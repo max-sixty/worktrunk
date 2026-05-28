@@ -73,9 +73,27 @@ Claude will run `wt config show`, inspect the shell config files, and identify t
 
 If Claude can't fix it, please [open an issue](https://github.com/max-sixty/worktrunk/issues/new?title=Shell%20setup%20issue&body=%23%23%20Shell%20and%20OS%0A%0A-%20Shell%3A%20%0A-%20OS%3A%20%0A%0A%23%23%20Output%20of%20%60wt%20config%20show%60%0A%0A%60%60%60%0A%0A%60%60%60%0A%0A%23%23%20What%20Claude%20found%20%28if%20available%29%0A%0A) with the output of `wt config show`, the shell (bash/zsh/fish), and OS. (And even if it fixes the problem, feel free to open an issue: non-standard success cases are useful for ensuring Worktrunk is easy to set up for others.)
 
-## What files does Worktrunk create?
+## What does `-v` / `-vv` do?
 
-Worktrunk creates files in four categories.
+Three verbosity levels. Each is a superset of the previous one.
+
+| Level | Stderr | Files (`.git/wt/logs/`) | Use case |
+|-------|--------|-------------------------|----------|
+| (none) | Warnings only | — | Normal use |
+| `-v` | + Info: hook output, alias template variable resolution | — | Debugging hooks/aliases |
+| `-vv` | Same as `-v` | + `trace.log`, `subprocess.log`, `diagnostic.md` | Filing a bug |
+
+At `-vv`, debug-level records (`$ cmd` headers, `[wt-trace]` timing, bounded subprocess preview) route to `trace.log` instead of stderr — so the terminal stays readable while the deep trace lands on disk. A one-line pointer on stderr shows where the files went.
+
+The three `-vv` files have distinct audiences:
+
+- **`trace.log`** — bounded preview (~1K lines), `[wt-trace]` records, gistable.
+- **`subprocess.log`** — raw uncapped stdout/stderr of every subprocess `wt` spawns (multi-MB possible, e.g. full `git log -p` output). The deep-dive escape hatch.
+- **`diagnostic.md`** — markdown bug-report bundle that inlines `trace.log`. `wt` prints a `gh gist create` command pointing at it.
+
+`RUST_LOG` overrides the flag baseline when set (`RUST_LOG=debug wt -v` lifts `-v` to debug-on-stderr).
+
+## What files does Worktrunk create?
 
 ### 1. Worktree directories
 
@@ -122,9 +140,9 @@ Worktrunk stores small amounts of cache and log data in the repository's `.git/`
 | `.git/wt/cache/summary/{branch}/{hash}.json` | Cached LLM branch summaries, content-addressed by diff hash | `wt list --full`, `wt switch` (when `[list] summary = true`) |
 | `.git/wt/logs/{branch}/**/*.log` | Background hook output (nested per branch) | Hooks, background `wt remove` |
 | `.git/wt/logs/commands.jsonl` | Command audit log (~2MB max) | Hooks, LLM commands |
-| `.git/wt/logs/trace.log` | Debug log (mirrors stderr) for issue reporting | Running with `-vv` |
-| `.git/wt/logs/output.log` | Raw uncapped subprocess stdout/stderr (may be multi-MB) | Running with `-vv` |
-| `.git/wt/logs/diagnostic.md` | Diagnostic report for issue reporting | Running with `-vv` when warnings occur |
+| `.git/wt/logs/trace.log` | Debug log for issue reporting | Running with `-vv` |
+| `.git/wt/logs/subprocess.log` | Raw uncapped subprocess stdout/stderr (may be multi-MB) | Running with `-vv` |
+| `.git/wt/logs/diagnostic.md` | Diagnostic report for issue reporting | Running with `-vv` |
 | `.git/wt/trash/<name>-<timestamp>` | Staged worktree contents pending background deletion | `wt remove` |
 
 None of this is tracked by git or pushed to remotes.

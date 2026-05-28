@@ -10,50 +10,104 @@
 //! The skeleton (placeholder table with loading indicators) must render as fast as possible
 //! to give users immediate feedback. Every git command before skeleton adds latency.
 //!
-//! ### Fixed Command Count (O(1), not O(N))
+//! ### Forks on the Critical Path
 //!
-//! Pre-skeleton runs a **fixed number of git commands** regardless of worktree count.
-//! This is achieved through:
-//! - **Batching** — timestamp fetch passes all SHAs to one `git log --no-walk` command
-//! - **Parallelization** — independent commands run concurrently via `join!` macro
+//! A steady-state run reaches the skeleton through five `git` subprocess
+//! forks (six in repos with `extensions.worktreeConfig=true` — see #3
+//! below). Fork *count* is O(1) — independent of worktree or branch
+//! count — because each batches as much as it can. Fork *work* scales with
+//! N (refs read, SHAs resolved); on a fast Linux system N=40 lands
+//! ~30–80 ms.
 //!
-//! **Steady-state (6-8 commands):**
+//! | # | Command | Source | Role |
+//! |---|---------|--------|------|
+//! | 1 | `git rev-parse --git-common-dir --is-inside-work-tree --show-toplevel --git-dir --symbolic-full-name HEAD` | [`Repository::prewarm`] (`prewarm_rev_parse`) | Five facts in one fork: shared `.git`, in-worktree gate, worktree root, per-worktree `.git/worktrees/<name>`, current branch. Populates process-global caches. Parallel with #2 at process startup. |
+//! | 2 | `git config --list -z` (cwd = discovery path) | [`Repository::prewarm`] (`prewarm_git_config`) | Whole merged config (system + global + local) in one shot, NUL-delimited so values containing `\n` or `=` parse unambiguously. Stashed in `GIT_CONFIG_PRELOAD` keyed by discovery path; every later `config_last("…")` reads from memory. Parallel with #1. |
+//! | 3 | `git config --list -z` (cwd = `git_common_dir`) | [`Repository::all_config`] | **Conditional.** [`Repository::at`] consumes #2's preload into `cache.all_config`, so `all_config()` is a memory hit on a normal repo. This fork only fires when `prewarm_git_config` declined the preload because `extensions.worktreeConfig=true` — there `--list` from a linked worktree misses the main-worktree `config.worktree` overrides (most importantly `core.bare = true` for the `myproject/.git + sibling worktrees` layout), so `all_config` re-forks from the common dir to see the full merged set. See `prewarm_git_config` for the full reasoning. |
+//! | 4 | `git worktree list --porcelain` | [`Repository::list_worktrees`] | Path, HEAD SHA, branch, and flags per worktree — the row source for the skeleton. The picker prelude triggers this once for `num_items_estimate`; collect's rayon scope then hits the cache. |
+//! | 5 | `git for-each-ref --format=… refs/heads/` | [`Repository::local_branches`] inside collect's `rayon::scope` | Local branch tips (name, SHA, committer date, upstream) for branch-only rows (`branches=true`) and for the stale-default-branch check. `remotes=true` adds a sibling `refs/remotes/` fork. The scope joins; this fork gates the skeleton. |
+//! | 6 | `git log --no-walk --no-show-signature --format=… SHA₁ … SHA_N` | collect, after the scope | Batched commit metadata for every worktree HEAD + branch tip. See breakdown below. |
 //!
-//! | Command | Purpose | Parallel |
-//! |---------|---------|----------|
-//! | `git worktree list --porcelain` | Enumerate worktrees | ✓ |
-//! | `git config worktrunk.default-branch` | Cached default branch | ✓ |
-//! | `git config --bool core.bare` | Bare repo check for expected-path logic | ✓ |
-//! | `git rev-parse --show-toplevel` | Worktree root for project config | ✓ |
-//! | `git config remote.*.url` (1-3 calls) | Project identifier (for config + path check) | ✓ |
-//! | `git for-each-ref refs/heads` | Only with `--branches` flag | ✓ |
-//! | `git for-each-ref refs/remotes` | Only with `--remotes` flag | ✓ |
-//! | `git log --no-walk --format='%H\0%ct\0%s' SHA1 SHA2 ...` | **Batched** commit details (timestamp + subject) | Sequential (needs SHAs) |
+//! Things that *look* like forks but aren't, on the steady-state path:
+//! `git config worktrunk.default-branch`, `git config --bool core.bare`,
+//! `git config remote.*.url`, [`Repository::is_bare`] — each is a
+//! `config_last("…")` lookup served from #2's in-memory map (or from #3
+//! when the conditional fork above did fire). They appear in the rayon
+//! scope as logical fetches but no subprocess fires for them warm. The
+//! same is true for [`Repository::default_branch`] once
+//! `worktrunk.default-branch` is cached (the steady-state case).
 //!
-//! The batched `git log` fetches subjects too, which the skeleton itself
-//! doesn't strictly need — only timestamps are required for sort order. It
-//! rides along for free: git has to resolve each commit object anyway, and
-//! the subject bytes add no measurable latency to the round trip. The
-//! full `(timestamp, subject)` map is handed to the post-skeleton loop that
-//! populates `ListItem.commit` directly — no per-SHA `git log -1` fork path.
+//! Things that fire **once per repo, ever**:
+//!
+//! - [`Repository::default_branch`] falling through to
+//!   `git ls-remote --symref <remote> HEAD` when neither
+//!   `worktrunk.default-branch` nor `refs/remotes/<remote>/HEAD` is set.
+//!   100 ms – 2 s on the wire. The result persists to
+//!   `worktrunk.default-branch` so subsequent runs are a cache hit. This is
+//!   worktrunk's one accepted wire-path exception — see CLAUDE.md →
+//!   "Network Access".
+//!
+//! ### #6 — the batched commit-details fork
+//!
+//! ```text
+//! git log --no-walk --no-show-signature \
+//!   --format=%H%x00%h%x00%ct%x00%s \
+//!   SHA₁ SHA₂ … SHA_N
+//! ```
+//!
+//! - `--no-walk` — don't traverse history. Without it, `git log SHA₁ SHA₂`
+//!   walks the ancestry of each starting point and prints thousands of
+//!   commits. With it, one record per named SHA. Turns this from
+//!   O(history) into O(N refs).
+//! - `--no-show-signature` — skip GPG verification. If `gpg.program` is set
+//!   and any of these commits are signed, the default forks `gpg` per
+//!   commit; disabled here.
+//! - `--format=%H%x00%h%x00%ct%x00%s` — four fields per commit,
+//!   NUL-separated because subjects can contain anything except NUL:
+//!   - `%H` full SHA, `%h` abbreviated SHA, `%ct` committer date (Unix
+//!     epoch), `%s` subject (first line of message).
+//!
+//! SHAs come from #4 (worktree HEADs) ∪ #5 (branch tips), deduplicated.
+//! Argv length scales with N — Linux `ARG_MAX` (~128 KB) bounds the
+//! unchunked form at roughly 3,000 SHAs.
+//!
+//! What each field feeds:
+//! - `%ct` — sort order on the skeleton. This is the *only* reason #6 is
+//!   pre-skeleton; the skeleton can't pick row order without it.
+//! - `%ct` again, post-skeleton — Age column ("3 hours ago").
+//! - `%s` post-skeleton — Message column.
+//! - `%h` post-skeleton — abbreviated-SHA cell.
+//!
+//! Subjects and abbreviated SHAs ride along for free: git resolves each
+//! commit object to read its timestamp anyway, so the extra bytes add no
+//! measurable latency to the round trip. Without this batch you'd be
+//! forking `git log -1` per SHA later — same data, N forks instead of one.
+//! The full `(timestamp, subject)` map is handed to the post-skeleton loop
+//! that populates `ListItem.commit` directly.
+//!
 //! When the batch fails (e.g., a listed SHA was deleted mid-run), the
 //! failure is surfaced once and Age/Message cells render placeholders for
 //! that run.
 //!
-//! **Non-git operations (negligible latency):**
-//! - Path canonicalization — detect current worktree
-//! - Project config file read — check if URL column needed (no template expansion)
-//! - Config resolution — merge project-specific settings (uses cached project identifier)
+//! ### Non-git work on the path
 //!
-//! ### First-Run Behavior
+//! Negligible latency, but worth naming:
+//! - Path canonicalization — detect current worktree.
+//! - Project config file read (`.config/wt.toml`) via
+//!   `ProjectConfig::load`. [`Repository::url_template`] reads `list.url`
+//!   from this file — TOML I/O, not git config, and no subprocess.
+//! - Config resolution — merge project-specific settings (uses cached
+//!   project identifier).
 //!
-//! When `worktrunk.default-branch` is not cached, `default_branch()` runs additional
-//! commands to detect it:
-//! 1. Query primary remote (origin/HEAD or `git ls-remote`)
-//! 2. Fall back to local inference (check init.defaultBranch, common names)
-//! 3. Cache result to `git config worktrunk.default-branch`
+//! ### First-run behavior
 //!
-//! Subsequent runs use the cached value — only one `git config` call.
+//! On a fresh clone with `worktrunk.default-branch` unset,
+//! [`Repository::default_branch`] adds one extra step on the path: try
+//! `refs/remotes/<remote>/HEAD` locally, fall through to
+//! `git ls-remote --symref` (the wire-path exception above), fall further
+//! back to local inference (`init.defaultBranch`, common branch names).
+//! The result is cached to `worktrunk.default-branch` so every subsequent
+//! run is a memory hit served from #2.
 //!
 //! ### Post-Skeleton Operations
 //!

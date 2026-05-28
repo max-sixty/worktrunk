@@ -3284,7 +3284,7 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
 
         // Create a temp file for the redirect target
         let tmp_dir = tempfile::tempdir().unwrap();
-        let redirect_file = tmp_dir.path().join("output.log");
+        let redirect_file = tmp_dir.path().join("subprocess.log");
         let redirect_path = redirect_file.display().to_string();
 
         // Generate wrapper script

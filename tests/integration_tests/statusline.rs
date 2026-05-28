@@ -201,7 +201,7 @@ fn test_statusline_claude_code_full_context(repo: TestRepo) {
 
     let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
     claude_code_snapshot_settings().bind(|| {
-        assert_snapshot!(output, @"[PATH]  main  [36m?[0m[2m^[22m[2m|[22m  @[32m+1[0m  | Opus");
+        assert_snapshot!(output, @"[PATH]  main  [36m?[0m[2m^[22m[2m|[22m  @[32m+1[0m  Opus");
     });
 }
 
@@ -228,7 +228,7 @@ fn test_statusline_claude_code_with_model(repo: TestRepo) {
 
     let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
     claude_code_snapshot_settings().bind(|| {
-        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  | Haiku");
+        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  Haiku");
     });
 }
 
@@ -247,7 +247,7 @@ fn test_statusline_claude_code_with_context_gauge(repo: TestRepo) {
 
     let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
     claude_code_snapshot_settings().bind(|| {
-        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  | Opus  🌕 42%");
+        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  Opus  🌕42%");
     });
 }
 
@@ -264,7 +264,7 @@ fn test_statusline_claude_code_context_gauge_low(repo: TestRepo) {
 
     let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
     claude_code_snapshot_settings().bind(|| {
-        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  | Opus  🌕 5%");
+        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  Opus  🌕5%");
     });
 }
 
@@ -281,7 +281,7 @@ fn test_statusline_claude_code_context_gauge_high(repo: TestRepo) {
 
     let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
     claude_code_snapshot_settings().bind(|| {
-        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  | Opus  🌑 98%");
+        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  Opus  🌑98%");
     });
 }
 
@@ -298,7 +298,7 @@ fn test_statusline_claude_code_missing_context_window(repo: TestRepo) {
 
     let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
     claude_code_snapshot_settings().bind(|| {
-        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  | Opus");
+        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  Opus");
     });
 }
 
@@ -613,4 +613,268 @@ fn test_statusline_json_nested_worktree(mut repo: TestRepo) {
         items[0]["branch"], "feature",
         "Nested worktree should report 'feature' branch, not parent"
     );
+}
+
+// --- Rate-limit segment snapshots ---
+//
+// These tests pin the "now" used by the rate-limit predictor (via
+// `WORKTRUNK_TEST_EPOCH`), force `TZ=UTC` so the deadline string is
+// deterministic across machines and timezones, and pin `LC_TIME=en_US.UTF-8`
+// so the clock segment renders 12h (`3pm`) — matching the docs example and
+// the US/macOS default. The 24h path has its own test that overrides
+// `LC_TIME` to a non-US locale.
+//
+// All cases use Thursday 2025-01-02 13:00 UTC as the reference "now", and
+// resets_at values relative to it.
+
+use crate::common::TEST_EPOCH;
+
+const TEST_NOW_THU_1PM: u64 = TEST_EPOCH + 13 * 3600;
+
+/// Run statusline with a pinned "now" and timezone; optional COLUMNS override.
+///
+/// Defaults to `LC_TIME=en_US.UTF-8` (12h clock); pass a different locale
+/// string to exercise the 24h path.
+fn run_statusline_at_time(
+    repo: &TestRepo,
+    stdin_json: &str,
+    now_epoch: u64,
+    columns: Option<u32>,
+) -> String {
+    run_statusline_with_locale(repo, stdin_json, now_epoch, columns, "en_US.UTF-8")
+}
+
+fn run_statusline_with_locale(
+    repo: &TestRepo,
+    stdin_json: &str,
+    now_epoch: u64,
+    columns: Option<u32>,
+    lc_time: &str,
+) -> String {
+    let mut cmd = wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.args(["list", "statusline", "--format=claude-code"]);
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.env("WORKTRUNK_TEST_EPOCH", now_epoch.to_string());
+    cmd.env("TZ", "UTC");
+    // The test harness pins `LC_ALL=C` globally for determinism; clear it
+    // so `LC_TIME` actually takes effect (POSIX precedence: LC_ALL beats
+    // LC_TIME). Then set `LC_TIME` per-test.
+    cmd.env_remove("LC_ALL");
+    cmd.env("LC_TIME", lc_time);
+    if let Some(c) = columns {
+        cmd.env("COLUMNS", c.to_string());
+    }
+    cmd.stdin(Stdio::piped());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().expect("failed to spawn command");
+    let mut stdin = child.stdin.take().expect("failed to get stdin");
+    stdin
+        .write_all(stdin_json.as_bytes())
+        .expect("failed to write stdin");
+    drop(stdin);
+
+    let output = child.wait_with_output().expect("failed to wait for output");
+    String::from_utf8_lossy(&output.stdout).to_string()
+}
+
+/// Build a minimal Claude Code JSON with the given rate-limit windows.
+///
+/// `windows`: `[(key, used_percentage, seconds_until_reset_from_now)]`.
+fn build_claude_code_json(
+    repo_path: &std::path::Path,
+    model: Option<&str>,
+    context_pct: Option<f64>,
+    now_epoch: u64,
+    windows: &[(&str, f64, i64)],
+) -> String {
+    use std::fmt::Write;
+    let escaped = escape_path_for_json(repo_path);
+    let mut json = format!(r#"{{"workspace":{{"current_dir":"{escaped}"}}"#);
+    if let Some(m) = model {
+        write!(json, r#","model":{{"display_name":"{m}"}}"#).unwrap();
+    }
+    if let Some(p) = context_pct {
+        write!(json, r#","context_window":{{"used_percentage":{p}}}"#).unwrap();
+    }
+    if !windows.is_empty() {
+        json.push_str(r#","rate_limits":{"#);
+        for (i, (key, used, secs_to_reset)) in windows.iter().enumerate() {
+            if i > 0 {
+                json.push(',');
+            }
+            let resets_at = now_epoch as i64 + secs_to_reset;
+            write!(
+                json,
+                r#""{key}":{{"used_percentage":{used},"resets_at":{resets_at}}}"#
+            )
+            .unwrap();
+        }
+        json.push('}');
+    }
+    json.push('}');
+    json
+}
+
+#[rstest]
+fn test_statusline_rate_limit_hidden_when_safe(repo: TestRepo) {
+    // Both windows well under threshold → segment absent.
+    let json = build_claude_code_json(
+        repo.root_path(),
+        Some("Opus"),
+        Some(42.0),
+        TEST_NOW_THU_1PM,
+        &[
+            ("five_hour", 30.0, 2 * 3600 + 1800), // 50% elapsed, 30% used
+            ("seven_day", 20.0, 4 * 86400),       // ~43% elapsed, 20% used
+        ],
+    );
+    let out = run_statusline_at_time(&repo, &json, TEST_NOW_THU_1PM, None);
+    claude_code_snapshot_settings().bind(|| {
+        assert_snapshot!("rate_limit_hidden_when_safe", out);
+    });
+}
+
+#[rstest]
+fn test_statusline_rate_limit_5h_clock_time(repo: TestRepo) {
+    // 5h burning mid-window, reset in 2h → 3pm.
+    let json = build_claude_code_json(
+        repo.root_path(),
+        Some("Opus"),
+        Some(42.0),
+        TEST_NOW_THU_1PM,
+        &[("five_hour", 80.0, 2 * 3600)],
+    );
+    let out = run_statusline_at_time(&repo, &json, TEST_NOW_THU_1PM, None);
+    claude_code_snapshot_settings().bind(|| {
+        assert_snapshot!("rate_limit_5h_clock_time", out);
+    });
+}
+
+#[rstest]
+fn test_statusline_rate_limit_5h_with_minutes(repo: TestRepo) {
+    // Reset 30 minutes from now → 1:30pm — exercises the `:mm` time spec.
+    let json = build_claude_code_json(
+        repo.root_path(),
+        Some("Opus"),
+        Some(42.0),
+        TEST_NOW_THU_1PM,
+        &[("five_hour", 95.0, 1800)],
+    );
+    let out = run_statusline_at_time(&repo, &json, TEST_NOW_THU_1PM, None);
+    claude_code_snapshot_settings().bind(|| {
+        assert_snapshot!("rate_limit_5h_with_minutes", out);
+    });
+}
+
+#[rstest]
+fn test_statusline_rate_limit_5h_at_limit(repo: TestRepo) {
+    // 100% used — the throttled edge.
+    let json = build_claude_code_json(
+        repo.root_path(),
+        Some("Opus"),
+        Some(42.0),
+        TEST_NOW_THU_1PM,
+        &[("five_hour", 100.0, 2 * 3600)],
+    );
+    let out = run_statusline_at_time(&repo, &json, TEST_NOW_THU_1PM, None);
+    claude_code_snapshot_settings().bind(|| {
+        assert_snapshot!("rate_limit_5h_at_limit", out);
+    });
+}
+
+#[rstest]
+fn test_statusline_rate_limit_7d_with_day_and_time(repo: TestRepo) {
+    // 7d binding, reset 4d 2h from Thu 1pm → Mon 3pm.
+    let json = build_claude_code_json(
+        repo.root_path(),
+        Some("Opus"),
+        Some(42.0),
+        TEST_NOW_THU_1PM,
+        &[
+            ("five_hour", 15.0, 4 * 3600), // safe
+            ("seven_day", 80.0, 4 * 86400 + 2 * 3600),
+        ],
+    );
+    let out = run_statusline_at_time(&repo, &json, TEST_NOW_THU_1PM, None);
+    claude_code_snapshot_settings().bind(|| {
+        assert_snapshot!("rate_limit_7d_with_day_and_time", out);
+    });
+}
+
+#[rstest]
+fn test_statusline_rate_limit_both_picks_worse(repo: TestRepo) {
+    // Both windows flagged; 7d projects worse, so 7d is the segment shown.
+    let json = build_claude_code_json(
+        repo.root_path(),
+        Some("Opus"),
+        Some(42.0),
+        TEST_NOW_THU_1PM,
+        &[
+            ("five_hour", 85.0, 90 * 60), // 70% elapsed, 85% used → visible
+            ("seven_day", 80.0, 4 * 86400 + 2 * 3600), // ~40% elapsed, 80% used → worse
+        ],
+    );
+    let out = run_statusline_at_time(&repo, &json, TEST_NOW_THU_1PM, None);
+    claude_code_snapshot_settings().bind(|| {
+        assert_snapshot!("rate_limit_both_picks_worse", out);
+    });
+}
+
+#[rstest]
+fn test_statusline_rate_limit_with_dirty_worktree_and_context(repo: TestRepo) {
+    // Uncommitted change + 95% context + 5h binding — checks segment
+    // composition with other state.
+    add_uncommitted_changes(&repo);
+    let json = build_claude_code_json(
+        repo.root_path(),
+        Some("Opus"),
+        Some(95.0),
+        TEST_NOW_THU_1PM,
+        &[("five_hour", 80.0, 2 * 3600)],
+    );
+    let out = run_statusline_at_time(&repo, &json, TEST_NOW_THU_1PM, None);
+    claude_code_snapshot_settings().bind(|| {
+        assert_snapshot!("rate_limit_with_dirty_worktree_and_context", out);
+    });
+}
+
+#[rstest]
+fn test_statusline_rate_limit_5h_24h_locale(repo: TestRepo) {
+    // Same input as `5h_clock_time` but `LC_TIME=en_GB.UTF-8` → 24h clock.
+    // 12h `10am–3pm` becomes 24h `10:00–15:00`. Weekday in `Mon–Mon 15:00`
+    // is still English (out of scope for the clock-format follow-up).
+    let json = build_claude_code_json(
+        repo.root_path(),
+        Some("Opus"),
+        Some(42.0),
+        TEST_NOW_THU_1PM,
+        &[("five_hour", 80.0, 2 * 3600)],
+    );
+    let out = run_statusline_with_locale(&repo, &json, TEST_NOW_THU_1PM, None, "en_GB.UTF-8");
+    claude_code_snapshot_settings().bind(|| {
+        assert_snapshot!("rate_limit_5h_24h_locale", out);
+    });
+}
+
+#[rstest]
+fn test_statusline_rate_limit_drops_at_narrow_width(repo: TestRepo) {
+    // Same input as `5h_clock_time` but COLUMNS=80 — the rate-limit
+    // segment is the lowest-priority Claude-Code segment, so it drops first.
+    let json = build_claude_code_json(
+        repo.root_path(),
+        Some("Opus"),
+        Some(42.0),
+        TEST_NOW_THU_1PM,
+        &[("five_hour", 80.0, 2 * 3600)],
+    );
+    // COLUMNS=40 is narrower than the rendered line with rate-limit, so
+    // the lowest-priority segments drop. The full line is ~60 chars wide
+    // even on the short test repo path.
+    let out = run_statusline_at_time(&repo, &json, TEST_NOW_THU_1PM, Some(40));
+    claude_code_snapshot_settings().bind(|| {
+        assert_snapshot!("rate_limit_drops_at_narrow_width", out);
+    });
 }

@@ -752,7 +752,7 @@ fn test_state_get_logs_diagnostic_files(repo: TestRepo) {
     let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     std::fs::write(log_dir.join("trace.log"), "debug output").unwrap();
-    std::fs::write(log_dir.join("output.log"), "raw subprocess output").unwrap();
+    std::fs::write(log_dir.join("subprocess.log"), "raw subprocess output").unwrap();
     std::fs::write(log_dir.join("diagnostic.md"), "# Diagnostic Report").unwrap();
     // Also add a hook output file to verify separation
     let remove_rel = internal_log_rel_path("feature", "remove");
@@ -764,7 +764,7 @@ fn test_state_get_logs_diagnostic_files(repo: TestRepo) {
 
     // Diagnostic files appear under DIAGNOSTIC, not HOOK OUTPUT
     assert!(stdout.contains("DIAGNOSTIC"), "Expected DIAGNOSTIC heading");
-    for name in ["trace.log", "output.log", "diagnostic.md"] {
+    for name in ["trace.log", "subprocess.log", "diagnostic.md"] {
         assert!(stdout.contains(name), "Expected {name} in output");
     }
 
@@ -781,7 +781,7 @@ fn test_state_get_logs_diagnostic_files(repo: TestRepo) {
         hook_section.contains(&remove_display),
         "Expected {remove_display} in HOOK OUTPUT: {hook_section}"
     );
-    for name in ["trace.log", "output.log"] {
+    for name in ["trace.log", "subprocess.log"] {
         assert!(
             !hook_section.contains(name),
             "{name} should not be in HOOK OUTPUT: {hook_section}"
@@ -796,7 +796,7 @@ fn test_state_clear_logs_includes_diagnostic_files(repo: TestRepo) {
     let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     std::fs::write(log_dir.join("trace.log"), "debug output").unwrap();
-    std::fs::write(log_dir.join("output.log"), "raw output").unwrap();
+    std::fs::write(log_dir.join("subprocess.log"), "raw output").unwrap();
     std::fs::write(log_dir.join("diagnostic.md"), "# Report").unwrap();
 
     let output = wt_state_cmd(&repo, "logs", "clear", &[]).output().unwrap();

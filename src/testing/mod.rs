@@ -519,7 +519,6 @@ pub fn configure_completion_invocation_for_shell(cmd: &mut Command, words: &[&st
 /// - This function uses COLUMNS=500 (wider for long macOS paths in error messages)
 /// - `test_env_vars()` uses COLUMNS=150 (narrower for PTY snapshot consistency)
 /// - This function sets TERM=alacritty; PTY tests don't (skim needs valid terminfo)
-/// - This function enables RUST_LOG=warn; PTY tests don't (too noisy in combined output)
 /// - This function clears host GIT_*/WORKTRUNK_* vars; PTY tests start with clean env
 pub fn configure_cli_command(cmd: &mut Command) {
     // Strip host context and set baseline `WORKTRUNK_*_PATH` defaults
@@ -531,8 +530,12 @@ pub fn configure_cli_command(cmd: &mut Command) {
     // by the env-strip above.
     isolate_subprocess_env(cmd, None);
     cmd.env("WORKTRUNK_TEST_EPOCH", TEST_EPOCH.to_string());
-    // Enable warn-level logging so diagnostics show up in test failures
-    cmd.env("RUST_LOG", "warn");
+    // RUST_LOG intentionally NOT set: the flag baseline and `RUST_LOG`
+    // merge via the env-wins-when-set contract enforced by
+    // `tracing_subscriber::EnvFilter` (see `logging::init`), so a blanket
+    // `RUST_LOG=warn` default would cap `-vv` tests at Warn and starve
+    // `trace.log` of debug-level `[wt-trace]` records. Tests that need
+    // warn-level output should opt in per-invocation.
     // Treat Claude as not installed by default (tests can override with "1")
     cmd.env("WORKTRUNK_TEST_CLAUDE_INSTALLED", "0");
     // Treat Codex as not installed by default (tests can override with "1")

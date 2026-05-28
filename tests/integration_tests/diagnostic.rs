@@ -302,7 +302,7 @@ fn test_diagnostic_written_to_correct_location(mut repo: TestRepo) {
     );
 }
 
-/// Both log files (`trace.log` and `output.log`) should be created at `-vv`.
+/// Both log files (`trace.log` and `subprocess.log`) should be created at `-vv`.
 #[rstest]
 fn test_log_files_created(mut repo: TestRepo) {
     repo.add_worktree("feature");
@@ -312,9 +312,12 @@ fn test_log_files_created(mut repo: TestRepo) {
 
     let logs_dir = repo.root_path().join(".git").join("wt/logs");
     let trace_log = logs_dir.join("trace.log");
-    let output_log = logs_dir.join("output.log");
+    let subprocess_log = logs_dir.join("subprocess.log");
     assert!(trace_log.exists(), "trace.log should be created with -vv");
-    assert!(output_log.exists(), "output.log should be created with -vv");
+    assert!(
+        subprocess_log.exists(),
+        "subprocess.log should be created with -vv"
+    );
 
     let trace = fs::read_to_string(&trace_log).unwrap();
     assert!(!trace.is_empty(), "trace.log should not be empty");
@@ -325,7 +328,7 @@ fn test_log_files_created(mut repo: TestRepo) {
 }
 
 /// At `-vv`, the full (uncapped) subprocess stdout/stderr should land in
-/// `output.log` via `shell_exec::SUBPROCESS_FULL_TARGET` — not in `trace.log`.
+/// `subprocess.log` via `shell_exec::SUBPROCESS_FULL_TARGET` — not in `trace.log`.
 /// `trace.log` gets the bounded preview alongside trace records.
 #[rstest]
 fn test_vv_splits_full_and_bounded_output(repo: TestRepo) {
@@ -333,7 +336,7 @@ fn test_vv_splits_full_and_bounded_output(repo: TestRepo) {
 
     let logs_dir = repo.root_path().join(".git").join("wt/logs");
     let trace = fs::read_to_string(logs_dir.join("trace.log")).unwrap();
-    let output = fs::read_to_string(logs_dir.join("output.log")).unwrap();
+    let output = fs::read_to_string(logs_dir.join("subprocess.log")).unwrap();
 
     assert!(
         trace.contains("[wt-trace]"),
@@ -341,29 +344,32 @@ fn test_vv_splits_full_and_bounded_output(repo: TestRepo) {
     );
     // Captured stdout is emitted line-by-line with the `  ` / `  ! `
     // continuation prefix used by log_output. Full subprocess output lives
-    // in output.log.
+    // in subprocess.log.
     assert!(
         output.lines().any(|l| l.contains("  worktree ")),
-        "output.log should contain `git worktree list --porcelain` stdout lines at -vv"
+        "subprocess.log should contain `git worktree list --porcelain` stdout lines at -vv"
     );
-    // Structured trace records stay in trace.log only, not output.log.
+    // Structured trace records stay in trace.log only, not subprocess.log.
     assert!(
         !output.contains("[wt-trace]"),
-        "output.log should not contain [wt-trace] records"
+        "subprocess.log should not contain [wt-trace] records"
     );
 }
 
-/// At `-vv`, when a single subprocess produces more than the line cap, stderr
-/// and `trace.log` must show the elision marker while `output.log` holds the
-/// full body without any elision. This guards the bounded-stderr invariant —
-/// a regression that routed full output to stderr would silently fail to
-/// elide.
+/// At `-vv`, Debug-level records (the noisy ones) stay out of stderr —
+/// the bounded subprocess preview lands in `trace.log` (not stderr), and
+/// `subprocess.log` still holds the unbounded body. Info-level routing
+/// from `-v` still applies at `-vv` (it's a superset), so the "Tracing
+/// to ..." pointer and similar status lines DO appear on stderr; they're
+/// asserted at the end of this test. Guards against a regression that
+/// re-routes the debug stream to stderr and floods the terminal.
 #[rstest]
-fn test_vv_bounded_on_stderr_full_in_output_log(repo: TestRepo) {
+fn test_vv_debug_pipeline_silent_on_stderr(repo: TestRepo) {
     // `wt list` runs `git for-each-ref refs/heads/` (captured via `Cmd::run`),
     // so its output flows through `log_output` and exercises the split.
     // Populate packed-refs with 250 fake branches pointing at HEAD — far more
-    // than LOG_OUTPUT_MAX_LINES (200), which guarantees elision on stderr.
+    // than LOG_OUTPUT_MAX_LINES (200), which would have tripped elision on
+    // stderr under the old routing.
     let head_out = repo
         .git_command()
         .args(["rev-parse", "HEAD"])
@@ -388,44 +394,110 @@ fn test_vv_bounded_on_stderr_full_in_output_log(repo: TestRepo) {
         .expect("wt list");
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Elision marker appears on stderr (bounded preview) and in trace.log.
-    let marker = "more lines, ";
-    assert!(
-        stderr.contains(marker),
-        "stderr should contain elision marker for >200-line subprocess output: {stderr}"
-    );
-
     let logs_dir = repo.root_path().join(".git").join("wt/logs");
     let trace = fs::read_to_string(logs_dir.join("trace.log")).unwrap();
-    let raw = fs::read_to_string(logs_dir.join("output.log")).unwrap();
+    let raw = fs::read_to_string(logs_dir.join("subprocess.log")).unwrap();
 
+    // Elision marker belongs to the bounded preview, which now lives in
+    // trace.log only — never on stderr.
+    let marker = "more lines, ";
     assert!(
         trace.contains(marker),
-        "trace.log mirrors stderr and should include the elision marker"
+        "trace.log should hold the bounded preview's elision marker"
+    );
+    assert!(
+        !stderr.contains(marker),
+        "stderr must not receive the bounded preview at -vv: {stderr}"
     );
     assert!(
         !raw.contains(marker),
-        "output.log holds full output and must not contain an elision marker"
+        "subprocess.log holds full output and must not contain an elision marker"
     );
+
     // The tail refs only appear in the full log.
     let tail_ref = "many-branch-249";
     assert!(
         raw.contains(tail_ref),
-        "output.log should contain the full for-each-ref stdout (last ref)"
+        "subprocess.log should contain the full for-each-ref stdout (last ref)"
     );
     assert!(
         !stderr.contains(tail_ref),
-        "stderr preview should be bounded before the last ref"
+        "stderr must not see the per-line subprocess output at -vv"
     );
     assert!(
         !trace.contains(tail_ref),
-        "trace.log mirrors stderr and should be bounded too"
+        "trace.log holds the bounded preview, which is capped before the last ref"
+    );
+
+    // The full subprocess stdout still lands in subprocess.log, and trace.log
+    // still captures the `$ cmd` / `[wt-trace]` records — confirm both so a
+    // regression that disables the file sinks fails loudly here too.
+    assert!(
+        raw.lines().any(|l| l.contains("refs/heads/many-branch-")),
+        "subprocess.log should contain the captured for-each-ref stdout"
+    );
+    assert!(
+        trace.contains("[wt-trace]"),
+        "trace.log should contain [wt-trace] records at -vv"
+    );
+
+    // Stderr at -vv should contain the new pointer line (and the existing
+    // diagnostic line), so the user knows where the trace went.
+    assert!(
+        stderr.contains("Writing to") && stderr.contains("trace.log"),
+        "stderr should announce the trace destination at -vv: {stderr}"
+    );
+}
+
+/// `RUST_LOG` is honored at every verbosity level — including `-v` — and
+/// can raise the filter above the flag's baseline. A user who runs
+/// `RUST_LOG=debug wt -v` gets Debug, not Info: the flag sets a baseline,
+/// and `RUST_LOG` refines it on top via `tracing_subscriber::EnvFilter`'s
+/// directive grammar (env wins when set). Guards against the regression
+/// where `-v`/`-vv` hardcoded `filter_level(...)` and silently dropped
+/// `RUST_LOG`.
+///
+/// The probe is the `[wt-trace]` grammar — those records are emitted at
+/// `log::debug!`, so they're suppressed at the Info baseline `-v` selects
+/// and surface when `RUST_LOG=debug` raises it. (At `-v 0` the same
+/// `RUST_LOG=debug` path is already covered by
+/// `test_rust_log_debug_fallback_without_vv`; at `-vv` the baseline is
+/// already Debug so there's no flag/env conflict to assert.)
+#[rstest]
+fn test_rust_log_overrides_verbose_flag(repo: TestRepo) {
+    // Baseline: -v alone caps at Info, so debug-level [wt-trace] records
+    // are dropped from stderr.
+    let info_only = repo
+        .wt_command()
+        .args(["list", "-v"])
+        .env_remove("RUST_LOG")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("wt list -v");
+    let info_stderr = String::from_utf8_lossy(&info_only.stderr);
+    assert!(
+        !info_stderr.contains("[wt-trace]"),
+        "-v alone (Info baseline) should not surface [wt-trace] records: {info_stderr}"
+    );
+
+    // RUST_LOG=debug + -v raises the level: [wt-trace] records appear.
+    let with_env = repo
+        .wt_command()
+        .args(["list", "-v"])
+        .env("RUST_LOG", "debug")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("wt list -v");
+    let env_stderr = String::from_utf8_lossy(&with_env.stderr);
+    assert!(
+        env_stderr.contains("[wt-trace]"),
+        "RUST_LOG=debug at -v should surface [wt-trace] records on stderr: {env_stderr}"
     );
 }
 
 /// `RUST_LOG=debug` at `-v 0` activates Debug logging without creating the
 /// on-disk log files. Stderr receives the **bounded** preview
-/// (`SUBPROCESS_TERMINAL_TARGET`); the uncapped `SUBPROCESS_FULL_TARGET`
+/// (`SUBPROCESS_BOUNDED_TARGET`); the uncapped `SUBPROCESS_FULL_TARGET`
 /// records are dropped so raw bodies don't flood the terminal.
 #[rstest]
 fn test_rust_log_debug_fallback_without_vv(repo: TestRepo) {
@@ -445,8 +517,8 @@ fn test_rust_log_debug_fallback_without_vv(repo: TestRepo) {
         "trace.log should NOT be created without -vv"
     );
     assert!(
-        !logs_dir.join("output.log").exists(),
-        "output.log should NOT be created without -vv"
+        !logs_dir.join("subprocess.log").exists(),
+        "subprocess.log should NOT be created without -vv"
     );
 
     // Subprocess stdout still reaches stderr via the bounded preview —
@@ -532,8 +604,41 @@ fn test_vv_writes_diagnostic_on_error(mut repo: TestRepo) {
     );
 }
 
+/// If one of the `-vv` log files can't be opened (here: pre-existing path
+/// of the wrong type), the user still gets a "Writing to ..." pointer for
+/// the one that opened, and the elision marker reflects the asymmetric
+/// state instead of telling a `-vv` user to "rerun with -vv".
+#[rstest]
+fn test_vv_pointer_handles_split_init(repo: TestRepo) {
+    let logs_dir = repo.root_path().join(".git").join("wt/logs");
+    std::fs::create_dir_all(&logs_dir).unwrap();
+    // Block subprocess.log open by occupying the path with a directory.
+    std::fs::create_dir(logs_dir.join("subprocess.log")).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["list", "-vv"])
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        stderr.contains("Writing to") && stderr.contains("trace.log"),
+        "stderr should point at trace.log even when subprocess.log can't open: {stderr}"
+    );
+    assert!(
+        stderr.contains("subprocess.log unavailable"),
+        "stderr should note subprocess.log is unavailable: {stderr}"
+    );
+    assert!(
+        logs_dir.join("trace.log").exists(),
+        "trace.log should still be created"
+    );
+}
+
 /// With just -v, info-level logging goes to stderr but no log files are written.
-/// `-vv` is the threshold for `trace.log`, `output.log`, and `diagnostic.md`.
+/// `-vv` is the threshold for `trace.log`, `subprocess.log`, and `diagnostic.md`.
 #[rstest]
 fn test_v_does_not_write_log_files(repo: TestRepo) {
     // Run a successful command with just -v
@@ -543,7 +648,7 @@ fn test_v_does_not_write_log_files(repo: TestRepo) {
 
     // None of the -vv diagnostic files should exist with just -v
     let wt_logs = repo.root_path().join(".git").join("wt/logs");
-    for name in ["diagnostic.md", "trace.log", "output.log"] {
+    for name in ["diagnostic.md", "trace.log", "subprocess.log"] {
         assert!(
             !wt_logs.join(name).exists(),
             "{name} should NOT be created with just -v (requires -vv)"
@@ -551,7 +656,9 @@ fn test_v_does_not_write_log_files(repo: TestRepo) {
     }
 }
 
-/// With -vv outside a git repo, command should still work (no crash).
+/// With -vv outside a git repo, command should still work (no crash), no
+/// log files are written, and `announce_trace_destination` takes its silent
+/// early-return path (TRACE.path() is None).
 #[test]
 fn test_vv_outside_repo_no_crash() {
     use crate::common::wt_command;
@@ -559,13 +666,21 @@ fn test_vv_outside_repo_no_crash() {
     // Create a temp directory that is NOT a git repo
     let temp_dir = tempfile::tempdir().unwrap();
 
+    // Use `list` (not `--version`) so `init_logging` actually runs — clap
+    // short-circuits `--version` before logging is set up, which would
+    // skip the announce_trace_destination path this test exists to cover.
     let output = wt_command()
-        .args(["--version", "-vv"])
+        .args(["list", "-vv"])
         .current_dir(temp_dir.path())
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "Command should succeed");
+    // `wt list` exits non-zero outside a git repo, but that's fine —
+    // init_logging still ran before the command failed.
+    assert!(
+        !output.status.success(),
+        "wt list outside a repo should fail"
+    );
 
     // No diagnostic file should be created (not in a git repo)
     let diagnostic_path = temp_dir
@@ -576,6 +691,14 @@ fn test_vv_outside_repo_no_crash() {
     assert!(
         !diagnostic_path.exists(),
         "Diagnostic file should NOT be created outside a git repo"
+    );
+
+    // Startup pointer should NOT appear: TRACE failed to open, so
+    // announce_trace_destination took its early-return path.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("Writing to"),
+        "no startup pointer when trace.log can't open: {stderr}"
     );
 }
 

@@ -814,8 +814,9 @@ impl GitError {
                     "Commit or stash changes first".to_string()
                 };
                 write!(f, "{}", error_message(&title))?;
-                for line in dirty_files {
-                    write!(f, "\n  {}", cformat!("<dim>{}</>", line))?;
+                if !dirty_files.is_empty() {
+                    let joined = dirty_files.join("\n");
+                    write!(f, "\n{}", format_with_gutter(&joined, None))?;
                 }
                 write!(f, "\n{}", hint_message(hint))
             }
@@ -2157,8 +2158,8 @@ mod tests {
         };
         assert_snapshot!(err.render(), @"
         [31m✗[39m [31mCannot remove worktree after merge: [1mfeature-auth[22m has uncommitted changes[39m
-          [2m M auth.rs[22m
-          [2m?? .DS_Store[22m
+        [107m [0m  M auth.rs
+        [107m [0m ?? .DS_Store
         [2m↳[22m [2mCommit or stash changes first[22m
         ");
     }

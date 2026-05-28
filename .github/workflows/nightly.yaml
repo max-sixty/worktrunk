@@ -100,7 +100,7 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: Install cargo-hack
-      uses: taiki-e/install-action@v2.79.2
+      uses: taiki-e/install-action@v2.79.8
       with:
         tool: cargo-hack
 
@@ -179,7 +179,7 @@ jobs:
     - name: Install nushell
       uses: hustcer/setup-nu@v3
       with:
-        version: '0.112.2'
+        version: '0.113.0'
 
     - name: 💰 Rust repo cache
       uses: actions/cache@v5

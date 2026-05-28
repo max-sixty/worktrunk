@@ -36,7 +36,9 @@
 //!    `on_skeleton`.
 //!
 //! Time-to-skeleton = steps 1-6 on the main thread *plus* collect's
-//! pre-skeleton phase on the bg thread.
+//! pre-skeleton phase on the bg thread. See `commands/list/collect/mod.rs`
+//! § "Forks on the Critical Path" for the subprocess inventory (five
+//! forks, plus one more in `extensions.worktreeConfig` repos).
 //!
 //! ## Phase timings
 //!
@@ -117,7 +119,7 @@ use super::list::progressive::RenderTarget;
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::worktree::{RemoveResult, SwitchPipeline};
 use crate::cli::SwitchFormat;
-use crate::output::handle_remove_output;
+use crate::output::{BackgroundFallbackMode, handle_remove_output};
 use worktrunk::git::{BranchDeletionMode, delete_branch_if_safe};
 
 use items::{PreviewCache, WORKTREE_OUTPUT_PREFIX};
@@ -296,6 +298,7 @@ impl PickerCollector {
                     /* quiet */ true,
                     /* silent */ true,
                     &mut announcer,
+                    BackgroundFallbackMode::Detached,
                 )?;
                 announcer.flush()?;
             }
@@ -1076,7 +1079,6 @@ pub mod tests {
             branch_name: Some("feature".to_string()),
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
-            integration_reason: None,
             force_worktree: false,
             expected_path: None,
             removed_commit: None,
@@ -1172,7 +1174,6 @@ pub mod tests {
             branch_name: None,
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
-            integration_reason: None,
             force_worktree: false,
             expected_path: None,
             removed_commit: None,
@@ -1276,7 +1277,6 @@ pub mod tests {
             branch_name: Some("feature".to_string()),
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
-            integration_reason: None,
             force_worktree: false,
             expected_path: None,
             removed_commit: None,

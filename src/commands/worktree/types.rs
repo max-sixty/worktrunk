@@ -161,11 +161,6 @@ pub enum RemoveResult {
         branch_name: Option<String>,
         deletion_mode: BranchDeletionMode,
         target_branch: Option<String>,
-        /// Pre-computed integration reason (if branch is integrated with target).
-        /// Computed upfront to avoid race conditions when removing multiple worktrees
-        /// in background mode (background git operations can hold locks that cause
-        /// subsequent integration checks to fail).
-        integration_reason: Option<worktrunk::git::IntegrationReason>,
         /// Force git worktree removal even with untracked files.
         force_worktree: bool,
         /// Expected path based on config template. `Some` when actual path differs
@@ -189,9 +184,9 @@ pub enum RemoveResult {
         /// `origin/main` when upstream is ahead) or the local default branch.
         /// `None` when no default branch is configured.
         target_branch: Option<String>,
-        /// Pre-computed integration reason, same as `RemovedWorktree`.
-        /// Computed in `prepare_worktree_removal` so the output handler
-        /// doesn't need to re-derive a `Repository` for the check.
+        /// Pre-computed integration reason. Branch-only removal has no
+        /// worktree-local `pre-remove` hook, so the integration decision can
+        /// be made during preparation.
         integration_reason: Option<worktrunk::git::IntegrationReason>,
     },
 }
@@ -357,7 +352,6 @@ mod tests {
             branch_name: Some("feature".to_string()),
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
-            integration_reason: Some(worktrunk::git::IntegrationReason::SameCommit),
             force_worktree: false,
             expected_path: None,
             removed_commit: Some("abc1234567890".to_string()),
@@ -370,7 +364,6 @@ mod tests {
                 branch_name,
                 deletion_mode,
                 target_branch,
-                integration_reason,
                 force_worktree,
                 expected_path,
                 removed_commit,
@@ -382,7 +375,6 @@ mod tests {
                 assert!(!deletion_mode.should_keep());
                 assert!(!deletion_mode.is_force());
                 assert_eq!(target_branch.as_deref(), Some("main"));
-                assert!(integration_reason.is_some());
                 assert!(!force_worktree);
                 assert!(expected_path.is_none());
                 assert_eq!(removed_commit.as_deref(), Some("abc1234567890"));
@@ -455,7 +447,6 @@ mod tests {
             branch_name: None, // Detached HEAD
             deletion_mode: BranchDeletionMode::ForceDelete,
             target_branch: None,
-            integration_reason: None, // Force delete skips integration check
             force_worktree: true,
             expected_path: None,
             removed_commit: None, // Detached HEAD may not have meaningful commit

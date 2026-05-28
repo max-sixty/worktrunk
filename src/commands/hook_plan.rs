@@ -231,13 +231,16 @@ impl HookPlan {
         }))
     }
 
-    /// The picker can't prompt mid-render, so it runs only the already-approved
-    /// project pipelines and silently drops the rest (keeping user pipelines).
-    /// Strictly the CLAUDE.md "consult the approval state read-only and run
-    /// only the already-approved commands, skipping the rest" rule. An absent
-    /// `project_id` (unresolvable identifier) drops every project pipeline —
-    /// fail-closed, never run unapproved.
-    #[cfg(unix)]
+    /// Build an approved plan without prompting: project pipelines whose
+    /// commands are already approved survive, the rest are dropped (user
+    /// pipelines always survive). Strictly the CLAUDE.md "consult the
+    /// approval state read-only and run only the already-approved commands,
+    /// skipping the rest" rule. An absent `project_id` (unresolvable
+    /// identifier) drops every project pipeline — fail-closed, never run
+    /// unapproved.
+    ///
+    /// Used by the picker (can't prompt mid-render) and by `wt step prune`
+    /// (streams removals — would deadlock against a prompt).
     pub fn approve_readonly(
         self,
         approvals: &Approvals,
@@ -255,6 +258,38 @@ impl HookPlan {
         }
         entries.retain(|e| !e.selection.is_empty());
         ApprovedHookPlan { entries }
+    }
+
+    /// Deduped project-command templates in this plan that are not yet
+    /// approved for `project_id`. Empty when nothing project-sourced needs
+    /// approval (no project hooks selected, every template already approved,
+    /// or `project_id` unresolvable — fail-closed by returning empty so
+    /// callers don't surface "needs approval" without a project to scope it).
+    pub fn unapproved_project_commands(
+        &self,
+        approvals: &Approvals,
+        project_id: Option<&str>,
+    ) -> Vec<String> {
+        let Some(pid) = project_id else {
+            return Vec::new();
+        };
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for entry in &self.entries {
+            for (source, cfg) in &entry.selection {
+                if *source != HookSource::Project {
+                    continue;
+                }
+                for cmd in cfg.commands() {
+                    if !approvals.is_command_approved(pid, &cmd.template)
+                        && seen.insert(cmd.template.clone())
+                    {
+                        out.push(cmd.template.clone());
+                    }
+                }
+            }
+        }
+        out
     }
 }
 
