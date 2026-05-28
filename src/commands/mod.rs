@@ -63,7 +63,7 @@ pub(crate) use step::{
     step_relocate, step_show_squash_prompt, step_tether,
 };
 pub(crate) use worktree::{
-    OperationMode, SwitchOptions, is_worktree_at_expected_path, resolve_worktree_arg, run_switch,
+    SwitchOptions, is_worktree_at_expected_path, resolve_worktree_arg, run_switch,
     worktree_display_name,
 };
 

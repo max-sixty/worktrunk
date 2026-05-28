@@ -704,175 +704,10 @@ fn test_unset_config_propagates_error_on_corrupt_config() {
 }
 
 // =============================================================================
-// Bug #1: Tag/branch name collision tests
-// =============================================================================
-
-/// When a tag and branch share the same name, git resolves unqualified refs to
-/// the tag by default. This can cause is_ancestor() to return incorrect results
-/// if the tag points to a different commit than the branch.
-///
-/// This test verifies that integration checking uses qualified refs (refs/heads/)
-/// to avoid this ambiguity.
-#[test]
-fn test_tag_branch_name_collision_is_ancestor() {
-    let repo = TestRepo::with_initial_commit();
-
-    // Initial commit already exists from with_initial_commit()
-    let main_sha = repo.git_output(&["rev-parse", "HEAD"]);
-
-    // Create feature branch with additional commits
-    repo.run_git(&["checkout", "-b", "feature"]);
-    fs::write(repo.root_path().join("feature.txt"), "feature content").unwrap();
-    repo.run_git(&["add", "feature.txt"]);
-    repo.run_git(&["commit", "-m", "Feature commit"]);
-
-    // Create a tag named "feature" pointing to the MAIN commit (earlier)
-    // This simulates the scenario where someone creates a tag with the same name
-    repo.run_git(&["tag", "feature", &main_sha]);
-
-    // Now git has ambiguity: "feature" could be the tag (at main_sha) or the branch (ahead)
-    // The branch "feature" is NOT an ancestor of main (it's ahead)
-    // But the tag "feature" points to main_sha, which IS an ancestor of main (same commit)
-
-    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-
-    // Without qualified refs, this would incorrectly return true
-    // (checking the tag, which equals main, instead of the branch, which is ahead)
-    // With the fix (using refs/heads/), this should correctly return false
-    let result = repository.is_ancestor("feature", "main").unwrap();
-
-    // The branch "feature" is ahead of main, so it should NOT be an ancestor
-    assert!(
-        !result,
-        "is_ancestor should check the branch 'feature', not the tag 'feature'"
-    );
-}
-
-/// Test that same_commit() correctly distinguishes between tag and branch
-/// when they share the same name but point to different commits.
-#[test]
-fn test_tag_branch_name_collision_same_commit() {
-    let repo = TestRepo::with_initial_commit();
-
-    // Get main's SHA
-    let main_sha = repo.git_output(&["rev-parse", "HEAD"]);
-
-    // Create feature branch with additional commits
-    repo.run_git(&["checkout", "-b", "feature"]);
-    fs::write(repo.root_path().join("feature.txt"), "feature content").unwrap();
-    repo.run_git(&["add", "feature.txt"]);
-    repo.run_git(&["commit", "-m", "Feature commit"]);
-
-    // Create a tag named "feature" pointing to main (different from branch)
-    repo.run_git(&["tag", "feature", &main_sha]);
-
-    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-
-    // The branch "feature" is NOT at the same commit as main
-    // But the tag "feature" IS at the same commit as main
-    // Without qualified refs, this would incorrectly return true
-    let result = repository.same_commit("feature", "main").unwrap();
-
-    assert!(
-        !result,
-        "same_commit should check the branch 'feature', not the tag 'feature'"
-    );
-}
-
-/// Test that trees_match() correctly distinguishes between tag and branch
-/// when they share the same name but point to commits with different trees.
-#[test]
-fn test_tag_branch_name_collision_trees_match() {
-    let repo = TestRepo::with_initial_commit();
-
-    // Get main's SHA
-    let main_sha = repo.git_output(&["rev-parse", "HEAD"]);
-
-    // Create feature branch with different content
-    repo.run_git(&["checkout", "-b", "feature"]);
-    fs::write(repo.root_path().join("feature.txt"), "feature content").unwrap();
-    repo.run_git(&["add", "feature.txt"]);
-    repo.run_git(&["commit", "-m", "Feature commit"]);
-
-    // Create a tag named "feature" pointing to main (different tree)
-    repo.run_git(&["tag", "feature", &main_sha]);
-
-    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-
-    // The branch "feature" has different tree content than main
-    // But the tag "feature" has the same tree as main
-    // Without qualified refs, this would incorrectly return true
-    let result = repository.trees_match("feature", "main").unwrap();
-
-    assert!(
-        !result,
-        "trees_match should check the branch 'feature', not the tag 'feature'"
-    );
-}
-
-/// Test that integration functions correctly handle HEAD (not a branch).
-#[test]
-fn test_integration_functions_handle_head() {
-    let repo = TestRepo::new();
-
-    // Create a commit so HEAD differs from an empty state
-    fs::write(repo.root_path().join("file.txt"), "content").unwrap();
-    repo.run_git(&["add", "file.txt"]);
-    repo.run_git(&["commit", "-m", "Add file"]);
-
-    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-
-    // HEAD should work in all integration functions
-    // (resolve_preferring_branch should pass HEAD through unchanged)
-    assert!(repository.same_commit("HEAD", "main").unwrap());
-    assert!(repository.is_ancestor("main", "HEAD").unwrap());
-    assert!(repository.trees_match("HEAD", "main").unwrap());
-}
-
-/// Test that integration functions correctly handle commit SHAs.
-#[test]
-fn test_integration_functions_handle_shas() {
-    let repo = TestRepo::with_initial_commit();
-
-    let main_sha = repo.git_output(&["rev-parse", "HEAD"]);
-
-    // Create feature branch
-    repo.run_git(&["checkout", "-b", "feature"]);
-    fs::write(repo.root_path().join("feature.txt"), "content").unwrap();
-    repo.run_git(&["add", "feature.txt"]);
-    repo.run_git(&["commit", "-m", "Feature"]);
-
-    let feature_sha = repo.git_output(&["rev-parse", "HEAD"]);
-
-    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-
-    // SHAs should work in all integration functions
-    // (resolve_preferring_branch should pass SHAs through unchanged)
-    assert!(repository.same_commit(&main_sha, "main").unwrap());
-    assert!(!repository.same_commit(&feature_sha, &main_sha).unwrap());
-    assert!(repository.is_ancestor(&main_sha, &feature_sha).unwrap());
-}
-
-/// Test that integration functions correctly handle remote refs.
-#[test]
-fn test_integration_functions_handle_remote_refs() {
-    let mut repo = TestRepo::with_initial_commit();
-    repo.setup_remote("main");
-
-    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-
-    // Remote refs like origin/main should work
-    // (resolve_preferring_branch should pass them through unchanged since
-    // refs/heads/origin/main doesn't exist)
-    assert!(repository.same_commit("origin/main", "main").unwrap());
-    assert!(repository.is_ancestor("origin/main", "main").unwrap());
-}
-
-// =============================================================================
 // merge-tree exit code handling tests
 // =============================================================================
 
-/// has_merge_conflicts returns false for clean merges (exit 0)
+/// has_merge_conflicts_by_sha returns false for clean merges (exit 0)
 /// and true for conflicts (exit 1).
 #[test]
 fn test_has_merge_conflicts_clean_vs_conflicting() {
@@ -898,20 +733,24 @@ fn test_has_merge_conflicts_clean_vs_conflicting() {
     repo.run_git(&["add", "base.txt"]);
     repo.run_git(&["commit", "-m", "Edit base on main"]);
 
+    let main_sha = repo.git_output(&["rev-parse", "main"]);
+    let clean_sha = repo.git_output(&["rev-parse", "clean-feature"]);
+    let conflict_sha = repo.git_output(&["rev-parse", "conflict-feature"]);
+
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
     assert!(
         !repository
-            .has_merge_conflicts("main", "clean-feature")
+            .has_merge_conflicts_by_sha(&main_sha, &clean_sha)
             .unwrap()
     );
     assert!(
         repository
-            .has_merge_conflicts("main", "conflict-feature")
+            .has_merge_conflicts_by_sha(&main_sha, &conflict_sha)
             .unwrap()
     );
 }
 
-/// has_merge_conflicts returns true (not Err) for orphan branches,
+/// has_merge_conflicts_by_sha returns true (not Err) for orphan branches,
 /// since unrelated histories can't be cleanly merged.
 #[test]
 fn test_has_merge_conflicts_orphan_branch() {
@@ -924,13 +763,20 @@ fn test_has_merge_conflicts_orphan_branch() {
     repo.run_git(&["commit", "-m", "Orphan commit"]);
     repo.run_git(&["checkout", "main"]);
 
+    let main_sha = repo.git_output(&["rev-parse", "main"]);
+    let orphan_sha = repo.git_output(&["rev-parse", "orphan"]);
+
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
 
     // Orphan branches have no merge base — treated as conflicting, not as an error
-    assert!(repository.has_merge_conflicts("main", "orphan").unwrap());
+    assert!(
+        repository
+            .has_merge_conflicts_by_sha(&main_sha, &orphan_sha)
+            .unwrap()
+    );
 }
 
-/// merge_integration_probe short-circuits for orphan branches:
+/// merge_integration_probe_by_sha short-circuits for orphan branches:
 /// would_merge_add=true, is_patch_id_match=false.
 #[test]
 fn test_merge_integration_probe_orphan_branch() {
@@ -943,9 +789,12 @@ fn test_merge_integration_probe_orphan_branch() {
     repo.run_git(&["commit", "-m", "Orphan commit"]);
     repo.run_git(&["checkout", "main"]);
 
+    let orphan_sha = repo.git_output(&["rev-parse", "orphan"]);
+    let main_sha = repo.git_output(&["rev-parse", "main"]);
+
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
     let probe = repository
-        .merge_integration_probe("orphan", "main")
+        .merge_integration_probe_by_sha(&orphan_sha, &main_sha)
         .unwrap();
 
     assert!(probe.would_merge_add, "orphan branch always has changes");
@@ -955,7 +804,7 @@ fn test_merge_integration_probe_orphan_branch() {
     );
 }
 
-/// merge_integration_probe correctly detects already-integrated branches
+/// merge_integration_probe_by_sha correctly detects already-integrated branches
 /// (clean merge that doesn't change target tree).
 #[test]
 fn test_merge_integration_probe_already_integrated() {
@@ -969,9 +818,12 @@ fn test_merge_integration_probe_already_integrated() {
     repo.run_git(&["checkout", "main"]);
     repo.run_git(&["merge", "feature"]);
 
+    let feature_sha = repo.git_output(&["rev-parse", "feature"]);
+    let main_sha = repo.git_output(&["rev-parse", "main"]);
+
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
     let probe = repository
-        .merge_integration_probe("feature", "main")
+        .merge_integration_probe_by_sha(&feature_sha, &main_sha)
         .unwrap();
 
     assert!(!probe.would_merge_add, "already-merged branch adds nothing");

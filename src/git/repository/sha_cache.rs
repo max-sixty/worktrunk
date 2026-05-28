@@ -4,7 +4,7 @@
 //! content-addressed SHAs — diffing commit A against commit B is the same
 //! today as last week. One variant (working-tree conflict checks) uses a
 //! composite key that includes a tree SHA; see
-//! [`Repository::has_merge_conflicts_by_tree`]. No TTL, no invalidation
+//! [`Repository::has_merge_conflicts_by_tree_with_base_sha`]. No TTL, no invalidation
 //! logic, only a per-kind LRU size bound to prevent unbounded growth.
 //!
 //! Layout: `.git/wt/cache/{kind}/{key}.json` where `kind` is one of
@@ -58,14 +58,14 @@ fn asymmetric_key(first: &str, second: &str) -> String {
 
 // merge-tree conflicts (symmetric)
 
-/// Look up a cached `has_merge_conflicts(sha1, sha2)` result.
+/// Look up a cached `has_merge_conflicts_by_sha(sha1, sha2)` result.
 ///
 /// The key is order-independent: `(A, B)` and `(B, A)` hit the same entry.
 pub(super) fn merge_conflicts(repo: &Repository, sha1: &str, sha2: &str) -> Option<bool> {
     cache::read(repo, KIND_MERGE_TREE_CONFLICTS, &symmetric_key(sha1, sha2))
 }
 
-/// Store a `has_merge_conflicts(sha1, sha2)` result, triggering an LRU
+/// Store a `has_merge_conflicts_by_sha(sha1, sha2)` result, triggering an LRU
 /// sweep if the per-kind entry bound is exceeded.
 pub(super) fn put_merge_conflicts(repo: &Repository, sha1: &str, sha2: &str, value: bool) {
     cache::write_with_lru(
@@ -79,7 +79,7 @@ pub(super) fn put_merge_conflicts(repo: &Repository, sha1: &str, sha2: &str, val
 
 // merge-add probe (asymmetric)
 
-/// Look up a cached `merge_integration_probe(branch, target)` result.
+/// Look up a cached `merge_integration_probe_by_sha(branch, target)` result.
 ///
 /// The key is order-dependent: the merge result is compared against
 /// `target`'s tree, so swapping arguments changes the semantics.
@@ -95,7 +95,7 @@ pub(super) fn merge_add_probe(
     )
 }
 
-/// Store a `merge_integration_probe(branch, target)` result, triggering
+/// Store a `merge_integration_probe_by_sha(branch, target)` result, triggering
 /// an LRU sweep if the per-kind entry bound is exceeded.
 pub(super) fn put_merge_add_probe(
     repo: &Repository,
@@ -114,14 +114,14 @@ pub(super) fn put_merge_add_probe(
 
 // is-ancestor (asymmetric)
 
-/// Look up a cached `is_ancestor(base_sha, head_sha)` result.
+/// Look up a cached `is_ancestor_by_sha(base_sha, head_sha)` result.
 ///
 /// Asymmetric: "is base ancestor of head?" differs from "is head ancestor of base?".
 pub(super) fn is_ancestor(repo: &Repository, base_sha: &str, head_sha: &str) -> Option<bool> {
     cache::read(repo, KIND_IS_ANCESTOR, &asymmetric_key(base_sha, head_sha))
 }
 
-/// Store an `is_ancestor(base_sha, head_sha)` result.
+/// Store an `is_ancestor_by_sha(base_sha, head_sha)` result.
 pub(super) fn put_is_ancestor(repo: &Repository, base_sha: &str, head_sha: &str, value: bool) {
     cache::write_with_lru(
         repo,
@@ -134,7 +134,7 @@ pub(super) fn put_is_ancestor(repo: &Repository, base_sha: &str, head_sha: &str,
 
 // has-added-changes (asymmetric)
 
-/// Look up a cached `has_added_changes(branch_sha, target_sha)` result.
+/// Look up a cached `has_added_changes_by_sha(branch_sha, target_sha)` result.
 ///
 /// Asymmetric: diff from merge-base to branch is directional.
 pub(super) fn has_added_changes(
@@ -149,7 +149,7 @@ pub(super) fn has_added_changes(
     )
 }
 
-/// Store a `has_added_changes(branch_sha, target_sha)` result.
+/// Store a `has_added_changes_by_sha(branch_sha, target_sha)` result.
 pub(super) fn put_has_added_changes(
     repo: &Repository,
     branch_sha: &str,
@@ -359,10 +359,17 @@ mod tests {
         test.run_git(&["commit", "-m", "Add file"]);
         test.run_git(&["checkout", "main"]);
 
+        let main_sha = test.git_output(&["rev-parse", "main"]);
+        let feature_sha = test.git_output(&["rev-parse", "feature"]);
+
         let repo = Repository::at(test.root_path()).unwrap();
 
         // First call: real computation — clean merge → false
-        assert!(!repo.has_merge_conflicts("main", "feature").unwrap());
+        assert!(
+            !repo
+                .has_merge_conflicts_by_sha(&main_sha, &feature_sha)
+                .unwrap()
+        );
 
         // Tamper with the cache file to return the wrong answer
         let dir = cache::cache_dir(&repo, KIND_MERGE_TREE_CONFLICTS);
@@ -374,14 +381,14 @@ mod tests {
         assert_eq!(entries.len(), 1, "exactly one cache entry expected");
         fs::write(entries[0].path(), "true").unwrap();
 
-        // Second call: reads the tampered value from cache
-        // Note: we need a fresh Repository so the in-memory RepoCache doesn't
-        // interfere (resolved_refs, merge_base, etc. are all keyed by ref name
-        // and would bypass the cache for the same invocation — but
-        // rev_parse_commit is cached per command, and on a fresh Repo the SHAs
-        // will resolve identically to the first run).
+        // Second call on a fresh Repository reads the tampered value from the
+        // persistent cache.
         let repo2 = Repository::at(test.root_path()).unwrap();
-        assert!(repo2.has_merge_conflicts("main", "feature").unwrap());
+        assert!(
+            repo2
+                .has_merge_conflicts_by_sha(&main_sha, &feature_sha)
+                .unwrap()
+        );
     }
 
     #[test]
@@ -395,12 +402,13 @@ mod tests {
 
         let branch_head = test.git_output(&["rev-parse", "HEAD"]);
         let tree_sha = test.git_output(&["write-tree"]);
+        let main_sha = test.git_output(&["rev-parse", "main"]);
 
         let repo = Repository::at(test.root_path()).unwrap();
 
         // Call with composite keying — computes and caches
         let result = repo
-            .has_merge_conflicts_by_tree("main", &branch_head, &tree_sha)
+            .has_merge_conflicts_by_tree_with_base_sha(&main_sha, &branch_head, &tree_sha)
             .unwrap();
 
         // Verify the cache entry uses the composite key
@@ -424,7 +432,7 @@ mod tests {
 
         let repo2 = Repository::at(test.root_path()).unwrap();
         let cached = repo2
-            .has_merge_conflicts_by_tree("main", &branch_head, &tree_sha)
+            .has_merge_conflicts_by_tree_with_base_sha(&main_sha, &branch_head, &tree_sha)
             .unwrap();
         assert_eq!(cached, tampered, "should read tampered value from cache");
     }
@@ -456,12 +464,13 @@ mod tests {
 
         let head_before = test.git_output(&["rev-parse", "HEAD"]);
         let tree1 = test.git_output(&["write-tree"]);
+        let main_sha = test.git_output(&["rev-parse", "main"]);
 
         let repo = Repository::at(test.root_path()).unwrap();
 
         // Before rebase: feature conflicts with main (both modified shared.txt)
         let result_before = repo
-            .has_merge_conflicts_by_tree("main", &head_before, &tree1)
+            .has_merge_conflicts_by_tree_with_base_sha(&main_sha, &head_before, &tree1)
             .unwrap();
         assert!(result_before, "should conflict before rebase");
 
@@ -484,7 +493,7 @@ mod tests {
 
         let repo2 = Repository::at(test.root_path()).unwrap();
         let result_after = repo2
-            .has_merge_conflicts_by_tree("main", &head_after, &tree2)
+            .has_merge_conflicts_by_tree_with_base_sha(&main_sha, &head_after, &tree2)
             .unwrap();
 
         // After rebase onto main, feature is based on main — no conflicts
@@ -506,10 +515,15 @@ mod tests {
         test.run_git(&["checkout", "main"]);
         test.run_git(&["merge", "feature"]);
 
+        let feature_sha = test.git_output(&["rev-parse", "feature"]);
+        let main_sha = test.git_output(&["rev-parse", "main"]);
+
         let repo = Repository::at(test.root_path()).unwrap();
 
         // First call: feature is fully integrated → would_merge_add=false
-        let real = repo.merge_integration_probe("feature", "main").unwrap();
+        let real = repo
+            .merge_integration_probe_by_sha(&feature_sha, &main_sha)
+            .unwrap();
         assert!(!real.would_merge_add);
 
         // Tamper with the cache to flip the answer
@@ -528,7 +542,9 @@ mod tests {
 
         // Fresh repo reads the tampered cache
         let repo2 = Repository::at(test.root_path()).unwrap();
-        let cached = repo2.merge_integration_probe("feature", "main").unwrap();
+        let cached = repo2
+            .merge_integration_probe_by_sha(&feature_sha, &main_sha)
+            .unwrap();
         assert!(cached.would_merge_add);
         assert!(cached.is_patch_id_match);
     }
@@ -612,10 +628,13 @@ mod tests {
         test.run_git(&["commit", "-m", "Feature"]);
         test.run_git(&["checkout", "main"]);
 
+        let feature_sha = test.git_output(&["rev-parse", "feature"]);
+        let main_sha = test.git_output(&["rev-parse", "main"]);
+
         let repo = Repository::at(test.root_path()).unwrap();
 
         // feature is NOT an ancestor of main (main didn't merge feature)
-        assert!(!repo.is_ancestor("feature", "main").unwrap());
+        assert!(!repo.is_ancestor_by_sha(&feature_sha, &main_sha).unwrap());
 
         // Tamper with cache to flip the answer
         let dir = cache::cache_dir(&repo, KIND_IS_ANCESTOR);
@@ -628,7 +647,7 @@ mod tests {
         fs::write(entries[0].path(), "true").unwrap();
 
         let repo2 = Repository::at(test.root_path()).unwrap();
-        assert!(repo2.is_ancestor("feature", "main").unwrap());
+        assert!(repo2.is_ancestor_by_sha(&feature_sha, &main_sha).unwrap());
     }
 
     #[test]
@@ -641,10 +660,16 @@ mod tests {
         test.run_git(&["commit", "-m", "Feature"]);
         test.run_git(&["checkout", "main"]);
 
+        let feature_sha = test.git_output(&["rev-parse", "feature"]);
+        let main_sha = test.git_output(&["rev-parse", "main"]);
+
         let repo = Repository::at(test.root_path()).unwrap();
 
         // feature has added changes compared to main
-        assert!(repo.has_added_changes("feature", "main").unwrap());
+        assert!(
+            repo.has_added_changes_by_sha(&feature_sha, &main_sha)
+                .unwrap()
+        );
 
         // Tamper with cache to flip the answer
         let dir = cache::cache_dir(&repo, KIND_HAS_ADDED_CHANGES);
@@ -657,7 +682,11 @@ mod tests {
         fs::write(entries[0].path(), "false").unwrap();
 
         let repo2 = Repository::at(test.root_path()).unwrap();
-        assert!(!repo2.has_added_changes("feature", "main").unwrap());
+        assert!(
+            !repo2
+                .has_added_changes_by_sha(&feature_sha, &main_sha)
+                .unwrap()
+        );
     }
 
     #[test]

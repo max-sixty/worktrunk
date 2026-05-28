@@ -38,11 +38,6 @@ impl DiffColumnConfig {
         value > max_value
     }
 
-    /// Check if a subcolumn value should be rendered (non-zero or explicitly showing zeros)
-    fn should_render(value: usize, always_show_zeros: bool) -> bool {
-        value > 0 || (value == 0 && always_show_zeros)
-    }
-
     /// Format a value using compact notation (K for thousands, optionally C for hundreds)
     ///
     /// Returns (formatted_string, uses_compact_notation)
@@ -124,7 +119,7 @@ impl DiffColumnConfig {
         let positive_overflow = Self::exceeds_width(positive, self.positive_digits);
         let negative_overflow = Self::exceeds_width(negative, self.negative_digits);
 
-        if positive == 0 && negative == 0 && !self.display.always_show_zeros {
+        if positive == 0 && negative == 0 {
             segment.push_raw(" ".repeat(self.total_width));
             return segment;
         }
@@ -142,7 +137,7 @@ impl DiffColumnConfig {
         }
 
         // Render positive (added) subcolumn
-        if Self::should_render(positive, self.display.always_show_zeros) {
+        if positive > 0 {
             Self::render_subcolumn(
                 &mut segment,
                 symbols.positive,
@@ -161,7 +156,7 @@ impl DiffColumnConfig {
         segment.push_raw(" ");
 
         // Render negative (deleted) subcolumn
-        if Self::should_render(negative, self.display.always_show_zeros) {
+        if negative > 0 {
             Self::render_subcolumn(
                 &mut segment,
                 symbols.negative,
@@ -504,15 +499,6 @@ impl ColumnLayout {
                 cell.truncate_to_width(self.width)
             }
             ColumnKind::CiStatus => {
-                // Check display field first for pending indicators during progressive rendering
-                // (works for both worktrees and branches)
-                if let Some(ref ci_display) = item.display.ci_status_display {
-                    let mut cell = StyledLine::new();
-                    // ci_status_display contains pre-formatted ANSI text (either actual status or the placeholder)
-                    cell.push_raw(ci_display.clone());
-                    return cell;
-                }
-
                 match &item.pr_status {
                     None => self.placeholder_cell(placeholder),
                     Some(None) => StyledLine::new(), // No CI for this branch
@@ -596,7 +582,6 @@ mod tests {
             variant: DiffVariant::Signs,
             positive_style: ADDITION,
             negative_style: DELETION,
-            always_show_zeros: false,
         };
 
         // Test various values
@@ -642,7 +627,6 @@ mod tests {
             variant: DiffVariant::Signs,
             positive_style: ADDITION,
             negative_style: DELETION,
-            always_show_zeros: false,
         };
 
         // Insertions only
@@ -688,7 +672,6 @@ mod tests {
                     variant: DiffVariant::Signs,
                     positive_style: ADDITION,
                     negative_style: DELETION,
-                    always_show_zeros: false,
                 },
             },
         );
@@ -711,7 +694,6 @@ mod tests {
                     variant: DiffVariant::Signs,
                     positive_style: ADDITION,
                     negative_style: DELETION,
-                    always_show_zeros: false,
                 },
             },
         );
@@ -734,7 +716,6 @@ mod tests {
                     variant: DiffVariant::Signs,
                     positive_style: ADDITION,
                     negative_style: DELETION,
-                    always_show_zeros: false,
                 },
             },
         );
@@ -757,7 +738,6 @@ mod tests {
                     variant: DiffVariant::Signs,
                     positive_style: ADDITION,
                     negative_style: DELETION,
-                    always_show_zeros: false,
                 },
             },
         );
@@ -782,7 +762,6 @@ mod tests {
                     variant: DiffVariant::Signs,
                     positive_style: ADDITION,
                     negative_style: DELETION,
-                    always_show_zeros: false,
                 },
             },
         );
@@ -919,7 +898,6 @@ mod tests {
                         variant: DiffVariant::Arrows,
                         positive_style: ADDITION,
                         negative_style: dim_deletion,
-                        always_show_zeros: false,
                     },
                 },
             );
@@ -947,7 +925,6 @@ mod tests {
                     variant: DiffVariant::Arrows,
                     positive_style: ADDITION,
                     negative_style: dim_deletion,
-                    always_show_zeros: false,
                 },
             },
         );
@@ -964,66 +941,10 @@ mod tests {
                     variant: DiffVariant::Arrows,
                     positive_style: ADDITION,
                     negative_style: dim_deletion,
-                    always_show_zeros: false,
                 },
             },
         );
         assert_eq!(behind_only.width(), total);
-    }
-
-    #[test]
-    fn test_always_show_zeros_renders_zero_values() {
-        use super::super::columns::DiffVariant;
-        use worktrunk::styling::{ADDITION, DELETION};
-
-        let total = 7;
-
-        let dim_deletion = DELETION.dimmed();
-
-        // With always_show_zeros=false, (0, 0) renders as blank
-        let without = format_diff_like_column(
-            0,
-            0,
-            DiffColumnConfig {
-                positive_digits: 1,
-                negative_digits: 1,
-                total_width: total,
-                display: DiffDisplayConfig {
-                    variant: DiffVariant::Arrows,
-                    positive_style: ADDITION,
-                    negative_style: dim_deletion,
-                    always_show_zeros: false,
-                },
-            },
-        );
-        assert_eq!(without.width(), total);
-        let rendered_without = without.render();
-        let clean_without = rendered_without.ansi_strip().into_owned();
-        assert_eq!(clean_without, "       ");
-
-        // With always_show_zeros=true, (0, 0) renders as "↑0 ↓0"
-        let with = format_diff_like_column(
-            0,
-            0,
-            DiffColumnConfig {
-                positive_digits: 1,
-                negative_digits: 1,
-                total_width: total,
-                display: DiffDisplayConfig {
-                    variant: DiffVariant::Arrows,
-                    positive_style: ADDITION,
-                    negative_style: dim_deletion,
-                    always_show_zeros: true,
-                },
-            },
-        );
-        assert_eq!(with.width(), total);
-        let rendered_with = with.render();
-        let clean_with = rendered_with.ansi_strip().into_owned();
-        assert_eq!(
-            clean_with, "  ↑0 ↓0",
-            "Should render ↑0 ↓0 with padding (right-aligned)"
-        );
     }
 
     #[test]
@@ -1107,7 +1028,6 @@ mod tests {
                     variant: DiffVariant::Signs,
                     positive_style: ADDITION,
                     negative_style: DELETION,
-                    always_show_zeros: false,
                 },
             },
         );
@@ -1127,7 +1047,6 @@ mod tests {
                     variant: DiffVariant::Signs,
                     positive_style: ADDITION,
                     negative_style: DELETION,
-                    always_show_zeros: false,
                 },
             },
         );
@@ -1147,7 +1066,6 @@ mod tests {
                     variant: DiffVariant::Signs,
                     positive_style: ADDITION,
                     negative_style: DELETION,
-                    always_show_zeros: false,
                 },
             },
         );
@@ -1199,7 +1117,6 @@ mod tests {
                     variant: DiffVariant::Signs,
                     positive_style: ADDITION,
                     negative_style: DELETION,
-                    always_show_zeros: false,
                 },
             },
         );
@@ -1219,7 +1136,6 @@ mod tests {
                     variant: DiffVariant::Signs,
                     positive_style: ADDITION,
                     negative_style: DELETION,
-                    always_show_zeros: false,
                 },
             },
         );
@@ -1239,7 +1155,6 @@ mod tests {
                     variant: DiffVariant::Signs,
                     positive_style: ADDITION,
                     negative_style: DELETION,
-                    always_show_zeros: false,
                 },
             },
         );
@@ -1258,7 +1173,6 @@ mod tests {
                     variant: DiffVariant::Signs,
                     positive_style: ADDITION,
                     negative_style: DELETION,
-                    always_show_zeros: false,
                 },
             },
         );
@@ -1285,7 +1199,6 @@ mod tests {
                     variant: DiffVariant::Arrows,
                     positive_style: ADDITION,
                     negative_style: DELETION,
-                    always_show_zeros: false,
                 },
             },
         );
@@ -1305,7 +1218,6 @@ mod tests {
                     variant: DiffVariant::Arrows,
                     positive_style: ADDITION,
                     negative_style: DELETION,
-                    always_show_zeros: false,
                 },
             },
         );
@@ -1395,7 +1307,6 @@ mod tests {
                     variant: super::super::columns::DiffVariant::Signs,
                     positive_style: ADDITION,
                     negative_style: DELETION,
-                    always_show_zeros: false,
                 },
             }),
         };
@@ -1439,7 +1350,6 @@ mod tests {
                     variant: super::super::columns::DiffVariant::UpstreamArrows,
                     positive_style: ADDITION,
                     negative_style: DELETION.dimmed(),
-                    always_show_zeros: false,
                 },
             }),
         };

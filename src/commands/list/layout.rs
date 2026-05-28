@@ -304,14 +304,13 @@ pub struct DiffDisplayConfig {
     pub variant: DiffVariant,
     pub positive_style: Style,
     pub negative_style: Style,
-    pub always_show_zeros: bool,
 }
 
 impl DiffDisplayConfig {
     /// Format diff values with fixed-width alignment for tabular display.
     ///
     /// Numbers are right-aligned within a 3-digit column width.
-    /// Returns empty spaces if both values are zero (unless `always_show_zeros` is set).
+    /// Returns empty spaces if both values are zero.
     #[cfg(unix)] // Only used by picker module which is unix-only
     pub fn format_aligned(&self, positive: usize, negative: usize) -> String {
         const DIGITS: usize = 3;
@@ -331,17 +330,17 @@ impl DiffDisplayConfig {
 
     /// Format diff values as plain text with ANSI colors (no fixed-width alignment).
     ///
-    /// Returns `None` if both values are zero (unless `always_show_zeros` is set).
+    /// Returns `None` if both values are zero.
     /// Format: `+N -M` with appropriate colors for each component.
     pub fn format_plain(&self, positive: usize, negative: usize) -> Option<String> {
-        if !self.always_show_zeros && positive == 0 && negative == 0 {
+        if positive == 0 && negative == 0 {
             return None;
         }
 
         let symbols = self.variant.symbols();
         let mut parts = Vec::with_capacity(2);
 
-        if positive > 0 || self.always_show_zeros {
+        if positive > 0 {
             parts.push(format!(
                 "{}{}{}{}",
                 self.positive_style,
@@ -351,7 +350,7 @@ impl DiffDisplayConfig {
             ));
         }
 
-        if negative > 0 || self.always_show_zeros {
+        if negative > 0 {
             parts.push(format!(
                 "{}{}{}{}",
                 self.negative_style,
@@ -401,19 +400,16 @@ impl ColumnKind {
                 variant: DiffVariant::Signs,
                 positive_style: ADDITION,
                 negative_style: DELETION,
-                always_show_zeros: false,
             }),
             ColumnKind::AheadBehind => Some(DiffDisplayConfig {
                 variant: DiffVariant::Arrows,
                 positive_style: ADDITION,
                 negative_style: DELETION.dimmed(),
-                always_show_zeros: false,
             }),
             ColumnKind::Upstream => Some(DiffDisplayConfig {
                 variant: DiffVariant::UpstreamArrows,
                 positive_style: ADDITION,
                 negative_style: DELETION.dimmed(),
-                always_show_zeros: false, // 0/0 case handled specially with | symbol
             }),
             _ => None,
         }
@@ -1296,8 +1292,8 @@ mod tests {
     #[test]
     fn test_visible_columns_follow_gap_rule() {
         use crate::commands::list::model::{
-            ActiveGitOperation, AheadBehind, BranchDiffTotals, CommitDetails, DisplayFields,
-            ItemKind, ListItem, StatusSymbols, UpstreamStatus, WorktreeData,
+            ActiveGitOperation, AheadBehind, BranchDiffTotals, CommitDetails, ItemKind, ListItem,
+            StatusSymbols, UpstreamStatus, WorktreeData,
         };
 
         // Create test data with specific widths to verify position calculation
@@ -1334,7 +1330,7 @@ mod tests {
             has_merge_tree_conflicts: None,
             user_marker: None,
             status_symbols: StatusSymbols::default(),
-            display: DisplayFields::default(),
+            statusline: None,
             kind: ItemKind::Worktree(Box::new(WorktreeData {
                 path: PathBuf::from("/test/path"),
                 detached: false,
@@ -1349,7 +1345,6 @@ mod tests {
                 is_current: false,
                 is_previous: false,
                 branch_worktree_mismatch: false,
-                working_diff_display: None,
             })),
         };
 
@@ -1406,8 +1401,8 @@ mod tests {
     #[test]
     fn test_column_positions_with_empty_columns() {
         use crate::commands::list::model::{
-            ActiveGitOperation, AheadBehind, BranchDiffTotals, CommitDetails, DisplayFields,
-            ItemKind, ListItem, StatusSymbols, UpstreamStatus, WorktreeData,
+            ActiveGitOperation, AheadBehind, BranchDiffTotals, CommitDetails, ItemKind, ListItem,
+            StatusSymbols, UpstreamStatus, WorktreeData,
         };
 
         // Create minimal data - most columns will be empty
@@ -1440,7 +1435,7 @@ mod tests {
             has_merge_tree_conflicts: None,
             user_marker: None,
             status_symbols: StatusSymbols::default(),
-            display: DisplayFields::default(),
+            statusline: None,
             kind: ItemKind::Worktree(Box::new(WorktreeData {
                 path: PathBuf::from("/test"),
                 detached: false,
@@ -1455,7 +1450,6 @@ mod tests {
                 is_current: false,
                 is_previous: false,
                 branch_worktree_mismatch: false,
-                working_diff_display: None,
             })),
         };
 
@@ -1537,7 +1531,7 @@ mod tests {
     /// Helper: create a minimal ListItem for layout tests.
     fn make_test_item(branch: &str) -> super::super::model::ListItem {
         use crate::commands::list::model::{
-            ActiveGitOperation, DisplayFields, ItemKind, StatusSymbols, WorktreeData,
+            ActiveGitOperation, ItemKind, StatusSymbols, WorktreeData,
         };
         super::super::model::ListItem {
             head: "abc12345".to_string(),
@@ -1560,7 +1554,7 @@ mod tests {
             has_merge_tree_conflicts: None,
             user_marker: None,
             status_symbols: StatusSymbols::default(),
-            display: DisplayFields::default(),
+            statusline: None,
             kind: ItemKind::Worktree(Box::new(WorktreeData {
                 path: PathBuf::from("/test/wt"),
                 detached: false,
@@ -1575,7 +1569,6 @@ mod tests {
                 is_current: false,
                 is_previous: false,
                 branch_worktree_mismatch: false,
-                working_diff_display: None,
             })),
         }
     }
@@ -1785,7 +1778,7 @@ mod tests {
     /// Helper: create a test item with a specific worktree path and no mismatch.
     fn make_test_item_at(branch: &str, path: &str) -> super::super::model::ListItem {
         use crate::commands::list::model::{
-            ActiveGitOperation, DisplayFields, ItemKind, StatusSymbols, WorktreeData,
+            ActiveGitOperation, ItemKind, StatusSymbols, WorktreeData,
         };
         super::super::model::ListItem {
             head: "abc12345".to_string(),
@@ -1808,7 +1801,7 @@ mod tests {
             has_merge_tree_conflicts: None,
             user_marker: None,
             status_symbols: StatusSymbols::default(),
-            display: DisplayFields::default(),
+            statusline: None,
             kind: ItemKind::Worktree(Box::new(WorktreeData {
                 path: PathBuf::from(path),
                 detached: false,
@@ -1823,7 +1816,6 @@ mod tests {
                 is_current: false,
                 is_previous: false,
                 branch_worktree_mismatch: false,
-                working_diff_display: None,
             })),
         }
     }
@@ -1886,8 +1878,8 @@ mod tests {
     #[test]
     fn test_snapshot_path_yields_to_summary() {
         use crate::commands::list::model::{
-            ActiveGitOperation, AheadBehind, BranchDiffTotals, CommitDetails, DisplayFields,
-            ItemKind, StatusSymbols, UpstreamStatus, WorktreeData,
+            ActiveGitOperation, AheadBehind, BranchDiffTotals, CommitDetails, ItemKind,
+            StatusSymbols, UpstreamStatus, WorktreeData,
         };
         use worktrunk::git::LineDiff;
 
@@ -1940,7 +1932,7 @@ mod tests {
                 has_merge_tree_conflicts: None,
                 user_marker: None,
                 status_symbols: StatusSymbols::default(),
-                display: DisplayFields::default(),
+                statusline: None,
                 kind: ItemKind::Worktree(Box::new(WorktreeData {
                     path: PathBuf::from(path),
                     detached: false,
@@ -1955,7 +1947,6 @@ mod tests {
                     is_current,
                     is_previous: false,
                     branch_worktree_mismatch: false,
-                    working_diff_display: None,
                 })),
             }
         };

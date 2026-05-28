@@ -245,7 +245,7 @@
 //! ### Cached via tree SHA
 //!
 //! `WorkingTreeConflicts` uses `git write-tree` to snapshot the index as a tree SHA,
-//! then checks for merge conflicts via `has_merge_conflicts_by_tree`. The tree SHA is
+//! then checks for merge conflicts via `has_merge_conflicts_by_tree_with_base_sha`. The tree SHA is
 //! content-addressed and stable — identical index state produces the same SHA.
 //!
 //! When there are unstaged modifications or untracked files, the task copies the
@@ -253,7 +253,7 @@
 //! then `write-tree`.
 //!
 //! The cache key is `(base_commit_sha, branch_head_sha+tree_sha)`. The branch HEAD
-//! SHA captures the merge-base dependency. On cache miss, `has_merge_conflicts_by_tree`
+//! SHA captures the merge-base dependency. On cache miss, `has_merge_conflicts_by_tree_with_base_sha`
 //! creates an ephemeral commit via `git commit-tree` for merge-tree; on cache hit,
 //! no commit is created. This makes the cache-hit path a single `git write-tree`
 //! (~15ms) instead of the previous `git stash create` (~50-265ms).
@@ -293,7 +293,7 @@ use worktrunk::styling::{
 
 use crate::commands::is_worktree_at_expected_path;
 
-use super::model::{CommitDetails, DisplayFields, ItemKind, ListItem, StatusSymbols, WorktreeData};
+use super::model::{CommitDetails, ItemKind, ListItem, StatusSymbols, WorktreeData};
 use super::progressive::RenderTarget;
 use super::progressive_table::ProgressiveTable;
 
@@ -1004,7 +1004,7 @@ pub fn collect(
                 has_merge_tree_conflicts: None,
                 user_marker: None,
                 status_symbols: StatusSymbols::default(),
-                display: DisplayFields::default(),
+                statusline: None,
                 kind: ItemKind::Worktree(Box::new(worktree_data)),
             }
         })
@@ -1821,7 +1821,7 @@ pub fn build_worktree_item(
         has_merge_tree_conflicts: None,
         user_marker: None,
         status_symbols: StatusSymbols::default(),
-        display: DisplayFields::default(),
+        statusline: None,
         kind: ItemKind::Worktree(Box::new(WorktreeData::from_worktree(
             wt,
             is_main,
