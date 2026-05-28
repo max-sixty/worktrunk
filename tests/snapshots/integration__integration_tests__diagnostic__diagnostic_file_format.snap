@@ -64,5 +64,5 @@ Project config: _REPO_/.config/wt.toml
 <details>
 <summary>Raw subprocess output</summary>
 
-Full captured stdout/stderr is in `_REPO_/.git/wt/logs/output.log` — not inlined because it can be multi-MB.
+Full captured stdout/stderr is in `_REPO_/.git/wt/logs/subprocess.log`.
 </details>

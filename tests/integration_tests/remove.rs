@@ -1710,6 +1710,82 @@ approved-commands = ["echo 'hook ran' > {}"]
     );
 }
 
+#[rstest]
+fn test_pre_remove_hook_dirtying_worktree_blocks_foreground_remove(mut repo: TestRepo) {
+    let hook = "echo dirty > hook-created.txt";
+    repo.write_project_config(&format!(r#"pre-remove = "{hook}""#));
+    repo.commit("Add config");
+    repo.write_test_approvals(&format!(
+        r#"[projects."../origin"]
+approved-commands = ["{hook}"]
+"#
+    ));
+
+    let worktree_path = repo.add_worktree("feature-hook-dirties");
+    let output = repo
+        .wt_command()
+        .args(["remove", "--foreground", "feature-hook-dirties"])
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "remove should fail after pre-remove dirties the worktree; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        worktree_path.exists(),
+        "worktree must be preserved when the post-hook clean check fails"
+    );
+    assert!(
+        worktree_path.join("hook-created.txt").exists(),
+        "hook-created file should remain recoverable in the worktree"
+    );
+}
+
+#[rstest]
+fn test_pre_remove_hook_new_commit_retains_branch_in_background_remove(mut repo: TestRepo) {
+    use crate::common::wait_for_worktree_removed;
+
+    let hook = "echo hook > late-commit.txt && git add late-commit.txt && git commit -m late-hook";
+    repo.write_project_config(&format!(r#"pre-remove = "{hook}""#));
+    repo.commit("Add config");
+    repo.write_test_approvals(&format!(
+        r#"[projects."../origin"]
+approved-commands = ["{hook}"]
+"#
+    ));
+
+    let worktree_path = repo.add_worktree("feature-hook-commit");
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature-hook-commit"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "remove should keep the worktree cleanup path successful; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    wait_for_worktree_removed(&worktree_path);
+
+    let branch = repo
+        .git_command()
+        .args([
+            "show-ref",
+            "--verify",
+            "--quiet",
+            "refs/heads/feature-hook-commit",
+        ])
+        .run()
+        .unwrap();
+    assert!(
+        branch.status.success(),
+        "branch must be retained after a pre-remove hook adds an unintegrated commit"
+    );
+}
+
 /// `pre-remove` resolves `.config/wt.toml` from the invoking worktree — the one
 /// `wt remove` ran in — while its template context (`{{ branch }}` etc.) is the
 /// removed worktree's. The removed worktree's own config is not consulted.
@@ -2806,6 +2882,87 @@ fn test_remove_background_fallback_on_rename_failure(mut repo: TestRepo) {
     });
 
     // Clean up the blocking file
+    let _ = std::fs::remove_file(&staged_path);
+}
+
+/// Block the rename-into-trash fast path for `worktree_path` by pre-creating a
+/// regular file at its deterministic staged path. Returns that path so the
+/// caller can clean it up. (On POSIX a directory cannot be renamed onto an
+/// existing file, so `stage_worktree_removal` falls back to legacy removal.)
+fn block_staged_rename(repo: &TestRepo, worktree_path: &std::path::Path) -> std::path::PathBuf {
+    let trash_dir = crate::common::resolve_git_common_dir(repo.root_path()).join("wt/trash");
+    std::fs::create_dir_all(&trash_dir).unwrap();
+    let staged_path = trash_dir.join(format!(
+        "{}-{}",
+        worktree_path.file_name().unwrap().to_string_lossy(),
+        crate::common::TEST_EPOCH
+    ));
+    std::fs::write(&staged_path, "blocking file").unwrap();
+    staged_path
+}
+
+/// The rename-failure fallback honors `-D`: an unmerged branch is force-deleted
+/// in the legacy `git worktree remove && git branch -D` command.
+#[rstest]
+fn test_remove_background_fallback_force_delete_branch(mut repo: TestRepo) {
+    repo.commit("initial");
+    // Unmerged branch: a plain `-d` would refuse it, so this exercises the
+    // `BranchDeletionMode::ForceDelete` arm of the fallback command builder.
+    let worktree_path =
+        repo.add_worktree_with_commit("feature-force", "f.txt", "content", "unmerged commit");
+    let staged_path = block_staged_rename(&repo, &worktree_path);
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "--force", "-D", "feature-force"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt remove --force -D should succeed via the legacy fallback: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    crate::common::wait_for("worktree removed by legacy fallback", || {
+        !worktree_path.exists()
+    });
+    crate::common::wait_for("unmerged branch force-deleted by legacy fallback", || {
+        let branches = repo
+            .git_command()
+            .args(["branch", "--list", "feature-force"])
+            .run()
+            .unwrap();
+        String::from_utf8_lossy(&branches.stdout).trim().is_empty()
+    });
+
+    let _ = std::fs::remove_file(&staged_path);
+}
+
+/// The rename-failure fallback removes a detached-HEAD worktree with no branch
+/// to delete — the `_` arm of the fallback command builder. `wt remove` resolves
+/// the detached worktree by path.
+#[rstest]
+fn test_remove_background_fallback_detached_worktree(mut repo: TestRepo) {
+    repo.commit("initial");
+    let worktree_path = repo.add_worktree("feature-detached");
+    repo.detach_head_in_worktree("feature-detached");
+    let staged_path = block_staged_rename(&repo, &worktree_path);
+
+    let output = repo
+        .wt_command()
+        .args(["remove", worktree_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt remove of a detached worktree should succeed via the legacy fallback: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    crate::common::wait_for("detached worktree removed by legacy fallback", || {
+        !worktree_path.exists()
+    });
+
     let _ = std::fs::remove_file(&staged_path);
 }
 

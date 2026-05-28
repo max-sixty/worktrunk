@@ -3,7 +3,7 @@ use crate::common::{
     mock_commands::{create_mock_cargo, create_mock_llm_auth},
     repo, repo_with_alternate_primary, repo_with_feature_worktree, repo_with_main_worktree,
     repo_with_multi_commit_feature, repo_with_remote, setup_snapshot_settings, wait_for_file,
-    wait_for_file_content,
+    wait_for_file_content, wait_for_worktree_removed,
 };
 use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
@@ -1799,6 +1799,75 @@ sync = "echo 'merged {{{{ branch }}}}' > {}"
         std::fs::read_to_string(&pre_remove_marker).unwrap().trim(),
         "removing feature-pm",
         "pre-remove should run from the invoking feature worktree's config"
+    );
+}
+
+#[rstest]
+fn test_merge_pre_remove_dirty_mutation_aborts_cleanup(mut repo: TestRepo) {
+    repo.write_project_config(r#"pre-remove = "echo late > late.txt""#);
+    repo.commit("Add pre-remove hook");
+
+    let branch = "feature-pre-remove-dirty";
+    let feature_wt = repo.add_worktree_with_commit(branch, "feature.txt", "x", "feat: x");
+
+    let output = repo
+        .wt_command()
+        .current_dir(&feature_wt)
+        .args(["merge", "--yes"])
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "wt merge should fail cleanup after pre-remove dirties the worktree"
+    );
+    assert!(
+        feature_wt.join("late.txt").exists(),
+        "dirty file from pre-remove hook should be preserved"
+    );
+    assert!(
+        feature_wt.exists(),
+        "dirty feature worktree should not be removed"
+    );
+    repo.run_git(&["rev-parse", "--verify", &format!("refs/heads/{branch}")]);
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Cannot remove worktree") && stderr.contains("late.txt"),
+        "expected dirty-worktree cleanup failure, got:\n{stderr}"
+    );
+}
+
+#[rstest]
+fn test_merge_pre_remove_new_commit_keeps_branch(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"pre-remove = "sh -c 'printf late > late-commit.txt && git add late-commit.txt && git commit -m late-pre-remove'""#,
+    );
+    repo.commit("Add pre-remove hook");
+
+    let branch = "feature-pre-remove-commit";
+    let feature_wt = repo.add_worktree_with_commit(branch, "feature.txt", "x", "feat: x");
+
+    let output = repo
+        .wt_command()
+        .current_dir(&feature_wt)
+        .args(["merge", "--yes"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt merge failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    wait_for_worktree_removed(&feature_wt);
+
+    let branch_ref = format!("refs/heads/{branch}");
+    repo.run_git(&["rev-parse", "--verify", &branch_ref]);
+    let late_file = repo.git_output(&["show", "--format=", "--name-only", &branch_ref]);
+    assert!(
+        late_file.lines().any(|line| line == "late-commit.txt"),
+        "branch should retain the pre-remove hook commit"
     );
 }
 

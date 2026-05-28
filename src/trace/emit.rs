@@ -1,7 +1,7 @@
 //! Authoritative emitter for the `[wt-trace]` log grammar.
 //!
 //! `[wt-trace]` records are structured single-line `key=value` text emitted on
-//! top of the `log` crate and parsed downstream by [`super::parse`] and the
+//! top of `tracing` and parsed downstream by [`super::parse`] and the
 //! `wt-perf` binary. This module is the single source of truth for the
 //! grammar — any field or formatting change happens here and in `parse.rs`
 //! together.
@@ -16,21 +16,49 @@
 //! [wt-trace] ts=1234567 tid=3 span="build_hook_context" dur_us=8200
 //! ```
 //!
+//! # Emission model
+//!
+//! Records emit as `tracing` events under [`WT_TRACE_TARGET`] with typed
+//! structured fields (`kind`, `ts`, `tid`, `cmd`, `dur_us`, `ok`, `err`,
+//! `event`, `span`, `context`). The text grammar is produced downstream by
+//! the `trace.log` layer's `FormatEvent` impl in
+//! `src/logging.rs::TraceFileFormat`, which reads the structured fields
+//! and renders the exact `[wt-trace] key=value …` lines wt-perf and the
+//! integration suite parse.
+//!
+//! This split — structured fields at the emission site, grammar rendering
+//! at the layer — means the wire format lives in one place
+//! (`logging.rs`) and emit sites carry no string-formatting noise.
+//!
+//! # Timing
+//!
 //! In-process spans (everything that isn't a subprocess) use [`Span`], an
 //! RAII guard that captures `ts` at construction and emits the completed
 //! record on drop with the elapsed duration. Use it to attribute time spent
 //! in code paths subprocess records can't see (config load, repo open,
 //! template render).
 //!
-//! Records are emitted at `log::debug!`, so `-vv` or `RUST_LOG=debug` makes
-//! them visible. Subprocess stdout/stderr continuations are emitted via
-//! separate log targets: the full output goes to `output.log`, and a bounded
-//! preview goes to stderr + `trace.log` — so raw bodies don't spam `-vv`.
+//! Subprocess emission lives in `shell_exec::WtTraceLog`, which captures
+//! `Instant::now()` at `Cmd::run` entry — `tracing` spans can't carry this
+//! across the sync subprocess wait, so the timing stays manual.
+//!
+//! # Routing
+//!
+//! Events emit at `tracing::DEBUG`, so `-vv` or `RUST_LOG=debug` makes them
+//! visible. Subprocess stdout/stderr continuations route through separate
+//! targets: the full output goes to `subprocess.log`, and a bounded preview
+//! shares the routing of all other records — `trace.log` at `-vv`, stderr
+//! otherwise — so raw bodies don't spam `-vv`.
 
 use std::borrow::Cow;
 use std::fmt::Display;
 use std::sync::OnceLock;
 use std::time::Instant;
+
+/// Tracing target the `trace.log` layer keys on to render the `[wt-trace]`
+/// grammar. Events under any other target fall through to the layer's
+/// default message-passing format.
+pub const WT_TRACE_TARGET: &str = "worktrunk::wt_trace";
 
 /// Monotonic epoch for trace timestamps. All `ts` fields are microseconds
 /// since this point. `Instant` is monotonic even if the system clock steps.
@@ -68,22 +96,24 @@ pub fn command_completed(
     ok: bool,
 ) {
     match context {
-        Some(ctx) => log::debug!(
-            r#"[wt-trace] ts={} tid={} context={} cmd="{}" dur_us={} ok={}"#,
+        Some(ctx) => tracing::debug!(
+            target: WT_TRACE_TARGET,
+            kind = "cmd_completed",
             ts,
             tid,
-            ctx,
+            context = ctx,
             cmd,
             dur_us,
-            ok
+            ok,
         ),
-        None => log::debug!(
-            r#"[wt-trace] ts={} tid={} cmd="{}" dur_us={} ok={}"#,
+        None => tracing::debug!(
+            target: WT_TRACE_TARGET,
+            kind = "cmd_completed",
             ts,
             tid,
             cmd,
             dur_us,
-            ok
+            ok,
         ),
     }
 }
@@ -97,23 +127,26 @@ pub fn command_errored(
     dur_us: u64,
     err: impl Display,
 ) {
+    let err = err.to_string();
     match context {
-        Some(ctx) => log::debug!(
-            r#"[wt-trace] ts={} tid={} context={} cmd="{}" dur_us={} err="{}""#,
+        Some(ctx) => tracing::debug!(
+            target: WT_TRACE_TARGET,
+            kind = "cmd_errored",
             ts,
             tid,
-            ctx,
+            context = ctx,
             cmd,
             dur_us,
-            err
+            err = %err,
         ),
-        None => log::debug!(
-            r#"[wt-trace] ts={} tid={} cmd="{}" dur_us={} err="{}""#,
+        None => tracing::debug!(
+            target: WT_TRACE_TARGET,
+            kind = "cmd_errored",
             ts,
             tid,
             cmd,
             dur_us,
-            err
+            err = %err,
         ),
     }
 }
@@ -124,11 +157,12 @@ pub fn command_errored(
 /// Instant events appear as vertical lines in Chrome Trace Format tools
 /// (chrome://tracing, Perfetto).
 pub fn instant(event: &str) {
-    log::debug!(
-        r#"[wt-trace] ts={} tid={} event="{}""#,
-        now_us(),
-        thread_id(),
-        event
+    tracing::debug!(
+        target: WT_TRACE_TARGET,
+        kind = "instant",
+        ts = now_us(),
+        tid = thread_id(),
+        event,
     );
 }
 
@@ -138,12 +172,13 @@ pub fn instant(event: &str) {
 /// records cover work in child processes; spans cover everything between and
 /// around them (config load, repo open, template render, etc.).
 pub fn span_completed(name: &str, ts: u64, tid: u64, dur_us: u64) {
-    log::debug!(
-        r#"[wt-trace] ts={} tid={} span="{}" dur_us={}"#,
+    tracing::debug!(
+        target: WT_TRACE_TARGET,
+        kind = "span",
         ts,
         tid,
-        name,
-        dur_us
+        span = name,
+        dur_us,
     );
 }
 
@@ -157,11 +192,11 @@ pub fn span_completed(name: &str, ts: u64, tid: u64, dur_us: u64) {
 /// useful when the span name carries dynamic context, e.g.
 /// `Span::new(format!("prepare_steps:{}", alias))`.
 ///
-/// The `log_enabled!` check happens on drop, not construction. A span
-/// constructed before `init_logging` (e.g. wrapping the logger init itself)
-/// still fires correctly as long as the logger is up by the time the span
-/// goes out of scope. Construction always pays two `Instant::now()` calls;
-/// they're vDSO-fast and the overhead is below noise.
+/// The `tracing::enabled!` check happens on drop, not construction. A span
+/// constructed before the subscriber is installed (e.g. wrapping the logger
+/// init itself) still fires correctly as long as the subscriber is up by the
+/// time the span goes out of scope. Construction always pays two
+/// `Instant::now()` calls; they're vDSO-fast and the overhead is below noise.
 pub struct Span {
     name: Cow<'static, str>,
     start_ts_us: u64,
@@ -180,7 +215,7 @@ impl Span {
 
 impl Drop for Span {
     fn drop(&mut self) {
-        if !log::log_enabled!(log::Level::Debug) {
+        if !tracing::enabled!(tracing::Level::DEBUG) {
             return;
         }
         let dur_us = self.start.elapsed().as_micros() as u64;

@@ -76,7 +76,7 @@
 //! external state that could go stale:
 //! - Resource limiters: `CMD_SEMAPHORE` (shell_exec), `HEAVY_OPS_SEMAPHORE` (git),
 //!   `LLM_SEMAPHORE` (summary), `COPY_POOL` (copy)
-//! - Global state: `OUTPUT_STATE` (output), `TRACE` and `OUTPUT` (log_files), `COMMAND_LOG`
+//! - Global state: `OUTPUT_STATE` (output), `TRACE` and `SUBPROCESS` (log_files), `COMMAND_LOG`
 //! - Config: `CONFIG_PATH` (config/user/path), `SHELL_CONFIG`, `GIT_ENV_OVERRIDES` (shell_exec)
 //!
 //! The picker also maintains a `PreviewCache` (`Arc<DashMap>` in `commands/picker/items.rs`)

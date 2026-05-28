@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::io::Write;
 use std::path::Path;
 
 use anyhow::Context;
@@ -31,6 +30,7 @@ pub(crate) mod help_pager;
 mod invocation;
 mod llm;
 mod log_files;
+mod logging;
 mod md_help;
 mod output;
 mod pager;
@@ -62,7 +62,7 @@ use commands::{
     handle_vars_list, handle_vars_set, resolve_worktree_arg, run_hook, run_switch, step_commit,
     step_copy_ignored, step_diff, step_eval, step_for_each, step_prune, step_relocate, step_tether,
 };
-use output::handle_remove_output;
+use output::{BackgroundFallbackMode, handle_remove_output};
 use worktrunk::git::BranchDeletionMode;
 
 use cli::{
@@ -1002,6 +1002,7 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                     false,
                     false,
                     &mut announcer,
+                    BackgroundFallbackMode::Detached,
                 )?;
                 announcer.flush()?;
                 if json_mode {
@@ -1064,6 +1065,7 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                         false,
                         false,
                         &mut announcer,
+                        BackgroundFallbackMode::Detached,
                     )?;
                     announcer.flush()
                 };
@@ -1220,108 +1222,6 @@ fn init_command_log(command_line: &str) {
     // Directory and file are created lazily on first log_command() call.
     if let Ok(repo) = worktrunk::git::Repository::current() {
         worktrunk::command_log::init(&repo.wt_logs_dir(), command_line);
-    }
-}
-
-fn thread_label() -> char {
-    let thread_id = format!("{:?}", std::thread::current().id());
-    thread_id
-        .strip_prefix("ThreadId(")
-        .and_then(|s| s.strip_suffix(")"))
-        .and_then(|s| s.parse::<usize>().ok())
-        .map(|n| {
-            if n == 0 {
-                '0'
-            } else if n <= 26 {
-                char::from(b'a' + (n - 1) as u8)
-            } else if n <= 52 {
-                char::from(b'A' + (n - 27) as u8)
-            } else {
-                '?'
-            }
-        })
-        .unwrap_or('?')
-}
-
-fn init_logging(verbose_level: u8) {
-    // Configure logging based on --verbose flag or RUST_LOG env var.
-    // Level map: -v → Info, -vv+ → Debug (stderr, with subprocess output
-    // capped). At -vv, `.git/wt/logs/trace.log` mirrors stderr and
-    // `.git/wt/logs/output.log` receives the uncapped subprocess bodies
-    // routed via `shell_exec::SUBPROCESS_FULL_TARGET`.
-    //
-    // env_logger registers the logger via `.init()` at the bottom of this
-    // function. `log_files::init()` runs after that so the
-    // `Repository::current()` it triggers (cold cache: 4ms `git rev-parse
-    // --git-common-dir`) is visible in `[wt-trace]` output.
-    output::set_verbosity(verbose_level);
-
-    let mut builder = match verbose_level {
-        0 => env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("off")),
-        1 => {
-            let mut b = env_logger::Builder::new();
-            b.filter_level(log::LevelFilter::Info);
-            b
-        }
-        _ => {
-            let mut b = env_logger::Builder::new();
-            b.filter_level(log::LevelFilter::Debug);
-            b
-        }
-    };
-
-    builder
-        .format(|buf, record| {
-            let route = log_files::route(record.target());
-            if matches!(route, log_files::Route::Drop) {
-                return Ok(());
-            }
-
-            let thread_num = thread_label();
-            let msg = record.args().to_string();
-            let file_line = format!("[{thread_num}] {msg}");
-
-            if let log_files::Route::File(sink) = route {
-                sink.write_line(&file_line);
-                return Ok(());
-            }
-            // Route::Stderr: mirror to trace.log (no-op when inactive), then
-            // write the ANSI-formatted version to stderr below.
-            log_files::TRACE.write_line(&file_line);
-
-            // Commands start with $, make only the command bold (not $ or [worktree])
-            if let Some(rest) = msg.strip_prefix("$ ") {
-                // Split: "git command [worktree]" -> ("git command", " [worktree]")
-                if let Some(bracket_pos) = rest.find(" [") {
-                    let command = &rest[..bracket_pos];
-                    let worktree = &rest[bracket_pos..];
-                    writeln!(
-                        buf,
-                        "{}",
-                        cformat!("<dim>[{thread_num}]</> $ <bold>{command}</>{worktree}")
-                    )
-                } else {
-                    writeln!(
-                        buf,
-                        "{}",
-                        cformat!("<dim>[{thread_num}]</> $ <bold>{rest}</>")
-                    )
-                }
-            } else if msg.starts_with("  ! ") {
-                // Error output - show in red
-                writeln!(buf, "{}", cformat!("<dim>[{thread_num}]</> <red>{msg}</>"))
-            } else {
-                // Regular output with thread ID
-                writeln!(buf, "{}", cformat!("<dim>[{thread_num}]</> {msg}"))
-            }
-        })
-        .init();
-
-    // Open per-file log sinks AFTER env_logger is registered so the
-    // `Repository::current()` rev-parse fired by `try_create` is captured
-    // in the trace.
-    if verbose_level >= 2 {
-        log_files::init();
     }
 }
 
@@ -1585,16 +1485,18 @@ fn main() {
         worktrunk::config::suppress_warnings();
     }
 
-    // `init_logging` registers the logger. Run it before `init_command_log`
-    // so the latter's `Repository::current()` → `git rev-parse
-    // --git-common-dir` subprocess is visible in `[wt-trace]` output. With
-    // the previous order the rev-parse fired before any logger was
-    // registered, leaving a 4ms hole in the trace where the subprocess
-    // actually ran. Same reason `init_logging` itself reorders to
-    // register env_logger before opening per-file log sinks.
+    // `logging::init` registers the tracing subscriber. Run it before
+    // `init_command_log` so the latter's `Repository::current()` →
+    // `git rev-parse --git-common-dir` subprocess is visible in
+    // `[wt-trace]` output. With the previous order the rev-parse fired
+    // before any subscriber was registered, leaving a 4ms hole in the
+    // trace where the subprocess actually ran. Same reason `logging::init`
+    // itself opens the per-file log sinks before installing the layers:
+    // the open's `Repository::current()` would otherwise emit into a
+    // half-built pipeline.
     {
         let _span = worktrunk::trace::Span::new("init_logging");
-        init_logging(verbose);
+        logging::init(verbose);
     }
 
     // Fold the two cold-path rev-parses (`--git-common-dir` from

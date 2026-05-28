@@ -106,8 +106,8 @@ impl RepositoryCliExt for Repository {
         // worktree, then repo base for bare repos with no worktrees.
         let primary_path = self.home_path()?;
 
-        // Reuse caller's snapshot when present; otherwise capture once for the
-        // two `compute_integration_reason` calls below.
+        // Reuse caller's snapshot when present; otherwise capture once for
+        // branch-only integration checks below.
         let owned_snapshot;
         let snapshot = match snapshot {
             Some(s) => s,
@@ -238,8 +238,8 @@ impl RepositoryCliExt for Repository {
         }
 
         // Phase 4: Return BranchOnly early (after validation), or continue to
-        // worktree-level checks. Compute integration here (same as Phase 5 does
-        // for RemovedWorktree) so the output handler doesn't re-derive it.
+        // worktree-level checks. Branch-only removals have no pre-remove hook,
+        // so their integration decision can be computed here.
         let (worktree_path, branch_name, is_current) = match resolved {
             Resolved::BranchOnly { branch, pruned } => {
                 let default_branch = self.default_branch();
@@ -293,18 +293,6 @@ impl RepositoryCliExt for Repository {
             _ => default_branch,
         };
 
-        // Pre-compute integration reason to avoid race conditions when removing
-        // multiple worktrees in background mode. Use the effective target for
-        // display (e.g., origin/main when upstream is ahead).
-        let (integration_reason, effective_target) = compute_integration_reason(
-            self,
-            snapshot,
-            branch_name.as_deref(),
-            target_branch.as_deref(),
-            deletion_mode,
-        );
-        let target_branch = effective_target.or(target_branch);
-
         // Compute expected_path for path mismatch detection
         // Only set if actual path differs from expected (path mismatch)
         let expected_path = branch_name
@@ -329,7 +317,6 @@ impl RepositoryCliExt for Repository {
             branch_name,
             deletion_mode,
             target_branch,
-            integration_reason,
             force_worktree,
             expected_path,
             removed_commit,

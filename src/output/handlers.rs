@@ -16,6 +16,7 @@ use crate::commands::hooks::HookAnnouncer;
 use crate::commands::process::{
     HookLog, InternalOp, build_remove_command, build_remove_command_staged, spawn_detached,
 };
+use crate::commands::repository_ext::compute_integration_reason;
 use crate::commands::worktree::hooks::PostRemoveContext;
 use crate::commands::worktree::{RemoveResult, SwitchBranchInfo, SwitchResult};
 use worktrunk::config::UserConfig;
@@ -26,7 +27,8 @@ use worktrunk::git::Repository;
 use worktrunk::git::path_dir_name;
 use worktrunk::git::{
     BranchDeletionMode, BranchDeletionOutcome, BranchDeletionResult, RemoveOptions,
-    remove_worktree_with_cleanup, stage_worktree_removal, stop_fsmonitor_daemon,
+    delete_branch_if_safe, remove_worktree_with_cleanup, stage_worktree_removal,
+    stop_fsmonitor_daemon,
 };
 use worktrunk::path::format_path_for_display;
 use worktrunk::progress::{Progress, format_stats_paren};
@@ -71,6 +73,36 @@ fn cleanup_staged_with_progress(staged: &Path) -> (usize, u64) {
 // Background Removal Helpers
 // ============================================================================
 
+/// The removal parameters shared by [`spawn_background_removal`] and
+/// [`execute_instant_removal_or_fallback`]. `branch_name` / `deletion_mode` /
+/// `target_branch` drive the freshly-recomputed branch deletion; the rest
+/// control the worktree removal itself.
+struct BackgroundRemoval<'a> {
+    worktree_path: &'a Path,
+    branch_name: Option<&'a str>,
+    deletion_mode: BranchDeletionMode,
+    target_branch: Option<&'a str>,
+    force_worktree: bool,
+    changed_directory: bool,
+}
+
+/// How a background removal behaves when the rename-into-trash fast path fails.
+#[derive(Clone, Copy)]
+pub enum BackgroundFallbackMode {
+    /// Spawn the legacy detached `git worktree remove` — the default for
+    /// `wt remove`, `wt merge`, and the picker.
+    Detached,
+    /// Run the fallback removal and branch deletion synchronously for a
+    /// non-current worktree. `wt step prune` uses this to keep the fallback's
+    /// `.git/config` rewrite serialized with its integration-check readers.
+    SynchronousForNonCurrent,
+}
+
+enum BackgroundRemovalPlan {
+    Detached(String),
+    CompletedSynchronously,
+}
+
 /// Spawn background worktree removal: stop fsmonitor, rename-then-prune, spawn detached rm.
 ///
 /// Shared sequence for both detached HEAD and branch background removal paths.
@@ -78,61 +110,77 @@ fn cleanup_staged_with_progress(staged: &Path) -> (usize, u64) {
 fn spawn_background_removal(
     repo: &Repository,
     main_path: &Path,
-    worktree_path: &Path,
-    branch_to_delete: Option<&str>,
-    force_worktree: bool,
+    removal: &BackgroundRemoval<'_>,
     log_label: &str,
-    changed_directory: bool,
+    fallback_mode: BackgroundFallbackMode,
 ) -> anyhow::Result<()> {
     // Stop the fsmonitor daemon BEFORE rename (must happen while the path
     // still exists — the IPC socket lives under its git dir). Force-kills a
     // wedged daemon so it can't leak once the worktree is gone.
-    stop_fsmonitor_daemon(&repo.worktree_at(worktree_path));
+    stop_fsmonitor_daemon(&repo.worktree_at(removal.worktree_path));
 
-    let remove_command = execute_instant_removal_or_fallback(
-        repo,
-        worktree_path,
-        branch_to_delete,
-        force_worktree,
-        changed_directory,
-    );
+    let remove_plan = execute_instant_removal_or_fallback(repo, removal, fallback_mode)?;
 
-    spawn_detached(
-        repo,
-        main_path,
-        &remove_command,
-        log_label,
-        &HookLog::internal(InternalOp::Remove),
-        None,
-    )?;
+    if let BackgroundRemovalPlan::Detached(remove_command) = remove_plan {
+        spawn_detached(
+            repo,
+            main_path,
+            &remove_command,
+            log_label,
+            &HookLog::internal(InternalOp::Remove),
+            None,
+        )?;
+    }
     Ok(())
 }
 
-/// Execute instant worktree removal via rename-then-prune, returning the background command.
+/// Execute instant worktree removal via rename-then-prune.
 ///
 /// This function has side effects: it renames the worktree directory and prunes git metadata.
 /// On the fast path, the branch is also deleted synchronously (since after prune, the branch
 /// is no longer checked out in any worktree), and the background command is just `rm -rf`.
-/// If rename fails (cross-filesystem, permissions, Windows file locking), returns the legacy
-/// `git worktree remove` command with branch deletion deferred to the background.
+/// If rename fails (cross-filesystem, permissions, Windows file locking), either returns the
+/// legacy `git worktree remove` command with branch deletion deferred to the background, or
+/// runs that fallback synchronously for non-current worktrees when the caller needs to keep
+/// the fallback's `.git/config` rewrite serialized with other git readers.
 ///
-/// The caller is responsible for spawning the returned command in the background.
+/// The caller is responsible for spawning detached plans in the background.
 fn execute_instant_removal_or_fallback(
     repo: &Repository,
-    worktree_path: &Path,
-    branch_to_delete: Option<&str>,
-    force_worktree: bool,
-    changed_directory: bool,
-) -> String {
+    removal: &BackgroundRemoval<'_>,
+    fallback_mode: BackgroundFallbackMode,
+) -> anyhow::Result<BackgroundRemovalPlan> {
+    let BackgroundRemoval {
+        worktree_path,
+        branch_name,
+        deletion_mode,
+        target_branch,
+        force_worktree,
+        changed_directory,
+    } = *removal;
+
+    if !force_worktree {
+        repo.worktree_at(worktree_path)
+            .ensure_clean("remove worktree", branch_name, true)?;
+    }
+
     // Fast path: rename worktree into .git/wt/trash/ (instant on same filesystem),
     // prune git metadata, then background process just does `rm -rf`.
     if let Some(staged_path) = stage_worktree_removal(repo, worktree_path) {
         // Delete branch synchronously now that prune has removed the worktree metadata.
-        // The branch is no longer checked out, so `git branch -D` will succeed.
-        // This avoids a race where the user creates a new worktree with the same branch
-        // name before the background `rm -rf` completes.
-        if let Some(branch) = branch_to_delete
-            && let Err(e) = repo.run_command(&["branch", "-D", branch])
+        // Re-capture refs here rather than trusting the pre-hook planning
+        // decision: hooks or concurrent processes may have advanced the branch.
+        if let Some(branch) = branch_name
+            && !deletion_mode.should_keep()
+            && let Err(e) = repo.capture_refs().and_then(|snapshot| {
+                delete_branch_if_safe(
+                    repo,
+                    &snapshot,
+                    branch,
+                    target_branch.unwrap_or("HEAD"),
+                    deletion_mode.is_force(),
+                )
+            })
         {
             log::debug!("Failed to delete branch {} synchronously: {}", branch, e);
         }
@@ -145,25 +193,86 @@ fn execute_instant_removal_or_fallback(
             // is that Nushell may still emit PWD errors — not a correctness issue.
             let _ = std::fs::create_dir(worktree_path);
         }
-        build_remove_command_staged(&staged_path, worktree_path, changed_directory)
+        Ok(BackgroundRemovalPlan::Detached(
+            build_remove_command_staged(&staged_path, worktree_path, changed_directory),
+        ))
     } else {
+        if matches!(
+            fallback_mode,
+            BackgroundFallbackMode::SynchronousForNonCurrent
+        ) && !changed_directory
+        {
+            repo.remove_worktree(worktree_path, force_worktree)?;
+            if let Some(branch) = branch_name
+                && !deletion_mode.should_keep()
+            {
+                delete_branch_in_synchronous_fallback(repo, branch, target_branch, deletion_mode);
+            }
+            return Ok(BackgroundRemovalPlan::CompletedSynchronously);
+        }
+
         // Fallback: cross-filesystem, permissions, Windows file locking, etc.
-        // Use legacy git worktree remove which handles these cases.
-        // Branch deletion stays in the background command since the worktree
-        // still references the branch until `git worktree remove` runs.
-        //
-        // Git refuses to remove worktrees with initialized submodules without
-        // --force. We preemptively set --force when .gitmodules exists — broader
-        // than checking initialization, but harmless for clean worktrees.
-        //
-        // TOCTOU note: the clean check runs during planning in
-        // prepare_worktree_removal(). In this fallback path, we may add --force
-        // later (at execution time) when .gitmodules is present. That creates a
-        // small check-vs-use window where newly introduced changes could be
-        // removed. See remove_worktree() docs for the detailed safety analysis.
-        let force = force_worktree || worktree_path.join(".gitmodules").exists();
-        build_remove_command(worktree_path, branch_to_delete, force, changed_directory)
+        // Use legacy git worktree remove which handles these cases. Safe-delete
+        // uses Git's non-forcing branch deletion in the detached command; if
+        // the branch gained unmerged commits after the hook, Git retains it.
+        let command = match (branch_name, deletion_mode) {
+            (Some(branch), BranchDeletionMode::ForceDelete) => build_remove_command(
+                worktree_path,
+                Some(branch),
+                force_worktree,
+                changed_directory,
+            ),
+            (Some(branch), BranchDeletionMode::SafeDelete) => build_remove_command_safe_delete(
+                worktree_path,
+                branch,
+                force_worktree,
+                changed_directory,
+            ),
+            _ => build_remove_command(worktree_path, None, force_worktree, changed_directory),
+        };
+        Ok(BackgroundRemovalPlan::Detached(command))
     }
+}
+
+/// Delete the just-removed worktree's branch in the synchronous fallback path.
+///
+/// Only `wt step prune` reaches this (via `SynchronousForNonCurrent`). Mirrors
+/// the fast path above by re-capturing refs and calling `delete_branch_if_safe`,
+/// so squash-merged / patch-id-matched branches that prune accepted as candidates
+/// are deleted here too — a plain `git branch -d` would refuse them on
+/// reachability from HEAD alone and leave the branch behind while the worktree
+/// was already removed. The caller filters out `None` branches and `Keep` modes.
+fn delete_branch_in_synchronous_fallback(
+    repo: &Repository,
+    branch: &str,
+    target_branch: Option<&str>,
+    deletion_mode: BranchDeletionMode,
+) {
+    if let Err(e) = repo.capture_refs().and_then(|snapshot| {
+        delete_branch_if_safe(
+            repo,
+            &snapshot,
+            branch,
+            target_branch.unwrap_or("HEAD"),
+            deletion_mode.is_force(),
+        )
+    }) {
+        log::debug!("Failed to delete branch {branch} in synchronous fallback: {e}");
+    }
+}
+
+fn build_remove_command_safe_delete(
+    worktree_path: &Path,
+    branch_name: &str,
+    force_worktree: bool,
+    changed_directory: bool,
+) -> String {
+    use shell_escape::unix::escape;
+
+    let remove_command =
+        build_remove_command(worktree_path, None, force_worktree, changed_directory);
+    let branch_escaped = escape(branch_name.into());
+    format!("{remove_command} && git branch -d {branch_escaped}")
 }
 
 /// List top-level entries remaining in a directory after a failed removal.
@@ -746,6 +855,13 @@ pub fn execute_user_command(command: &str, display_path: Option<&Path>) -> anyho
 /// regardless of `foreground` (there's no detached `rm` to background to).
 /// `silent` has no effect on `BranchOnly` results — the picker handles that
 /// arm itself.
+///
+/// `background_fallback_mode` selects how a background removal whose
+/// rename-into-trash fast path fails behaves: every caller but `wt step prune`
+/// passes [`BackgroundFallbackMode::Detached`] (spawn the legacy `git worktree
+/// remove`); prune passes [`BackgroundFallbackMode::SynchronousForNonCurrent`]
+/// to keep the fallback's `.git/config` rewrite serialized with its parallel
+/// integration-check readers.
 pub fn handle_remove_output(
     result: &RemoveResult,
     foreground: bool,
@@ -753,6 +869,7 @@ pub fn handle_remove_output(
     quiet: bool,
     silent: bool,
     announcer: &mut HookAnnouncer<'_>,
+    background_fallback_mode: BackgroundFallbackMode,
 ) -> anyhow::Result<()> {
     match result {
         RemoveResult::RemovedWorktree {
@@ -762,7 +879,6 @@ pub fn handle_remove_output(
             branch_name,
             deletion_mode,
             target_branch,
-            integration_reason,
             force_worktree,
             expected_path,
             removed_commit,
@@ -774,13 +890,13 @@ pub fn handle_remove_output(
                 branch_name: branch_name.as_deref(),
                 deletion_mode: *deletion_mode,
                 target_branch: target_branch.as_deref(),
-                pre_computed_integration: *integration_reason,
                 force_worktree: *force_worktree,
                 expected_path: expected_path.as_deref(),
                 removed_commit: removed_commit.as_deref(),
                 plan,
                 foreground,
                 silent,
+                background_fallback_mode,
             },
             announcer,
         ),
@@ -973,9 +1089,9 @@ fn spawn_hooks_after_remove(
 
 /// Information needed to display removal messages and hints.
 ///
-/// This struct captures the outcome of a branch deletion decision (whether
-/// pre-computed for background mode or actual for foreground mode) so that
-/// message formatting can be shared between both modes.
+/// This struct captures the outcome of a branch deletion decision (freshly
+/// computed for background mode or actual for foreground mode) so that message
+/// formatting can be shared between both modes.
 struct RemovalDisplayInfo {
     /// The deletion outcome (NotDeleted, ForceDeleted, or Integrated)
     outcome: BranchDeletionOutcome,
@@ -990,10 +1106,10 @@ struct RemovalDisplayInfo {
 }
 
 impl RemovalDisplayInfo {
-    /// Build display info from pre-computed integration (background mode).
+    /// Build display info from the refreshed integration check (background mode).
     ///
-    /// Uses the pre-computed integration reason to avoid race conditions when
-    /// removing multiple worktrees (background processes can hold git locks).
+    /// The caller refreshes this after `pre-remove` hooks and immediately
+    /// before staging/removing the worktree.
     fn from_precomputed(
         deletion_mode: BranchDeletionMode,
         pre_computed_integration: Option<IntegrationReason>,
@@ -1185,7 +1301,6 @@ struct RemovedWorktreeOutputContext<'a> {
     branch_name: Option<&'a str>,
     deletion_mode: BranchDeletionMode,
     target_branch: Option<&'a str>,
-    pre_computed_integration: Option<IntegrationReason>,
     force_worktree: bool,
     expected_path: Option<&'a Path>,
     removed_commit: Option<&'a str>,
@@ -1198,6 +1313,18 @@ struct RemovedWorktreeOutputContext<'a> {
     /// progress/success messages, no trash-cleanup spinner, and no `cd`
     /// directive — see [`handle_remove_output`].
     silent: bool,
+    background_fallback_mode: BackgroundFallbackMode,
+}
+
+struct RefreshedRemovalSafety {
+    integration_reason: Option<IntegrationReason>,
+    target_branch: Option<String>,
+}
+
+impl RefreshedRemovalSafety {
+    fn target_branch(&self) -> Option<&str> {
+        self.target_branch.as_deref()
+    }
 }
 
 fn execute_pre_remove_hooks_if_needed(
@@ -1246,6 +1373,44 @@ fn execute_pre_remove_hooks_if_needed(
         FailureStrategy::FailFast,
         display_path,
     )
+}
+
+fn refresh_removal_safety_after_pre_remove(
+    repo: &Repository,
+    ctx: &RemovedWorktreeOutputContext<'_>,
+) -> anyhow::Result<RefreshedRemovalSafety> {
+    // `pre-remove` hooks run arbitrary approved commands in the worktree being
+    // removed. Re-check before the rename/branch-delete cleanup uses this state.
+    if !ctx.force_worktree {
+        repo.worktree_at(ctx.worktree_path).ensure_clean(
+            "remove worktree",
+            ctx.branch_name,
+            true,
+        )?;
+    }
+
+    let mut target_branch = ctx.target_branch.map(String::from);
+    let integration_reason = if ctx.branch_name.is_some() && ctx.target_branch.is_some() {
+        let snapshot = repo.capture_refs()?;
+        let (reason, effective_target) = compute_integration_reason(
+            repo,
+            &snapshot,
+            ctx.branch_name,
+            ctx.target_branch,
+            ctx.deletion_mode,
+        );
+        if let Some(target) = effective_target {
+            target_branch = Some(target);
+        }
+        reason
+    } else {
+        None
+    };
+
+    Ok(RefreshedRemovalSafety {
+        integration_reason,
+        target_branch,
+    })
 }
 
 fn prepare_remove_directory_change(
@@ -1320,11 +1485,16 @@ fn handle_detached_removed_worktree_output(
         spawn_background_removal(
             repo,
             ctx.main_path,
-            ctx.worktree_path,
-            None,
-            ctx.force_worktree,
+            &BackgroundRemoval {
+                worktree_path: ctx.worktree_path,
+                branch_name: None,
+                deletion_mode: ctx.deletion_mode,
+                target_branch: ctx.target_branch,
+                force_worktree: ctx.force_worktree,
+                changed_directory: ctx.changed_directory,
+            },
             "detached",
-            ctx.changed_directory,
+            ctx.background_fallback_mode,
         )?;
     }
 
@@ -1337,6 +1507,7 @@ fn handle_detached_removed_worktree_output(
 fn handle_named_removed_worktree_foreground(
     repo: &Repository,
     ctx: &RemovedWorktreeOutputContext<'_>,
+    safety: &RefreshedRemovalSafety,
     branch_name: &str,
     announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
@@ -1360,7 +1531,7 @@ fn handle_named_removed_worktree_foreground(
         RemoveOptions {
             branch: Some(branch_name.to_string()),
             deletion_mode: ctx.deletion_mode,
-            target_branch: ctx.target_branch.map(String::from),
+            target_branch: safety.target_branch.clone(),
             force_worktree: ctx.force_worktree,
         },
     )
@@ -1379,13 +1550,13 @@ fn handle_named_removed_worktree_foreground(
     let display_info = RemovalDisplayInfo::from_branch_result(
         output.branch_result,
         branch_name,
-        ctx.pre_computed_integration,
-        ctx.target_branch,
+        safety.integration_reason,
+        safety.target_branch(),
         ctx.force_worktree,
     )?;
 
     display_info.print_message(branch_name, true, Some(stats))?;
-    display_info.print_hints(branch_name, ctx.deletion_mode, ctx.pre_computed_integration)?;
+    display_info.print_hints(branch_name, ctx.deletion_mode, safety.integration_reason)?;
     print_switch_message_if_changed(ctx.changed_directory, ctx.main_path)?;
 
     spawn_hooks_after_remove(repo, ctx, branch_name, announcer)?;
@@ -1396,6 +1567,7 @@ fn handle_named_removed_worktree_foreground(
 fn handle_named_removed_worktree_background(
     repo: &Repository,
     ctx: &RemovedWorktreeOutputContext<'_>,
+    safety: &RefreshedRemovalSafety,
     branch_name: &str,
     announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
@@ -1408,23 +1580,28 @@ fn handle_named_removed_worktree_background(
 
     let display_info = RemovalDisplayInfo::from_precomputed(
         ctx.deletion_mode,
-        ctx.pre_computed_integration,
-        ctx.target_branch,
+        safety.integration_reason,
+        safety.target_branch(),
         ctx.force_worktree,
     );
 
     display_info.print_message(branch_name, false, None)?;
-    display_info.print_hints(branch_name, ctx.deletion_mode, ctx.pre_computed_integration)?;
+    display_info.print_hints(branch_name, ctx.deletion_mode, safety.integration_reason)?;
     print_switch_message_if_changed(ctx.changed_directory, ctx.main_path)?;
 
     spawn_background_removal(
         repo,
         ctx.main_path,
-        ctx.worktree_path,
-        display_info.branch_deleted().then_some(branch_name),
-        ctx.force_worktree,
+        &BackgroundRemoval {
+            worktree_path: ctx.worktree_path,
+            branch_name: Some(branch_name),
+            deletion_mode: ctx.deletion_mode,
+            target_branch: safety.target_branch(),
+            force_worktree: ctx.force_worktree,
+            changed_directory: ctx.changed_directory,
+        },
         branch_name,
-        ctx.changed_directory,
+        ctx.background_fallback_mode,
     )?;
 
     spawn_hooks_after_remove(repo, ctx, branch_name, announcer)?;
@@ -1442,13 +1619,14 @@ fn handle_removed_worktree_output(
     let repo = worktrunk::git::Repository::at(ctx.main_path)?;
 
     execute_pre_remove_hooks_if_needed(&repo, &ctx)?;
+    let safety = refresh_removal_safety_after_pre_remove(&repo, &ctx)?;
 
     // TUI (picker) path: the removal runs in a background thread while skim
     // owns the terminal, so no messages, no spinner, no `cd` directive (the
     // picker manages its own cwd). The git removal runs inline — same as the
     // foreground path, minus the chrome.
     if ctx.silent {
-        return remove_removed_worktree_silently(&repo, &ctx, announcer);
+        return remove_removed_worktree_silently(&repo, &ctx, &safety, announcer);
     }
 
     prepare_remove_directory_change(ctx.main_path, ctx.changed_directory)?;
@@ -1459,9 +1637,9 @@ fn handle_removed_worktree_output(
     };
 
     if ctx.foreground {
-        handle_named_removed_worktree_foreground(&repo, &ctx, branch_name, announcer)
+        handle_named_removed_worktree_foreground(&repo, &ctx, &safety, branch_name, announcer)
     } else {
-        handle_named_removed_worktree_background(&repo, &ctx, branch_name, announcer)
+        handle_named_removed_worktree_background(&repo, &ctx, &safety, branch_name, announcer)
     }
 }
 
@@ -1479,13 +1657,14 @@ fn handle_removed_worktree_output(
 fn remove_removed_worktree_silently(
     repo: &Repository,
     ctx: &RemovedWorktreeOutputContext<'_>,
+    safety: &RefreshedRemovalSafety,
     announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
     let snapshot = repo.capture_refs()?;
     let options = RemoveOptions {
         branch: ctx.branch_name.map(String::from),
         deletion_mode: ctx.deletion_mode,
-        target_branch: ctx.target_branch.map(String::from),
+        target_branch: safety.target_branch.clone(),
         force_worktree: ctx.force_worktree,
     };
     let output = remove_worktree_with_cleanup(repo, &snapshot, ctx.worktree_path, options)?;

@@ -241,7 +241,7 @@ pub(crate) struct Cli {
     )]
     pub config: Option<std::path::PathBuf>,
 
-    /// Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
+    /// Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/)
     #[arg(
         long,
         short = 'v',
@@ -602,7 +602,7 @@ $ wt switch pr:123                      # PR #123's branch
 $ wt switch mr:101                      # MR !101's branch
 ```
 
-Shortcuts also apply to `--base`. For a fork PR/MR, the head commit is fetched and used as the base SHA without creating a tracking branch.
+Shortcuts also apply to `--base`. For a fork PR/MR, the head commit is fetched and used as the base SHA without creating a tracking branch. (Web URLs like `https://github.com/owner/repo/pull/N` or `https://gitlab.com/owner/repo/-/merge_requests/N` work in place of `pr:N` / `mr:N` anywhere a shortcut does.)
 
 ## Interactive picker
 
@@ -745,7 +745,7 @@ $ wt list --format=json
 | Status | Compact symbols (see below) |
 | HEAD± | Uncommitted changes: +added -deleted lines |
 | main↕ | Commits ahead/behind default branch |
-| main…± | Line diffs since the merge-base with the default branch; `--full` only |
+| main…± | Line diffs since the merge-base (three-dot) with the default branch; `--full` only |
 | Summary | LLM-generated branch summary; requires `--full`, `summary = true`, and [`commit.generation`](@/config.md#commit) [experimental] |
 | Remote⇅ | Commits ahead/behind tracking branch |
 | CI | Pipeline status; `--full` only |
@@ -755,7 +755,7 @@ $ wt list --format=json
 | Age | Time since last commit |
 | Message | Last commit message (truncated) |
 
-Note: `main↕` and `main…±` refer to the default branch — the header label stays `main` for compactness. `main…±` uses a merge-base (three-dot) diff.
+The `main` header label is used regardless of the default branch's actual name.
 
 ### CI status
 
@@ -1004,7 +1004,9 @@ Worktrunk checks six conditions (in order of cost):
 3. **No added changes** — Three-dot diff (`target...branch`) is empty. Shows `⊂`.
 4. **Trees match** — Branch tree SHA equals target tree SHA. Shows `⊂`.
 5. **Merge adds nothing** — Simulated merge produces the same tree as target. Handles squash-merged branches where target has advanced with changes to different files. Shows `⊂`.
-6. **Patch-id match** — Branch's entire diff matches a single squash-merge commit on target. Fallback for when the simulated merge conflicts because target later modified the same files the branch touched. Shows `⊂`. The default-branch walk is capped so a single check stays fast; a squash merge with hundreds of commits landed since the merge point falls outside the cap and needs `-D` to remove.
+6. **Patch-id match** — Branch's entire diff matches a single squash-merge commit on target. Fallback for when the simulated merge conflicts because target later modified the same files the branch touched. Shows `⊂`.
+
+The default-branch walk is capped so a single check stays fast; a squash merge with hundreds of commits landed since the merge point falls outside the cap and needs `-D` to remove.
 
 The 'same commit' check uses the local default branch; for other checks, 'target' means the default branch, or its upstream (e.g., `origin/main`) when strictly ahead.
 
@@ -1025,7 +1027,7 @@ $ wt remove feature -D            # Delete unmerged branch
 $ wt remove feature --force -D    # Both
 ```
 
-Without `--force`, removal fails if the worktree has staged, modified, or untracked files. Without `--force-delete`, removal keeps branches with unmerged changes. Use `--no-delete-branch` to keep the branch regardless of merge status.
+Use `--no-delete-branch` to keep the branch regardless of merge status.
 
 ## Background removal
 
@@ -1252,7 +1254,7 @@ The most common creation hook is `post-start` — it runs background tasks (dev 
 | `pre-remove` | Cleanup before worktree deletion: saving test artifacts, backing up state. Runs in the worktree being removed |
 | `post-remove` | Stopping dev servers, removing containers, notifying external systems. Template variables reference the removed worktree |
 
-During `wt merge`, hooks run in this order: pre-commit → post-commit → pre-merge → pre-remove → post-remove + post-merge. As usual, post-* hooks run in the background. See [`wt merge`](@/merge.md#pipeline) for the complete pipeline.
+During `wt merge`, hooks run in this order: pre-commit → post-commit → pre-merge → pre-remove → post-remove + post-merge. See [`wt merge`](@/merge.md#pipeline) for the complete pipeline.
 
 # Security
 
@@ -1341,12 +1343,12 @@ Hooks can use template variables that expand at runtime:
 |           | `{{ commit }}`                | Branch HEAD SHA |
 |           | `{{ short_commit }}`          | Branch HEAD SHA, abbreviated per `core.abbrev` |
 |           | `{{ upstream }}`              | Branch upstream (if tracking a remote) |
-| operation | `{{ base }}`                  | Base branch name |
+| operation | `{{ base }}`                  | Base branch name (switch/create only) |
 |           | `{{ base_worktree_path }}`    | Base worktree path |
 |           | `{{ target }}`                | Target branch name |
-|           | `{{ target_worktree_path }}`  | Target worktree path |
-|           | `{{ pr_number }}`             | PR/MR number (when creating via `pr:N` / `mr:N`) |
-|           | `{{ pr_url }}`                | PR/MR web URL (when creating via `pr:N` / `mr:N`) |
+|           | `{{ target_worktree_path }}`  | Target worktree path (when target has a worktree) |
+|           | `{{ pr_number }}`             | PR/MR number (post-switch, pre-start, post-start; when creating via `pr:N` / `mr:N`) |
+|           | `{{ pr_url }}`                | PR/MR web URL (post-switch, pre-start, post-start; when creating via `pr:N` / `mr:N`) |
 | repo      | `{{ repo }}`                  | Repository directory name |
 |           | `{{ repo_path }}`             | Absolute path to repository root |
 |           | `{{ owner }}`                 | Primary remote owner path (may include subgroups) |
@@ -1369,9 +1371,14 @@ Bare variables (`branch`, `worktree_path`, `commit`) refer to the branch the ope
 | merge | feature being merged | = bare vars | merge target |
 | remove | branch being removed | = bare vars | where you end up |
 
-Pre and post hooks share the same perspective — `{{ branch | hash_port }}` produces the same port in `post-start` and `post-remove`. `cwd` is the worktree root where the hook command runs. It differs from `worktree_path` in three cases: pre-switch, where the hook runs in the source but `worktree_path` is the destination; post-remove, where the active worktree is gone so the hook runs in primary; and post-merge with removal, same — the active worktree is gone, so the hook runs in target.
+All hooks share the same perspective — `{{ branch | hash_port }}` produces the same port in `post-start` and `post-remove`.
 
-Some variables are conditional: `upstream` requires remote tracking; `base` only appears in switch/create hooks; `target_worktree_path` requires the target to have a worktree; `pr_number`/`pr_url` are populated for `post-switch`, `pre-start`, and `post-start` hooks when creating via `pr:N` or `mr:N`; `vars` keys may not exist. Undefined variables error — use conditionals or defaults for optional behavior:
+`cwd` is the worktree root where the hook command runs. It equals `worktree_path` except in three cases:
+
+- `pre-switch`: hook runs in the source worktree; `worktree_path` is the destination
+- `post-remove` and `post-merge` with removal: the active worktree is gone, so the hook runs in primary or target, respectively
+
+Undefined variables error — use conditionals or defaults for optional behavior:
 
 ```toml
 [pre-start]
@@ -1403,7 +1410,7 @@ Templates support Jinja2 filters for transforming values:
 | `basename` | `{{ repo_path \| basename }}` | Keep only the last path component (`/a/b/c` → `c`) |
 | `codename(n)` | `{{ branch \| codename(2) }}` | Deterministic friendly words |
 
-The `sanitize` filter makes branch names safe for filesystem paths. The `sanitize_db` filter produces database-safe identifiers — lowercase alphanumeric and underscores, no leading digits, with a 3-character hash suffix to avoid collisions and reserved words. The `sanitize_hash` filter produces a filesystem-safe name and appends a 3-character hash suffix when sanitization changed the input, so distinct originals never collide — already-safe names pass through unchanged. The `codename(n)` filter produces deterministic friendly names from an input string: `codename(1)` returns a noun, `codename(2)` returns `adjective-noun`, and higher counts add more adjectives. The pool is large (~1.26M combinations for `codename(2)`), so it usually stands alone as a worktree leaf:
+The `sanitize_db` filter produces database-safe identifiers — lowercase alphanumeric and underscores, no leading digits, with a 3-character hash suffix to avoid collisions and reserved words. The `sanitize_hash` filter produces a filesystem-safe name and appends a 3-character hash suffix when sanitization changed the input, so distinct originals never collide — already-safe names pass through unchanged. The `codename(n)` filter produces deterministic friendly names from an input string: `codename(1)` returns a noun, `codename(2)` returns `adjective-noun`, and higher counts add more adjectives. The pool is large (~1.26M combinations for `codename(2)`), so it usually stands alone as a worktree leaf:
 
 ```toml
 # Friendly branch-derived worktree names, e.g. myproject.malleable-opah
@@ -1596,7 +1603,7 @@ $ wt config show
 | **User config** | `~/.config/worktrunk/config.toml` | Worktree path template, LLM commit configs, etc | ✗ |
 | **Project config** | `.config/wt.toml` | Project hooks, dev server URL | ✓ |
 
-Organizations can also deploy a system-wide config file for shared defaults — run `wt config show` for the platform-specific location.
+Organizations can deploy a system-wide config file for shared defaults — run `wt config show` for the platform-specific location.
 
 **User config** — personal preferences:
 
@@ -1813,11 +1820,7 @@ Aliases defined here apply to all projects. For project-specific aliases, use th
 
 ### User project-specific settings
 
-For context:
-
-- [Project config](@/config.md#project-configuration) settings are shared with teammates.
-- User configs generally apply to all projects.
-- User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as worktree layout and setting overrides. That's what this section covers.
+User config can include a `[projects]` table for project-specific settings — worktree layout, setting overrides, anything else — separate from the [project config](@/config.md#project-configuration) shared with teammates.
 
 Entries are keyed by project identifier — `<host>/<owner>/<repo>` derived from the primary remote URL (no `.git` suffix), or the canonical repo path when there is no remote. Run `wt config show` inside the repo to see the identifier for the current project; it appears in the `PROJECT CONFIG` section as `Identifier: …`.
 
@@ -2071,7 +2074,7 @@ Without shell integration, `wt switch` prints the target directory but cannot `c
 
 ### First-run prompts
 
-On first run without shell integration, Worktrunk offers to install it. Similarly, on first commit without LLM configuration, it offers to configure a detected tool (`claude`, `codex`). Declining sets `skip-shell-integration-prompt` or `skip-commit-generation-prompt` automatically.
+On first run without shell integration, Worktrunk offers to install it. On first commit without LLM configuration, it offers to configure a detected tool (`claude`, `codex`). Declining sets `skip-shell-integration-prompt` or `skip-commit-generation-prompt` automatically.
 
 # Other
 
@@ -2090,8 +2093,6 @@ For nested config sections, use double underscores to separate levels:
 | `worktree-path` | `WORKTRUNK_WORKTREE_PATH` |
 | `commit.generation.command` | `WORKTRUNK_COMMIT__GENERATION__COMMAND` |
 | `commit.stage` | `WORKTRUNK_COMMIT__STAGE` |
-
-Note the single underscore after `WORKTRUNK` and double underscores between nested keys.
 
 ### Example: CI/testing override
 

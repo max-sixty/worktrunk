@@ -784,10 +784,10 @@ All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the
 | File | Created when |
 |------|-------------|
 | `trace.log` | Running with `-vv` |
-| `output.log` | Running with `-vv` |
-| `diagnostic.md` | Running with `-vv` when warnings occur |
+| `subprocess.log` | Running with `-vv` |
+| `diagnostic.md` | Running with `-vv` |
 
-`trace.log` mirrors stderr (commands, `[wt-trace]` records, bounded subprocess previews). `output.log` holds the raw uncapped subprocess stdout/stderr bodies. Both are overwritten on each `-vv` run. `diagnostic.md` is a markdown report for pasting into GitHub issues — written only when warnings occur, and inlines `trace.log` (never `output.log`, which can be multi-MB).
+`trace.log` captures debug-level records at `-vv` — commands, `[wt-trace]` records, bounded subprocess previews. `subprocess.log` holds the raw uncapped subprocess stdout/stderr bodies. `diagnostic.md` is a markdown bug-report bundle that inlines `trace.log`; `wt` prints a `gh gist create` command pointing at it. All three are overwritten on each `-vv` run.
 
 ## Location
 

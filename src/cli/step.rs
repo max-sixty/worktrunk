@@ -549,11 +549,11 @@ The swap uses `rename()` for each entry — fast regardless of entry size, since
 
 In `wt list`, candidates show `_` (same commit) or `⊂` (content integrated). Run `--dry-run` to preview. See `wt remove --help` for the full integration criteria.
 
-Locked worktrees and the main worktree are always skipped. The current worktree is removed last, triggering cd to the primary worktree. Pre-remove and post-remove hooks run for each removal.
+Locked worktrees and the main worktree are always skipped. The current worktree is removed last, triggering cd to the primary worktree. Pre-remove and post-remove hooks run for each removal; a candidate whose hooks include an unapproved project command is skipped with `(approval required)` (pre-approve with `wt config approvals add`, or pass `--yes`).
 
 ## Min-age guard
 
-Worktrees younger than `--min-age` (default: 1 hour) are skipped. This prevents removing a worktree just created from the default branch — it looks "merged" because its branch points at the same commit.
+Worktrees younger than `--min-age` (default: 1 day) are skipped. This prevents removing a worktree just created from the default branch — it looks "merged" because its branch points at the same commit.
 
 ```console
 $ wt step prune --min-age=0s     # no age guard
@@ -581,7 +581,7 @@ $ wt step prune
         dry_run: bool,
 
         /// Skip worktrees younger than this
-        #[arg(long, default_value = "1h")]
+        #[arg(long, default_value = "1d")]
         min_age: String,
 
         /// Run removal in foreground (block until complete)

@@ -52,7 +52,7 @@ If the branch already has a worktree, `wt switch` changes directories to it. Oth
 
 {{ terminal(cmd="wt switch -                           # Back to previous|||wt switch ^                           # Default branch worktree|||wt switch --create fix --base=@       # Branch from current HEAD|||wt switch --create fix --base=pr:123  # Branch from PR #123's head|||wt switch pr:123                      # PR #123's branch|||wt switch mr:101                      # MR !101's branch") }}
 
-Shortcuts also apply to `--base`. For a fork PR/MR, the head commit is fetched and used as the base SHA without creating a tracking branch.
+Shortcuts also apply to `--base`. For a fork PR/MR, the head commit is fetched and used as the base SHA without creating a tracking branch. (Web URLs like `https://github.com/owner/repo/pull/N` or `https://gitlab.com/owner/repo/-/merge_requests/N` work in place of `pr:N` / `mr:N` anywhere a shortcut does.)
 
 ## Interactive picker
 
@@ -218,8 +218,8 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: info logs + hook/alias template variable &amp; output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts

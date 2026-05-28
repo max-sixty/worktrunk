@@ -1,0 +1,5 @@
+---
+source: tests/integration_tests/statusline.rs
+expression: out
+---
+[PATH]  main  [2m^[22m[2m|[22m  Opus  🌕42%  [33m1.3×pace(10am–3pm)[39m
