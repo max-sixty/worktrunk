@@ -418,6 +418,15 @@ fn gather_check_items(
             continue;
         }
 
+        // Unborn worktrees (`git worktree add --orphan`, HEAD = null OID)
+        // have no commits to integrate, so `integration_reason` would abort
+        // the whole prune scan with `fatal: Needed a single revision` from
+        // `git rev-parse` on the unborn branch. Skip them — they're never
+        // auto-prunable.
+        if !wt.has_commits() {
+            continue;
+        }
+
         if wt.is_prunable() {
             let integration_ref = wt.branch.clone().unwrap_or_else(|| wt.head.clone());
             check_items.push(CheckItem {
