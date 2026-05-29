@@ -1404,13 +1404,10 @@ fn approve_switch_hooks(
     let project_id = repo.project_identifier().ok();
     let pid = project_id.as_deref();
     let project_config = repo.load_project_config()?;
-    let mut builder = HookPlanBuilder::new();
+    let mut builder = HookPlanBuilder::new(project_config.as_ref(), config, pid);
     builder.add(
         plan.worktree_path(),
         switch_post_hook_types(plan.is_create()),
-        project_config.as_ref(),
-        config,
-        pid,
     );
     match builder.finish().approve(pid, yes)? {
         Some(approved) => Ok((true, approved)),

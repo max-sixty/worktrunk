@@ -192,7 +192,7 @@ use anstyle::Style;
 use unicode_width::UnicodeWidthStr;
 use worktrunk::styling::{ADDITION, DELETION, Stream, supports_hyperlinks};
 
-use crate::display::{shorten_path, terminal_width};
+use crate::display::shorten_path;
 
 use super::collect::{TaskKind, parse_port_from_url};
 use super::columns::{COLUMN_SPECS, ColumnKind, ColumnSpec, column_display_index};
@@ -648,7 +648,7 @@ fn build_estimated_widths(
 
 /// Allocate columns using priority-based allocation logic.
 ///
-/// This is the core allocation algorithm used by `calculate_layout_from_basics()`
+/// This is the core allocation algorithm used by `calculate_layout_with_width()`
 /// with pre-allocated width estimates for expensive-to-compute columns.
 fn allocate_columns_with_priority(
     metadata: &LayoutMetadata,
@@ -880,7 +880,10 @@ fn allocate_columns_with_priority(
     }
 }
 
-/// Calculate responsive layout from basic worktree info.
+/// Calculate responsive layout for an explicit terminal width.
+///
+/// (Contexts like skim pass a width smaller than the full terminal because the
+/// list only gets part of it; the rest belongs to the preview pane.)
 ///
 /// Uses pre-allocated width estimates for expensive-to-compute columns (status, diffs, time, CI).
 /// This is faster than scanning all data and provides consistent layout between buffered and
@@ -900,22 +903,6 @@ fn allocate_columns_with_priority(
 /// - CI: 1 char (indicator symbol)
 /// - Message: flexible (20-100 chars)
 /// - URL: estimated from template + longest branch
-pub fn calculate_layout_from_basics(
-    items: &[super::model::ListItem],
-    skip_tasks: &HashSet<TaskKind>,
-    main_worktree_path: &Path,
-    url_template: Option<&str>,
-) -> LayoutConfig {
-    calculate_layout_with_width(
-        items,
-        skip_tasks,
-        terminal_width(),
-        main_worktree_path,
-        url_template,
-    )
-}
-
-/// Calculate layout with explicit width (for contexts like skim where available width differs)
 pub fn calculate_layout_with_width(
     items: &[super::model::ListItem],
     skip_tasks: &HashSet<TaskKind>,
@@ -974,6 +961,7 @@ pub fn calculate_layout_with_width(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::display::terminal_width;
     use worktrunk::git::LineDiff;
 
     #[test]
@@ -1353,7 +1341,13 @@ mod tests {
             .into_iter()
             .collect();
         let main_worktree_path = PathBuf::from("/test");
-        let layout = calculate_layout_from_basics(&items, &skip_tasks, &main_worktree_path, None);
+        let layout = calculate_layout_with_width(
+            &items,
+            &skip_tasks,
+            terminal_width(),
+            &main_worktree_path,
+            None,
+        );
 
         assert!(
             !layout.columns.is_empty(),
@@ -1458,7 +1452,13 @@ mod tests {
             .into_iter()
             .collect();
         let main_worktree_path = PathBuf::from("/home/user/project");
-        let layout = calculate_layout_from_basics(&items, &skip_tasks, &main_worktree_path, None);
+        let layout = calculate_layout_with_width(
+            &items,
+            &skip_tasks,
+            terminal_width(),
+            &main_worktree_path,
+            None,
+        );
 
         assert!(
             layout

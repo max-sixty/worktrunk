@@ -439,21 +439,9 @@ fn approved_removal_plan(
     let user = repo.user_config();
     let project_config = repo.load_project_config()?;
 
-    let mut builder = HookPlanBuilder::new();
-    builder.add(
-        worktree_path,
-        &[HookType::PreRemove, HookType::PostRemove],
-        project_config.as_ref(),
-        user,
-        pid,
-    );
-    builder.add(
-        main_path,
-        &[HookType::PostSwitch],
-        project_config.as_ref(),
-        user,
-        pid,
-    );
+    let mut builder = HookPlanBuilder::new(project_config.as_ref(), user, pid);
+    builder.add(worktree_path, &[HookType::PreRemove, HookType::PostRemove]);
+    builder.add(main_path, &[HookType::PostSwitch]);
     Ok(builder.finish().approve_readonly(approvals, pid))
 }
 

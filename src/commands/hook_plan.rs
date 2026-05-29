@@ -89,33 +89,40 @@ pub struct HookPlan {
 /// `add` is the only place `load_project_config()`'s result feeds command
 /// selection for the covered hook types — `pub(crate)` and called only from
 /// command gates.
-pub struct HookPlanBuilder {
+pub struct HookPlanBuilder<'a> {
     entries: Vec<PlanEntry>,
+    project_config: Option<&'a ProjectConfig>,
+    user: &'a UserConfig,
+    project_id: Option<&'a str>,
 }
 
-impl HookPlanBuilder {
-    pub fn new() -> Self {
+impl<'a> HookPlanBuilder<'a> {
+    /// The gate resolves the selection context once: `project_config` (the
+    /// gate's snapshot) plus `user` config supply every `add`'s command lookup,
+    /// and `project_id` scopes the user-config hooks. Every covered hook selects
+    /// from the invoking worktree's config — the same context — so `add` only
+    /// names the anchor and the hook types.
+    pub fn new(
+        project_config: Option<&'a ProjectConfig>,
+        user: &'a UserConfig,
+        project_id: Option<&'a str>,
+    ) -> Self {
         Self {
             entries: Vec::new(),
+            project_config,
+            user,
+            project_id,
         }
     }
 
-    /// Select `hook_types` anchored at `anchor`, from the already-resolved
-    /// `project_config` (the gate snapshots it) plus user config.
-    ///
-    /// `project_id` scopes the user-config hook lookup. Source identity is
-    /// preserved so source-scoped behavior survives into execution.
-    pub fn add(
-        &mut self,
-        anchor: &Path,
-        hook_types: &[HookType],
-        project_config: Option<&ProjectConfig>,
-        user: &UserConfig,
-        project_id: Option<&str>,
-    ) -> &mut Self {
-        let user_hooks = user.hooks(project_id);
+    /// Select `hook_types` anchored at `anchor` from the builder's resolved
+    /// config context. Source identity is preserved so source-scoped behavior
+    /// survives into execution.
+    pub fn add(&mut self, anchor: &Path, hook_types: &[HookType]) -> &mut Self {
+        let user_hooks = self.user.hooks(self.project_id);
         for &hook_type in hook_types {
-            let (user_cfg, proj_cfg) = lookup_hook_configs(&user_hooks, project_config, hook_type);
+            let (user_cfg, proj_cfg) =
+                lookup_hook_configs(&user_hooks, self.project_config, hook_type);
             let mut selection: Selection = Vec::new();
             if let Some(cfg) = user_cfg {
                 selection.push((HookSource::User, cfg.clone()));
@@ -154,12 +161,6 @@ impl HookPlanBuilder {
         HookPlan {
             entries: self.entries,
         }
-    }
-}
-
-impl Default for HookPlanBuilder {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -432,14 +433,8 @@ mod tests {
         let user = UserConfig::default();
         let gate_cfg = project_cfg(r#"post-merge = "echo approved""#);
 
-        let mut builder = HookPlanBuilder::new();
-        builder.add(
-            Path::new("/dest"),
-            &[HookType::PostMerge],
-            Some(&gate_cfg),
-            &user,
-            None,
-        );
+        let mut builder = HookPlanBuilder::new(Some(&gate_cfg), &user, None);
+        builder.add(Path::new("/dest"), &[HookType::PostMerge]);
         // `--yes` ⇒ approved without writing approvals.
         let plan = builder
             .finish()
@@ -476,14 +471,8 @@ mod tests {
         };
         let proj = project_cfg(r#"pre-remove = "echo project-hook""#);
 
-        let mut builder = HookPlanBuilder::new();
-        builder.add(
-            Path::new("/wt"),
-            &[HookType::PreRemove],
-            Some(&proj),
-            &user,
-            None,
-        );
+        let mut builder = HookPlanBuilder::new(Some(&proj), &user, None);
+        builder.add(Path::new("/wt"), &[HookType::PreRemove]);
         let plan = builder
             .finish()
             // Empty approvals ⇒ the project pipeline is unapproved.
@@ -509,14 +498,8 @@ mod tests {
                 &approvals_path,
             )
             .unwrap();
-        let mut builder = HookPlanBuilder::new();
-        builder.add(
-            Path::new("/wt"),
-            &[HookType::PreRemove],
-            Some(&proj),
-            &user,
-            None,
-        );
+        let mut builder = HookPlanBuilder::new(Some(&proj), &user, None);
+        builder.add(Path::new("/wt"), &[HookType::PreRemove]);
         let plan = builder.finish().approve_readonly(&approvals, Some("proj"));
         let sel = plan.lookup(HookType::PreRemove, Path::new("/wt"));
         assert_eq!(
@@ -537,22 +520,10 @@ mod tests {
         };
         let proj = project_cfg(r#"post-merge = "echo p""#);
 
-        let mut builder = HookPlanBuilder::new();
+        let mut builder = HookPlanBuilder::new(Some(&proj), &user, None);
         // Same (PostMerge, /dest) added twice — the interleave-prone path.
-        builder.add(
-            Path::new("/dest"),
-            &[HookType::PostMerge],
-            Some(&proj),
-            &user,
-            None,
-        );
-        builder.add(
-            Path::new("/dest"),
-            &[HookType::PostMerge],
-            Some(&proj),
-            &user,
-            None,
-        );
+        builder.add(Path::new("/dest"), &[HookType::PostMerge]);
+        builder.add(Path::new("/dest"), &[HookType::PostMerge]);
         let plan = builder
             .finish()
             .approve(Some("proj"), true)

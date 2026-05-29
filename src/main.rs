@@ -930,28 +930,16 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                 let project_id = repo.project_identifier().ok();
                 let pid = project_id.as_deref();
                 let project_config = repo.load_project_config()?;
-                let mut builder = HookPlanBuilder::new();
+                let mut builder = HookPlanBuilder::new(project_config.as_ref(), &config, pid);
                 for &wt_path in removed_worktree_paths {
-                    builder.add(
-                        wt_path,
-                        &[HookType::PreRemove, HookType::PostRemove],
-                        project_config.as_ref(),
-                        &config,
-                        pid,
-                    );
+                    builder.add(wt_path, &[HookType::PreRemove, HookType::PostRemove]);
                 }
                 let mut seen_dests = std::collections::HashSet::new();
                 for &dest in destination_paths {
                     if !seen_dests.insert(dest) {
                         continue;
                     }
-                    builder.add(
-                        dest,
-                        &[HookType::PostSwitch],
-                        project_config.as_ref(),
-                        &config,
-                        pid,
-                    );
+                    builder.add(dest, &[HookType::PostSwitch]);
                 }
                 match builder.finish().approve(pid, yes)? {
                     Some(plan) => Ok(plan),

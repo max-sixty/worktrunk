@@ -1041,21 +1041,13 @@ pub fn collect(
     // Calculate layout from items (worktrees, local branches, and remote branches).
     // The picker passes an explicit width because the list only gets part of the
     // terminal — the rest belongs to the preview pane.
-    let layout = match list_width {
-        Some(width) => super::layout::calculate_layout_with_width(
-            &all_items,
-            &effective_skip_tasks,
-            width,
-            &main_worktree.path,
-            url_template.as_deref(),
-        ),
-        None => super::layout::calculate_layout_from_basics(
-            &all_items,
-            &effective_skip_tasks,
-            &main_worktree.path,
-            url_template.as_deref(),
-        ),
-    };
+    let layout = super::layout::calculate_layout_with_width(
+        &all_items,
+        &effective_skip_tasks,
+        list_width.unwrap_or_else(crate::display::terminal_width),
+        &main_worktree.path,
+        url_template.as_deref(),
+    );
 
     // Single-line invariant: use safe width to prevent line wrapping
     let max_width = crate::display::terminal_width();

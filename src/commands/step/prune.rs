@@ -604,20 +604,14 @@ fn build_pessimistic_plan(
     user_config: &UserConfig,
     project_id: Option<&str>,
 ) -> anyhow::Result<HookPlan> {
-    let mut builder = HookPlanBuilder::new();
+    let mut builder = HookPlanBuilder::new(project_config, user_config, project_id);
     let mut has_current = false;
     for item in check_items {
         let CheckSource::Linked { wt_idx } = &item.source else {
             continue;
         };
         let wt = &worktrees[*wt_idx];
-        builder.add(
-            &wt.path,
-            &[HookType::PreRemove, HookType::PostRemove],
-            project_config,
-            user_config,
-            project_id,
-        );
+        builder.add(&wt.path, &[HookType::PreRemove, HookType::PostRemove]);
         let wt_path = dunce::canonicalize(&wt.path).unwrap_or_else(|_| wt.path.clone());
         if wt_path == *current_root {
             has_current = true;
@@ -625,13 +619,7 @@ fn build_pessimistic_plan(
     }
     if has_current {
         let primary = repo.home_path()?;
-        builder.add(
-            &primary,
-            &[HookType::PostSwitch],
-            project_config,
-            user_config,
-            project_id,
-        );
+        builder.add(&primary, &[HookType::PostSwitch]);
     }
     Ok(builder.finish())
 }
@@ -650,8 +638,8 @@ fn unapproved_for_hook(
     let Ok(home) = repo.home_path() else {
         return Vec::new();
     };
-    let mut b = HookPlanBuilder::new();
-    b.add(&home, &[hook_type], project_config, user_config, project_id);
+    let mut b = HookPlanBuilder::new(project_config, user_config, project_id);
+    b.add(&home, &[hook_type]);
     b.finish()
         .unapproved_project_commands(approvals, project_id)
 }
