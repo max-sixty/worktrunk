@@ -535,6 +535,46 @@ fn detect_deprecations_from_doc(
     }
 }
 
+/// Detect-side scope walk: apply `f` to the top-level table (scope `None`) and
+/// to each `[projects."key"]` table (scope `Some(key)`), short-circuiting on the
+/// first `true`. The scope key feeds callers that build display paths.
+fn any_config_table(
+    doc: &toml_edit::DocumentMut,
+    mut f: impl FnMut(Option<&str>, &toml_edit::Table) -> bool,
+) -> bool {
+    if f(None, doc.as_table()) {
+        return true;
+    }
+    if let Some(projects) = doc.get("projects").and_then(|p| p.as_table()) {
+        for (key, value) in projects.iter() {
+            if let Some(table) = value.as_table()
+                && f(Some(key), table)
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Migrate-side scope walk: apply `f` mutably to the top-level table (scope
+/// `None`) and to each `[projects."key"]` table (scope `Some(key)`), returning
+/// whether any scope reported a change.
+fn for_each_config_table_mut(
+    doc: &mut toml_edit::DocumentMut,
+    mut f: impl FnMut(Option<&str>, &mut toml_edit::Table) -> bool,
+) -> bool {
+    let mut modified = f(None, doc.as_table_mut());
+    if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
+        for (key, value) in projects.iter_mut() {
+            if let Some(table) = value.as_table_mut() {
+                modified |= f(Some(key.get()), table);
+            }
+        }
+    }
+    modified
+}
+
 fn find_approved_commands_from_doc(doc: &toml_edit::DocumentMut) -> bool {
     let Some(projects) = doc.get("projects").and_then(|p| p.as_table()) else {
         return false;
@@ -552,50 +592,32 @@ fn find_approved_commands_from_doc(doc: &toml_edit::DocumentMut) -> bool {
     false
 }
 
+/// Whether a scope has a non-empty deprecated `commit-generation` section and
+/// no canonical `[commit.generation]` to supersede it. Shared by detection and
+/// migration so both agree on which scopes need migrating.
+fn has_deprecated_commit_generation(table: &toml_edit::Table) -> bool {
+    if has_table_like_child(table.get("commit"), "generation") {
+        return false;
+    }
+    table.get("commit-generation").is_some_and(|section| {
+        section.as_table().is_some_and(|t| !t.is_empty())
+            || section.as_inline_table().is_some_and(|t| !t.is_empty())
+    })
+}
+
 fn find_commit_generation_from_doc(doc: &toml_edit::DocumentMut) -> CommitGenerationDeprecations {
     let mut result = CommitGenerationDeprecations::default();
-
-    // Check if new [commit.generation] already exists as a valid table
-    // (skip deprecation warning if so)
-    let has_new_section = has_table_like_child(doc.get("commit"), "generation");
-
-    // Check top-level [commit-generation] - only flag if non-empty and new section doesn't exist
-    // Handle both regular tables and inline tables
-    if !has_new_section && let Some(section) = doc.get("commit-generation") {
-        if let Some(table) = section.as_table() {
-            if !table.is_empty() {
-                result.has_top_level = true;
-            }
-        } else if let Some(inline) = section.as_inline_table()
-            && !inline.is_empty()
-        {
-            result.has_top_level = true;
-        }
-    }
-
-    // Check [projects."...".commit-generation]
-    if let Some(projects) = doc.get("projects").and_then(|p| p.as_table()) {
-        for (project_key, project_value) in projects.iter() {
-            if let Some(project_table) = project_value.as_table() {
-                // Check if this project has new section as a valid table
-                let has_new_project_section =
-                    has_table_like_child(project_table.get("commit"), "generation");
-
-                // Only flag if old section exists, is non-empty, and new doesn't exist
-                // Handle both regular tables and inline tables
-                if !has_new_project_section
-                    && let Some(old_section) = project_table.get("commit-generation")
-                {
-                    let is_non_empty = old_section.as_table().is_some_and(|t| !t.is_empty())
-                        || old_section.as_inline_table().is_some_and(|t| !t.is_empty());
-                    if is_non_empty {
-                        result.project_keys.push(project_key.to_string());
-                    }
-                }
+    // Top-level sets a bool; each project records its key — a per-scope fork, so
+    // the closure branches on the scope rather than returning a uniform bool.
+    any_config_table(doc, |scope, table| {
+        if has_deprecated_commit_generation(table) {
+            match scope {
+                None => result.has_top_level = true,
+                Some(key) => result.project_keys.push(key.to_string()),
             }
         }
-    }
-
+        false
+    });
     result
 }
 
@@ -656,80 +678,39 @@ fn into_table(item: toml_edit::Item) -> Option<toml_edit::Table> {
     }
 }
 
-fn migrate_commit_generation_doc(doc: &mut toml_edit::DocumentMut) -> bool {
-    let mut modified = false;
-
-    // Check if new [commit.generation] already exists as a valid table - if so, skip migration
-    // (new format takes precedence, don't overwrite it)
-    let has_new_section = has_table_like_child(doc.get("commit"), "generation");
-
-    // Migrate top-level [commit-generation] → [commit.generation]
-    // Only if new section doesn't already exist
-    // Handle both regular tables and inline tables. Peek before removing so a
-    // malformed value (e.g., a bare string) is left in place rather than
-    // silently dropped when a sibling migration also serializes the doc.
-    // Also require `commit` be absent or a table — a scalar `commit = "x"`
-    // blocks insertion of `[commit.generation]`; removing the source then
-    // would silently drop the deprecated section.
-    if !has_new_section
-        && doc.get("commit-generation").is_some_and(is_table_like)
-        && can_host_subtable(doc.get("commit"))
-        && let Some(old_section) = doc.remove("commit-generation")
+/// Migrate one scope's `[commit-generation]` → `[commit.generation]`.
+///
+/// Skips when a canonical `[commit.generation]` already exists (new format takes
+/// precedence). Peeks before removing so a malformed value (e.g. a bare string)
+/// is left in place rather than silently dropped when a sibling migration also
+/// serializes the doc. Requires `commit` be absent or a table — a scalar
+/// `commit = "x"` blocks insertion of `[commit.generation]`, and removing the
+/// source then would silently drop the deprecated section.
+fn migrate_commit_generation_in(table: &mut toml_edit::Table) -> bool {
+    if has_table_like_child(table.get("commit"), "generation")
+        || !table.get("commit-generation").is_some_and(is_table_like)
+        || !can_host_subtable(table.get("commit"))
     {
-        let mut table = into_table(old_section).expect("checked is_table_like above");
-
-        // Merge args into command if present
-        merge_args_into_command(&mut table);
-
-        // Ensure [commit] section exists.
-        // Mark as implicit so it doesn't render a separate [commit] header
-        // (only [commit.generation] will render)
-        // Move to [commit.generation]
-        if let Some(commit_table) = ensure_standard_table_parent(doc.as_table_mut(), "commit") {
-            commit_table.insert("generation", toml_edit::Item::Table(table));
-        }
-
-        modified = true;
+        return false;
     }
+    let Some(old_section) = table.remove("commit-generation") else {
+        return false;
+    };
+    let mut generation = into_table(old_section).expect("checked is_table_like above");
 
-    // Migrate [projects."...".commit-generation] → [projects."...".commit.generation]
-    if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
-        for (_project_key, project_value) in projects.iter_mut() {
-            if let Some(project_table) = project_value.as_table_mut() {
-                // Check if new section already exists as a valid table for this project
-                let has_new_project_section =
-                    has_table_like_child(project_table.get("commit"), "generation");
+    // Merge args into command if present.
+    merge_args_into_command(&mut generation);
 
-                // Peek before removing so a malformed value is preserved.
-                // Same scalar-parent guard as the top-level case above.
-                if !has_new_project_section
-                    && project_table
-                        .get("commit-generation")
-                        .is_some_and(is_table_like)
-                    && can_host_subtable(project_table.get("commit"))
-                    && let Some(old_section) = project_table.remove("commit-generation")
-                {
-                    let mut table = into_table(old_section).expect("checked is_table_like above");
-
-                    // Merge args into command if present
-                    merge_args_into_command(&mut table);
-
-                    // Ensure [projects."...".commit] section exists.
-                    // Mark as implicit so it doesn't render a separate header
-                    // Move to [projects."...".commit.generation]
-                    if let Some(commit_table) =
-                        ensure_standard_table_parent(project_table, "commit")
-                    {
-                        commit_table.insert("generation", toml_edit::Item::Table(table));
-                    }
-
-                    modified = true;
-                }
-            }
-        }
+    // Ensure [commit] exists (implicit, so only [commit.generation] renders a
+    // header) and move the migrated section under it.
+    if let Some(commit_table) = ensure_standard_table_parent(table, "commit") {
+        commit_table.insert("generation", toml_edit::Item::Table(generation));
     }
+    true
+}
 
-    modified
+fn migrate_commit_generation_doc(doc: &mut toml_edit::DocumentMut) -> bool {
+    for_each_config_table_mut(doc, |_, table| migrate_commit_generation_in(table))
 }
 
 /// Remove `approved-commands` from all `\[projects."..."\]` sections.
@@ -785,22 +766,7 @@ fn remove_approved_commands_doc(doc: &mut toml_edit::DocumentMut) -> bool {
 }
 
 fn find_select_from_doc(doc: &toml_edit::DocumentMut) -> bool {
-    if has_select_without_picker(doc) {
-        return true;
-    }
-
-    // Check project-level sections
-    if let Some(projects) = doc.get("projects").and_then(|p| p.as_table()) {
-        for (_key, project_value) in projects.iter() {
-            if let Some(project_table) = project_value.as_table()
-                && has_select_without_picker(project_table)
-            {
-                return true;
-            }
-        }
-    }
-
-    false
+    any_config_table(doc, |_, table| has_select_without_picker(table))
 }
 
 /// Check if a table has a non-empty `select` section without `switch.picker`.
@@ -828,43 +794,30 @@ fn has_select_without_picker(table: &toml_edit::Table) -> bool {
 /// Handles both top-level and project-level `[projects."...".select]` sections.
 /// Skips each migration if `[switch.picker]` already exists at that level.
 fn migrate_select_doc(doc: &mut toml_edit::DocumentMut) -> bool {
-    let mut modified = false;
-
-    // Migrate top-level [select] → [switch.picker]
-    migrate_select_table(doc.as_table_mut(), &mut modified);
-
-    // Migrate project-level [projects."...".select] → [projects."...".switch.picker]
-    if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
-        for (_key, project_value) in projects.iter_mut() {
-            if let Some(project_table) = project_value.as_table_mut() {
-                migrate_select_table(project_table, &mut modified);
-            }
-        }
-    }
-
-    modified
+    for_each_config_table_mut(doc, |_, table| migrate_select_table(table))
 }
 
-/// Migrate a `select` key to `switch.picker` within a table.
+/// Migrate a `select` key to `switch.picker` within a table. Returns whether a
+/// migration was performed.
 ///
 /// Leaves a malformed `select` (e.g., a string) in place rather than removing
 /// it — silently dropping it would lose user config when a sibling migration
 /// also rewrites the document.
-fn migrate_select_table(table: &mut toml_edit::Table, modified: &mut bool) {
+fn migrate_select_table(table: &mut toml_edit::Table) -> bool {
     let has_new_section = has_table_like_child(table.get("switch"), "picker");
 
     if has_new_section {
-        return;
+        return false;
     }
 
     if !table.get("select").is_some_and(is_table_like) {
-        return;
+        return false;
     }
 
     // A scalar `switch = "x"` blocks insertion of `[switch.picker]`; removing
     // `select` then would silently drop the user's picker config.
     if !can_host_subtable(table.get("switch")) {
-        return;
+        return false;
     }
 
     let select_table =
@@ -874,7 +827,7 @@ fn migrate_select_table(table: &mut toml_edit::Table, modified: &mut bool) {
         switch_table.insert("picker", toml_edit::Item::Table(select_table));
     }
 
-    *modified = true;
+    true
 }
 
 /// The 5 canonical pre-* hook keys.
@@ -912,20 +865,11 @@ fn collect_pre_hook_table_form_keys(
 /// hook found.
 fn find_pre_hook_table_form_from_doc(doc: &toml_edit::DocumentMut) -> Vec<String> {
     let mut found = Vec::new();
-
-    // Top-level (user config or project config)
-    collect_pre_hook_table_form_keys(doc.as_table(), "", &mut found);
-
-    // Per-project overrides (user config)
-    if let Some(projects) = doc.get("projects").and_then(|p| p.as_table()) {
-        for (project_key, project_value) in projects.iter() {
-            if let Some(project_table) = project_value.as_table() {
-                let prefix = format!("projects.\"{project_key}\"");
-                collect_pre_hook_table_form_keys(project_table, &prefix, &mut found);
-            }
-        }
-    }
-
+    any_config_table(doc, |scope, table| {
+        let prefix = scope.map_or_else(String::new, |key| format!("projects.\"{key}\""));
+        collect_pre_hook_table_form_keys(table, &prefix, &mut found);
+        false
+    });
     found
 }
 
@@ -1005,30 +949,12 @@ fn find_negated_bool_from_doc(
     old_key: &str,
     new_key: &str,
 ) -> bool {
-    // Check top-level section
-    if let Some(table) = doc.get(section).and_then(|s| s.as_table())
-        && !table.contains_key(new_key)
-        && table.contains_key(old_key)
-    {
-        return true;
-    }
-
-    // Check project-level sections
-    if let Some(projects) = doc.get("projects").and_then(|p| p.as_table()) {
-        for (_key, project_value) in projects.iter() {
-            if let Some(table) = project_value
-                .as_table()
-                .and_then(|t| t.get(section))
-                .and_then(|s| s.as_table())
-                && !table.contains_key(new_key)
-                && table.contains_key(old_key)
-            {
-                return true;
-            }
-        }
-    }
-
-    false
+    any_config_table(doc, |_, scope| {
+        scope
+            .get(section)
+            .and_then(|s| s.as_table())
+            .is_some_and(|table| !table.contains_key(new_key) && table.contains_key(old_key))
+    })
 }
 
 /// Migrate a negated boolean field within a table (e.g., `no-ff = true` → `ff = false`).
@@ -1059,30 +985,12 @@ fn migrate_negated_bool_doc(
     old_key: &str,
     new_key: &str,
 ) -> bool {
-    let mut modified = false;
-
-    // Top-level section
-    if let Some(table) = doc.get_mut(section).and_then(|s| s.as_table_mut())
-        && migrate_negated_bool(table, old_key, new_key)
-    {
-        modified = true;
-    }
-
-    // Project-level sections
-    if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
-        for (_key, project_value) in projects.iter_mut() {
-            if let Some(table) = project_value
-                .as_table_mut()
-                .and_then(|t| t.get_mut(section))
-                .and_then(|s| s.as_table_mut())
-                && migrate_negated_bool(table, old_key, new_key)
-            {
-                modified = true;
-            }
-        }
-    }
-
-    modified
+    for_each_config_table_mut(doc, |_, scope| {
+        scope
+            .get_mut(section)
+            .and_then(|s| s.as_table_mut())
+            .is_some_and(|table| migrate_negated_bool(table, old_key, new_key))
+    })
 }
 
 /// Convert a multi-entry pre-* table section into an array-of-tables pipeline.
@@ -1093,7 +1001,7 @@ fn migrate_negated_bool_doc(
 /// Iterates pre-* keys in document order (not [`PRE_HOOK_KEYS`] order) so
 /// migrated sections land in the same relative position they had in the
 /// source file.
-fn migrate_pre_hook_table_in(table: &mut toml_edit::Table, modified: &mut bool) {
+fn migrate_pre_hook_table_in(table: &mut toml_edit::Table) -> bool {
     let keys_to_migrate: Vec<String> = table
         .iter()
         .filter(|(k, v)| {
@@ -1103,6 +1011,7 @@ fn migrate_pre_hook_table_in(table: &mut toml_edit::Table, modified: &mut bool) 
         .map(|(k, _)| k.to_string())
         .collect();
 
+    let mut modified = false;
     for key in keys_to_migrate {
         let item = table.get_mut(&key).unwrap();
         let entries = pre_hook_pipeline_entries(item).unwrap();
@@ -1115,8 +1024,9 @@ fn migrate_pre_hook_table_in(table: &mut toml_edit::Table, modified: &mut bool) 
         }
 
         *item = toml_edit::Item::ArrayOfTables(arr);
-        *modified = true;
+        modified = true;
     }
+    modified
 }
 
 fn pre_hook_pipeline_entries(item: &toml_edit::Item) -> Option<Vec<(String, String)>> {
@@ -1144,21 +1054,7 @@ fn pre_hook_pipeline_entries(item: &toml_edit::Item) -> Option<Vec<(String, Stri
 /// Hooks are flattened into the top level of user config, project config, and
 /// each `[projects."id"]` subtree.
 fn migrate_pre_hook_table_form_doc(doc: &mut toml_edit::DocumentMut) -> bool {
-    let mut modified = false;
-
-    // Top-level (user config or project config)
-    migrate_pre_hook_table_in(doc.as_table_mut(), &mut modified);
-
-    // Per-project overrides (user config)
-    if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
-        for (_key, project_value) in projects.iter_mut() {
-            if let Some(project_table) = project_value.as_table_mut() {
-                migrate_pre_hook_table_in(project_table, &mut modified);
-            }
-        }
-    }
-
-    modified
+    for_each_config_table_mut(doc, |_, table| migrate_pre_hook_table_in(table))
 }
 
 /// Apply all structural TOML migrations to a parsed document.
@@ -1248,19 +1144,7 @@ fn has_switch_picker_timeout(table: &toml_edit::Table) -> bool {
 }
 
 fn find_switch_picker_timeout_from_doc(doc: &toml_edit::DocumentMut) -> bool {
-    if has_switch_picker_timeout(doc.as_table()) {
-        return true;
-    }
-    if let Some(projects) = doc.get("projects").and_then(|p| p.as_table()) {
-        for (_key, project_value) in projects.iter() {
-            if let Some(project_table) = project_value.as_table()
-                && has_switch_picker_timeout(project_table)
-            {
-                return true;
-            }
-        }
-    }
-    false
+    any_config_table(doc, |_, table| has_switch_picker_timeout(table))
 }
 
 /// Remove `timeout-ms` from `[switch.picker]` in a table (top-level or project).
@@ -1286,15 +1170,7 @@ fn remove_switch_picker_timeout_in(table: &mut toml_edit::Table) -> bool {
 /// Strips the key at both the top level and under `[projects."..."]`. Empty
 /// `[switch.picker]` sections are left in place — they round-trip harmlessly.
 fn migrate_switch_picker_timeout_doc(doc: &mut toml_edit::DocumentMut) -> bool {
-    let mut modified = remove_switch_picker_timeout_in(doc.as_table_mut());
-    if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
-        for (_key, project_value) in projects.iter_mut() {
-            if let Some(project_table) = project_value.as_table_mut() {
-                modified |= remove_switch_picker_timeout_in(project_table);
-            }
-        }
-    }
-    modified
+    for_each_config_table_mut(doc, |_, table| remove_switch_picker_timeout_in(table))
 }
 
 fn migrate_content_from_doc(content: &str, mut doc: toml_edit::DocumentMut) -> String {
