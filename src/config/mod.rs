@@ -100,6 +100,29 @@ pub(crate) fn is_default<T: Default + PartialEq>(value: &T) -> bool {
     *value == T::default()
 }
 
+/// Returns all valid top-level keys for a config type, derived from its
+/// JsonSchema. The schema flattens nested structs (e.g. `HooksConfig`), so all
+/// top-level keys appear in `properties`. Drives `WorktrunkConfig::is_valid_key`
+/// (misplaced-key classification) and the round-trip in `unknown_tree`.
+///
+/// `pre-create`/`post-create` are appended as silent serde aliases for the
+/// canonical `pre-start`/`post-start` hook keys (see `HooksConfig` in
+/// `src/config/hooks.rs`). The schema only knows canonical names from
+/// `#[serde(rename = ...)]`; adding the aliases here keeps the unknown-key
+/// round-trip from flagging an accepted name as unknown.
+pub(crate) fn schema_top_level_keys<T: schemars::JsonSchema>() -> Vec<String> {
+    let schema = schemars::SchemaGenerator::default().into_root_schema_for::<T>();
+    let mut keys: Vec<String> = schema
+        .as_object()
+        .and_then(|obj| obj.get("properties"))
+        .and_then(|p| p.as_object())
+        .map(|props| props.keys().cloned().collect())
+        .unwrap_or_default();
+    keys.push("pre-create".to_string());
+    keys.push("post-create".to_string());
+    keys
+}
+
 // Re-export public types
 pub use approvals::{Approvals, approvals_path, require_approvals_path};
 pub use commands::{Command, CommandConfig, HookStep, append_aliases};

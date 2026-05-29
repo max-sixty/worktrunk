@@ -432,6 +432,29 @@ fn fetch_same_repo_branch(repo: &Repository, info: &RemoteRefInfo) -> anyhow::Re
     Ok(())
 }
 
+/// Parse a `pr:N` / `mr:N` shortcut into its ref type and number, first
+/// normalising a forge PR/MR web URL (e.g.
+/// `https://github.com/owner/repo/pull/123`) into the same literal shortcut so
+/// both forms flow through one dispatch. Returns `None` for a regular branch
+/// name, which callers resolve as an ordinary ref.
+fn parse_ref_shortcut(input: &str) -> Option<(RefType, u32)> {
+    let normalised = parse_ref_url(input);
+    let input = normalised.as_deref().unwrap_or(input);
+    if let Some(number) = input
+        .strip_prefix("pr:")
+        .and_then(|s| s.parse::<u32>().ok())
+    {
+        return Some((RefType::Pr, number));
+    }
+    if let Some(number) = input
+        .strip_prefix("mr:")
+        .and_then(|s| s.parse::<u32>().ok())
+    {
+        return Some((RefType::Mr, number));
+    }
+    None
+}
+
 /// Resolve a `--base` value, expanding `pr:`/`mr:` shortcuts. Non-shortcut
 /// inputs go through [`Repository::resolve_worktree_name`] (handles `@`/`-`/`^`).
 ///
@@ -449,22 +472,12 @@ fn resolve_base_ref(
     repo: &Repository,
     base: &str,
 ) -> anyhow::Result<(String, Option<(String, String)>)> {
-    // Forge PR/MR web URLs (e.g. `https://github.com/owner/repo/pull/123`)
-    // normalise into the literal `pr:N` / `mr:N` shortcut so the parsing
-    // below handles both forms identically — no duplicate dispatch.
-    let normalised = parse_ref_url(base);
-    let base = normalised.as_deref().unwrap_or(base);
-
-    if let Some(suffix) = base.strip_prefix("pr:")
-        && let Ok(number) = suffix.parse::<u32>()
-    {
-        return resolve_pr_base(repo, number);
-    }
-
-    if let Some(suffix) = base.strip_prefix("mr:")
-        && let Ok(number) = suffix.parse::<u32>()
-    {
-        return resolve_remote_ref_as_base(repo, &GitLabProvider, number);
+    match parse_ref_shortcut(base) {
+        Some((RefType::Pr, number)) => return resolve_pr_base(repo, number),
+        Some((RefType::Mr, number)) => {
+            return resolve_remote_ref_as_base(repo, &GitLabProvider, number);
+        }
+        None => {}
     }
 
     let resolved = repo.resolve_worktree_name(base)?;
@@ -533,24 +546,14 @@ fn resolve_switch_target(
     create: bool,
     base: Option<&str>,
 ) -> anyhow::Result<ResolvedTarget> {
-    // Forge PR/MR web URLs (e.g. `https://github.com/owner/repo/pull/123`)
-    // normalise into the literal `pr:N` / `mr:N` shortcut so the parsing
-    // below handles both forms identically — no duplicate dispatch.
-    let normalised = parse_ref_url(branch);
-    let branch = normalised.as_deref().unwrap_or(branch);
-
-    // Handle pr:<number> syntax — dispatches to GitHub, Gitea, or Azure DevOps based on remotes.
-    if let Some(suffix) = branch.strip_prefix("pr:")
-        && let Ok(number) = suffix.parse::<u32>()
-    {
-        return resolve_pr_target(repo, number, create, base);
-    }
-
-    // Handle mr:<number> syntax (GitLab MRs)
-    if let Some(suffix) = branch.strip_prefix("mr:")
-        && let Ok(number) = suffix.parse::<u32>()
-    {
-        return resolve_remote_ref(repo, &GitLabProvider, number, create, base);
+    // `pr:N` dispatches to GitHub, Gitea, or Azure DevOps based on remotes;
+    // `mr:N` to GitLab. Forge PR/MR web URLs normalise to the same shortcuts.
+    match parse_ref_shortcut(branch) {
+        Some((RefType::Pr, number)) => return resolve_pr_target(repo, number, create, base),
+        Some((RefType::Mr, number)) => {
+            return resolve_remote_ref(repo, &GitLabProvider, number, create, base);
+        }
+        None => {}
     }
 
     // Regular branch switch

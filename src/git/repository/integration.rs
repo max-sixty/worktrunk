@@ -71,6 +71,16 @@ pub struct MergeProbeResult {
 /// tuning.
 const PATCH_ID_SCAN_MAX_COMMITS: usize = 500;
 
+/// Outcome of `git merge-tree --write-tree`, classified by exit code.
+///
+/// Exit 0 → `Clean` carrying the resulting tree SHA; exit 1 → `Conflict`;
+/// anything else is an error (the helper bails). Both merge-tree callers
+/// share this dispatch; they differ only in what they do with a clean tree.
+enum MergeTreeOutcome {
+    Clean { tree: String },
+    Conflict,
+}
+
 impl Repository {
     /// Check if `base_sha` is an ancestor of `head_sha`, taking commit SHAs
     /// directly. Hits the persistent SHA-keyed cache without going through
@@ -195,6 +205,28 @@ impl Repository {
         self.run_merge_tree(base_sha, head_commit, base_sha, &cache_head)
     }
 
+    /// Run `git merge-tree --write-tree <a> <b>` and classify the outcome by
+    /// exit code. Exit 1 → [`MergeTreeOutcome::Conflict`]; anything other than
+    /// success is an error; exit 0 → [`MergeTreeOutcome::Clean`] with the
+    /// resulting tree SHA (first line of stdout).
+    fn merge_tree_outcome(&self, a: &str, b: &str) -> anyhow::Result<MergeTreeOutcome> {
+        // Exit codes: 0 = clean merge, 1 = conflicts, 128+ = error (invalid ref, corrupt repo)
+        let output = self.run_command_output(&["merge-tree", "--write-tree", a, b])?;
+
+        if output.status.code() == Some(1) {
+            return Ok(MergeTreeOutcome::Conflict);
+        }
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("git merge-tree failed for {a} {b}: {}", stderr.trim());
+        }
+
+        // Clean merge — first line of stdout is the resulting tree SHA.
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let tree = stdout.lines().next().unwrap_or("").trim().to_string();
+        Ok(MergeTreeOutcome::Clean { tree })
+    }
+
     /// Run merge-tree and cache the result.
     ///
     /// `base_sha` and `head_sha` are passed to `git merge-tree` (must be
@@ -213,23 +245,12 @@ impl Repository {
             return Ok(true);
         }
 
-        // Exit codes: 0 = clean merge, 1 = conflicts, 128+ = error (invalid ref, corrupt repo)
-        let output =
-            self.run_command_output(&["merge-tree", "--write-tree", base_sha, head_sha])?;
-
-        if output.status.code() == Some(1) {
-            super::sha_cache::put_merge_conflicts(self, cache_base, cache_head, true);
-            return Ok(true);
-        }
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!(
-                "git merge-tree failed for {base_sha} {head_sha}: {}",
-                stderr.trim()
-            );
-        }
-        super::sha_cache::put_merge_conflicts(self, cache_base, cache_head, false);
-        Ok(false)
+        let conflicts = matches!(
+            self.merge_tree_outcome(base_sha, head_sha)?,
+            MergeTreeOutcome::Conflict
+        );
+        super::sha_cache::put_merge_conflicts(self, cache_base, cache_head, conflicts);
+        Ok(conflicts)
     }
 
     /// Check if merging a branch into target would add anything (not already integrated).
@@ -245,30 +266,16 @@ impl Repository {
         branch: &str,
         target: &str,
     ) -> anyhow::Result<Option<bool>> {
-        // Exit codes: 0 = clean merge, 1 = conflicts, 128+ = error (invalid ref, corrupt repo)
-        let output = self.run_command_output(&["merge-tree", "--write-tree", target, branch])?;
-
-        if output.status.code() == Some(1) {
-            // Conflicts — caller should try patch-id fallback
-            return Ok(None);
+        match self.merge_tree_outcome(target, branch)? {
+            // Conflicts — caller should try patch-id fallback.
+            MergeTreeOutcome::Conflict => Ok(None),
+            MergeTreeOutcome::Clean { tree } => {
+                // If the merge result differs from target's tree, merging would
+                // add something (the branch is not already integrated).
+                let target_tree = self.rev_parse_tree(&format!("{target}^{{tree}}"))?;
+                Ok(Some(tree != target_tree))
+            }
         }
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!(
-                "git merge-tree failed for {target} {branch}: {}",
-                stderr.trim()
-            );
-        }
-
-        // Clean merge — first line of stdout is the resulting tree SHA
-        let merge_tree = String::from_utf8_lossy(&output.stdout);
-        let merge_tree = merge_tree.lines().next().unwrap_or("").trim();
-
-        // Get target's tree for comparison
-        let target_tree = self.rev_parse_tree(&format!("{target}^{{tree}}"))?;
-
-        // If merge result differs from target's tree, merging would add something
-        Ok(Some(merge_tree != target_tree))
     }
 
     /// Detect squash merges via patch-id matching.
