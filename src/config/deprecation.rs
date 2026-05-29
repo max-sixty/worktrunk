@@ -461,78 +461,102 @@ impl CommitGenerationDeprecations {
     }
 }
 
-/// All deprecation information detected in a config file.
+/// One deprecated config pattern, carrying the payload its warning needs.
 ///
-/// This is a pure data struct with no path/label context. Used by both
-/// config loading (brief warnings) and `wt config show` (full details).
-#[derive(Debug, Default, Clone)]
-pub struct Deprecations {
-    /// Deprecated template variables found: (old_name, new_name)
-    pub vars: Vec<(&'static str, &'static str)>,
-    /// Deprecated commit-generation sections found
-    pub commit_gen: CommitGenerationDeprecations,
-    /// Has `approved-commands` in any `[projects."..."]` section (moved to approvals.toml)
-    pub approved_commands: bool,
-    /// Has `[select]` section (moved to `[switch.picker]`)
-    pub select: bool,
-    /// Has `[ci]` section (moved to `[forge]`)
-    pub ci_section: bool,
-    /// Has `no-ff` in `[merge]` section (use `ff` instead)
-    pub no_ff: bool,
-    /// Has `no-cd` in `[switch]` section (use `cd` instead)
-    pub no_cd: bool,
-    /// Pre-* hooks using multi-entry table form (will become concurrent in a future version)
-    pub pre_hook_table_form: Vec<String>,
-    /// Has `timeout-ms` under `[switch.picker]` (removed — picker now renders progressively)
-    pub switch_picker_timeout_ms: bool,
+/// Each variant maps to a single `format_deprecation_warnings` arm. Silently
+/// migrated patterns (the `-create` → `-start` hook rename) have NO variant —
+/// they produce no warning by construction.
+#[derive(Debug, Clone)]
+pub enum DeprecationKind {
+    /// Deprecated template variable `old` replaced by `new`.
+    TemplateVar {
+        old: &'static str,
+        new: &'static str,
+    },
+    /// `[commit-generation]` sections → `[commit.generation]`. Carries the
+    /// top-level flag plus per-project keys so each emits its own warning line.
+    CommitGeneration(CommitGenerationDeprecations),
+    /// `approved-commands` under `[projects."..."]` (moved to approvals.toml).
+    ApprovedCommands,
+    /// `[select]` section (moved to `[switch.picker]`).
+    Select,
+    /// `[ci]` section (moved to `[forge]`).
+    CiSection,
+    /// `no-ff` in `[merge]` (use `ff` instead).
+    NoFf,
+    /// `no-cd` in `[switch]` (use `cd` instead).
+    NoCd,
+    /// `timeout-ms` under `[switch.picker]` (removed — picker renders progressively).
+    SwitchPickerTimeout,
+    /// Pre-* hooks using multi-entry table form, by display path.
+    PreHookTableForm(Vec<String>),
 }
 
-impl Deprecations {
-    /// Returns true if any deprecations were found
-    pub fn is_empty(&self) -> bool {
-        self.vars.is_empty()
-            && self.commit_gen.is_empty()
-            && !self.approved_commands
-            && !self.select
-            && !self.ci_section
-            && !self.no_ff
-            && !self.no_cd
-            && self.pre_hook_table_form.is_empty()
-            && !self.switch_picker_timeout_ms
-    }
-}
+/// All deprecation patterns detected in a config file, in the order their
+/// warnings are emitted.
+///
+/// Pure data with no path/label context. Used by both config loading (brief
+/// warnings) and `wt config show` (full details). Empty when nothing is
+/// deprecated.
+pub type Deprecations = Vec<DeprecationKind>;
 
 /// Detect deprecations in config content. Pure function, no I/O.
 ///
 /// Parses the TOML content once and checks all deprecation types against the
 /// parsed document.
 ///
-/// Returns a `Deprecations` struct containing all detected deprecation issues.
-/// This is the recommended entry point for deprecation detection.
+/// Returns the detected deprecation patterns. This is the recommended entry
+/// point for deprecation detection.
 pub fn detect_deprecations(content: &str) -> Deprecations {
     let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
-        return Deprecations::default();
+        return Vec::new();
     };
     let template_strings = extract_template_strings_from_doc(&doc);
     detect_deprecations_from_doc(&doc, &template_strings)
 }
 
-/// Detect deprecations from an already-parsed document and pre-extracted template strings.
+/// Detect deprecations from an already-parsed document and pre-extracted
+/// template strings.
+///
+/// Pushes kinds in the order their warnings are emitted, so iterating the
+/// returned `Vec` reproduces the warning text byte-for-byte.
 fn detect_deprecations_from_doc(
     doc: &toml_edit::DocumentMut,
     template_strings: &[String],
 ) -> Deprecations {
-    Deprecations {
-        vars: find_deprecated_vars_from_strings(template_strings),
-        commit_gen: find_commit_generation_from_doc(doc),
-        approved_commands: find_approved_commands_from_doc(doc),
-        select: find_select_from_doc(doc),
-        ci_section: find_ci_section_from_doc(doc),
-        no_ff: find_negated_bool_from_doc(doc, "merge", "no-ff", "ff"),
-        no_cd: find_negated_bool_from_doc(doc, "switch", "no-cd", "cd"),
-        pre_hook_table_form: find_pre_hook_table_form_from_doc(doc),
-        switch_picker_timeout_ms: find_switch_picker_timeout_from_doc(doc),
+    let mut kinds = Vec::new();
+
+    for (old, new) in find_deprecated_vars_from_strings(template_strings) {
+        kinds.push(DeprecationKind::TemplateVar { old, new });
     }
+    let commit_gen = find_commit_generation_from_doc(doc);
+    if !commit_gen.is_empty() {
+        kinds.push(DeprecationKind::CommitGeneration(commit_gen));
+    }
+    if find_approved_commands_from_doc(doc) {
+        kinds.push(DeprecationKind::ApprovedCommands);
+    }
+    if find_select_from_doc(doc) {
+        kinds.push(DeprecationKind::Select);
+    }
+    if find_ci_section_from_doc(doc) {
+        kinds.push(DeprecationKind::CiSection);
+    }
+    if find_negated_bool_from_doc(doc, "merge", "no-ff", "ff") {
+        kinds.push(DeprecationKind::NoFf);
+    }
+    if find_negated_bool_from_doc(doc, "switch", "no-cd", "cd") {
+        kinds.push(DeprecationKind::NoCd);
+    }
+    if find_switch_picker_timeout_from_doc(doc) {
+        kinds.push(DeprecationKind::SwitchPickerTimeout);
+    }
+    let pre_hook_table_form = find_pre_hook_table_form_from_doc(doc);
+    if !pre_hook_table_form.is_empty() {
+        kinds.push(DeprecationKind::PreHookTableForm(pre_hook_table_form));
+    }
+
+    kinds
 }
 
 /// Detect-side scope walk: apply `f` to the top-level table (scope `None`) and
@@ -1389,7 +1413,7 @@ pub fn check_and_migrate(
             let migrated_content = migrate_content_from_doc(content, doc);
             (deprecations, migrated_content)
         }
-        Err(_) => (Deprecations::default(), content.to_string()),
+        Err(_) => (Vec::new(), content.to_string()),
     };
 
     if deprecations.is_empty() {
@@ -1485,7 +1509,10 @@ pub fn compute_migrated_content(content: &str) -> String {
 
     // Replace deprecated template vars on the parsed tree (correct even when
     // the source uses escapes — see `replace_deprecated_vars_in_doc`).
-    let mut modified = if !deprecations.vars.is_empty() {
+    let has_template_vars = deprecations
+        .iter()
+        .any(|k| matches!(k, DeprecationKind::TemplateVar { .. }));
+    let mut modified = if has_template_vars {
         replace_deprecated_vars_in_doc(&mut doc)
     } else {
         false
@@ -1495,7 +1522,10 @@ pub fn compute_migrated_content(content: &str) -> String {
     modified |= migrate_content_doc(&mut doc);
     // Additionally remove approved-commands (not part of migrate_content because
     // approved-commands is still a valid serde field at runtime).
-    if deprecations.approved_commands {
+    if deprecations
+        .iter()
+        .any(|k| matches!(k, DeprecationKind::ApprovedCommands))
+    {
         modified |= remove_approved_commands_doc(&mut doc);
     }
     if modified {
@@ -1544,127 +1574,116 @@ pub fn format_migration_diff(original: &str, migrated: &str, label: &str) -> Opt
 /// `wt config update` hint and diff) and `wt config update` (which applies directly).
 pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
     use std::fmt::Write;
+    let label = &info.label;
     let mut out = String::new();
 
-    for (old, new) in &info.deprecations.vars {
-        let _ = writeln!(
-            out,
-            "{}",
-            warning_message(cformat!(
-                "{label}: template variable <bold>{old}</> is deprecated in favor of <bold>{new}</>",
-                label = info.label,
-            ))
-        );
-    }
-
-    if info.deprecations.commit_gen.has_top_level {
-        let _ = writeln!(
-            out,
-            "{}",
-            warning_message(cformat!(
-                "{}: <bold>[commit-generation]</> is deprecated in favor of <bold>[commit.generation]</>",
-                info.label
-            ))
-        );
-    }
-    for project_key in &info.deprecations.commit_gen.project_keys {
-        let _ = writeln!(
-            out,
-            "{}",
-            warning_message(cformat!(
-                "{label}: <bold>[projects.\"{k}\".commit-generation]</> is deprecated in favor of <bold>[projects.\"{k}\".commit.generation]</>",
-                label = info.label,
-                k = project_key
-            ))
-        );
-    }
-
-    if info.deprecations.approved_commands {
-        let _ = writeln!(
-            out,
-            "{}",
-            warning_message(cformat!(
-                "{}: <bold>approved-commands</> under <bold>[projects]</> is deprecated in favor of <bold>approvals.toml</>",
-                info.label
-            ))
-        );
-    }
-
-    if info.deprecations.select {
-        let _ = writeln!(
-            out,
-            "{}",
-            warning_message(cformat!(
-                "{}: <bold>[select]</> is deprecated in favor of <bold>[switch.picker]</>",
-                info.label
-            ))
-        );
-    }
-
-    if info.deprecations.ci_section {
-        let _ = writeln!(
-            out,
-            "{}",
-            warning_message(cformat!(
-                "{}: <bold>[ci]</> is deprecated in favor of <bold>[forge]</>",
-                info.label
-            ))
-        );
-    }
-
-    if info.deprecations.no_ff {
-        let _ = writeln!(
-            out,
-            "{}",
-            warning_message(cformat!(
-                "{}: <bold>merge.no-ff</> is deprecated in favor of <bold>merge.ff</> (inverted)",
-                info.label
-            ))
-        );
-    }
-
-    if info.deprecations.no_cd {
-        let _ = writeln!(
-            out,
-            "{}",
-            warning_message(cformat!(
-                "{}: <bold>switch.no-cd</> is deprecated in favor of <bold>switch.cd</> (inverted)",
-                info.label
-            ))
-        );
-    }
-
-    if info.deprecations.switch_picker_timeout_ms {
-        let _ = writeln!(
-            out,
-            "{}",
-            warning_message(cformat!(
-                "{}: <bold>switch.picker.timeout-ms</> is no longer used — the picker now renders progressively",
-                info.label
-            ))
-        );
-    }
-
-    if !info.deprecations.pre_hook_table_form.is_empty() {
-        let hook_list = info
-            .deprecations
-            .pre_hook_table_form
-            .iter()
-            .map(|h| cformat!("<bold>{h}</>"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let _ = writeln!(
-            out,
-            "{}",
-            warning_message(cformat!(
-                "{}: table form for {} is deprecated in favor of the pipeline form. \
-                 We're unifying pre-hooks, post-hooks, and aliases so that list form always runs serially \
-                 and table form always runs in parallel — migrate now to keep the current serial behavior \
-                 once the table form is repurposed.",
-                info.label,
-                hook_list
-            ))
-        );
+    // One `warning_message` line per emitted message. The kinds are stored in
+    // emission order, so a single pass reproduces the original output verbatim.
+    // Each arm pushes its own newline so a multi-line kind (commit-generation)
+    // can emit several lines.
+    for kind in &info.deprecations {
+        match kind {
+            DeprecationKind::TemplateVar { old, new } => {
+                let _ = writeln!(
+                    out,
+                    "{}",
+                    warning_message(cformat!(
+                        "{label}: template variable <bold>{old}</> is deprecated in favor of <bold>{new}</>"
+                    ))
+                );
+            }
+            DeprecationKind::CommitGeneration(commit_gen) => {
+                if commit_gen.has_top_level {
+                    let _ = writeln!(
+                        out,
+                        "{}",
+                        warning_message(cformat!(
+                            "{label}: <bold>[commit-generation]</> is deprecated in favor of <bold>[commit.generation]</>"
+                        ))
+                    );
+                }
+                for k in &commit_gen.project_keys {
+                    let _ = writeln!(
+                        out,
+                        "{}",
+                        warning_message(cformat!(
+                            "{label}: <bold>[projects.\"{k}\".commit-generation]</> is deprecated in favor of <bold>[projects.\"{k}\".commit.generation]</>"
+                        ))
+                    );
+                }
+            }
+            DeprecationKind::ApprovedCommands => {
+                let _ = writeln!(
+                    out,
+                    "{}",
+                    warning_message(cformat!(
+                        "{label}: <bold>approved-commands</> under <bold>[projects]</> is deprecated in favor of <bold>approvals.toml</>"
+                    ))
+                );
+            }
+            DeprecationKind::Select => {
+                let _ = writeln!(
+                    out,
+                    "{}",
+                    warning_message(cformat!(
+                        "{label}: <bold>[select]</> is deprecated in favor of <bold>[switch.picker]</>"
+                    ))
+                );
+            }
+            DeprecationKind::CiSection => {
+                let _ = writeln!(
+                    out,
+                    "{}",
+                    warning_message(cformat!(
+                        "{label}: <bold>[ci]</> is deprecated in favor of <bold>[forge]</>"
+                    ))
+                );
+            }
+            DeprecationKind::NoFf => {
+                let _ = writeln!(
+                    out,
+                    "{}",
+                    warning_message(cformat!(
+                        "{label}: <bold>merge.no-ff</> is deprecated in favor of <bold>merge.ff</> (inverted)"
+                    ))
+                );
+            }
+            DeprecationKind::NoCd => {
+                let _ = writeln!(
+                    out,
+                    "{}",
+                    warning_message(cformat!(
+                        "{label}: <bold>switch.no-cd</> is deprecated in favor of <bold>switch.cd</> (inverted)"
+                    ))
+                );
+            }
+            DeprecationKind::SwitchPickerTimeout => {
+                let _ = writeln!(
+                    out,
+                    "{}",
+                    warning_message(cformat!(
+                        "{label}: <bold>switch.picker.timeout-ms</> is no longer used — the picker now renders progressively"
+                    ))
+                );
+            }
+            DeprecationKind::PreHookTableForm(hooks) => {
+                let hook_list = hooks
+                    .iter()
+                    .map(|h| cformat!("<bold>{h}</>"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let _ = writeln!(
+                    out,
+                    "{}",
+                    warning_message(cformat!(
+                        "{label}: table form for {hook_list} is deprecated in favor of the pipeline form. \
+                     We're unifying pre-hooks, post-hooks, and aliases so that list form always runs serially \
+                     and table form always runs in parallel — migrate now to keep the current serial behavior \
+                     once the table form is repurposed."
+                    ))
+                );
+            }
+        }
     }
 
     out
@@ -1933,6 +1952,13 @@ mod tests {
     fn find_deprecated_vars(content: &str) -> Vec<(&'static str, &'static str)> {
         let strings = extract_template_strings(content);
         find_deprecated_vars_from_strings(&strings)
+    }
+
+    /// True when `deprecations` carries a kind matching `pred`. Lets the
+    /// per-kind tests assert presence of a single deprecation against the
+    /// `Vec<DeprecationKind>`, the way they used to read a boolean field.
+    fn has_kind(deprecations: &Deprecations, pred: impl Fn(&DeprecationKind) -> bool) -> bool {
+        deprecations.iter().any(pred)
     }
 
     fn find_commit_generation_deprecations(content: &str) -> CommitGenerationDeprecations {
@@ -3297,7 +3323,10 @@ approved-commands = ["npm install"]
 approved-commands = ["npm install"]
 "#;
         let deprecations = detect_deprecations(content);
-        assert!(deprecations.approved_commands);
+        assert!(has_kind(&deprecations, |k| matches!(
+            k,
+            DeprecationKind::ApprovedCommands
+        )));
         assert!(!deprecations.is_empty());
     }
 
@@ -3316,17 +3345,7 @@ approved-commands = ["npm install"]
 "#;
         let info = DeprecationInfo {
             config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
-            deprecations: Deprecations {
-                vars: vec![],
-                commit_gen: CommitGenerationDeprecations::default(),
-                approved_commands: true,
-                select: false,
-                ci_section: false,
-                no_ff: false,
-                no_cd: false,
-                pre_hook_table_form: vec![],
-                switch_picker_timeout_ms: false,
-            },
+            deprecations: vec![DeprecationKind::ApprovedCommands],
             label: "User config".to_string(),
             main_worktree_path: None,
         };
@@ -3691,7 +3710,10 @@ full = true
 pager = "delta"
 "#;
         let deprecations = detect_deprecations(content);
-        assert!(deprecations.select);
+        assert!(has_kind(&deprecations, |k| matches!(
+            k,
+            DeprecationKind::Select
+        )));
         assert!(!deprecations.is_empty());
     }
 
@@ -3716,17 +3738,7 @@ pager = "delta --paging=never"
 "#;
         let info = DeprecationInfo {
             config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
-            deprecations: Deprecations {
-                vars: vec![],
-                commit_gen: CommitGenerationDeprecations::default(),
-                approved_commands: false,
-                select: true,
-                ci_section: false,
-                no_ff: false,
-                no_cd: false,
-                pre_hook_table_form: vec![],
-                switch_picker_timeout_ms: false,
-            },
+            deprecations: vec![DeprecationKind::Select],
             label: "User config".to_string(),
             main_worktree_path: None,
         };
@@ -3864,7 +3876,10 @@ pager = "delta"
 timeout-ms = 500
 "#;
         let deprecations = detect_deprecations(content);
-        assert!(deprecations.switch_picker_timeout_ms);
+        assert!(has_kind(&deprecations, |k| matches!(
+            k,
+            DeprecationKind::SwitchPickerTimeout
+        )));
         assert!(!deprecations.is_empty());
     }
 
@@ -3875,7 +3890,10 @@ timeout-ms = 500
 timeout-ms = 300
 "#;
         let deprecations = detect_deprecations(content);
-        assert!(deprecations.switch_picker_timeout_ms);
+        assert!(has_kind(&deprecations, |k| matches!(
+            k,
+            DeprecationKind::SwitchPickerTimeout
+        )));
     }
 
     #[test]
@@ -3885,7 +3903,10 @@ timeout-ms = 300
 picker = { pager = "delta", timeout-ms = 500 }
 "#;
         let deprecations = detect_deprecations(content);
-        assert!(deprecations.switch_picker_timeout_ms);
+        assert!(has_kind(&deprecations, |k| matches!(
+            k,
+            DeprecationKind::SwitchPickerTimeout
+        )));
     }
 
     #[test]
@@ -3906,7 +3927,10 @@ picker = { pager = "delta", timeout-ms = 500 }
 pager = "delta"
 "#;
         let deprecations = detect_deprecations(content);
-        assert!(!deprecations.switch_picker_timeout_ms);
+        assert!(!has_kind(&deprecations, |k| matches!(
+            k,
+            DeprecationKind::SwitchPickerTimeout
+        )));
     }
 
     #[test]
@@ -3960,10 +3984,7 @@ pager = "delta"
     fn test_format_deprecation_warnings_switch_picker_timeout() {
         let info = DeprecationInfo {
             config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
-            deprecations: Deprecations {
-                switch_picker_timeout_ms: true,
-                ..Deprecations::default()
-            },
+            deprecations: vec![DeprecationKind::SwitchPickerTimeout],
             label: "User config".to_string(),
             main_worktree_path: None,
         };
@@ -3984,17 +4005,7 @@ pager = "delta"
     fn test_format_deprecation_warnings_no_ff_and_no_cd() {
         let info = DeprecationInfo {
             config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
-            deprecations: Deprecations {
-                vars: vec![],
-                commit_gen: CommitGenerationDeprecations::default(),
-                approved_commands: false,
-                select: false,
-                ci_section: false,
-                no_ff: true,
-                no_cd: true,
-                pre_hook_table_form: vec![],
-                switch_picker_timeout_ms: false,
-            },
+            deprecations: vec![DeprecationKind::NoFf, DeprecationKind::NoCd],
             label: "User config".to_string(),
             main_worktree_path: None,
         };
@@ -4006,19 +4017,28 @@ pager = "delta"
     #[test]
     fn test_detect_no_ff_deprecation() {
         let deprecations = detect_deprecations("[merge]\nno-ff = true\n");
-        assert!(deprecations.no_ff);
+        assert!(has_kind(&deprecations, |k| matches!(
+            k,
+            DeprecationKind::NoFf
+        )));
     }
 
     #[test]
     fn test_detect_no_ff_not_flagged_when_ff_exists() {
         let deprecations = detect_deprecations("[merge]\nff = true\nno-ff = true\n");
-        assert!(!deprecations.no_ff);
+        assert!(!has_kind(&deprecations, |k| matches!(
+            k,
+            DeprecationKind::NoFf
+        )));
     }
 
     #[test]
     fn test_detect_no_cd_deprecation() {
         let deprecations = detect_deprecations("[switch]\nno-cd = true\n");
-        assert!(deprecations.no_cd);
+        assert!(has_kind(&deprecations, |k| matches!(
+            k,
+            DeprecationKind::NoCd
+        )));
     }
 
     #[test]
@@ -4028,7 +4048,10 @@ pager = "delta"
 no-ff = true
 "#;
         let deprecations = detect_deprecations(content);
-        assert!(deprecations.no_ff);
+        assert!(has_kind(&deprecations, |k| matches!(
+            k,
+            DeprecationKind::NoFf
+        )));
     }
 
     #[test]
@@ -4089,7 +4112,10 @@ no-ff = true
 pager = "bat"
 "#;
         let deprecations = detect_deprecations(content);
-        assert!(deprecations.select);
+        assert!(has_kind(&deprecations, |k| matches!(
+            k,
+            DeprecationKind::Select
+        )));
     }
 
     #[test]
