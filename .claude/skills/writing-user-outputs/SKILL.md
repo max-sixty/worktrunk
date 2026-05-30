@@ -648,6 +648,28 @@ perform_squash()?;
 eprintln!("{}", success_message("Squashed @ a1b2c3d"));
 ```
 
+## Section and Glyph Spacing
+
+When composing tightly-packed output where adjacent pieces carry distinct
+meaning (the statusline segments, prefix-char indicators like `@+1`, `↓1`,
+`?^|`), pack sections flush — no separating space. The marker and its value
+read as one unit, and visual density keeps the line short.
+
+The one exception is **emoji**: leave a trailing space after an emoji glyph.
+Most terminals render emoji as double-width and bleed the glyph into the cell
+to its right, so a flush `🌔65%` collides the moon with the digits. A space
+(`🌔 65%`) keeps them legible. ASCII and narrow Unicode markers (`@`, `↓`, `●`,
+`⊂`) don't have this problem and stay flush.
+
+```rust
+// GOOD - ASCII marker flush with its value
+format!("@{added}");          // @+1
+// GOOD - emoji gets a trailing space to clear the next cell
+format!("{moon} {pct:.0}%");  // 🌔 65%
+// BAD - emoji runs into the digits; terminals overlap the glyph
+format!("{moon}{pct:.0}%");   // 🌔65%
+```
+
 ## Style Constants
 
 Only three `anstyle` constants exist for table rendering (`src/styling/constants.rs`):
