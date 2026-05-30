@@ -227,6 +227,35 @@ fn test_list_json_with_metadata(mut repo: TestRepo) {
     });
 }
 
+/// `repo_url` is derived locally from the primary remote, converting an SSH
+/// remote to its HTTPS web URL without shelling out to a forge.
+#[rstest]
+fn test_list_json_repo_url_from_ssh_remote(repo: TestRepo) {
+    // A real forge SSH remote. The local-path remote the fixture configures
+    // doesn't parse as a forge, so `repo_url` would be absent for it.
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "git@github.com:owner/repo.git",
+    ]);
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "wt list should succeed");
+
+    let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let row = json.first().expect("at least one row");
+    assert_eq!(
+        row["repo_url"].as_str(),
+        Some("https://github.com/owner/repo"),
+        "SSH remote should derive the HTTPS web URL"
+    );
+}
+
 /// This tests the merge commit scenario where content matches main even with different commit history.
 #[rstest]
 fn test_list_json_tree_matches_main_after_merge(mut repo: TestRepo) {
