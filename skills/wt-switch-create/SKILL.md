@@ -58,8 +58,10 @@ after it. Otherwise the task starts at the second token.
 
 Don't remove the worktree yourself. `ExitWorktree({action: "remove"})` (if the
 user asks to leave) or the session-exit prompt routes through this plugin's
-`WorktreeRemove` hook → `wt remove -D --foreground`. A worktree with uncommitted
-changes won't be auto-removed without confirmation — that's intended.
+`WorktreeRemove` hook → `wt remove --foreground`. A worktree with uncommitted
+changes won't be auto-removed without confirmation — that's intended. A branch
+with committed-but-unmerged work is retained (with a `wt remove -D <branch>`
+hint) instead of being silently force-deleted.
 
 ## Scope
 
