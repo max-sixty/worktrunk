@@ -1073,14 +1073,11 @@ fn scan_for_uninstall(
                         continue;
                     }
 
-                    match uninstall_from_file(shell, path, dry_run) {
-                        Ok(Some(result)) => {
-                            results.push(result);
-                            found = true;
-                            break; // Only process first matching file per shell
-                        }
-                        Ok(None) => {} // No integration found in this file
-                        Err(e) => return Err(e),
+                    // Only process the first matching file per shell.
+                    if let Some(result) = uninstall_from_file(shell, path, dry_run)? {
+                        results.push(result);
+                        found = true;
+                        break;
                     }
                 }
 
@@ -1528,5 +1525,41 @@ mod tests {
         let old = "# Docs: https://worktrunk.dev/docs/shell-integration\nfunction wt\n    command wt $argv\nend";
         let new = "# Docs: https://worktrunk.dev/config/#shell-integration\nfunction wt\n    command wt $argv\nend";
         assert_eq!(fish_code_lines(old), fish_code_lines(new));
+    }
+
+    #[test]
+    fn test_line_based_config_paths_fish_and_nushell_have_no_line_files() {
+        // Fish and Nushell are configured via wrapper files, not line-based rc
+        // edits, so the line-based path list is empty for them.
+        let home = Path::new("/home/user");
+        assert!(line_based_config_paths(Shell::Fish, home).is_empty());
+        assert!(line_based_config_paths(Shell::Nushell, home).is_empty());
+    }
+
+    #[test]
+    fn test_scan_wrapper_directory_skips_wrong_extension_and_directories() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        // Wrong extension: skipped.
+        fs::write(root.join("notes.txt"), "anything").unwrap();
+        // A directory carrying the wrapper extension: skipped (not a file).
+        fs::create_dir(root.join("nested.fish")).unwrap();
+        assert!(scan_fish_wrappers(root).unwrap().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_scan_wrapper_directory_skips_unreadable_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        let unreadable = root.join("locked.fish");
+        fs::write(&unreadable, "function wt\nend\n").unwrap();
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000)).unwrap();
+        // An unreadable wrapper file is skipped, not surfaced as an error.
+        let found = scan_fish_wrappers(root);
+        // Restore perms so TempDir cleanup can remove the file.
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(found.unwrap().is_empty());
     }
 }

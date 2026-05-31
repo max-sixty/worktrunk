@@ -814,6 +814,23 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_any_cmd_detects_managed_line_regardless_of_binary_name() {
+        // The cmd-agnostic detector extracts the binary candidate from the line
+        // and confirms it via the execution-context check, matching a wrapper
+        // installed under any binary name.
+        assert!(is_shell_integration_line_for_uninstall_any_cmd(
+            "eval \"$(wt config shell init bash)\""
+        ));
+        assert!(is_shell_integration_line_for_uninstall_any_cmd(
+            "eval \"$(git-wt config shell init zsh)\""
+        ));
+        // A bare mention with no execution context is not a managed line.
+        assert!(!is_shell_integration_line_for_uninstall_any_cmd(
+            "echo wt config shell init bash"
+        ));
+    }
+
     // ------------------------------------------------------------------------
     // FALSE NEGATIVE: PowerShell block comments
     // Note: This is actually a FALSE POSITIVE risk (comments matching)
