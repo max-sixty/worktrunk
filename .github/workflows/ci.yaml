@@ -103,7 +103,7 @@ jobs:
         echo "TMP=D:\tmp" >> $env:GITHUB_ENV
 
     - name: 🧪 Pre-merge hooks
-      run: wt hook pre-merge --yes insta doctest doc
+      run: wt hook pre-merge --yes lockfile insta doctest doc
 
     # Anything tests leave behind in the working tree is a leak we want to see
     # before it lands. `target/` is gitignored, so a normal run is clean —
@@ -186,7 +186,7 @@ jobs:
       uses: actions/checkout@v6
 
     - name: Setup Zola
-      uses: taiki-e/install-action@v2.79.8
+      uses: taiki-e/install-action@v2.79.11
       with:
         tool: zola@0.22.1
 

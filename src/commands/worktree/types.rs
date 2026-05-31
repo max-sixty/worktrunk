@@ -244,17 +244,6 @@ impl RemoveResult {
     }
 }
 
-/// Operation mode for worktree resolution - determines which checks are performed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OperationMode {
-    /// Creating or switching to a worktree - path occupation is an error
-    /// because we need to create a worktree at the expected path.
-    CreateOrSwitch,
-    /// Removing a worktree - we only care if the branch has a worktree,
-    /// path occupation is irrelevant since we're not creating anything.
-    Remove,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

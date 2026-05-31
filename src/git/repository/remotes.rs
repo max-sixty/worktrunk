@@ -186,22 +186,26 @@ impl Repository {
         owner: &str,
         repo: &str,
     ) -> Option<String> {
-        let matches = |url: &str| -> bool {
-            let Some(parsed) = GitRemoteUrl::parse(url) else {
-                return false;
-            };
+        self.find_remote(|parsed| {
             parsed.owner().eq_ignore_ascii_case(owner)
                 && parsed.repo().eq_ignore_ascii_case(repo)
                 && host.is_none_or(|h| parsed.host().eq_ignore_ascii_case(h))
-        };
+        })
+    }
 
+    /// Return the first remote whose URL (raw or `insteadOf`-effective) parses
+    /// and satisfies `matches`. Each remote is checked against its raw URL and,
+    /// when it differs, its effective URL — so a custom hostname rewritten to a
+    /// real forge still matches.
+    fn find_remote(&self, matches: impl Fn(&GitRemoteUrl) -> bool) -> Option<String> {
+        let test = |url: &str| GitRemoteUrl::parse(url).is_some_and(|parsed| matches(&parsed));
         for (remote_name, raw_url) in self.all_remote_urls() {
-            if matches(&raw_url) {
+            if test(&raw_url) {
                 return Some(remote_name);
             }
             if let Some(effective_url) = self.effective_remote_url(&remote_name)
                 && effective_url != raw_url
-                && matches(&effective_url)
+                && test(&effective_url)
             {
                 return Some(remote_name);
             }
@@ -224,10 +228,7 @@ impl Repository {
         project: &str,
         repo_name: &str,
     ) -> Option<String> {
-        let matches = |url: &str| -> bool {
-            let Some(parsed) = GitRemoteUrl::parse(url) else {
-                return false;
-            };
+        self.find_remote(|parsed| {
             parsed
                 .azure_organization()
                 .is_some_and(|o| o.eq_ignore_ascii_case(organization))
@@ -235,21 +236,7 @@ impl Repository {
                     .azure_project()
                     .is_some_and(|p| p.eq_ignore_ascii_case(project))
                 && parsed.repo().eq_ignore_ascii_case(repo_name)
-        };
-
-        for (remote_name, raw_url) in self.all_remote_urls() {
-            if matches(&raw_url) {
-                return Some(remote_name);
-            }
-            if let Some(effective_url) = self.effective_remote_url(&remote_name)
-                && effective_url != raw_url
-                && matches(&effective_url)
-            {
-                return Some(remote_name);
-            }
-        }
-
-        None
+        })
     }
 
     /// Find a remote that points to the same project as the given URL.

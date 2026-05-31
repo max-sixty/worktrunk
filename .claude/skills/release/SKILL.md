@@ -11,7 +11,7 @@ metadata:
 
 1. **Run tests**: `cargo run -- hook pre-merge --yes`
 2. **Check current version**: Read `version` in `Cargo.toml`
-3. **Review commits**: Check commits since last release to understand scope of changes
+3. **Review commits**: Check commits since last release to understand scope of changes. Audit the cumulative diff for the data-loss surface (see [Data-Loss Surface Review](#data-loss-surface-review)) before proceeding.
 4. **Check library API compatibility**: Run `cargo semver-checks check-release -p worktrunk` (install with `cargo install cargo-semver-checks --locked` if missing). If it reports breaking changes, the bump must be minor (pre-1.0) or major (post-1.0). See "Library API Compatibility" below.
 5. **Credit contributors**: Check for external PR authors and issue reporters (see "Credit External Contributors" and "Credit Issue Reporters" below)
 6. **Determine release type**: Pick the bump from the changes (including semver-checks result). Ask the user only if the choice is genuinely ambiguous (see below).
@@ -37,6 +37,35 @@ metadata:
     ```
 
 `release.yaml` builds binaries and publishes to crates.io, Homebrew, and winget automatically.
+
+## Data-Loss Surface Review
+
+Worktrunk's worst failure is silently destroying a user's work. The per-PR review (`running-tend`, "Data-Loss Surface") is the first gate; the release is the second, where the whole diff since the last release is visible at once.
+
+This review optimizes for recall: find every change that could touch the deletion surface, accept false positives, then adjudicate each candidate. Missing one real loss path costs far more than reviewing a false alarm.
+
+A keyword grep alone is insufficient. It finds only what someone thought to pattern-match, and an agent handed the grep anchors on it and inherits its blind spots. So fan out independent finders, most of them without the grep, and analyze every candidate they surface.
+
+### Find: independent finders, recall over precision
+
+Launch 3-5 finder subagents in parallel over the cumulative diff (`git log v<last-version>..HEAD -p`) and the code it touches, including anything that calls into or is called by the changed code. Each works independently: do not let them share findings during this phase, and do not collapse them onto one method. Each returns candidate locations with a one-line reason, erring toward over-reporting.
+
+Give each a distinct charter. At least two receive no grep and no keyword list, so they reason from the code instead of pattern-matching:
+
+- **Behavioral (no grep):** read each change and ask what it could destroy: files, branches, worktrees, uncommitted or untracked work, committed-but-unpushed commits. Flag any change whose worst case is lost user data.
+- **Blast-radius (no grep):** for every function and file the diff touches, trace callers and callees. Flag any path that can now reach a destructive primitive (branch deletion, worktree removal, filesystem removal, history rewrite), even when that call sits outside the diff.
+- **Automation diff (no grep):** compare shipped automation before and after: `plugins/*/hooks/hooks.json`, `hooks/hooks.json`, `hooks/wt.sh`, and skill or alias examples users copy. Flag any new or altered invocation that removes or force-overwrites anything.
+- **Keyword scan (grep):** one finder runs the pattern filter over the full diff as a cross-check, never as the primary method. It takes no pathspec; a path allowlist would recreate the blind spots the no-grep finders exist to avoid (the densest destructive code, the trash sweep in `src/commands/process.rs`, sits outside `src/git/`).
+  ```bash
+  git log v<last-version>..HEAD -p \
+    | grep -nE -- '--force-delete|--force| -D| -f |branch -[dD]|worktree remove|reset --hard|checkout -f|clean -[fdx]|remove_dir_all|remove_file|rm -rf'
+  ```
+
+### Analyze: adjudicate each candidate
+
+Pool the candidates, dedupe, and analyze each against the data-safety invariants in `CLAUDE.md` and the FAQ "What can Worktrunk delete?" inventory: does it preserve data on failure, require explicit consent for destructive ops, and avoid silent side-effect deletion? Mark each real risk / acceptable / needs change, with the reasoning.
+
+Surface the full adjudicated list and get explicit sign-off before tagging. Do not tag a release with an unresolved deletion-surface candidate, even if it looks acceptable.
 
 ## CHANGELOG Review
 

@@ -172,13 +172,13 @@ fn parse_line(line: &str) -> Option<TraceEntry> {
         // Instant event
         TraceEntryKind::Instant { name: event_name }
     } else if let Some(span_name) = span {
-        // In-process span - requires span and dur
+        // In-process span - requires span and dur_us
         TraceEntryKind::Span {
             name: span_name,
             duration: duration?,
         }
     } else {
-        // Command event - requires cmd, dur, and result
+        // Command event - requires cmd, dur_us, and result
         TraceEntryKind::Command {
             command: command?,
             duration: duration?,

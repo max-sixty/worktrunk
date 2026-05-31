@@ -1257,14 +1257,15 @@ impl Repository {
             return Ok(Some("MERGING".to_string()));
         }
 
-        // Check for rebase
-        if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
-            let rebase_dir = if git_dir.join("rebase-merge").exists() {
-                git_dir.join("rebase-merge")
-            } else {
-                git_dir.join("rebase-apply")
-            };
-
+        // Check for rebase. `rebase-merge` (interactive/merge backend) and
+        // `rebase-apply` (am backend) are mutually exclusive; probe each once.
+        let rebase_merge = git_dir.join("rebase-merge");
+        let rebase_apply = git_dir.join("rebase-apply");
+        if let Some(rebase_dir) = rebase_merge
+            .exists()
+            .then_some(rebase_merge)
+            .or_else(|| rebase_apply.exists().then_some(rebase_apply))
+        {
             if let (Ok(msgnum), Ok(end)) = (
                 std::fs::read_to_string(rebase_dir.join("msgnum")),
                 std::fs::read_to_string(rebase_dir.join("end")),

@@ -288,7 +288,7 @@ impl PositionMask {
 /// Working tree changes as structured booleans
 ///
 /// This is the canonical internal representation. Display strings are derived from this.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct WorkingTreeStatus {
     pub staged: bool,
     pub modified: bool,

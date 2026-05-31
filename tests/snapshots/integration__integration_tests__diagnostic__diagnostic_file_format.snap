@@ -28,6 +28,7 @@ branch refs/heads/main
 
 worktree [PATH]
 HEAD [COMMIT]
+detached
 
 worktree [PATH]
 HEAD [COMMIT]

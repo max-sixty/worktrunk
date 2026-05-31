@@ -103,15 +103,6 @@ impl std::fmt::Display for WorktreeState {
     }
 }
 
-impl serde::Serialize for WorktreeState {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(&self.to_string())
-    }
-}
-
 /// Default branch relationship state
 ///
 /// Represents the combined relationship to the default branch in a single position.
@@ -384,15 +375,6 @@ pub fn tier_integration_or_counts(
     ))
 }
 
-impl serde::Serialize for MainState {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(&self.to_string())
-    }
-}
-
 /// Worktree operation state
 ///
 /// Represents blocking git operations in progress that require resolution.
@@ -447,38 +429,19 @@ impl OperationState {
     }
 }
 
-impl serde::Serialize for OperationState {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(&self.to_string())
-    }
-}
-
 /// Active git operation in a worktree
 ///
 /// Represents raw data about whether a worktree is in the middle of a git operation.
 /// This is distinct from [`OperationState`] which is the display enum (includes Conflicts,
 /// has symbols/colors).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, strum::IntoStaticStr)]
-#[serde(rename_all = "kebab-case")]
-#[strum(serialize_all = "kebab-case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ActiveGitOperation {
-    #[strum(serialize = "")]
-    #[serde(rename = "")]
     #[default]
     None,
     /// Rebase in progress (rebase-merge or rebase-apply directory exists)
     Rebase,
     /// Merge in progress (MERGE_HEAD exists)
     Merge,
-}
-
-impl ActiveGitOperation {
-    pub fn is_none(&self) -> bool {
-        matches!(self, Self::None)
-    }
 }
 
 #[cfg(test)]
@@ -538,19 +501,6 @@ mod tests {
         assert_eq!(format!("{}", WorktreeState::Branch), "/");
     }
 
-    #[test]
-    fn test_worktree_state_serialize() {
-        // Serialize to JSON and check the string representation
-        let json = serde_json::to_string(&WorktreeState::None).unwrap();
-        assert_eq!(json, "\"\"");
-
-        let json = serde_json::to_string(&WorktreeState::BranchWorktreeMismatch).unwrap();
-        assert_eq!(json, "\"⚑\"");
-
-        let json = serde_json::to_string(&WorktreeState::Branch).unwrap();
-        assert_eq!(json, "\"/\"");
-    }
-
     // ============================================================================
     // MainState Tests
     // ============================================================================
@@ -580,21 +530,6 @@ mod tests {
         assert_snapshot!(MainState::IsMain.styled().unwrap(), @"[2m^[22m");
         assert_snapshot!(MainState::Ahead.styled().unwrap(), @"[2m↑[22m");
         assert_snapshot!(MainState::Orphan.styled().unwrap(), @"[2m∅[22m");
-    }
-
-    #[test]
-    fn test_main_state_serialize() {
-        let json = serde_json::to_string(&MainState::None).unwrap();
-        assert_eq!(json, "\"\"");
-
-        let json = serde_json::to_string(&MainState::IsMain).unwrap();
-        assert_eq!(json, "\"^\"");
-
-        let json = serde_json::to_string(&MainState::Diverged).unwrap();
-        assert_eq!(json, "\"↕\"");
-
-        let json = serde_json::to_string(&MainState::Orphan).unwrap();
-        assert_eq!(json, "\"∅\"");
     }
 
     #[test]
@@ -932,31 +867,10 @@ mod tests {
     }
 
     #[test]
-    fn test_operation_state_serialize() {
-        let json = serde_json::to_string(&OperationState::None).unwrap();
-        assert_eq!(json, "\"\"");
-
-        let json = serde_json::to_string(&OperationState::Conflicts).unwrap();
-        assert_eq!(json, "\"✘\"");
-    }
-
-    #[test]
     fn test_operation_state_as_json_str() {
         assert_eq!(OperationState::None.as_json_str(), None);
         assert_eq!(OperationState::Conflicts.as_json_str(), Some("conflicts"));
         assert_eq!(OperationState::Rebase.as_json_str(), Some("rebase"));
         assert_eq!(OperationState::Merge.as_json_str(), Some("merge"));
-    }
-
-    // ============================================================================
-    // ActiveGitOperation Tests
-    // ============================================================================
-
-    #[test]
-    fn test_git_operation_state_is_none() {
-        assert!(ActiveGitOperation::None.is_none());
-        assert!(ActiveGitOperation::default().is_none());
-        assert!(!ActiveGitOperation::Rebase.is_none());
-        assert!(!ActiveGitOperation::Merge.is_none());
     }
 }
