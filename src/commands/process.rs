@@ -290,7 +290,7 @@ fn spawn_detached_windows(
     let shell = ShellConfig::get()?;
 
     // Build the command based on shell type
-    let mut cmd = if shell.is_posix() {
+    let mut cmd = if shell.is_posix {
         // Git Bash available - use same syntax as Unix
         let full_command = build_printf_pipe_command(command, context_json);
         shell.command(&full_command)

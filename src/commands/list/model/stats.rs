@@ -11,34 +11,30 @@ use worktrunk::git::LineDiff;
 /// when this struct isn't populated (prunable worktrees, items missing from the
 /// pre-skeleton batch); the fields here are the per-commit data fetched
 /// alongside it in the same `git log` batch.
-#[derive(serde::Serialize, Clone, Default, Debug)]
+#[derive(Clone, Default, Debug)]
 pub struct CommitDetails {
     pub timestamp: i64,
     pub commit_message: String,
 }
 
 /// Ahead/behind counts relative to a base branch.
-#[derive(serde::Serialize, Default, Copy, Clone, Debug)]
+#[derive(Default, Copy, Clone, Debug)]
 pub struct AheadBehind {
     pub ahead: usize,
     pub behind: usize,
 }
 
 /// Line diff totals for a branch compared to the integration target.
-#[derive(serde::Serialize, Default, Copy, Clone, Debug)]
+#[derive(Default, Copy, Clone, Debug)]
 pub struct BranchDiffTotals {
-    #[serde(rename = "branch_diff")]
     pub diff: LineDiff,
 }
 
 /// Upstream tracking information for a branch.
-#[derive(serde::Serialize, Default, Clone, Debug)]
+#[derive(Default, Clone, Debug)]
 pub struct UpstreamStatus {
-    #[serde(rename = "upstream_remote")]
     pub(crate) remote: Option<String>,
-    #[serde(rename = "upstream_ahead")]
     pub(crate) ahead: usize,
-    #[serde(rename = "upstream_behind")]
     pub(crate) behind: usize,
 }
 

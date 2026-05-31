@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::{
-    DeprecationInfo, compute_migrated_content, config_path,
+    DeprecationInfo, DeprecationKind, compute_migrated_content, config_path,
     copy_approved_commands_to_approvals_file, format_deprecation_warnings, format_migration_diff,
 };
 use worktrunk::git::Repository;
@@ -93,7 +93,11 @@ pub fn handle_config_update(yes: bool, print: bool) -> anyhow::Result<()> {
         // drops them; approvals.toml becomes the authoritative source). Abort
         // the whole update if the copy fails — rewriting config.toml first
         // would silently lose the legacy approvals.
-        if candidate.info.deprecations.approved_commands
+        if candidate
+            .info
+            .deprecations
+            .iter()
+            .any(|k| matches!(k, DeprecationKind::ApprovedCommands))
             && let Some(approvals_path) =
                 copy_approved_commands_to_approvals_file(&candidate.config_path)?
         {

@@ -344,7 +344,7 @@ impl Task for HasFileChangesTask {
 
 /// Task 3b: Merge simulation + patch-id fallback
 ///
-/// Delegates to [`Repository::merge_integration_probe()`], which runs:
+/// Delegates to [`Repository::merge_integration_probe_by_sha()`], which runs:
 ///
 /// 1. `merge-tree --write-tree` — simulates merging branch into target. If the
 ///    result tree equals target's tree, the branch is integrated (`MergeAddsNothing`).

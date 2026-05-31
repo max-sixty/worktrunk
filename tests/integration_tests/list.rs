@@ -538,7 +538,7 @@ fn test_list_json_with_display_fields(mut repo: TestRepo) {
         &["commit", "--allow-empty", "-m", "Feature commit 2"],
     );
 
-    // Add uncommitted changes to show working_diff_display
+    // Add uncommitted changes to populate the working-diff column
     std::fs::write(feature_path.join("uncommitted.txt"), "uncommitted").unwrap();
     std::fs::write(feature_path.join("feature.txt"), "modified content").unwrap();
 
@@ -3000,6 +3000,12 @@ fn test_list_warns_when_default_branch_missing_worktree(repo: TestRepo) {
 /// Corrupts a branch ref to point to a non-existent commit, which causes
 /// ahead_behind and other git operations to fail. Verifies the warning
 /// message appears after the table.
+///
+/// The dummy SHA is `…001` (non-null) on purpose: a NULL_OID branch ref
+/// reads as an unborn worktree and is handled by the commit-task skip path
+/// (no warning, by design — see #2936). A non-null invalid SHA still flows
+/// through the regular task path and surfaces the warning this test
+/// validates.
 #[rstest]
 fn test_list_shows_warning_on_git_error(mut repo: TestRepo) {
     repo.add_worktree("feature");
@@ -3009,8 +3015,8 @@ fn test_list_shows_warning_on_git_error(mut repo: TestRepo) {
     let git_dir = repo.root_path().join(".git");
     let ref_path = git_dir.join("refs/heads/feature");
 
-    // Write an invalid SHA that doesn't exist in the repo
-    std::fs::write(&ref_path, "0000000000000000000000000000000000000000\n").unwrap();
+    // Non-null invalid SHA so the worktree is not treated as unborn.
+    std::fs::write(&ref_path, "0000000000000000000000000000000000000001\n").unwrap();
 
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
@@ -3253,6 +3259,62 @@ fn test_list_empty_repo_json() {
     assert_eq!(item["branch"], "main");
     assert_eq!(item["commit"]["sha"], "");
     assert_eq!(item["commit"]["short_sha"], "");
+}
+
+/// Regression for #2936: a linked worktree on an unborn branch (`git worktree
+/// add --orphan`) reports `HEAD 0000…` in `worktree list --porcelain`. The
+/// working-tree-diff and working-tree-conflicts tasks both reference HEAD /
+/// the null OID and fail with `fatal: ambiguous argument 'HEAD'` and
+/// `fatal: 0000… is not a valid object`. Adding untracked content to the
+/// orphan worktree forces both code paths to run.
+#[rstest]
+fn test_list_unborn_worktree_no_task_failures(repo: TestRepo) {
+    repo.commit("initial");
+
+    let orphan_path = repo.root_path().parent().unwrap().join("repo.orphan");
+    let out = repo
+        .git_command()
+        .args([
+            "worktree",
+            "add",
+            "--orphan",
+            "-b",
+            "orphan",
+            orphan_path.to_str().unwrap(),
+        ])
+        .run()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git worktree add --orphan failed: {}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // Untracked content forces WorkingTreeConflictsTask to run merge-tree
+    // against the null OID rather than short-circuiting on a clean tree.
+    std::fs::write(orphan_path.join("untracked.txt"), "content\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["list"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("working-tree-diff") && !stderr.contains("working-tree-conflicts"),
+        "wt list should not surface working-tree-* task failures for unborn worktrees, got stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("ambiguous argument 'HEAD'")
+            && !stderr.contains("0000000000000000000000000000000000000000"),
+        "wt list should not run HEAD/null-OID commands against unborn worktrees, got stderr:\n{stderr}"
+    );
+    assert!(
+        output.status.success(),
+        "wt list should succeed; stderr:\n{stderr}"
+    );
 }
 
 /// Regression: the `wt list` integration column ORs over local AND upstream,

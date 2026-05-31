@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.55.0
+
+### Improved
+
+- **`wt switch` accepts forge PR/MR URLs**: `wt switch https://github.com/owner/repo/pull/123` now resolves the same way as `wt switch pr:123`, and the URL form works anywhere a `pr:N` / `mr:N` shortcut does (positional argument and `--base`). Detection is shape-based, not host-based — any `http(s)://` URL whose path contains `/pull/N`, `/pulls/N`, `/-/merge_requests/N`, or `/pullrequest/N` matches, covering GitHub (including Enterprise), GitLab, Gitea, and Azure DevOps, including self-hosted instances. ([#2898](https://github.com/max-sixty/worktrunk/pull/2898), thanks @thiagowfx for the request)
+
+- **`-vv` startup pointer names `diagnostic.md`**: The `-vv` pointer now lists the shared log directory once with all three files it will contain — `trace.log`, `subprocess.log`, and `diagnostic.md` — so the diagnostic bundle is discoverable at startup rather than only when the gist hint fires at exit. The pointer verb reads `Writing to …` instead of `Tracing to …`. ([#2919](https://github.com/max-sixty/worktrunk/pull/2919))
+
+### Fixed
+
+- **Claude Code plugin keeps unmerged branches during worktree cleanup**: The plugin's `WorktreeRemove` hook passed `-D` (`--force-delete`) to `wt remove`, which removes a branch even when it carries commits that aren't merged or pushed. The hook now uses the default removal: a merged or integrated branch is removed cleanly, while one with unmerged commits is kept, with a `wt remove -D <branch>` hint for deleting it deliberately. ([#2940](https://github.com/max-sixty/worktrunk/pull/2940), thanks @jbeda for reporting)
+
+- **`wt list` and `wt step prune` degrade gracefully on unborn worktrees**: A linked worktree created with `git worktree add --orphan` sits on an unborn branch whose `HEAD` is the null OID. `wt list` used to show `working-tree-diff (fatal: ambiguous argument 'HEAD')` and a merge-tree error in its columns, and `wt step prune` aborted its entire scan with `fatal: Needed a single revision`, blocking pruning of every other worktree. Both now treat an unborn worktree as having no commits: `wt list` renders `·` for the commit-dependent columns, and `wt step prune` skips it (as it does locked worktrees) and continues. ([#2937](https://github.com/max-sixty/worktrunk/pull/2937), thanks @nedtwigg for reporting)
+
+### Documentation
+
+- **Doc-site and `--help` prose cleanup**: A writing-prose pass across the FAQ, config, list, remove, Claude Code, hook, LLM-commits, and Tips & Patterns pages (some via `--help` text in `after_long_help`). ([#2922](https://github.com/max-sixty/worktrunk/pull/2922), [#2925](https://github.com/max-sixty/worktrunk/pull/2925))
+
+### Internal
+
+- **Collapsed duplicated code paths and removed dead code left by completed cut-overs**: A net reduction across the shell, git, and command layers. ([#2931](https://github.com/max-sixty/worktrunk/pull/2931), [#2932](https://github.com/max-sixty/worktrunk/pull/2932), [#2934](https://github.com/max-sixty/worktrunk/pull/2934))
+
 ## 0.54.0
 
 ### Improved

@@ -9,7 +9,7 @@ use anyhow::Context;
 use color_print::cformat;
 use normalize_path::NormalizePath;
 use worktrunk::config::UserConfig;
-use worktrunk::git::{GitError, Repository, ResolvedWorktree};
+use worktrunk::git::{Repository, ResolvedWorktree};
 use worktrunk::path::{format_path_for_display, paths_match};
 use worktrunk::styling::{
     eprintln, format_toml, hint_message, info_message, success_message, warning_message,
@@ -17,29 +17,19 @@ use worktrunk::styling::{
 
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
 
-use super::types::OperationMode;
-
 /// Resolve a worktree argument using branch-first lookup.
 ///
 /// Resolution order:
 /// 1. Special symbols ("@", "-", "^") are handled specially
 /// 2. Resolve argument as branch name
 /// 3. If branch has a worktree, return it
-/// 4. For `Remove`: fall back to path-based lookup (supports detached worktrees)
+/// 4. Fall back to path-based lookup (supports detached worktrees)
 /// 5. Otherwise, return branch-only (no worktree)
 ///
-/// For `CreateOrSwitch` context: If the branch has no worktree but expected
-/// path is occupied by another branch's worktree, an error is raised.
-///
-/// For `Remove` context: If branch lookup fails to find a worktree, the
-/// argument is tried as a filesystem path (absolute or relative to CWD).
-/// This supports removing detached HEAD worktrees which have no branch name.
-pub fn resolve_worktree_arg(
-    repo: &Repository,
-    name: &str,
-    config: &UserConfig,
-    context: OperationMode,
-) -> anyhow::Result<ResolvedWorktree> {
+/// If branch lookup fails to find a worktree, the argument is tried as a
+/// filesystem path (absolute or relative to CWD). This supports removing
+/// detached HEAD worktrees which have no branch name.
+pub fn resolve_worktree_arg(repo: &Repository, name: &str) -> anyhow::Result<ResolvedWorktree> {
     // Special symbols - delegate to Repository for consistent error handling
     match name {
         "@" | "-" | "^" => {
@@ -59,40 +49,24 @@ pub fn resolve_worktree_arg(
         });
     }
 
-    // No worktree for branch - check if expected path is occupied (only for create/switch)
-    if context == OperationMode::CreateOrSwitch {
-        let expected_path = compute_worktree_path(repo, name, config)?;
-        if let Some((_, occupant_branch)) = repo.worktree_at_path(&expected_path)? {
-            // Path is occupied by a different branch's worktree
-            return Err(GitError::WorktreePathOccupied {
-                branch,
-                path: expected_path,
-                occupant: occupant_branch,
-            }
-            .into());
-        }
+    // No worktree for branch - fall back to path-based lookup (supports detached worktrees)
+    let candidate = Path::new(name);
+    // Try as absolute path, or resolve relative to CWD
+    let abs_path = if candidate.is_absolute() {
+        candidate.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .context("Failed to determine current directory")?
+            .join(candidate)
+    };
+    if let Some((path, wt_branch)) = repo.worktree_at_path(&abs_path)? {
+        return Ok(ResolvedWorktree::Worktree {
+            path,
+            branch: wt_branch,
+        });
     }
 
-    // For Remove: fall back to path-based lookup (supports detached worktrees)
-    if context == OperationMode::Remove {
-        let candidate = Path::new(name);
-        // Try as absolute path, or resolve relative to CWD
-        let abs_path = if candidate.is_absolute() {
-            candidate.to_path_buf()
-        } else {
-            std::env::current_dir()
-                .context("Failed to determine current directory")?
-                .join(candidate)
-        };
-        if let Some((path, wt_branch)) = repo.worktree_at_path(&abs_path)? {
-            return Ok(ResolvedWorktree::Worktree {
-                path,
-                branch: wt_branch,
-            });
-        }
-    }
-
-    // No worktree for branch (and path not occupied, or we don't care about path)
+    // No worktree for branch and no worktree at the path
     Ok(ResolvedWorktree::BranchOnly { branch })
 }
 

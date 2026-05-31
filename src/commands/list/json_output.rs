@@ -339,7 +339,7 @@ impl JsonItem {
             .map(JsonCi::from);
 
         // Statusline and symbols (raw, without ANSI codes)
-        let statusline = item.display.statusline.clone();
+        let statusline = item.statusline.clone();
         let symbols = Some(format_raw_symbols(&item.status_symbols)).filter(|s| !s.is_empty());
 
         // Per-branch vars data (pre-fetched, moved out to avoid cloning)
@@ -650,7 +650,6 @@ mod tests {
             has_working_tree_conflicts: None,
             git_operation: Some(ActiveGitOperation::None),
             branch_worktree_mismatch: false,
-            working_diff_display: None,
         }
     }
 

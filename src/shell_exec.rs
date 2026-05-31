@@ -173,7 +173,12 @@ pub struct ShellConfig {
     pub executable: PathBuf,
     /// Arguments to pass before the command (e.g., ["-c"] for sh, ["/C"] for cmd)
     pub args: Vec<String>,
-    /// Whether this is a POSIX-compatible shell (bash/sh)
+    /// Whether this shell supports POSIX syntax (bash, sh, zsh, etc.).
+    ///
+    /// When true, commands can use POSIX features like:
+    /// - `{ cmd; } 1>&2` for stdout redirection
+    /// - `printf '%s' ... | cmd` for stdin piping
+    /// - `nohup ... &` for background execution
     pub is_posix: bool,
     /// Human-readable name for error messages
     pub name: String,
@@ -200,16 +205,6 @@ impl ShellConfig {
         }
         cmd.arg(shell_command);
         cmd
-    }
-
-    /// Check if this shell supports POSIX syntax (bash, sh, zsh, etc.)
-    ///
-    /// When true, commands can use POSIX features like:
-    /// - `{ cmd; } 1>&2` for stdout redirection
-    /// - `printf '%s' ... | cmd` for stdin piping
-    /// - `nohup ... &` for background execution
-    pub fn is_posix(&self) -> bool {
-        self.is_posix
     }
 }
 
@@ -1813,13 +1808,6 @@ mod tests {
         assert_eq!(config.name, cloned.name);
         assert_eq!(config.is_posix, cloned.is_posix);
         assert_eq!(config.args, cloned.args);
-    }
-
-    #[test]
-    fn test_shell_is_posix_method() {
-        let config = ShellConfig::get().unwrap();
-        // is_posix method should match the field
-        assert_eq!(config.is_posix(), config.is_posix);
     }
 
     // ========================================================================

@@ -54,19 +54,6 @@ impl PreparedStep {
     }
 }
 
-/// Per-step announcement policy — replaces the per-command match on origin.
-///
-/// Hook steps render a per-command `Running {type} {label} @ {path}` line plus
-/// the bash gutter. Alias steps suppress per-command rendering because the
-/// caller emits a single summary line for the whole pipeline.
-pub enum AnnouncePolicy {
-    Hook {
-        hook_type: HookType,
-        display_path: Option<PathBuf>,
-    },
-    None,
-}
-
 /// Wraps a command failure (FailFast path) into the final error.
 ///
 /// Receives the failing command, the message extracted from the inner error,
@@ -105,8 +92,11 @@ pub struct ForegroundStep {
     /// Whether `Concurrent` steps actually run concurrently. When `false`,
     /// concurrent commands execute serially (deprecated pre-* table form).
     pub concurrent: bool,
-    /// How to announce each command before execution.
-    pub announce: AnnouncePolicy,
+    /// Which pipeline this step belongs to. Drives how each command is
+    /// announced before execution: hooks render a per-command "Running …"
+    /// line plus the bash gutter; aliases stay silent (the caller emits one
+    /// pipeline summary line).
+    pub announce: PipelineKind,
     /// Pipe `context_json` to the child's stdin (hooks); when `false`, inherit
     /// the parent's stdin so interactive children keep the controlling tty
     /// (aliases).
@@ -464,7 +454,7 @@ pub fn execute_pipeline_foreground(
 
 /// Run every command in a concurrent group via the prefixed-line executor.
 ///
-/// Announces each command up front (per the step's `AnnouncePolicy` — hooks
+/// Announces each command up front (per the step's `PipelineKind` — hooks
 /// render per-command announcements, aliases only announce the outer group),
 /// expands all templates sequentially (template expansion reads git config;
 /// racing on reads would produce inconsistent state), then dispatches to
@@ -573,16 +563,16 @@ fn run_one_command(
     }
 }
 
-/// Announce a command before execution, formatted per the step's policy.
+/// Announce a command before execution, formatted per the step's pipeline kind.
 ///
-/// Hook policies emit a per-command "Running …" line plus the bash gutter.
-/// Alias policies (`AnnouncePolicy::None`) emit nothing — the alias caller
-/// renders a single pipeline summary externally.
-fn announce_command(cmd: &PreparedCommand, policy: &AnnouncePolicy) {
-    let AnnouncePolicy::Hook {
+/// Hook pipelines emit a per-command "Running …" line plus the bash gutter.
+/// Alias pipelines emit nothing — the alias caller renders a single pipeline
+/// summary externally.
+fn announce_command(cmd: &PreparedCommand, kind: &PipelineKind) {
+    let PipelineKind::Hook {
         hook_type,
         display_path,
-    } = policy
+    } = kind
     else {
         return;
     };

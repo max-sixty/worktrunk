@@ -49,18 +49,18 @@ use commands::handle_picker;
 use commands::repository_ext::RepositoryCliExt;
 use commands::worktree::{PushKind, PushOutcome, PushResult, handle_no_ff_merge, handle_push};
 use commands::{
-    HookCliArgs, MergeFlagOverrides, MergeOptions, OperationMode, RebaseResult, RemoveTarget,
-    SquashResult, SwitchOptions, add_approvals, clear_approvals, handle_alias_dry_run,
-    handle_alias_show, handle_claude_install, handle_claude_install_statusline,
-    handle_claude_uninstall, handle_codex_install, handle_codex_uninstall, handle_completions,
-    handle_config_create, handle_config_show, handle_config_update, handle_configure_shell,
-    handle_custom_command, handle_hints_clear, handle_hints_get, handle_hook_show, handle_init,
-    handle_list, handle_logs_list, handle_merge, handle_opencode_install,
-    handle_opencode_uninstall, handle_promote, handle_rebase, handle_show_theme, handle_squash,
-    handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
-    handle_state_show, handle_unconfigure_shell, handle_vars_clear, handle_vars_get,
-    handle_vars_list, handle_vars_set, resolve_worktree_arg, run_hook, run_switch, step_commit,
-    step_copy_ignored, step_diff, step_eval, step_for_each, step_prune, step_relocate, step_tether,
+    HookCliArgs, MergeFlagOverrides, MergeOptions, RebaseResult, RemoveTarget, SquashResult,
+    SwitchOptions, add_approvals, clear_approvals, handle_alias_dry_run, handle_alias_show,
+    handle_claude_install, handle_claude_install_statusline, handle_claude_uninstall,
+    handle_codex_install, handle_codex_uninstall, handle_completions, handle_config_create,
+    handle_config_show, handle_config_update, handle_configure_shell, handle_custom_command,
+    handle_hints_clear, handle_hints_get, handle_hook_show, handle_init, handle_list,
+    handle_logs_list, handle_merge, handle_opencode_install, handle_opencode_uninstall,
+    handle_promote, handle_rebase, handle_show_theme, handle_squash, handle_state_clear,
+    handle_state_clear_all, handle_state_get, handle_state_set, handle_state_show,
+    handle_unconfigure_shell, handle_vars_clear, handle_vars_get, handle_vars_list,
+    handle_vars_set, resolve_worktree_arg, run_hook, run_switch, step_commit, step_copy_ignored,
+    step_diff, step_eval, step_for_each, step_prune, step_relocate, step_tether,
 };
 use output::{BackgroundFallbackMode, handle_remove_output};
 use worktrunk::git::BranchDeletionMode;
@@ -793,8 +793,7 @@ fn validate_remove_targets(
     };
 
     for branch_name in &branches {
-        let resolved = match resolve_worktree_arg(repo, branch_name, config, OperationMode::Remove)
-        {
+        let resolved = match resolve_worktree_arg(repo, branch_name) {
             Ok(r) => r,
             Err(e) => {
                 plans.record_error(e);
@@ -931,28 +930,16 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                 let project_id = repo.project_identifier().ok();
                 let pid = project_id.as_deref();
                 let project_config = repo.load_project_config()?;
-                let mut builder = HookPlanBuilder::new();
+                let mut builder = HookPlanBuilder::new(project_config.as_ref(), &config, pid);
                 for &wt_path in removed_worktree_paths {
-                    builder.add(
-                        wt_path,
-                        &[HookType::PreRemove, HookType::PostRemove],
-                        project_config.as_ref(),
-                        &config,
-                        pid,
-                    );
+                    builder.add(wt_path, &[HookType::PreRemove, HookType::PostRemove]);
                 }
                 let mut seen_dests = std::collections::HashSet::new();
                 for &dest in destination_paths {
                     if !seen_dests.insert(dest) {
                         continue;
                     }
-                    builder.add(
-                        dest,
-                        &[HookType::PostSwitch],
-                        project_config.as_ref(),
-                        &config,
-                        pid,
-                    );
+                    builder.add(dest, &[HookType::PostSwitch]);
                 }
                 match builder.finish().approve(pid, yes)? {
                     Some(plan) => Ok(plan),

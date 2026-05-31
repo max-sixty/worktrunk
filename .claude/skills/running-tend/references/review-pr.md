@@ -1,5 +1,32 @@
 # PR Review — Worktrunk Specifics
 
+## Data-Loss Surface: Hold for Human Review
+
+Worktrunk's worst failure is silently destroying a user's work, and the deletion
+surface is where it leaks in. A change that touches it is not an agent's to
+merge: a force-flag bypass can read as harmless and still discard committed work.
+
+Flag a PR when its diff **introduces** any of these, or **edits a file that
+already contains** one:
+
+- `wt remove`, especially `-D` / `--force-delete` or `-f` / `--force`
+- `git branch -D` / `-d`, `git worktree remove --force`
+- `git reset --hard`, `git checkout -f`, `git clean` with `-f` / `-d` / `-x`
+- `rm -rf`, `std::fs::remove_dir_all`, `std::fs::remove_file`
+- shipped automation that runs the above: `plugins/*/hooks/hooks.json`,
+  `hooks/hooks.json`, `hooks/wt.sh`, and skill or alias examples users copy
+
+Both directions matter. A PR that adds a call is obvious. A PR that edits a file
+already holding one is the subtle case: a change near the force-delete path in
+`src/git/remove.rs` can alter its behavior without the destructive line
+appearing in the diff.
+
+On a match:
+
+1. Name the command and file in the review.
+2. Request review from @max-sixty.
+3. Do not approve or authorize the merge, even if it looks acceptable.
+
 ## Review Criteria
 
 **Idiomatic Rust and project conventions:**

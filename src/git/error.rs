@@ -1208,73 +1208,57 @@ impl GitError {
             }
 
             GitError::RefCreateConflict {
-                ref_type,
-                number,
-                branch,
+                ref_type, number, ..
             } => {
-                let name = ref_type.name();
                 let syntax = ref_type.syntax();
+                let title = self.title();
                 write!(
                     f,
                     "{}\n{}",
-                    error_message(cformat!(
-                        "Cannot create branch for <bold>{syntax}{number}</> — {name} already has branch <bold>{branch}</>"
-                    )),
+                    error_message(&title),
                     hint_message(cformat!(
                         "To switch to the existing branch, run <underline>wt switch {syntax}{number}</>"
                     ))
                 )
             }
 
-            GitError::RefBaseConflict { ref_type, number } => {
-                let syntax = ref_type.syntax();
+            GitError::RefBaseConflict { ref_type, .. } => {
                 let name_plural = ref_type.name_plural();
+                let title = self.title();
                 write!(
                     f,
                     "{}\n{}",
-                    error_message(cformat!(
-                        "Cannot use <bold>--base</> with <bold>{syntax}{number}</>"
-                    )),
+                    error_message(&title),
                     hint_message(cformat!(
                         "{name_plural} already have a base; remove <underline>--base</>"
                     ))
                 )
             }
 
-            GitError::BranchTracksDifferentRef {
-                branch,
-                ref_type,
-                number,
-            } => {
+            GitError::BranchTracksDifferentRef { branch, .. } => {
                 // The ref's branch name conflicts with an existing local branch.
                 // We can't use a different local name because git push requires
                 // the local and remote branch names to match (with push.default=current).
                 let escaped = escape(Cow::Borrowed(branch.as_str()));
                 let old_name = format!("{branch}-old");
                 let escaped_old = escape(Cow::Borrowed(&old_name));
-                let name = ref_type.name();
-                let symbol = ref_type.symbol();
+                let title = self.title();
                 write!(
                     f,
                     "{}\n{}",
-                    error_message(cformat!(
-                        "Branch <bold>{branch}</> exists but doesn't track {name} {symbol}{number}"
-                    )),
+                    error_message(&title),
                     hint_message(cformat!(
                         "To free the name, run <underline>git branch -m -- {escaped} {escaped_old}</>"
                     ))
                 )
             }
 
-            GitError::NoRemoteForRepo {
-                owner,
-                repo,
-                suggested_url,
-            } => {
+            GitError::NoRemoteForRepo { suggested_url, .. } => {
+                let title = self.title();
                 write!(
                     f,
                     "{}\n{}",
-                    error_message(cformat!("No remote found for <bold>{owner}/{repo}</>")),
+                    error_message(&title),
                     hint_message(cformat!(
                         "Add the remote: <underline>git remote add upstream {suggested_url}</>"
                     ))

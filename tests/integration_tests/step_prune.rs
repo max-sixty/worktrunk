@@ -310,6 +310,66 @@ fn test_prune_skips_locked(mut repo: TestRepo) {
     );
 }
 
+/// Regression for #2936: an unborn worktree (`git worktree add --orphan`) has
+/// HEAD = `0000…`, so its branch name doesn't resolve via `git rev-parse`.
+/// Prune used to abort with `fatal: Needed a single revision` while checking
+/// branch integration. The conservative fix is to skip such worktrees from
+/// the prune candidate set — they have no commits to integrate.
+#[rstest]
+fn test_prune_skips_unborn_worktree(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Merged worktree — should still be pruned alongside the unborn one.
+    repo.add_worktree("merged-branch");
+
+    let orphan_path = repo.root_path().parent().unwrap().join("repo.orphan");
+    let out = repo
+        .git_command()
+        .args([
+            "worktree",
+            "add",
+            "--orphan",
+            "-b",
+            "orphan",
+            orphan_path.to_str().unwrap(),
+        ])
+        .run()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git worktree add --orphan failed: {}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["step", "prune", "--yes", "--min-age=0s"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("Needed a single revision"),
+        "wt step prune should not bail on unborn worktrees, got stderr:\n{stderr}"
+    );
+    assert!(
+        output.status.success(),
+        "wt step prune should succeed; stderr:\n{stderr}"
+    );
+
+    let parent = repo.root_path().parent().unwrap();
+    assert!(
+        !parent.join("repo.merged-branch").exists(),
+        "merged worktree should still be pruned"
+    );
+    assert!(
+        orphan_path.exists(),
+        "unborn worktree is skipped (not a prune candidate), so it should remain"
+    );
+}
+
 /// Prune deletes orphan branches (integrated branches without worktrees).
 ///
 /// Two orphan branches exercise the "N branches" plural path in the summary.
