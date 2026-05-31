@@ -259,7 +259,7 @@ mod tests {
     #[test]
     fn test_llm_tool_recommended_config() {
         assert_snapshot!(LlmTool::Claude.recommended_config(), @"CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''");
-        assert_snapshot!(LlmTool::Codex.recommended_config(), @r#"codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == "agent_message")] | last.item.text'"#);
+        assert_snapshot!(LlmTool::Codex.recommended_config(), @r#"codex exec -m gpt-5.4-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == "agent_message")] | last.item.text'"#);
         assert_snapshot!(LlmTool::OpenCode.recommended_config(), @"opencode run -m anthropic/claude-haiku-4.5 --variant fast");
     }
 
