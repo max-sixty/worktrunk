@@ -24,6 +24,10 @@ use rstest::rstest;
 use crate::common::{TestRepo, repo, setup_snapshot_settings};
 
 /// Helper to corrupt a worktree's HEAD file to trigger git errors.
+///
+/// Writes a non-null invalid SHA so the worktree is treated as "valid but
+/// broken" (errors surface) rather than the NULL_OID-keyed unborn path,
+/// which now skips commit-dependent tasks silently (see #2936).
 fn corrupt_worktree_head(repo: &TestRepo, worktree_name: &str) -> PathBuf {
     let feature_path = repo.worktrees.get(worktree_name).unwrap();
     let git_dir = feature_path.join(".git");
@@ -34,7 +38,7 @@ fn corrupt_worktree_head(repo: &TestRepo, worktree_name: &str) -> PathBuf {
         .trim()
         .to_string();
     let head_path = PathBuf::from(&actual_git_dir).join("HEAD");
-    fs::write(&head_path, "invalid").unwrap();
+    fs::write(&head_path, "0000000000000000000000000000000000000001\n").unwrap();
     head_path
 }
 

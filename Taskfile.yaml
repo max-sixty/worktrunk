@@ -185,7 +185,7 @@ tasks:
 
   # Social cards and logo
   build-social-cards:
-    desc: Build social card ONGs from SVG sources
+    desc: Build social card PNGs from SVG sources
     dir: "{{.STATIC_DIR}}"
     preconditions:
       - sh: command -v rsvg-convert

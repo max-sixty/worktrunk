@@ -96,8 +96,11 @@ impl MergeContext {
             .trim()
             .to_string();
 
-        // Fast-forward check (target must be ancestor of HEAD)
-        if !repo.is_ancestor(&target_tip, "HEAD")? {
+        // Fast-forward check (target must be ancestor of HEAD).
+        // target_tip is already a SHA; resolve HEAD to one too so the
+        // ancestry probe hits the SHA-keyed cache directly.
+        let head_sha = repo.run_command(&["rev-parse", "HEAD"])?.trim().to_string();
+        if !repo.is_ancestor_by_sha(&target_tip, &head_sha)? {
             let commits_formatted = repo
                 .run_command(&[
                     "log",

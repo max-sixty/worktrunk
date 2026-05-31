@@ -516,10 +516,12 @@ fn format_context_gauge(percentage: f64) -> String {
         91..=97 => '🌒',
         _ => '🌑',
     };
-    // Display the original percentage (not clamped) for transparency
-    // Emoji + percent runs together (no separator) to match the other
-    // prefix-char segments in the statusline: `@+1`, `↓1`, `?^|`.
-    format!("{symbol}{:.0}%", percentage)
+    // Display the original percentage (not clamped) for transparency.
+    // A space separates the moon emoji from the percent: unlike the ASCII
+    // prefix-char segments (`@+1`, `↓1`, `?^|`) that run flush, emoji glyphs
+    // are double-width and bleed into the next cell on most terminals, so they
+    // need a trailing space to keep from colliding with the digits.
+    format!("{symbol} {:.0}%", percentage)
 }
 
 /// Run the statusline command.
@@ -1002,38 +1004,38 @@ mod tests {
     fn test_context_gauge_formatting() {
         // Test boundary values for each moon phase symbol (waning - darker as context fills)
         // Thresholds use exponential halving: ratio 16:8:4:2:1, normalized to 100%
-        assert_eq!(format_context_gauge(0.0), "🌕0%");
-        assert_eq!(format_context_gauge(51.0), "🌕51%");
-        assert_eq!(format_context_gauge(52.0), "🌔52%");
-        assert_eq!(format_context_gauge(77.0), "🌔77%");
-        assert_eq!(format_context_gauge(78.0), "🌓78%");
-        assert_eq!(format_context_gauge(90.0), "🌓90%");
-        assert_eq!(format_context_gauge(91.0), "🌒91%");
-        assert_eq!(format_context_gauge(97.0), "🌒97%");
-        assert_eq!(format_context_gauge(98.0), "🌑98%");
-        assert_eq!(format_context_gauge(100.0), "🌑100%");
+        assert_eq!(format_context_gauge(0.0), "🌕 0%");
+        assert_eq!(format_context_gauge(51.0), "🌕 51%");
+        assert_eq!(format_context_gauge(52.0), "🌔 52%");
+        assert_eq!(format_context_gauge(77.0), "🌔 77%");
+        assert_eq!(format_context_gauge(78.0), "🌓 78%");
+        assert_eq!(format_context_gauge(90.0), "🌓 90%");
+        assert_eq!(format_context_gauge(91.0), "🌒 91%");
+        assert_eq!(format_context_gauge(97.0), "🌒 97%");
+        assert_eq!(format_context_gauge(98.0), "🌑 98%");
+        assert_eq!(format_context_gauge(100.0), "🌑 100%");
     }
 
     #[test]
     fn test_context_gauge_fractional_percentages() {
         // Fractional values are rounded (per {:.0} format specifier)
         // Rust uses banker's rounding (round half to even)
-        assert_eq!(format_context_gauge(42.7), "🌕43%"); // 43% is in 0-51% range
-        assert_eq!(format_context_gauge(0.4), "🌕0%");
-        assert_eq!(format_context_gauge(0.5), "🌕0%"); // banker's rounding: 0.5 rounds to even (0)
-        assert_eq!(format_context_gauge(1.5), "🌕2%"); // banker's rounding: 1.5 rounds to even (2)
-        assert_eq!(format_context_gauge(99.9), "🌑100%");
+        assert_eq!(format_context_gauge(42.7), "🌕 43%"); // 43% is in 0-51% range
+        assert_eq!(format_context_gauge(0.4), "🌕 0%");
+        assert_eq!(format_context_gauge(0.5), "🌕 0%"); // banker's rounding: 0.5 rounds to even (0)
+        assert_eq!(format_context_gauge(1.5), "🌕 2%"); // banker's rounding: 1.5 rounds to even (2)
+        assert_eq!(format_context_gauge(99.9), "🌑 100%");
     }
 
     #[test]
     fn test_context_gauge_edge_cases() {
         // Negative values: symbol clamps to bright (low usage), but display shows original value
-        assert_eq!(format_context_gauge(-5.0), "🌕-5%");
-        assert_eq!(format_context_gauge(-0.1), "🌕-0%"); // rounds to -0%
+        assert_eq!(format_context_gauge(-5.0), "🌕 -5%");
+        assert_eq!(format_context_gauge(-0.1), "🌕 -0%"); // rounds to -0%
 
         // Values over 100%: symbol clamps to dark (high usage), but display shows original value
-        assert_eq!(format_context_gauge(105.0), "🌑105%");
-        assert_eq!(format_context_gauge(150.0), "🌑150%");
+        assert_eq!(format_context_gauge(105.0), "🌑 105%");
+        assert_eq!(format_context_gauge(150.0), "🌑 150%");
     }
 
     #[test]

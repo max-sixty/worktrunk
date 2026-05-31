@@ -3979,6 +3979,24 @@ fn test_plugin_layout_is_consolidated() {
         }
     }
 
+    // The WorktreeRemove hook must not force-delete unmerged branches (#2939).
+    // Claude Code auto-fires WorktreeRemove on session exit for any worktree
+    // with a clean working tree, so a hook command containing `-D` /
+    // `--force-delete` silently discards committed-but-unpushed work — the only
+    // recovery path is `git fsck`. The safe default retains unmerged branches
+    // and prints a `wt remove -D <branch>` hint for the user to act on.
+    let hooks = read("plugins/worktrunk/hooks/hooks.json");
+    let hooks_json = json("plugins/worktrunk/hooks/hooks.json");
+    let worktree_remove_cmd = hooks_json["hooks"]["WorktreeRemove"][0]["hooks"][0]["command"]
+        .as_str()
+        .expect("WorktreeRemove hook must define a command");
+    assert!(
+        !worktree_remove_cmd.contains(" -D") && !worktree_remove_cmd.contains("--force-delete"),
+        "WorktreeRemove hook must not pass -D / --force-delete (silently destroys \
+         committed-but-unpushed work on session-exit auto-remove; see #2939). \
+         hooks.json:\n{hooks}"
+    );
+
     // The product description must not drift across tools. Byte-identical is
     // schema-impossible (Codex omits the activity clause, Gemini says
     // "extension"), but every manifest shares the canonical opening sentence.

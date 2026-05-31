@@ -307,30 +307,12 @@ impl ProjectConfig {
     }
 }
 
-/// Returns all valid top-level keys in project config, derived from the JsonSchema.
-///
-/// This includes keys from ProjectConfig and HooksConfig (flattened).
-/// Public for use by the `WorktrunkConfig` trait implementation.
-///
-/// `pre-create`/`post-create` are appended as silent serde aliases for the
-/// canonical `pre-start`/`post-start` hook keys (see `HooksConfig` in
-/// `src/config/hooks.rs`). The schema only knows canonical names from
-/// `#[serde(rename = ...)]`; adding the aliases here keeps the unknown-key
-/// round-trip from flagging an accepted name as unknown.
+/// All valid top-level keys in project config (ProjectConfig + flattened
+/// HooksConfig), derived from the JsonSchema via
+/// `config::schema_top_level_keys`. Public for use by the
+/// `WorktrunkConfig` trait implementation.
 pub fn valid_project_config_keys() -> Vec<String> {
-    use schemars::SchemaGenerator;
-
-    let schema = SchemaGenerator::default().into_root_schema_for::<ProjectConfig>();
-
-    let mut keys: Vec<String> = schema
-        .as_object()
-        .and_then(|obj| obj.get("properties"))
-        .and_then(|p| p.as_object())
-        .map(|props| props.keys().cloned().collect())
-        .unwrap_or_default();
-    keys.push("pre-create".to_string());
-    keys.push("post-create".to_string());
-    keys
+    crate::config::schema_top_level_keys::<ProjectConfig>()
 }
 
 #[cfg(test)]

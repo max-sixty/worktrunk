@@ -72,6 +72,18 @@ pub enum Shell {
 }
 
 impl Shell {
+    /// All supported shells, in the order `wt config shell install` /
+    /// `uninstall` scan them. The single source for that scan list.
+    pub fn all() -> Vec<Shell> {
+        vec![
+            Shell::Bash,
+            Shell::Zsh,
+            Shell::Fish,
+            Shell::Nushell,
+            Shell::PowerShell,
+        ]
+    }
+
     /// Whether this shell uses a standalone wrapper file as integration.
     ///
     /// Wrapper-based shells (Fish, Nushell) install a complete function file that the shell

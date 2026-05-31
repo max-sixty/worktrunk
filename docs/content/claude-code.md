@@ -109,7 +109,7 @@ On session exit the worktree is offered for removal via the `WorktreeRemove` hoo
 
 `wt list statusline --format=claude-code` outputs a single-line status for the Claude Code statusline. When the CI status cache is stale, this fetches from the network — typically 1–2 seconds — making it suitable for async statuslines but too slow for synchronous shell prompts. If a faster version would be helpful, please [open an issue](https://github.com/max-sixty/worktrunk/issues).
 
-<code>~/w/myproject.feature-auth  !🤖  @<span style='color:#0a0'>+42</span> <span style='color:#a00'>-8</span>  <span style='color:#0a0'>↑3</span>  <span style='color:#0a0'>⇡1</span>  <span style='color:#0a0'>●</span>  Opus  🌔65%  <span style='color:#a70'>1.4×pace(10am–3pm)</span></code>
+<code>~/w/myproject.feature-auth  !🤖  @<span style='color:#0a0'>+42</span> <span style='color:#a00'>-8</span>  <span style='color:#0a0'>↑3</span>  <span style='color:#0a0'>⇡1</span>  <span style='color:#0a0'>●</span>  Opus  🌔 65%  <span style='color:#a70'>1.4×pace(10am–3pm)</span></code>
 
 When Claude Code provides context window usage via stdin JSON, a moon phase gauge appears (🌕→🌑 as context fills). A yellow `<n>×pace(<window>)` segment appears when Claude's 5-hour or weekly rate limit is on track to be hit before reset — `1.4×pace(10am–3pm)` reads as 1.4× the pace that would exactly fill that window.
 

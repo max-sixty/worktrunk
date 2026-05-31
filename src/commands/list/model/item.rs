@@ -13,75 +13,6 @@ use super::status_symbols::{StatusSymbols, WorkingTreeStatus};
 use crate::commands::list::ci_status::PrStatus;
 use crate::commands::list::columns::ColumnKind;
 
-/// Display fields shared between WorktreeInfo and BranchInfo
-/// These contain formatted strings with ANSI colors for json-pretty output
-#[derive(Clone, serde::Serialize, Default)]
-pub struct DisplayFields {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub commits_display: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub branch_diff_display: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub upstream_display: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ci_status_display: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub status_display: Option<String>,
-    /// Pre-formatted single-line representation for statusline tools.
-    /// Format: `branch  status  @working  commits  ^branch_diff  upstream  ci` (2-space separators)
-    ///
-    /// Use via JSON: `wt list --format=json | jq '.[] | select(.is_current) | .statusline'`
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub statusline: Option<String>,
-}
-
-impl DisplayFields {
-    pub(crate) fn from_common_fields(
-        counts: &Option<AheadBehind>,
-        branch_diff: &Option<BranchDiffTotals>,
-        upstream: &Option<UpstreamStatus>,
-    ) -> Self {
-        let commits_display = counts
-            .as_ref()
-            .and_then(|c| ColumnKind::AheadBehind.format_diff_plain(c.ahead, c.behind));
-
-        let branch_diff_display = branch_diff.as_ref().and_then(|bd| {
-            ColumnKind::BranchDiff.format_diff_plain(bd.diff.added, bd.diff.deleted)
-        });
-
-        let upstream_display = upstream.as_ref().and_then(|u| {
-            u.active().and_then(|active| {
-                ColumnKind::Upstream.format_diff_plain(active.ahead, active.behind)
-            })
-        });
-
-        Self {
-            commits_display,
-            branch_diff_display,
-            upstream_display,
-            // CI renders via render_indicator() in render.rs, not as display text
-            ci_status_display: None,
-            status_display: None,
-            statusline: None,
-        }
-    }
-}
-
-/// Serde helper: skip `git_operation` when it is absent (unloaded) or an
-/// active `ActiveGitOperation::None` — preserving the original
-/// `skip_serializing_if = "ActiveGitOperation::is_none"` behavior now that
-/// the field is wrapped in `Option`.
-// `clippy::ref_option` fires because we take `&Option<T>` instead of
-// `Option<&T>`, but `skip_serializing_if` calls this with `&field`, so the
-// signature is forced by serde.
-#[allow(clippy::ref_option)]
-fn git_operation_is_none_or_unloaded(op: &Option<ActiveGitOperation>) -> bool {
-    match op {
-        None => true,
-        Some(inner) => inner.is_none(),
-    }
-}
-
 /// Compute the `WorktreeState` from `WorktreeData` metadata alone.
 ///
 /// Used by both `compute_status_symbols` (full computation) and the
@@ -100,48 +31,36 @@ fn metadata_worktree_state(data: &WorktreeData) -> WorktreeState {
 }
 
 /// Type-specific data for worktrees
-#[derive(Clone, serde::Serialize, Default)]
+#[derive(Clone, Default)]
 pub struct WorktreeData {
     pub path: PathBuf,
     pub detached: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub locked: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub prunable: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub working_tree_diff: Option<LineDiff>,
     /// Working-tree change flags (tracked/untracked/modified). `None` = not yet
     /// loaded; `Some` = loaded (possibly empty). Fed by the `WorkingTreeDiff` task.
-    #[serde(skip)]
     pub working_tree_status: Option<WorkingTreeStatus>,
     /// Whether the working tree has merge conflicts in tracked files. `None` =
     /// not yet loaded; `Some` = loaded. Fed by the `WorkingTreeDiff` task.
-    #[serde(skip)]
     pub has_conflicts: Option<bool>,
     /// Result of `WorkingTreeConflicts` task (`--full` mode only). Outer `None`
     /// = task hasn't run yet. Outer `Some(None)` = task ran but working tree
     /// was clean, so fall back to the committed-HEAD merge-tree check.
     /// Outer `Some(Some(b))` = dirty working tree, `b` is the conflict result.
-    #[serde(skip)]
     pub has_working_tree_conflicts: Option<Option<bool>>,
     /// Git operation in progress (rebase/merge). `None` = not yet loaded;
     /// `Some(ActiveGitOperation::None)` = loaded, no operation in progress.
     /// Fed by the `GitOperation` task.
-    #[serde(skip_serializing_if = "git_operation_is_none_or_unloaded")]
     pub git_operation: Option<ActiveGitOperation>,
     pub is_main: bool,
     /// Whether this is the current worktree (matches repo discovery path: PWD or `-C`)
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub is_current: bool,
     /// Whether this was the previous worktree (from `worktrunk.history`)
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub is_previous: bool,
     /// Whether the worktree is at an unexpected location (branch-worktree mismatch).
     /// Only true when: has branch name, not main worktree, and path differs from template.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub branch_worktree_mismatch: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub working_diff_display: Option<String>,
 }
 
 impl WorktreeData {
@@ -178,8 +97,7 @@ impl WorktreeData {
 /// WorktreeData is boxed to reduce the size of ItemKind enum (304 bytes → 24 bytes).
 /// This reduces stack pressure when passing ListItem by value and improves cache locality
 /// in `Vec<ListItem>` by keeping the discriminant and common fields together.
-#[derive(serde::Serialize, Clone)]
-#[serde(tag = "type", rename_all = "lowercase")]
+#[derive(Clone)]
 pub enum ItemKind {
     Worktree(Box<WorktreeData>),
     Branch,
@@ -191,82 +109,65 @@ pub enum ItemKind {
 /// was collected (`None` = not loaded, render shows placeholder). The inner type `U` is
 /// whatever the data naturally is — e.g., `AheadBehind` (always has a value, even if zero)
 /// or `Option<PrStatus>` (CI may not exist).
-#[derive(serde::Serialize, Clone)]
+#[derive(Clone)]
 pub struct ListItem {
     // Common fields (present for both worktrees and branches)
-    #[serde(rename = "head_sha")]
     pub head: String,
     /// Abbreviated form of `head`, honoring `core.abbrev` and auto-extending
     /// for ambiguous prefixes. Always populated when there is a HEAD commit
     /// to abbreviate (the `git log` batch in `collect()` emits `%h` for every
     /// row, including prunable worktrees). Empty for null OIDs (unborn
     /// branches) or when the batch failed for this row.
-    #[serde(skip)]
     pub short_sha: String,
     /// Branch name - None for detached worktrees
     pub branch: Option<String>,
-    #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub commit: Option<CommitDetails>,
 
-    #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub counts: Option<AheadBehind>,
-    #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub branch_diff: Option<BranchDiffTotals>,
     /// Whether HEAD's tree SHA matches the integration target's tree SHA.
     /// True when committed content is identical regardless of commit history.
     /// Internal field used to compute `BranchState::Integrated(TreesMatch)`.
-    #[serde(skip)]
     pub committed_trees_match: Option<bool>,
     /// Whether branch has file changes beyond the merge-base with the integration target.
     /// False when three-dot diff (`<integration-target>...branch`) is empty.
     /// Internal field used for integration detection (no unique content).
-    #[serde(skip)]
     pub has_file_changes: Option<bool>,
     /// Whether merging branch into the integration target would add changes (merge simulation).
     /// False when `git merge-tree --write-tree <integration-target> branch` produces the same tree
     /// as the integration target. Catches squash-merged branches where the integration target advanced.
-    #[serde(skip)]
     pub would_merge_add: Option<bool>,
     /// Whether the branch's squashed patch-id matches a commit on the integration target.
     /// Detects squash merges when merge-tree conflicts (both sides modified the same files).
-    #[serde(skip)]
     pub is_patch_id_match: Option<bool>,
     /// Whether branch HEAD is an ancestor of the integration target (or same commit).
     /// True means branch is already part of the integration target's history.
     /// This is the cheapest integration check (~1ms).
-    #[serde(skip)]
     pub is_ancestor: Option<bool>,
     /// Whether this branch is an orphan (no common ancestor with default branch).
     /// Orphan branches have independent history and can't compute meaningful ahead/behind counts.
-    #[serde(skip)]
     pub is_orphan: Option<bool>,
 
-    #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub upstream: Option<UpstreamStatus>,
 
     /// CI/PR status (inner Option: whether CI exists for this branch)
     pub pr_status: Option<Option<PrStatus>>,
 
     /// Dev server URL computed from project config template
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
     /// Whether the URL's port is actively listening
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub url_active: Option<bool>,
 
     /// LLM-generated branch summary (inner Option: whether LLM produced a summary)
-    #[serde(skip)]
     pub summary: Option<Option<String>>,
 
     /// Potential merge conflicts with the integration target, computed from
     /// the committed HEAD via `git merge-tree`. `None` = not yet loaded;
     /// `Some` = loaded. Fed by the `MergeTreeConflicts` task.
-    #[serde(skip)]
     pub has_merge_tree_conflicts: Option<bool>,
     /// User-defined status marker from git config. Outer `None` = task
     /// hasn't run yet; `Some(None)` = task ran, no marker configured;
     /// `Some(Some(s))` = task ran, marker is `s`. Fed by the `UserMarker` task.
-    #[serde(skip)]
     pub user_marker: Option<Option<String>>,
 
     /// Git status symbols — one `StatusSymbols` struct per item, always
@@ -274,17 +175,16 @@ pub struct ListItem {
     /// `Option` that progresses from `None` (loading, renders `·`) to `Some`
     /// as task results arrive. See the `status_symbols` module docstring for
     /// the per-gate rendering rules.
-    ///
-    /// Not serialized directly — JSON output converts to `JsonItem` first.
-    #[serde(skip)]
     pub status_symbols: StatusSymbols,
 
-    // Display fields for json-pretty format (with ANSI colors)
-    #[serde(flatten)]
-    pub display: DisplayFields,
+    /// Pre-formatted single-line representation for statusline tools.
+    /// Format: `branch  status  @working  commits  ^branch_diff  upstream  ci` (2-space separators)
+    ///
+    /// Populated by [`finalize_display`](Self::finalize_display); read by
+    /// `JsonItem` for the `statusline` field.
+    pub statusline: Option<String>,
 
     // Type-specific data (worktree vs branch)
-    #[serde(flatten)]
     pub kind: ItemKind,
 }
 
@@ -317,7 +217,7 @@ impl ListItem {
             has_merge_tree_conflicts: None,
             user_marker: None,
             status_symbols: StatusSymbols::default(),
-            display: DisplayFields::default(),
+            statusline: None,
             kind: ItemKind::Branch,
         }
     }
@@ -506,20 +406,11 @@ impl ListItem {
         segments
     }
 
-    /// Populate display fields for JSON output and statusline.
+    /// Populate the pre-formatted statusline for JSON output.
     ///
     /// Call after all computed fields (counts, diffs, upstream, CI) are available.
     pub fn finalize_display(&mut self) {
-        self.display =
-            DisplayFields::from_common_fields(&self.counts, &self.branch_diff, &self.upstream);
-        self.display.statusline = Some(self.format_statusline());
-
-        if let ItemKind::Worktree(ref mut wt_data) = self.kind
-            && let Some(ref working_tree_diff) = wt_data.working_tree_diff
-        {
-            wt_data.working_diff_display = ColumnKind::WorkingDiff
-                .format_diff_plain(working_tree_diff.added, working_tree_diff.deleted);
-        }
+        self.statusline = Some(self.format_statusline());
     }
 
     /// Refresh status symbols for this item, populating any gates whose

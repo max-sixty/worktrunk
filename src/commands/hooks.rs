@@ -76,9 +76,8 @@ use worktrunk::styling::{
 };
 
 use super::command_executor::{
-    AnnouncePolicy, CommandContext, FailureStrategy, ForegroundStep, PipelineKind, PreparedCommand,
-    PreparedStep, alias_error_wrapper, execute_pipeline_foreground, hook_error_wrapper,
-    prepare_steps,
+    CommandContext, FailureStrategy, ForegroundStep, PipelineKind, PreparedCommand, PreparedStep,
+    alias_error_wrapper, execute_pipeline_foreground, hook_error_wrapper, prepare_steps,
 };
 use super::hook_announcement::{SourcedStep, format_pipeline_summary};
 use crate::commands::process::{HookLog, spawn_detached_exec};
@@ -709,30 +708,16 @@ pub(crate) fn sourced_steps_to_foreground(
                 }
                 _ => DirectivePassthrough::inherit_from_env(),
             };
-            let (announce, pipe_stdin, redirect_stdout_to_stderr, error_wrapper) = match kind {
-                PipelineKind::Hook {
-                    hook_type,
-                    display_path,
-                } => (
-                    AnnouncePolicy::Hook {
-                        hook_type: *hook_type,
-                        display_path: display_path.clone(),
-                    },
-                    true,
-                    true,
-                    hook_error_wrapper(*hook_type),
-                ),
-                PipelineKind::Alias { name } => (
-                    AnnouncePolicy::None,
-                    false,
-                    false,
-                    alias_error_wrapper(name.clone()),
-                ),
+            let (pipe_stdin, redirect_stdout_to_stderr, error_wrapper) = match kind {
+                PipelineKind::Hook { hook_type, .. } => {
+                    (true, true, hook_error_wrapper(*hook_type))
+                }
+                PipelineKind::Alias { name } => (false, false, alias_error_wrapper(name.clone())),
             };
             ForegroundStep {
                 step: sourced.step,
                 concurrent: sourced.is_pipeline,
-                announce,
+                announce: kind.clone(),
                 pipe_stdin,
                 redirect_stdout_to_stderr,
                 error_wrapper,

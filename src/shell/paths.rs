@@ -5,6 +5,7 @@
 
 use etcetera::base_strategy::{BaseStrategy, choose_base_strategy};
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use crate::path::home_dir;
 
@@ -27,17 +28,26 @@ fn parse_nu_config_output(stdout: &[u8]) -> Option<PathBuf> {
     (!path.as_os_str().is_empty()).then_some(path)
 }
 
-/// Query `nu` for its default config directory.
+/// Query `nu` for its default config directory, spawning `nu` at most once per process.
 ///
 /// Returns `Some(path)` if the `nu` binary is in PATH and reports its config dir,
-/// `None` otherwise (not installed, PATH issues, timeout, etc.).
+/// `None` otherwise (not installed, PATH issues, timeout, etc.). The result is
+/// memoised: a single `wt config shell install` resolves both the write path
+/// (`nushell_config_dir`) and the installed-state candidates
+/// (`nushell_config_candidates`), which would otherwise each spawn `nu` for the
+/// same answer.
 fn query_nu_config_dir() -> Option<PathBuf> {
-    let output = crate::shell_exec::Cmd::new("nu")
-        .args(["-c", "echo $nu.default-config-dir"])
-        .run()
-        .ok()
-        .filter(|o| o.status.success())?;
-    parse_nu_config_output(&output.stdout)
+    static CACHE: OnceLock<Option<PathBuf>> = OnceLock::new();
+    CACHE
+        .get_or_init(|| {
+            let output = crate::shell_exec::Cmd::new("nu")
+                .args(["-c", "echo $nu.default-config-dir"])
+                .run()
+                .ok()
+                .filter(|o| o.status.success())?;
+            parse_nu_config_output(&output.stdout)
+        })
+        .clone()
 }
 
 /// Resolve the nushell config directory from a queried path or platform defaults.
@@ -71,7 +81,10 @@ fn nushell_config_dir(home: &std::path::Path) -> PathBuf {
 /// - We need to find the config file regardless of which path was used
 ///
 /// Returns paths in priority order: queried path first, then fallbacks.
-/// Callers that pick `first()` to write get the same path as `nushell_config_dir()`.
+/// When the `nu` query succeeds, `first()` is the queried path — the same path
+/// `nushell_config_dir()` writes to. (Their fallbacks differ when the query
+/// fails: `nushell_config_dir()` prefers the platform config dir, this prefers
+/// `$XDG_CONFIG_HOME`/`~/.config`.)
 pub fn nushell_config_candidates(home: &std::path::Path) -> Vec<PathBuf> {
     let mut candidates = vec![];
 

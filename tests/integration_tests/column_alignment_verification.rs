@@ -20,13 +20,11 @@ use unicode_width::UnicodeWidthStr;
 #[derive(Debug, Clone)]
 struct ColumnPositions {
     age: Option<usize>,
-    cmts: Option<usize>,
     cmt_diff: Option<usize>,
     wt_diff: Option<usize>,
     remote: Option<usize>,
     commit: Option<usize>,
     message: Option<usize>,
-    state: Option<usize>,
     path: Option<usize>,
 }
 
@@ -36,13 +34,11 @@ impl ColumnPositions {
     fn from_header(header: &str) -> Self {
         let mut positions = ColumnPositions {
             age: None,
-            cmts: None,
             cmt_diff: None,
             wt_diff: None,
             remote: None,
             commit: None,
             message: None,
-            state: None,
             path: None,
         };
 
@@ -53,9 +49,6 @@ impl ColumnPositions {
         // Note: str.find() returns byte positions, we need display positions
         if let Some(byte_pos) = header.find("Age") {
             positions.age = Some(byte_to_display_pos(byte_pos));
-        }
-        if let Some(byte_pos) = header.find("Main-Cmt") {
-            positions.cmts = Some(byte_to_display_pos(byte_pos));
         }
         if let Some(byte_pos) = header.find("main↕") {
             positions.cmt_diff = Some(byte_to_display_pos(byte_pos));
@@ -71,9 +64,6 @@ impl ColumnPositions {
         }
         if let Some(byte_pos) = header.find("Message") {
             positions.message = Some(byte_to_display_pos(byte_pos));
-        }
-        if let Some(byte_pos) = header.find("State") {
-            positions.state = Some(byte_to_display_pos(byte_pos));
         }
         if let Some(byte_pos) = header.find("Path") {
             positions.path = Some(byte_to_display_pos(byte_pos));
@@ -204,13 +194,11 @@ fn verify_table_alignment(output: &str) -> Result<(), String> {
         let positions = [
             ("Branch", Some(0usize)), // Branch always starts at 0
             ("Age", header_positions.age),
-            ("Main-Cmt", header_positions.cmts),
-            ("Main-Δ", header_positions.cmt_diff),
-            ("Dirty", header_positions.wt_diff),
+            ("main↕", header_positions.cmt_diff),
+            ("HEAD±", header_positions.wt_diff),
             ("Remote", header_positions.remote),
             ("Commit", header_positions.commit),
             ("Message", header_positions.message),
-            ("State", header_positions.state),
             ("Path", header_positions.path),
         ];
 

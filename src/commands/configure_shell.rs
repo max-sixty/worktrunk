@@ -357,13 +357,7 @@ pub fn scan_shell_configs(
     // Iterate every supported shell. Shells the user doesn't have are filtered
     // out of the Skipped output by `is_installed()` below, matching how
     // bash/zsh/fish/nushell are handled.
-    let default_shells = vec![
-        Shell::Bash,
-        Shell::Zsh,
-        Shell::Fish,
-        Shell::Nushell,
-        Shell::PowerShell,
-    ];
+    let default_shells = Shell::all();
 
     // Detect whether the user is *running in* PowerShell or Nushell right now.
     // This unlocks `allow_create` so we'll write a profile/autoload file even
@@ -973,14 +967,9 @@ fn scan_for_uninstall(
     shell_filter: Option<Shell>,
     dry_run: bool,
 ) -> Result<UninstallScanResult, String> {
-    // For uninstall, always include PowerShell to clean up any existing profiles
-    let default_shells = vec![
-        Shell::Bash,
-        Shell::Zsh,
-        Shell::Fish,
-        Shell::Nushell,
-        Shell::PowerShell,
-    ];
+    // For uninstall, scan every shell (Shell::all includes PowerShell) to clean
+    // up any existing profiles.
+    let default_shells = Shell::all();
 
     let shells = shell_filter.map_or(default_shells, |shell| vec![shell]);
 
