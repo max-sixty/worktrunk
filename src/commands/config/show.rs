@@ -1159,7 +1159,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
             ConfigAction::AlreadyExists => {
                 render_already_configured(out, result, &detection_results, &cmd, shell_active)?;
             }
-            ConfigAction::WouldAdd | ConfigAction::WouldCreate => {
+            ConfigAction::WouldAdd | ConfigAction::WouldCreate
                 if render_would_add_or_create(
                     out,
                     result,
@@ -1167,9 +1167,9 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                     legacy_fish_has_integration,
                     &cmd,
                     shell_active,
-                )? {
-                    any_not_configured = true;
-                }
+                )? =>
+            {
+                any_not_configured = true;
             }
             _ => {} // Added/Created won't appear in dry_run mode
         }

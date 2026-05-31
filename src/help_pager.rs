@@ -55,7 +55,7 @@ fn detect_help_pager() -> Option<String> {
 
     // Default to "less" only if we have a POSIX shell (Unix or Git Bash on Windows)
     // Without Git Bash, less isn't typically available on Windows
-    if shell.is_posix() {
+    if shell.is_posix {
         Some("less".to_string())
     } else {
         log::debug!("No POSIX shell available, skipping pager (less not available)");

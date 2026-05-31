@@ -11,6 +11,12 @@ install = "cargo install --path ."
 sync = 'if [ "{{ target }}" = "main" ]; then git pull && git push; fi'
 
 [[pre-merge]]
+# Assert Cargo.lock is in sync with Cargo.toml before anything builds. Must be
+# first: a preceding unlocked cargo command (the insta hook's test runner, or a
+# pre-commit hook) would silently regenerate a stale lock and mask this check.
+# `--workspace` reconciles the lock against the manifests only; plain
+# `cargo update --locked` would also fail on dependencies merely behind latest.
+lockfile = "cargo update --workspace --locked"
 pre-commit = 'if [ -n "$MSYSTEM" ]; then SKIP=lychee-system pre-commit run --all-files; else pre-commit run --all-files; fi'
 insta = """RUSTFLAGS='-D warnings' NEXTEST_NO_INPUT_HANDLER=1 cargo insta test --test-runner nextest --dnd --check $([ "$(uname)" = 'Linux' ] && echo '--unreferenced reject') --features shell-integration-tests"""
 doctest = "RUSTDOCFLAGS='-Dwarnings' cargo test --doc"

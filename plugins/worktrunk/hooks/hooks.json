@@ -47,7 +47,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.worktree_path' | xargs bash \"${CLAUDE_PLUGIN_ROOT}/hooks/wt.sh\" remove -D --foreground"
+            "command": "jq -r '.worktree_path' | xargs bash \"${CLAUDE_PLUGIN_ROOT}/hooks/wt.sh\" remove --foreground"
           }
         ]
       }

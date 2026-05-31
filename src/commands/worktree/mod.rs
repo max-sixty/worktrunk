@@ -98,4 +98,4 @@ pub use resolve::{
 #[cfg(unix)]
 pub(crate) use switch::SwitchPipeline;
 pub use switch::{SwitchOptions, run_switch};
-pub use types::{MergeOperations, OperationMode, RemoveResult, SwitchBranchInfo, SwitchResult};
+pub use types::{MergeOperations, RemoveResult, SwitchBranchInfo, SwitchResult};

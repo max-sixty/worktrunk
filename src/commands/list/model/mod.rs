@@ -8,7 +8,7 @@
 //! - [`state`] - State enums for worktree and branch status (Divergence, MainState, etc.)
 //! - [`stats`] - Statistics types (AheadBehind, BranchDiffTotals, UpstreamStatus)
 //! - [`status_symbols`] - Status symbol rendering (StatusSymbols, PositionMask)
-//! - [`item`] - Core list item types (ListItem, WorktreeData, DisplayFields)
+//! - [`item`] - Core list item types (ListItem, WorktreeData, ItemKind)
 //! - [`statusline_segment`] - Statusline output with smart truncation
 
 pub mod item;
@@ -22,7 +22,7 @@ pub mod statusline_segment;
 // via `crate::commands::list::model::...` paths. The allow is needed because
 // rustc doesn't track re-export usage across module boundaries.
 #[allow(unused_imports)]
-pub use item::{DisplayFields, ItemKind, ListData, ListItem, WorktreeData};
+pub use item::{ItemKind, ListData, ListItem, WorktreeData};
 #[allow(unused_imports)]
 pub use state::{ActiveGitOperation, Divergence, MainState, OperationState, WorktreeState};
 #[allow(unused_imports)]

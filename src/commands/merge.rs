@@ -107,6 +107,12 @@ fn approve_merge_plan(
 ) -> anyhow::Result<Option<ApprovedHookPlan>> {
     let pid = Some(project_id);
 
+    // `--no-hooks` (`!verify`) selects no hook, so the gate skips the config
+    // read entirely.
+    if !verify {
+        return Ok(Some(ApprovedHookPlan::empty()));
+    }
+
     // Every feature-worktree hook shares one anchor: the feature worktree's
     // canonical root, the exact path `finish_after_merge` records as
     // `RemoveResult::worktree_path` and `handle_merge` passes as the
@@ -116,51 +122,25 @@ fn approve_merge_plan(
     // looked up.
     let mut feature_hooks = Vec::new();
     let will_create_commit = repo.current_worktree().is_dirty()? || squash_enabled;
-    if commit && verify && will_create_commit {
+    if commit && will_create_commit {
         feature_hooks.push(HookType::PreCommit);
         feature_hooks.push(HookType::PostCommit);
     }
-    if verify {
-        feature_hooks.push(HookType::PreMerge);
-    }
-    if verify && will_remove {
+    feature_hooks.push(HookType::PreMerge);
+    if will_remove {
         feature_hooks.push(HookType::PreRemove);
         feature_hooks.push(HookType::PostRemove);
     }
 
-    // Every merge hook resolves against the invoking worktree's
-    // `.config/wt.toml` — the feature worktree `wt merge` ran in. Read once,
-    // inside the `verify` gate: `--no-hooks` selects no hook, so the gate needs
-    // no config.
-    let mut builder = HookPlanBuilder::new();
-    if verify {
-        let project_config = repo.load_project_config()?;
-        builder.add(
-            feature_root,
-            &feature_hooks,
-            project_config.as_ref(),
-            config,
-            pid,
-        );
-        // `post-merge` runs in the destination, and `post-switch` lands the
-        // user there (the feature worktree is removed) — both still selected
-        // from the invoking worktree's config.
-        builder.add(
-            destination_path,
-            &[HookType::PostMerge],
-            project_config.as_ref(),
-            config,
-            pid,
-        );
-        if will_remove {
-            builder.add(
-                destination_path,
-                &[HookType::PostSwitch],
-                project_config.as_ref(),
-                config,
-                pid,
-            );
-        }
+    let project_config = repo.load_project_config()?;
+    let mut builder = HookPlanBuilder::new(project_config.as_ref(), config, pid);
+    builder.add(feature_root, &feature_hooks);
+    // `post-merge` runs in the destination, and `post-switch` lands the user
+    // there (the feature worktree is removed) — both still selected from the
+    // invoking worktree's config.
+    builder.add(destination_path, &[HookType::PostMerge]);
+    if will_remove {
+        builder.add(destination_path, &[HookType::PostSwitch]);
     }
 
     builder.finish().approve(pid, yes)

@@ -241,12 +241,7 @@ impl Merge for CommitConfig {
     fn merge_with(&self, other: &Self) -> Self {
         Self {
             stage: other.stage.or(self.stage),
-            generation: match (&self.generation, &other.generation) {
-                (None, None) => None,
-                (Some(s), None) => Some(s.clone()),
-                (None, Some(o)) => Some(o.clone()),
-                (Some(s), Some(o)) => Some(s.merge_with(o)),
-            },
+            generation: merge_optional(self.generation.as_ref(), other.generation.as_ref()),
         }
     }
 }
@@ -404,12 +399,7 @@ impl Merge for SwitchConfig {
     fn merge_with(&self, other: &Self) -> Self {
         Self {
             cd: other.cd.or(self.cd),
-            picker: match (&self.picker, &other.picker) {
-                (None, None) => None,
-                (Some(s), None) => Some(s.clone()),
-                (None, Some(o)) => Some(o.clone()),
-                (Some(s), Some(o)) => Some(s.merge_with(o)),
-            },
+            picker: merge_optional(self.picker.as_ref(), other.picker.as_ref()),
         }
     }
 }
