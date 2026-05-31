@@ -588,6 +588,29 @@ mod tests {
         assert!(!exit.success(), "branch should have been deleted");
     }
 
+    /// When the branch ref vanishes between snapshot capture and the CAS
+    /// delete, `git update-ref -d` fails *and* the ref is already absent, so
+    /// the outcome is a real error (propagated) — distinct from the
+    /// `RetainedRaced` case where the ref moved but still exists.
+    #[test]
+    fn cas_propagates_error_when_ref_vanished() {
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&["branch", "feature"]);
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        // Snapshot captures `feature`, then it is deleted out-of-band.
+        let snapshot = repo.capture_refs().unwrap();
+        test.run_git(&["branch", "-D", "feature"]);
+
+        // Integration still reads "integrated" from the stale snapshot, the CAS
+        // update-ref fails, and rev-parse confirms the ref is gone → error.
+        let result = delete_branch_if_safe(&repo, &snapshot, "feature", "main", false);
+        assert!(
+            result.is_err(),
+            "expected a propagated error when the ref vanished, got Ok"
+        );
+    }
+
     #[test]
     fn test_branch_deletion_outcome_matching() {
         // Ensure the match patterns work correctly

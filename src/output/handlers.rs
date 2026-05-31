@@ -2051,6 +2051,25 @@ mod tests {
     }
 
     #[test]
+    fn build_remove_command_with_tail_appends_only_when_present() {
+        let path = Path::new("/tmp/wt");
+        let bare = build_remove_command_with_tail(path, false, false, None);
+        // No tail → the command is exactly the bare worktree removal.
+        assert!(!bare.contains("&&"));
+        let tailed = build_remove_command_with_tail(
+            path,
+            false,
+            false,
+            Some("git update-ref -d refs/heads/x deadbeef"),
+        );
+        // A tail is chained with `&&` so it runs only after a successful removal.
+        assert_eq!(
+            tailed,
+            format!("{bare} && git update-ref -d refs/heads/x deadbeef")
+        );
+    }
+
+    #[test]
     fn test_format_switch_message() {
         let path = PathBuf::from("/tmp/test");
 
