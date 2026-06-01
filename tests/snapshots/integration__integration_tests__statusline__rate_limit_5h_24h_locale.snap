@@ -2,4 +2,4 @@
 source: tests/integration_tests/statusline.rs
 expression: out
 ---
-[PATH]  main  [2m^[22m[2m|[22m  Opus  🌕42%  [33m1.3×pace(10:00–15:00)[39m
+[PATH]  main  [2m^[22m[2m|[22m  Opus  🌕 42%  [33m1.3×pace(10:00–15:00)[39m

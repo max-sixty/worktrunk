@@ -128,7 +128,6 @@ pub use approvals::{Approvals, approvals_path, require_approvals_path};
 pub use commands::{Command, CommandConfig, HookStep, append_aliases};
 pub use deprecation::CheckAndMigrateResult;
 pub use deprecation::DeprecationInfo;
-pub use deprecation::Deprecations;
 pub use deprecation::check_and_migrate;
 pub use deprecation::compute_migrated_content;
 pub use deprecation::copy_approved_commands_to_approvals_file;
@@ -143,6 +142,7 @@ pub use deprecation::{
     DEPRECATED_SECTION_KEYS, DeprecatedSection, UnknownKeyKind, classify_unknown_key,
     key_belongs_in, nested_key_belongs_in, warn_unknown_fields,
 };
+pub use deprecation::{DeprecationKind, Deprecations};
 pub use expansion::{
     ACTIVE_VARS, ALIAS_ARGS_KEY, DEPRECATED_TEMPLATE_VARS, EXEC_BASE_VARS, REPO_VARS,
     TemplateExpandError, ValidationScope, alias_context_filter, base_vars, expand_template,
