@@ -5,9 +5,8 @@ expression: "&output"
 [33m▲[39m [33mBare repo at [1mproject/.git[22m — worktrees will be at [1mproject/.git.feature[22m[39m
 
 [36m❯[39m Configure worktree-path to place worktrees at [1mproject/feature[22m? [1m[y/N/?][22m ?
-[2m○[22m Would add to [1m[TEMP]/test-config.toml[22m:
-[107m [0m [2m[36m[projects."[TEMP]/project/.git"][0m
-[107m [0m [2mworktree-path = [0m[2m[32m"{{ repo_path }}/../{{ branch | sanitize }}"[0m
+[2m○[22m Would set in .git/config (this clone only):
+[107m [0m [2mworktrunk.worktree-path = [0m[2m[32m"{{ repo_path }}/../{{ branch | sanitize }}"[0m
 
 [36m❯[39m Configure worktree-path to place worktrees at [1mproject/feature[22m? [1m[y/N/?][22m n
 [32m✓[39m [32mCreated branch [1mfeature[22m and worktree @ [1m[TEMP]/project/.git.feature[22m[39m

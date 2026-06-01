@@ -1580,6 +1580,40 @@ fn test_bare_repo_worktree_path_prompt_skipped_for_symbolic_identifier() {
     );
 }
 
+/// When `worktrunk.worktree-path` is already set in the bare repo's git
+/// config, the offer prompt must be skipped entirely (idempotent).
+#[test]
+fn test_bare_repo_worktree_path_prompt_skipped_when_git_config_already_set() {
+    let test = setup_unconfigured_nested_bare_repo();
+    let main_worktree = test.project_path().join("main");
+
+    // Pre-set the git config key so the prompt should be suppressed.
+    test.git_command(test.bare_repo_path())
+        .args([
+            "config",
+            "worktrunk.worktree-path",
+            "{{ repo_path }}/../{{ branch | sanitize }}",
+        ])
+        .run()
+        .unwrap();
+
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    cmd.args(["switch", "--create", "feature"])
+        .current_dir(&main_worktree);
+    let output = cmd.output().unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("Configure worktree-path"),
+        "Prompt should not appear when git config is already set, got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("Bare repo at"),
+        "Warning should not appear when git config is already set, got: {stderr}"
+    );
+}
+
 // =============================================================================
 // PTY-based interactive prompt tests
 // =============================================================================
@@ -1618,11 +1652,18 @@ mod bare_repo_prompt_pty {
             assert_snapshot!("bare_repo_prompt_accept", &output);
         });
 
-        // Verify config was written
-        let config_content = fs::read_to_string(test.config_path()).unwrap();
-        assert!(
-            config_content.contains("worktree-path"),
-            "Config should contain worktree-path override.\nConfig: {config_content}"
+        // Verify worktree-path was written to git config (per-clone, not user config)
+        let git_config_output = Cmd::new("git")
+            .args(["config", "worktrunk.worktree-path"])
+            .current_dir(&main_worktree)
+            .env("GIT_CONFIG_GLOBAL", test.git_config_path())
+            .run()
+            .unwrap();
+        let value = String::from_utf8_lossy(&git_config_output.stdout);
+        assert_eq!(
+            value.trim(),
+            "{{ repo_path }}/../{{ branch | sanitize }}",
+            "worktrunk.worktree-path should be set in git config"
         );
     }
 

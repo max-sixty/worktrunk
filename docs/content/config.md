@@ -129,6 +129,18 @@ worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"
 
 `~` expands to the home directory. Relative paths resolve from `repo_path`.
 
+### Scope options
+
+`worktree-path` can be set at three scopes, checked in this order:
+
+| Scope | How to set | Applies to |
+|-------|-----------|------------|
+| Per-clone | `git config worktrunk.worktree-path "..."` | This local clone only |
+| Per-remote | `[projects."github.com/owner/repo"]` in user config | All clones of the same remote URL |
+| Global | Top-level `worktree-path` in user config | All repos |
+
+The per-clone git config key (`worktrunk.worktree-path` in `.git/config`) is useful when you have multiple local clones of the same repo that need different layouts. Bare repos cloned at a hidden path (`.git`, `.bare`) get an automatic prompt to set this when you first run `wt switch`.
+
 ## LLM commit messages
 
 Generate commit messages automatically during merge. Requires an external CLI tool.
@@ -842,7 +854,7 @@ Worktrunk detects the default branch automatically:
 3. **Remote query** — If not cached, queries `git ls-remote` — typically 100ms–2s
 4. **Local inference** — If no remote, infers from local branches
 
-Once detected, the result is cached in `worktrunk.default-branch` for fast access.
+Once detected, the result is cached in `worktrunk.default-branch` for fast access. Similarly, `worktrunk.worktree-path` can be set in git config to override the worktree path template for a specific clone — see [Scope options](@/config.md#scope-options).
 
 The local inference fallback uses these heuristics in order:
 - If only one local branch exists, uses it

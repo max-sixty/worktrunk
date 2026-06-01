@@ -79,7 +79,7 @@ Worktrunk detects the default branch automatically:
 3. [1mRemote query[0m — If not cached, queries [2mgit ls-remote[0m — typically 100ms–2s
 4. [1mLocal inference[0m — If no remote, infers from local branches
 
-Once detected, the result is cached in [2mworktrunk.default-branch[0m for fast access.
+Once detected, the result is cached in [2mworktrunk.default-branch[0m for fast access. Similarly, [2mworktrunk.worktree-path[0m can be set in git config to override the worktree path template for a specific clone — see Scope options.
 
 The local inference fallback uses these heuristics in order:
 - If only one local branch exists, uses it

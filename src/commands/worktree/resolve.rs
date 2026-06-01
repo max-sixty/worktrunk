@@ -198,7 +198,7 @@ fn template_references_repo_name(template: &str) -> bool {
 /// Returns `true` if config was modified (caller should use the updated config).
 pub fn offer_bare_repo_worktree_path_fix(
     repo: &Repository,
-    config: &mut UserConfig,
+    config: &UserConfig,
     branch: &str,
 ) -> anyhow::Result<bool> {
     if !repo.is_bare()? {
@@ -220,6 +220,15 @@ pub fn offer_bare_repo_worktree_path_fix(
 
     if repo
         .config_value("worktrunk.skip-bare-repo-prompt")
+        .unwrap_or(None)
+        .is_some()
+    {
+        return Ok(false);
+    }
+
+    // Skip if git config already has an explicit per-clone override.
+    if repo
+        .config_value("worktrunk.worktree-path")
         .unwrap_or(None)
         .is_some()
     {
@@ -250,11 +259,7 @@ pub fn offer_bare_repo_worktree_path_fix(
     let example_bad = format!("{parent_name}/{repo_name}.{sanitized}");
     let example_good = format!("{parent_name}/{sanitized}");
 
-    let config_path_display = worktrunk::config::config_path()
-        .map(|p| format_path_for_display(&p).to_string())
-        .unwrap_or_else(|| "~/.config/worktrunk/config.toml".to_string());
-
-    // Non-interactive: warn and show the config to add.
+    // Non-interactive: warn and show the git config command to run.
     if !std::io::stdin().is_terminal() {
         eprintln!(
             "{}",
@@ -265,12 +270,15 @@ pub fn offer_bare_repo_worktree_path_fix(
         eprintln!(
             "{}",
             hint_message(cformat!(
-                "To place worktrees at <underline>{example_good}</>, add to <underline>{config_path_display}</>:"
+                "To place worktrees at <underline>{example_good}</>, run:"
             ))
         );
-        let config_snippet =
-            format!("[projects.\"{project_id}\"]\nworktree-path = \"{BARE_REPO_WORKTREE_PATH}\"");
-        eprintln!("{}", format_toml(&config_snippet));
+        eprintln!(
+            "{}",
+            format_toml(&format!(
+                "git config worktrunk.worktree-path \"{BARE_REPO_WORKTREE_PATH}\""
+            ))
+        );
         return Ok(false);
     }
 
@@ -282,29 +290,25 @@ pub fn offer_bare_repo_worktree_path_fix(
         ))
     );
 
-    let config_path_for_preview = config_path_display.clone();
-    let project_id_for_preview = project_id.clone();
     match prompt_yes_no_preview(
         &cformat!("Configure worktree-path to place worktrees at <bold>{example_good}</>?"),
         move || {
             eprintln!(
                 "{}",
-                info_message(cformat!("Would add to <bold>{config_path_for_preview}</>:"))
+                info_message("Would set in .git/config (this clone only):")
             );
-            let preview = format!(
-                "[projects.\"{project_id_for_preview}\"]\nworktree-path = \"{BARE_REPO_WORKTREE_PATH}\""
+            eprintln!(
+                "{}",
+                format_toml(&format!(
+                    "worktrunk.worktree-path = \"{BARE_REPO_WORKTREE_PATH}\""
+                ))
             );
-            eprintln!("{}", format_toml(&preview));
             eprintln!();
         },
     )? {
         PromptResponse::Accepted => {
-            config.set_project_worktree_path(
-                &project_id,
-                BARE_REPO_WORKTREE_PATH.to_string(),
-                &worktrunk::config::require_config_path()?,
-            )?;
-            print_accepted_message(&display_path, &config_path_display);
+            repo.set_config("worktrunk.worktree-path", BARE_REPO_WORKTREE_PATH)?;
+            print_accepted_message(&display_path);
             Ok(true)
         }
         PromptResponse::Declined => {
@@ -316,19 +320,17 @@ pub fn offer_bare_repo_worktree_path_fix(
     }
 }
 
-fn print_accepted_message(display_path: &str, config_path: &str) {
+fn print_accepted_message(display_path: &str) {
     eprintln!(
         "{}",
         success_message(cformat!(
-            "Set <bold>worktree-path</> for <bold>{display_path}</>:"
+            "Set <bold>worktrunk.worktree-path</> for <bold>{display_path}</> (this clone only):"
         ))
     );
-    let global_config = format!("worktree-path = \"{BARE_REPO_WORKTREE_PATH}\"");
-    eprintln!("{}", format_toml(&global_config));
     eprintln!(
         "{}",
-        hint_message(cformat!(
-            "To set globally, add to <underline>{config_path}</>"
+        format_toml(&format!(
+            "worktrunk.worktree-path = \"{BARE_REPO_WORKTREE_PATH}\""
         ))
     );
 

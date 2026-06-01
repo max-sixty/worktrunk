@@ -168,6 +168,18 @@ Bare repository ([2m~/code/myproject/feature-auth[0m):
 
 [2m~[0m expands to the home directory. Relative paths resolve from [2mrepo_path[0m.
 
+[32mScope options[0m
+
+[2mworktree-path[0m can be set at three scopes, checked in this order:
+
+   Scope                       How to set                                Applies to             
+ ────────── ───────────────────────────────────────────────── ───────────────────────────────── 
+ Per-clone  [2mgit config worktrunk.worktree-path "..."[0m          This local clone only             
+ Per-remote [2m[projects."github.com/owner/repo"][0m in user config All clones of the same remote URL 
+ Global     Top-level [2mworktree-path[0m in user config            All repos                         
+
+The per-clone git config key ([2mworktrunk.worktree-path[0m in [2m.git/config[0m) is useful when you have multiple local clones of the same repo that need different layouts. Bare repos cloned at a hidden path ([2m.git[0m, [2m.bare[0m) get an automatic prompt to set this when you first run [2mwt switch[0m.
+
 [1m[32mLLM commit messages[0m
 
 Generate commit messages automatically during merge. Requires an external CLI tool.

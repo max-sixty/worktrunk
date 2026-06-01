@@ -1666,8 +1666,14 @@ impl SwitchPipeline<'_> {
         let fallback_path = repo.repo_path()?.to_path_buf();
         let cwd = std::env::current_dir().unwrap_or(fallback_path.clone());
         let source_root = repo.current_worktree().root().unwrap_or(fallback_path);
-        let hooks_display_path =
-            handle_switch_output(&result, &branch_info, change_dir, Some(&source_root), &cwd)?;
+        let hooks_display_path = handle_switch_output(
+            repo,
+            &result,
+            &branch_info,
+            change_dir,
+            Some(&source_root),
+            &cwd,
+        )?;
 
         // Offer shell integration if not already installed/active (only shows
         // the prompt/hint when shell integration isn't working). With

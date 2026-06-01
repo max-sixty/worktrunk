@@ -462,32 +462,36 @@ fn handle_switch_existing_output(ctx: &SwitchOutputContext) -> Option<PathBuf> {
     ctx.user_wont_be_in_worktree.then(|| ctx.path.clone())
 }
 
-fn maybe_print_worktree_path_hint(created_branch: bool) {
+fn maybe_print_worktree_path_hint(repo: &Repository, created_branch: bool) {
     if !created_branch {
         return;
     }
 
-    if let Ok(repo) = worktrunk::git::Repository::current() {
-        let has_custom_config = UserConfig::load()
-            .map(|c| {
-                c.has_custom_worktree_path()
-                    || repo
-                        .project_identifier()
-                        .ok()
-                        .is_some_and(|p| c.has_project_worktree_path(&p))
-            })
-            .unwrap_or(false);
-        if !has_custom_config && !repo.has_shown_hint("worktree-path") {
-            let hint = hint_message(cformat!(
-                "To customize worktree locations, run <underline>wt config create</>"
-            ));
-            eprintln!("{}", hint);
-            let _ = repo.mark_hint_shown("worktree-path");
-        }
+    let has_custom_config = UserConfig::load()
+        .map(|c| {
+            c.has_custom_worktree_path()
+                || repo
+                    .project_identifier()
+                    .ok()
+                    .is_some_and(|p| c.has_project_worktree_path(&p))
+        })
+        .unwrap_or(false);
+    let has_git_config = repo
+        .config_value("worktrunk.worktree-path")
+        .ok()
+        .flatten()
+        .is_some();
+    if !has_custom_config && !has_git_config && !repo.has_shown_hint("worktree-path") {
+        let hint = hint_message(cformat!(
+            "To customize worktree locations, run <underline>wt config create</>"
+        ));
+        eprintln!("{}", hint);
+        let _ = repo.mark_hint_shown("worktree-path");
     }
 }
 
 fn handle_switch_created_output(
+    repo: &Repository,
     ctx: &SwitchOutputContext,
     created_branch: bool,
     base_branch: Option<&str>,
@@ -505,7 +509,7 @@ fn handle_switch_created_output(
         ))
     );
 
-    maybe_print_worktree_path_hint(created_branch);
+    maybe_print_worktree_path_hint(repo, created_branch);
 
     if let Some(reason) = &ctx.shell_warning_reason {
         eprintln!(
@@ -762,6 +766,7 @@ fn resolve_subdir_in_target(target_root: &Path, source_root: Option<&Path>, cwd:
 /// Returns `None` when the user will be in the worktree directory (shell integration
 /// active or already at the worktree), so no path annotation needed.
 pub fn handle_switch_output(
+    repo: &Repository,
     result: &SwitchResult,
     branch_info: &SwitchBranchInfo,
     change_dir: bool,
@@ -789,6 +794,7 @@ pub fn handle_switch_output(
             from_remote,
             ..
         } => handle_switch_created_output(
+            repo,
             &ctx,
             *created_branch,
             base_branch.as_deref(),

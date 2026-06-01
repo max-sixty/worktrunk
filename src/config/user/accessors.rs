@@ -207,9 +207,21 @@ impl UserConfig {
         repo: &crate::git::Repository,
         project: Option<&str>,
     ) -> anyhow::Result<String> {
-        let template = match project {
-            Some(p) => self.worktree_path_for_project(p),
-            None => self.worktree_path(),
+        // Priority: env var > git config (per-clone) > user config (per-remote or global) > default.
+        // The env var is already overlaid into self at load time, but we must check it explicitly
+        // here so it wins over a git config value that would otherwise take precedence.
+        let template = if let Some(env_val) = std::env::var("WORKTRUNK_WORKTREE_PATH")
+            .ok()
+            .filter(|v| !v.is_empty())
+        {
+            env_val
+        } else if let Some(git_val) = repo.config_value("worktrunk.worktree-path")? {
+            git_val
+        } else {
+            match project {
+                Some(p) => self.worktree_path_for_project(p),
+                None => self.worktree_path(),
+            }
         };
         // Use native path format (not POSIX) since this is used for filesystem operations
         let repo_path = repo.repo_path()?.to_string_lossy().to_string();

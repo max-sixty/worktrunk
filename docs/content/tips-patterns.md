@@ -446,10 +446,16 @@ When you run `wt switch` for the first time in a bare repo at a hidden path (`.g
 ◎ Configure worktree-path to place worktrees at myproject/main? [y/N/?]
 ```
 
-Accepting writes a project-scoped entry to your user config:
+Accepting writes `worktrunk.worktree-path` to the repo's local git config — scoped to this clone only, without touching any shared config file:
+
+{{ terminal(cmd="git config worktrunk.worktree-path __WT_QUOT__{{ repo_path }}/../{{ branch | sanitize }}__WT_QUOT__") }}
+
+To set it manually before the first `wt switch`, run the same command directly from the bare repo directory.
+
+For multiple clones of the same repo that each need a different layout, the git config approach is preferable over the user config alternative below, because the `[projects."..."]` key is derived from the remote URL and applies to every local clone of that repo:
 
 ```toml
-# ~/.config/worktrunk/config.toml
+# ~/.config/worktrunk/config.toml — applies to ALL clones of this repo
 [projects."github.com/myorg/myrepo"]
 worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"
 ```
