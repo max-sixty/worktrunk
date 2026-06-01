@@ -1554,6 +1554,32 @@ fn test_bare_repo_worktree_path_prompt_non_interactive_warning() {
     });
 }
 
+/// Symbolic identifiers (-, @, pr:N) are passed before branch resolution, so
+/// the example paths in the prompt would show the raw symbol. The function
+/// must return early without prompting.
+#[test]
+fn test_bare_repo_worktree_path_prompt_skipped_for_symbolic_identifier() {
+    let test = setup_unconfigured_nested_bare_repo();
+    let main_worktree = test.project_path().join("main");
+
+    // `@` means HEAD — resolves to `main`, which already exists. The prompt
+    // must not appear because `@` is a symbolic form.
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    cmd.args(["switch", "@"]).current_dir(&main_worktree);
+    let output = cmd.output().unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("Configure worktree-path"),
+        "Prompt should not appear for symbolic identifier '@', got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("Bare repo at"),
+        "Warning should not appear for symbolic identifier '@', got: {stderr}"
+    );
+}
+
 // =============================================================================
 // PTY-based interactive prompt tests
 // =============================================================================

@@ -119,3 +119,16 @@ run = "echo hello"
         ");
     });
 }
+
+/// Running `wt config create --project` from inside a repo's `.git` directory
+/// (not inside a worktree, not a bare repo) must fail with the generic
+/// "no worktree found" error rather than the bare-repo-specific message.
+#[rstest]
+fn test_config_create_project_from_git_dir_errors(repo: TestRepo) {
+    let git_dir = repo.path().join(".git");
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "config", &["create", "--project"], Some(&git_dir));
+        assert_cmd_snapshot!(cmd);
+    });
+}

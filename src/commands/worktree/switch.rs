@@ -1573,7 +1573,7 @@ impl SwitchPipeline<'_> {
 
         // Offer to fix worktree-path for bare repos with hidden directory names
         // (.git, .bare) before anything reads worktree-path config.
-        offer_bare_repo_worktree_path_fix(repo, config)?;
+        offer_bare_repo_worktree_path_fix(repo, config, identifier)?;
 
         // Run pre-switch hooks before branch resolution or worktree creation.
         // {{ branch }} receives the raw user input (before resolution). Skip

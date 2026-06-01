@@ -456,22 +456,47 @@ With `worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"`, worktrees b
 ```
 myproject/
 ├── .git/       # bare repository
-├── main/       # default branch
-├── feature/    # feature branch
-└── bugfix/     # bugfix branch
+├── main/       # default branch worktree
+├── feature/    # feature branch worktree
+└── bugfix/     # bugfix branch worktree
 ```
 
-Configure worktrunk:
+### Configure the worktree path
+
+When you run `wt switch` for the first time in a bare repo at a hidden path (`.git`, `.bare`), worktrunk detects that the default template would produce broken paths like `myproject/.git.main` and offers to fix it automatically:
+
+```
+▲ Bare repo at myproject/.git — worktrees will be at myproject/.git.main
+◎ Configure worktree-path to place worktrees at myproject/main? [y/N/?]
+```
+
+Accepting writes a project-scoped entry to your user config:
 
 ```toml
 # ~/.config/worktrunk/config.toml
+[projects."github.com/myorg/myrepo"]
 worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"
 ```
 
-Create the first worktree:
+Run `wt config show` from inside any worktree to find the project identifier (`Identifier: …` in the PROJECT CONFIG section). Set it globally with `worktree-path = "..."` at the top level if this layout is preferred for all bare repos.
+
+### Create the first worktree
 
 ```bash
-wt switch --create main
+wt switch main
 ```
 
+For a freshly cloned bare repo the default branch already exists, so `wt switch main` (without `--create`) is enough. Use `wt switch --create <branch>` for new branches.
+
 Now `wt switch --create feature` creates `myproject/feature/`.
+
+### Set up the project config
+
+The project config (`.config/wt.toml`) must live inside a worktree — the bare `.git` directory has no tracked files. Once the first worktree exists, create it from there:
+
+```bash
+cd myproject/main
+wt config create --project
+```
+
+Commit the file and it will appear in every worktree automatically.

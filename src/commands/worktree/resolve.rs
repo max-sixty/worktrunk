@@ -199,8 +199,16 @@ fn template_references_repo_name(template: &str) -> bool {
 pub fn offer_bare_repo_worktree_path_fix(
     repo: &Repository,
     config: &mut UserConfig,
+    branch: &str,
 ) -> anyhow::Result<bool> {
     if !repo.is_bare()? {
+        return Ok(false);
+    }
+
+    // Symbolic identifiers (-, @, ^, pr:N, mr:N) haven't been resolved to a real
+    // branch name yet, so the example paths would be misleading. Skip the prompt;
+    // it will surface on the next switch with a concrete branch name.
+    if branch == "-" || branch == "@" || branch == "^" || branch.contains(':') {
         return Ok(false);
     }
 
@@ -235,9 +243,12 @@ pub fn offer_bare_repo_worktree_path_fix(
         .and_then(|n| n.to_str())
         .unwrap_or("project");
 
-    // Example paths to show the user what changes
-    let example_bad = format!("{parent_name}/{repo_name}.feature-auth");
-    let example_good = format!("{parent_name}/feature-auth");
+    // Use the actual branch being switched to in example paths. Calling
+    // `sanitize_branch_name` keeps the displayed example aligned with what
+    // the `sanitize` Jinja filter applies inside `BARE_REPO_WORKTREE_PATH`.
+    let sanitized = worktrunk::config::sanitize_branch_name(branch);
+    let example_bad = format!("{parent_name}/{repo_name}.{sanitized}");
+    let example_good = format!("{parent_name}/{sanitized}");
 
     let config_path_display = worktrunk::config::config_path()
         .map(|p| format_path_for_display(&p).to_string())
