@@ -12,7 +12,7 @@ repos:
         exclude: '.*\.(rs|snap)$|^vendor/'
   # pre-commit autoupdate reverts to mutable v1 tag; update manually
   - repo: https://github.com/crate-ci/typos
-    rev: v1
+    rev: v1.47.0
     hooks:
       - id: typos
         # https://github.com/crate-ci/typos/issues/347
@@ -29,7 +29,7 @@ repos:
         args: ["--all-targets", "--all-features", "--", "-D", "warnings"]
   # pre-commit autoupdate reverts to mutable nightly tag; update manually
   - repo: https://github.com/lycheeverse/lychee
-    rev: nightly
+    rev: lychee-v0.24.2
     hooks:
       # Check links using .config/lychee.toml exclusions
       # Uses lychee-system (requires `cargo install lychee`) to avoid /bin/bash dependency on Windows
