@@ -463,14 +463,14 @@ myproject/
 
 ### Configure the worktree path
 
-When you run `wt switch` for the first time in a bare repo at a hidden path (`.git`, `.bare`), worktrunk detects that the default template would produce broken paths like `myproject/.git.main` and offers to fix it automatically:
+On first `wt switch` in a bare repo at a hidden path (`.git`, `.bare`), worktrunk detects that the default template would produce broken paths like `myproject/.git.main` and offers a fix:
 
 ```
 ▲ Bare repo at myproject/.git — worktrees will be at myproject/.git.main
 ◎ Configure worktree-path to place worktrees at myproject/main? [y/N/?]
 ```
 
-Accepting writes a project-scoped entry to your user config:
+Accepting writes a project-scoped entry to user config:
 
 ```toml
 # ~/.config/worktrunk/config.toml
