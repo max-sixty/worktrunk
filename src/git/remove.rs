@@ -611,6 +611,43 @@ mod tests {
         );
     }
 
+    /// When the branch is integrated but absent from the captured snapshot
+    /// (created after capture), `integration_reason` still resolves it via the
+    /// live `rev-parse` fallback, yet `snapshot_sha` finds no SHA to CAS
+    /// against. The delete falls back to a plain `branch -D` and reports
+    /// `Integrated` — the non-CAS arm that exists for exactly this skew.
+    #[test]
+    fn deletes_via_fallback_when_branch_absent_from_snapshot() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        // Capture refs BEFORE `feature` exists, so the snapshot carries no SHA
+        // for it (forcing the `snapshot_sha == None` arm).
+        let snapshot = repo.capture_refs().unwrap();
+        assert!(
+            snapshot.local_branch("feature").is_none(),
+            "test setup: snapshot must predate the branch"
+        );
+
+        // Create `feature` at main's commit → trivially integrated (same
+        // commit), resolvable live but missing from the stale snapshot.
+        test.run_git(&["branch", "feature"]);
+
+        let result = delete_branch_if_safe(&repo, &snapshot, "feature", "main", false).unwrap();
+        assert!(
+            matches!(result.outcome, BranchDeletionOutcome::Integrated(_)),
+            "expected Integrated via the non-CAS fallback"
+        );
+
+        // Branch was deleted.
+        let exit = std::process::Command::new("git")
+            .args(["rev-parse", "--verify", "--quiet", "refs/heads/feature"])
+            .current_dir(test.root_path())
+            .status()
+            .unwrap();
+        assert!(!exit.success(), "branch should have been deleted");
+    }
+
     #[test]
     fn test_branch_deletion_outcome_matching() {
         // Ensure the match patterns work correctly
