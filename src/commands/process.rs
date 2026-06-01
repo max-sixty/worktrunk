@@ -283,9 +283,9 @@ fn spawn_detached_windows(
     use worktrunk::shell_exec::ShellConfig;
 
     // CREATE_NEW_PROCESS_GROUP: Creates new process group (0x00000200)
-    // DETACHED_PROCESS: Creates process without console (0x00000008)
+    // CREATE_NO_WINDOW: Creates process without console window (0x08000000)
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
-    const DETACHED_PROCESS: u32 = 0x00000008;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     let shell = ShellConfig::get()?;
 
@@ -320,12 +320,12 @@ fn spawn_detached_windows(
                 .context("Failed to clone log file handle")?,
         ))
         .stderr(Stdio::from(log_file))
-        .creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS);
+        .creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
     // Prevent hooks from writing to the directive file
     worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
     cmd.spawn().context("Failed to spawn detached process")?;
 
-    // Windows: Process is fully detached via DETACHED_PROCESS flag,
+    // Windows: Process is fully detached with a hidden window via CREATE_NO_WINDOW flag,
     // no need to wait (unlike Unix which waits for the outer shell)
 
     Ok(())
@@ -455,7 +455,7 @@ fn spawn_detached_exec_windows(
     use std::os::windows::process::CommandExt;
 
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
-    const DETACHED_PROCESS: u32 = 0x00000008;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     let mut cmd = Command::new(program);
     cmd.args(args)
@@ -467,7 +467,7 @@ fn spawn_detached_exec_windows(
                 .context("Failed to clone log file handle")?,
         ))
         .stderr(Stdio::from(log_file))
-        .creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS);
+        .creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
     worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
     set_background_hook_env(&mut cmd, is_background_hook);
     let mut child = cmd.spawn().context("Failed to spawn detached process")?;
