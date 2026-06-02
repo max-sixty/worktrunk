@@ -233,35 +233,36 @@ impl Repository {
 
     fn compute_ahead_behind(&self, base: &str, head: &str) -> anyhow::Result<(usize, usize)> {
         // Get merge-base (cached in shared repo cache)
-        let Some(merge_base) = self.merge_base(base, head)? else {
+        let Some(merge_base) = self.merge_base_by_sha(base, head)? else {
             // Orphan branch - no common ancestor
             return Ok((0, 0));
         };
 
-        // Count commits using two-dot syntax (faster when merge-base is cached)
-        // ahead = commits in head but not in merge_base
-        // behind = commits in base but not in merge_base
+        // Count commits using two-dot syntax (faster when merge-base is cached).
+        // ahead = commits in head but not in merge_base.
+        // behind = commits in base but not in merge_base.
         //
-        // Skip rev-list when merge_base equals head (count would be 0).
-        // Note: we don't check merge_base == base because base is typically a
-        // refname like "main" while merge_base is a SHA.
-        let ahead = if merge_base == head {
-            0
-        } else {
-            let output =
-                self.run_command(&["rev-list", "--count", &format!("{}..{}", merge_base, head)])?;
+        // Skip rev-list when merge_base equals either side (count would be 0).
+        // Both inputs are SHAs (the only caller is `ahead_behind_by_sha`), and
+        // `merge_base_by_sha` returns a SHA, so the equality check is sound on
+        // both sides.
+        let count = |range: String| -> anyhow::Result<usize> {
+            let output = self.run_command(&["rev-list", "--count", &range])?;
             output
                 .trim()
                 .parse()
-                .context("Failed to parse ahead count")?
+                .context("Failed to parse rev-list count")
         };
-
-        let behind_output =
-            self.run_command(&["rev-list", "--count", &format!("{}..{}", merge_base, base)])?;
-        let behind = behind_output
-            .trim()
-            .parse()
-            .context("Failed to parse behind count")?;
+        let ahead = if merge_base == head {
+            0
+        } else {
+            count(format!("{merge_base}..{head}"))?
+        };
+        let behind = if merge_base == base {
+            0
+        } else {
+            count(format!("{merge_base}..{base}"))?
+        };
 
         Ok((ahead, behind))
     }
