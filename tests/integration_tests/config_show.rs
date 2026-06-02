@@ -3909,7 +3909,7 @@ fn test_plugin_layout_is_consolidated() {
     );
     assert!(
         !read("plugins/worktrunk/hooks/hooks.json").contains(".claude-plugin/hooks/"),
-        "hooks.json must reference ${{CLAUDE_PLUGIN_ROOT}}/hooks/wt.sh, not the old wrapper path"
+        "hooks.json must reference $CLAUDE_PLUGIN_ROOT/hooks/wt.sh, not the old wrapper path"
     );
 
     // The description is duplicated across the Claude marketplace pointer and
@@ -3987,6 +3987,35 @@ fn test_plugin_layout_is_consolidated() {
     // and prints a `wt remove -D <branch>` hint for the user to act on.
     let hooks = read("plugins/worktrunk/hooks/hooks.json");
     let hooks_json = json("plugins/worktrunk/hooks/hooks.json");
+
+    // Claude hands each hook command to the user's LOGIN shell before `bash`
+    // launches, so the outer command line must parse under fish/zsh/bash. fish
+    // rejects bash brace syntax ("Variables cannot be bracketed"), so the plugin
+    // root must be referenced as `$CLAUDE_PLUGIN_ROOT`, never `${CLAUDE_PLUGIN_ROOT}`.
+    let all_commands: Vec<&str> = hooks_json["hooks"]
+        .as_object()
+        .expect("hooks.json must have a `hooks` object")
+        .values()
+        .flat_map(|event| event.as_array().expect("each hook event must be an array"))
+        .flat_map(|group| {
+            group["hooks"]
+                .as_array()
+                .expect("each hook group must have a `hooks` array")
+        })
+        .map(|hook| {
+            hook["command"]
+                .as_str()
+                .expect("each hook must define a command")
+        })
+        .collect();
+    for cmd in &all_commands {
+        assert!(
+            cmd.contains("$CLAUDE_PLUGIN_ROOT") && !cmd.contains("${CLAUDE_PLUGIN_ROOT}"),
+            "hook command must use unbraced $CLAUDE_PLUGIN_ROOT (braces break fish \
+             login-shell parsing: \"fish: Variables cannot be bracketed\"). command:\n{cmd}"
+        );
+    }
+
     let worktree_remove_cmd = hooks_json["hooks"]["WorktreeRemove"][0]["hooks"][0]["command"]
         .as_str()
         .expect("WorktreeRemove hook must define a command");
@@ -4020,6 +4049,60 @@ fn test_plugin_layout_is_consolidated() {
             val.starts_with(STEM),
             "{label} description must start with the canonical product sentence; got: {val}"
         );
+    }
+}
+
+/// Claude hands each hook `command` to the user's LOGIN shell, which parses the
+/// whole line before the leading `bash …` ever launches. The command must
+/// therefore parse cleanly under fish, zsh, and bash — fish in particular
+/// rejects bash brace syntax (`${VAR}` → "Variables cannot be bracketed"). This
+/// syntax-checks every Claude hook command under all three shells with their
+/// no-execute flags, so a reintroduced brace (or any other non-portable
+/// construct) fails here instead of silently breaking fish users at runtime.
+#[cfg(all(unix, feature = "shell-integration-tests"))]
+#[test]
+fn test_claude_hook_commands_parse_in_all_shells() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let hooks_json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join("plugins/worktrunk/hooks/hooks.json")).unwrap(),
+    )
+    .unwrap();
+
+    let commands: Vec<&str> = hooks_json["hooks"]
+        .as_object()
+        .expect("hooks.json must have a `hooks` object")
+        .values()
+        .flat_map(|event| event.as_array().expect("each hook event must be an array"))
+        .flat_map(|group| {
+            group["hooks"]
+                .as_array()
+                .expect("each hook group must have a `hooks` array")
+        })
+        .map(|hook| {
+            hook["command"]
+                .as_str()
+                .expect("each hook must define a command")
+        })
+        .collect();
+    assert!(
+        !commands.is_empty(),
+        "expected at least one hook command to syntax-check"
+    );
+
+    // Each shell's no-execute flag: parse and report syntax errors without
+    // running the command. fish/zsh/bash all spell this `-n`.
+    for command in &commands {
+        for shell in ["fish", "bash", "zsh"] {
+            let output = std::process::Command::new(shell)
+                .args(["-n", "-c", command])
+                .output()
+                .unwrap_or_else(|e| panic!("failed to spawn {shell}: {e}"));
+            assert!(
+                output.status.success(),
+                "{shell} failed to parse hook command:\n  {command}\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
     }
 }
 

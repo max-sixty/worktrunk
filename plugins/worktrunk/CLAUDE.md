@@ -21,7 +21,7 @@ worktrunk/                          ← repo root = marketplace root
     ├── .codex-plugin/plugin.json   ← Codex manifest (Codex's required wrapper)
     ├── hooks/hooks.json            ← Claude activity + WorktreeCreate/Remove hooks
     ├── hooks/wt.sh                 ← canonical hook shim; Claude/Codex reach it via
-    │                                  ${CLAUDE_PLUGIN_ROOT}, Gemini via
+    │                                  $CLAUDE_PLUGIN_ROOT, Gemini via
     │                                  ${extensionPath}/plugins/worktrunk/hooks/wt.sh
     ├── skills -> ../../skills       ← symlink; single-sources skills across all
     │                                  tools and the docs auto-sync
@@ -35,7 +35,7 @@ Path resolution differs by tool, all verified end-to-end against the real CLIs:
   Claude reads `plugins/worktrunk/plugin.json` (at the plugin root, *not* a
   `.claude-plugin/` subdir). `hooks` and `skills` paths in `plugin.json` resolve
   from the plugin root, so `./skills/worktrunk` follows the `skills` symlink to
-  the repo-root `skills/worktrunk`. `${CLAUDE_PLUGIN_ROOT}` is the plugin root.
+  the repo-root `skills/worktrunk`. `$CLAUDE_PLUGIN_ROOT` is the plugin root.
 - **Codex**: `.agents/plugins/marketplace.json` `source` object
   `{ "source": "local", "path": "./plugins/worktrunk" }`. Codex reads
   `plugins/worktrunk/.codex-plugin/plugin.json`. `skills: "./skills/"` resolves
