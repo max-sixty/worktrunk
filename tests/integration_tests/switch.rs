@@ -5026,6 +5026,50 @@ fn test_switch_pr_azure_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) 
     });
 }
 
+/// A full Azure DevOps PR web URL passed to `wt switch` resolves the same as the
+/// `pr:N` shortcut: the URL normalises to `pr:101` (shape-based `parse_ref_url`),
+/// dispatch selects `AzureDevOpsProvider`, and the worktree is created. The
+/// snapshot should match `switch_pr_azure_same_repo`, since both forms converge
+/// on the same shortcut.
+#[rstest]
+fn test_switch_pr_azure_web_url(#[from(repo_with_remote)] mut repo: TestRepo) {
+    repo.add_worktree("feature-auth");
+    repo.run_git(&["push", "origin", "feature-auth"]);
+
+    set_azure_remote_url(
+        &repo,
+        "https://dev.azure.com/myorg/myproject/_git/test-repo",
+    );
+
+    let az_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "createdBy": {"uniqueName": "alice@example.com"},
+        "status": "active",
+        "isDraft": false,
+        "sourceRefName": "refs/heads/feature-auth",
+        "repository": {
+            "name": "test-repo",
+            "project": {"name": "myproject"},
+            "webUrl": "https://dev.azure.com/myorg/myproject/_git/test-repo"
+        },
+        "forkSource": null
+    }"#;
+
+    let mock_bin = setup_mock_az(&repo, Some(az_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(
+            &repo,
+            "switch",
+            &["https://dev.azure.com/myorg/myproject/_git/test-repo/pullrequest/101"],
+            None,
+        );
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_azure_web_url", cmd);
+    });
+}
+
 /// Regression: an Azure PR whose `sourceRefName` is just `refs/heads/`
 /// (empty branch after stripping) must fail at the provider boundary with a
 /// clear message — matching GitHub/GitLab/Gitea — not produce a confusing

@@ -466,6 +466,13 @@ mod tests {
             parse_ref_url("https://dev.azure.com/org/project/_git/repo/pullrequest/9").as_deref(),
             Some("pr:9")
         );
+        // Legacy `*.visualstudio.com` host: org in the hostname, one fewer path
+        // segment than `dev.azure.com`. Still resolves to the same shortcut.
+        assert_eq!(
+            parse_ref_url("https://myorg.visualstudio.com/myproject/_git/repo/pullrequest/9")
+                .as_deref(),
+            Some("pr:9")
+        );
     }
 
     #[test]
