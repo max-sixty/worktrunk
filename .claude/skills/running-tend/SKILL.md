@@ -41,10 +41,13 @@ If codecov fails **locally**, investigate with `task coverage` and
 
 ### Investigating codecov failures in CI
 
-`task` and `cargo-llvm-cov` are not installed in the `claude-setup` action, and
-`cargo install` / `curl | sh` are blocked by the sandbox. Do not attempt to
-install them — in past runs this has cascaded into bash-tool interrupts that
-block even `pwd` and `echo`. Instead, query Codecov directly:
+`task` and `cargo-llvm-cov` are not installed in the `claude-setup` action.
+Don't try to `cargo install` them in the sandbox — past attempts at
+source-compiling installs cascaded into bash-tool interrupts that blocked
+even `pwd` and `echo`. (Pre-built single-script installers like Determinate
+Nix's are fine — see **Weekly Maintenance: MSRV & Toolchain** for the one we
+use. The block is specifically about long-running cargo compiles.) Instead,
+query Codecov directly:
 
 ```bash
 REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
@@ -222,10 +225,22 @@ Files to update:
 
 `flake.nix` reads the channel from `rust-toolchain.toml`, so no separate bump
 is needed. After updating the toolchain, refresh `flake.lock` so the locked
-`rust-overlay` revision knows about the new version:
+`rust-overlay` revision knows about the new version. Nix isn't installed in
+the tend sandbox by default — install it with the Determinate Systems
+installer (single script, daemon-mode, no prompts), then update:
 
 ```bash
-nix flake update
+curl -fsSL https://install.determinate.systems/nix -o /tmp/nix-installer.sh
+sh /tmp/nix-installer.sh install --no-confirm --determinate
+. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+nix flake update --extra-experimental-features 'nix-command flakes'
+```
+
+Verify the new lock evaluates with the channel bump before committing:
+
+```bash
+nix eval --extra-experimental-features 'nix-command flakes' \
+  .#devShells.x86_64-linux.default.name
 ```
 
 Commit `flake.lock` alongside the other toolchain changes. After bumping, run
