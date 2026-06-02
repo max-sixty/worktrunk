@@ -4059,7 +4059,7 @@ fn test_plugin_layout_is_consolidated() {
 /// syntax-checks every Claude hook command under all three shells with their
 /// no-execute flags, so a reintroduced brace (or any other non-portable
 /// construct) fails here instead of silently breaking fish users at runtime.
-#[cfg(feature = "shell-integration-tests")]
+#[cfg(all(unix, feature = "shell-integration-tests"))]
 #[test]
 fn test_claude_hook_commands_parse_in_all_shells() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
