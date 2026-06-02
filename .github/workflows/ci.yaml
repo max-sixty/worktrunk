@@ -309,6 +309,24 @@ jobs:
         restore-keys: |
           cargo-affected-db-v1-${{ runner.os }}-
 
+    - name: 🧹 Free disk space on Linux runner (stopgap)
+      # `cargo affected collect` is currently sequential: nextest produces
+      # every per-test profraw bundle (~10 GB peak on this repo) before
+      # extraction starts. ubuntu-24.04 runners stack that on top of the
+      # restored target/, llvm-tools, and the runner's own diag logs, and
+      # intermittently OOD — symptom is the runner Worker dying with
+      # "No space left on device" writing _diag/Worker_*.log, leaving
+      # 📊 Collect coverage data with no log output and no conclusion
+      # (3 occurrences in 8 days: issues #2904, #2957, run 26830756184).
+      # Reclaim ~30 GB by dropping pre-installed tooling we don't use.
+      # Drop this step once max-sixty/cargo-affected#46 merges and gets
+      # picked up.
+      if: runner.os == 'Linux'
+      run: |
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+          /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+        df -h /
+
     - name: 📊 Collect coverage data
       env:
         NEXTEST_NO_INPUT_HANDLER: 1
