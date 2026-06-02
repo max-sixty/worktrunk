@@ -12,7 +12,8 @@ use worktrunk::config::UserConfig;
 use worktrunk::git::{Repository, ResolvedWorktree};
 use worktrunk::path::{format_path_for_display, paths_match};
 use worktrunk::styling::{
-    eprintln, format_toml, hint_message, info_message, success_message, warning_message,
+    eprintln, format_bash_with_gutter, format_toml, hint_message, info_message, success_message,
+    warning_message,
 };
 
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
@@ -275,7 +276,7 @@ pub fn offer_bare_repo_worktree_path_fix(
         );
         eprintln!(
             "{}",
-            format_toml(&format!(
+            format_bash_with_gutter(&format!(
                 "git config worktrunk.worktree-path \"{BARE_REPO_WORKTREE_PATH}\""
             ))
         );

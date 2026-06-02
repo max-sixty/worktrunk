@@ -128,25 +128,6 @@ impl UserConfig {
         })
     }
 
-    /// Set worktree-path for a specific project and save.
-    ///
-    /// Creates the project entry if it doesn't exist.
-    pub fn set_project_worktree_path(
-        &mut self,
-        project: &str,
-        worktree_path: String,
-        config_path: &std::path::Path,
-    ) -> Result<(), ConfigError> {
-        self.with_locked_mutation(config_path, |config| {
-            let entry = config.projects.entry(project.to_string()).or_default();
-            if entry.worktree_path.as_ref() == Some(&worktree_path) {
-                return false;
-            }
-            entry.worktree_path = Some(worktree_path);
-            true
-        })
-    }
-
     /// Set commit generation command and save.
     ///
     /// Sets `[commit.generation] command = ...` in the user config.

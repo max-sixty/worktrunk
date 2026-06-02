@@ -567,32 +567,6 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
     assert!(!config.skip_shell_integration_prompt);
 }
 
-#[test]
-fn test_set_project_worktree_path() {
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-    std::fs::write(&config_path, "# empty config\n").unwrap();
-
-    let mut config = UserConfig::default();
-    config
-        .set_project_worktree_path(
-            "github.com/user/repo",
-            "../{{ branch | sanitize }}".to_string(),
-            &config_path,
-        )
-        .unwrap();
-
-    assert_eq!(
-        config.worktree_path_for_project("github.com/user/repo"),
-        "../{{ branch | sanitize }}"
-    );
-
-    // Verify it was saved to disk
-    let content = std::fs::read_to_string(&config_path).unwrap();
-    assert!(content.contains("[projects.\"github.com/user/repo\"]"));
-    assert!(content.contains("worktree-path"));
-}
-
 // =========================================================================
 // Merge trait tests
 // =========================================================================
@@ -3268,40 +3242,6 @@ fn test_save_to_existing_file_preserves_inline_table_formatting() {
 // =========================================================================
 // mutation.rs — additional coverage
 // =========================================================================
-
-#[test]
-fn test_set_project_worktree_path_noop_when_unchanged() {
-    // Covers the `return false` early-exit in set_project_worktree_path's
-    // mutator: when the path already matches, no save happens. We verify
-    // this by checking that the file content is byte-identical across a
-    // redundant call.
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-    std::fs::write(&config_path, "# keep\n").unwrap();
-
-    let mut config = UserConfig::default();
-    config
-        .set_project_worktree_path("user/repo", "../custom".to_string(), &config_path)
-        .unwrap();
-
-    let after_first = std::fs::read_to_string(&config_path).unwrap();
-    // Sanity: first call actually wrote the value
-    assert!(after_first.contains("../custom"), "{after_first}");
-
-    // Second call with identical value should be a no-op — reload_from
-    // refreshes self from disk, the mutator compares equal and returns
-    // false, so save is skipped.
-    let mut config2 = UserConfig::default();
-    config2
-        .set_project_worktree_path("user/repo", "../custom".to_string(), &config_path)
-        .unwrap();
-
-    let after_second = std::fs::read_to_string(&config_path).unwrap();
-    assert_eq!(
-        after_first, after_second,
-        "unchanged value should not rewrite the file"
-    );
-}
 
 #[test]
 fn test_set_skip_shell_integration_prompt_noop_on_second_call() {
