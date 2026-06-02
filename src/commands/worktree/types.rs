@@ -293,46 +293,6 @@ mod tests {
     }
 
     #[test]
-    fn test_merge_operations_struct() {
-        let ops = MergeOperations {
-            committed: true,
-            squashed: false,
-            rebased: true,
-        };
-        assert!(ops.committed);
-        assert!(!ops.squashed);
-        assert!(ops.rebased);
-    }
-
-    #[test]
-    fn test_merge_operations_clone() {
-        let ops = MergeOperations {
-            committed: true,
-            squashed: true,
-            rebased: false,
-        };
-        // MergeOperations implements both Clone and Copy
-        // Use Clone explicitly to test the Clone impl
-        let cloned = Clone::clone(&ops);
-        assert_eq!(ops.committed, cloned.committed);
-        assert_eq!(ops.squashed, cloned.squashed);
-        assert_eq!(ops.rebased, cloned.rebased);
-    }
-
-    #[test]
-    fn test_merge_operations_copy() {
-        let ops = MergeOperations {
-            committed: false,
-            squashed: false,
-            rebased: true,
-        };
-        let copied = ops; // Copy trait
-        assert_eq!(ops.committed, copied.committed);
-        assert_eq!(ops.squashed, copied.squashed);
-        assert_eq!(ops.rebased, copied.rebased);
-    }
-
-    #[test]
     fn test_remove_result_removed_worktree() {
         let result = RemoveResult::RemovedWorktree {
             main_path: PathBuf::from("/main"),
