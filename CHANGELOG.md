@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.56.0
+
+### Improved
+
+- **`wt list` JSON output includes `repo_url`**: Each item now carries `repo_url`, the repository's web URL derived from the primary remote (absent when there's no parseable forge remote). It's the local checkout's repo — distinct from `ci.repo_url`, which is the repo a PR/MR targets. ([#2941](https://github.com/max-sixty/worktrunk/pull/2941), thanks @bendrucker)
+
+### Fixed
+
+- **Bare-repo prompts**: Two UX fixes. `wt config create --project` run in a bare repo with no linked worktrees now explains the next step (`wt switch <branch>` first, then create from inside the worktree) instead of failing with a generic "no worktree found". And the bare-repo worktree-path prompt no longer fires for symbolic identifiers (`-`, `@`, `^`, `pr:`/`mr:`), where the example paths would be misleading — it waits for the next switch to a concrete branch name. ([#2951](https://github.com/max-sixty/worktrunk/pull/2951), thanks @ammachado)
+
+- **Context gauge spacing in the Claude Code statusline**: The context-gauge moon emoji rendered flush against the percent (`🌕42%`). Most terminals draw the emoji double-width and bleed it into the next cell, so the moon collided with the digits; it now carries a trailing space (`🌕 42%`). ([#2944](https://github.com/max-sixty/worktrunk/pull/2944))
+
+- **Console storm on Windows**: Detached background hook processes were created with `DETACHED_PROCESS`, which could flash a burst of console windows. They now use `CREATE_NO_WINDOW` and spawn fully hidden. ([#2959](https://github.com/max-sixty/worktrunk/pull/2959), thanks @nathanbabcock)
+
+### Documentation
+
+- **Codex commit-generation model bumped to `gpt-5.4-mini`**: The recommended `[commit.generation]` command for Codex — shown by `wt config create` and in the LLM-commits docs — now uses `gpt-5.4-mini` (was `gpt-5.1-codex-mini`). ([#2949](https://github.com/max-sixty/worktrunk/pull/2949))
+
+### Internal
+
+- **Config-deprecation layer refactor**: The deprecation detector now returns a `Vec<DeprecationKind>` instead of a struct of per-field flags, and the per-section config-table walks collapse into two combinators. Behavior-neutral — warning text and migration output are byte-for-byte unchanged. ([#2946](https://github.com/max-sixty/worktrunk/pull/2946))
+
 ## 0.55.0
 
 ### Improved
