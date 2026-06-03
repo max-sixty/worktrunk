@@ -22,7 +22,7 @@ Worktrees are addressed by branch name; paths are computed from a configurable t
 
 ## Examples
 
-{{ terminal(cmd="wt switch feature-auth           # Switch to worktree|||wt switch -                      # Previous worktree (like cd -)|||wt switch --create new-feature   # Create new branch and worktree|||wt switch --create hotfix --base production|||wt switch pr:123                 # Switch to PR #123's branch") }}
+{{ terminal(cmd="wt switch feature-auth           # Switch to worktree|||wt switch -                      # Previous worktree (like cd -)|||wt switch --create new-feature   # Create new branch and worktree|||wt switch --create hotfix --base production|||wt switch pr:123                 # Switch to PR #123's branch|||wt switch https://github.com/owner/repo/pull/123   # ...or paste the PR's URL") }}
 
 ## Creating a branch
 
@@ -52,7 +52,7 @@ If the branch already has a worktree, `wt switch` changes directories to it. Oth
 
 {{ terminal(cmd="wt switch -                           # Back to previous|||wt switch ^                           # Default branch worktree|||wt switch --create fix --base=@       # Branch from current HEAD|||wt switch --create fix --base=pr:123  # Branch from PR #123's head|||wt switch pr:123                      # PR #123's branch|||wt switch mr:101                      # MR !101's branch") }}
 
-Shortcuts also apply to `--base`. For a fork PR/MR, the head commit is fetched and used as the base SHA without creating a tracking branch. (Web URLs like `https://github.com/owner/repo/pull/N` or `https://gitlab.com/owner/repo/-/merge_requests/N` work in place of `pr:N` / `mr:N` anywhere a shortcut does.)
+Shortcuts also apply to `--base`. For a fork PR/MR, the head commit is fetched and used as the base SHA without creating a tracking branch.
 
 ## Interactive picker
 
@@ -98,11 +98,13 @@ Available on Unix only (macOS, Linux). On Windows, use `wt list` or `wt switch <
 
 ## Pull requests and merge requests
 
-The `pr:<number>` and `mr:<number>` shortcuts resolve a GitHub PR or GitLab MR to its branch. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref (`refs/pull/N/head` or `refs/merge-requests/N/head`) and configures `pushRemote` to the fork URL.
+The `pr:<number>` / `mr:<number>` shortcut and the PR/MR's web URL both resolve to its branch. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref (`refs/pull/N/head` or `refs/merge-requests/N/head`) and configures `pushRemote` to the fork URL.
 
-{{ terminal(cmd="wt switch pr:101                 # GitHub PR #101|||wt switch mr:101                 # GitLab MR !101") }}
+{{ terminal(cmd="wt switch pr:101                                  # GitHub PR #101|||wt switch https://github.com/owner/repo/pull/101  # ...the same PR, by URL|||wt switch mr:101                                  # GitLab MR !101|||wt switch https://gitlab.com/owner/repo/-/merge_requests/101  # ...the same MR, by URL") }}
 
-Requires `gh` (GitHub) or `glab` (GitLab) CLI to be installed and authenticated. The `--create` flag cannot be used with `pr:`/`mr:` syntax since the branch already exists.
+Both work anywhere a branch is accepted, including `--base`.
+
+Requires `gh` (GitHub) or `glab` (GitLab) CLI to be installed and authenticated. The `--create` flag cannot be used with a PR/MR reference since the branch already exists.
 
 **Forks:** The local branch uses the PR/MR's branch name directly (e.g., `feature-fix`), so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
 
