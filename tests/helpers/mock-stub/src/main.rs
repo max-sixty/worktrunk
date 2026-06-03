@@ -28,7 +28,8 @@
 //!
 //! Response types:
 //! - `file`: read and output contents of specified file (relative to config dir)
-//! - `output`: output literal string
+//! - `output`: output literal string to stdout
+//! - `stderr`: output literal string to stderr
 //! - `exit_code`: exit with specified code (default 0)
 
 use serde::Deserialize;
