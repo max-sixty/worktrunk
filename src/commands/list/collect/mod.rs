@@ -157,9 +157,9 @@
 //! | `All results drained → List collect complete` (final render) | ~344µs | 0 |
 //! | Wall clock | ~549ms | — |
 //!
-//! The 23-command pre-skeleton count is above the "6-8 commands" target
-//! above — worth an audit. Most of the extras come from per-worktree probes
-//! that creep into the phase.
+//! The 23-command pre-skeleton count is well above the five-to-six
+//! critical-path forks documented above — worth an audit. Most of the extras
+//! come from per-worktree probes that creep into the phase.
 //!
 //! Reproduce end-to-end via
 //! `cargo bench --bench time_to_first_output -- list`; for a per-phase
@@ -590,16 +590,24 @@ fn format_drain_timeout_diag(
     );
 
     if !items_with_missing.is_empty() {
+        const MAX_SHOWN: usize = 5;
         diag.push_str("; blocked tasks:");
-        let missing_lines: Vec<String> = items_with_missing
+        let mut missing_lines: Vec<String> = items_with_missing
             .iter()
-            .take(5)
+            .take(MAX_SHOWN)
             .map(|result| {
                 let missing_names: Vec<&str> =
                     result.missing_kinds.iter().map(|k| k.into()).collect();
                 cformat!("<bold>{}</>: {}", result.name, missing_names.join(", "))
             })
             .collect();
+        if let Some(extra) = items_with_missing
+            .len()
+            .checked_sub(MAX_SHOWN)
+            .filter(|n| *n > 0)
+        {
+            missing_lines.push(format!("… and {extra} more"));
+        }
         diag.push_str(&format!(
             "\n{}",
             format_with_gutter(&missing_lines.join("\n"), None)
@@ -711,8 +719,11 @@ pub fn collect(
     if worktrees.is_empty() {
         return Ok(None);
     }
-    let default_branch = default_branch_cell.into_inner().unwrap();
-    let url_template = url_template_cell.into_inner().unwrap();
+    // Both cells are unconditionally `set()` inside the rayon scope above, so
+    // `into_inner()` is always `Some`. Use `.flatten()` rather than `.unwrap()`
+    // to honor the no-unwrap rule and match the sibling cells below.
+    let default_branch = default_branch_cell.into_inner().flatten();
+    let url_template = url_template_cell.into_inner().flatten();
 
     // Resolve show flags: merge CLI overrides with config (warmed in parallel phase)
     let (
@@ -2128,6 +2139,32 @@ mod tests {
         Listing worktrees timed out after 120s (3 results received); blocked tasks:
           feature-a: ci-status, branch-diff
           feature-b: ahead-behind
+        "
+        );
+    }
+
+    /// More than `MAX_SHOWN` blocked tasks truncate to the first five and
+    /// append an "… and N more" line, so the count isn't silently hidden.
+    #[test]
+    fn test_format_drain_timeout_diag_truncates_blocked_items() {
+        let items: Vec<MissingResult> = (0..8)
+            .map(|i| MissingResult {
+                item_idx: i,
+                name: format!("feature-{i}"),
+                missing_kinds: vec![TaskKind::AheadBehind],
+            })
+            .collect();
+        let rendered = format_drain_timeout_diag(2, &items);
+        insta::assert_snapshot!(
+            strip_ansi(&rendered),
+            @r"
+        Listing worktrees timed out after 120s (2 results received); blocked tasks:
+          feature-0: ahead-behind
+          feature-1: ahead-behind
+          feature-2: ahead-behind
+          feature-3: ahead-behind
+          feature-4: ahead-behind
+          … and 3 more
         "
         );
     }
