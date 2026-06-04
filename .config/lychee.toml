@@ -35,6 +35,7 @@ exclude = [
     "github\\.com/[^/]+/[^/]+/actions",
     "github\\.com/[^/]+/[^/]+/stargazers",
     "github\\.com/[^/]+/[^/]+/releases/tag",
+    "gitlab\\.com/.+/-/merge_requests",
 
     # GitHub user/org profiles (no content we control, frequently 429/502)
     "github\\.com/[a-zA-Z0-9_-]+$",

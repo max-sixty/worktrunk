@@ -12,6 +12,7 @@ $ wt switch -                      # Previous worktree (like cd -)
 $ wt switch --create new-feature   # Create new branch and worktree
 $ wt switch --create hotfix --base production
 $ wt switch pr:123                 # Switch to PR #123's branch
+$ wt switch https://github.com/owner/repo/pull/123   # ...or paste the PR's URL
 ```
 
 ## Creating a branch
@@ -54,7 +55,7 @@ $ wt switch pr:123                      # PR #123's branch
 $ wt switch mr:101                      # MR !101's branch
 ```
 
-Shortcuts also apply to `--base`. For a fork PR/MR, the head commit is fetched and used as the base SHA without creating a tracking branch. (Web URLs like `https://github.com/owner/repo/pull/N` or `https://gitlab.com/owner/repo/-/merge_requests/N` work in place of `pr:N` / `mr:N` anywhere a shortcut does.)
+Shortcuts also apply to `--base`. For a fork PR/MR, the head commit is fetched and used as the base SHA without creating a tracking branch.
 
 ## Interactive picker
 
@@ -93,15 +94,19 @@ Available on Unix only (macOS, Linux). On Windows, use `wt list` or `wt switch <
 
 ## Pull requests and merge requests
 
-The `pr:<number>` and `mr:<number>` shortcuts resolve a GitHub PR or GitLab MR to its branch. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref (`refs/pull/N/head` or `refs/merge-requests/N/head`) and configures `pushRemote` to the fork URL.
+The `pr:<number>` / `mr:<number>` shortcut and the PR/MR's web URL both resolve to its branch. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref (`refs/pull/N/head` or `refs/merge-requests/N/head`) and configures `pushRemote` to the fork URL.
 
 ```bash
-$ wt switch pr:101                 # GitHub PR #101
-$ wt switch mr:101                 # GitLab MR !101
-$ wt switch --prs                  # Browse open PRs/MRs in the picker
+$ wt switch pr:101                                  # GitHub PR #101
+$ wt switch https://github.com/owner/repo/pull/101  # ...the same PR, by URL
+$ wt switch mr:101                                  # GitLab MR !101
+$ wt switch https://gitlab.com/owner/repo/-/merge_requests/101  # ...the same MR, by URL
+$ wt switch --prs                                   # Browse open PRs/MRs in the picker
 ```
 
-Requires `gh` (GitHub) or `glab` (GitLab) CLI to be installed and authenticated. The `--create` flag cannot be used with `pr:`/`mr:` syntax since the branch already exists.
+Both work anywhere a branch is accepted, including `--base`.
+
+Requires `gh` (GitHub) or `glab` (GitLab) CLI to be installed and authenticated. The `--create` flag cannot be used with a PR/MR reference since the branch already exists.
 
 The `--prs` flag adds the repository's open PRs (GitHub) or MRs (GitLab) to the interactive picker. Each row resolves to the same `pr:`/`mr:` shortcut, so selecting one fetches the ref and switches to its branch. The list is one forge call streamed in as it arrives — the picker paints immediately from local worktree data and PR rows appear once the call returns.
 
