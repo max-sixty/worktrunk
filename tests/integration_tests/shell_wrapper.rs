@@ -3068,6 +3068,58 @@ _wt_lazy_complete
         assert_snapshot!(String::from_utf8_lossy(&output.stdout));
     }
 
+    /// Black-box test: the zsh init script works as an fpath completion file.
+    ///
+    /// Completion managers (zinit, zsh-completion-generators, oh-my-zsh custom
+    /// completions) save `wt config shell init zsh` output as `_wt` in a
+    /// directory on `$fpath` instead of eval-ing it from .zshrc. compinit only
+    /// registers files whose first line is a `#compdef` tag, and the first TAB
+    /// runs the file body as the completion function — so the body must
+    /// produce candidates for that invocation itself, not just rebind compdef
+    /// for the next one.
+    #[test]
+    fn test_zsh_completion_fpath_autoload() {
+        let wt_bin = wt_bin();
+        let init = std::process::Command::new(&wt_bin)
+            .args(["config", "shell", "init", "zsh"])
+            .output()
+            .unwrap();
+        let shell_integration = String::from_utf8_lossy(&init.stdout);
+
+        // Save the init script as an fpath completion file, the way
+        // completion managers consume it.
+        let fpath_dir = tempfile::tempdir().unwrap();
+        std::fs::write(fpath_dir.path().join("_wt"), shell_integration.as_bytes()).unwrap();
+
+        // Same _describe override as test_zsh_completion_subcommands; the
+        // first `"${_comps[wt]}"` call is the first TAB — it must print
+        // candidates immediately. `compinit -d` keeps the dump file out of
+        // the real $HOME.
+        let script = format!(
+            r#"
+fpath=({fpath_dir} $fpath)
+autoload -Uz compinit && compinit -u -i -d {fpath_dir}/zcompdump 2>/dev/null
+echo "completer: ${{_comps[wt]:-NONE}}"
+_describe() {{
+    while [[ "$1" == -* ]]; do shift; done; shift
+    for arr in "$@"; do for item in "${{(@P)arr}}"; do echo "${{item%%:*}}"; done; done
+}}
+words=(wt "") CURRENT=2
+"${{_comps[wt]}}"
+"#,
+            fpath_dir = fpath_dir.path().display()
+        );
+
+        let (_dir, clean_path) = completion_test_path(&wt_bin);
+
+        let mut cmd = std::process::Command::new("zsh");
+        cmd.args(["-f", "-c"]).arg(&script).env("PATH", &clean_path);
+        set_empty_configs(&mut cmd);
+        let output = cmd.output().unwrap();
+
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    }
+
     /// Black-box test: bash completion produces correct subcommands.
     ///
     /// Sources actual `wt config shell init bash`, triggers completion, snapshots result.

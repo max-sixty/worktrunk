@@ -31,6 +31,8 @@ Zsh (~/.zshrc):
 eval "$(wt config shell init zsh)"
 ```
 
+The zsh script starts with a `#compdef` tag, so it also works as an fpath completion file: save it as `_wt` in a directory on `$fpath` before compinit runs, and completions load on first use. Completion managers that cache generated completion files can consume it this way.
+
 Nushell [experimental] — save to vendor autoload directory:
 ```console
 $ wt config shell init nu | save -f ($nu.default-config-dir | path join vendor/autoload/wt.nu)

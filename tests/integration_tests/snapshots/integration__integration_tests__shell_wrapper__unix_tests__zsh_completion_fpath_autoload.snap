@@ -1,0 +1,12 @@
+---
+source: tests/integration_tests/shell_wrapper.rs
+expression: "String::from_utf8_lossy(&output.stdout)"
+---
+completer: _wt
+switch
+list
+remove
+merge
+step
+hook
+config

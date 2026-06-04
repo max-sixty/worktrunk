@@ -1,4 +1,10 @@
+#compdef {{ cmd }}
 # worktrunk shell integration for zsh
+#
+# Loads two ways:
+#   eval "$({{ cmd }} config shell init zsh)" in .zshrc, or saved as a
+#   completion file (e.g. _{{ cmd }} in a $fpath directory) — the #compdef tag
+#   above lets compinit autoload it on the first completion.
 #
 # Completions require zsh's completion system (compinit). If completions don't work:
 #   autoload -Uz compinit && compinit  # add before this line in .zshrc
@@ -94,5 +100,14 @@ if command -v {{ cmd }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
         # Prevent grouping branches with identical descriptions (same timestamp) on one line.
         # Without this, "release  main  -- + 12m" instead of separate lines per branch.
         zstyle ':completion:*:*:{{ cmd }}:*' list-grouped false
+    fi
+
+    # When compinit autoloads this file from $fpath (first TAB), the body runs
+    # as the completion function itself. compdef above re-registered
+    # _{{ cmd }}_lazy_complete for subsequent completions, but this first
+    # invocation must produce candidates too. Never true when eval'd from
+    # .zshrc — funcstack is empty at the top level.
+    if [[ "${funcstack[1]}" == "_{{ cmd }}" ]]; then
+        _{{ cmd }}_lazy_complete "$@"
     fi
 fi
