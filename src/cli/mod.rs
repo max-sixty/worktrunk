@@ -316,6 +316,10 @@ pub(crate) struct SwitchArgs {
     #[arg(long, help_heading = "Picker Options", conflicts_with_all = ["create", "base", "execute", "execute_args", "clobber"])]
     pub(crate) remotes: bool,
 
+    /// Include open PRs/MRs
+    #[arg(long, help_heading = "Picker Options", conflicts_with_all = ["create", "base", "execute", "execute_args", "clobber"])]
+    pub(crate) prs: bool,
+
     /// Create a new branch
     #[arg(short = 'c', long, requires = "branch")]
     pub(crate) create: bool,
@@ -606,7 +610,7 @@ Shortcuts also apply to `--base`. For a fork PR/MR, the head commit is fetched a
 
 ## Interactive picker
 
-When called without arguments, `wt switch` opens an interactive picker to browse and select worktrees with live preview.
+When called without arguments, `wt switch` opens an interactive picker to browse and select worktrees with live preview. The candidate set widens with `--branches` (local branches without worktrees), `--remotes` (remote branches), and `--prs` (open PRs/MRs — see below).
 
 <!-- demo: wt-switch-picker.gif 1600x800 -->
 **Keybindings:**
@@ -647,9 +651,12 @@ The `pr:<number>` and `mr:<number>` shortcuts resolve a GitHub PR or GitLab MR t
 ```console
 $ wt switch pr:101                 # GitHub PR #101
 $ wt switch mr:101                 # GitLab MR !101
+$ wt switch --prs                  # Browse open PRs/MRs in the picker
 ```
 
 Requires `gh` (GitHub) or `glab` (GitLab) CLI to be installed and authenticated. The `--create` flag cannot be used with `pr:`/`mr:` syntax since the branch already exists.
+
+The `--prs` flag adds the repository's open PRs (GitHub) or MRs (GitLab) to the interactive picker. Each row resolves to the same `pr:`/`mr:` shortcut, so selecting one fetches the ref and switches to its branch. The list is one forge call streamed in as it arrives — the picker paints immediately from local worktree data and PR rows appear once the call returns.
 
 **Forks:** The local branch uses the PR/MR's branch name directly (e.g., `feature-fix`), so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
 

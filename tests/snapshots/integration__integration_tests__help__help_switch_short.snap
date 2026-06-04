@@ -55,6 +55,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
 [1m[32mPicker Options:[0m
       [1m[36m--branches[0m  Include branches without worktrees
       [1m[36m--remotes[0m   Include remote branches
+      [1m[36m--prs[0m       Include open PRs/MRs
 
 [1m[32mAutomation:[0m
       [1m[36m--no-hooks[0m         Skip hooks

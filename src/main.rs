@@ -651,7 +651,7 @@ fn handle_select_command(branches: bool, remotes: bool) -> anyhow::Result<()> {
     // Deprecated: show warning and delegate to handle_picker
     warn_select_deprecated();
     worktrunk::config::suppress_warnings();
-    handle_picker(branches, remotes, None, SwitchFormat::Text)
+    handle_picker(branches, remotes, false, None, SwitchFormat::Text)
 }
 
 #[cfg(not(unix))]
@@ -684,6 +684,7 @@ fn handle_switch_command(args: SwitchArgs, yes: bool) -> anyhow::Result<()> {
                     return handle_picker(
                         args.branches,
                         args.remotes,
+                        args.prs,
                         change_dir_flag,
                         args.format,
                     );
@@ -693,7 +694,7 @@ fn handle_switch_command(args: SwitchArgs, yes: bool) -> anyhow::Result<()> {
                 {
                     use worktrunk::git::WorktrunkError;
                     // Suppress unused variable warnings on Windows
-                    let _ = (args.branches, args.remotes, change_dir_flag);
+                    let _ = (args.branches, args.remotes, args.prs, change_dir_flag);
 
                     print_windows_picker_unavailable();
                     return Err(WorktrunkError::AlreadyDisplayed { exit_code: 2 }.into());

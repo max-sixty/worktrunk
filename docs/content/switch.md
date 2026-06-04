@@ -56,7 +56,7 @@ Shortcuts also apply to `--base`. For a fork PR/MR, the head commit is fetched a
 
 ## Interactive picker
 
-When called without arguments, `wt switch` opens an interactive picker to browse and select worktrees with live preview.
+When called without arguments, `wt switch` opens an interactive picker to browse and select worktrees with live preview. The candidate set widens with `--branches` (local branches without worktrees), `--remotes` (remote branches), and `--prs` (open PRs/MRs — see below).
 
 <figure class="demo">
 <picture>
@@ -100,9 +100,11 @@ Available on Unix only (macOS, Linux). On Windows, use `wt list` or `wt switch <
 
 The `pr:<number>` and `mr:<number>` shortcuts resolve a GitHub PR or GitLab MR to its branch. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref (`refs/pull/N/head` or `refs/merge-requests/N/head`) and configures `pushRemote` to the fork URL.
 
-{{ terminal(cmd="wt switch pr:101                 # GitHub PR #101|||wt switch mr:101                 # GitLab MR !101") }}
+{{ terminal(cmd="wt switch pr:101                 # GitHub PR #101|||wt switch mr:101                 # GitLab MR !101|||wt switch --prs                  # Browse open PRs/MRs in the picker") }}
 
 Requires `gh` (GitHub) or `glab` (GitLab) CLI to be installed and authenticated. The `--create` flag cannot be used with `pr:`/`mr:` syntax since the branch already exists.
+
+The `--prs` flag adds the repository's open PRs (GitHub) or MRs (GitLab) to the interactive picker. Each row resolves to the same `pr:`/`mr:` shortcut, so selecting one fetches the ref and switches to its branch. The list is one forge call streamed in as it arrives — the picker paints immediately from local worktree data and PR rows appear once the call returns.
 
 **Forks:** The local branch uses the PR/MR's branch name directly (e.g., `feature-fix`), so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
 
@@ -193,6 +195,9 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
 
       <b><span class=c>--remotes</span></b>
           Include remote branches
+
+      <b><span class=c>--prs</span></b>
+          Include open PRs/MRs
 
 <b><span class=g>Automation:</span></b>
       <b><span class=c>--no-hooks</span></b>

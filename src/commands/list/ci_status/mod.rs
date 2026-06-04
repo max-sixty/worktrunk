@@ -104,7 +104,7 @@ const MAX_PRS_TO_FETCH: u8 = 20;
 /// - Prompting for user input
 /// - Using TTY-specific output formatting
 /// - Opening browsers for authentication
-fn non_interactive_cmd(program: &str) -> Cmd {
+pub(crate) fn non_interactive_cmd(program: &str) -> Cmd {
     Cmd::new(program)
         .env_remove("CLICOLOR_FORCE")
         .env_remove("GH_FORCE_TTY")
@@ -117,7 +117,7 @@ fn non_interactive_cmd(program: &str) -> Cmd {
 ///
 /// On Windows, CreateProcessW (via Cmd) searches PATH for .exe files.
 /// We provide .exe mocks in tests via mock-stub, so this works consistently.
-fn tool_available(tool: &str, args: &[&str]) -> bool {
+pub(crate) fn tool_available(tool: &str, args: &[&str]) -> bool {
     Cmd::new(tool)
         .args(args.iter().copied())
         .run()

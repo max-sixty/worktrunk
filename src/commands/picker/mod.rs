@@ -94,6 +94,7 @@ mod preview;
 pub(crate) mod preview_cache;
 mod preview_orchestrator;
 mod progressive_handler;
+mod prs;
 mod summary;
 
 use std::cell::RefCell;
@@ -448,6 +449,7 @@ fn approved_removal_plan(
 pub fn handle_picker(
     cli_branches: bool,
     cli_remotes: bool,
+    cli_prs: bool,
     change_dir_flag: Option<bool>,
     format: SwitchFormat,
 ) -> anyhow::Result<()> {
@@ -470,6 +472,9 @@ pub fn handle_picker(
     let change_dir = change_dir_flag.unwrap_or_else(|| config.switch.cd());
     let show_branches = cli_branches || config.list.branches();
     let show_remotes = cli_remotes || config.list.remotes();
+    // Flag-only: listing PRs always reaches the forge, so it stays opt-in
+    // per invocation rather than defaulting on via config.
+    let show_prs = cli_prs;
     worktrunk::trace::instant("Picker config resolved");
 
     // Initialize preview mode state file (auto-cleanup on drop)
@@ -764,8 +769,31 @@ pub fn handle_picker(
         .context("Failed to spawn picker-collect thread")?;
     worktrunk::trace::instant("Picker collect spawned");
 
-    // Drop main-thread copies so the bg thread's `tx` clone is the last
-    // sender (its drop is what stops skim's heartbeat).
+    // PR/MR streaming (`--prs`). One forge call on its own thread that holds
+    // another `tx` clone, so the picker frame paints from local worktree data
+    // immediately and PR rows stream in (~1s) when the call returns. The
+    // clone extends the heartbeat: skim idles only once both this thread and
+    // the collect thread drop their senders. Skipped in the headless dry-run /
+    // preview-bench paths, which exist to benchmark previews, not reach the
+    // network.
+    let prs_handle = if show_prs && !skip_tui {
+        let prs_tx = tx.clone();
+        let prs_repo = repo.clone();
+        let prs_warnings = Arc::clone(&stashed_warnings);
+        Some(
+            std::thread::Builder::new()
+                .name("picker-prs".into())
+                .spawn(move || {
+                    prs::stream_open_prs(&prs_repo, skim_list_width, &prs_tx, &prs_warnings);
+                })
+                .context("Failed to spawn picker-prs thread")?,
+        )
+    } else {
+        None
+    };
+
+    // Drop main-thread copies so the bg threads' `tx` clones are the last
+    // senders (their drop is what stops skim's heartbeat).
     drop(tx);
     drop(handler);
 
@@ -796,6 +824,10 @@ pub fn handle_picker(
     // are read-only.
     let output = Skim::run_with(&options, Some(rx));
     drop(bg_handle);
+    // Same rationale as `bg_handle`: don't join — the forge call may still be
+    // in flight, and process exit terminates the thread (its `gh`/`glab`
+    // subprocess is read-only).
+    drop(prs_handle);
 
     // Skim has released the terminal — emit any warnings that collect's bg
     // thread stashed during the run. Late warnings (e.g. drain timeouts)
