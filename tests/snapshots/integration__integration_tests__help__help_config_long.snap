@@ -362,7 +362,8 @@ Default template:
 
 Available variables (in addition to commit template variables):
 
-- [2m{{ commits }}[0m — list of commits being squashed
+- [2m{{ commits }}[0m — list of commit subjects being squashed
+- [2m{{ commit_details }}[0m — list of commits being squashed as [2m{ subject, body }[0m objects
 - [2m{{ target_branch }}[0m — merge target branch
 
 Default template:
