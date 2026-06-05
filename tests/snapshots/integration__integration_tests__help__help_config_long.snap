@@ -102,7 +102,7 @@ Organizations can deploy a system-wide config file for shared defaults — run 
 [107m [0m [2mworktree-path = [0m[2m[32m".worktrees/{{ branch | sanitize }}"[0m
 [107m [0m 
 [107m [0m [2m[36m[commit.generation][0m
-[107m [0m [2mcommand = [0m[2m[32m"CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
+[107m [0m [2mcommand = [0m[2m[32m"MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
 
 [1mProject config[0m — shared team settings:
 
@@ -175,7 +175,7 @@ Generate commit messages automatically during merge. Requires an external CLI to
 [32mClaude Code[0m
 
 [107m [0m [2m[36m[commit.generation][0m
-[107m [0m [2mcommand = [0m[2m[32m"CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
+[107m [0m [2mcommand = [0m[2m[32m"MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
 
 [32mCodex[0m
 
