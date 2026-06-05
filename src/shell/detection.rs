@@ -96,6 +96,32 @@ pub fn is_shell_integration_line_for_uninstall(line: &str, cmd: &str) -> bool {
     is_shell_integration_line_impl(line, cmd, false)
 }
 
+/// Cmd-agnostic line detection: matches any `<binary> config shell init` line
+/// in an execution context, regardless of binary name. Extracts binary-name
+/// candidates from the line via regex and delegates to
+/// `is_shell_integration_line_for_uninstall` for the execution-context check.
+///
+/// Used by `uninstall` when scanning to remove worktrunk-managed shell
+/// integration regardless of the binary name it was installed under.
+pub fn is_shell_integration_line_for_uninstall_any_cmd(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.starts_with('#') || trimmed.starts_with("<#") {
+        return false;
+    }
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r"([\w.-]+?)(?:\.exe)?\s+config\s+shell\s+init\b")
+            .expect("static regex is valid")
+    });
+    for cap in re.captures_iter(trimmed) {
+        let candidate = &cap[1];
+        if is_shell_integration_line_for_uninstall(line, candidate) {
+            return true;
+        }
+    }
+    false
+}
+
 fn is_shell_integration_line_impl(line: &str, cmd: &str, strict: bool) -> bool {
     let trimmed = line.trim();
 
@@ -786,6 +812,23 @@ mod tests {
             ),
             "Permissive mode should also detect new PowerShell config"
         );
+    }
+
+    #[test]
+    fn test_any_cmd_detects_managed_line_regardless_of_binary_name() {
+        // The cmd-agnostic detector extracts the binary candidate from the line
+        // and confirms it via the execution-context check, matching a wrapper
+        // installed under any binary name.
+        assert!(is_shell_integration_line_for_uninstall_any_cmd(
+            "eval \"$(wt config shell init bash)\""
+        ));
+        assert!(is_shell_integration_line_for_uninstall_any_cmd(
+            "eval \"$(git-wt config shell init zsh)\""
+        ));
+        // A bare mention with no execution context is not a managed line.
+        assert!(!is_shell_integration_line_for_uninstall_any_cmd(
+            "echo wt config shell init bash"
+        ));
     }
 
     // ------------------------------------------------------------------------

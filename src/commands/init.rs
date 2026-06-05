@@ -8,6 +8,8 @@ use worktrunk::styling::println;
 use crate::cli::Cli;
 
 pub fn handle_init(shell: shell::Shell, cmd: String) -> Result<(), String> {
+    shell::validate_shell_command_name(&cmd)?;
+
     let init = shell::ShellInit::with_prefix(shell, cmd);
 
     // Generate shell integration code (includes dynamic completion registration)
@@ -39,6 +41,7 @@ pub fn handle_init(shell: shell::Shell, cmd: String) -> Result<(), String> {
 pub fn handle_completions(shell: shell::Shell) -> anyhow::Result<()> {
     let mut cmd = Cli::command();
     let cmd_name = crate::binary_name();
+    shell::validate_shell_command_name(&cmd_name).map_err(anyhow::Error::msg)?;
     let mut stdout = io::stdout();
 
     match shell {

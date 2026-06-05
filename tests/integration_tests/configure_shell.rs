@@ -89,6 +89,43 @@ fn test_configure_shell_specific_shell(repo: TestRepo, temp_home: TempDir) {
 }
 
 #[rstest]
+fn test_configure_shell_rejects_unsafe_cmd_without_modifying_rc(
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
+    let zshrc_path = temp_home.path().join(".zshrc");
+    let original = "# Existing config\n";
+    fs::write(&zshrc_path, original).unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.arg("config")
+        .arg("shell")
+        .arg("install")
+        .arg("zsh")
+        .arg("--yes")
+        .arg("--cmd")
+        .arg("wt; touch /tmp/pwn")
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+
+    assert!(!output.status.success());
+    assert!(
+        output.stdout.is_empty(),
+        "unsafe command name must not emit shell code:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Invalid shell integration command name"),
+        "expected validation error, got:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(fs::read_to_string(&zshrc_path).unwrap(), original);
+}
+
+#[rstest]
 fn test_configure_shell_already_exists(repo: TestRepo, temp_home: TempDir) {
     // Create a fake .zshrc file with the line already present
     let zshrc_path = temp_home.path().join(".zshrc");
@@ -126,6 +163,39 @@ fn test_configure_shell_already_exists(repo: TestRepo, temp_home: TempDir) {
     let content = fs::read_to_string(&zshrc_path).unwrap();
     let count = content.matches("wt config shell init").count();
     assert_eq!(count, 1, "Should only have one wt config shell init line");
+}
+
+#[rstest]
+fn test_configure_shell_already_exists_noncanonical_line(repo: TestRepo, temp_home: TempDir) {
+    let zshrc_path = temp_home.path().join(".zshrc");
+    fs::write(
+        &zshrc_path,
+        "# Existing config\neval \"$(wt config shell init zsh)\"\n",
+    )
+    .unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/zsh");
+    cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1");
+    cmd.arg("config")
+        .arg("shell")
+        .arg("install")
+        .arg("zsh")
+        .arg("--yes")
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "install should treat the existing manual line as configured:\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let content = fs::read_to_string(&zshrc_path).unwrap();
+    let count = content.matches("wt config shell init").count();
+    assert_eq!(count, 1, "Should not append a duplicate shell init line");
 }
 
 #[rstest]
@@ -881,9 +951,9 @@ fn test_uninstall_shell(repo: TestRepo, temp_home: TempDir) {
         ----- stderr -----
         [32m✓[39m [32mRemoved shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
         [2m↳[22m [2mNo [4mbash[24m shell extension & completions in ~/.bashrc[22m
-        [2m↳[22m [2mNo [4mfish[24m shell extension in ~/.config/fish/functions/wt.fish[22m
-        [2m↳[22m [2mNo [4mnu[24m shell extension & completions in ~/.config/nushell/vendor/autoload/wt.nu[22m
-        [2m↳[22m [2mNo [4mfish[24m completions in ~/.config/fish/completions/wt.fish[22m
+        [2m↳[22m [2mNo [4mfish[24m shell extension in ~/.config/fish/functions[22m
+        [2m↳[22m [2mNo [4mnu[24m shell extension & completions in ~/.config/nushell/vendor/autoload[22m
+        [2m↳[22m [2mNo [4mfish[24m completions in ~/.config/fish/completions[22m
 
         [32m✓[39m [32mRemoved integration from 1 shell[39m
         [2m↳[22m [2mRestart shell to complete uninstall[22m
@@ -938,9 +1008,9 @@ fn test_uninstall_shell_multiple(repo: TestRepo, temp_home: TempDir) {
         ----- stderr -----
         [32m✓[39m [32mRemoved shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m[39m
         [32m✓[39m [32mRemoved shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
-        [2m↳[22m [2mNo [4mfish[24m shell extension in ~/.config/fish/functions/wt.fish[22m
-        [2m↳[22m [2mNo [4mnu[24m shell extension & completions in ~/.config/nushell/vendor/autoload/wt.nu[22m
-        [2m↳[22m [2mNo [4mfish[24m completions in ~/.config/fish/completions/wt.fish[22m
+        [2m↳[22m [2mNo [4mfish[24m shell extension in ~/.config/fish/functions[22m
+        [2m↳[22m [2mNo [4mnu[24m shell extension & completions in ~/.config/nushell/vendor/autoload[22m
+        [2m↳[22m [2mNo [4mfish[24m completions in ~/.config/fish/completions[22m
 
         [32m✓[39m [32mRemoved integration from 2 shells[39m
         [2m↳[22m [2mRestart shell to complete uninstall[22m
@@ -1095,6 +1165,173 @@ fn test_install_uninstall_roundtrip(repo: TestRepo, temp_home: TempDir) {
         content.contains("export PATH=$HOME/bin:$PATH"),
         "PATH export should be preserved"
     );
+}
+
+#[rstest]
+fn test_uninstall_scan_removes_all_worktrunk_zsh_lines(repo: TestRepo, temp_home: TempDir) {
+    let zshrc_path = temp_home.path().join(".zshrc");
+    fs::write(
+        &zshrc_path,
+        "# Existing config\nif command -v wt >/dev/null 2>&1; then eval \"$(command wt config shell init zsh)\"; fi\n",
+    )
+    .unwrap();
+
+    let mut install_cmd = wt_command();
+    repo.configure_wt_cmd(&mut install_cmd);
+    set_temp_home_env(&mut install_cmd, temp_home.path());
+    install_cmd.env("SHELL", "/bin/zsh");
+    install_cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1");
+    install_cmd
+        .args([
+            "config", "shell", "install", "zsh", "--yes", "--cmd", "git-wt",
+        ])
+        .current_dir(repo.root_path());
+
+    let install_output = install_cmd.output().expect("Failed to execute install");
+    assert!(
+        install_output.status.success(),
+        "Install should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&install_output.stderr)
+    );
+    let installed = fs::read_to_string(&zshrc_path).unwrap();
+    assert!(installed.contains("git-wt config shell init zsh"));
+
+    let mut uninstall_cmd = wt_command();
+    repo.configure_wt_cmd(&mut uninstall_cmd);
+    set_temp_home_env(&mut uninstall_cmd, temp_home.path());
+    uninstall_cmd.env("SHELL", "/bin/zsh");
+    uninstall_cmd
+        .args(["config", "shell", "uninstall", "zsh", "--yes"])
+        .current_dir(repo.root_path());
+
+    let uninstall_output = uninstall_cmd.output().expect("Failed to execute uninstall");
+    assert!(
+        uninstall_output.status.success(),
+        "Uninstall should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&uninstall_output.stderr)
+    );
+
+    let content = fs::read_to_string(&zshrc_path).unwrap();
+    assert!(
+        !content.contains("git-wt config shell init zsh"),
+        "Custom command integration should be removed"
+    );
+    assert!(
+        !content.contains("wt config shell init zsh"),
+        "Default command integration should also be removed (scan-all)"
+    );
+    assert!(
+        content.contains("# Existing config"),
+        "Unrelated comment should be preserved"
+    );
+}
+
+#[rstest]
+fn test_uninstall_scan_removes_custom_cmd_fish_files(repo: TestRepo, temp_home: TempDir) {
+    let fish_functions = temp_home.path().join(".config/fish/functions");
+    let fish_completions = temp_home.path().join(".config/fish/completions");
+    fs::create_dir_all(&fish_functions).unwrap();
+    fs::create_dir_all(&fish_completions).unwrap();
+    let default_function = fish_functions.join("wt.fish");
+    let default_completion = fish_completions.join("wt.fish");
+    fs::write(&default_function, "function wt\nend\n").unwrap();
+    fs::write(&default_completion, "complete --command wt\n").unwrap();
+
+    let mut install_cmd = wt_command();
+    repo.configure_wt_cmd(&mut install_cmd);
+    set_temp_home_env(&mut install_cmd, temp_home.path());
+    install_cmd.env("SHELL", "/bin/fish");
+    install_cmd
+        .args([
+            "config", "shell", "install", "fish", "--yes", "--cmd", "git-wt",
+        ])
+        .current_dir(repo.root_path());
+
+    let install_output = install_cmd.output().expect("Failed to execute install");
+    assert!(
+        install_output.status.success(),
+        "Install should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&install_output.stderr)
+    );
+    let custom_function = fish_functions.join("git-wt.fish");
+    let custom_completion = fish_completions.join("git-wt.fish");
+    assert!(custom_function.exists());
+    assert!(custom_completion.exists());
+
+    let mut uninstall_cmd = wt_command();
+    repo.configure_wt_cmd(&mut uninstall_cmd);
+    set_temp_home_env(&mut uninstall_cmd, temp_home.path());
+    uninstall_cmd.env("SHELL", "/bin/fish");
+    uninstall_cmd
+        .args(["config", "shell", "uninstall", "fish", "--yes"])
+        .current_dir(repo.root_path());
+
+    let uninstall_output = uninstall_cmd.output().expect("Failed to execute uninstall");
+    assert!(
+        uninstall_output.status.success(),
+        "Uninstall should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&uninstall_output.stderr)
+    );
+
+    // Scan-all removes git-wt.fish (worktrunk-managed by content) but leaves the
+    // hand-written wt.fish stub alone — it lacks the `config shell init … | source`
+    // marker so it doesn't look like a worktrunk wrapper.
+    assert!(!custom_function.exists());
+    assert!(!custom_completion.exists());
+    assert!(default_function.exists());
+    assert!(default_completion.exists());
+}
+
+#[rstest]
+fn test_uninstall_scan_removes_custom_cmd_nushell_file(repo: TestRepo, temp_home: TempDir) {
+    let home = std::fs::canonicalize(temp_home.path()).unwrap();
+    let nu_autoload = home
+        .join(".config")
+        .join("nushell")
+        .join("vendor")
+        .join("autoload");
+    fs::create_dir_all(&nu_autoload).unwrap();
+    let default_config = nu_autoload.join("wt.nu");
+    fs::write(&default_config, "def --env --wrapped wt [] {}\n").unwrap();
+
+    let mut install_cmd = wt_command();
+    repo.configure_wt_cmd(&mut install_cmd);
+    set_temp_home_env(&mut install_cmd, temp_home.path());
+    install_cmd.env("SHELL", "/bin/nu");
+    install_cmd
+        .args([
+            "config", "shell", "install", "nu", "--yes", "--cmd", "git-wt",
+        ])
+        .current_dir(repo.root_path());
+
+    let install_output = install_cmd.output().expect("Failed to execute install");
+    assert!(
+        install_output.status.success(),
+        "Install should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&install_output.stderr)
+    );
+    let custom_config = nu_autoload.join("git-wt.nu");
+    assert!(custom_config.exists());
+
+    let mut uninstall_cmd = wt_command();
+    repo.configure_wt_cmd(&mut uninstall_cmd);
+    set_temp_home_env(&mut uninstall_cmd, temp_home.path());
+    uninstall_cmd.env("SHELL", "/bin/nu");
+    uninstall_cmd
+        .args(["config", "shell", "uninstall", "nu", "--yes"])
+        .current_dir(repo.root_path());
+
+    let uninstall_output = uninstall_cmd.output().expect("Failed to execute uninstall");
+    assert!(
+        uninstall_output.status.success(),
+        "Uninstall should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&uninstall_output.stderr)
+    );
+
+    // Scan-all removes git-wt.nu (worktrunk-managed by content) but leaves the
+    // hand-written wt.nu stub alone (no `config shell init … | source` marker).
+    assert!(!custom_config.exists());
+    assert!(default_config.exists());
 }
 
 #[rstest]

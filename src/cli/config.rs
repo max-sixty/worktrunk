@@ -110,8 +110,8 @@ $ wt config shell uninstall --yes
 
 ## Version tolerance
 
-Detects various forms of the integration pattern regardless of:
-- Command prefix (wt, worktree, etc.)
+Uninstall removes every worktrunk-managed integration it finds, regardless of:
+- Binary name it was installed under (`wt`, `git-wt`, …)
 - Minor syntax variations between versions"#
     )]
     Uninstall {

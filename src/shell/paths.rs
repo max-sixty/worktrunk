@@ -85,7 +85,7 @@ fn nushell_config_dir(home: &std::path::Path) -> PathBuf {
 /// `nushell_config_dir()` writes to. (Their fallbacks differ when the query
 /// fails: `nushell_config_dir()` prefers the platform config dir, this prefers
 /// `$XDG_CONFIG_HOME`/`~/.config`.)
-fn nushell_config_candidates(home: &std::path::Path) -> Vec<PathBuf> {
+pub fn nushell_config_candidates(home: &std::path::Path) -> Vec<PathBuf> {
     let mut candidates = vec![];
 
     // Best path: query nu directly (same source of truth as nushell_config_dir)

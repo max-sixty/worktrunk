@@ -5,10 +5,11 @@
 //! are not the primary shell integration path on Windows (PowerShell is).
 #![cfg(not(windows))]
 
-use crate::common::{TestRepo, add_standard_env_redactions, repo, wt_command};
+use crate::common::{TestRepo, add_standard_env_redactions, repo, wt_bin, wt_command};
 use insta::Settings;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
+use std::process::Command;
 
 /// Helper to create snapshot for config shell init command
 fn snapshot_init(test_name: &str, repo: &TestRepo, shell: &str, extra_args: &[&str]) {
@@ -68,4 +69,65 @@ fn test_init_invalid_shell(repo: TestRepo) {
         For more information, try '[1m[36m--help[0m'.
         ");
     });
+}
+
+#[rstest]
+#[case("bash")]
+#[case("fish")]
+#[case("nu")]
+#[case("powershell")]
+#[case("zsh")]
+fn test_init_rejects_unsafe_cmd(#[case] shell: &str, repo: TestRepo) {
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.arg("config")
+        .arg("shell")
+        .arg("init")
+        .arg(shell)
+        .arg("--cmd")
+        .arg("wt; touch /tmp/pwn")
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+
+    assert!(!output.status.success());
+    assert!(
+        output.stdout.is_empty(),
+        "unsafe command name must not emit shell code:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Invalid shell integration command name"),
+        "expected validation error, got:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[rstest]
+fn test_init_rejects_unsafe_argv0_command_name(repo: TestRepo) {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let bad_bin = temp_dir.path().join("wt;touch");
+    std::os::unix::fs::symlink(wt_bin(), &bad_bin).unwrap();
+
+    let mut cmd = Command::new(&bad_bin);
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.arg("config")
+        .arg("shell")
+        .arg("init")
+        .arg("bash")
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+
+    assert!(!output.status.success());
+    assert!(
+        output.stdout.is_empty(),
+        "unsafe argv[0] command name must not emit shell code:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Invalid shell integration command name"),
+        "expected validation error, got:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
