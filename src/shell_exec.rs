@@ -2166,6 +2166,11 @@ mod tests {
                 "preview line must not carry raw NUL bytes: {line:?}"
             );
         }
+
+        // A non-NUL control byte (here ESC, 0x1b) takes the general
+        // `escape_default` arm rather than the compact `\0` one.
+        let lines = format_stream_bounded(b"a\x1bb\n", "  ");
+        assert_eq!(lines, vec![r"  a\u{1b}b"]);
     }
 
     #[test]
