@@ -181,7 +181,8 @@ Diff:
 | `{{ branch }}` | Current branch name |
 | `{{ repo }}` | Repository name |
 | `{{ recent_commits }}` | Recent commit subjects (for style reference) |
-| `{{ commits }}` | Commits being squashed (squash template only) |
+| `{{ commits }}` | Commit subjects being squashed (squash template only) |
+| `{{ commit_details }}` | Commits being squashed as `{ subject, body }` (squash template only) <span class="badge-experimental"></span> |
 | `{{ target_branch }}` | Merge target branch (squash template only) |
 | `{{ user_guidance }}` | Rendered user `template-append` fragment (see below) |
 | `{{ project_guidance }}` | Rendered project `template-append` fragment (see below) |

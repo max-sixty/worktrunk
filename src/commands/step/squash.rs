@@ -256,8 +256,8 @@ pub fn handle_squash(
         eprintln!("{}", hint_message(format!("Backup created @ {sha}")));
     }
 
-    // Get commit subjects for the squash message
-    let subjects = repo.commit_subjects(&range)?;
+    // Get commit subjects and bodies for the squash message
+    let commit_details = repo.commit_message_details(&range)?;
 
     // Generate squash commit message
     eprintln!(
@@ -277,7 +277,7 @@ pub fn handle_squash(
     let commit_message = crate::llm::generate_squash_message(
         &integration_target,
         &merge_base,
-        &subjects,
+        &commit_details,
         &current_branch,
         repo_name,
         &resolved.commit_generation,
@@ -372,7 +372,7 @@ fn preview_squash(target: Option<&str>, dry_run: bool, yes: bool) -> anyhow::Res
         .context("Cannot generate squash message: no common ancestor with target branch")?;
 
     let range = format!("{}..HEAD", merge_base);
-    let subjects = repo.commit_subjects(&range)?;
+    let commit_details = repo.commit_message_details(&range)?;
 
     let repo_root = wt.root()?;
     let repo_name = repo_root
@@ -387,7 +387,7 @@ fn preview_squash(target: Option<&str>, dry_run: bool, yes: bool) -> anyhow::Res
     let prompt = crate::llm::build_squash_prompt(
         &integration_target,
         &merge_base,
-        &subjects,
+        &commit_details,
         &current_branch,
         repo_name,
         &commit_config,
@@ -400,7 +400,7 @@ fn preview_squash(target: Option<&str>, dry_run: bool, yes: bool) -> anyhow::Res
     let message = crate::llm::generate_squash_message(
         &integration_target,
         &merge_base,
-        &subjects,
+        &commit_details,
         &current_branch,
         repo_name,
         &commit_config,

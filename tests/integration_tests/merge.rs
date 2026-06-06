@@ -2488,6 +2488,71 @@ fn test_step_squash_show_prompt(repo_with_multi_commit_feature: TestRepo) {
     ));
 }
 
+#[rstest]
+fn test_step_squash_show_prompt_custom_template_renders_commit_details(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+
+    repo.commit_in_worktree(
+        &feature_wt,
+        "empty_body.txt",
+        "empty body change\n",
+        "Add empty-body change",
+    );
+
+    let commit_with_body = |file: &str, content: &str, subject: &str, body: &str| {
+        let message = format!("{subject}\n\n{body}");
+        repo.commit_in_worktree(&feature_wt, file, content, &message);
+    };
+    commit_with_body(
+        "with_body.txt",
+        "body change\n",
+        "Describe body",
+        "Body line",
+    );
+    commit_with_body(
+        "multiline_body.txt",
+        "multiline body change\n",
+        "Describe multiline body",
+        "First body line\nSecond body line\n\nThird body line",
+    );
+    commit_with_body(
+        "multiline_body.txt",
+        "multiline body next change\n",
+        "Describe multiline body",
+        "- First line\n- Second line",
+    );
+    commit_with_body(
+        "trailer_body.txt",
+        "trailer body change\n",
+        "Keep trailer-like text",
+        "Implements the workflow.\n\nRefs: #123",
+    );
+
+    let worktrunk_config = r#"
+[commit.generation]
+squash-template = """
+Combine these {{ commit_details | length }} commits into one message:
+{% for c in commit_details -%}
+- {{ c.subject }}
+{% if c.body -%}
+{{ c.body | trim | indent(2, true) }}
+{% endif -%}
+{% endfor %}
+<diff>
+{{ git_diff_stat -}}
+</diff>
+"""
+"#;
+    fs::write(repo.test_config_path(), worktrunk_config).unwrap();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["squash", "--show-prompt"],
+        Some(&feature_wt),
+    ));
+}
+
 // =============================================================================
 // --dry-run tests
 // =============================================================================
