@@ -145,6 +145,25 @@ pub fn temp_home() -> TempDir {
     TempDir::new().unwrap()
 }
 
+/// Canonicalize a `temp_home` for use as a base when building paths that
+/// production code will compare against the exported HOME.
+///
+/// `set_temp_home_env` exports HOME via `dunce::canonicalize`, so paths the
+/// command later prints (e.g. the nushell vendor-autoload dir) only tilde-
+/// shorten in `format_path_for_display` when they share that canonical prefix.
+/// Two platform pitfalls make a bare `temp_home.path()` wrong:
+///
+/// - **macOS**: the temp dir lives under `/var`, a symlink to `/private/var`.
+///   Canonicalizing resolves it to match the exported HOME, so the printed path
+///   shortens to `~/...` instead of the full temp path.
+/// - **Windows**: `std::fs::canonicalize` returns a `\\?\` verbatim path, where
+///   the forward slashes in a later `.join("a/b/c")` are treated as literal
+///   filename characters rather than separators — breaking both the file write
+///   and `.exists()`. `dunce::canonicalize` returns an ordinary path.
+pub fn canonical_temp_home(temp_home: &TempDir) -> std::path::PathBuf {
+    dunce::canonicalize(temp_home.path()).unwrap()
+}
+
 /// Repo with remote tracking set up.
 ///
 /// Builds on the `repo` fixture, adding a "remote" for the default branch.

@@ -1,6 +1,6 @@
 use crate::common::{
-    TestRepo, repo, set_temp_home_env, set_xdg_config_path, setup_home_snapshot_settings,
-    temp_home, wt_command,
+    TestRepo, canonical_temp_home, repo, set_temp_home_env, set_xdg_config_path,
+    setup_home_snapshot_settings, temp_home, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -872,7 +872,7 @@ fn test_uninstall_shell(repo: TestRepo, temp_home: TempDir) {
         // the runner's PATH.
         cmd.env(
             "WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR",
-            temp_home.path().join(".local/share/nushell/vendor/autoload"),
+            canonical_temp_home(&temp_home).join(".local/share/nushell/vendor/autoload"),
         );
         cmd.arg("config")
             .arg("shell")
@@ -936,7 +936,7 @@ fn test_uninstall_shell_multiple(repo: TestRepo, temp_home: TempDir) {
         // the runner's PATH.
         cmd.env(
             "WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR",
-            temp_home.path().join(".local/share/nushell/vendor/autoload"),
+            canonical_temp_home(&temp_home).join(".local/share/nushell/vendor/autoload"),
         );
         cmd.arg("config")
             .arg("shell")
@@ -1876,7 +1876,7 @@ mod pty_tests {
 /// every platform (and doesn't depend on `nu` being installed).
 #[rstest]
 fn test_configure_shell_nushell(repo: TestRepo, temp_home: TempDir) {
-    let home = std::fs::canonicalize(temp_home.path()).unwrap();
+    let home = canonical_temp_home(&temp_home);
     let autoload = home.join(".local/share/nushell/vendor/autoload");
     let nu_config = autoload.join("wt.nu");
 
@@ -1926,7 +1926,7 @@ fn test_configure_shell_nushell(repo: TestRepo, temp_home: TempDir) {
 /// This covers the nushell-specific uninstall block in configure_shell.
 #[rstest]
 fn test_uninstall_shell_nushell(repo: TestRepo, temp_home: TempDir) {
-    let home = std::fs::canonicalize(temp_home.path()).unwrap();
+    let home = canonical_temp_home(&temp_home);
     let autoload = home.join(".local/share/nushell/vendor/autoload");
     let nu_config = autoload.join("wt.nu");
 
@@ -1990,7 +1990,7 @@ fn test_uninstall_shell_nushell(repo: TestRepo, temp_home: TempDir) {
 /// iterates the full list.
 #[rstest]
 fn test_uninstall_nushell_cleans_all_candidate_locations(repo: TestRepo, temp_home: TempDir) {
-    let home = std::fs::canonicalize(temp_home.path()).unwrap();
+    let home = canonical_temp_home(&temp_home);
     let autoload = home.join(".local/share/nushell/vendor/autoload");
     let canonical = autoload.join("wt.nu");
 
@@ -2112,7 +2112,7 @@ fn test_nushell_auto_detection_creates_vendor_autoload(repo: TestRepo, temp_home
     // Don't create vendor/autoload - the whole point is that it doesn't exist yet
     // but nushell IS detected on the system
 
-    let home = std::fs::canonicalize(temp_home.path()).unwrap();
+    let home = canonical_temp_home(&temp_home);
     let autoload = home.join(".local/share/nushell/vendor/autoload");
 
     let mut cmd = wt_command();
@@ -2215,7 +2215,7 @@ fn test_config_show_detects_nushell_integration(mut repo: TestRepo, temp_home: T
 /// target dir is pinned via the test override so it doesn't depend on `nu`.
 #[rstest]
 fn test_nushell_install_cleans_stranded_legacy(repo: TestRepo, temp_home: TempDir) {
-    let home = std::fs::canonicalize(temp_home.path()).unwrap();
+    let home = canonical_temp_home(&temp_home);
     let autoload = home.join(".local/share/nushell/vendor/autoload");
     let canonical = autoload.join("wt.nu");
 
@@ -2270,7 +2270,7 @@ fn test_nushell_install_cleans_stranded_legacy(repo: TestRepo, temp_home: TempDi
 /// file. Only files carrying the worktrunk header are cleaned up (issue #2878).
 #[rstest]
 fn test_nushell_install_keeps_unmanaged_legacy_file(repo: TestRepo, temp_home: TempDir) {
-    let home = std::fs::canonicalize(temp_home.path()).unwrap();
+    let home = canonical_temp_home(&temp_home);
     let autoload = home.join(".local/share/nushell/vendor/autoload");
 
     // A user-authored wt.nu at the legacy config-dir location — no worktrunk
@@ -2320,7 +2320,7 @@ fn test_nushell_install_keeps_unmanaged_legacy_file(repo: TestRepo, temp_home: T
 #[cfg(all(unix, feature = "shell-integration-tests"))]
 #[rstest]
 fn test_nushell_install_target_is_a_vendor_autoload_dir(repo: TestRepo, temp_home: TempDir) {
-    let home = std::fs::canonicalize(temp_home.path()).unwrap();
+    let home = canonical_temp_home(&temp_home);
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
