@@ -120,7 +120,7 @@ Created by `wt config shell install`:
 - **Bash**: adds line to `~/.bashrc`
 - **Zsh**: adds line to `~/.zshrc` (or `$ZDOTDIR/.zshrc`)
 - **Fish**: creates `~/.config/fish/functions/wt.fish` and `~/.config/fish/completions/wt.fish`
-- **Nushell** <span class="badge-experimental"></span>: creates `$nu.default-config-dir/vendor/autoload/wt.nu` (typically `~/.config/nushell` on Linux, `~/Library/Application Support/nushell` on macOS)
+- **Nushell** <span class="badge-experimental"></span>: creates `wt.nu` in Nushell's user vendor-autoload directory — the last entry of `$nu.vendor-autoload-dirs`, under `$nu.data-dir` (typically `~/.local/share/nushell/vendor/autoload` on Linux, `~/Library/Application Support/nushell/vendor/autoload` on macOS)
 - **PowerShell** (Windows): creates both profile files if they don't exist:
   - `Documents/PowerShell/Microsoft.PowerShell_profile.ps1` (PowerShell 7+)
   - `Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1` (Windows PowerShell 5.1)
@@ -183,6 +183,7 @@ Use `-D` to force-delete branches with unmerged changes. Use `--no-delete-branch
 - `wt remove` — in addition to the target worktree, runs a background internal sweep: deletes `.git/wt/trash/` entries older than 24 hours (eventual cleanup for directories orphaned when a previous background removal was interrupted), and terminates (`SIGTERM` then `SIGKILL`) `git fsmonitor--daemon` processes whose worktree no longer exists
 - `wt remove` — terminates the removed worktree's `git fsmonitor--daemon` process. Git starts this per-worktree filesystem-watch daemon when `core.fsmonitor=true`; once its worktree is gone it would leak. Removal sends `git fsmonitor--daemon stop`, then resolves that daemon's PID from its IPC socket and force-terminates it (SIGTERM, then SIGKILL) if it didn't exit. The signal only ever targets the daemon whose socket resolves to the worktree being removed.
 - `wt config state clear` — removes all worktrunk data from `.git/` (config keys, caches, markers, hints, variables, logs, stale trash)
+- `wt config shell install` — when migrating an integration to a new location, removes the worktrunk-managed file left at the old one: fish `conf.d/wt.fish` (now `functions/wt.fish`) and nushell wrappers stranded under `<config-dir>/vendor/autoload` (now `<data-dir>/vendor/autoload`)
 - `wt config shell uninstall` — removes shell integration from rc files
 
 See [What files does Worktrunk create?](#what-files-does-worktrunk-create) for details.

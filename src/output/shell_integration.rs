@@ -311,16 +311,17 @@ pub fn print_shell_install_result(scan_result: &crate::commands::configure_shell
         }
     }
 
-    // Show legacy file cleanups (migration from conf.d to functions)
-    for legacy_path in &scan_result.legacy_cleanups {
+    // Show legacy file cleanups (fish conf.d → functions, nushell config-dir →
+    // data-dir vendor/autoload).
+    for (shell, legacy_path) in &scan_result.legacy_cleanups {
         let old_path = format_path_for_display(legacy_path);
-        // Find the new canonical path from the configured results
+        // Find the new canonical path for this shell from the configured results
         let new_path = scan_result
             .configured
             .iter()
-            .find(|r| r.shell == Shell::Fish)
+            .find(|r| r.shell == *shell)
             .map(|r| format_path_for_display(&r.path))
-            .unwrap_or_else(|| "~/.config/fish/functions/".to_string());
+            .unwrap_or_default();
         eprintln!(
             "{}",
             info_message(cformat!(

@@ -33,7 +33,7 @@ eval "$(wt config shell init zsh)"
 
 Nushell [experimental] — save to vendor autoload directory:
 ```console
-$ wt config shell init nu | save -f ($nu.default-config-dir | path join vendor/autoload/wt.nu)
+$ wt config shell init nu | save -f ($nu.vendor-autoload-dirs | last | path join wt.nu)
 ```"#
     )]
     Init {

@@ -29,7 +29,6 @@ info:
     OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     PSModulePath: ""
-    RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
@@ -44,6 +43,7 @@ info:
     WORKTRUNK_TEST_FISH_INSTALLED: "0"
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR: "[TEST_NU_VENDOR_AUTOLOAD]"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
@@ -65,7 +65,7 @@ exit_code: 0
 [33m▲[39m [33mShell integration not active[39m
 [107m [0m Invoked as: [1m[PROJECT_ROOT]/target/[BUILD_MODE]/wt[22m
 
-[33m▲[39m [33m[1mnu[22m: Outdated shell extension @ [1m~/.config/nushell/vendor/autoload/wt.nu[22m[39m
+[33m▲[39m [33m[1mnu[22m: Outdated shell extension @ [1m~/.local/share/nushell/vendor/autoload/wt.nu[22m[39m
 [2m↳[22m [2mTo update, run [4mwt config shell install nu[24m[22m
 
 [36mOTHER[39m

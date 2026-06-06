@@ -19,105 +19,166 @@ pub fn home_dir_required() -> Result<PathBuf, std::io::Error> {
     })
 }
 
-/// Parse the stdout of `nu -c "echo $nu.default-config-dir"` into a path.
+/// Test override pinning the Nushell vendor-autoload directory.
 ///
-/// Returns `Some(path)` if stdout contains a non-empty trimmed path, `None` otherwise.
-fn parse_nu_config_output(stdout: &[u8]) -> Option<PathBuf> {
-    let path_str = std::str::from_utf8(stdout).ok()?;
-    let path = PathBuf::from(path_str.trim());
+/// Set by integration tests so the install target is deterministic across
+/// platforms (and independent of whether `nu` is on PATH). Mirrors the
+/// `WORKTRUNK_TEST_*` overrides consulted by `Shell::is_installed`.
+const TEST_NU_VENDOR_AUTOLOAD_ENV: &str = "WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR";
+
+/// The Nushell directories worktrunk resolves from `nu`, queried at most once
+/// per process.
+///
+/// Nushell autoloads `*.nu` files from `$nu.vendor-autoload-dirs`; the last
+/// entry is the user-writable one (under `$nu.data-dir`) and is worktrunk's
+/// install target. `$nu.default-config-dir` is kept only to locate files
+/// stranded by older worktrunk versions, which installed under
+/// `<default-config-dir>/vendor/autoload` — a path Nushell never autoloads
+/// (issue #2878).
+#[derive(Clone, Default)]
+struct NuDirs {
+    /// `$nu.vendor-autoload-dirs | last`. `None` when `nu` can't be queried.
+    vendor_autoload: Option<PathBuf>,
+    /// `$nu.default-config-dir` (legacy install root). `None` when unavailable.
+    default_config: Option<PathBuf>,
+}
+
+/// Parse a single trimmed path line from `nu` stdout.
+///
+/// Returns `None` for empty / whitespace-only input.
+fn parse_nu_path(line: &str) -> Option<PathBuf> {
+    let path = PathBuf::from(line.trim());
     (!path.as_os_str().is_empty()).then_some(path)
 }
 
-/// Query `nu` for its default config directory, spawning `nu` at most once per process.
+/// Query `nu` for the directories worktrunk cares about, spawning `nu` at most
+/// once per process (memoised).
 ///
-/// Returns `Some(path)` if the `nu` binary is in PATH and reports its config dir,
-/// `None` otherwise (not installed, PATH issues, timeout, etc.). The result is
-/// memoised: a single `wt config shell install` resolves both the write path
-/// (`nushell_config_dir`) and the installed-state candidates
-/// (`nushell_config_candidates`), which would otherwise each spawn `nu` for the
-/// same answer.
-fn query_nu_config_dir() -> Option<PathBuf> {
-    static CACHE: OnceLock<Option<PathBuf>> = OnceLock::new();
+/// Returns [`NuDirs::default`] (all `None`) when `nu` is not in PATH or the
+/// query fails. A single `wt config shell install` resolves both the write
+/// target (`completion_path`) and the installed-state candidates
+/// (`config_paths`), which would otherwise each spawn `nu` for the same answer.
+fn nu_dirs() -> NuDirs {
+    static CACHE: OnceLock<NuDirs> = OnceLock::new();
     CACHE
         .get_or_init(|| {
-            let output = crate::shell_exec::Cmd::new("nu")
-                .args(["-c", "echo $nu.default-config-dir"])
+            // Test override: skip spawning `nu` for deterministic, offline tests.
+            if let Some(dir) = std::env::var_os(TEST_NU_VENDOR_AUTOLOAD_ENV) {
+                return NuDirs {
+                    vendor_autoload: parse_nu_path(&dir.to_string_lossy()),
+                    default_config: None,
+                };
+            }
+
+            let Some(output) = crate::shell_exec::Cmd::new("nu")
+                .args([
+                    "-c",
+                    "print ($nu.vendor-autoload-dirs | last); print $nu.default-config-dir",
+                ])
                 .run()
                 .ok()
-                .filter(|o| o.status.success())?;
-            parse_nu_config_output(&output.stdout)
+                .filter(|o| o.status.success())
+            else {
+                return NuDirs::default();
+            };
+
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let mut lines = stdout.lines();
+            NuDirs {
+                vendor_autoload: lines.next().and_then(parse_nu_path),
+                default_config: lines.next().and_then(parse_nu_path),
+            }
         })
         .clone()
 }
 
-/// Resolve the nushell config directory from a queried path or platform defaults.
+/// Fallback for Nushell's `$nu.data-dir` when `nu` can't be queried.
 ///
-/// If `queried` is `Some`, uses that directly. Otherwise falls back to etcetera's
-/// platform config dir, then `home/.config`.
-fn resolve_nushell_config_dir(home: &std::path::Path, queried: Option<PathBuf>) -> PathBuf {
-    queried.unwrap_or_else(|| {
-        choose_base_strategy()
-            .map(|s| s.config_dir())
-            .unwrap_or_else(|_| home.join(".config"))
-            .join("nushell")
-    })
-}
-
-/// Get Nushell's default config directory (single best path for writing).
-///
-/// Used by `completion_path()` to determine where to write completions.
-/// Queries `nu` for `$nu.default-config-dir` to handle platform-specific paths
-/// — on macOS without `XDG_CONFIG_HOME` set, Nushell defaults to
-/// `~/Library/Application Support/nushell`, otherwise it follows
-/// `$XDG_CONFIG_HOME/nushell`.
-/// Falls back to etcetera's `config_dir` (which uses XDG on every Unix
-/// platform, so `~/.config/nushell` by default) if the nu command fails.
-fn nushell_config_dir(home: &std::path::Path) -> PathBuf {
-    resolve_nushell_config_dir(home, query_nu_config_dir())
-}
-
-/// Get candidate nushell config directories for checking if integration is installed.
-///
-/// Returns multiple paths to check because:
-/// - Installation might use the path from `nu -c "echo $nu.default-config-dir"`
-/// - Runtime detection might fail the `nu` command (PATH issues, timeout, etc.)
-/// - We need to find the config file regardless of which path was used
-///
-/// Returns paths in priority order: queried path first, then fallbacks.
-/// When the `nu` query succeeds, `first()` is the queried path — the same path
-/// `nushell_config_dir()` writes to. (Their fallbacks differ when the query
-/// fails: `nushell_config_dir()` prefers the platform config dir, this prefers
-/// `$XDG_CONFIG_HOME`/`~/.config`.)
-fn nushell_config_candidates(home: &std::path::Path) -> Vec<PathBuf> {
-    let mut candidates = vec![];
-
-    // Best path: query nu directly (same source of truth as nushell_config_dir)
-    if let Some(queried) = query_nu_config_dir() {
-        candidates.push(queried);
+/// Mirrors `nu_path::data_dir`: `XDG_DATA_HOME` (when absolute) wins on every
+/// platform, otherwise `dirs::data_dir()` (`~/Library/Application Support` on
+/// macOS, `%APPDATA%` on Windows, `~/.local/share` on Linux). Nushell appends
+/// `nushell`.
+fn nushell_data_dir_fallback(home: &std::path::Path) -> PathBuf {
+    if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
+        let path = PathBuf::from(xdg);
+        if path.is_absolute() {
+            return path.join("nushell");
+        }
     }
+    dirs::data_dir()
+        .unwrap_or_else(|| home.join(".local").join("share"))
+        .join("nushell")
+}
 
-    // Fallbacks for when nu query fails at runtime but succeeded during install:
+/// The Nushell vendor-autoload directory worktrunk writes its wrapper to.
+///
+/// Prefers the path `nu` reports (`$nu.vendor-autoload-dirs | last`); otherwise
+/// reconstructs `<data-dir>/vendor/autoload`.
+fn nushell_vendor_autoload_dir(
+    home: &std::path::Path,
+    queried: Option<&std::path::Path>,
+) -> PathBuf {
+    match queried {
+        Some(dir) => dir.to_path_buf(),
+        None => nushell_data_dir_fallback(home)
+            .join("vendor")
+            .join("autoload"),
+    }
+}
 
-    // XDG_CONFIG_HOME/nushell if set
+/// Legacy `<config-dir>/vendor/autoload` directories where older worktrunk
+/// versions wrongly installed the Nushell wrapper (issue #2878).
+///
+/// Returned so install/uninstall can find and remove files stranded there.
+/// Mirrors the candidate set the buggy code wrote to: the queried
+/// `$nu.default-config-dir`, then `$XDG_CONFIG_HOME`, `~/.config`, and
+/// etcetera's base config dir — each under `nushell/vendor/autoload`.
+fn legacy_nushell_autoload_dirs(
+    home: &std::path::Path,
+    default_config: Option<&std::path::Path>,
+) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(dir) = default_config {
+        dirs.push(dir.to_path_buf());
+    }
     if let Ok(xdg_config) = std::env::var("XDG_CONFIG_HOME") {
-        candidates.push(PathBuf::from(xdg_config).join("nushell"));
+        dirs.push(PathBuf::from(xdg_config).join("nushell"));
     }
-
-    // ~/.config/nushell (XDG default)
-    candidates.push(home.join(".config").join("nushell"));
-
-    // Platform config dir via etcetera. `choose_base_strategy` uses the XDG
-    // strategy on every Unix platform (including macOS), so this resolves to
-    // `$XDG_CONFIG_HOME/nushell` (default `~/.config/nushell`) on Linux and
-    // macOS, and `%APPDATA%\nushell` on Windows.
+    dirs.push(home.join(".config").join("nushell"));
     if let Ok(strategy) = choose_base_strategy() {
-        candidates.push(strategy.config_dir().join("nushell"));
+        dirs.push(strategy.config_dir().join("nushell"));
     }
+    dirs.into_iter()
+        .map(|d| d.join("vendor").join("autoload"))
+        .collect()
+}
 
-    // Deduplicate while preserving priority order (queried path first)
+/// Nushell autoload directories to check for an installed wrapper, in priority
+/// order.
+///
+/// The first entry is the canonical write target (the current vendor-autoload
+/// dir); the rest are the data-dir fallback and the legacy config-dir locations
+/// kept so install/uninstall can clean up stranded files.
+fn nushell_autoload_candidates(home: &std::path::Path) -> Vec<PathBuf> {
+    let dirs = nu_dirs();
+    let mut candidates = vec![nushell_vendor_autoload_dir(
+        home,
+        dirs.vendor_autoload.as_deref(),
+    )];
+    // New-style fallback, in case `nu` was queryable at install time but not now.
+    candidates.push(
+        nushell_data_dir_fallback(home)
+            .join("vendor")
+            .join("autoload"),
+    );
+    candidates.extend(legacy_nushell_autoload_dirs(
+        home,
+        dirs.default_config.as_deref(),
+    ));
+
+    // Deduplicate while preserving priority order (write target first).
     let mut seen = std::collections::HashSet::new();
     candidates.retain(|p| seen.insert(p.clone()));
-
     candidates
 }
 
@@ -179,18 +240,14 @@ pub fn config_paths(shell: super::Shell, cmd: &str) -> Result<Vec<PathBuf>, std:
             ]
         }
         super::Shell::Nushell => {
-            // Nushell vendor autoload directory - check multiple candidate locations because:
-            // - Installation might use the path from `nu -c "echo $nu.default-config-dir"`
-            // - Runtime detection might fail the `nu` command (PATH issues, timeout, etc.)
-            // - We need to find the config file regardless of which path was used during install
-            nushell_config_candidates(&home)
+            // Nushell autoloads `*.nu` from `$nu.vendor-autoload-dirs`; the last
+            // entry (under `$nu.data-dir`) is the write target. Earlier entries
+            // are fallbacks plus the legacy `<config-dir>/vendor/autoload`
+            // locations older worktrunk wrote to (never autoloaded — issue
+            // #2878), kept so install/uninstall can clean them up.
+            nushell_autoload_candidates(&home)
                 .into_iter()
-                .map(|config_dir| {
-                    config_dir
-                        .join("vendor")
-                        .join("autoload")
-                        .join(format!("{}.nu", cmd))
-                })
+                .map(|autoload_dir| autoload_dir.join(format!("{}.nu", cmd)))
                 .collect()
         }
         super::Shell::PowerShell => powershell_profile_paths(&home),
@@ -250,12 +307,10 @@ pub fn completion_path(shell: super::Shell, cmd: &str) -> Result<PathBuf, std::i
                 .join(format!("{}.fish", cmd))
         }
         super::Shell::Nushell => {
-            // Nushell completions are defined inline in the init script
-            // Return a path in the vendor autoload directory (same as config)
-            let config_dir = nushell_config_dir(&home);
-            config_dir
-                .join("vendor")
-                .join("autoload")
+            // Nushell completions are defined inline in the init script.
+            // Return the canonical vendor-autoload path (same as config).
+            let dirs = nu_dirs();
+            nushell_vendor_autoload_dir(&home, dirs.vendor_autoload.as_deref())
                 .join(format!("{}.nu", cmd))
         }
         super::Shell::PowerShell => {
@@ -272,102 +327,91 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_nu_config_output() {
+    fn test_parse_nu_path() {
         assert_eq!(
-            parse_nu_config_output(b"/home/user/.config/nushell\n"),
-            Some(PathBuf::from("/home/user/.config/nushell"))
+            parse_nu_path("/home/user/.local/share/nushell/vendor/autoload\n"),
+            Some(PathBuf::from(
+                "/home/user/.local/share/nushell/vendor/autoload"
+            ))
         );
-        // Trims whitespace
+        // Trims surrounding whitespace
+        assert_eq!(parse_nu_path("  /a/b  "), Some(PathBuf::from("/a/b")));
+        // Empty / whitespace-only
+        assert_eq!(parse_nu_path(""), None);
+        assert_eq!(parse_nu_path("  \n"), None);
+    }
+
+    #[test]
+    fn test_nushell_vendor_autoload_dir_prefers_queried() {
+        let home = PathBuf::from("/home/user");
+        let queried = PathBuf::from("/opt/nu/vendor/autoload");
         assert_eq!(
-            parse_nu_config_output(b"  /home/user/.config/nushell  \n"),
-            Some(PathBuf::from("/home/user/.config/nushell"))
-        );
-        // Empty / whitespace-only / invalid UTF-8
-        assert_eq!(parse_nu_config_output(b""), None);
-        assert_eq!(parse_nu_config_output(b"  \n"), None);
-        assert_eq!(parse_nu_config_output(&[0xFF, 0xFE]), None);
-    }
-
-    #[test]
-    fn test_nushell_config_candidates_includes_xdg_and_defaults() {
-        let home = PathBuf::from("/home/user");
-
-        let candidates = nushell_config_candidates(&home);
-
-        // Should include default XDG path
-        assert!(
-            candidates
-                .iter()
-                .any(|p| p == &home.join(".config").join("nushell")),
-            "Should include ~/.config/nushell in candidates"
-        );
-
-        // Should include the platform config dir from etcetera
-        if let Ok(strategy) = choose_base_strategy() {
-            let platform_dir = strategy.config_dir().join("nushell");
-            assert!(
-                candidates.iter().any(|p| p == &platform_dir),
-                "Should include platform config dir {platform_dir:?} in candidates"
-            );
-        }
-
-        // All candidates should be nushell config dirs
-        assert!(
-            candidates.iter().all(|p| p.ends_with("nushell")),
-            "All candidates should end with 'nushell'"
+            nushell_vendor_autoload_dir(&home, Some(&queried)),
+            queried,
+            "the path nu reports should be used verbatim"
         );
     }
 
     #[test]
-    fn test_nushell_config_candidates_always_has_fallback() {
+    fn test_nushell_vendor_autoload_dir_fallback_under_data_dir() {
         let home = PathBuf::from("/home/user");
-        let candidates = nushell_config_candidates(&home);
-
-        // Even without `nu` in PATH, we should get at least one fallback
+        let dir = nushell_vendor_autoload_dir(&home, None);
+        // Fallback must land under `<data-dir>/nushell/vendor/autoload`, never
+        // under the *config* dir (the bug this fixes).
         assert!(
-            !candidates.is_empty(),
-            "Should return at least 1 candidate path, got: {candidates:?}"
-        );
-
-        // On macOS/Windows, should have at least 2 (XDG default + platform path)
-        #[cfg(any(target_os = "macos", windows))]
-        assert!(
-            candidates.len() >= 2,
-            "Should have at least 2 candidates on this platform, got: {candidates:?}"
+            dir.ends_with("nushell/vendor/autoload"),
+            "fallback should be under <data>/nushell/vendor/autoload: {dir:?}"
         );
     }
 
     #[test]
-    fn test_nushell_config_candidates_no_duplicates() {
+    fn test_legacy_nushell_autoload_dirs_are_config_rooted() {
         let home = PathBuf::from("/home/user");
-        let candidates = nushell_config_candidates(&home);
+        let default_config = PathBuf::from("/home/user/.config/nushell");
+        let dirs = legacy_nushell_autoload_dirs(&home, Some(&default_config));
 
+        // Includes the queried default-config-dir location...
+        assert!(
+            dirs.contains(&default_config.join("vendor").join("autoload")),
+            "should include the queried default-config-dir: {dirs:?}"
+        );
+        // ...and the XDG default ~/.config/nushell location.
+        assert!(
+            dirs.contains(&home.join(".config/nushell/vendor/autoload")),
+            "should include ~/.config/nushell: {dirs:?}"
+        );
+        // Every legacy dir is a vendor/autoload dir.
+        assert!(
+            dirs.iter().all(|p| p.ends_with("vendor/autoload")),
+            "all legacy dirs should end with vendor/autoload: {dirs:?}"
+        );
+    }
+
+    #[test]
+    fn test_nushell_autoload_candidates_write_target_first_and_unique() {
+        let home = PathBuf::from("/home/user");
+        let candidates = nushell_autoload_candidates(&home);
+
+        assert!(!candidates.is_empty(), "must return at least one candidate");
+        // The write target (first entry) is a vendor/autoload directory.
+        assert!(
+            candidates[0].ends_with("vendor/autoload"),
+            "write target should be a vendor/autoload dir: {:?}",
+            candidates[0]
+        );
+        // No duplicates.
         let unique: std::collections::HashSet<_> = candidates.iter().collect();
         assert_eq!(
             candidates.len(),
             unique.len(),
-            "Candidates should not contain duplicates: {candidates:?}"
+            "candidates must not contain duplicates: {candidates:?}"
         );
-    }
-
-    #[test]
-    fn test_resolve_nushell_config_dir_with_queried_path() {
-        let home = PathBuf::from("/home/user");
-        let queried = PathBuf::from("/custom/nushell");
-        assert_eq!(
-            resolve_nushell_config_dir(&home, Some(queried.clone())),
-            queried
-        );
-    }
-
-    #[test]
-    fn test_resolve_nushell_config_dir_without_queried_path() {
-        let home = PathBuf::from("/home/user");
-        let result = resolve_nushell_config_dir(&home, None);
-        // Should fall back to a platform config dir ending in "nushell"
+        // The legacy ~/.config location is always present for cleanup.
         assert!(
-            result.ends_with("nushell"),
-            "Fallback should end with 'nushell': {result:?}"
+            candidates
+                .iter()
+                .any(|p| p == &home.join(".config/nushell/vendor/autoload")),
+            "legacy ~/.config/nushell location must be a candidate: {candidates:?}"
         );
     }
 }

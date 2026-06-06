@@ -556,6 +556,11 @@ pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
     settings.add_redaction(".env.PWD", "[PWD]");
     // Mock commands directory (temp path for mock gh/glab binaries)
     settings.add_redaction(".env.MOCK_CONFIG_DIR", "[MOCK_CONFIG_DIR]");
+    // Nushell vendor-autoload override (temp path pinned by shell-integration tests)
+    settings.add_redaction(
+        ".env.WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR",
+        "[TEST_NU_VENDOR_AUTOLOAD]",
+    );
     // OpenCode config directory (platform-independent override for tests)
     settings.add_redaction(".env.OPENCODE_CONFIG_DIR", "[TEST_OPENCODE_CONFIG]");
     // `wt config show --full` tests inject WORKTRUNK_TEST_LATEST_VERSION = the
