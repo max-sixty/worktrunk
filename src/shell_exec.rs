@@ -516,10 +516,12 @@ fn format_stream_full(bytes: &[u8], prefix: &str) -> Vec<String> {
 /// `subprocess.log` layer is registered and accepting that target (`-vv` opened
 /// the file successfully).
 ///
-/// Each preview line is run through [`escape_preview_controls`] so raw control
-/// bytes (most commonly NUL from `-z`/`--null` git output) don't ride into
-/// `trace.log` or the human-facing stderr preview. The uncapped
-/// [`SUBPROCESS_FULL_TARGET`] copy keeps the bytes verbatim.
+/// Preview lines are emitted raw here; control bytes (most commonly NUL from
+/// `-z`/`--null` git output) are escaped downstream at the single point that
+/// feeds both human-facing sinks — `render_event_message` in the binary's
+/// logging layer, which renders this target's records to stderr and `trace.log`.
+/// The uncapped [`SUBPROCESS_FULL_TARGET`] copy bypasses that escape and keeps
+/// the bytes verbatim in `subprocess.log`.
 fn format_stream_bounded(bytes: &[u8], prefix: &str) -> Vec<String> {
     if bytes.is_empty() {
         return Vec::new();
@@ -545,39 +547,10 @@ fn format_stream_bounded(bytes: &[u8], prefix: &str) -> Vec<String> {
             ));
             return out;
         }
-        // Count against the raw line length so the byte cap reflects what the
-        // command actually produced, not the (possibly longer) escaped form.
+        out.push(format!("{}{}", prefix, line));
         bytes_emitted += line.len() + 1;
-        out.push(format!("{}{}", prefix, escape_preview_controls(line)));
     }
     out
-}
-
-/// Replace C0/C1 control characters (other than tab) with a visible escape so
-/// the bounded preview stays valid text.
-///
-/// Raw subprocess output can carry control bytes — most commonly NUL from
-/// `-z`/`--null` git invocations (`git config --list -z`,
-/// `git for-each-ref --format=…%00…`). Left in place they ride into `trace.log`
-/// and the `diagnostic.md` bug-report bundle that inlines it, where the
-/// content-type sniffing behind `gh gist create` flags the file as binary
-/// ("binary file not supported") and refuses to upload it. Tab is preserved —
-/// git output is full of legitimate tabs, and it isn't a problem byte.
-fn escape_preview_controls(line: &str) -> std::borrow::Cow<'_, str> {
-    if !line.chars().any(|c| c.is_control() && c != '\t') {
-        return std::borrow::Cow::Borrowed(line);
-    }
-    let mut out = String::with_capacity(line.len());
-    for c in line.chars() {
-        match c {
-            // NUL dominates here (`-z`/`--null` record separators), so render
-            // it as the compact `\0` rather than `escape_default`'s `\u{0}`.
-            '\0' => out.push_str(r"\0"),
-            c if c.is_control() && c != '\t' => out.extend(c.escape_default()),
-            c => out.push(c),
-        }
-    }
-    std::borrow::Cow::Owned(out)
 }
 
 /// Implementation of timeout-based command execution.
@@ -2149,35 +2122,5 @@ mod tests {
             marker.starts_with("  … (2 more lines, "),
             "marker should count after1 + after2: {marker}"
         );
-    }
-
-    #[test]
-    fn test_format_stream_bounded_escapes_nul_bytes() {
-        // `-z`/`--null` git invocations (`git config --list -z`,
-        // `git for-each-ref --format=…%00…`) emit NUL-separated records. The
-        // bounded preview rides into trace.log and the diagnostic.md bundle;
-        // leaving NUL bytes in place makes `gh gist create` reject the file as
-        // binary. The preview must escape them.
-        let lines = format_stream_bounded(b"core.bare\0false\0core.filemode\0true\n", "  ");
-        assert_eq!(lines, vec![r"  core.bare\0false\0core.filemode\0true"]);
-        for line in &lines {
-            assert!(
-                !line.contains('\0'),
-                "preview line must not carry raw NUL bytes: {line:?}"
-            );
-        }
-
-        // A non-NUL control byte (here ESC, 0x1b) takes the general
-        // `escape_default` arm rather than the compact `\0` one.
-        let lines = format_stream_bounded(b"a\x1bb\n", "  ");
-        assert_eq!(lines, vec![r"  a\u{1b}b"]);
-    }
-
-    #[test]
-    fn test_format_stream_bounded_preserves_tab() {
-        // Tab is legitimate text (git output is full of it); only the
-        // problematic control bytes get escaped.
-        let lines = format_stream_bounded(b"col1\tcol2\n", "  ");
-        assert_eq!(lines, vec!["  col1\tcol2"]);
     }
 }

@@ -31,6 +31,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 use worktrunk::shell_exec::SUBPROCESS_FULL_TARGET;
 use worktrunk::styling::{eprintln, info_message};
 use worktrunk::trace::WT_TRACE_TARGET;
+use worktrunk::utils::escape_controls;
 
 use crate::log_files::{self, SubprocessMakeWriter, TraceMakeWriter};
 use crate::output;
@@ -135,14 +136,23 @@ where
 /// everything else. Shared between the stderr and `trace.log` formatters so
 /// `[wt-trace]` records appear in both routes (`-vv` writes to the file;
 /// `RUST_LOG=debug -v` surfaces them on stderr).
+///
+/// Control bytes are escaped here ([`escape_controls`]) — this is the single
+/// chokepoint feeding both human-facing routes, so raw NUL/ESC from subprocess
+/// output (e.g. the bounded preview of `git … -z`, or a `cmd=`/`err=` field
+/// carrying captured bytes) can't ride into the terminal or `trace.log`, and
+/// thus can't break the gist upload of the `diagnostic.md` that inlines
+/// `trace.log`. `subprocess.log` keeps raw bytes verbatim: it renders via
+/// [`event_message`] directly, not this helper.
 fn render_event_message(event: &Event<'_>) -> String {
-    if event.metadata().target() == WT_TRACE_TARGET {
+    let rendered = if event.metadata().target() == WT_TRACE_TARGET {
         let mut fields = WtTraceFields::default();
         event.record(&mut fields);
         format_wt_trace(&fields)
     } else {
         event_message(event)
-    }
+    };
+    escape_controls(&rendered).into_owned()
 }
 
 /// `trace.log` formatter: plain `[<thread>] <message>`, no ANSI, one line
