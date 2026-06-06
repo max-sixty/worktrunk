@@ -688,9 +688,13 @@ fn test_require_target_ref_surfaces_stale_default_branch() {
 /// yet) surfaces `UnbornDefaultBranch`, not `StaleDefaultBranch`. The cache
 /// is correct — `main` simply has nothing to diff against — so the
 /// cache-reset hint of `StaleDefaultBranch` would mislead. Reproduces #2989.
+///
+/// Both validators are checked: `require_target_ref` (rebase/squash/diff) and
+/// `require_target_branch` (merge/push). The rendered message must read "has
+/// no commits yet" and omit the cache-reset hint.
 #[test]
-fn test_require_target_ref_surfaces_unborn_default_branch() {
-    use worktrunk::git::GitError;
+fn test_require_target_surfaces_unborn_default_branch() {
+    use worktrunk::git::{Diagnostic, GitError};
     // TestRepo::new() runs `git init -b main` with no commits, so HEAD is unborn.
     let repo = TestRepo::new();
     let r = Repository::at(repo.root_path().to_path_buf()).unwrap();
@@ -698,12 +702,25 @@ fn test_require_target_ref_surfaces_unborn_default_branch() {
 
     // Fresh Repository so the OnceCell re-reads the persisted value.
     let r2 = Repository::at(repo.root_path().to_path_buf()).unwrap();
-    let err = r2.require_target_ref(None).unwrap_err();
-    let gerr = err.downcast_ref::<GitError>().expect("GitError");
-    assert!(
-        matches!(gerr, GitError::UnbornDefaultBranch { branch } if branch == "main"),
-        "expected UnbornDefaultBranch, got {gerr:?}"
-    );
+    for err in [
+        r2.require_target_ref(None).unwrap_err(),
+        r2.require_target_branch(None).unwrap_err(),
+    ] {
+        let gerr = err.downcast_ref::<GitError>().expect("GitError");
+        assert!(
+            matches!(gerr, GitError::UnbornDefaultBranch { branch } if branch == "main"),
+            "expected UnbornDefaultBranch, got {gerr:?}"
+        );
+        let rendered = gerr.render();
+        assert!(
+            rendered.contains("has no commits yet") && rendered.contains("Make an initial commit on"),
+            "unexpected render: {rendered}"
+        );
+        assert!(
+            !rendered.contains("Reset the cached value"),
+            "render should omit the stale-cache hint: {rendered}"
+        );
+    }
 }
 
 /// `unset_config_value` propagates errors from corrupt git config
