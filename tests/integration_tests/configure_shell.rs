@@ -2265,6 +2265,50 @@ fn test_nushell_install_cleans_stranded_legacy(repo: TestRepo, temp_home: TempDi
     );
 }
 
+/// Data safety: install must NOT delete a `wt.nu` at a legacy location that
+/// isn't worktrunk-managed (no worktrunk header) — it could be the user's own
+/// file. Only files carrying the worktrunk header are cleaned up (issue #2878).
+#[rstest]
+fn test_nushell_install_keeps_unmanaged_legacy_file(repo: TestRepo, temp_home: TempDir) {
+    let home = std::fs::canonicalize(temp_home.path()).unwrap();
+    let autoload = home.join(".local/share/nushell/vendor/autoload");
+
+    // A user-authored wt.nu at the legacy config-dir location — no worktrunk
+    // header, so it must be left untouched.
+    let legacy_dir = home.join(".config/nushell/vendor/autoload");
+    fs::create_dir_all(&legacy_dir).unwrap();
+    let legacy = legacy_dir.join("wt.nu");
+    let user_content = "# my own wt helper\ndef wt [] { echo hi }\n";
+    fs::write(&legacy, user_content).unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR", &autoload);
+    cmd.env("SHELL", "/bin/nu");
+    cmd.args(["config", "shell", "install", "nu", "--yes"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().expect("Failed to execute install");
+    assert!(
+        output.status.success(),
+        "Install should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Canonical wrapper written, user's legacy file preserved verbatim.
+    assert!(autoload.join("wt.nu").exists(), "canonical wrapper missing");
+    assert!(
+        legacy.exists(),
+        "unmanaged legacy wt.nu must be preserved: {legacy:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(&legacy).unwrap(),
+        user_content,
+        "unmanaged legacy file must be left unchanged"
+    );
+}
+
 /// End-to-end guard for issue #2878 using the real `nu` binary (no override):
 /// after `install nu`, the wrapper worktrunk wrote must live inside one of the
 /// directories `nu` actually autoloads (`$nu.vendor-autoload-dirs`). This fails
