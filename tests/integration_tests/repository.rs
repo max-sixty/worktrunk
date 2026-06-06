@@ -713,7 +713,8 @@ fn test_require_target_surfaces_unborn_default_branch() {
         );
         let rendered = gerr.render();
         assert!(
-            rendered.contains("has no commits yet") && rendered.contains("Make an initial commit on"),
+            rendered.contains("has no commits yet")
+                && rendered.contains("Make an initial commit on"),
             "unexpected render: {rendered}"
         );
         assert!(
