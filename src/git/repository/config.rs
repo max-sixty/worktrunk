@@ -411,6 +411,9 @@ impl Repository {
         let branch = self.resolve_target_branch(target)?;
         if !self.branch(&branch).exists()? {
             if target.is_none() {
+                if self.is_unborn_branch(&branch) {
+                    return Err(GitError::UnbornDefaultBranch { branch }.into());
+                }
                 return Err(GitError::StaleDefaultBranch { branch }.into());
             }
             return Err(GitError::BranchNotFound {
@@ -437,11 +440,30 @@ impl Repository {
         let reference = self.resolve_target_branch(target)?;
         if !self.ref_exists(&reference)? {
             if target.is_none() {
+                if self.is_unborn_branch(&reference) {
+                    return Err(GitError::UnbornDefaultBranch { branch: reference }.into());
+                }
                 return Err(GitError::StaleDefaultBranch { branch: reference }.into());
             }
             return Err(GitError::ReferenceNotFound { reference }.into());
         }
         Ok(reference)
+    }
+
+    /// True when `branch` is checked out as an unborn HEAD (no commits yet)
+    /// in some worktree — e.g. a freshly `git init`'d repo before its first
+    /// commit. Such a branch has no `refs/heads/<branch>` ref, so the
+    /// `require_target_*` existence checks fail even though the cached
+    /// default branch is correct. Used to surface
+    /// [`GitError::UnbornDefaultBranch`] (no cache-reset hint) instead of
+    /// [`GitError::StaleDefaultBranch`] (which would wrongly suggest the
+    /// cache is bad).
+    fn is_unborn_branch(&self, branch: &str) -> bool {
+        self.list_worktrees().is_ok_and(|worktrees| {
+            worktrees
+                .iter()
+                .any(|wt| wt.branch.as_deref() == Some(branch) && !wt.has_commits())
+        })
     }
 
     /// Infer the default branch locally (without remote).
