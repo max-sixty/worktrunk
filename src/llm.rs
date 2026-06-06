@@ -69,6 +69,10 @@ fn format_reproduction_command(base_cmd: &str, llm_command: &str) -> String {
 /// Track whether template-file deprecation warning has been shown this session
 static TEMPLATE_FILE_WARNING_SHOWN: AtomicBool = AtomicBool::new(false);
 
+/// Track whether the deprecated `commits` squash-template-variable warning has
+/// been shown this session.
+static COMMITS_TEMPLATE_VAR_WARNING_SHOWN: AtomicBool = AtomicBool::new(false);
+
 /// Maximum diff size in characters before filtering kicks in
 const DIFF_SIZE_THRESHOLD: usize = 400_000;
 
@@ -329,7 +333,7 @@ const DEFAULT_SQUASH_TEMPLATE: &str = r#"<task>Write a commit message for the co
 </project-guidance>
 {% endif %}
 <commits branch="{{ branch }}" target="{{ target_branch }}">
-{% for commit in commits %}- {{ commit }}
+{% for detail in commit_details %}- {{ detail.subject }}
 {% endfor %}</commits>
 
 <diffstat>
@@ -461,8 +465,9 @@ fn load_template(
 /// - `repo`: Repository directory name
 ///
 /// Squash-specific variables (empty for regular commits):
-/// - `commits`: Commit subjects being squashed
 /// - `commit_details`: Subject/body details for commits being squashed
+/// - `commits`: Commit subjects being squashed (deprecated — see #2984; use
+///   `commit_details` and its `.subject` property instead)
 /// - `target_branch`: Target branch for merge
 fn build_prompt(
     config: &CommitGenerationConfig,
@@ -502,6 +507,25 @@ fn build_prompt(
     // Render template with minijinja - all variables available to all templates
     let env = Environment::new();
     let tmpl = env.template_from_str(&template)?;
+
+    // `commits` (a list of bare subject strings) is deprecated in favor of
+    // `commit_details` (a list of `{ subject, body }` objects); see issue #2984.
+    // It still renders for now, but warn once per session when a squash template
+    // references it. Detect via `undeclared_variables` rather than a substring
+    // match so `recent_commits` and `{{ commits }}` inside `{% raw %}` don't
+    // trigger false positives. The default squash template no longer uses it, so
+    // this only fires for a user-customized `squash-template`.
+    if matches!(template_type, TemplateType::Squash)
+        && tmpl.undeclared_variables(false).contains("commits")
+        && !COMMITS_TEMPLATE_VAR_WARNING_SHOWN.swap(true, Ordering::Relaxed)
+    {
+        eprintln!(
+            "{}",
+            warning_message(cformat!(
+                "Squash template variable <bold>commits</> is deprecated in favor of <bold>commit_details</>; iterate it and use the <bold>.subject</> property (<bold>.body</> is also available)"
+            ))
+        );
+    }
 
     // Reverse commits so they're in chronological order (oldest first)
     let commits_chronological: Vec<&String> = context

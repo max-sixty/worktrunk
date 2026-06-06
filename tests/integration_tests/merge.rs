@@ -2553,6 +2553,30 @@ Combine these {{ commit_details | length }} commits into one message:
     ));
 }
 
+/// A custom squash template that references the deprecated `commits` variable
+/// still renders, but emits a one-time deprecation warning steering toward
+/// `commit_details` (see #2984).
+#[rstest]
+fn test_step_squash_show_prompt_deprecated_commits_warns(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+
+    repo.commit_in_worktree(&feature_wt, "a.txt", "a\n", "Add a");
+    repo.commit_in_worktree(&feature_wt, "b.txt", "b\n", "Add b");
+
+    let worktrunk_config = r#"
+[commit.generation]
+squash-template = "Squashing {{ commits | length }} commits from {{ branch }}"
+"#;
+    fs::write(repo.test_config_path(), worktrunk_config).unwrap();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["squash", "--show-prompt"],
+        Some(&feature_wt),
+    ));
+}
+
 // =============================================================================
 // --dry-run tests
 // =============================================================================

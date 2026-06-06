@@ -355,8 +355,8 @@ Branch: {{ branch }}
 
 Available variables (in addition to commit template variables):
 
-- `{{ commits }}` — list of commit subjects being squashed
 - `{{ commit_details }}` — <span class="badge-experimental"></span> list of commits being squashed as `{ subject, body }` objects
+- `{{ commits }}` — list of commit subjects being squashed (deprecated in favor of `commit_details` — iterate it and use `.subject`)
 - `{{ target_branch }}` — merge target branch
 
 Default template:
@@ -388,7 +388,7 @@ squash-template = """
 </project-guidance>
 {% endif %}
 <commits branch="{{ branch }}" target="{{ target_branch }}">
-{% for commit in commits %}- {{ commit }}
+{% for detail in commit_details %}- {{ detail.subject }}
 {% endfor %}</commits>
 
 <diffstat>
