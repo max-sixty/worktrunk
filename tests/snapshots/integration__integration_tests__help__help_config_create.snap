@@ -317,7 +317,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# Available variables (in addition to commit template variables):[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# - `{{ commits }}` — list of commit subjects being squashed[0m
-[107m [0m [2m# - `{{ commit_details }}` — list of commits being squashed as `{ subject, body }` objects[0m
+[107m [0m [2m# - `{{ commit_details }}` — [experimental] list of commits being squashed as `{ subject, body }` objects[0m
 [107m [0m [2m# - `{{ target_branch }}` — merge target branch[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Default template:[0m

@@ -1928,7 +1928,7 @@ Branch: {{ branch }}
 Available variables (in addition to commit template variables):
 
 - `{{ commits }}` — list of commit subjects being squashed
-- `{{ commit_details }}` — list of commits being squashed as `{ subject, body }` objects
+- `{{ commit_details }}` — [experimental] list of commits being squashed as `{ subject, body }` objects
 - `{{ target_branch }}` — merge target branch
 
 Default template:
