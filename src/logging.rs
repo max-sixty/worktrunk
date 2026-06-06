@@ -18,6 +18,7 @@
 //! `tracing` by [`tracing_log::LogTracer::init`] — every layer above sees
 //! both native `tracing::*` events and forwarded `log::*` records.
 
+use std::borrow::Cow;
 use std::fmt::{self, Write as _};
 
 use color_print::cformat;
@@ -152,7 +153,13 @@ fn render_event_message(event: &Event<'_>) -> String {
     } else {
         event_message(event)
     };
-    escape_controls(&rendered).into_owned()
+    // Reuse the owned `rendered` on the clean path — `escape_controls` borrows
+    // when nothing needs escaping, so `into_owned()` would otherwise re-clone an
+    // already-owned String on every log line. Only control-bearing lines allocate.
+    match escape_controls(&rendered) {
+        Cow::Borrowed(_) => rendered,
+        Cow::Owned(escaped) => escaped,
+    }
 }
 
 /// `trace.log` formatter: plain `[<thread>] <message>`, no ANSI, one line
