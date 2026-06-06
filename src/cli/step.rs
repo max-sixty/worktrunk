@@ -217,6 +217,16 @@ Similar to `git push . HEAD:<target>`, but uses `receive.denyCurrentBranch=updat
     #[command(
         after_long_help = r#"This is what `wt merge` would include — a single diff against the merge base.
 
+## Operating on another worktree
+
+`--branch` diffs another worktree's branch without leaving the current one:
+
+```console
+$ wt step diff --branch feature
+```
+
+The branch must have a checked-out worktree.
+
 ## Extra git diff arguments
 
 Arguments after `--` are forwarded to `git diff`:
@@ -252,6 +262,10 @@ $ GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state defau
         /// Defaults to default branch.
         #[arg(add = crate::completion::branch_value_completer())]
         target: Option<String>,
+
+        /// Branch to operate on (defaults to current worktree)
+        #[arg(short, long, add = crate::completion::worktree_only_completer())]
+        branch: Option<String>,
 
         /// Extra arguments forwarded to `git diff`
         #[arg(last = true)]

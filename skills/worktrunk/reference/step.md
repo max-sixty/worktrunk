@@ -282,6 +282,16 @@ Show all changes since branching. Includes committed, staged, unstaged, and untr
 
 This is what `wt merge` would include — a single diff against the merge base.
 
+### Operating on another worktree
+
+`--branch` diffs another worktree's branch without leaving the current one:
+
+```bash
+$ wt step diff --branch feature
+```
+
+The branch must have a checked-out worktree.
+
 ### Extra git diff arguments
 
 Arguments after `--` are forwarded to `git diff`:
@@ -329,6 +339,9 @@ Arguments:
           Extra arguments forwarded to git diff
 
 Options:
+  -b, --branch <BRANCH>
+          Branch to operate on (defaults to current worktree)
+
   -h, --help
           Print help (see a summary with '-h')
 
