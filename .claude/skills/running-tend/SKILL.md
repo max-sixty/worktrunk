@@ -84,6 +84,31 @@ cargo test --test integration       # integration tests only
 
 CI runs on Linux, Windows, and macOS.
 
+### Run the pre-merge gate in the foreground — never background it and yield
+
+`cargo run -- hook pre-merge --yes` is a cold-compile + full-suite + lint run
+that takes many minutes in the CI sandbox. Run it **in the foreground** so it
+blocks your turn; bound it with `timeout` if you want a ceiling:
+
+```bash
+timeout 600 cargo run -- hook pre-merge --yes 2>&1 | tail -25
+```
+
+**Never** launch the gate (or any validation whose result you must act on) with
+`run_in_background: true` and then end your turn to "wait" for it. A tend CI
+session is one-shot: ending your turn terminates the run, and any uncommitted
+work — the implementation, the local branch, the drafted PR body — is discarded
+with the runner, while the run still reports `success`. The "background it and
+you'll be notified on completion" model is interactive Claude Code;
+`claude-code-action` does **not** resume a finished CI session.
+
+**Commit and push before any backgrounded wait.** `run_in_background: true` is
+correct only for polling *external* CI **after** you have already pushed (the
+`running-in-ci` CI-monitoring loop) — your work is saved at that point, so a
+session that ends early loses nothing. It is never correct for a pre-commit
+local gate.
+
+
 ## Session Log Paths
 
 Artifact paths: `-home-runner-work-worktrunk-worktrunk/<session-id>.jsonl`
