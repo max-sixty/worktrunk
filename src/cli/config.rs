@@ -705,6 +705,8 @@ to clear specific state."#)]
 $ git rebase $(wt config state default-branch)
 ```
 
+In a hook or alias template, prefer the `{{ default_branch }}` [template variable](@/hook.md#template-variables); `$(wt config state default-branch)` is for plain shell scripts.
+
 Without a subcommand, runs `get`. Use `set` to override, or `clear` then `get` to re-detect.
 
 ## Detection
@@ -722,7 +724,9 @@ The local inference fallback uses these heuristics in order:
 - If only one local branch exists, uses it
 - For bare repos or empty repos, checks `symbolic-ref HEAD`
 - Checks `git config init.defaultBranch`
-- Looks for common names: `main`, `master`, `develop`, `trunk`"#
+- Looks for common names: `main`, `master`, `develop`, `trunk`
+
+If none of these match, detection fails; set it explicitly with `wt config state default-branch set BRANCH`."#
     )]
     DefaultBranch {
         #[command(subcommand)]

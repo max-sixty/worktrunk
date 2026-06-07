@@ -213,6 +213,7 @@ fn test_help_md_subcommand() {
 fn test_help_list_narrow_terminal() {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
+    add_standard_env_redactions(&mut settings);
     settings.bind(|| {
         let mut cmd = wt_command();
         cmd.env("COLUMNS", "80");

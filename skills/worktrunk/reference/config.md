@@ -82,6 +82,8 @@ Controls where new worktrees are created.
 - `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)
 - `{{ branch | codename(2) }}` — deterministic friendly name from a ~1.26M-combo pool (e.g., `malleable-opah`)
 
+This is a smaller set than [the variables hooks and aliases get](https://worktrunk.dev/hook/#template-variables).
+
 **Examples** for repo at `~/code/myproject`, branch `feature/auth`:
 
 Default — sibling directory (`~/code/myproject.feature-auth`):
@@ -862,6 +864,8 @@ Useful in scripts to avoid hardcoding `main` or `master`:
 $ git rebase $(wt config state default-branch)
 ```
 
+In a hook or alias template, prefer the `{{ default_branch }}` [template variable](https://worktrunk.dev/hook/#template-variables); `$(wt config state default-branch)` is for plain shell scripts.
+
 Without a subcommand, runs `get`. Use `set` to override, or `clear` then `get` to re-detect.
 
 ### Detection
@@ -880,6 +884,8 @@ The local inference fallback uses these heuristics in order:
 - For bare repos or empty repos, checks `symbolic-ref HEAD`
 - Checks `git config init.defaultBranch`
 - Looks for common names: `main`, `master`, `develop`, `trunk`
+
+If none of these match, detection fails; set it explicitly with `wt config state default-branch set BRANCH`.
 
 ### Command reference
 

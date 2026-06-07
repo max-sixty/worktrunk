@@ -441,9 +441,9 @@ Note: This command is experimental and may change in future versions.
 
     /// \[experimental\] Run command in each worktree
     ///
-    /// Executes sequentially with real-time output; continues on failure.
+    /// Executes sequentially with real-time output; continues past command failures.
     #[command(
-        after_long_help = r#"A summary of successes and failures is shown at the end. Context JSON is piped to stdin for scripts that need structured data.
+        after_long_help = r#"A summary of successes and failures is shown at the end. A template-expansion error (a malformed `{{ … }}` argument) aborts the whole run; only command failures are tolerated and reported. Context JSON — a flat object of every template variable — is piped to stdin for scripts that need structured data.
 
 ## Arguments
 
@@ -468,6 +468,8 @@ Variables substitute into each argv element before exec. See [`wt hook` template
 ```console
 $ wt step for-each -- echo 'Branch: {{ branch }}'
 ```
+
+Each element is expanded fresh in every worktree, so `{{ branch }}` is that worktree's branch. An alias wrapping for-each renders templates earlier, in the invoking worktree; [deferring expansion in an alias](@/extending.md#deferring-expansion-to-a-nested-wt-command) shows how to keep a variable per-worktree.
 
 ## Examples
 

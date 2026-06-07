@@ -573,9 +573,9 @@ Usage: <b><span class=c>wt step eval</span></b> <span class=c>[OPTIONS]</span> <
 
 <span class="badge-experimental"></span>
 
-Run command in each worktree. Executes sequentially with real-time output; continues on failure.
+Run command in each worktree. Executes sequentially with real-time output; continues past command failures.
 
-A summary of successes and failures is shown at the end. Context JSON is piped to stdin for scripts that need structured data.
+A summary of successes and failures is shown at the end. A template-expansion error (a malformed `{{ … }}` argument) aborts the whole run; only command failures are tolerated and reported. Context JSON — a flat object of every template variable — is piped to stdin for scripts that need structured data.
 
 ### Arguments
 
@@ -593,6 +593,8 @@ Variables substitute into each argv element before exec. See [`wt hook` template
 
 {{ terminal(cmd="wt step for-each -- echo 'Branch: __WT_OPEN__ branch __WT_CLOSE__'") }}
 
+Each element is expanded fresh in every worktree, so `{{ branch }}` is that worktree's branch. An alias wrapping for-each renders templates earlier, in the invoking worktree; [deferring expansion in an alias](@/extending.md#deferring-expansion-to-a-nested-wt-command) shows how to keep a variable per-worktree.
+
 ### Examples
 
 Pull updates in worktrees with upstreams (skips others):
@@ -606,7 +608,7 @@ Note: This command is experimental and may change in future versions.
 {% terminal() %}
 wt step for-each - [experimental] Run command in each worktree
 
-Executes sequentially with real-time output; continues on failure.
+Executes sequentially with real-time output; continues past command failures.
 
 Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</span> <b><span class=c>--</span></b> <span class=c>&lt;ARGS&gt;...</span>
 

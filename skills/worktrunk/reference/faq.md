@@ -241,6 +241,14 @@ If the remote's default branch has changed (e.g., renamed from master to main), 
 
 For full details on the detection mechanism, see `wt config state default-branch --help`.
 
+## My `for-each` or `--execute` alias prints the same value in every worktree
+
+An alias body renders once at dispatch, in the invoking worktree's context, so a per-worktree variable like `{{ branch }}` is baked to that one worktree's value before the nested `wt` command iterates. Every worktree then sees the same value.
+
+Confirm it with `wt config alias dry-run <name>`: if the value is already substituted (e.g. `… echo branch=main`), it was baked at dispatch.
+
+To defer a variable to the nested command, wrap it as `{% raw %}{{ branch }}{% endraw %}`; for `wt step for-each`, also keep it inside a quoted `sh -c '…'` so the alias's shell doesn't word-split it. See [deferring expansion in an alias](https://worktrunk.dev/extending/#deferring-expansion-to-a-nested-wt-command). A repo-level variable like `{{ default_branch }}` is unaffected — it is identical in every worktree.
+
 ## Installation fails with C compilation errors
 
 Errors related to tree-sitter or C compilation (C99 mode, `le16toh` undefined) can be avoided by installing without syntax highlighting:

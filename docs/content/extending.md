@@ -119,14 +119,25 @@ Every step sees the same `{{ args }}` and bound variables. `wt release -- --dry-
 
 ### Deferring expansion to a nested `wt` command
 
-Alias templates render once at dispatch, using the alias-invocation worktree's context. A nested `wt` command in the alias body (for example `wt switch --execute '…'`) therefore receives already-rendered text, so a variable like `{{ worktree_path }}` inside the inner command's template resolves to the *outer* worktree rather than the one `wt switch` is targeting. Wrap the inner template in `{% raw %}…{% endraw %}` so it passes through unrendered and the inner `wt` command expands it in its own context:
+A `wt step for-each` alias that prints the same branch in every worktree is rendering `{{ branch }}` too early. An alias body renders once at dispatch, in the invoking worktree, so a bare `{{ branch }}` is baked to that worktree's branch before for-each iterates. (`wt config alias dry-run <name>` shows the rendered body, with the value already baked in.)
+
+`{% raw %}…{% endraw %}` defers the variable: it survives the dispatch render as a literal `{{ branch }}`, and for-each expands it per worktree. One catch for `for-each`: the deferred `{{ branch }}` has spaces, so the alias body's `sh -c` splits it into `{{`, `branch`, `}}` before for-each sees it (`Failed to expand for-each argument: syntax error`). Give for-each its own `sh -c '…'` to keep the value one token:
+
+```toml
+[aliases]
+show-branches = "wt step for-each -- sh -c 'echo {% raw %}{{ branch }}{% endraw %}'"
+```
+
+`wt show-branches` prints each worktree's own branch.
+
+`wt switch --execute` defers the same way, without the extra wrapper: its `--execute '…'` argument is already a single quoted string, so only `{% raw %}` is needed. Here `{{ worktree_path }}` expands against the worktree being created, not the one the alias ran from:
 
 ```toml
 [aliases]
 echo-target = "wt switch {{ args }} --no-cd --execute 'echo {% raw %}{{ worktree_path }}{% endraw %}'"
 ```
 
-`wt echo-target other` now prints the path of the `other` worktree, not the worktree the alias was invoked from.
+A repo-level variable like `{{ default_branch }}` needs no deferral: it is identical in every worktree, so a bare `{{ default_branch }}` is already correct everywhere.
 
 ### Recipe: rebase every worktree onto its upstream
 
@@ -134,14 +145,15 @@ echo-target = "wt switch {{ args }} --no-cd --execute 'echo {% raw %}{{ worktree
 [aliases]
 up = '''
 git fetch --all --prune && wt step for-each -- sh -c '
-  git rev-parse --verify @{u} >/dev/null 2>&1 || exit 0
+  git rev-parse --verify -q @{u} >/dev/null || exit 0
   g=$(git rev-parse --git-dir)
   test -d "$g/rebase-merge" -o -d "$g/rebase-apply" && exit 0
+  git update-index --refresh -q >/dev/null || true
   git rebase @{u} --no-autostash || git rebase --abort
 ''''
 ```
 
-`wt up` fetches all remotes, then iterates every worktree: skip if no upstream, skip if mid-rebase, otherwise rebase and auto-abort on conflict.
+`wt up` fetches all remotes, then iterates every worktree: skip if no upstream, skip if mid-rebase, refresh the index to drop stale stat entries, then rebase and auto-abort on conflict. It rebases onto git-native `@{u}` rather than a `{{ … }}` template, so git resolves each worktree's own upstream and there is nothing to defer.
 
 ### Recipe: move or copy in-progress changes to a new worktree
 

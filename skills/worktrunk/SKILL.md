@@ -16,8 +16,9 @@ Reference files are synced from [worktrunk.dev](https://worktrunk.dev) documenta
 - **reference/config.md**: User and project configuration (LLM, hooks, command defaults)
 - **reference/hook.md**: Hook types, timing, and execution order
 - **reference/switch.md**, **merge.md**, **list.md**, etc.: Command documentation
+- **reference/extending.md**: Aliases, multi-step pipelines, custom subcommands, and template-expansion gotchas (two-pass `{% raw %}` deferral, for-each recipes)
 - **reference/llm-commits.md**: LLM commit message generation
-- **reference/tips-patterns.md**: Language-specific tips and patterns
+- **reference/tips-patterns.md**: Practical recipes — aliases, per-branch variables, dev server per worktree, parallel agent patterns
 - **reference/shell-integration.md**: Shell integration debugging
 - **reference/troubleshooting.md**: Troubleshooting for LLM and hooks (Claude-specific)
 
@@ -104,13 +105,16 @@ Common request for workflow automation. Follow discovery process:
    - For Rust: Common cargo commands
    - For Python: Check pyproject.toml
 
-3. **Design appropriate hooks** (7 hook types available)
+3. **Design appropriate hooks** (10 hook types: 5 events × pre/post — see `reference/hook.md`)
    - Dependencies (fast, must complete) → `pre-start`
    - Tests/linting (must pass) → `pre-commit` or `pre-merge`
    - Long builds, dev servers → `post-start`
+   - Setup before branch resolution → `pre-switch`
    - Terminal/IDE updates → `post-switch`
+   - After-commit triggers (CI, notifications) → `post-commit`
    - Deployment → `post-merge`
-   - Cleanup tasks → `pre-remove`
+   - Cleanup before removal → `pre-remove`
+   - Cleanup after removal (stop servers, remove containers) → `post-remove`
 
 4. **Validate commands work**
    ```bash
@@ -147,14 +151,15 @@ When users want to add automation to an existing project:
 
 1. **Read existing config**: `cat .config/wt.toml`
 
-2. **Determine hook type** - When should this run?
+2. **Determine hook type** - When should this run? (10 types: 5 events × pre/post)
    - Creating worktree (blocking) → `pre-start`
    - Creating worktree (background) → `post-start`
-   - Every switch → `post-switch`
+   - Before/after a switch → `pre-switch` / `post-switch`
    - Before committing → `pre-commit`
+   - After committing (CI, notifications) → `post-commit`
    - Before merging → `pre-merge`
    - After merging → `post-merge`
-   - Before removal → `pre-remove`
+   - Before/after removal → `pre-remove` / `post-remove`
 
 3. **Handle format conversion if needed**
 
@@ -211,15 +216,21 @@ bash -n -c "if [ true ]; then echo ok; fi"
 ### User Config Tasks
 - Set up commit message generation → `reference/llm-commits.md`
 - Customize worktree paths → `reference/config.md#worktree-path-template`
-- Custom commit templates → `reference/llm-commits.md#templates`
-- Configure command defaults → `reference/config.md#command-settings`
-- Set up personal hooks → `reference/config.md#user-hooks`
+- Custom commit templates → `reference/llm-commits.md#prompt-templates`
+- Configure command defaults → `reference/config.md#command-config`
+- Set up personal hooks → `reference/config.md#hooks`
 
 ### Project Config Tasks
 - Set up hooks for new project → `reference/hook.md`
-- Add hook to existing config → `reference/hook.md#configuration`
+- Add hook to existing config → `reference/hook.md#hook-forms`
 - Use template variables → `reference/hook.md#template-variables`
 - Add dev server URL to list → `reference/config.md#dev-server-url`
+
+### Aliases & Multi-Worktree Tasks
+- Create a `wt` alias → `reference/extending.md#aliases`
+- Run a command in every worktree → `reference/step.md#wt-step-for-each`
+- Rebase every worktree (up-style) → `reference/extending.md#recipe-rebase-every-worktree-onto-its-upstream`
+- Defer a template variable to a nested `wt` command → `reference/extending.md#deferring-expansion-to-a-nested-wt-command`
 
 ## Key Commands
 
@@ -227,10 +238,10 @@ bash -n -c "if [ true ]; then echo ok; fi"
 # View all configuration
 wt config show
 
-# Create initial user config
+# Create initial user config (LLM/commit setup: see reference/llm-commits.md)
 wt config create
 
-# LLM setup guide
+# Full config reference (subcommands, templates, env vars)
 wt config --help
 ```
 

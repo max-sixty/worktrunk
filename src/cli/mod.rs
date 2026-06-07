@@ -630,7 +630,7 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 2. **log** — Recent commits; commits already on the default branch have dimmed hashes
 3. **main…±** — Diff of changes since the merge-base with the default branch
 4. **remote⇅** — Ahead/behind diff vs upstream tracking branch
-5. **summary** — LLM-generated branch summary; requires `[list] summary = true` and `[commit.generation]`
+5. **summary** — LLM-generated branch summary; requires `[list] summary = true` and [`commit.generation`](@/config.md#commit)
 
 **Pager configuration:** The preview panel pipes diff output through git's pager. Override in user config:
 
@@ -942,7 +942,7 @@ These values describe the relation to the default branch.
 
 ### integration_reason values
 
-When `main_state == "integrated"`: `"ancestor"` `"trees_match"` `"no_added_changes"` `"merge_adds_nothing"` `"patch-id-match"`
+When `main_state == "integrated"`: `"ancestor"` `"trees-match"` `"no-added-changes"` `"merge-adds-nothing"` `"patch-id-match"`
 
 ### ci.status values
 
@@ -1367,6 +1367,8 @@ Hooks can use template variables that expand at runtime:
 |           | `{{ args }}`                  | Tokens forwarded from the CLI — see [Running Hooks Manually](#running-hooks-manually) |
 | user      | `{{ vars.<key> }}`            | Per-branch variables from [`wt config state vars`](@/config.md#wt-config-state-vars) |
 
+The `repo` variables (`repo`, `repo_path`, `owner`, `primary_worktree_path`, `default_branch`, `remote`, `remote_url`) are constant across the whole repository — `default_branch` is the same in every worktree. The `active` variables (`branch`, `worktree_path`, `commit`, `short_commit`, `upstream`) vary per worktree.
+
 Bare variables (`branch`, `worktree_path`, `commit`) refer to the branch the operation acts on: the destination for switch/create, the source for merge/remove. `base` and `target` give the other side:
 
 | Operation | Bare vars | `base` | `target` |
@@ -1654,6 +1656,8 @@ Controls where new worktrees are created.
 - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)
 - `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)
 - `{{ branch | codename(2) }}` — deterministic friendly name from a ~1.26M-combo pool (e.g., `malleable-opah`)
+
+This is a smaller set than [the variables hooks and aliases get](@/hook.md#template-variables).
 
 **Examples** for repo at `~/code/myproject`, branch `feature/auth`:
 
