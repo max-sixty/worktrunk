@@ -1646,18 +1646,64 @@ mod bare_repo_prompt_pty {
             assert_snapshot!("bare_repo_prompt_decline", &output);
         });
 
-        // Verify skip flag was saved in git config
-        let git_config_output = Cmd::new("git")
+        // Declining records the opt-out as a hint (count 1), not under the legacy
+        // top-level key — so it participates in `wt config state`.
+        let hint_value = Cmd::new("git")
+            .args(["config", "worktrunk.hints.skip-bare-repo-prompt"])
+            .current_dir(&main_worktree)
+            .env("GIT_CONFIG_GLOBAL", test.git_config_path())
+            .run()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&hint_value.stdout).trim(),
+            "1",
+            "Declining should record the opt-out as a hint"
+        );
+
+        // The legacy top-level key must not be written anymore.
+        let legacy_key = Cmd::new("git")
             .args(["config", "worktrunk.skip-bare-repo-prompt"])
             .current_dir(&main_worktree)
             .env("GIT_CONFIG_GLOBAL", test.git_config_path())
             .run()
             .unwrap();
-        let value = String::from_utf8_lossy(&git_config_output.stdout);
-        assert_eq!(
-            value.trim(),
-            "true",
-            "Skip flag should be saved in git config"
+        assert!(
+            !legacy_key.status.success(),
+            "Legacy top-level skip key should no longer be written"
+        );
+
+        // Round-trip through `wt config state`: the opt-out is listed by
+        // `state hints` and removed by the aggregate `state clear`.
+        let mut hints_cmd = wt_command();
+        test.configure_wt_cmd(&mut hints_cmd);
+        hints_cmd
+            .args(["config", "state", "hints"])
+            .current_dir(&main_worktree);
+        let hints_listed = String::from_utf8(hints_cmd.output().unwrap().stdout).unwrap();
+        assert!(
+            hints_listed.contains("skip-bare-repo-prompt"),
+            "state hints should list the opt-out.\nstdout: {hints_listed}"
+        );
+
+        let mut clear_cmd = wt_command();
+        test.configure_wt_cmd(&mut clear_cmd);
+        clear_cmd
+            .args(["config", "state", "clear"])
+            .current_dir(&main_worktree);
+        assert!(
+            clear_cmd.output().unwrap().status.success(),
+            "state clear should succeed"
+        );
+
+        let mut hints_after = wt_command();
+        test.configure_wt_cmd(&mut hints_after);
+        hints_after
+            .args(["config", "state", "hints"])
+            .current_dir(&main_worktree);
+        let hints_remaining = String::from_utf8(hints_after.output().unwrap().stdout).unwrap();
+        assert!(
+            !hints_remaining.contains("skip-bare-repo-prompt"),
+            "state clear should remove the opt-out hint.\nstdout: {hints_remaining}"
         );
     }
 
