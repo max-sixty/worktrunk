@@ -73,7 +73,7 @@ pub enum StepCommand {
 
 ## Options
 
-### `--stage`
+### Staging
 
 Controls what to stage before committing:
 
@@ -94,7 +94,7 @@ Configure the default in user config:
 stage = "tracked"
 ```
 
-### `--dry-run`
+### Dry run
 
 Render the prompt, print the LLM command, generate the message, and exit without staging, running hooks, or committing:
 
@@ -115,7 +115,7 @@ Three sections are printed: the rendered prompt, the shell command that would in
 
 ## Options
 
-### `--stage`
+### Staging
 
 Controls what to stage before squashing:
 
@@ -136,7 +136,7 @@ Configure the default in user config:
 stage = "tracked"
 ```
 
-### `--dry-run`
+### Dry run
 
 Render the prompt, print the LLM command, generate the squash message, and exit without resetting, running hooks, or committing:
 

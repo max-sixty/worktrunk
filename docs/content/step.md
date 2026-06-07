@@ -100,7 +100,7 @@ See [LLM-generated commit messages](@/llm-commits.md) for configuration and prom
 
 ### Options
 
-#### `--stage`
+#### Staging
 
 Controls what to stage before committing:
 
@@ -119,7 +119,7 @@ Configure the default in user config:
 stage = "tracked"
 ```
 
-#### `--dry-run`
+#### Dry run
 
 Render the prompt, print the LLM command, generate the message, and exit without staging, running hooks, or committing:
 
@@ -190,7 +190,7 @@ See [LLM-generated commit messages](@/llm-commits.md) for configuration and prom
 
 ### Options
 
-#### `--stage`
+#### Staging
 
 Controls what to stage before squashing:
 
@@ -209,7 +209,7 @@ Configure the default in user config:
 stage = "tracked"
 ```
 
-#### `--dry-run`
+#### Dry run
 
 Render the prompt, print the LLM command, generate the squash message, and exit without resetting, running hooks, or committing:
 
