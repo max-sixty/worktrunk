@@ -57,4 +57,5 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mno worktree for branch 'lonely'[39m
+[31m✗[39m [31mBranch [1mlonely[22m has no worktree[39m
+[2m↳[22m [2mTo create a worktree, run [4mwt switch lonely[24m[22m
