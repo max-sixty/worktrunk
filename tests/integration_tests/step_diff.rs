@@ -142,6 +142,39 @@ fn test_step_diff_explicit_target(mut repo: TestRepo) {
     ));
 }
 
+/// `--branch` diffs another worktree's branch from a different worktree
+#[rstest]
+fn test_step_diff_branch_arg(mut repo: TestRepo) {
+    setup_feature_with_commit(&mut repo);
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    // Run from the main worktree (repo root, cwd = None), targeting `feature`.
+    // Output should match `test_step_diff_committed_changes`, which runs the
+    // same diff from inside the feature worktree.
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["diff", "--branch", "feature"],
+        None,
+    ));
+}
+
+/// `--branch` for a branch without a worktree errors
+#[rstest]
+fn test_step_diff_branch_no_worktree(repo: TestRepo) {
+    repo.run_git(&["branch", "lonely"]);
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["diff", "--branch", "lonely"],
+        None,
+    ));
+}
+
 fn git_status(repo: &TestRepo, dir: &Path) -> String {
     let output = repo
         .git_command()

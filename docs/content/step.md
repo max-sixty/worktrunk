@@ -100,7 +100,7 @@ See [LLM-generated commit messages](@/llm-commits.md) for configuration and prom
 
 ### Options
 
-#### `--stage`
+#### Staging
 
 Controls what to stage before committing:
 
@@ -119,7 +119,7 @@ Configure the default in user config:
 stage = "tracked"
 ```
 
-#### `--dry-run`
+#### Dry run
 
 Render the prompt, print the LLM command, generate the message, and exit without staging, running hooks, or committing:
 
@@ -190,7 +190,7 @@ See [LLM-generated commit messages](@/llm-commits.md) for configuration and prom
 
 ### Options
 
-#### `--stage`
+#### Staging
 
 Controls what to stage before squashing:
 
@@ -209,7 +209,7 @@ Configure the default in user config:
 stage = "tracked"
 ```
 
-#### `--dry-run`
+#### Dry run
 
 Render the prompt, print the LLM command, generate the squash message, and exit without resetting, running hooks, or committing:
 
@@ -283,6 +283,14 @@ Show all changes since branching. Includes committed, staged, unstaged, and untr
 
 This is what `wt merge` would include — a single diff against the merge base.
 
+### Operating on another worktree
+
+`--branch` diffs another worktree's branch without leaving the current one:
+
+{{ terminal(cmd="wt step diff --branch feature") }}
+
+The branch must have a checked-out worktree.
+
 ### Extra git diff arguments
 
 Arguments after `--` are forwarded to `git diff`:
@@ -320,6 +328,9 @@ Usage: <b><span class=c>wt step diff</span></b> <span class=c>[OPTIONS]</span> <
           Extra arguments forwarded to <b>git diff</b>
 
 <b><span class=g>Options:</span></b>
+  <b><span class=c>-b</span></b>, <b><span class=c>--branch</span></b><span class=c> &lt;BRANCH&gt;</span>
+          Branch to operate on (defaults to current worktree)
+
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
 

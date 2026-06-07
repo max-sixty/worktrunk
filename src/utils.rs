@@ -1,6 +1,42 @@
 //! General utilities.
 
+use std::borrow::Cow;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Replace C0/C1 control characters — other than tab and newline — with a
+/// visible escape so the text stays valid for plain-text and markdown sinks.
+///
+/// Raw subprocess output can carry control bytes, most commonly NUL from
+/// `-z`/`--null` git invocations (`git config --list -z`,
+/// `git for-each-ref --format=…%00…`). Left in place they ride into the
+/// human-facing `trace.log` and the `diagnostic.md` bug-report bundle, where
+/// the content-type sniffing behind `gh gist create` flags the file as binary
+/// ("binary file not supported") and refuses to upload it.
+///
+/// Tab and newline are preserved — they're legitimate text structure (git
+/// output is full of tabs; `trace.log` and `diagnostic.md` are multi-line).
+/// NUL renders as the compact `\0` rather than `escape_default`'s `\u{0}`
+/// because it's by far the most common byte here. The function is idempotent:
+/// its own output carries no control bytes, so a sink can re-sanitize content
+/// another sink already cleaned without doubling the escapes.
+///
+/// Borrows when there's nothing to escape (the common case), so the hot logging
+/// path allocates only for lines that actually carry control bytes.
+pub fn escape_controls(s: &str) -> Cow<'_, str> {
+    if !s.chars().any(|c| c.is_control() && c != '\t' && c != '\n') {
+        return Cow::Borrowed(s);
+    }
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\t' | '\n' => out.push(c),
+            '\0' => out.push_str(r"\0"),
+            c if c.is_control() => out.extend(c.escape_default()),
+            c => out.push(c),
+        }
+    }
+    Cow::Owned(out)
+}
 
 /// Format a Unix timestamp as ISO 8601 string (e.g., "2025-01-01T00:00:00Z").
 ///
@@ -84,5 +120,47 @@ mod tests {
         let chrono_out_of_range: u64 = 9_000_000_000_000; // ~year 287396
         let formatted = format_timestamp_iso8601(chrono_out_of_range);
         assert!(formatted.starts_with("invalid-timestamp("));
+    }
+
+    #[test]
+    fn escape_controls_borrows_clean_text() {
+        // No control bytes (tab/newline aside) → borrowed, untouched.
+        let out = escape_controls("plain text");
+        assert!(matches!(out, Cow::Borrowed(_)));
+        assert_eq!(out, "plain text");
+    }
+
+    #[test]
+    fn escape_controls_preserves_tab_and_newline() {
+        // Tab and newline are legitimate structure and must survive verbatim
+        // (git output is full of tabs; trace.log / diagnostic.md are multi-line).
+        let out = escape_controls("a\tb\nc");
+        assert!(matches!(out, Cow::Borrowed(_)));
+        assert_eq!(out, "a\tb\nc");
+    }
+
+    #[test]
+    fn escape_controls_renders_nul_compactly() {
+        // NUL (the `-z`/`--null` record separator) → `\0`, not `\u{0}`.
+        assert_eq!(
+            escape_controls("core.bare\0false\0core.filemode\0true"),
+            r"core.bare\0false\0core.filemode\0true"
+        );
+    }
+
+    #[test]
+    fn escape_controls_escapes_other_control_bytes() {
+        // ESC (0x1b) and BEL (0x07) take the general `escape_default` arm.
+        assert_eq!(escape_controls("a\x1bb"), r"a\u{1b}b");
+        assert_eq!(escape_controls("a\x07b"), r"a\u{7}b");
+    }
+
+    #[test]
+    fn escape_controls_is_idempotent() {
+        // Re-escaping already-escaped text is a no-op: the escapes carry no
+        // control bytes, so diagnostic.md assembly can re-sanitize a trace.log
+        // the formatter already cleaned without doubling the backslashes.
+        let once = escape_controls("x\0y\x1bz").into_owned();
+        assert_eq!(escape_controls(&once), once);
     }
 }

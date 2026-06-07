@@ -158,16 +158,20 @@ pub(crate) fn render_markdown_in_help_with_width(help: &str, width: Option<usize
         // - H4: Bold (nested subsections like "Commit template")
         if let Some(header_text) = trimmed.strip_prefix("#### ") {
             let bold = Style::new().bold();
+            let header_text = render_header_text(header_text);
             result.push_str(&format!("{bold}{header_text}{bold:#}\n"));
         } else if let Some(header_text) = trimmed.strip_prefix("### ") {
+            let header_text = render_header_text(header_text);
             result.push_str(&format!("{green}{header_text}{green:#}\n"));
         } else if let Some(header_text) = trimmed.strip_prefix("## ") {
             let bold_green = Style::new()
                 .bold()
                 .fg_color(Some(Color::Ansi(AnsiColor::Green)));
+            let header_text = render_header_text(header_text);
             result.push_str(&format!("{bold_green}{header_text}{bold_green:#}\n"));
         } else if let Some(header_text) = trimmed.strip_prefix("# ") {
-            result.push_str(&format!("{green}{}{green:#}\n", header_text.to_uppercase()));
+            let header_text = render_header_text(header_text).to_uppercase();
+            result.push_str(&format!("{green}{header_text}{green:#}\n"));
         } else {
             // Prose text - wrap if width is specified
             let formatted = render_inline_formatting(line);
@@ -324,6 +328,17 @@ fn strip_markdown_links(line: &str) -> String {
     }
 
     result
+}
+
+/// Strip inline markdown markers from header text.
+///
+/// Headers render with a single uniform style (color and/or weight), so inline
+/// `code` can't carry its own styling — the dim style's ANSI reset would
+/// terminate the header's color partway through the line. We drop the backticks
+/// and let the header style cover the whole heading; links are reduced to their
+/// text, matching prose rendering.
+fn render_header_text(text: &str) -> String {
+    strip_markdown_links(text).replace('`', "")
 }
 
 /// Render inline markdown formatting (bold, inline code, links)
@@ -571,6 +586,21 @@ mod tests {
         [1m[32mSection[0m
         [32mSubsection[0m
         [1mNested[0m
+        ");
+    }
+
+    #[test]
+    fn test_render_markdown_in_help_header_inline_code() {
+        // Inline `code` and links in headers are reduced to plain text so the
+        // header's own style covers the whole line (no literal backticks, no
+        // mid-line ANSI reset). Real case: `### Command log (`commands.jsonl`)`
+        // on the `wt config state logs` page.
+        let md = "### `--stage`\n#### Run `wt merge`\n## See [the docs](@/x.md)";
+        let result = render_markdown_in_help(md);
+        assert_snapshot!(result, @"
+        [32m--stage[0m
+        [1mRun wt merge[0m
+        [1m[32mSee the docs[0m
         ");
     }
 

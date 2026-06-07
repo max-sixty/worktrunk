@@ -854,6 +854,7 @@ as `worktrunk.hints.<name>`, a count of times the hint has been shown.
 | Name | Trigger | Message |
 |------|---------|---------|
 | `worktree-path` | First `wt switch --create` | Customize worktree locations: wt config create |
+| `skip-bare-repo-prompt` | Declining the bare-repo worktree-path prompt | Records the opt-out (no message shown) |
 
 ## Examples
 

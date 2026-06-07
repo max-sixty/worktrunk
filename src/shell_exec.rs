@@ -515,6 +515,13 @@ fn format_stream_full(bytes: &[u8], prefix: &str) -> Vec<String> {
 /// `tracing::enabled!` against [`SUBPROCESS_FULL_TARGET`] — true iff the
 /// `subprocess.log` layer is registered and accepting that target (`-vv` opened
 /// the file successfully).
+///
+/// Preview lines are emitted raw here; control bytes (most commonly NUL from
+/// `-z`/`--null` git output) are escaped downstream at the single point that
+/// feeds both human-facing sinks — `render_event_message` in the binary's
+/// logging layer, which renders this target's records to stderr and `trace.log`.
+/// The uncapped [`SUBPROCESS_FULL_TARGET`] copy bypasses that escape and keeps
+/// the bytes verbatim in `subprocess.log`.
 fn format_stream_bounded(bytes: &[u8], prefix: &str) -> Vec<String> {
     if bytes.is_empty() {
         return Vec::new();
