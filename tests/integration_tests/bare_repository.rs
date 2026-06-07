@@ -1580,6 +1580,31 @@ fn test_bare_repo_worktree_path_prompt_skipped_for_symbolic_identifier() {
     );
 }
 
+/// Once the opt-out is recorded (the `skip-bare-repo-prompt` hint is set), the
+/// bare-repo warning/prompt is suppressed on later switches — the read path
+/// early-returns via `has_shown_hint`.
+#[test]
+fn test_bare_repo_prompt_suppressed_when_opted_out() {
+    let test = setup_unconfigured_nested_bare_repo();
+    let main_worktree = test.project_path().join("main");
+
+    // Record the opt-out the way a decline does: `worktrunk.hints.<name> = <count>`.
+    test.run_git_in(
+        &main_worktree,
+        &["config", "worktrunk.hints.skip-bare-repo-prompt", "1"],
+    );
+
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    cmd.args(["switch", "--create", "feature"])
+        .current_dir(&main_worktree);
+    let stderr = String::from_utf8(cmd.output().unwrap().stderr).unwrap();
+    assert!(
+        !stderr.contains("Bare repo at"),
+        "Opted-out repo should not re-show the bare-repo warning.\nstderr: {stderr}"
+    );
+}
+
 // =============================================================================
 // PTY-based interactive prompt tests
 // =============================================================================
