@@ -108,6 +108,17 @@ correct only for polling *external* CI **after** you have already pushed (the
 session that ends early loses nothing. It is never correct for a pre-commit
 local gate.
 
+**This is not limited to the pre-merge gate or to commit/push work.** The same
+one-shot teardown discards *any* task waiting on a backgrounded command —
+including a diagnostic that produces no commit. The weekly **statusline
+cache-check** below shells out to `cargo run --release` (another cold compile in
+the sandbox); backgrounding that build and `ScheduleWakeup`-ing / ending the
+turn to wait loses the cache-check entirely, and the run still reports
+`success`. Run *every* slow build whose output a later step consumes in the
+foreground (bound it with `timeout` if you want a ceiling). Reaching for
+`run_in_background: true` + `ScheduleWakeup` to wait on a local build is the
+tell — a finished CI session never resumes.
+
 
 ## Session Log Paths
 
@@ -291,6 +302,12 @@ Detect new in-process cache-miss duplicates introduced by recent changes by
 running `wt-perf cache-check` against a real `wt list statusline --claude-code`
 trace. The render runs on every Claude Code prompt redraw, so duplicate git
 subprocesses there compound into measurable fseventsd / IPC load.
+
+The `cargo run --release` below is a cold compile in the CI sandbox. Run it in
+the **foreground** — see *Run the pre-merge gate in the foreground* above.
+Backgrounding it and scheduling a wakeup to wait loses the cache-check, because
+the one-shot session is torn down before the wakeup fires (the run still reports
+`success`).
 
 ```bash
 # Run from any worktree of this repo
