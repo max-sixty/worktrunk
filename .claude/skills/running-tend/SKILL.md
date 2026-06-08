@@ -119,7 +119,6 @@ foreground (bound it with `timeout` if you want a ceiling). Reaching for
 `run_in_background: true` + `ScheduleWakeup` to wait on a local build is the
 tell — a finished CI session never resumes.
 
-
 ## Session Log Paths
 
 Artifact paths: `-home-runner-work-worktrunk-worktrunk/<session-id>.jsonl`
