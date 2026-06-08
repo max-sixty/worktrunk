@@ -10,6 +10,7 @@ use dunce::canonicalize;
 
 use super::{GitError, LineDiff, Repository};
 use crate::git::CommandError;
+use crate::git::parse_numstat_line;
 
 /// Parse `git submodule status` output and detect whether any submodule is initialized.
 ///
@@ -460,21 +461,81 @@ impl<'a> WorkingTree<'a> {
     /// Working-tree diff stats vs HEAD that also count untracked files,
     /// matching the diff `wt step diff` shows.
     ///
-    /// Registers untracked files in a [`TempIndex`] via
-    /// `git add --intent-to-add .`, then runs `git diff --shortstat HEAD`
-    /// against that temp index. The real index is untouched.
+    /// Tracked changes come from the normal `git diff HEAD` path. Untracked
+    /// files are staged separately in a [`TempIndex`] and diffed by path, so
+    /// the real index is untouched and Git does not need to rediscover tracked
+    /// modifications from a copied index.
     pub fn working_tree_diff_stats_with_untracked(&self) -> anyhow::Result<LineDiff> {
+        let mut stats = self.working_tree_diff_stats()?;
+        let untracked = self.untracked_diff_stats()?;
+        stats.added += untracked.added;
+        stats.deleted += untracked.deleted;
+        Ok(stats)
+    }
+
+    fn untracked_diff_stats(&self) -> anyhow::Result<LineDiff> {
+        let output =
+            self.run_command_output(&["ls-files", "--others", "--exclude-standard", "-z"])?;
+        if !output.status.success() {
+            return Err(CommandError::from_failed_output(
+                "git",
+                &["ls-files", "--others", "--exclude-standard", "-z"],
+                &output,
+            )
+            .into());
+        }
+
+        let paths: Vec<String> = output
+            .stdout
+            .split(|&b| b == 0)
+            .filter(|path| !path.is_empty())
+            .map(|path| String::from_utf8_lossy(path).into_owned())
+            .collect();
+        if paths.is_empty() {
+            return Ok(LineDiff::default());
+        }
+
         let idx = self.temp_index()?;
-        idx.git(["add", "--intent-to-add", "."])
+        let add_output = idx
+            .git(["add", "--pathspec-from-file=-", "--pathspec-file-nul"])
+            .stdin_bytes(output.stdout)
             .run()
-            .context("Failed to register untracked files")?;
+            .context("Failed to stage untracked files")?;
+        if !add_output.status.success() {
+            return Err(CommandError::from_failed_output(
+                "git",
+                &["add", "--pathspec-from-file=-", "--pathspec-file-nul"],
+                &add_output,
+            )
+            .into());
+        }
+
+        let mut args = vec![
+            "diff".to_string(),
+            "--cached".to_string(),
+            "--numstat".to_string(),
+            "HEAD".to_string(),
+            "--".to_string(),
+        ];
+        args.extend(paths);
+        let command = args.join(" ");
         let output = idx
-            .git(["diff", "--shortstat", "HEAD"])
+            .git(args)
             .run()
-            .context("Failed to compute working-tree diff stats")?;
-        Ok(LineDiff::from_shortstat(&String::from_utf8_lossy(
-            &output.stdout,
-        )))
+            .context("Failed to compute untracked diff stats")?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("git {} failed: {}", command, stderr.trim());
+        }
+
+        let mut stats = LineDiff::default();
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            if let Some((added, deleted)) = parse_numstat_line(line) {
+                stats.added += added;
+                stats.deleted += deleted;
+            }
+        }
+        Ok(stats)
     }
 
     /// Open a working copy of this worktree's index for staging
