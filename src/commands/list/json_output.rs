@@ -20,7 +20,7 @@ use std::path::PathBuf;
 
 use schemars::JsonSchema;
 use serde::Serialize;
-use worktrunk::git::{LineDiff, Repository};
+use worktrunk::git::{GitRepoInfo, GitRepoProvider, LineDiff, Repository};
 
 use super::ci_status::{CiSource, PrStatus};
 use super::model::{ItemKind, ListItem, UpstreamStatus};
@@ -84,11 +84,15 @@ pub struct JsonItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ci: Option<JsonCi>,
 
-    /// Repository web URL derived from the primary remote (absent when no parseable forge remote).
+    /// Repository web URL derived from the primary remote (absent when no parseable remote).
     /// This is the local checkout's repo; for the repo a PR/MR targets (e.g. the upstream of a
     /// fork), see `ci.repo_url`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repo_url: Option<String>,
+
+    /// Structured repository metadata derived from the primary remote.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo: Option<JsonRepo>,
 
     /// Dev server URL from project config template
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -237,6 +241,78 @@ pub struct JsonCi {
     /// is absent or not a recognized PR/MR link.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repo_url: Option<String>,
+
+    /// Structured metadata for the repository the PR/MR targets, derived from `url`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo: Option<JsonRepo>,
+}
+
+/// Structured repository metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct JsonRepo {
+    /// Repository web URL.
+    pub url: String,
+
+    /// Forge provider.
+    pub provider: JsonRepoProvider,
+
+    /// Repository web host.
+    pub host: String,
+
+    /// Repository owner, organization, or namespace path.
+    pub owner: String,
+
+    /// Repository name.
+    pub name: String,
+
+    /// Azure DevOps project name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+
+    /// Local remote name used for top-level repo metadata.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote: Option<String>,
+}
+
+/// Repository provider in JSON output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+pub enum JsonRepoProvider {
+    #[serde(rename = "github")]
+    GitHub,
+    #[serde(rename = "gitlab")]
+    GitLab,
+    #[serde(rename = "gitea")]
+    Gitea,
+    #[serde(rename = "azure-devops")]
+    AzureDevOps,
+    #[serde(rename = "unknown")]
+    Unknown,
+}
+
+impl JsonRepo {
+    pub(crate) fn from_git_repo_info(info: GitRepoInfo, remote: Option<String>) -> Self {
+        Self {
+            url: info.url,
+            provider: JsonRepoProvider::from(info.provider),
+            host: info.host,
+            owner: info.owner,
+            name: info.name,
+            project: info.project,
+            remote,
+        }
+    }
+}
+
+impl From<GitRepoProvider> for JsonRepoProvider {
+    fn from(provider: GitRepoProvider) -> Self {
+        match provider {
+            GitRepoProvider::GitHub => Self::GitHub,
+            GitRepoProvider::GitLab => Self::GitLab,
+            GitRepoProvider::Gitea => Self::Gitea,
+            GitRepoProvider::AzureDevOps => Self::AzureDevOps,
+            GitRepoProvider::Unknown => Self::Unknown,
+        }
+    }
 }
 
 impl JsonItem {
@@ -245,12 +321,13 @@ impl JsonItem {
     /// `all_vars` is pre-fetched vars data for all branches (from `repo.all_vars_entries()`),
     /// avoiding N+1 git process spawns. Entries are moved out via `.remove()` to avoid cloning.
     ///
-    /// `repo_url` is the repository web URL (from `repo.repo_web_url()`). It is repo-wide, so
-    /// the caller computes it once and passes the same value to every item.
+    /// `repo` is repository metadata (from `repo.repo_info()`). It is repo-wide, so the caller
+    /// computes it once and passes the same value to every item.
     pub fn from_list_item(
         item: &ListItem,
         all_vars: &mut HashMap<String, BTreeMap<String, String>>,
-        repo_url: Option<&str>,
+        repo: Option<&JsonRepo>,
+        ci_provider_override: Option<&str>,
     ) -> Self {
         let (kind_str, worktree_data) = match &item.kind {
             ItemKind::Worktree(data) => ("worktree", Some(data.as_ref())),
@@ -352,7 +429,7 @@ impl JsonItem {
             .pr_status
             .as_ref()
             .and_then(|opt| opt.as_ref())
-            .map(JsonCi::from);
+            .map(|pr| JsonCi::from_pr_status(pr, ci_provider_override));
 
         // Statusline and symbols (raw, without ANSI codes)
         let statusline = item.statusline.clone();
@@ -384,7 +461,8 @@ impl JsonItem {
             is_current,
             is_previous,
             ci,
-            repo_url: repo_url.map(String::from),
+            repo_url: repo.map(|repo| repo.url.clone()),
+            repo: repo.cloned(),
             url: item.url.clone(),
             url_active: item.url_active,
             summary,
@@ -444,14 +522,28 @@ fn worktree_state_to_json(
 
 impl From<&PrStatus> for JsonCi {
     fn from(pr: &PrStatus) -> Self {
+        Self::from_pr_status(pr, None)
+    }
+}
+
+impl JsonCi {
+    fn from_pr_status(pr: &PrStatus, provider_override: Option<&str>) -> Self {
+        let repo = pr
+            .url
+            .as_deref()
+            .and_then(|url| {
+                worktrunk::git::remote_ref::repo_info_from_ref_url_with_provider(
+                    url,
+                    provider_override,
+                )
+            })
+            .map(|info| JsonRepo::from_git_repo_info(info, None));
         Self {
             status: pr.ci_status.into(),
             source: pr.source,
             stale: pr.is_stale,
-            repo_url: pr
-                .url
-                .as_deref()
-                .and_then(worktrunk::git::remote_ref::repo_url_from_ref_url),
+            repo_url: repo.as_ref().map(|repo| repo.url.clone()),
+            repo,
             url: pr.url.clone(),
         }
     }
@@ -516,10 +608,24 @@ fn format_raw_symbols(symbols: &super::model::StatusSymbols) -> String {
 /// Fetches all vars data in a single git call, then distributes per-branch.
 pub fn to_json_items(items: &[ListItem], repo: &Repository) -> Vec<JsonItem> {
     let mut all_vars = repo.all_vars_entries();
-    let repo_url = repo.repo_web_url();
+    let repo_metadata = repo
+        .repo_info()
+        .map(|(remote, info)| JsonRepo::from_git_repo_info(info, Some(remote)));
+    let ci_provider_override = repo
+        .project_config()
+        .ok()
+        .flatten()
+        .and_then(|config| config.forge_platform().map(str::to_string));
     items
         .iter()
-        .map(|item| JsonItem::from_list_item(item, &mut all_vars, repo_url.as_deref()))
+        .map(|item| {
+            JsonItem::from_list_item(
+                item,
+                &mut all_vars,
+                repo_metadata.as_ref(),
+                ci_provider_override.as_deref(),
+            )
+        })
         .collect()
 }
 
@@ -580,6 +686,18 @@ mod tests {
             passed.repo_url,
             Some("https://github.com/org/repo".to_string())
         );
+        assert_eq!(
+            passed.repo,
+            Some(JsonRepo {
+                url: "https://github.com/org/repo".to_string(),
+                provider: JsonRepoProvider::GitHub,
+                host: "github.com".to_string(),
+                owner: "org".to_string(),
+                name: "repo".to_string(),
+                project: None,
+                remote: None,
+            })
+        );
 
         // Stale branch with no URL
         let failed = JsonCi::from(&PrStatus {
@@ -592,8 +710,9 @@ mod tests {
         assert_eq!(failed.source, CiSource::Branch);
         assert!(failed.stale);
         assert!(failed.url.is_none());
-        // No PR URL means no derived repo_url.
+        // No PR URL means no derived repo_url or repo.
         assert!(failed.repo_url.is_none());
+        assert!(failed.repo.is_none());
 
         // All status string mappings
         let status_mappings = [
@@ -941,17 +1060,27 @@ mod tests {
         let mut item = ListItem::new_branch("abc1234".into(), "feature".into());
         item.summary = Some(Some("Add login page".to_string()));
 
-        // repo_url is set when provided, absent (skipped) when None.
-        let json_item = JsonItem::from_list_item(&item, &mut all_vars, None);
+        // repo_url/repo are set when provided, absent (skipped) when None.
+        let json_item = JsonItem::from_list_item(&item, &mut all_vars, None, None);
         assert_eq!(json_item.summary, Some("Add login page".to_string()));
         assert!(json_item.repo_url.is_none());
+        assert!(json_item.repo.is_none());
 
-        let json_item =
-            JsonItem::from_list_item(&item, &mut all_vars, Some("https://github.com/owner/repo"));
+        let repo = JsonRepo {
+            url: "https://github.com/owner/repo".to_string(),
+            provider: JsonRepoProvider::GitHub,
+            host: "github.com".to_string(),
+            owner: "owner".to_string(),
+            name: "repo".to_string(),
+            project: None,
+            remote: Some("origin".to_string()),
+        };
+        let json_item = JsonItem::from_list_item(&item, &mut all_vars, Some(&repo), None);
         assert_eq!(
             json_item.repo_url,
             Some("https://github.com/owner/repo".to_string())
         );
+        assert_eq!(json_item.repo, Some(repo));
     }
 
     #[test]
@@ -962,14 +1091,14 @@ mod tests {
         let mut item = ListItem::new_branch("abc1234".into(), "feature".into());
         // Both "not collected" and "no summary" should be absent in JSON
         assert!(
-            JsonItem::from_list_item(&item, &mut all_vars, None)
+            JsonItem::from_list_item(&item, &mut all_vars, None, None)
                 .summary
                 .is_none()
         );
 
         item.summary = Some(None);
         assert!(
-            JsonItem::from_list_item(&item, &mut all_vars, None)
+            JsonItem::from_list_item(&item, &mut all_vars, None, None)
                 .summary
                 .is_none()
         );
@@ -983,6 +1112,15 @@ mod tests {
             stale: false,
             url: Some("https://github.com/org/repo/pull/7".to_string()),
             repo_url: Some("https://github.com/org/repo".to_string()),
+            repo: Some(JsonRepo {
+                url: "https://github.com/org/repo".to_string(),
+                provider: JsonRepoProvider::GitHub,
+                host: "github.com".to_string(),
+                owner: "org".to_string(),
+                name: "repo".to_string(),
+                project: None,
+                remote: None,
+            }),
         })
         .unwrap();
         assert_snapshot!(json, @r#"
@@ -991,8 +1129,39 @@ mod tests {
           "source": "pr",
           "stale": false,
           "url": "https://github.com/org/repo/pull/7",
-          "repo_url": "https://github.com/org/repo"
+          "repo_url": "https://github.com/org/repo",
+          "repo": {
+            "url": "https://github.com/org/repo",
+            "provider": "github",
+            "host": "github.com",
+            "owner": "org",
+            "name": "repo"
+          }
         }
         "#);
+    }
+
+    #[test]
+    fn test_json_repo_provider_from_git_repo_provider() {
+        assert_eq!(
+            JsonRepoProvider::from(GitRepoProvider::GitHub),
+            JsonRepoProvider::GitHub
+        );
+        assert_eq!(
+            JsonRepoProvider::from(GitRepoProvider::GitLab),
+            JsonRepoProvider::GitLab
+        );
+        assert_eq!(
+            JsonRepoProvider::from(GitRepoProvider::Gitea),
+            JsonRepoProvider::Gitea
+        );
+        assert_eq!(
+            JsonRepoProvider::from(GitRepoProvider::AzureDevOps),
+            JsonRepoProvider::AzureDevOps
+        );
+        assert_eq!(
+            JsonRepoProvider::from(GitRepoProvider::Unknown),
+            JsonRepoProvider::Unknown
+        );
     }
 }

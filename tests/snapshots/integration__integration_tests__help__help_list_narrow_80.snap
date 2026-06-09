@@ -8,7 +8,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "80"
-    GIT_EDITOR: ""
+    GIT_PAGER: ""
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
@@ -304,6 +304,11 @@ Query structured data with [2m--format=json[0m:
  [2mis_current[0m         boolean     Is the current worktree                         
  [2mis_previous[0m        boolean     Previous worktree from wt switch                
  [2mci[0m                 object      CI status (see below); absent when no CI        
+ [2mrepo_url[0m           string      Repository web URL derived from the primary     
+                                remote; absent when the remote URL cannot be    
+                                parsed                                          
+ [2mrepo[0m               object      Structured repository metadata (see below);     
+                                includes [2mremote[0m                                 
  [2murl[0m                string      Dev server URL from project config; absent when 
                                 not configured                                  
  [2murl_active[0m         boolean     Whether the URL's port is listening; absent     
@@ -364,12 +369,35 @@ Query structured data with [2m--format=json[0m:
 
 [32mci object[0m
 
- Field   Type                      Description                    
- ────── ─────── ───────────────────────────────────────────────── 
- [2mstatus[0m string  CI status (see below)                             
- [2msource[0m string  [2m"pr"[0m (PR/MR) or [2m"branch"[0m (branch workflow)        
- [2mstale[0m  boolean Local HEAD differs from remote (unpushed changes) 
- [2murl[0m    string  URL to the PR/MR page                             
+  Field    Type                            Description                          
+ ──────── ─────── ───────────────────────────────────────────────────────────── 
+ [2mstatus[0m   string  CI status (see below)                                         
+ [2msource[0m   string  [2m"pr"[0m (PR/MR) or [2m"branch"[0m (branch workflow)                    
+ [2mstale[0m    boolean Local HEAD differs from remote (unpushed changes)             
+ [2murl[0m      string  URL to the PR/MR page                                         
+ [2mrepo_url[0m string  Web URL of the repository the PR/MR targets; absent for       
+                  branch workflow URLs                                          
+ [2mrepo[0m     object  Structured metadata for the repository the PR/MR targets;     
+                  never includes [2mremote[0m                                         
+
+[32mrepo object[0m
+
+Top-level [2mrepo[0m describes the local checkout's repository as derived from the 
+primary remote. [2mci.repo[0m describes the repository targeted by the PR/MR URL in 
+[2mci.url[0m (for fork PRs, this is the upstream target). Existing [2mrepo_url[0m and 
+[2mci.repo_url[0m fields remain available and carry the same URL as [2mrepo.url[0m / 
+[2mci.repo.url[0m.
+
+  Field    Type                           Description                           
+ ──────── ────── ────────────────────────────────────────────────────────────── 
+ [2murl[0m      string Repository web URL                                             
+ [2mprovider[0m string [2m"github"[0m, [2m"gitlab"[0m, [2m"gitea"[0m, [2m"azure-devops"[0m, or [2m"unknown"[0m      
+ [2mhost[0m     string Repository web host                                            
+ [2mowner[0m    string Owner, organization, or namespace path                         
+ [2mname[0m     string Repository name                                                
+ [2mproject[0m  string Azure DevOps project name; absent for other providers          
+ [2mremote[0m   string Local remote name used for top-level repo metadata; absent     
+                 from [2mci.repo[0m                                                   
 
 [32mmain_state values[0m
 

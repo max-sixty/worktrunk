@@ -66,7 +66,7 @@ use std::process::Output;
 use anyhow::{Context, bail};
 
 use crate::git::error::GitError;
-use crate::git::{RefType, Repository};
+use crate::git::{GitRepoInfo, GitRepoProvider, RefType, Repository};
 use crate::shell_exec::Cmd;
 
 /// Provider trait for platform-specific PR/MR operations.
@@ -366,6 +366,25 @@ pub fn parse_ref_url(input: &str) -> Option<String> {
 /// Detection is shape-based and host-agnostic (see `parse_ref_url_parts`).
 /// Returns `None` when the input isn't a recognized PR/MR link.
 pub fn repo_url_from_ref_url(input: &str) -> Option<String> {
+    repo_info_from_ref_url(input).map(|info| info.url)
+}
+
+/// Derive repository metadata from a PR/MR URL.
+///
+/// The returned URL is identical to [`repo_url_from_ref_url`]. Provider and
+/// owner/name fields are derived from the PR/MR URL shape: GitHub `/pull/N`,
+/// Gitea `/pulls/N`, GitLab `/-/merge_requests/N`, and Azure DevOps
+/// `/pullrequest/N`.
+pub fn repo_info_from_ref_url(input: &str) -> Option<GitRepoInfo> {
+    repo_info_from_ref_url_with_provider(input, None)
+}
+
+/// Derive repository metadata from a PR/MR URL with an optional configured
+/// `[forge].platform` override.
+pub fn repo_info_from_ref_url_with_provider(
+    input: &str,
+    provider_override: Option<&str>,
+) -> Option<GitRepoInfo> {
     let parts = parse_ref_url_parts(input)?;
 
     // The repository path is everything before the marker segment. GitLab
@@ -379,7 +398,114 @@ pub fn repo_url_from_ref_url(input: &str) -> Option<String> {
     if repo_segments.len() < 3 {
         return None;
     }
-    Some(format!("{}://{}", parts.scheme, repo_segments.join("/")))
+    let url = format!("{}://{}", parts.scheme, repo_segments.join("/"));
+    let host = repo_segments[0].to_string();
+    let marker = parts.segments[parts.marker_index];
+    let provider_override = GitRepoProvider::from_platform(provider_override);
+
+    let provider = match marker {
+        "pull" => {
+            if provider_override == Some(GitRepoProvider::GitHub)
+                || host.to_ascii_lowercase().contains("github")
+            {
+                GitRepoProvider::GitHub
+            } else {
+                GitRepoProvider::Unknown
+            }
+        }
+        "pulls" => GitRepoProvider::Gitea,
+        "merge_requests" => GitRepoProvider::GitLab,
+        "pullrequest" => {
+            if provider_override == Some(GitRepoProvider::AzureDevOps)
+                || host.to_ascii_lowercase().contains("dev.azure.com")
+                || host.to_ascii_lowercase().contains("visualstudio.com")
+            {
+                GitRepoProvider::AzureDevOps
+            } else {
+                GitRepoProvider::Unknown
+            }
+        }
+        _ => GitRepoProvider::Unknown,
+    };
+
+    if provider == GitRepoProvider::AzureDevOps {
+        let allow_generic_host = provider_override == Some(GitRepoProvider::AzureDevOps);
+        if let Some((owner, project, name)) =
+            azure_repo_segments(&host, &repo_segments[1..], allow_generic_host)
+        {
+            return Some(GitRepoInfo {
+                url,
+                provider,
+                host,
+                owner,
+                name,
+                project: Some(project),
+            });
+        }
+
+        let name = repo_segments.last()?.to_string();
+        let owner = repo_segments[1..repo_segments.len() - 1].join("/");
+        return Some(GitRepoInfo {
+            url,
+            provider: GitRepoProvider::Unknown,
+            host,
+            owner,
+            name,
+            project: None,
+        });
+    }
+
+    let name = repo_segments.last()?.to_string();
+    let owner = repo_segments[1..repo_segments.len() - 1].join("/");
+    Some(GitRepoInfo {
+        url,
+        provider,
+        host,
+        owner,
+        name,
+        project: None,
+    })
+}
+
+fn azure_repo_segments(
+    host: &str,
+    segments: &[&str],
+    allow_generic_host: bool,
+) -> Option<(String, String, String)> {
+    let host_lower = host.to_ascii_lowercase();
+    if host_lower == "dev.azure.com" {
+        if segments.len() >= 4 && segments.get(2) == Some(&"_git") {
+            return Some((
+                segments[0].to_string(),
+                segments[1].to_string(),
+                segments[3].to_string(),
+            ));
+        }
+    } else if host_lower == "ssh.dev.azure.com" {
+        if segments.len() >= 4 && segments.first() == Some(&"v3") {
+            return Some((
+                segments[1].to_string(),
+                segments[2].to_string(),
+                segments[3].to_string(),
+            ));
+        }
+    } else if host_lower.ends_with(".visualstudio.com") {
+        if segments.len() >= 3 && segments.get(1) == Some(&"_git") {
+            let organization = host.split('.').next()?.to_string();
+            return Some((
+                organization,
+                segments[0].to_string(),
+                segments[2].to_string(),
+            ));
+        }
+    } else if allow_generic_host && segments.len() >= 4 && segments.get(2) == Some(&"_git") {
+        return Some((
+            segments[0].to_string(),
+            segments[1].to_string(),
+            segments[3].to_string(),
+        ));
+    }
+    None
 }
 
 #[cfg(test)]
@@ -557,5 +683,138 @@ mod tests {
         // Not a URL.
         assert_eq!(repo_url_from_ref_url("pr:123"), None);
         assert_eq!(repo_url_from_ref_url(""), None);
+    }
+
+    #[test]
+    fn repo_info_from_ref_url_per_forge() {
+        let cases = [
+            (
+                "https://github.com/owner/repo/pull/123",
+                "https://github.com/owner/repo",
+                GitRepoProvider::GitHub,
+                "github.com",
+                "owner",
+                "repo",
+                None,
+            ),
+            (
+                "https://gitlab.com/group/sub/repo/-/merge_requests/7/diffs",
+                "https://gitlab.com/group/sub/repo",
+                GitRepoProvider::GitLab,
+                "gitlab.com",
+                "group/sub",
+                "repo",
+                None,
+            ),
+            (
+                "https://gitea.example.com/owner/repo/pulls/55",
+                "https://gitea.example.com/owner/repo",
+                GitRepoProvider::Gitea,
+                "gitea.example.com",
+                "owner",
+                "repo",
+                None,
+            ),
+            (
+                "https://dev.azure.com/org/project/_git/repo/pullrequest/9",
+                "https://dev.azure.com/org/project/_git/repo",
+                GitRepoProvider::AzureDevOps,
+                "dev.azure.com",
+                "org",
+                "repo",
+                Some("project"),
+            ),
+            (
+                "https://ssh.dev.azure.com/v3/org/project/repo/pullrequest/9",
+                "https://ssh.dev.azure.com/v3/org/project/repo",
+                GitRepoProvider::AzureDevOps,
+                "ssh.dev.azure.com",
+                "org",
+                "repo",
+                Some("project"),
+            ),
+            (
+                "https://org.visualstudio.com/project/_git/repo/pullrequest/9",
+                "https://org.visualstudio.com/project/_git/repo",
+                GitRepoProvider::AzureDevOps,
+                "org.visualstudio.com",
+                "org",
+                "repo",
+                Some("project"),
+            ),
+        ];
+
+        for (input, url, provider, host, owner, name, project) in cases {
+            let info = repo_info_from_ref_url(input).expect("ref URL should produce repo info");
+            assert_eq!(info.url, url, "input: {input}");
+            assert_eq!(repo_url_from_ref_url(input).as_deref(), Some(url));
+            assert_eq!(info.provider, provider, "input: {input}");
+            assert_eq!(info.host, host, "input: {input}");
+            assert_eq!(info.owner, owner, "input: {input}");
+            assert_eq!(info.name, name, "input: {input}");
+            assert_eq!(info.project.as_deref(), project, "input: {input}");
+        }
+    }
+
+    #[test]
+    fn repo_info_from_ref_url_unknown_pull_host() {
+        let info = repo_info_from_ref_url("https://git.example.com/owner/repo/pull/1")
+            .expect("shape is still parseable");
+        assert_eq!(info.url, "https://git.example.com/owner/repo");
+        assert_eq!(info.provider, GitRepoProvider::Unknown);
+        assert_eq!(info.host, "git.example.com");
+        assert_eq!(info.owner, "owner");
+        assert_eq!(info.name, "repo");
+        assert_eq!(info.project, None);
+    }
+
+    #[test]
+    fn repo_info_from_ref_url_uses_configured_github_for_opaque_host() {
+        let input = "https://git.example.com/owner/repo/pull/1";
+        let info = repo_info_from_ref_url_with_provider(input, Some("github"))
+            .expect("shape is still parseable");
+        assert_eq!(
+            repo_url_from_ref_url(input).as_deref(),
+            Some(info.url.as_str())
+        );
+        assert_eq!(info.url, "https://git.example.com/owner/repo");
+        assert_eq!(info.provider, GitRepoProvider::GitHub);
+        assert_eq!(info.host, "git.example.com");
+        assert_eq!(info.owner, "owner");
+        assert_eq!(info.name, "repo");
+        assert_eq!(info.project, None);
+    }
+
+    #[test]
+    fn repo_info_from_ref_url_uses_configured_azure_for_opaque_host() {
+        let input = "https://git.example.com/org/project/_git/repo/pullrequest/9";
+        let info = repo_info_from_ref_url_with_provider(input, Some("azure-devops"))
+            .expect("shape is still parseable");
+        assert_eq!(
+            repo_url_from_ref_url(input).as_deref(),
+            Some(info.url.as_str())
+        );
+        assert_eq!(info.url, "https://git.example.com/org/project/_git/repo");
+        assert_eq!(info.provider, GitRepoProvider::AzureDevOps);
+        assert_eq!(info.host, "git.example.com");
+        assert_eq!(info.owner, "org");
+        assert_eq!(info.name, "repo");
+        assert_eq!(info.project.as_deref(), Some("project"));
+    }
+
+    #[test]
+    fn repo_info_from_ref_url_malformed_azure_is_unknown() {
+        let input = "https://dev.azure.com/org/repo/pullrequest/9";
+        let info = repo_info_from_ref_url(input).expect("shape is still parseable");
+        assert_eq!(
+            repo_url_from_ref_url(input).as_deref(),
+            Some(info.url.as_str())
+        );
+        assert_eq!(info.url, "https://dev.azure.com/org/repo");
+        assert_eq!(info.provider, GitRepoProvider::Unknown);
+        assert_eq!(info.host, "dev.azure.com");
+        assert_eq!(info.owner, "org");
+        assert_eq!(info.name, "repo");
+        assert_eq!(info.project, None);
     }
 }

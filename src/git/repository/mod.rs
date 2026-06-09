@@ -107,7 +107,8 @@ use super::{CiPlatform, CommandError, DefaultBranchName, GitError, LineDiff, Wor
 
 // Re-export types needed by submodules
 pub(super) use super::{
-    BranchCategory, CompletionBranch, DiffStats, GitRemoteUrl, LocalBranch, RemoteBranch,
+    BranchCategory, CompletionBranch, DiffStats, GitRemoteUrl, GitRepoInfo, LocalBranch,
+    RemoteBranch,
 };
 
 // Submodules with impl blocks
