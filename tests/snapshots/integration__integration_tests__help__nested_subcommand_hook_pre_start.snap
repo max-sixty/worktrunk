@@ -10,15 +10,14 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
-    LLVM_PROFILE_FILE: /var/folders/v3/8k5q0_6j3_q6gl4h8czr66sh0000gn/T/wt-test-profraw/cov-%m_%p.profraw
+    LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
     NO_COLOR: ""
     PSModulePath: ""
-    RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
-    WORKTRUNK_APPROVALS_PATH: /nonexistent/wt/approvals.toml
-    WORKTRUNK_CONFIG_PATH: /nonexistent/wt/config.toml
-    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_CODEX_INSTALLED: "0"
