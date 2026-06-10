@@ -72,6 +72,8 @@ In a hook or alias template, prefer the [2m{{ default_branch }}[0m template va
 
 Without a subcommand, runs [2mget[0m. Use [2mset[0m to override, or [2mclear[0m then [2mget[0m to re-detect.
 
+[2mdefault-branch get[0m resolves the value and caches it on a miss; the aggregate [2mwt config state get[0m only reports the cache (read-only), so it can show [2m(none)[0m until something populates it.
+
 [1m[32mDetection[0m
 
 Worktrunk detects the default branch automatically:

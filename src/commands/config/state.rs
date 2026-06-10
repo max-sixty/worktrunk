@@ -30,6 +30,17 @@
 //! `handle_state_clear_all`, plus the `after_long_help` blocks for `state get`
 //! and `state clear` in `src/cli/config.rs`, in the same change.
 //!
+//! # Reading vs resolving
+//!
+//! The aggregate `state get` is pure inspection: it reports stored values
+//! read-only and never detects, fetches, or persists (`default-branch` via
+//! `cached_default_branch()`, CI via `CachedCiStatus::list_all`). A per-key
+//! `get` for a *derived* value resolves it and caches the result
+//! (`default-branch get` -> `default_branch()`, `ci-status get` ->
+//! `PrStatus::detect`); for stored-only values (`previous-branch`, `marker`)
+//! it is a plain read. So a `clear` followed by the aggregate `get` shows the
+//! value gone, while the per-key `get` would re-resolve it.
+//!
 //! # Log layout invariant
 //!
 //! Inside `wt_logs_dir()`, top-level *files* are shared logs (`commands.jsonl*`,

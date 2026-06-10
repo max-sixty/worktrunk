@@ -709,6 +709,8 @@ In a hook or alias template, prefer the `{{ default_branch }}` [template variabl
 
 Without a subcommand, runs `get`. Use `set` to override, or `clear` then `get` to re-detect.
 
+`default-branch get` resolves the value and caches it on a miss; the aggregate `wt config state get` only reports the cache (read-only), so it can show `(none)` until something populates it.
+
 ## Detection
 
 Worktrunk detects the default branch automatically:
