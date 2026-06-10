@@ -1337,6 +1337,23 @@ mod tests {
     }
 
     #[test]
+    fn test_select_binding_window_logs_at_debug() {
+        // The per-window debug line's format args are lazily skipped at
+        // default verbosity; enabling Debug evaluates them. The
+        // not-yet-started window (negative elapsed, clamped to 0) is the
+        // case the `t.max(0.001)` division guard exists for.
+        log::set_max_level(log::LevelFilter::Debug);
+        let now = 1_700_000_000_i64;
+        let readings = [
+            make_reading(80.0, 0.60, &FIVE_HOUR_PRIORS, now, FIVE_HOUR_SECS),
+            make_reading(5.0, -0.10, &SEVEN_DAY_PRIORS, now, SEVEN_DAY_SECS),
+        ];
+        let sel = select_binding_window(&readings, now);
+        log::set_max_level(log::LevelFilter::Off);
+        assert_eq!(sel.unwrap().used_percentage, 80.0);
+    }
+
+    #[test]
     fn test_select_binding_window_picks_worse_of_two() {
         let now = 1_700_000_000_i64;
         let readings = [
