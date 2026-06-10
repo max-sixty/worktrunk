@@ -39,6 +39,8 @@ struct ClaudeCodeContext {
 /// A single rate-limit window reading parsed from Claude Code's JSON.
 #[derive(Clone, Debug)]
 struct RateLimitReading {
+    /// Window key in Claude Code's JSON: `five_hour` or `seven_day`.
+    name: &'static str,
     /// 0–100 from `.rate_limits.<window>.used_percentage`.
     used_percentage: f64,
     /// Unix epoch seconds from `.rate_limits.<window>.resets_at`.
@@ -230,6 +232,14 @@ const RATE_LIMIT_P_THRESHOLD: f64 = 0.50;
 /// Both windows are independently optional: subscribers see `rate_limits`
 /// only after the first API response, and each window may be missing.
 fn parse_rate_limits(v: &serde_json::Value) -> Vec<RateLimitReading> {
+    // Ground truth for debugging window selection: which windows Claude Code
+    // actually sent, before any parsing or clamping. The explicit absent case
+    // distinguishes "no rate_limits key" from "stdin context never parsed"
+    // (which logs nothing at all).
+    match v.get("rate_limits") {
+        Some(rl) => log::debug!("rate_limits input: {rl}"),
+        None => log::debug!("rate_limits input: absent"),
+    }
     let mut out = Vec::new();
     for (key, window_secs, priors) in [
         ("five_hour", FIVE_HOUR_SECS, &FIVE_HOUR_PRIORS),
@@ -243,6 +253,7 @@ fn parse_rate_limits(v: &serde_json::Value) -> Vec<RateLimitReading> {
             .and_then(|x| x.as_i64());
         if let (Some(u), Some(r)) = (used, resets) {
             out.push(RateLimitReading {
+                name: key,
                 used_percentage: u,
                 resets_at: r,
                 window_secs,
@@ -395,8 +406,8 @@ where
 }
 
 /// Format the rate-limit window's start and end as a short label that
-/// goes inside the parenthetical: `10am-3pm` (12h) / `10:00–15:00` (24h) for
-/// the 5-hour window, `Mon-Mon 3pm` / `Mon-Mon 15:00` for the 7-day window.
+/// goes inside the parenthetical: `10am–3pm` (12h) / `10:00–15:00` (24h) for
+/// the 5-hour window, `Mon–Mon 3pm` / `Mon–Mon 15:00` for the 7-day window.
 ///
 /// The 5h variant uses clock times on both endpoints. The longer window
 /// uses the weekday on both ends (they're equal for a true 7-day rolling
@@ -459,6 +470,13 @@ fn select_binding_window(
             let elapsed = (now_unix - (r.resets_at - r.window_secs)) as f64 / r.window_secs as f64;
             let t = elapsed.clamp(0.0, 1.0);
             let p = p_over(u, t, r.priors);
+            log::debug!(
+                "rate-limit {} window: used={:.1}% elapsed={:.1}% pace={:.2}× P(over)={p:.3} (show threshold {RATE_LIMIT_P_THRESHOLD})",
+                r.name,
+                u * 100.0,
+                t * 100.0,
+                u / t.max(0.001),
+            );
             (p >= RATE_LIMIT_P_THRESHOLD).then_some((p, r))
         })
         .max_by(|(a, _), (b, _)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
@@ -467,8 +485,8 @@ fn select_binding_window(
 
 /// Build the rate-limit segment, or `None` to hide.
 ///
-/// Shape: `<pace>×pace(<window_bounds>)` — e.g. `1.4×pace(10am-3pm)` or
-/// `1.9×pace(Mon-Mon 3pm)`. `pace` is the **naive `u/t` ratio**: what the
+/// Shape: `<pace>×pace(<window_bounds>)` — e.g. `1.4×pace(10am–3pm)` or
+/// `1.9×pace(Mon–Mon 3pm)`. `pace` is the **naive `u/t` ratio**: what the
 /// user has actually consumed per unit elapsed window. `1.0×` is on pace
 /// to exactly fill the window; `>1.0×` is over-pace. The Bayesian
 /// posterior `m₁` is only used by [`p_over`] to decide whether to show —
@@ -1283,6 +1301,11 @@ mod tests {
     ) -> RateLimitReading {
         let resets_at = now + ((1.0 - t_elapsed) * window_secs as f64).round() as i64;
         RateLimitReading {
+            name: if window_secs == FIVE_HOUR_SECS {
+                "five_hour"
+            } else {
+                "seven_day"
+            },
             used_percentage: used_pct,
             resets_at,
             window_secs,
