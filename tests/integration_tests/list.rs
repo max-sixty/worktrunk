@@ -1,10 +1,8 @@
 use crate::common::{
-    DAY, HOUR, MINUTE, TestRepo, list_snapshots, make_snapshot_cmd,
-    mock_commands::create_mock_llm_quickstart, repo, repo_with_remote,
+    DAY, HOUR, MINUTE, TestRepo, list_snapshots, make_snapshot_cmd, repo, repo_with_remote,
     setup_snapshot_settings_for_paths, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
-use path_slash::PathExt as _;
 use rstest::rstest;
 
 /// Creates worktrees with specific timestamps for ordering tests.
@@ -2170,25 +2168,16 @@ mod tests {
         .join(".wt-directive-temp");
     std::fs::write(&directive_file, "").unwrap();
 
-    // Create a cross-platform mock LLM command (uses mock-stub binary system)
-    // The mock-bin directory is already created by setup_mock_gh() via the repo fixture
-    let mock_bin_dir = repo.root_path().parent().unwrap().join("mock-bin");
-    create_mock_llm_quickstart(&mock_bin_dir);
-
-    // Configure the LLM path (Windows needs .exe extension)
-    let llm_name = if cfg!(windows) { "llm.exe" } else { "llm" };
-    let llm_path = mock_bin_dir.join(llm_name);
-
     // Merge feature-auth into main
     assert_cmd_snapshot!("quickstart_merge", {
         let mut cmd = make_snapshot_cmd(&repo, "merge", &["main"], Some(&feature_auth));
         cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", &directive_file);
-        // Set MOCK_CONFIG_DIR so mock-stub can find llm.json
-        cmd.env("MOCK_CONFIG_DIR", &mock_bin_dir);
-        // Use to_slash_lossy() for Windows compatibility - bash can't handle backslash paths
+        // Inline generation command (the suite's standard mock): a binary
+        // path here would bake the per-test temp dir into the snapshot's
+        // env block, which redactions don't cover for this key.
         cmd.env(
             "WORKTRUNK_COMMIT__GENERATION__COMMAND",
-            llm_path.to_slash_lossy().as_ref(),
+            "cat >/dev/null && echo 'Add authentication module'",
         );
         cmd
     });
@@ -3257,9 +3246,8 @@ fn test_list_nested_worktree_json_is_current(mut repo: TestRepo) {
 #[test]
 fn test_list_empty_repo() {
     let repo = TestRepo::empty();
-    let guard =
+    let _settings_guard =
         setup_snapshot_settings_for_paths(repo.root_path(), &repo.worktrees).bind_to_scope();
-    std::mem::forget(guard);
     // Pre-set default branch so the unborn-HEAD case has something to resolve to
     repo.run_git(&["config", "worktrunk.default-branch", "main"]);
     // Should show the branch with empty commit columns and no errors

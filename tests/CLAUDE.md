@@ -461,6 +461,25 @@ before dismissing:
   `add_filter` does **not** work on the `env:` block — it only substitutes on
   captured snapshot content; use a redaction.
 
+The `args:` block has the same property: a repo path passed as a CLI argument
+(`wt -C <root>`) is covered by the `.args[]` redaction in
+`add_repo_and_worktree_path_filters`, which rewrites it to `_REPO_…` like the
+body filters; any other run-specific argument needs its own redaction.
+
+Path leaks fail `test_no_host_specific_paths_in_snapshots`
+(`snapshot_formatting_guard.rs`), which scans every committed `.snap` for
+host-specific path markers (other run-specific values — PIDs, timestamps —
+still need review-time vigilance). The test exists because insta never *compares* the
+`info:` block — a missing redaction passes on the machine that generated the
+snapshot and only churns when regenerated elsewhere.
+
+A runner caveat: the `repo` fixture leaks its settings binding (rstest has no
+teardown), so under libtest's reused threads a test that binds no settings of
+its own — or clones them via `Settings::clone_current()` without
+`add_standard_env_redactions` — can still appear redacted. nextest (process
+per test) is authoritative — regenerate snapshots with
+`cargo insta test --test-runner nextest` when in doubt.
+
 ### Inline snapshots over multi-assert
 
 When a test checks formatted output, use `insta::assert_snapshot!` with an
