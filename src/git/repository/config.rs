@@ -529,6 +529,24 @@ impl Repository {
         self.unset_config_value("worktrunk.default-branch")
     }
 
+    /// Read the persisted default-branch cache without detecting or writing.
+    ///
+    /// Unlike `default_branch()`, this never falls through to detection
+    /// (`origin/HEAD`, `git ls-remote`, local inference) and never persists a
+    /// result. It reports only what is currently stored in
+    /// `worktrunk.default-branch`, so state-inspection commands
+    /// (`wt config state`) can display the cache without the act of inspecting
+    /// it repopulating the very value being cleared.
+    ///
+    /// Returns `None` when nothing is cached.
+    pub fn cached_default_branch(&self) -> Option<String> {
+        self.config_value("worktrunk.default-branch")
+            .ok()
+            .flatten()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
+
     // =========================================================================
     // Project config
     // =========================================================================

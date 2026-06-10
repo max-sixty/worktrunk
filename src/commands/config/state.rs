@@ -1081,8 +1081,9 @@ pub fn handle_state_show(format: OutputFormat) -> anyhow::Result<()> {
 
 /// Output state as JSON
 fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
-    // Get default branch
-    let default_branch = repo.default_branch();
+    // Read-only: report the cached default branch without detecting/persisting
+    // (see handle_state_show_table).
+    let default_branch = repo.cached_default_branch();
 
     // Get previous branch
     let previous_branch = repo.switch_previous();
@@ -1190,11 +1191,12 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     // Build complete output as a string
     let mut out = String::new();
 
-    // Show default branch cache
+    // Show default branch cache. Read-only: this inspection must not detect
+    // or persist, or it would silently repopulate a just-cleared cache.
     writeln!(out, "{}", format_heading("DEFAULT BRANCH", None))?;
-    match repo.default_branch() {
+    match repo.cached_default_branch() {
         Some(branch) => writeln!(out, "{}", format_with_gutter(&branch, None))?,
-        None => writeln!(out, "{}", format_with_gutter("(not available)", None))?,
+        None => writeln!(out, "{}", format_with_gutter("(none)", None))?,
     }
     writeln!(out)?;
 
