@@ -3,6 +3,9 @@
 //! Parses git remote URLs into structured components (host, owner, repo).
 //! Supports HTTPS, SSH, and git@ URL formats.
 
+use schemars::JsonSchema;
+use serde::Serialize;
+
 use super::ci_platform::CiPlatform;
 
 /// Parsed, provider-neutral repository metadata.
@@ -24,12 +27,17 @@ pub struct GitRepoInfo {
 }
 
 /// Supported forge providers for repository metadata.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 pub enum GitRepoProvider {
+    #[serde(rename = "github")]
     GitHub,
+    #[serde(rename = "gitlab")]
     GitLab,
+    #[serde(rename = "gitea")]
     Gitea,
+    #[serde(rename = "azure-devops")]
     AzureDevOps,
+    #[serde(rename = "unknown")]
     Unknown,
 }
 
@@ -1282,6 +1290,21 @@ mod tests {
         let url = GitRemoteUrl::parse("https://github.com/owner/repo").unwrap();
         assert_eq!(url.azure_organization(), None);
         assert_eq!(url.azure_project(), None);
+    }
+
+    #[test]
+    fn git_repo_provider_serializes_json_values() {
+        let cases = [
+            (GitRepoProvider::GitHub, "\"github\""),
+            (GitRepoProvider::GitLab, "\"gitlab\""),
+            (GitRepoProvider::Gitea, "\"gitea\""),
+            (GitRepoProvider::AzureDevOps, "\"azure-devops\""),
+            (GitRepoProvider::Unknown, "\"unknown\""),
+        ];
+
+        for (provider, expected) in cases {
+            assert_eq!(serde_json::to_string(&provider).unwrap(), expected);
+        }
     }
 
     #[test]

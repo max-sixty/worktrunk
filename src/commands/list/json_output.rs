@@ -254,7 +254,7 @@ pub struct JsonRepo {
     pub url: String,
 
     /// Forge provider.
-    pub provider: JsonRepoProvider,
+    pub provider: GitRepoProvider,
 
     /// Repository web host.
     pub host: String,
@@ -274,43 +274,16 @@ pub struct JsonRepo {
     pub remote: Option<String>,
 }
 
-/// Repository provider in JSON output.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
-pub enum JsonRepoProvider {
-    #[serde(rename = "github")]
-    GitHub,
-    #[serde(rename = "gitlab")]
-    GitLab,
-    #[serde(rename = "gitea")]
-    Gitea,
-    #[serde(rename = "azure-devops")]
-    AzureDevOps,
-    #[serde(rename = "unknown")]
-    Unknown,
-}
-
 impl JsonRepo {
     pub(crate) fn from_git_repo_info(info: GitRepoInfo, remote: Option<String>) -> Self {
         Self {
             url: info.url,
-            provider: JsonRepoProvider::from(info.provider),
+            provider: info.provider,
             host: info.host,
             owner: info.owner,
             name: info.name,
             project: info.project,
             remote,
-        }
-    }
-}
-
-impl From<GitRepoProvider> for JsonRepoProvider {
-    fn from(provider: GitRepoProvider) -> Self {
-        match provider {
-            GitRepoProvider::GitHub => Self::GitHub,
-            GitRepoProvider::GitLab => Self::GitLab,
-            GitRepoProvider::Gitea => Self::Gitea,
-            GitRepoProvider::AzureDevOps => Self::AzureDevOps,
-            GitRepoProvider::Unknown => Self::Unknown,
         }
     }
 }
@@ -690,7 +663,7 @@ mod tests {
             passed.repo,
             Some(JsonRepo {
                 url: "https://github.com/org/repo".to_string(),
-                provider: JsonRepoProvider::GitHub,
+                provider: GitRepoProvider::GitHub,
                 host: "github.com".to_string(),
                 owner: "org".to_string(),
                 name: "repo".to_string(),
@@ -1068,7 +1041,7 @@ mod tests {
 
         let repo = JsonRepo {
             url: "https://github.com/owner/repo".to_string(),
-            provider: JsonRepoProvider::GitHub,
+            provider: GitRepoProvider::GitHub,
             host: "github.com".to_string(),
             owner: "owner".to_string(),
             name: "repo".to_string(),
@@ -1114,7 +1087,7 @@ mod tests {
             repo_url: Some("https://github.com/org/repo".to_string()),
             repo: Some(JsonRepo {
                 url: "https://github.com/org/repo".to_string(),
-                provider: JsonRepoProvider::GitHub,
+                provider: GitRepoProvider::GitHub,
                 host: "github.com".to_string(),
                 owner: "org".to_string(),
                 name: "repo".to_string(),
@@ -1139,29 +1112,5 @@ mod tests {
           }
         }
         "#);
-    }
-
-    #[test]
-    fn test_json_repo_provider_from_git_repo_provider() {
-        assert_eq!(
-            JsonRepoProvider::from(GitRepoProvider::GitHub),
-            JsonRepoProvider::GitHub
-        );
-        assert_eq!(
-            JsonRepoProvider::from(GitRepoProvider::GitLab),
-            JsonRepoProvider::GitLab
-        );
-        assert_eq!(
-            JsonRepoProvider::from(GitRepoProvider::Gitea),
-            JsonRepoProvider::Gitea
-        );
-        assert_eq!(
-            JsonRepoProvider::from(GitRepoProvider::AzureDevOps),
-            JsonRepoProvider::AzureDevOps
-        );
-        assert_eq!(
-            JsonRepoProvider::from(GitRepoProvider::Unknown),
-            JsonRepoProvider::Unknown
-        );
     }
 }
