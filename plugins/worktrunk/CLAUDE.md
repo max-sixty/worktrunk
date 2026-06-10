@@ -56,8 +56,10 @@ that every repo-root skill is listed); Codex and Gemini pick up the whole
 
 The Claude hooks track activity via git config (`worktrunk.status.{branch}`):
 - `UserPromptSubmit` → 🤖 (working)
-- `Notification` → 💬 (waiting for input)
+- `Notification`, `PreToolUse`(`AskUserQuestion`), `PermissionRequest`, `Stop` → 💬 (waiting for input)
 - `SessionEnd` → clears status
+
+The 💬 transitions overlap deliberately: `Notification` covers the documented permission/idle path, but on platforms where it doesn't fire (VS Code extension, Windows CLI) `PermissionRequest` and `Stop` still mark the wait; `PreToolUse`(`AskUserQuestion`) catches the built-in question picker, which fires no `Notification` on any platform ([claude-code#13024](https://github.com/anthropics/claude-code/issues/13024)). There is currently no transition back to 🤖 once a turn-end/permission marker is set except a fresh `UserPromptSubmit`, so 💬 can persist into resumed work after a permission grant (the original symptom in [#2916](https://github.com/max-sixty/worktrunk/issues/2916)).
 
 **Problem**: If the user interrupts Claude Code (Escape/Ctrl+C), the 🤖 status persists because there's no `UserInterrupt` hook. The `Stop` hook explicitly does not fire on user interrupt.
 
