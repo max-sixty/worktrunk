@@ -1,8 +1,9 @@
 use crate::common::{TEST_EPOCH, TestRepo, repo, repo_with_remote, wt_command};
 use insta::assert_snapshot;
 use rstest::rstest;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use worktrunk::path::sanitize_for_filename;
 
 /// Relative path of a hook log file under the wt logs directory.
@@ -241,7 +242,10 @@ fn test_state_set_previous_branch(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mSet previous branch to [1mfeature[22m[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [33m▲[39m [33mwt config state previous-branch is deprecated; use [1mwt config state cache[22m instead[39m
+    [32m✓[39m [32mSet previous branch to [1mfeature[22m[39m
+    ");
 
     // Verify it was set
     let output = wt_state_cmd(&repo, "previous-branch", "get", &[])
@@ -262,7 +266,10 @@ fn test_state_clear_previous_branch(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared previous branch[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [33m▲[39m [33mwt config state previous-branch is deprecated; use [1mwt config state cache[22m instead[39m
+    [32m✓[39m [32mCleared previous branch[39m
+    ");
 
     // Verify it was cleared
     let output = wt_state_cmd(&repo, "previous-branch", "get", &[])
@@ -279,7 +286,10 @@ fn test_state_clear_previous_branch_empty(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No previous branch to clear");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [33m▲[39m [33mwt config state previous-branch is deprecated; use [1mwt config state cache[22m instead[39m
+    [2m○[22m No previous branch to clear
+    ");
 }
 
 // ============================================================================
@@ -369,6 +379,7 @@ fn test_state_get_ci_status_nonexistent_branch(repo: TestRepo) {
         .unwrap();
     assert!(!output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [33m▲[39m [33mwt config state ci-status is deprecated; use [1mwt config state cache[22m instead[39m
     [31m✗[39m [31mNo branch named [1mnonexistent[22m[39m
     [2m↳[22m [2mTo create a new branch, run [4mwt switch --create nonexistent[24m; to list branches, run [4mwt list --branches --remotes[24m[22m
     ");
@@ -469,7 +480,10 @@ fn test_state_clear_ci_status_all_empty(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No CI cache entries to clear");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [33m▲[39m [33mwt config state ci-status is deprecated; use [1mwt config state cache[22m instead[39m
+    [2m○[22m No CI cache entries to clear
+    ");
 }
 
 #[rstest]
@@ -489,7 +503,10 @@ fn test_state_clear_ci_status_branch(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared CI cache for [1mmain[22m[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [33m▲[39m [33mwt config state ci-status is deprecated; use [1mwt config state cache[22m instead[39m
+    [32m✓[39m [32mCleared CI cache for [1mmain[22m[39m
+    ");
     assert!(
         !cache_file.exists(),
         "cache file should be gone after clear"
@@ -505,7 +522,10 @@ fn test_state_clear_ci_status_branch_not_cached(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No CI cache for [1mmain[22m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [33m▲[39m [33mwt config state ci-status is deprecated; use [1mwt config state cache[22m instead[39m
+    [2m○[22m No CI cache for [1mmain[22m
+    ");
     assert!(!cache_file.exists(), "cache file should still not exist");
 }
 
@@ -883,7 +903,9 @@ fn wt_state_clear_all_cmd(repo: &TestRepo) -> std::process::Command {
     let mut cmd = wt_command();
     cmd.current_dir(repo.root_path());
     cmd.env("CLICOLOR_FORCE", "1");
-    cmd.args(["config", "state", "clear"]);
+    // `clear` prompts before removing markers/vars; `--yes` skips it so these
+    // tests exercise the clearing itself. The prompt path has its own tests.
+    cmd.args(["config", "state", "clear", "--yes"]);
     cmd
 }
 
@@ -1027,6 +1049,238 @@ fn test_state_clear_all_nothing_to_clear(repo: TestRepo) {
     let output = wt_state_clear_all_cmd(&repo).output().unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No stored state to clear");
+}
+
+/// Run `wt config state clear` (no `--yes`) with the given stdin, so the
+/// confirmation prompt reads `input`.
+fn clear_all_with_stdin(repo: &TestRepo, input: &str) -> std::process::Output {
+    let mut cmd = wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("CLICOLOR_FORCE", "1");
+    cmd.args(["config", "state", "clear"]);
+    cmd.stdin(Stdio::piped());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    let mut child = cmd.spawn().unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+/// Without `--yes` and with no interactive input, the prompt declines and
+/// nothing is cleared.
+#[rstest]
+fn test_state_clear_all_prompt_declines(repo: TestRepo) {
+    repo.git_command()
+        .args(["config", "worktrunk.history", "feature"])
+        .run()
+        .unwrap();
+
+    let mut cmd = wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("CLICOLOR_FORCE", "1");
+    cmd.args(["config", "state", "clear"]);
+    cmd.stdin(Stdio::null());
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+
+    [36m❯[39m Clear all stored state, including branch markers and vars? [1m[y/N/?][22m [2m○[22m Clear cancelled
+    ");
+
+    // Previous branch must survive the declined prompt.
+    assert!(
+        repo.git_command()
+            .args(["config", "--get", "worktrunk.history"])
+            .run()
+            .unwrap()
+            .status
+            .success()
+    );
+}
+
+/// Answering `y` at the prompt clears everything (covers the accepted branch).
+#[rstest]
+fn test_state_clear_all_prompt_accepts(repo: TestRepo) {
+    repo.git_command()
+        .args(["config", "worktrunk.history", "feature"])
+        .run()
+        .unwrap();
+
+    let output = clear_all_with_stdin(&repo, "y\n");
+    assert!(output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Cleared previous branch"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !repo
+            .git_command()
+            .args(["config", "--get", "worktrunk.history"])
+            .run()
+            .unwrap()
+            .status
+            .success(),
+        "previous branch should be cleared after accepting"
+    );
+}
+
+// ============================================================================
+// cache
+// ============================================================================
+
+/// `wt config state cache` (no subcommand) defaults to `get`.
+#[rstest]
+fn test_state_cache_bare_get_empty(repo: TestRepo) {
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["config", "state", "cache"]);
+    cmd.current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"
+    [36mPREVIOUS BRANCH[39m
+    [107m [0m (none)
+
+    [36mCI STATUS CACHE[39m
+    [107m [0m (none)
+
+    [36mSUMMARY CACHE[39m
+    [107m [0m (none)
+
+    [36mGIT COMMANDS CACHE[39m
+    [107m [0m (none)
+
+    [36mHINTS[39m
+    [107m [0m (none)
+    ");
+}
+
+#[rstest]
+fn test_state_cache_get_json_empty(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "cache", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
+    {
+      "ci_status": [],
+      "git_commands_cache": 0,
+      "hints": [],
+      "previous_branch": null,
+      "summaries": []
+    }
+    "#);
+}
+
+#[rstest]
+fn test_state_cache_clear_empty(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "cache", "clear", &[]).output().unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No cache to clear");
+}
+
+#[rstest]
+fn test_state_cache_clear_with_entries(repo: TestRepo) {
+    // Seed every regenerable cache category.
+    repo.git_command()
+        .args(["config", "worktrunk.history", "feature"])
+        .run()
+        .unwrap();
+    write_ci_cache(
+        &repo,
+        "feature",
+        r#"{"checked_at":1704067200,"head":"abc123","branch":"feature"}"#,
+    );
+    write_summary_cache(&repo, "feature", "aaaaaaaaaaaaaaaa", "Short summary", 0);
+    let git_dir = repo.root_path().join(".git");
+    let sha_cache_dir = git_dir.join("wt/cache/merge-tree-conflicts");
+    std::fs::create_dir_all(&sha_cache_dir).unwrap();
+    std::fs::write(sha_cache_dir.join("abc123-def456.json"), "true").unwrap();
+    repo.git_command()
+        .args(["config", "worktrunk.hints.worktree-path", "1"])
+        .run()
+        .unwrap();
+
+    let output = wt_state_cmd(&repo, "cache", "clear", &[]).output().unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [32m✓[39m [32mCleared previous branch[39m
+    [32m✓[39m [32mCleared [1m1[22m CI cache entry[39m
+    [32m✓[39m [32mCleared [1m1[22m summary cache entry[39m
+    [32m✓[39m [32mCleared [1m1[22m git commands cache entry[39m
+    [32m✓[39m [32mCleared [1m1[22m hint[39m
+    ");
+}
+
+/// `cache clear` must leave authoritative state (markers, vars,
+/// default-branch override) untouched — only regenerable caches are dropped.
+#[rstest]
+fn test_state_cache_clear_preserves_authoritative(repo: TestRepo) {
+    repo.set_marker("main", "🚧");
+    repo.git_command()
+        .args(["config", "worktrunk.state.main.vars.env", "staging"])
+        .run()
+        .unwrap();
+    repo.git_command()
+        .args(["config", "worktrunk.history", "feature"])
+        .run()
+        .unwrap();
+
+    let output = wt_state_cmd(&repo, "cache", "clear", &[]).output().unwrap();
+    assert!(output.status.success());
+
+    // Regenerable: previous branch is cleared.
+    assert!(
+        !repo
+            .git_command()
+            .args(["config", "--get", "worktrunk.history"])
+            .run()
+            .unwrap()
+            .status
+            .success(),
+        "previous branch (cache) should be cleared"
+    );
+    // Authoritative: marker and var survive.
+    assert!(
+        repo.git_command()
+            .args(["config", "--get", "worktrunk.state.main.marker"])
+            .run()
+            .unwrap()
+            .status
+            .success(),
+        "marker should survive cache clear"
+    );
+    assert!(
+        repo.git_command()
+            .args(["config", "--get", "worktrunk.state.main.vars.env"])
+            .run()
+            .unwrap()
+            .status
+            .success(),
+        "var should survive cache clear"
+    );
+}
+
+/// The subcommands folded into `cache` (ci-status, hints, previous-branch)
+/// still work but print a deprecation notice on stderr.
+#[rstest]
+fn test_state_deprecated_subcommands_warn(repo: TestRepo) {
+    for name in ["ci-status", "hints", "previous-branch"] {
+        let output = wt_state_cmd(&repo, name, "get", &[]).output().unwrap();
+        assert!(output.status.success(), "{name} get should succeed");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(&format!("wt config state {name} is deprecated; use"))
+                && stderr.contains("wt config state cache"),
+            "{name} should warn: {stderr}"
+        );
+    }
 }
 
 // ============================================================================
@@ -1437,7 +1691,10 @@ fn test_state_clear_ci_status_all_with_entries(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1m2[22m CI cache entries[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [33m▲[39m [33mwt config state ci-status is deprecated; use [1mwt config state cache[22m instead[39m
+    [32m✓[39m [32mCleared [1m2[22m CI cache entries[39m
+    ");
 }
 
 #[rstest]
@@ -1455,7 +1712,10 @@ fn test_state_clear_ci_status_all_single_entry(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1m1[22m CI cache entry[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [33m▲[39m [33mwt config state ci-status is deprecated; use [1mwt config state cache[22m instead[39m
+    [32m✓[39m [32mCleared [1m1[22m CI cache entry[39m
+    ");
 }
 
 #[rstest]
@@ -1481,7 +1741,10 @@ fn test_state_clear_ci_status_specific_branch(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared CI cache for [1mfeature[22m[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [33m▲[39m [33mwt config state ci-status is deprecated; use [1mwt config state cache[22m instead[39m
+    [32m✓[39m [32mCleared CI cache for [1mfeature[22m[39m
+    ");
     assert!(
         !cache_file.exists(),
         "cache file should be gone after clear"
@@ -1502,7 +1765,10 @@ fn test_state_clear_ci_status_specific_branch_not_cached(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No CI cache for [1mfeature[22m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [33m▲[39m [33mwt config state ci-status is deprecated; use [1mwt config state cache[22m instead[39m
+    [2m○[22m No CI cache for [1mfeature[22m
+    ");
     assert!(!cache_file.exists(), "cache file should still not exist");
 }
 
@@ -1567,7 +1833,10 @@ fn test_state_clear_marker_all_single(repo: TestRepo) {
 fn test_state_hints_get_empty(repo: TestRepo) {
     let output = wt_state_cmd(&repo, "hints", "get", &[]).output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No hints have been shown");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [33m▲[39m [33mwt config state hints is deprecated; use [1mwt config state cache[22m instead[39m
+    [2m○[22m No hints have been shown
+    ");
 }
 
 #[rstest]
@@ -1594,7 +1863,10 @@ fn test_state_hints_get_with_hints(repo: TestRepo) {
 fn test_state_hints_clear_empty(repo: TestRepo) {
     let output = wt_state_cmd(&repo, "hints", "clear", &[]).output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No hints to clear");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [33m▲[39m [33mwt config state hints is deprecated; use [1mwt config state cache[22m instead[39m
+    [2m○[22m No hints to clear
+    ");
 }
 
 #[rstest]
@@ -1611,7 +1883,10 @@ fn test_state_hints_clear_all(repo: TestRepo) {
 
     let output = wt_state_cmd(&repo, "hints", "clear", &[]).output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1m2[22m hints[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [33m▲[39m [33mwt config state hints is deprecated; use [1mwt config state cache[22m instead[39m
+    [32m✓[39m [32mCleared [1m2[22m hints[39m
+    ");
 
     // Verify hints were cleared
     let output = repo
@@ -1632,7 +1907,10 @@ fn test_state_hints_clear_single(repo: TestRepo) {
 
     let output = wt_state_cmd(&repo, "hints", "clear", &[]).output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1m1[22m hint[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [33m▲[39m [33mwt config state hints is deprecated; use [1mwt config state cache[22m instead[39m
+    [32m✓[39m [32mCleared [1m1[22m hint[39m
+    ");
 }
 
 #[rstest]
@@ -1651,7 +1929,10 @@ fn test_state_hints_clear_specific(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared hint [1mworktree-path[22m[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [33m▲[39m [33mwt config state hints is deprecated; use [1mwt config state cache[22m instead[39m
+    [32m✓[39m [32mCleared hint [1mworktree-path[22m[39m
+    ");
 
     // Verify only that hint was cleared
     let output = repo
@@ -1675,7 +1956,10 @@ fn test_state_hints_clear_specific_not_set(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m Hint [1mnonexistent[22m was not set");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [33m▲[39m [33mwt config state hints is deprecated; use [1mwt config state cache[22m instead[39m
+    [2m○[22m Hint [1mnonexistent[22m was not set
+    ");
 }
 
 // ============================================================================

@@ -72,6 +72,7 @@ fn snapshot_help(test_name: &str, args: &[&str]) {
     "config plugins codex install --help"
 )]
 #[case("help_config_state", "config state --help")]
+#[case("help_config_state_cache", "config state cache --help")]
 #[case(
     "help_config_state_default_branch",
     "config state default-branch --help"

@@ -595,12 +595,11 @@ $ wt config plugins opencode install
 
 ## Keys
 
+- **cache**: [Regenerable caches — CI status, summaries, git commands, hints, and the `wt switch -` target](@/config.md#wt-config-state-cache)
 - **default-branch**: [The repository's default branch (`main`, `master`, etc.)](@/config.md#wt-config-state-default-branch)
-- **previous-branch**: Previous branch for `wt switch -`
-- **logs**: [Operation and debug logs](@/config.md#wt-config-state-logs)
-- **ci-status**: [CI/PR status for a branch (passed, running, failed, conflicts, no-ci, error)](@/config.md#wt-config-state-ci-status)
 - **marker**: [Custom status marker for a branch (shown in `wt list`)](@/config.md#wt-config-state-marker)
 - **vars**: [experimental] [Custom variables per branch](@/config.md#wt-config-state-vars)
+- **logs**: [Operation and debug logs](@/config.md#wt-config-state-logs)
 
 ## Examples
 
@@ -624,9 +623,9 @@ Store arbitrary data:
 $ wt config state vars set env=staging
 ```
 
-Clear all CI status cache:
+Drop the regenerable caches:
 ```console
-$ wt config state ci-status clear --all
+$ wt config state cache clear
 ```
 
 Show all stored state:
@@ -638,6 +637,7 @@ Clear all stored state:
 ```console
 $ wt config state clear
 ```
+<!-- subdoc: cache -->
 <!-- subdoc: default-branch -->
 <!-- subdoc: logs -->
 <!-- subdoc: ci-status -->
@@ -650,11 +650,15 @@ $ wt config state clear
     },
 }
 
-// Ordering: aggregate operations first (get, clear) — entry points for
-// exploring or wiping all state. Then primary state managed by wt
-// (default-branch, previous-branch, logs, hints), then per-branch display
-// annotations shown in `wt list` (ci-status, marker), then experimental keys
-// (vars).
+// Ordering: aggregate operations first (get, clear, cache) — entry points for
+// exploring, wiping, or refreshing state. Then authoritative state managed by
+// the user (default-branch override, marker, vars) and the operation logs.
+//
+// `cache` is the home for every regenerable cache (ci-status, summaries, git
+// commands, hints, previous branch). The per-category subcommands those caches
+// used to have (ci-status, hints, previous-branch) are `hide`-deprecated: they
+// still work and still appear in the match below, but print a deprecation
+// notice and are absent from `--help`.
 #[derive(Subcommand)]
 pub enum StateCommand {
     /// Get all stored state
@@ -692,9 +696,58 @@ CI cache entries show status, age, and the commit SHA they were fetched for."#)]
 - All log files
 - Stale trash from worktree removal (`.git/wt/trash/`)
 
-Use individual subcommands (`default-branch clear`, `ci-status clear --all`, etc.)
-to clear specific state."#)]
+Prompts for confirmation before clearing, since this removes hand-authored
+markers and vars. Pass `--yes` to skip the prompt.
+
+To drop only the regenerable caches (CI status, summaries, git commands,
+hints, previous branch), run `wt config state cache clear` — it needs no
+confirmation and leaves markers, vars, and the default-branch override
+untouched."#)]
     Clear,
+
+    /// Regenerable caches
+    #[command(
+        after_long_help = r#"View or drop worktrunk's regenerable caches in one place. Everything here is rebuilt on demand — clearing only forces recomputation, never data loss.
+
+## What's cached
+
+- **CI status** — GitHub/GitLab CI per branch (30–60s TTL), shown in [`wt list`](@/list.md#ci-status)
+- **Summaries** — LLM-generated branch summaries (`wt list --full`, `wt switch` preview)
+- **Git commands** — SHA-keyed disk caches: merge-tree, ancestry, diff-stats, and `wt switch` preview renders
+- **Hints** — one-time hints already shown in this repo
+- **Previous branch** — the `wt switch -` target, re-recorded on the next switch
+
+`cache clear` drops all of the above with no prompt. It re-shows one-time hints and forgets the `wt switch -` target until the next switch — both repopulate on their own.
+
+Without a subcommand, runs `get`.
+
+## Examples
+
+Show cache contents:
+```console
+$ wt config state cache
+```
+
+Drop all caches:
+```console
+$ wt config state cache clear
+```"#
+    )]
+    Cache {
+        #[command(subcommand)]
+        action: Option<CacheAction>,
+
+        /// Output format (text, json) [default: text]
+        #[arg(
+            long,
+            default_value = "text",
+            global = true,
+            hide_possible_values = true,
+            hide_default_value = true,
+            help_heading = "Output"
+        )]
+        format: SwitchFormat,
+    },
 
     /// Default branch detection and override
     #[command(
@@ -732,7 +785,10 @@ The local inference fallback uses these heuristics in order:
     /// Previous branch (for `wt switch -`)
     #[command(
         name = "previous-branch",
-        after_long_help = r#"Enables `wt switch -` to return to the previous worktree, similar to `cd -` or `git checkout -`.
+        hide = true,
+        after_long_help = r#"**Deprecated** — the previous branch is now part of [`wt config state cache`](@/config.md#wt-config-state-cache). This subcommand still works but prints a deprecation notice.
+
+Enables `wt switch -` to return to the previous worktree, similar to `cd -` or `git checkout -`.
 
 ## How it works
 
@@ -842,7 +898,10 @@ $ wt config state logs clear
 
     /// One-time hints shown in this repo
     #[command(
-        after_long_help = r#"Some hints show once per repo on first use, then are recorded in git config
+        hide = true,
+        after_long_help = r#"**Deprecated** — hints are now part of [`wt config state cache`](@/config.md#wt-config-state-cache). This subcommand still works but prints a deprecation notice.
+
+Some hints show once per repo on first use, then are recorded in git config
 as `worktrunk.hints.<name>`, a count of times the hint has been shown.
 
 ## Current hints
@@ -878,7 +937,10 @@ $ wt config state hints clear NAME   # re-show specific hint
     /// CI status cache
     #[command(
         name = "ci-status",
-        after_long_help = r#"Caches GitHub/GitLab CI status for display in [`wt list`](@/list.md#ci-status).
+        hide = true,
+        after_long_help = r#"**Deprecated** — the CI status cache is now part of [`wt config state cache`](@/config.md#wt-config-state-cache). This subcommand still works but prints a deprecation notice.
+
+Caches GitHub/GitLab CI status for display in [`wt list`](@/list.md#ci-status).
 
 Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated. Platform auto-detects from the remote URL; set `forge.platform = "github"` (or `"gitlab"`) in `.config/wt.toml` for SSH host aliases or self-hosted instances. For GitHub Enterprise or self-hosted GitLab, also set `forge.hostname`.
 
@@ -1079,6 +1141,16 @@ $ wt config state previous-branch set feature
     },
 
     /// Clear the previous branch
+    Clear,
+}
+
+// Ordering: CRUD — get, clear.
+#[derive(Subcommand)]
+pub enum CacheAction {
+    /// Show cache contents
+    Get,
+
+    /// Drop all caches
     Clear,
 }
 
@@ -1302,6 +1374,15 @@ pub(crate) trait StateWrite {
     /// `Some(verb)` for write actions (verb names the action in the conflict
     /// error); `None` for reads.
     fn write_verb(&self) -> Option<&'static str>;
+}
+
+impl StateWrite for CacheAction {
+    fn write_verb(&self) -> Option<&'static str> {
+        match self {
+            Self::Get => None,
+            Self::Clear => Some("clear"),
+        }
+    }
 }
 
 impl StateWrite for CiStatusAction {

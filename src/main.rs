@@ -51,23 +51,23 @@ use commands::worktree::{PushKind, PushOutcome, PushResult, handle_no_ff_merge, 
 use commands::{
     HookCliArgs, MergeFlagOverrides, MergeOptions, RebaseResult, RemoveTarget, SquashResult,
     SwitchOptions, add_approvals, clear_approvals, handle_alias_dry_run, handle_alias_show,
-    handle_claude_install, handle_claude_install_statusline, handle_claude_uninstall,
-    handle_codex_install, handle_codex_uninstall, handle_completions, handle_config_create,
-    handle_config_show, handle_config_update, handle_configure_shell, handle_custom_command,
-    handle_hints_clear, handle_hints_get, handle_hook_show, handle_init, handle_list,
-    handle_logs_list, handle_merge, handle_opencode_install, handle_opencode_uninstall,
-    handle_promote, handle_rebase, handle_show_theme, handle_squash, handle_state_clear,
-    handle_state_clear_all, handle_state_get, handle_state_set, handle_state_show,
-    handle_unconfigure_shell, handle_vars_clear, handle_vars_get, handle_vars_list,
-    handle_vars_set, resolve_worktree_arg, run_hook, run_switch, step_commit, step_copy_ignored,
-    step_diff, step_eval, step_for_each, step_prune, step_relocate, step_tether,
+    handle_cache_clear, handle_cache_get, handle_claude_install, handle_claude_install_statusline,
+    handle_claude_uninstall, handle_codex_install, handle_codex_uninstall, handle_completions,
+    handle_config_create, handle_config_show, handle_config_update, handle_configure_shell,
+    handle_custom_command, handle_hints_clear, handle_hints_get, handle_hook_show, handle_init,
+    handle_list, handle_logs_list, handle_merge, handle_opencode_install,
+    handle_opencode_uninstall, handle_promote, handle_rebase, handle_show_theme, handle_squash,
+    handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
+    handle_state_show, handle_unconfigure_shell, handle_vars_clear, handle_vars_get,
+    handle_vars_list, handle_vars_set, resolve_worktree_arg, run_hook, run_switch, step_commit,
+    step_copy_ignored, step_diff, step_eval, step_for_each, step_prune, step_relocate, step_tether,
 };
 use output::{BackgroundFallbackMode, handle_remove_output};
 use worktrunk::git::BranchDeletionMode;
 
 use cli::{
-    ApprovalsCommand, CiStatusAction, Cli, Commands, ConfigAliasCommand, ConfigCommand,
-    ConfigPluginsClaudeCommand, ConfigPluginsCodexCommand, ConfigPluginsCommand,
+    ApprovalsCommand, CacheAction, CiStatusAction, Cli, Commands, ConfigAliasCommand,
+    ConfigCommand, ConfigPluginsClaudeCommand, ConfigPluginsCodexCommand, ConfigPluginsCommand,
     ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction, HintsAction,
     HookCommand, HookOptions, ListArgs, ListSubcommand, LogsAction, MarkerAction, MergeArgs,
     PreviousBranchAction, RemoveArgs, StateCommand, StateWrite, StepCommand, SwitchArgs,
@@ -140,7 +140,21 @@ pub(crate) fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
 fn warn_select_deprecated() {
     eprintln!(
         "{}",
-        warning_message("wt select is deprecated; use wt switch instead")
+        warning_message(cformat!(
+            "wt select is deprecated; use <bold>wt switch</> instead"
+        ))
+    );
+}
+
+/// Emit the deprecation notice for a `wt config state` subcommand that has
+/// moved under `wt config state cache` (ci-status, hints, previous-branch).
+/// These still work — the warning nudges callers toward `cache`.
+fn warn_state_subcommand_deprecated(name: &str) {
+    eprintln!(
+        "{}",
+        warning_message(cformat!(
+            "wt config state {name} is deprecated; use <bold>wt config state cache</> instead"
+        ))
     );
 }
 
@@ -152,7 +166,9 @@ fn warn_select_deprecated() {
 pub(crate) fn warn_no_verify_deprecated() {
     eprintln!(
         "{}",
-        warning_message("--no-verify is deprecated; use --no-hooks instead")
+        warning_message(cformat!(
+            "--no-verify is deprecated; use <bold>--no-hooks</> instead"
+        ))
     );
 }
 
@@ -167,7 +183,9 @@ fn handle_hook_command(action: HookCommand, yes: bool) -> anyhow::Result<()> {
         HookCommand::Approvals { action } => {
             eprintln!(
                 "{}",
-                warning_message("wt hook approvals is deprecated; use wt config approvals instead")
+                warning_message(cformat!(
+                    "wt hook approvals is deprecated; use <bold>wt config approvals</> instead"
+                ))
             );
             match action {
                 ApprovalsCommand::Add { all } => add_approvals(all),
@@ -437,8 +455,17 @@ fn guard_format_on_write(action_name: &str, format: SwitchFormat) -> anyhow::Res
     Err(enhance_clap_error(err))
 }
 
-fn handle_state_command(action: StateCommand) -> anyhow::Result<()> {
+fn handle_state_command(action: StateCommand, yes: bool) -> anyhow::Result<()> {
     match action {
+        StateCommand::Cache { action, format } => {
+            if let Some(verb) = action.as_ref().and_then(StateWrite::write_verb) {
+                guard_format_on_write(verb, format)?;
+            }
+            match action {
+                Some(CacheAction::Get) | None => handle_cache_get(format),
+                Some(CacheAction::Clear) => handle_cache_clear(),
+            }
+        }
         StateCommand::DefaultBranch { action } => match action {
             Some(DefaultBranchAction::Get) | None => {
                 handle_state_get("default-branch", None, SwitchFormat::Text)
@@ -448,16 +475,22 @@ fn handle_state_command(action: StateCommand) -> anyhow::Result<()> {
             }
             Some(DefaultBranchAction::Clear) => handle_state_clear("default-branch", None, false),
         },
-        StateCommand::PreviousBranch { action } => match action {
-            Some(PreviousBranchAction::Get) | None => {
-                handle_state_get("previous-branch", None, SwitchFormat::Text)
+        StateCommand::PreviousBranch { action } => {
+            warn_state_subcommand_deprecated("previous-branch");
+            match action {
+                Some(PreviousBranchAction::Get) | None => {
+                    handle_state_get("previous-branch", None, SwitchFormat::Text)
+                }
+                Some(PreviousBranchAction::Set { branch }) => {
+                    handle_state_set("previous-branch", branch, None)
+                }
+                Some(PreviousBranchAction::Clear) => {
+                    handle_state_clear("previous-branch", None, false)
+                }
             }
-            Some(PreviousBranchAction::Set { branch }) => {
-                handle_state_set("previous-branch", branch, None)
-            }
-            Some(PreviousBranchAction::Clear) => handle_state_clear("previous-branch", None, false),
-        },
+        }
         StateCommand::CiStatus { action, format } => {
+            warn_state_subcommand_deprecated("ci-status");
             if let Some(verb) = action.as_ref().and_then(StateWrite::write_verb) {
                 guard_format_on_write(verb, format)?;
             }
@@ -496,6 +529,7 @@ fn handle_state_command(action: StateCommand) -> anyhow::Result<()> {
             }
         }
         StateCommand::Hints { action, format } => {
+            warn_state_subcommand_deprecated("hints");
             if let Some(verb) = action.as_ref().and_then(StateWrite::write_verb) {
                 guard_format_on_write(verb, format)?;
             }
@@ -516,7 +550,7 @@ fn handle_state_command(action: StateCommand) -> anyhow::Result<()> {
             }
         },
         StateCommand::Get { format } => handle_state_show(format),
-        StateCommand::Clear => handle_state_clear_all(),
+        StateCommand::Clear => handle_state_clear_all(yes),
     }
 }
 
@@ -587,7 +621,7 @@ fn handle_config_command(action: ConfigCommand, yes: bool) -> anyhow::Result<()>
             ConfigAliasCommand::DryRun { name, args } => handle_alias_dry_run(name, args),
         },
         ConfigCommand::Plugins { action } => handle_plugins_command(action, yes),
-        ConfigCommand::State { action } => handle_state_command(action),
+        ConfigCommand::State { action } => handle_state_command(action, yes),
     }
 }
 

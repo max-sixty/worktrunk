@@ -5,7 +5,7 @@ info:
   args:
     - config
     - state
-    - previous-branch
+    - cache
     - "--help"
   env:
     CLICOLOR_FORCE: "1"
@@ -38,18 +38,21 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-wt config state previous-branch - Previous branch (for [1mwt switch -[0m)
+wt config state cache - Regenerable caches
 
-Usage: [1m[36mwt config state previous-branch[0m [36m[OPTIONS][0m [36m[COMMAND][0m
+Usage: [1m[36mwt config state cache[0m [36m[OPTIONS][0m [36m[COMMAND][0m
 
 [1m[32mCommands:[0m
-  [1m[36mget[0m    Get the previous branch
-  [1m[36mset[0m    Set the previous branch
-  [1m[36mclear[0m  Clear the previous branch
+  [1m[36mget[0m    Show cache contents
+  [1m[36mclear[0m  Drop all caches
 
 [1m[32mOptions:[0m
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
+
+[1m[32mOutput:[0m
+      [1m[36m--format[0m[36m [0m[36m<FORMAT>[0m
+          Output format (text, json) [default: text]
 
 [1m[32mGlobal Options:[0m
   [1m[36m-C[0m[36m [0m[36m<path>[0m
@@ -64,14 +67,26 @@ Usage: [1m[36mwt config state previous-branch[0m [36m[OPTIONS][0m [36m[COM
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
 
-[1mDeprecated[0m — the previous branch is now part of [2mwt config state cache[0m. This subcommand still works but prints a deprecation notice.
+View or drop worktrunk's regenerable caches in one place. Everything here is rebuilt on demand — clearing only forces recomputation, never data loss.
 
-Enables [2mwt switch -[0m to return to the previous worktree, similar to [2mcd -[0m or [2mgit checkout -[0m.
+[1m[32mWhat's cached[0m
 
-[1m[32mHow it works[0m
+- [1mCI status[0m — GitHub/GitLab CI per branch (30–60s TTL), shown in [2mwt list[0m
+- [1mSummaries[0m — LLM-generated branch summaries ([2mwt list --full[0m, [2mwt switch[0m preview)
+- [1mGit commands[0m — SHA-keyed disk caches: merge-tree, ancestry, diff-stats, and [2mwt switch[0m preview renders
+- [1mHints[0m — one-time hints already shown in this repo
+- [1mPrevious branch[0m — the [2mwt switch -[0m target, re-recorded on the next switch
 
-Updated automatically on every [2mwt switch[0m. Stored in git config as [2mworktrunk.history[0m.
+[2mcache clear[0m drops all of the above with no prompt. It re-shows one-time hints and forgets the [2mwt switch -[0m target until the next switch — both repopulate on their own.
 
-Without a subcommand, runs [2mget[0m. Use [2mset[0m to override or [2mclear[0m to reset.
+Without a subcommand, runs [2mget[0m.
+
+[1m[32mExamples[0m
+
+Show cache contents:
+[107m [0m [2m[0m[2m[34mwt[0m[2m config state cache[0m
+
+Drop all caches:
+[107m [0m [2m[0m[2m[34mwt[0m[2m config state cache clear[0m
 
 ----- stderr -----

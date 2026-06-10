@@ -4,7 +4,7 @@ mod list;
 mod step;
 
 pub(crate) use config::{
-    ApprovalsCommand, CiStatusAction, ConfigAliasCommand, ConfigCommand,
+    ApprovalsCommand, CacheAction, CiStatusAction, ConfigAliasCommand, ConfigCommand,
     ConfigPluginsClaudeCommand, ConfigPluginsCodexCommand, ConfigPluginsCommand,
     ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction, HintsAction, LogsAction,
     MarkerAction, PreviousBranchAction, StateCommand, StateWrite, VarsAction,
