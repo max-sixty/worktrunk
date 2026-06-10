@@ -7,6 +7,37 @@ use dashmap::mapref::entry::Entry;
 
 use super::{DiffStats, LineDiff, Repository};
 
+/// Subject and body for one commit in a range.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct CommitMessageDetail {
+    /// Commit subject from git's `%s` pretty format.
+    pub subject: String,
+    /// Commit body from git's `%b` pretty format, including trailer-like lines.
+    pub body: String,
+}
+
+fn parse_commit_message_details_output(output: &str) -> anyhow::Result<Vec<CommitMessageDetail>> {
+    if output.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let parts = output.split('\0').collect::<Vec<_>>();
+    if parts.len() % 2 != 0 {
+        bail!(
+            "Malformed git log output: expected NUL-separated subject/body pairs, got {} field(s)",
+            parts.len()
+        );
+    }
+
+    Ok(parts
+        .chunks_exact(2)
+        .map(|pair| CommitMessageDetail {
+            subject: pair[0].to_string(),
+            body: pair[1].to_string(),
+        })
+        .collect())
+}
+
 impl Repository {
     /// Count commits between base and head.
     pub fn count_commits(&self, base: &str, head: &str) -> anyhow::Result<usize> {
@@ -112,16 +143,21 @@ impl Repository {
         Ok(result)
     }
 
-    /// Get commit subjects (first line of commit message) from a range.
-    pub fn commit_subjects(&self, range: &str) -> anyhow::Result<Vec<String>> {
+    /// Get commit subjects and bodies from a range.
+    pub fn commit_message_details(&self, range: &str) -> anyhow::Result<Vec<CommitMessageDetail>> {
+        // Git pretty-format placeholders:
+        // - `%s`: subject
+        // - `%x00`: literal NUL delimiter
+        // - `%b`: body as Git reports it; trailer-like lines remain part of this text
         let output = self.run_command(&[
             "log",
+            "-z",
             "--no-show-signature",
-            "--format=%s",
+            "--pretty=format:%s%x00%b",
             "--end-of-options",
             range,
         ])?;
-        Ok(output.lines().map(String::from).collect())
+        parse_commit_message_details_output(&output)
     }
 
     /// Get recent commit subjects for style reference.
@@ -367,5 +403,18 @@ impl Repository {
             .ok()
             .map(|output| DiffStats::from_shortstat(&output).format_summary())
             .unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn parse_commit_message_details_output_rejects_odd_field_count() {
+        let err =
+            super::parse_commit_message_details_output("subject\0body\0dangling").unwrap_err();
+        assert!(
+            err.to_string().contains("subject/body pairs"),
+            "unexpected error: {err}"
+        );
     }
 }

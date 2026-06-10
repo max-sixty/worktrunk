@@ -50,8 +50,12 @@ pub struct ScanResult {
     pub skipped: Vec<(Shell, PathBuf)>, // Shell + first path that was checked
     /// Zsh was configured but compinit is missing (completions won't work without it)
     pub zsh_needs_compinit: bool,
-    /// Legacy files that were cleaned up (e.g., fish conf.d/wt.fish -> functions/wt.fish migration)
-    pub legacy_cleanups: Vec<PathBuf>,
+    /// Legacy/stranded files cleaned up during install, paired with the shell
+    /// they belong to so the display can name the canonical replacement.
+    /// Covers the fish `conf.d/wt.fish` → `functions/wt.fish` migration (#566)
+    /// and the nushell `<config-dir>/vendor/autoload` → `<data-dir>/vendor/autoload`
+    /// move (#2878).
+    pub legacy_cleanups: Vec<(Shell, PathBuf)>,
 }
 
 pub struct CompletionResult {
@@ -120,14 +124,25 @@ fn is_worktrunk_managed_content(content: &str, cmd: &str) -> bool {
     content.contains(&format!("{cmd} config shell init")) && content.contains("| source")
 }
 
+/// Check if a Nushell wrapper file is worktrunk-managed.
+///
+/// The Nushell wrapper is a complete autoload file (not a `source` line), so it
+/// carries no `config shell init` marker. Every version worktrunk has shipped
+/// opens with this header comment, which a user's own `wt.nu` would not — so it
+/// is a safe signal that the file is ours to remove during stranded-file
+/// cleanup (issue #2878).
+fn is_worktrunk_managed_nushell(content: &str) -> bool {
+    content.contains("worktrunk shell integration for nushell")
+}
+
 /// Clean up legacy fish conf.d file after installing to functions/
 ///
 /// Previously, fish shell integration was installed to `~/.config/fish/conf.d/{cmd}.fish`.
 /// This caused issues with Homebrew PATH setup (see issue #566). We now install to
 /// `functions/{cmd}.fish` instead. This function removes the legacy file if it exists.
 ///
-/// Returns the paths of files that were cleaned up.
-fn cleanup_legacy_fish_conf_d(configured: &[ConfigureResult], cmd: &str) -> Vec<PathBuf> {
+/// Returns the paths of files that were cleaned up, each paired with `Shell::Fish`.
+fn cleanup_legacy_fish_conf_d(configured: &[ConfigureResult], cmd: &str) -> Vec<(Shell, PathBuf)> {
     let mut cleaned = Vec::new();
 
     // Clean up if fish was part of the install (regardless of whether it already existed)
@@ -160,7 +175,7 @@ fn cleanup_legacy_fish_conf_d(configured: &[ConfigureResult], cmd: &str) -> Vec<
 
     match fs::remove_file(&legacy_path) {
         Ok(()) => {
-            cleaned.push(legacy_path);
+            cleaned.push((Shell::Fish, legacy_path));
         }
         Err(e) => {
             // Warn but don't fail - the new integration will still work
@@ -171,6 +186,59 @@ fn cleanup_legacy_fish_conf_d(configured: &[ConfigureResult], cmd: &str) -> Vec<
                     format_path_for_display(&legacy_path)
                 ))
             );
+        }
+    }
+
+    cleaned
+}
+
+/// Clean up Nushell wrapper files stranded at legacy autoload locations.
+///
+/// Older worktrunk installed the wrapper under `<config-dir>/vendor/autoload`,
+/// which Nushell never autoloads (issue #2878). After installing to the correct
+/// vendor-autoload dir (`<data-dir>/vendor/autoload`), this removes any
+/// worktrunk-managed wrapper left at the other candidate paths so a stale,
+/// never-loaded copy isn't left behind.
+///
+/// Returns the paths removed, each paired with `Shell::Nushell`.
+fn cleanup_stranded_nushell(configured: &[ConfigureResult], cmd: &str) -> Vec<(Shell, PathBuf)> {
+    let mut cleaned = Vec::new();
+
+    // Only act if nushell was part of this install.
+    let Some(nu_result) = configured.iter().find(|r| r.shell == Shell::Nushell) else {
+        return cleaned;
+    };
+    // The canonical write target — never remove this one.
+    let canonical = &nu_result.path;
+
+    let Ok(candidates) = Shell::Nushell.config_paths(cmd) else {
+        return cleaned;
+    };
+
+    for path in candidates {
+        if &path == canonical || !path.exists() {
+            continue;
+        }
+        // Only remove files that are clearly worktrunk's, to avoid deleting a
+        // user's own `wt.nu`.
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        if !is_worktrunk_managed_nushell(&content) {
+            continue;
+        }
+        match fs::remove_file(&path) {
+            Ok(()) => cleaned.push((Shell::Nushell, path)),
+            Err(e) => {
+                // Warn but don't fail - the new integration still works.
+                eprintln!(
+                    "{}",
+                    warning_message(color_print::cformat!(
+                        "Failed to remove deprecated <bold>{}</>: {e}",
+                        format_path_for_display(&path)
+                    ))
+                );
+            }
         }
     }
 
@@ -225,7 +293,8 @@ pub fn handle_configure_shell(
     // If nothing needs to be changed, still clean up legacy fish conf.d files
     // A user might have upgraded and have both functions/wt.fish and conf.d/wt.fish
     if !needs_shell_changes && !needs_completion_changes {
-        let legacy_cleanups = cleanup_legacy_fish_conf_d(&preview.configured, &cmd);
+        let mut legacy_cleanups = cleanup_legacy_fish_conf_d(&preview.configured, &cmd);
+        legacy_cleanups.extend(cleanup_stranded_nushell(&preview.configured, &cmd));
         return Ok(ScanResult {
             configured: preview.configured,
             completion_results: completion_preview,
@@ -281,8 +350,10 @@ pub fn handle_configure_shell(
     let zsh_needs_compinit = should_check_compinit && shell::detect_zsh_compinit() == Some(false);
 
     // Clean up legacy fish conf.d file if we just installed to functions/
-    // This handles migration from the old conf.d location (issue #566)
-    let legacy_cleanups = cleanup_legacy_fish_conf_d(&result.configured, &cmd);
+    // (issue #566), plus any nushell wrapper stranded at a legacy autoload
+    // location (issue #2878).
+    let mut legacy_cleanups = cleanup_legacy_fish_conf_d(&result.configured, &cmd);
+    legacy_cleanups.extend(cleanup_stranded_nushell(&result.configured, &cmd));
 
     Ok(ScanResult {
         configured: result.configured,
@@ -382,7 +453,18 @@ pub fn scan_shell_configs(
         let allow_create = shell_filter.is_some() || in_detected_shell;
 
         if should_configure {
-            let path = target_path.or_else(|| paths.first());
+            // Wrapper-based shells (Fish, Nushell) always write to the canonical
+            // location (`paths.first()`), never to whichever candidate happens to
+            // exist. For Nushell that matters: a wrapper stranded at a legacy
+            // `<config-dir>/vendor/autoload` path (issue #2878) must not become
+            // the write target — install writes the correct vendor-autoload path
+            // and `cleanup_stranded_nushell` removes the stale copy. Eval-based
+            // shells keep using the first existing config file.
+            let path = if shell.is_wrapper_based() {
+                paths.first()
+            } else {
+                target_path.or_else(|| paths.first())
+            };
             if let Some(path) = path {
                 match configure_shell_file(shell, path, dry_run, allow_create, cmd) {
                     Ok(Some(result)) => results.push(result),

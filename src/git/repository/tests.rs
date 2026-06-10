@@ -785,6 +785,45 @@ fn commit_details_many_deduplicates_repeated_sha() {
 }
 
 #[test]
+fn commit_message_details_returns_subjects_and_bodies_in_git_order() {
+    use super::CommitMessageDetail;
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::new();
+    test.commit_with_message("base");
+
+    test.commit_in_worktree(
+        test.root_path(),
+        "first.txt",
+        "first content",
+        "first subject\n\nline 1\nline 2\n\nTrailer: value",
+    );
+    test.commit_in_worktree(
+        test.root_path(),
+        "second.txt",
+        "second content",
+        "second subject",
+    );
+
+    let range = "HEAD~2..HEAD";
+    let result = test.repo.commit_message_details(range).unwrap();
+
+    assert_eq!(
+        result,
+        vec![
+            CommitMessageDetail {
+                subject: "second subject".to_string(),
+                body: String::new(),
+            },
+            CommitMessageDetail {
+                subject: "first subject".to_string(),
+                body: "line 1\nline 2\n\nTrailer: value\n".to_string(),
+            },
+        ]
+    );
+}
+
+#[test]
 #[cfg(unix)]
 fn worktree_at_path_resolves_symlinked_path() {
     // Reproduction for issue #2460: `wt switch` fails to resolve existing

@@ -1,10 +1,11 @@
 ---
-source: tests/integration_tests/list.rs
+source: tests/integration_tests/merge.rs
 info:
   program: wt
   args:
-    - merge
-    - main
+    - step
+    - squash
+    - "--show-prompt"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -15,7 +16,6 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_DIR: ""
-    GIT_EDITOR: ""
     GIT_INDEX_FILE: ""
     GIT_OBJECT_DIRECTORY: ""
     GIT_TERMINAL_PROMPT: "0"
@@ -33,9 +33,7 @@ info:
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
-    WORKTRUNK_COMMIT__GENERATION__COMMAND: "cat >/dev/null && echo 'Add authentication module'"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
-    WORKTRUNK_DIRECTIVE_CD_FILE: "[DIRECTIVE_CD_FILE]"
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
@@ -55,16 +53,29 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+Combine these 5 commits into one message:
+- Add empty-body change
+- Describe body
+  Body line
+- Describe multiline body
+  First body line
+  Second body line
+
+  Third body line
+- Describe multiline body
+  - First line
+  - Second line
+- Keep trailer-like text
+  Implements the workflow.
+
+  Refs: #123
+
+<diff>
+ empty_body.txt     | 1 +
+ multiline_body.txt | 1 +
+ trailer_body.txt   | 1 +
+ with_body.txt      | 1 +
+ 4 files changed, 4 insertions(+)
+</diff>
 
 ----- stderr -----
-[36m◎[39m [36mGenerating commit message and committing changes... [90m(2 files, [32m+53[39m, no squashing needed[39m[90m)[39m[39m
-[107m [0m [1mAdd authentication module[22m
-[32m✓[39m [32mCommitted changes @ [2m[HASH][22m[39m
-[36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2m[HASH][22m (no rebase needed)[39m
-[107m [0m * [33m[HASH][m Add authentication module
-[107m [0m  auth.rs | 51 [32m+++++++++++++++++++++++++++++++++++++++++++++++++++[m
-[107m [0m  lib.rs  |  2 [32m++[m
-[107m [0m  2 files changed, 53 insertions(+)
-[32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 2 files, [32m+53[39m[39m[90m)[39m[39m
-[36m◎[39m [36mRemoving [1mfeature-auth[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
-[2m○[22m Switched to worktree for [1mmain[22m @ [1m_REPO_[22m

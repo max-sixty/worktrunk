@@ -1,10 +1,8 @@
 use crate::common::{
-    DAY, HOUR, MINUTE, TestRepo, list_snapshots, make_snapshot_cmd,
-    mock_commands::create_mock_llm_quickstart, repo, repo_with_remote,
+    DAY, HOUR, MINUTE, TestRepo, list_snapshots, make_snapshot_cmd, repo, repo_with_remote,
     setup_snapshot_settings_for_paths, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
-use path_slash::PathExt as _;
 use rstest::rstest;
 
 /// Creates worktrees with specific timestamps for ordering tests.
@@ -2170,25 +2168,16 @@ mod tests {
         .join(".wt-directive-temp");
     std::fs::write(&directive_file, "").unwrap();
 
-    // Create a cross-platform mock LLM command (uses mock-stub binary system)
-    // The mock-bin directory is already created by setup_mock_gh() via the repo fixture
-    let mock_bin_dir = repo.root_path().parent().unwrap().join("mock-bin");
-    create_mock_llm_quickstart(&mock_bin_dir);
-
-    // Configure the LLM path (Windows needs .exe extension)
-    let llm_name = if cfg!(windows) { "llm.exe" } else { "llm" };
-    let llm_path = mock_bin_dir.join(llm_name);
-
     // Merge feature-auth into main
     assert_cmd_snapshot!("quickstart_merge", {
         let mut cmd = make_snapshot_cmd(&repo, "merge", &["main"], Some(&feature_auth));
         cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", &directive_file);
-        // Set MOCK_CONFIG_DIR so mock-stub can find llm.json
-        cmd.env("MOCK_CONFIG_DIR", &mock_bin_dir);
-        // Use to_slash_lossy() for Windows compatibility - bash can't handle backslash paths
+        // Inline generation command (the suite's standard mock): a binary
+        // path here would bake the per-test temp dir into the snapshot's
+        // env block, which redactions don't cover for this key.
         cmd.env(
             "WORKTRUNK_COMMIT__GENERATION__COMMAND",
-            llm_path.to_slash_lossy().as_ref(),
+            "cat >/dev/null && echo 'Add authentication module'",
         );
         cmd
     });
@@ -3257,9 +3246,8 @@ fn test_list_nested_worktree_json_is_current(mut repo: TestRepo) {
 #[test]
 fn test_list_empty_repo() {
     let repo = TestRepo::empty();
-    let guard =
+    let _settings_guard =
         setup_snapshot_settings_for_paths(repo.root_path(), &repo.worktrees).bind_to_scope();
-    std::mem::forget(guard);
     // Pre-set default branch so the unborn-HEAD case has something to resolve to
     repo.run_git(&["config", "worktrunk.default-branch", "main"]);
     // Should show the branch with empty commit columns and no errors
@@ -3521,5 +3509,63 @@ fn test_list_integrated_when_squash_merged_on_remote_with_local_diverged(
     assert_eq!(
         feature["main_state"], "integrated",
         "main_state must be \"integrated\" — instead got entry: {feature}"
+    );
+}
+
+/// Regression: `wt list` against a worktree whose `<gitdir>/index` file is
+/// absent must not surface `working-tree-conflicts (Failed to copy index
+/// file)`. A missing index is semantically empty (nothing staged), so the
+/// conflict probe should compute against the working tree as if the real
+/// index were empty.
+#[rstest]
+fn test_list_tolerates_missing_index(mut repo: TestRepo) {
+    std::fs::write(repo.root_path().join("shared.txt"), "original").unwrap();
+    repo.commit("Initial commit");
+
+    let feature = repo.add_worktree("feature");
+
+    // Dirty the worktree so WorkingTreeConflictsTask exercises the temp-index path.
+    std::fs::write(feature.join("shared.txt"), "feature changes").unwrap();
+    std::fs::write(feature.join("untracked.txt"), "extra\n").unwrap();
+
+    // Delete the worktree's index file — the state the dispatching session
+    // observed across 37 of 38 user worktrees. The linked worktree's gitdir
+    // is recorded in its `.git` pointer file (`gitdir: <abs path>`).
+    let dot_git = std::fs::read_to_string(feature.join(".git")).unwrap();
+    let feature_gitdir = std::path::PathBuf::from(
+        dot_git
+            .trim()
+            .strip_prefix("gitdir: ")
+            .expect("worktree .git points at a gitdir")
+            .trim(),
+    );
+    let feature_index = feature_gitdir.join("index");
+    std::fs::remove_file(&feature_index).unwrap();
+    assert!(
+        !feature_index.exists(),
+        "precondition: feature index removed"
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--full"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}{stderr}");
+
+    assert!(
+        !combined.contains("Failed to copy index file"),
+        "missing index must not surface as a copy error.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        !combined.contains("working-tree-conflicts ("),
+        "missing index must not produce a working-tree-conflicts task error.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        !feature_index.exists(),
+        "wt list must not resurrect the real index"
     );
 }

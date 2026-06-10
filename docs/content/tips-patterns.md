@@ -105,7 +105,7 @@ docker run -d --rm \
 db-stop = "docker stop {{ vars.container }} 2>/dev/null || true"
 ```
 
-The first pipeline step derives values from the branch and stores them as vars. The second step references `{{ vars.container }}` and `{{ vars.port }}` — expanded at execution time, after the vars are set. `post-remove` reads the same vars to stop the container.
+The first pipeline step derives values from the branch and stores them as vars. The second step references `{{ vars.container }}` and `{{ vars.port }}` — expanded at execution time, after the vars are set. `pre-remove` reads the same vars to stop the container.
 
 The `('db-' ~ branch)` concatenation hashes differently than plain `branch`, so database and dev server ports don't collide. The `sanitize_db` filter produces database-safe identifiers (lowercase, underscores, no leading digits, with a short hash suffix).
 
@@ -206,6 +206,8 @@ Worktrunk maintains useful state. Default branch [detection](@/config.md#wt-conf
 
 {{ terminal(cmd="git rebase $(wt config state default-branch)") }}
 
+In hooks and aliases, the same value is the `{{ default_branch }}` [template variable](@/hook.md#template-variables); reserve this command for plain shell scripts.
+
 ## Task runners in hooks
 
 Reference Taskfile/Justfile/Makefile in hooks:
@@ -232,7 +234,7 @@ test = "npm test"
 build = "npm run build"
 ```
 
-`pre-commit` runs on every squash commit during `wt merge`; `pre-merge` runs once per merge after the rebase, so it's the right place for the slow tests.
+`pre-commit` runs during `wt merge`, before the squash commit; `pre-merge` runs once per merge after the rebase, so it's the right place for the slow tests.
 
 ## Target-specific hooks
 
@@ -314,7 +316,7 @@ tmux = "tmux kill-session -t {{ branch | sanitize }} 2>/dev/null || true"
 To create a worktree and immediately attach:
 
 {% terminal() %}
-<span class="cmd">wt switch --create feature -x 'tmux attach -t {{ branch | sanitize }}'</span>
+<span class="cmd">wt switch --create feature -x tmux -- attach -t '{{ branch | sanitize }}'</span>
 {% end %}
 
 ## cmux workspace per worktree

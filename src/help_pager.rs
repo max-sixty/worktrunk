@@ -135,12 +135,36 @@ fn pipe_through_pager(pager_cmd: &str, help_text: &str) -> std::io::Result<()> {
 /// Returns flags suitable for setting LESS env var when spawning less.
 /// Ensures F (quit if one screen), R (colors), X (no termcap init) are always active.
 fn compute_less_flags(user_less: Option<&str>) -> String {
-    format!("{} -FRX", user_less.unwrap_or_default())
+    compute_less_flags_for(user_less, cfg!(windows))
+}
+
+/// Platform-parameterized core of [`compute_less_flags`], split out so both
+/// branches are testable on any host.
+///
+/// On Windows we additionally pass `-K` (`--quit-on-intr`) so that pressing
+/// Ctrl-C makes `less` exit cleanly — running its normal deinit that restores
+/// the console input mode — instead of returning to its own prompt. `wt` has
+/// no Windows console Ctrl-C handler (signal forwarding is Unix-only, see
+/// `signal_forwarder.rs`), so a Ctrl-C otherwise terminates both `less` and
+/// the blocked `wt` parent before the console mode is restored, leaving the
+/// terminal wedged (#2968). `-K` routes Ctrl-C through the same clean-exit
+/// path as quitting with `q`, which restores the terminal correctly.
+///
+/// `-K` is Windows-only on purpose: on Unix the signal forwarder coordinates a
+/// clean teardown, and many users rely on Ctrl-C returning `less` to its
+/// prompt rather than quitting.
+fn compute_less_flags_for(user_less: Option<&str>, windows: bool) -> String {
+    let base = user_less.unwrap_or_default();
+    if windows {
+        format!("{base} -FRX -K")
+    } else {
+        format!("{base} -FRX")
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_less_flags, parse_pager_value};
+    use super::{compute_less_flags_for, parse_pager_value};
 
     /// `cat > /dev/null` exercises the full spawn → write → wait path with a
     /// stand-in pager that always succeeds. Covers every line of
@@ -171,31 +195,49 @@ mod tests {
     #[test]
     fn test_compute_less_flags_empty() {
         // Leading space is fine - less ignores it
-        assert_eq!(compute_less_flags(None), " -FRX");
-        assert_eq!(compute_less_flags(Some("")), " -FRX");
+        assert_eq!(compute_less_flags_for(None, false), " -FRX");
+        assert_eq!(compute_less_flags_for(Some(""), false), " -FRX");
     }
 
     #[test]
     fn test_compute_less_flags_short_options() {
         // Common case: user has -R (oh-my-zsh default)
-        assert_eq!(compute_less_flags(Some("-R")), "-R -FRX");
+        assert_eq!(compute_less_flags_for(Some("-R"), false), "-R -FRX");
         // User has multiple short flags
-        assert_eq!(compute_less_flags(Some("-iMRS")), "-iMRS -FRX");
+        assert_eq!(compute_less_flags_for(Some("-iMRS"), false), "-iMRS -FRX");
     }
 
     #[test]
     fn test_compute_less_flags_long_options() {
         // Issue #594: --mouse must not become --mouseFRX
-        assert_eq!(compute_less_flags(Some("--mouse")), "--mouse -FRX");
+        assert_eq!(
+            compute_less_flags_for(Some("--mouse"), false),
+            "--mouse -FRX"
+        );
         // Multiple long options
         assert_eq!(
-            compute_less_flags(Some("--mouse --shift=4")),
+            compute_less_flags_for(Some("--mouse --shift=4"), false),
             "--mouse --shift=4 -FRX"
         );
     }
 
     #[test]
     fn test_compute_less_flags_mixed() {
-        assert_eq!(compute_less_flags(Some("-R --mouse")), "-R --mouse -FRX");
+        assert_eq!(
+            compute_less_flags_for(Some("-R --mouse"), false),
+            "-R --mouse -FRX"
+        );
+    }
+
+    #[test]
+    fn test_compute_less_flags_windows_appends_quit_on_intr() {
+        // #2968: on Windows we add -K so Ctrl-C makes less exit cleanly and
+        // restore the console, instead of wedging the terminal.
+        assert_eq!(compute_less_flags_for(None, true), " -FRX -K");
+        assert_eq!(compute_less_flags_for(Some("-R"), true), "-R -FRX -K");
+        assert_eq!(
+            compute_less_flags_for(Some("--mouse"), true),
+            "--mouse -FRX -K"
+        );
     }
 }

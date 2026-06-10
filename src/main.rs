@@ -383,7 +383,11 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
             }
             Ok(())
         }
-        StepCommand::Diff { target, extra_args } => step_diff(target.as_deref(), &extra_args),
+        StepCommand::Diff {
+            target,
+            branch,
+            extra_args,
+        } => step_diff(branch.as_deref(), target.as_deref(), &extra_args),
         StepCommand::CopyIgnored {
             from,
             to,

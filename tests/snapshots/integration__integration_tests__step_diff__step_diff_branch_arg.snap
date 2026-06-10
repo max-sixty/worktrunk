@@ -1,10 +1,12 @@
 ---
-source: tests/integration_tests/list.rs
+source: tests/integration_tests/step_diff.rs
 info:
   program: wt
   args:
-    - merge
-    - main
+    - step
+    - diff
+    - "--branch"
+    - feature
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -33,9 +35,7 @@ info:
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
-    WORKTRUNK_COMMIT__GENERATION__COMMAND: "cat >/dev/null && echo 'Add authentication module'"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
-    WORKTRUNK_DIRECTIVE_CD_FILE: "[DIRECTIVE_CD_FILE]"
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
@@ -55,16 +55,13 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+diff --git a/feature.txt b/feature.txt
+new file mode 100644
+index 0000000..47a4d0c
+--- /dev/null
++++ b/feature.txt
+@@ -0,0 +1 @@
++feature content
+\ No newline at end of file
 
 ----- stderr -----
-[36m◎[39m [36mGenerating commit message and committing changes... [90m(2 files, [32m+53[39m, no squashing needed[39m[90m)[39m[39m
-[107m [0m [1mAdd authentication module[22m
-[32m✓[39m [32mCommitted changes @ [2m[HASH][22m[39m
-[36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2m[HASH][22m (no rebase needed)[39m
-[107m [0m * [33m[HASH][m Add authentication module
-[107m [0m  auth.rs | 51 [32m+++++++++++++++++++++++++++++++++++++++++++++++++++[m
-[107m [0m  lib.rs  |  2 [32m++[m
-[107m [0m  2 files changed, 53 insertions(+)
-[32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 2 files, [32m+53[39m[39m[90m)[39m[39m
-[36m◎[39m [36mRemoving [1mfeature-auth[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
-[2m○[22m Switched to worktree for [1mmain[22m @ [1m_REPO_[22m

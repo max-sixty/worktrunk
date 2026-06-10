@@ -33,7 +33,7 @@ eval "$(wt config shell init zsh)"
 
 Nushell [experimental] — save to vendor autoload directory:
 ```console
-$ wt config shell init nu | save -f ($nu.default-config-dir | path join vendor/autoload/wt.nu)
+$ wt config shell init nu | save -f ($nu.vendor-autoload-dirs | last | path join wt.nu)
 ```"#
     )]
     Init {
@@ -758,7 +758,11 @@ $ wt config state cache clear
 $ git rebase $(wt config state default-branch)
 ```
 
+In a hook or alias template, prefer the `{{ default_branch }}` [template variable](@/hook.md#template-variables); `$(wt config state default-branch)` is for plain shell scripts.
+
 Without a subcommand, runs `get`. Use `set` to override, or `clear` then `get` to re-detect.
+
+`default-branch get` resolves the value and caches it on a miss; the aggregate `wt config state get` only reports the cache (read-only), so it can show `(none)` until something populates it.
 
 ## Detection
 
@@ -775,7 +779,9 @@ The local inference fallback uses these heuristics in order:
 - If only one local branch exists, uses it
 - For bare repos or empty repos, checks `symbolic-ref HEAD`
 - Checks `git config init.defaultBranch`
-- Looks for common names: `main`, `master`, `develop`, `trunk`"#
+- Looks for common names: `main`, `master`, `develop`, `trunk`
+
+If none of these match, detection fails; set it explicitly with `wt config state default-branch set BRANCH`."#
     )]
     DefaultBranch {
         #[command(subcommand)]
@@ -909,6 +915,7 @@ as `worktrunk.hints.<name>`, a count of times the hint has been shown.
 | Name | Trigger | Message |
 |------|---------|---------|
 | `worktree-path` | First `wt switch --create` | Customize worktree locations: wt config create |
+| `skip-bare-repo-prompt` | Declining the bare-repo worktree-path prompt | Records the opt-out (no message shown) |
 
 ## Examples
 

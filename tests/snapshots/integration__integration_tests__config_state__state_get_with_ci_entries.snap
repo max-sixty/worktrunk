@@ -3,7 +3,7 @@ source: tests/integration_tests/config_state.rs
 expression: "String::from_utf8_lossy(&output.stdout)"
 ---
 [36mDEFAULT BRANCH[39m
-[107m [0m main
+[107m [0m (none)
 
 [36mPREVIOUS BRANCH[39m
 [107m [0m (none)

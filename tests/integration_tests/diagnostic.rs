@@ -360,6 +360,43 @@ fn test_vv_splits_full_and_bounded_output(repo: TestRepo) {
     );
 }
 
+/// Control bytes in captured subprocess output must be escaped on the
+/// human-facing routes (stderr + `trace.log`) but kept verbatim in
+/// `subprocess.log`. `wt list` runs `git for-each-ref --format=…%00…`
+/// (`LOCAL_BRANCH_FORMAT`), so its captured stdout carries NUL bytes between
+/// fields — a real instance of the bytes that, left raw, make `diagnostic.md`
+/// sniff as binary and break its `gh gist create` upload (issue #2988).
+#[rstest]
+fn test_vv_escapes_control_bytes_in_trace_not_subprocess(repo: TestRepo) {
+    repo.wt_command().args(["list", "-vv"]).output().unwrap();
+
+    let logs_dir = repo.root_path().join(".git").join("wt/logs");
+    let trace = fs::read_to_string(logs_dir.join("trace.log")).unwrap();
+    let subprocess = fs::read_to_string(logs_dir.join("subprocess.log")).unwrap();
+    let diagnostic = fs::read_to_string(logs_dir.join("diagnostic.md")).unwrap();
+
+    // subprocess.log is the raw byte stream — NUL survives verbatim.
+    assert!(
+        subprocess.contains('\u{0}'),
+        "subprocess.log should keep raw NUL bytes from for-each-ref output"
+    );
+    // The bounded preview in trace.log is escaped: visible `\0`, no raw NUL.
+    assert!(
+        trace.contains(r"\0"),
+        "trace.log should render NUL as the escaped `\\0`"
+    );
+    assert!(
+        !trace.contains('\u{0}'),
+        "trace.log must not carry raw NUL bytes (would sniff as binary)"
+    );
+    // diagnostic.md inlines trace.log plus config / worktree list — the upload
+    // boundary must be free of raw control bytes so the gist upload succeeds.
+    assert!(
+        !diagnostic.contains('\u{0}'),
+        "diagnostic.md must not carry raw NUL bytes (binary file → gist upload fails)"
+    );
+}
+
 /// At `-vv`, Debug-level records (the noisy ones) stay out of stderr —
 /// the bounded subprocess preview lands in `trace.log` (not stderr), and
 /// `subprocess.log` still holds the unbounded body. Info-level routing

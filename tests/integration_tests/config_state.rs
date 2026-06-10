@@ -1294,7 +1294,7 @@ fn test_state_get_empty(repo: TestRepo) {
     state_get_settings().bind(|| {
         assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"
         [36mDEFAULT BRANCH[39m
-        [107m [0m main
+        [107m [0m (none)
 
         [36mPREVIOUS BRANCH[39m
         [107m [0m (none)
@@ -1368,6 +1368,12 @@ fn test_state_get_with_ci_entries(repo: TestRepo) {
 
 #[rstest]
 fn test_state_get_comprehensive(repo: TestRepo) {
+    // Populate the default-branch cache (the dump reads it, never detects)
+    repo.git_command()
+        .args(["config", "worktrunk.default-branch", "main"])
+        .run()
+        .unwrap();
+
     // Set up previous branch
     repo.git_command()
         .args(["config", "worktrunk.history", "feature"])
@@ -1461,7 +1467,7 @@ fn test_state_get_json_empty(repo: TestRepo) {
     {
       "ci_status": [],
       "command_log": [],
-      "default_branch": "main",
+      "default_branch": null,
       "diagnostic": [],
       "git_commands_cache": 0,
       "hints": [],
@@ -1477,6 +1483,12 @@ fn test_state_get_json_empty(repo: TestRepo) {
 
 #[rstest]
 fn test_state_get_json_comprehensive(repo: TestRepo) {
+    // Populate the default-branch cache (the dump reads it, never detects)
+    repo.git_command()
+        .args(["config", "worktrunk.default-branch", "main"])
+        .run()
+        .unwrap();
+
     // Set up previous branch
     repo.git_command()
         .args(["config", "worktrunk.history", "feature"])
@@ -1629,7 +1641,7 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
               "size": "<SIZE>"
             }
           ],
-          "default_branch": "main",
+          "default_branch": null,
           "diagnostic": [],
           "git_commands_cache": 0,
           "hints": [],

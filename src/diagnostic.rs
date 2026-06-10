@@ -174,21 +174,32 @@ impl DiagnosticReport {
         // Render template
         let env = Environment::new();
         let tmpl = env.template_from_str(REPORT_TEMPLATE).unwrap();
-        tmpl.render(context! {
-            timestamp,
-            command,
-            context,
-            version,
-            os,
-            arch,
-            git_version,
-            shell_integration,
-            worktree_list,
-            config_show,
-            trace_log,
-            subprocess_log_path,
-        })
-        .unwrap()
+        let rendered = tmpl
+            .render(context! {
+                timestamp,
+                command,
+                context,
+                version,
+                os,
+                arch,
+                git_version,
+                shell_integration,
+                worktree_list,
+                config_show,
+                trace_log,
+                subprocess_log_path,
+            })
+            .unwrap();
+
+        // Final sanitize at the upload boundary. This is the only place that
+        // covers *every* inlined source at once: `config_show` and
+        // `worktree_list` are spliced in directly, never through the
+        // already-escaped `trace.log`, so a control byte from either (or from
+        // the `context` error string) would still make `gh gist create` reject
+        // diagnostic.md as binary. `escape_controls` preserves tabs/newlines,
+        // so the markdown structure is intact, and is idempotent over the
+        // trace.log the formatter already cleaned.
+        worktrunk::utils::escape_controls(&rendered).into_owned()
     }
 
     /// Write the diagnostic report to a file.

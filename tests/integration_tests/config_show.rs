@@ -1,6 +1,7 @@
 use crate::common::{
-    TestRepo, repo, set_temp_home_env, set_xdg_config_path, setup_home_snapshot_settings,
-    setup_snapshot_settings, setup_snapshot_settings_with_home, temp_home, wt_command,
+    TestRepo, canonical_temp_home, repo, set_temp_home_env, set_xdg_config_path,
+    setup_home_snapshot_settings, setup_snapshot_settings, setup_snapshot_settings_with_home,
+    temp_home, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -948,8 +949,10 @@ fn test_config_show_nushell_outdated_wrapper(mut repo: TestRepo, temp_home: Temp
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(global_config_dir.join("config.toml"), "").unwrap();
 
-    // Create nushell vendor/autoload directory with an outdated wt.nu
-    let autoload = temp_home.path().join(".config/nushell/vendor/autoload");
+    // Create the nushell vendor-autoload directory with an outdated wt.nu.
+    // Pin the dir via the test override so the path is deterministic across
+    // platforms (and independent of whether `nu` is installed).
+    let autoload = canonical_temp_home(&temp_home).join(".local/share/nushell/vendor/autoload");
     fs::create_dir_all(&autoload).unwrap();
     fs::write(
         autoload.join("wt.nu"),
@@ -965,6 +968,7 @@ fn test_config_show_nushell_outdated_wrapper(mut repo: TestRepo, temp_home: Temp
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
+        cmd.env("WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR", &autoload);
 
         assert_cmd_snapshot!(cmd);
     });

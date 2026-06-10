@@ -218,11 +218,7 @@ pub fn offer_bare_repo_worktree_path_fix(
         return Ok(false);
     }
 
-    if repo
-        .config_value("worktrunk.skip-bare-repo-prompt")
-        .unwrap_or(None)
-        .is_some()
-    {
+    if repo.has_shown_hint("skip-bare-repo-prompt") {
         return Ok(false);
     }
 
@@ -308,9 +304,9 @@ pub fn offer_bare_repo_worktree_path_fix(
             Ok(true)
         }
         PromptResponse::Declined => {
-            if let Err(e) = repo.set_config("worktrunk.skip-bare-repo-prompt", "true") {
-                log::warn!("Failed to save skip-bare-repo-prompt to git config: {e}");
-            }
+            // Best-effort, like every other hint write: a failed persist just
+            // means the prompt may reappear on the next switch.
+            let _ = repo.mark_hint_shown("skip-bare-repo-prompt");
             Ok(false)
         }
     }
