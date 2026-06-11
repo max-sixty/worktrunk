@@ -622,6 +622,54 @@ pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
         ".env.CARGO_LLVM_COV_TARGET_DIR",
         "[CARGO_LLVM_COV_TARGET_DIR]",
     );
+
+    // Drop the host-dependent `GIT_*` / `WORKTRUNK_*` scrub markers from the
+    // recorded `env:` block so it depends only on what the test affirmatively
+    // sets — identically on every contributor's machine.
+    //
+    // `isolate_subprocess_env` scrubs every `GIT_*` / `WORKTRUNK_*` key it finds
+    // in the *parent* environment via `Command::env_remove`, and insta-cmd
+    // records each removed key as `KEY: ""` (it serializes `get_envs()`, which
+    // includes removals). Which keys appear is therefore a property of the host:
+    // CI has `GIT_EDITOR`, a contributor's box might have `GIT_PAGER`, neither,
+    // or both. insta never *compares* the `info:` block (only stdout/stderr/exit),
+    // so this only churns regenerated snapshots from machine to machine — but
+    // that churn is exactly what makes contributors think they have to match
+    // their local environment to CI. Normalizing it away here means they don't.
+    //
+    // This runs as its own pass after the per-key `.env.*` redactions above, so
+    // affirmatively-set vars (config paths → `[TEST_CONFIG]`, coverage →
+    // `[LLVM_PROFILE_FILE]`, etc.) already hold non-empty placeholders and are
+    // kept. The unconditional, explicitly-named scrubs (`NO_COLOR`, `SHELL`,
+    // `PSModulePath`) are deterministic across hosts and intentionally left as-is.
+    settings.add_dynamic_redaction(".env", |content, _path| {
+        strip_host_scrubbed_env_markers(content)
+    });
+}
+
+/// Drop empty-valued `GIT_*` / `WORKTRUNK_*` entries from an insta-cmd `env`
+/// map node. These are the [`isolate_subprocess_env`](worktrunk::testing) scrub
+/// markers whose presence depends on the host environment; removing them makes
+/// the recorded block host-independent. See [`add_standard_env_redactions`].
+fn strip_host_scrubbed_env_markers(
+    content: insta::internals::Content,
+) -> insta::internals::Content {
+    use insta::internals::Content;
+
+    let Content::Map(entries) = content else {
+        return content;
+    };
+    let kept = entries
+        .into_iter()
+        .filter(|(key, value)| {
+            let is_scrub_key = key
+                .as_str()
+                .is_some_and(|k| k.starts_with("GIT_") || k.starts_with("WORKTRUNK_"));
+            let is_empty = value.as_str() == Some("");
+            !(is_scrub_key && is_empty)
+        })
+        .collect();
+    Content::Map(kept)
 }
 
 fn canonical_home_dir() -> Option<PathBuf> {
@@ -1394,5 +1442,55 @@ mod tests {
             assert_snapshot!(linux_home_eq_tempdir, @"▲ [TEST_CONFIG] failed");
             assert_snapshot!(linux_home_above_tempdir, @"▲ [TEST_CONFIG] failed");
         });
+    }
+
+    /// The `env:` redaction drops the host-dependent `GIT_*` / `WORKTRUNK_*`
+    /// scrub markers (`KEY: ""`) while keeping everything a test affirmatively
+    /// sets — including affirmatively-empty non-scrub vars and already-redacted
+    /// scrub vars that hold a placeholder. A non-map node passes through.
+    #[test]
+    fn strip_host_scrubbed_env_markers_normalizes_env_block() {
+        use insta::internals::Content;
+
+        let env = Content::Map(vec![
+            // Host-dependent scrub markers — dropped.
+            (Content::from("GIT_EDITOR"), Content::from("")),
+            (Content::from("GIT_PAGER"), Content::from("")),
+            (Content::from("WORKTRUNK_LEAKED"), Content::from("")),
+            // Affirmatively set vars — kept.
+            (Content::from("CLICOLOR_FORCE"), Content::from("1")),
+            (Content::from("LANG"), Content::from("C")),
+            // A scrub-prefixed var the test set to a real (redacted) value — kept.
+            (
+                Content::from("WORKTRUNK_CONFIG_PATH"),
+                Content::from("[TEST_CONFIG]"),
+            ),
+            // A scrub-prefixed var set to "0", not removed — kept.
+            (
+                Content::from("WORKTRUNK_TEST_CLAUDE_INSTALLED"),
+                Content::from("0"),
+            ),
+            // Unconditional, explicitly-named scrubs are not GIT_/WORKTRUNK_ — kept.
+            (Content::from("NO_COLOR"), Content::from("")),
+        ]);
+
+        let Content::Map(kept) = strip_host_scrubbed_env_markers(env) else {
+            panic!("expected a map back");
+        };
+        let keys: Vec<&str> = kept.iter().filter_map(|(k, _)| k.as_str()).collect();
+        assert_eq!(
+            keys,
+            vec![
+                "CLICOLOR_FORCE",
+                "LANG",
+                "WORKTRUNK_CONFIG_PATH",
+                "WORKTRUNK_TEST_CLAUDE_INSTALLED",
+                "NO_COLOR",
+            ]
+        );
+
+        // Non-map nodes pass through untouched.
+        let scalar = Content::from("not a map");
+        assert_eq!(strip_host_scrubbed_env_markers(scalar.clone()), scalar);
     }
 }
