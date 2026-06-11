@@ -13,7 +13,7 @@ use worktrunk::shell_exec::{Cmd, SUBPROCESS_FULL_TARGET, ShellConfig};
 use worktrunk::styling::{eprintln, warning_message};
 
 use minijinja::Environment;
-use minijinja::value::{Enumerator, Object, ObjectRepr, Value};
+use minijinja::value::{Enumerator, Object, Value};
 
 /// minijinja view of one squashed commit, exposed to squash templates as an
 /// element of `commit_details`.
@@ -34,9 +34,7 @@ struct CommitDetailValue {
 }
 
 impl Object for CommitDetailValue {
-    fn repr(self: &Arc<Self>) -> ObjectRepr {
-        ObjectRepr::Map
-    }
+    // `repr` is left at the trait default (`ObjectRepr::Map`).
 
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         match key.as_str()? {
@@ -46,6 +44,9 @@ impl Object for CommitDetailValue {
         }
     }
 
+    // Report the two keys so the object is non-empty: with the default
+    // `Map`-repr enumerator (`Empty`) the object would be falsy in `{% if c %}`,
+    // breaking the equivalence with the old non-empty subject string.
     fn enumerate(self: &Arc<Self>) -> Enumerator {
         Enumerator::Str(&["subject", "body"])
     }
@@ -995,6 +996,49 @@ mod tests {
         assert!(
             rendered.contains(r#"'echo '\''hi'\'''"#),
             "single quotes not escaped: {rendered}"
+        );
+    }
+
+    /// Render a one-off template with a single `CommitDetailValue` bound to `c`.
+    fn render_with_detail(template: &str, subject: &str, body: &str) -> String {
+        let env = Environment::new();
+        let detail = Value::from_object(CommitDetailValue {
+            subject: subject.to_string(),
+            body: body.to_string(),
+        });
+        env.template_from_str(template)
+            .unwrap()
+            .render(minijinja::context! { c => detail })
+            .unwrap()
+    }
+
+    /// A `commit_details` element renders as its bare subject and exposes
+    /// `.subject` / `.body`. This is the equivalence that lets the
+    /// `commits` → `commit_details` rename be a mechanical identifier rewrite
+    /// (see #2984 and `CommitDetailValue`).
+    #[test]
+    fn test_commit_detail_value_render_and_properties() {
+        assert_eq!(render_with_detail("{{ c }}", "Add a", "body a"), "Add a");
+        assert_eq!(
+            render_with_detail("{{ c.subject }}|{{ c.body }}", "Add a", "body a"),
+            "Add a|body a"
+        );
+    }
+
+    /// An unknown attribute resolves to undefined (renders empty), exercising the
+    /// catch-all in `get_value`. A bare `{% if c %}` is truthy because
+    /// `enumerate` reports two keys — without that override a `Map`-repr object
+    /// defaults to an empty enumerator and would read as falsy, diverging from
+    /// the old non-empty subject string.
+    #[test]
+    fn test_commit_detail_value_unknown_key_and_truthiness() {
+        assert_eq!(
+            render_with_detail("[{{ c.nope }}]", "Add a", "body a"),
+            "[]"
+        );
+        assert_eq!(
+            render_with_detail("{% if c %}yes{% else %}no{% endif %}", "Add a", "body a"),
+            "yes"
         );
     }
 
