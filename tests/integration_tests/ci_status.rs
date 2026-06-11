@@ -160,6 +160,41 @@ fn test_list_full_with_github_pr_status(
 }
 
 // =============================================================================
+// Review state tests (reviewDecision / isDraft from gh pr list)
+// =============================================================================
+
+#[rstest]
+#[case::changes_requested("\"CHANGES_REQUESTED\"", "false", "github_pr_changes_requested")]
+#[case::review_required("\"REVIEW_REQUIRED\"", "false", "github_pr_review_required")]
+#[case::approved("\"APPROVED\"", "false", "github_pr_approved")]
+#[case::draft("\"APPROVED\"", "true", "github_pr_draft")]
+fn test_list_full_with_github_review_state(
+    mut repo: TestRepo,
+    #[case] review_decision: &str,
+    #[case] is_draft: &str,
+    #[case] snapshot_name: &str,
+) {
+    let head_sha = setup_github_repo_with_feature(&mut repo);
+
+    let pr_json = format!(
+        r#"[{{
+        "headRefOid": "{}",
+        "mergeStateStatus": "CLEAN",
+        "statusCheckRollup": [
+            {{"status": "COMPLETED", "conclusion": "SUCCESS"}}
+        ],
+        "url": "https://github.com/test-owner/test-repo/pull/1",
+        "headRepositoryOwner": {{"login": "test-owner"}},
+        "reviewDecision": {},
+        "isDraft": {}
+    }}]"#,
+        head_sha, review_decision, is_draft
+    );
+
+    run_ci_status_test(&mut repo, snapshot_name, &pr_json, "[]");
+}
+
+// =============================================================================
 // StatusContext tests (external CI systems like Jenkins)
 // =============================================================================
 

@@ -549,6 +549,8 @@ fn post_process_for_html(text: &str) -> String {
         .replace("`●` green", "<span style='color:#0a0'>●</span> green")
         .replace("`●` blue", "<span style='color:#00a'>●</span> blue")
         .replace("`●` red", "<span style='color:#a00'>●</span> red")
+        .replace("`●` magenta", "<span style='color:#a0a'>●</span> magenta")
+        .replace("`●` cyan", "<span style='color:#0aa'>●</span> cyan")
         .replace("`●` yellow", "<span style='color:#a60'>●</span> yellow")
         .replace("`⚠` yellow", "<span style='color:#a60'>⚠</span> yellow")
         .replace("`●` gray", "<span style='color:#888'>●</span> gray")

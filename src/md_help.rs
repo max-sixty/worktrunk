@@ -394,6 +394,8 @@ fn colorize_status_symbols(text: &str) -> String {
     let progress = Style::new().fg_color(Some(AnsiStyleColor::Ansi(AnsiColor::Blue)));
     let disabled = Style::new().fg_color(Some(AnsiStyleColor::Ansi(AnsiColor::BrightBlack)));
     let working_tree = Style::new().fg_color(Some(AnsiStyleColor::Ansi(AnsiColor::Cyan)));
+    let changes_requested = Style::new().fg_color(Some(AnsiStyleColor::Ansi(AnsiColor::Magenta)));
+    let pending_review = Style::new().fg_color(Some(AnsiStyleColor::Ansi(AnsiColor::Cyan)));
 
     // Pattern for dimmed text (from inline `code` rendering)
     // render_inline_formatting wraps backticked text in dimmed style
@@ -440,6 +442,14 @@ fn colorize_status_symbols(text: &str) -> String {
         .replace(
             &format!("{dimmed_bullet} red"),
             &format!("{error}●{error:#} red"),
+        )
+        .replace(
+            &format!("{dimmed_bullet} magenta"),
+            &format!("{changes_requested}●{changes_requested:#} magenta"),
+        )
+        .replace(
+            &format!("{dimmed_bullet} cyan"),
+            &format!("{pending_review}●{pending_review:#} cyan"),
         )
         .replace(
             &format!("{dimmed_bullet} yellow"),
