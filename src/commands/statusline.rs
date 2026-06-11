@@ -732,8 +732,14 @@ fn run_json() -> Result<()> {
             all_vars.insert(branch.clone(), entries);
         }
     }
-    let json_item =
-        json_output::JsonItem::from_list_item(&item, &mut all_vars, repo.repo_web_url().as_deref());
+    // No custom columns: the statusline path never expands `[list.columns]`
+    // (prompt hot path; its compact format has no column grid).
+    let json_item = json_output::JsonItem::from_list_item(
+        &item,
+        &mut all_vars,
+        repo.repo_web_url().as_deref(),
+        &[],
+    );
 
     // Output as JSON array (consistent with wt list --format=json)
     let output = serde_json::to_string_pretty(&[json_item])?;

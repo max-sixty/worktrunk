@@ -1016,6 +1016,7 @@ pub fn collect(
                 user_marker: None,
                 status_symbols: StatusSymbols::default(),
                 statusline: None,
+                custom_values: Vec::new(),
                 kind: ItemKind::Worktree(Box::new(worktree_data)),
             }
         })
@@ -1049,6 +1050,34 @@ pub fn collect(
         effective_skip_tasks.insert(TaskKind::SummaryGenerate);
     }
 
+    // Custom [list.columns] values expand before layout: their inputs
+    // (branch, worktree identity, vars from the bulk config snapshot) are
+    // already in memory, so cells paint with the skeleton and column widths
+    // are measured from content like Branch/Path. Pure CPU — no subprocess.
+    //
+    // A broken column definition aborts `wt list` with the error. The picker
+    // shares this path but runs collect on a background thread while skim
+    // owns the terminal, so it can't surface an abort — it stashes a warning
+    // (drained after the picker closes) and renders without custom columns.
+    let custom_columns =
+        match super::custom_columns::resolve_custom_columns(&config.list.columns, repo) {
+            Ok(columns) => columns,
+            Err(e) if progressive_handler.is_some() => {
+                emit_warning(warning_message(format!("Custom columns disabled: {e}")).to_string());
+                Vec::new()
+            }
+            Err(e) => return Err(e),
+        };
+    if !custom_columns.is_empty() {
+        let all_vars = repo.all_vars_from_snapshot()?;
+        super::custom_columns::expand_custom_columns(
+            &custom_columns,
+            &mut all_items,
+            &all_vars,
+            repo,
+        );
+    }
+
     // Calculate layout from items (worktrees, local branches, and remote branches).
     // The picker passes an explicit width because the list only gets part of the
     // terminal — the rest belongs to the preview pane.
@@ -1058,6 +1087,7 @@ pub fn collect(
         list_width.unwrap_or_else(crate::display::terminal_width),
         &main_worktree.path,
         url_template.as_deref(),
+        &custom_columns,
     );
 
     // Single-line invariant: use safe width to prevent line wrapping
@@ -1728,7 +1758,10 @@ pub fn collect(
         handler.on_collect_complete();
     }
 
-    Ok(Some(super::model::ListData { items }))
+    Ok(Some(super::model::ListData {
+        items,
+        custom_columns,
+    }))
 }
 
 // ============================================================================
@@ -1825,6 +1858,7 @@ pub fn build_worktree_item(
         user_marker: None,
         status_symbols: StatusSymbols::default(),
         statusline: None,
+        custom_values: Vec::new(),
         kind: ItemKind::Worktree(Box::new(WorktreeData::from_worktree(
             wt,
             is_main,
@@ -2187,7 +2221,8 @@ mod tests {
             ListItem::new_branch("bbb".into(), "row-one".into()),
         ];
         let skip_tasks: HashSet<TaskKind> = HashSet::new();
-        let layout = calculate_layout_with_width(&items, &skip_tasks, 80, Path::new("/tmp"), None);
+        let layout =
+            calculate_layout_with_width(&items, &skip_tasks, 80, Path::new("/tmp"), None, &[]);
         let placeholder = super::super::render::PLACEHOLDER;
 
         // Row 0 has data → format_list_item_line; row 1 doesn't → skeleton.

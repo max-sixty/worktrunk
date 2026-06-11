@@ -23,6 +23,7 @@ use serde::Serialize;
 use worktrunk::git::{LineDiff, Repository};
 
 use super::ci_status::{CiSource, PrStatus};
+use super::custom_columns::ResolvedCustomColumn;
 use super::model::{ItemKind, ListItem, UpstreamStatus};
 
 /// JSON output for a single list item
@@ -113,6 +114,11 @@ pub struct JsonItem {
     /// Custom variables stored via `wt config state vars`
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub vars: BTreeMap<String, String>,
+
+    /// Rendered `[list.columns]` values, keyed by column header.
+    /// Empty cells are omitted.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub columns: BTreeMap<String, String>,
 }
 
 /// Commit information
@@ -242,8 +248,9 @@ pub struct JsonCi {
 impl JsonItem {
     /// Convert a ListItem to the new JSON structure
     ///
-    /// `all_vars` is pre-fetched vars data for all branches (from `repo.all_vars_entries()`),
-    /// avoiding N+1 git process spawns. Entries are moved out via `.remove()` to avoid cloning.
+    /// `all_vars` is pre-fetched vars data for all branches (from
+    /// `repo.all_vars_from_snapshot()`), avoiding N+1 git process spawns.
+    /// Entries are moved out via `.remove()` to avoid cloning.
     ///
     /// `repo_url` is the repository web URL (from `repo.repo_web_url()`). It is repo-wide, so
     /// the caller computes it once and passes the same value to every item.
@@ -251,6 +258,7 @@ impl JsonItem {
         item: &ListItem,
         all_vars: &mut HashMap<String, BTreeMap<String, String>>,
         repo_url: Option<&str>,
+        custom_columns: &[ResolvedCustomColumn],
     ) -> Self {
         let (kind_str, worktree_data) = match &item.kind {
             ItemKind::Worktree(data) => ("worktree", Some(data.as_ref())),
@@ -368,6 +376,14 @@ impl JsonItem {
         // Summary: flatten Option<Option<String>> → Option<String>
         let summary = item.summary.as_ref().and_then(|s| s.clone());
 
+        // Rendered custom column values, keyed by header; empty cells omitted
+        let columns = custom_columns
+            .iter()
+            .zip(&item.custom_values)
+            .filter(|(_, value)| !value.is_empty())
+            .map(|(column, value)| (column.name.clone(), value.clone()))
+            .collect();
+
         JsonItem {
             branch: item.branch.clone(),
             path,
@@ -391,6 +407,7 @@ impl JsonItem {
             statusline,
             symbols,
             vars,
+            columns,
         }
     }
 }
@@ -513,13 +530,24 @@ fn format_raw_symbols(symbols: &super::model::StatusSymbols) -> String {
 
 /// Convert a list of ListItems to JSON output
 ///
-/// Fetches all vars data in a single git call, then distributes per-branch.
-pub fn to_json_items(items: &[ListItem], repo: &Repository) -> Vec<JsonItem> {
-    let mut all_vars = repo.all_vars_entries();
+/// Reads all vars from the bulk config snapshot (no subprocess, and —
+/// unlike the line-parsed `--get-regexp` read — multiline values survive),
+/// then distributes per-branch. The same source feeds the rendered `columns`
+/// values, so the two fields can't diverge. The snapshot was loaded earlier
+/// in this invocation; an error here means the bulk read failed, in which
+/// case `collect()` already surfaced it, so the empty fallback is dead code.
+pub fn to_json_items(
+    items: &[ListItem],
+    custom_columns: &[ResolvedCustomColumn],
+    repo: &Repository,
+) -> Vec<JsonItem> {
+    let mut all_vars = repo.all_vars_from_snapshot().unwrap_or_default();
     let repo_url = repo.repo_web_url();
     items
         .iter()
-        .map(|item| JsonItem::from_list_item(item, &mut all_vars, repo_url.as_deref()))
+        .map(|item| {
+            JsonItem::from_list_item(item, &mut all_vars, repo_url.as_deref(), custom_columns)
+        })
         .collect()
 }
 
@@ -942,12 +970,16 @@ mod tests {
         item.summary = Some(Some("Add login page".to_string()));
 
         // repo_url is set when provided, absent (skipped) when None.
-        let json_item = JsonItem::from_list_item(&item, &mut all_vars, None);
+        let json_item = JsonItem::from_list_item(&item, &mut all_vars, None, &[]);
         assert_eq!(json_item.summary, Some("Add login page".to_string()));
         assert!(json_item.repo_url.is_none());
 
-        let json_item =
-            JsonItem::from_list_item(&item, &mut all_vars, Some("https://github.com/owner/repo"));
+        let json_item = JsonItem::from_list_item(
+            &item,
+            &mut all_vars,
+            Some("https://github.com/owner/repo"),
+            &[],
+        );
         assert_eq!(
             json_item.repo_url,
             Some("https://github.com/owner/repo".to_string())
@@ -962,14 +994,14 @@ mod tests {
         let mut item = ListItem::new_branch("abc1234".into(), "feature".into());
         // Both "not collected" and "no summary" should be absent in JSON
         assert!(
-            JsonItem::from_list_item(&item, &mut all_vars, None)
+            JsonItem::from_list_item(&item, &mut all_vars, None, &[])
                 .summary
                 .is_none()
         );
 
         item.summary = Some(None);
         assert!(
-            JsonItem::from_list_item(&item, &mut all_vars, None)
+            JsonItem::from_list_item(&item, &mut all_vars, None, &[])
                 .summary
                 .is_none()
         );

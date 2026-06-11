@@ -278,6 +278,7 @@ fn test_list_config_serde() {
         summary: None,
         task_timeout_ms: Some(500),
         timeout_ms: None,
+        columns: Default::default(),
     };
     let json = serde_json::to_string(&config).unwrap();
     let parsed: ListConfig = serde_json::from_str(&json).unwrap();
@@ -606,6 +607,7 @@ fn test_merge_list_config() {
         summary: Some(true),
         task_timeout_ms: Some(1000),
         timeout_ms: Some(2000),
+        columns: Default::default(),
     };
     let override_config = ListConfig {
         full: None,            // Should fall back to base
@@ -614,6 +616,7 @@ fn test_merge_list_config() {
         summary: None,         // Should fall back to base
         task_timeout_ms: None, // Should fall back to base
         timeout_ms: None,      // Should fall back to base
+        columns: Default::default(),
     };
 
     let merged = base.merge_with(&override_config);
@@ -623,6 +626,32 @@ fn test_merge_list_config() {
     assert_eq!(merged.summary, Some(true)); // From base
     assert_eq!(merged.task_timeout_ms, Some(1000)); // From base
     assert_eq!(merged.timeout_ms, Some(2000)); // From base
+}
+
+#[test]
+fn test_merge_list_config_columns_per_key() {
+    let column = |template: &str| sections::ListColumnConfig {
+        template: template.to_string(),
+        width: None,
+        priority: None,
+    };
+
+    let mut base = ListConfig::default();
+    base.columns.insert("A".to_string(), column("base-a"));
+    base.columns.insert("B".to_string(), column("base-b"));
+
+    let mut override_config = ListConfig::default();
+    override_config
+        .columns
+        .insert("B".to_string(), column("override-b"));
+    override_config.columns.insert("C".to_string(), column("c"));
+
+    // Per-key union: the override wins on collision without clearing the rest
+    let merged = base.merge_with(&override_config);
+    assert_eq!(merged.columns.len(), 3);
+    assert_eq!(merged.columns["A"].template, "base-a");
+    assert_eq!(merged.columns["B"].template, "override-b");
+    assert_eq!(merged.columns["C"].template, "c");
 }
 
 #[test]
@@ -1026,6 +1055,7 @@ fn test_list_config_accessor_methods_with_values() {
         summary: Some(true),
         task_timeout_ms: Some(5000),
         timeout_ms: Some(3000),
+        columns: Default::default(),
     };
     assert!(config.full());
     assert!(config.branches());

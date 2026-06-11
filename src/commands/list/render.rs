@@ -318,6 +318,16 @@ impl LayoutConfig {
                         cell.push_styled(short_head, dim);
                     }
                 }
+                ColumnKind::Custom(i) => {
+                    // Custom values are expanded before the skeleton renders —
+                    // show them like Branch/Path rather than a placeholder.
+                    let text = item
+                        .custom_values
+                        .get(i as usize)
+                        .map(String::as_str)
+                        .unwrap_or("");
+                    return col.render_text_cell(text, None);
+                }
                 _ => {
                     // Show spinner for data columns (placeholder_cell handles alignment)
                     return col.placeholder_cell(spinner);
@@ -538,6 +548,16 @@ impl ColumnLayout {
                 let msg = truncate_to_width(&commit.commit_message, max_message_len);
                 cell.push_styled(msg, Style::new().dimmed());
                 cell
+            }
+            // Values are expanded before layout — no loading state, so an
+            // absent or empty value is an empty cell, never a placeholder.
+            ColumnKind::Custom(i) => {
+                let text = item
+                    .custom_values
+                    .get(i as usize)
+                    .map(String::as_str)
+                    .unwrap_or("");
+                self.render_text_cell(text, text_style)
             }
         }
     }
@@ -1234,7 +1254,7 @@ mod tests {
         let layout = LayoutConfig {
             columns: vec![ColumnLayout {
                 kind: ColumnKind::Summary,
-                header: "Summary",
+                header: std::borrow::Cow::Borrowed("Summary"),
                 start: 0,
                 width: 10,
                 format: ColumnFormat::Text,
@@ -1261,7 +1281,7 @@ mod tests {
 
         let summary_col = ColumnLayout {
             kind: ColumnKind::Summary,
-            header: "Summary",
+            header: std::borrow::Cow::Borrowed("Summary"),
             start: 0,
             width: 40,
             format: ColumnFormat::Text,
@@ -1296,7 +1316,7 @@ mod tests {
 
         let col = ColumnLayout {
             kind: ColumnKind::WorkingDiff,
-            header: "Working",
+            header: std::borrow::Cow::Borrowed("Working"),
             start: 0,
             width: 9,
             format: ColumnFormat::Diff(DiffColumnConfig {
@@ -1339,7 +1359,7 @@ mod tests {
 
         let col = ColumnLayout {
             kind: ColumnKind::Upstream,
-            header: "Remote⇅",
+            header: std::borrow::Cow::Borrowed("Remote⇅"),
             start: 0,
             width: 7,
             format: ColumnFormat::Diff(DiffColumnConfig {

@@ -756,6 +756,7 @@ $ wt list --format=json
 | CI | Pipeline status; `--full` only |
 | Path | Worktree directory |
 | URL | Dev server URL from project config; dimmed if port is not listening |
+| *(custom)* | User-defined [custom columns](#custom-columns) from `[list.columns]` user config [experimental] |
 | Commit | Short hash (8 chars) |
 | Age | Time since last commit |
 | Message | Last commit message (truncated) |
@@ -781,6 +782,17 @@ CI indicators are clickable links to the PR or pipeline page. Any CI dot appears
 ### LLM summaries [experimental]
 
 Reuses the [`commit.generation`](@/config.md#commit) command — the same LLM that generates commit messages. Enable with `summary = true` in `[list]` config; requires `--full`. Results are cached until the branch's diff changes.
+
+### Custom columns [experimental]
+
+Each `[list.columns]` entry in user config adds a column: the key is the header, the template renders each row's cell. Templates can reference per-branch `{{ vars.* }}` stored with [`wt config state vars set`](@/config.md#wt-config-state-vars) — useful for tracking what each of many (often agent-driven) branches is for:
+
+```toml
+[list.columns.Ticket]
+template = "{{ vars.ticket }}"
+```
+
+A column that renders empty for every row is dropped from the table. Templates, widths, and drop priority: [custom columns config](@/config.md#custom-columns).
 
 ## Status symbols
 
@@ -879,6 +891,7 @@ $ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 | `statusline` | string | Pre-formatted status with ANSI colors |
 | `symbols` | string | Raw status symbols without colors (e.g., `"!?↓"`) |
 | `vars` | object | Per-branch variables from [`wt config state vars`](@/config.md#wt-config-state-vars) (absent when empty) |
+| `columns` | object | Rendered [custom column](#custom-columns) values keyed by header; empty cells omitted (absent when none configured) |
 
 ### Commit object
 
@@ -1762,6 +1775,37 @@ remotes = false    # Include remote-only branches (--remotes)
 
 task-timeout-ms = 0   # Kill individual git commands after N ms; 0 disables
 timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disables
+```
+
+#### Custom columns [experimental]
+
+Custom columns add per-branch context to the `wt list` table. Each
+`[list.columns]` entry is a column: the key is the header, the template renders
+each row's cell.
+
+```toml
+[list.columns.Ticket]
+template = "{{ vars.ticket }}"   # Required; the result is the cell text
+width = 20                       # Optional max display width (default: 40)
+priority = 9                     # Optional drop order when the terminal narrows;
+                                 # lower = kept longer (default: 9, the URL band)
+```
+
+Templates may reference `{{ branch }}`, `{{ worktree_path }}`,
+`{{ worktree_name }}` (empty for branch-only rows), and `{{ vars.* }}` —
+per-branch values stored with
+[`wt config state vars set`](@/config.md#wt-config-state-vars).
+All standard filters work (`sanitize`, `hash_port`, `codename`, …). A row
+where the template renders empty (e.g. a branch without the vars key) shows an
+empty cell; a column that is empty for every row is dropped from the table.
+`wt list --format json` includes the rendered values under `columns`.
+
+A `Note` column showing free-form descriptions, set per branch with
+`wt config state vars set note "Bug fix for production fire"`:
+
+```toml
+[list.columns.Note]
+template = "{{ vars.note }}"
 ```
 
 ### Commit

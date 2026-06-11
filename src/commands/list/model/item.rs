@@ -184,6 +184,13 @@ pub struct ListItem {
     /// `JsonItem` for the `statusline` field.
     pub statusline: Option<String>,
 
+    /// Rendered `[list.columns]` values, indexed like the resolved column
+    /// list (`ColumnKind::Custom`). Unlike the `Option`-gated fields above,
+    /// these are final at construction time: templates expand from in-memory
+    /// data before layout, so there is no loading state. Empty when no custom
+    /// columns are configured.
+    pub custom_values: Vec<String>,
+
     // Type-specific data (worktree vs branch)
     pub kind: ItemKind,
 }
@@ -191,6 +198,9 @@ pub struct ListItem {
 /// Container for list command results.
 pub struct ListData {
     pub items: Vec<ListItem>,
+    /// Resolved `[list.columns]` definitions; each item's `custom_values`
+    /// uses the same indexing.
+    pub custom_columns: Vec<crate::commands::list::custom_columns::ResolvedCustomColumn>,
 }
 
 impl ListItem {
@@ -218,6 +228,7 @@ impl ListItem {
             user_marker: None,
             status_symbols: StatusSymbols::default(),
             statusline: None,
+            custom_values: Vec::new(),
             kind: ItemKind::Branch,
         }
     }
