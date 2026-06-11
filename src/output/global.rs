@@ -603,11 +603,10 @@ pub fn compute_hooks_display_path<'a>(
 /// # Examples
 ///
 /// ```ignore
-/// // In pre-commit, pre-merge, pre-remove hooks:
-/// run_hooks_foreground(..., pre_hook_display_path(ctx.worktree_path))?;
-///
-/// // In manual wt hook commands (even for post-* hook types):
-/// run_hooks_foreground(..., pre_hook_display_path(ctx.worktree_path))?;
+/// // `run_hooks_foreground` computes this internally for all foreground
+/// // hooks (including manual `wt hook` runs of post-* hook types);
+/// // plan-backed pre-hooks pass it explicitly:
+/// execute_planned_hook(..., pre_hook_display_path(ctx.worktree_path))?;
 /// ```
 pub fn pre_hook_display_path(hooks_run_at: &std::path::Path) -> Option<&std::path::Path> {
     let cwd = match std::env::current_dir() {
