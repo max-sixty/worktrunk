@@ -330,7 +330,7 @@ changelogs and flag changes that affect what Worktrunk consumes or produces.
 
 What to flag:
 
-- **New statusline JSON fields** — `src/commands/statusline.rs` parses `workspace.current_dir`, `model.display_name`, and `context_window.used_percentage`. A newly added field (rate limits, session cost, PR review state) may be worth surfacing in `wt list statusline`.
+- **New statusline JSON fields** — `src/commands/statusline.rs` parses `workspace.current_dir`, `model.display_name`, `context_window.used_percentage`, and `rate_limits.{five_hour,seven_day}.{used_percentage,resets_at}`. A newly added field (session cost, PR review state) may be worth surfacing in `wt list statusline`.
 - **Renamed or removed hook events** — `WorktreeCreate`/`WorktreeRemove` route agent worktree creation through `wt`; a renamed event silently disables isolation rather than erroring.
 - **Changed plugin install mechanisms** — `wt config plugins {claude,codex,opencode} install` and the Gemini extension manifest break if the marketplace or plugins-directory contract changes.
 
