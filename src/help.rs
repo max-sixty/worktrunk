@@ -348,7 +348,7 @@ fn find_after_help_start(help: &str) -> Option<usize> {
 
     for line in help.lines() {
         // Strip ANSI codes for pattern matching
-        let plain_line = strip_ansi_codes(line);
+        let plain_line = line.ansi_strip();
 
         if plain_line.starts_with("Global Options:") {
             past_global_options = true;
@@ -371,11 +371,6 @@ fn find_after_help_start(help: &str) -> Option<usize> {
         offset += line.len() + 1;
     }
     None
-}
-
-/// Strip ANSI escape codes from a string for pattern matching.
-fn strip_ansi_codes(s: &str) -> String {
-    s.ansi_strip().into_owned()
 }
 
 /// Extract the `about` (definition) and subtitle from a command's metadata.
