@@ -7,11 +7,16 @@
 //!
 //! ## Execution model
 //!
-//! Aliases build `ForegroundStep`s from `CommandConfig::steps()`, preserving
-//! pipeline structure (`Single` vs `Concurrent`). All commands use lazy template
-//! expansion — `vars.*` references resolve from git config at execution time,
-//! so prior steps that set vars via `wt config state vars set` are visible to
-//! later steps.
+//! Aliases build `ForegroundStep`s from `CommandConfig::steps()` via the
+//! shared `map_config_steps` walker, preserving pipeline structure (`Single`
+//! vs `Concurrent`). Like hooks, templates are syntax-checked before any
+//! step runs (here as a byproduct of the arg-routing parse in
+//! `referenced_vars_for_entry`) and rendered when each step runs — `vars.*`
+//! references resolve from git config at execution time, so prior steps that
+//! set vars via `wt config state vars set` are visible to later steps. The
+//! alias-specific residue is the context (built once, filtered to referenced
+//! vars, with `{{ args }}` injected from the CLI) and the labels (the alias
+//! name, no per-command log label).
 //!
 //! ## Why foreground and background execution differ
 //!
@@ -43,7 +48,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::config::{
-    ALIAS_ARGS_KEY, CommandConfig, HookStep, ProjectConfig, UserConfig, alias_context_filter,
+    ALIAS_ARGS_KEY, CommandConfig, ProjectConfig, UserConfig, alias_context_filter,
     format_alias_variables, referenced_vars_for_config,
 };
 use worktrunk::git::Repository;
@@ -55,8 +60,8 @@ use worktrunk::trace::Span;
 
 use crate::commands::command_approval::approve_alias_commands;
 use crate::commands::command_executor::{
-    CommandContext, FailureStrategy, PipelineKind, PreparedCommand, PreparedStep,
-    build_hook_context, execute_pipeline_foreground,
+    CommandContext, FailureStrategy, PipelineKind, PreparedCommand, build_hook_context,
+    execute_pipeline_foreground, map_config_steps,
 };
 use crate::commands::hook_announcement::{
     SourcedStep, format_pipeline_summary_from_names, step_names_from_config,
@@ -407,11 +412,13 @@ pub(crate) fn load_aliases(
 
 /// Union of variables referenced across both source bodies of an alias.
 /// Drives `--KEY=VALUE` routing in `AliasOptions::parse`: a flag binds to
-/// `{{ KEY }}` if KEY is referenced by *any* source's body.
-fn referenced_vars_for_entry(entry: &AliasEntry) -> anyhow::Result<BTreeSet<String>> {
+/// `{{ KEY }}` if KEY is referenced by *any* source's body. This parse is
+/// also where a syntax error in any alias template aborts — before flags are
+/// routed and before any step runs.
+fn referenced_vars_for_entry(name: &str, entry: &AliasEntry) -> anyhow::Result<BTreeSet<String>> {
     let mut out = BTreeSet::new();
     for (_, cfg) in entry.iter() {
-        out.extend(referenced_vars_for_config(cfg)?);
+        out.extend(referenced_vars_for_config(cfg, name)?);
     }
     Ok(out)
 }
@@ -447,7 +454,7 @@ pub fn try_alias(name: String, rest: Vec<String>, global_yes: bool) -> anyhow::R
     };
     let referenced = {
         let _span = Span::new("referenced_vars");
-        referenced_vars_for_entry(entry)?
+        referenced_vars_for_entry(&name, entry)?
     };
     if try_intercept_alias_help(&name, &rest, &referenced) {
         return Ok(Some(()));
@@ -511,7 +518,7 @@ pub fn step_alias(args: Vec<String>, global_yes: bool) -> anyhow::Result<()> {
             .collect();
         return Err(unknown_step_command_error(&name, &alias_names));
     };
-    let referenced = referenced_vars_for_entry(entry)?;
+    let referenced = referenced_vars_for_entry(&name, entry)?;
     if try_intercept_alias_help(&name, &args[1..], &referenced) {
         return Ok(());
     }
@@ -609,9 +616,6 @@ fn run_alias(
             .expect("Vec<String> serialization should never fail"),
     );
 
-    let context_json = serde_json::to_string(&context_map)
-        .expect("HashMap<String, String> serialization should never fail");
-
     if verbosity() >= 1 {
         let vars = format_alias_variables(&context_map, Some(&referenced));
         eprintln!("{}", info_message("template variables:"));
@@ -632,21 +636,20 @@ fn run_alias(
         let _span = Span::new(format!("prepare_steps:{}", alias_name));
         let mut sourced_steps = Vec::new();
         for (source, cfg) in entry.iter() {
-            for step in cfg.steps() {
-                let prepared = match step {
-                    HookStep::Single(cmd) => PreparedStep::Single(alias_prepared_command(
-                        cmd,
-                        &context_json,
-                        &alias_name,
-                    )),
-                    HookStep::Concurrent(cmds) => PreparedStep::Concurrent(
-                        cmds.iter()
-                            .map(|cmd| alias_prepared_command(cmd, &context_json, &alias_name))
-                            .collect(),
-                    ),
-                };
+            // No syntax check here: `referenced_vars_for_entry` already parsed
+            // every template for arg routing before dispatch reached this point.
+            let steps = map_config_steps(cfg, |cmd| {
+                Ok(PreparedCommand {
+                    name: cmd.name.clone(),
+                    template: cmd.template.clone(),
+                    context: context_map.clone(),
+                    template_name: alias_name.clone(),
+                    label: alias_name.clone(),
+                })
+            })?;
+            for step in steps {
                 sourced_steps.push(SourcedStep {
-                    step: prepared,
+                    step,
                     source,
                     // Aliases have no deprecated single-table form, so concurrent
                     // commands always run concurrently.
@@ -658,22 +661,6 @@ fn run_alias(
     };
 
     execute_pipeline_foreground(&foreground_steps, repo, &wt_path, FailureStrategy::FailFast)
-}
-
-/// Build a PreparedCommand for an alias, deferring template expansion to execution time.
-fn alias_prepared_command(
-    cmd: &worktrunk::config::Command,
-    context_json: &str,
-    alias_name: &str,
-) -> PreparedCommand {
-    PreparedCommand {
-        name: cmd.name.clone(),
-        expanded: cmd.template.clone(),
-        context_json: context_json.to_string(),
-        lazy_template: Some(cmd.template.clone()),
-        label: alias_name.to_string(),
-        log_label: None,
-    }
 }
 
 /// Which help page is being augmented. Controls the "shadowed by built-in"
@@ -1443,7 +1430,7 @@ cmd = [
 ]
 "#,
         );
-        let refs = worktrunk::config::referenced_vars_for_config(&cfg).unwrap();
+        let refs = worktrunk::config::referenced_vars_for_config(&cfg, "deploy").unwrap();
         let names: Vec<&str> = refs.iter().map(String::as_str).collect();
         assert_eq!(names, vec!["args", "env", "target"]);
     }

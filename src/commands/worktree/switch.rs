@@ -1981,9 +1981,10 @@ fn validate_switch_templates(
         for (source, cfg) in [("user", user_cfg), ("project", proj_cfg)] {
             if let Some(cfg) = cfg {
                 for cmd in cfg.commands() {
-                    // Skip full validation for lazy templates ({{ vars.X }}) —
-                    // they're expanded at runtime after prior pipeline steps set
-                    // the vars. Syntax is still checked by expand_commands.
+                    // Skip full validation for templates referencing {{ vars.X }} —
+                    // those values come from git config at execution time, after
+                    // prior pipeline steps set them. Syntax is still checked by
+                    // prepare_steps.
                     if template_references_var(&cmd.template, "vars") {
                         continue;
                     }

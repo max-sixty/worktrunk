@@ -225,18 +225,17 @@ mod tests {
         }
     }
 
-    fn make_cmd(name: Option<&str>, expanded: &str) -> PreparedCommand {
+    fn make_cmd(name: Option<&str>, template: &str) -> PreparedCommand {
         let label = match name {
             Some(n) => format!("user:{n}"),
             None => "user".to_string(),
         };
         PreparedCommand {
             name: name.map(String::from),
-            expanded: expanded.to_string(),
-            context_json: "{}".to_string(),
-            lazy_template: None,
+            template: template.to_string(),
+            context: std::collections::HashMap::new(),
+            template_name: label.clone(),
             label,
-            log_label: None,
         }
     }
 
