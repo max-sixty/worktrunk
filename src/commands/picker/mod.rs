@@ -290,7 +290,7 @@ impl PickerCollector {
             } => {
                 let main_repo = Repository::at(main_path)?;
                 let plan = approved_removal_plan(repo, main_path, worktree_path, approvals)?;
-                let mut announcer = HookAnnouncer::new(&main_repo, main_repo.user_config(), false);
+                let mut announcer = HookAnnouncer::new(&main_repo, false);
                 handle_remove_output(
                     result,
                     /* foreground */ true,
