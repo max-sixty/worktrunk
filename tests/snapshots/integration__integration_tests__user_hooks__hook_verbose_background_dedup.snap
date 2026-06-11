@@ -31,7 +31,6 @@ info:
     OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     PSModulePath: ""
-    RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
@@ -66,14 +65,6 @@ exit_code: 0
 [2m↳[22m [2mTo customize worktree locations, run [4mwt config create[24m[22m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m
-[2m○[22m Expanding [1muser post-start hook[22m
-[107m [0m [2m[0m[2m[34mecho[0m[2m user-hook
-[107m [0m [2m→[22m
-[107m [0m [2m[0m[2m[34mecho[0m[2m user-hook
-[2m○[22m Expanding [1mproject post-start hook[22m
-[107m [0m [2m[0m[2m[34mecho[0m[2m project-hook
-[107m [0m [2m→[22m
-[107m [0m [2m[0m[2m[34mecho[0m[2m project-hook
 [2m○[22m template variables:
 [107m [0m branch                = feature
 [107m [0m worktree_path         = _REPO_.feature

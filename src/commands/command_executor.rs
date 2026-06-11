@@ -1,7 +1,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::{
@@ -25,16 +25,28 @@ use crate::output::{DirectivePassthrough, execute_shell_command};
 #[derive(Debug)]
 pub struct PreparedCommand {
     pub name: Option<String>,
-    pub expanded: String,
-    pub context_json: String,
-    /// Raw template for lazy expansion at execution time (when template references `vars.`).
-    /// When `Some`, the `expanded` field is a placeholder — use `lazy_template` instead.
-    pub lazy_template: Option<String>,
-    /// Label for template expansion errors and per-command announcement summary.
+    /// Raw template, rendered against `context` when the command runs.
+    /// Syntax is validated at preparation; rendering is deferred so `vars.*`
+    /// set by earlier pipeline steps are read fresh from git config.
+    pub template: String,
+    /// Template variables, frozen at preparation. Serialized to JSON only at
+    /// the process boundary (child stdin, background pipeline spec).
+    pub context: HashMap<String, String>,
+    /// Name used in template expansion errors: `"user:foo"` for named hook
+    /// commands, `"user pre-merge hook"` for unnamed ones, the alias name for
+    /// aliases.
+    pub template_name: String,
+    /// Label for the per-command announcement summary and render span.
     /// For hooks: `"user:foo"` for named, `"user"` for unnamed. For aliases: alias name.
     pub label: String,
-    /// Log label for command tracing (e.g. `"pre-merge user:foo"`). `None` skips logging.
-    pub log_label: Option<String>,
+}
+
+impl PreparedCommand {
+    /// The JSON form of `context` piped to the child's stdin.
+    pub fn context_json(&self) -> String {
+        serde_json::to_string(&self.context)
+            .expect("HashMap<String, String> serialization should never fail")
+    }
 }
 
 /// A step in a prepared pipeline, mirroring `HookStep`.
@@ -84,6 +96,17 @@ pub enum PipelineKind {
     Alias {
         name: String,
     },
+}
+
+impl PipelineKind {
+    /// Log label for command tracing: hooks log as `"{hook_type} {label}"`
+    /// (e.g. `"pre-merge user:foo"`); aliases skip per-command logging.
+    fn log_label(&self, cmd: &PreparedCommand) -> Option<String> {
+        match self {
+            Self::Hook { hook_type, .. } => Some(format!("{hook_type} {}", cmd.label)),
+            Self::Alias { .. } => None,
+        }
+    }
 }
 
 /// A pipeline step ready for foreground execution, with rendering / error policy.
@@ -370,9 +393,9 @@ pub fn wait_first_error<E>(
 /// [`ShellEscapeMode::Posix`]: every caller (foreground hooks, background
 /// pipelines, aliases) interpolates the result into a command line run
 /// through `Cmd::shell` (`sh`/Git Bash), which is always POSIX — unlike the
-/// `--execute` payload, this never reaches a PowerShell wrapper. Used by the
-/// three execution paths that defer `vars.*` expansion until just before the
-/// command runs so prior steps can set vars via git config.
+/// `--execute` payload, this never reaches a PowerShell wrapper. Every
+/// execution path renders just before the command runs so prior steps can
+/// set `vars.*` via git config.
 pub fn expand_shell_template(
     template: &str,
     context: &HashMap<String, String>,
@@ -394,18 +417,29 @@ pub fn expand_shell_template(
 
 /// Resolve the shell string to execute for a prepared command.
 ///
-/// Commands carrying a `lazy_template` are re-expanded against their
-/// `context_json` at execution time so they see fresh git-config state
-/// (`vars.*` set by earlier steps). Commands without one were already
-/// expanded at prep time — return the cached `expanded` string.
+/// Templates render at execution time against the frozen `context`, so they
+/// see fresh git-config state (`vars.*` set by earlier steps).
 fn resolve_command_str(cmd: &PreparedCommand, repo: &Repository) -> Result<String> {
-    match &cmd.lazy_template {
-        Some(template) => {
-            let context: HashMap<String, String> = serde_json::from_str(&cmd.context_json)
-                .context("failed to deserialize context_json")?;
-            expand_shell_template(template, &context, repo, &cmd.label)
-        }
-        None => Ok(cmd.expanded.clone()),
+    expand_shell_template(&cmd.template, &cmd.context, repo, &cmd.template_name)
+}
+
+/// Render a template for dry-run / preview display. Mirrors execution-time
+/// semantics: a template referencing `vars.*` is shown raw after a syntax
+/// check — its values resolve from git config when the step runs, possibly
+/// written by earlier pipeline steps — while everything else renders against
+/// `context`. Expansion is side-effect-free, so previewing never perturbs the
+/// real run.
+pub fn render_template_preview(
+    template: &str,
+    context: &HashMap<String, String>,
+    repo: &Repository,
+    name: &str,
+) -> Result<String> {
+    if template_references_var(template, "vars") {
+        validate_template_syntax(template, name)?;
+        Ok(template.to_string())
+    } else {
+        expand_shell_template(template, context, repo, name)
     }
 }
 
@@ -420,8 +454,8 @@ pub(crate) fn command_summary_name(name: Option<&str>, source: HookSource) -> St
 /// Execute a pipeline of prepared steps in the foreground.
 ///
 /// This is the canonical foreground execution path for both hooks and aliases.
-/// Handles serial/concurrent step execution, per-command announcement, lazy
-/// template resolution, and policy-driven error handling.
+/// Handles serial/concurrent step execution, per-command announcement,
+/// execution-time template rendering, and policy-driven error handling.
 ///
 /// Each `ForegroundStep` carries a `concurrent` flag. When true, `Concurrent`
 /// steps spawn threads via `thread::scope`. When false (deprecated pre-*
@@ -454,12 +488,13 @@ pub fn execute_pipeline_foreground(
 
 /// Run every command in a concurrent group via the prefixed-line executor.
 ///
-/// Announces each command up front (per the step's `PipelineKind` — hooks
+/// Expands all templates sequentially before spawning any thread (template
+/// expansion reads git config; racing on reads would produce inconsistent
+/// state), announces each command (per the step's `PipelineKind` — hooks
 /// render per-command announcements, aliases only announce the outer group),
-/// expands all templates sequentially (template expansion reads git config;
-/// racing on reads would produce inconsistent state), then dispatches to
-/// `run_concurrent_commands` which streams each child's output prefixed by
-/// its label and waits for all to complete before folding outcomes.
+/// then dispatches to `run_concurrent_commands` which streams each child's
+/// output prefixed by its label and waits for all to complete before folding
+/// outcomes.
 fn run_concurrent_group(
     cmds: &[PreparedCommand],
     fg_step: &ForegroundStep,
@@ -468,9 +503,6 @@ fn run_concurrent_group(
     failure_strategy: FailureStrategy,
 ) -> anyhow::Result<()> {
     let directives = &fg_step.directives;
-    for cmd in cmds {
-        announce_command(cmd, &fg_step.announce);
-    }
 
     let expanded: Vec<String> = cmds
         .iter()
@@ -479,6 +511,10 @@ fn run_concurrent_group(
             resolve_command_str(cmd, repo)
         })
         .collect::<Result<_>>()?;
+
+    for (cmd, command_str) in cmds.iter().zip(&expanded) {
+        announce_command(cmd, &fg_step.announce, command_str);
+    }
 
     // Both alias tables and hook tables produce named commands (TOML keys
     // become `name`), so `cmd.name` is always `Some` here.
@@ -491,15 +527,19 @@ fn run_concurrent_group(
         })
         .collect();
 
-    let specs: Vec<ConcurrentCommand<'_>> = cmds
+    let context_jsons: Vec<String> = cmds.iter().map(PreparedCommand::context_json).collect();
+    let log_labels: Vec<Option<String>> = cmds
         .iter()
-        .enumerate()
-        .map(|(i, cmd)| ConcurrentCommand {
+        .map(|cmd| fg_step.announce.log_label(cmd))
+        .collect();
+
+    let specs: Vec<ConcurrentCommand<'_>> = (0..cmds.len())
+        .map(|i| ConcurrentCommand {
             label: labels[i],
             expanded: &expanded[i],
             working_dir: wt_path,
-            context_json: &cmd.context_json,
-            log_label: cmd.log_label.as_deref(),
+            context_json: &context_jsons[i],
+            log_label: log_labels[i].as_deref(),
             directives,
         })
         .collect();
@@ -524,7 +564,7 @@ fn run_concurrent_group(
     }
 }
 
-/// Execute a single prepared command: announce, expand, run, handle errors.
+/// Execute a single prepared command: expand, announce, run, handle errors.
 fn run_one_command(
     cmd: &PreparedCommand,
     fg_step: &ForegroundStep,
@@ -533,26 +573,23 @@ fn run_one_command(
     failure_strategy: FailureStrategy,
 ) -> anyhow::Result<()> {
     let directives = &fg_step.directives;
-    announce_command(cmd, &fg_step.announce);
 
     let command_str = {
         let _span = Span::new(format!("template_render:{}", cmd.label));
         resolve_command_str(cmd, repo)?
     };
+    announce_command(cmd, &fg_step.announce, &command_str);
 
     // Hooks get a documented JSON context on stdin; aliases inherit stdin so
     // interactive children (e.g. `wt switch`'s picker) keep their controlling
     // terminal. Piping JSON into an interactive alias body steals the tty.
-    let stdin_json = if fg_step.pipe_stdin {
-        Some(cmd.context_json.as_str())
-    } else {
-        None
-    };
+    let stdin_json = fg_step.pipe_stdin.then(|| cmd.context_json());
+    let log_label = fg_step.announce.log_label(cmd);
     let result = execute_shell_command(
         wt_path,
         &command_str,
-        stdin_json,
-        cmd.log_label.as_deref(),
+        stdin_json.as_deref(),
+        log_label.as_deref(),
         directives.clone(),
         fg_step.redirect_stdout_to_stderr,
     );
@@ -565,10 +602,11 @@ fn run_one_command(
 
 /// Announce a command before execution, formatted per the step's pipeline kind.
 ///
-/// Hook pipelines emit a per-command "Running …" line plus the bash gutter.
-/// Alias pipelines emit nothing — the alias caller renders a single pipeline
-/// summary externally.
-fn announce_command(cmd: &PreparedCommand, kind: &PipelineKind) {
+/// Hook pipelines emit a per-command "Running …" line plus a bash gutter
+/// showing `command_str` — the rendered command about to run. Alias pipelines
+/// emit nothing — the alias caller renders a single pipeline summary
+/// externally.
+fn announce_command(cmd: &PreparedCommand, kind: &PipelineKind, command_str: &str) {
     let PipelineKind::Hook {
         hook_type,
         display_path,
@@ -589,14 +627,12 @@ fn announce_command(cmd: &PreparedCommand, kind: &PipelineKind) {
         None => full_label,
     };
     if verbosity() >= 1 {
-        let ctx: HashMap<String, String> = serde_json::from_str(&cmd.context_json)
-            .expect("context_json is always serialized from a HashMap<String, String>");
-        let vars = format_hook_variables(*hook_type, &ctx);
+        let vars = format_hook_variables(*hook_type, &cmd.context);
         eprintln!("{}", info_message("template variables:"));
         eprintln!("{}", format_with_gutter(&vars, None));
     }
     eprintln!("{}", progress_message(message));
-    eprintln!("{}", format_bash_with_gutter(&cmd.expanded));
+    eprintln!("{}", format_bash_with_gutter(command_str));
 }
 
 /// Build the standard `ErrorWrapper` for hook steps.
@@ -668,19 +704,44 @@ fn handle_command_error(
     }
 }
 
-/// Expand commands from a CommandConfig without approval.
+/// Walk a config's pipeline structure, preparing each command.
 ///
-/// When `lazy_enabled` is true, commands referencing `vars.` are validated but not
-/// expanded — they carry a `lazy_template` for deferred expansion at execution time.
-/// Only enable for pipeline steps where ordering guarantees vars are set by prior steps.
-fn expand_commands(
-    commands: &[Command],
+/// Shared by hook and alias preparation: preserves the `Single` vs
+/// `Concurrent` grouping from the config while `prepare` supplies the
+/// per-command [`PreparedCommand`] (context construction and label naming
+/// differ between hooks and aliases).
+pub fn map_config_steps(
+    config: &CommandConfig,
+    mut prepare: impl FnMut(&Command) -> anyhow::Result<PreparedCommand>,
+) -> anyhow::Result<Vec<PreparedStep>> {
+    config
+        .steps()
+        .iter()
+        .map(|step| match step {
+            HookStep::Single(cmd) => Ok(PreparedStep::Single(prepare(cmd)?)),
+            HookStep::Concurrent(cmds) => Ok(PreparedStep::Concurrent(
+                cmds.iter().map(&mut prepare).collect::<Result<_>>()?,
+            )),
+        })
+        .collect()
+}
+
+/// Prepare hook pipeline steps for execution, preserving serial/concurrent
+/// structure. All hook preparation goes through this function (both
+/// foreground and background paths).
+///
+/// Each command freezes its context as JSON and keeps its raw template;
+/// rendering happens when the command runs. Syntax errors abort here — before
+/// the first step runs — while semantic errors (undefined variable, filter
+/// failure) surface at the failing step.
+pub fn prepare_steps(
+    command_config: &CommandConfig,
     ctx: &CommandContext<'_>,
     extra_vars: &[(&str, &str)],
     hook_type: HookType,
     source: HookSource,
-    lazy_enabled: bool,
-) -> anyhow::Result<Vec<(Command, String, Option<String>)>> {
+) -> anyhow::Result<Vec<PreparedStep>> {
+    // Built once per pipeline — build_hook_context spawns git subprocesses.
     let mut base_context = build_hook_context(ctx, extra_vars, None)?;
 
     // hook_type is always available as a template variable and in JSON context
@@ -694,9 +755,7 @@ fn expand_commands(
         .entry(worktrunk::config::ALIAS_ARGS_KEY.to_string())
         .or_insert_with(|| "[]".to_string());
 
-    let mut result = Vec::new();
-
-    for cmd in commands {
+    map_config_steps(command_config, |cmd| {
         // hook_name is per-command: available as template variable and in JSON context
         let mut cmd_context = base_context.clone();
         if let Some(ref name) = cmd.name {
@@ -704,100 +763,19 @@ fn expand_commands(
         }
 
         let template_name = match &cmd.name {
-            Some(name) => format!("{}:{}", source, name),
-            None => format!("{} {} hook", source, hook_type),
+            Some(name) => format!("{source}:{name}"),
+            None => format!("{source} {hook_type} hook"),
         };
+        validate_template_syntax(&cmd.template, &template_name)?;
 
-        let lazy = lazy_enabled && template_references_var(&cmd.template, "vars");
-
-        let (expanded_str, lazy_template) = if lazy {
-            // Parse-only validation: catch syntax errors upfront without rendering.
-            // Full rendering (validate_template) would fail on {{ vars.X }} because
-            // vars aren't set yet — that's the whole point of lazy expansion.
-            validate_template_syntax(&cmd.template, &template_name)
-                .map_err(|e| anyhow::anyhow!("syntax error in {template_name}: {e}"))?;
-            let tpl = cmd.template.clone();
-            (tpl.clone(), Some(tpl))
-        } else {
-            (
-                expand_shell_template(&cmd.template, &cmd_context, ctx.repo, &template_name)?,
-                None,
-            )
-        };
-
-        let context_json = serde_json::to_string(&cmd_context)
-            .expect("HashMap<String, String> serialization should never fail");
-
-        result.push((
-            Command::with_expansion(cmd.name.clone(), cmd.template.clone(), expanded_str),
-            context_json,
-            lazy_template,
-        ));
-    }
-
-    Ok(result)
-}
-
-/// Prepare pipeline steps for execution, preserving serial/concurrent structure.
-///
-/// Returns `Vec<PreparedStep>` that preserves the pipeline structure from
-/// the config — `Single` vs `Concurrent` grouping. All hook preparation
-/// goes through this function (both foreground and background paths).
-pub fn prepare_steps(
-    command_config: &CommandConfig,
-    ctx: &CommandContext<'_>,
-    extra_vars: &[(&str, &str)],
-    hook_type: HookType,
-    source: HookSource,
-) -> anyhow::Result<Vec<PreparedStep>> {
-    let steps = command_config.steps();
-
-    // Collect step sizes so we can re-partition after a single expand_commands call.
-    // This avoids calling build_hook_context (which spawns git subprocesses) per step.
-    let step_sizes: Vec<usize> = steps
-        .iter()
-        .map(|s| match s {
-            HookStep::Single(_) => 1,
-            HookStep::Concurrent(cmds) => cmds.len(),
+        Ok(PreparedCommand {
+            name: cmd.name.clone(),
+            template: cmd.template.clone(),
+            context: cmd_context,
+            template_name,
+            label: command_summary_name(cmd.name.as_deref(), source),
         })
-        .collect();
-
-    let all_commands: Vec<Command> = command_config.commands().cloned().collect();
-    let all_expanded = expand_commands(&all_commands, ctx, extra_vars, hook_type, source, true)?;
-    let mut expanded_iter = all_expanded.into_iter();
-
-    let make_prepared = |cmd: Command, json: String, lazy: Option<String>| -> PreparedCommand {
-        let label = command_summary_name(cmd.name.as_deref(), source);
-        let log_label = format!("{hook_type} {label}");
-        PreparedCommand {
-            name: cmd.name,
-            expanded: cmd.expanded,
-            context_json: json,
-            lazy_template: lazy,
-            label,
-            log_label: Some(log_label),
-        }
-    };
-
-    let mut result = Vec::new();
-    for (step, &size) in steps.iter().zip(&step_sizes) {
-        let chunk: Vec<_> = expanded_iter.by_ref().take(size).collect();
-        match step {
-            HookStep::Single(_) => {
-                let (cmd, json, lazy) = chunk.into_iter().next().unwrap();
-                result.push(PreparedStep::Single(make_prepared(cmd, json, lazy)));
-            }
-            HookStep::Concurrent(_) => {
-                let prepared = chunk
-                    .into_iter()
-                    .map(|(cmd, json, lazy)| make_prepared(cmd, json, lazy))
-                    .collect();
-                result.push(PreparedStep::Concurrent(prepared));
-            }
-        }
-    }
-
-    Ok(result)
+    })
 }
 
 #[cfg(test)]
@@ -806,14 +784,12 @@ mod tests {
 
     fn make_cmd(name: Option<&str>) -> PreparedCommand {
         let label = command_summary_name(name, HookSource::User);
-        let log_label = format!("pre-merge {label}");
         PreparedCommand {
             name: name.map(String::from),
-            expanded: "echo test".to_string(),
-            context_json: "{}".to_string(),
-            lazy_template: None,
+            template: "echo test".to_string(),
+            context: HashMap::new(),
+            template_name: label.clone(),
             label,
-            log_label: Some(log_label),
         }
     }
 

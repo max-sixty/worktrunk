@@ -20,14 +20,13 @@
 //! alias-dispatch path single-purpose (always runs) and gives preview a
 //! natural home alongside `show`.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::io::Write;
 
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::{
     ALIAS_ARGS_KEY, CommandConfig, ProjectConfig, UserConfig, referenced_vars_for_config,
-    template_references_var, validate_template_syntax,
 };
 use worktrunk::git::{Repository, WorktrunkError};
 use worktrunk::styling::{format_bash_with_gutter, info_message, println};
@@ -37,7 +36,7 @@ use crate::commands::alias::{
 };
 use crate::commands::build_invalid_subcommand_error;
 use crate::commands::command_executor::{
-    CommandContext, build_hook_context, expand_shell_template,
+    CommandContext, build_hook_context, render_template_preview,
 };
 use crate::commands::did_you_mean;
 use crate::commands::hooks::HookSource;
@@ -139,10 +138,11 @@ fn warn_if_shadowed(name: &str) {
 /// Preview an alias invocation: parse the args, build the template context,
 /// and print the rendered command(s) without executing.
 ///
-/// Lazy semantics are preserved: templates referencing `vars.*` are shown
-/// raw (after syntax validation) because those values resolve from git
-/// config at execution time, potentially written by earlier pipeline steps.
-/// Other templates expand against the current context.
+/// Rendering goes through [`render_template_preview`], which mirrors
+/// execution-time semantics: templates referencing `vars.*` are shown raw
+/// (after syntax validation) because those values resolve from git config
+/// when the step runs, potentially written by earlier pipeline steps. Other
+/// templates expand against the current context.
 pub fn handle_alias_dry_run(name: String, args: Vec<String>) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let user_config = repo.user_config();
@@ -165,7 +165,7 @@ pub fn handle_alias_dry_run(name: String, args: Vec<String>) -> anyhow::Result<(
     // so a flag binds if any entry's template references it.
     let mut referenced: BTreeSet<String> = BTreeSet::new();
     for (cfg, _) in &entries {
-        referenced.extend(referenced_vars_for_config(cfg)?);
+        referenced.extend(referenced_vars_for_config(cfg, &name)?);
     }
     let mut parse_args = Vec::with_capacity(1 + args.len());
     parse_args.push(name.clone());
@@ -197,7 +197,7 @@ pub fn handle_alias_dry_run(name: String, args: Vec<String>) -> anyhow::Result<(
     for (cfg, source) in &entries {
         let bodies: Vec<String> = cfg
             .commands()
-            .map(|c| render_preview(&c.template, &context_map, &repo, &name))
+            .map(|c| render_template_preview(&c.template, &context_map, &repo, &name))
             .collect::<anyhow::Result<_>>()?;
         println!(
             "{}",
@@ -241,23 +241,6 @@ fn format_routing_summary(opts: &AliasOptions) -> Option<String> {
         lines.push_str(&format!("# args: {args}\n"));
     }
     Some(lines)
-}
-
-/// Render a single command template for preview. Mirrors execution-time lazy
-/// semantics — see the module-level docstring.
-fn render_preview(
-    template: &str,
-    context: &HashMap<String, String>,
-    repo: &Repository,
-    alias_name: &str,
-) -> anyhow::Result<String> {
-    if template_references_var(template, "vars") {
-        validate_template_syntax(template, alias_name)
-            .map_err(|e| anyhow::anyhow!("syntax error in alias {alias_name}: {e}"))?;
-        Ok(template.to_string())
-    } else {
-        Ok(expand_shell_template(template, context, repo, alias_name)?)
-    }
 }
 
 /// Resolve `name` against user + project config, preserving runtime execution

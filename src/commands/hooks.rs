@@ -62,7 +62,6 @@
 //! (test isolation); user config (`~/.config/worktrunk/config.toml`) is global
 //! and unaffected.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
@@ -468,12 +467,10 @@ fn print_background_variable_table(pipelines: &[PendingPipeline], hook_type: Hoo
             PreparedStep::Single(cmd) => cmd,
             PreparedStep::Concurrent(cmds) => &cmds[0],
         };
-        let ctx: HashMap<String, String> = serde_json::from_str(&cmd.context_json)
-            .expect("context_json is always serialized from a HashMap<String, String>");
         eprintln!("{}", info_message("template variables:"));
         eprintln!(
             "{}",
-            format_with_gutter(&format_hook_variables(hook_type, &ctx), None)
+            format_with_gutter(&format_hook_variables(hook_type, &cmd.context), None)
         );
         return;
     }
@@ -496,26 +493,24 @@ fn spawn_hook_pipeline_quiet(repo: &Repository, pipeline: &PendingPipeline) -> a
         PreparedStep::Single(cmd) => cmd,
         PreparedStep::Concurrent(cmds) => &cmds[0],
     };
-    let mut context: std::collections::HashMap<String, String> =
-        serde_json::from_str(&first_cmd.context_json)
-            .context("failed to deserialize context_json")?;
+    let mut context = first_cmd.context.clone();
     context.remove("hook_name");
 
-    // Build pipeline spec from prepared steps. Use the raw template for lazy
-    // steps (vars-referencing) and the expanded command for eager steps.
+    // Build pipeline spec from prepared steps. The runner renders each raw
+    // template when its step runs (see `run_pipeline`'s "Template freshness").
     let spec_steps: Vec<PipelineStepSpec> = steps
         .iter()
         .map(|s| match &s.step {
             PreparedStep::Single(cmd) => PipelineStepSpec::Single {
                 name: cmd.name.clone(),
-                template: cmd.lazy_template.as_ref().unwrap_or(&cmd.expanded).clone(),
+                template: cmd.template.clone(),
             },
             PreparedStep::Concurrent(cmds) => PipelineStepSpec::Concurrent {
                 commands: cmds
                     .iter()
                     .map(|c| PipelineCommandSpec {
                         name: c.name.clone(),
-                        template: c.lazy_template.as_ref().unwrap_or(&c.expanded).clone(),
+                        template: c.template.clone(),
                     })
                     .collect(),
             },

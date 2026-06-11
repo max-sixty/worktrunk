@@ -1038,8 +1038,11 @@ fn test_merge_drops_pending_hooks_when_post_merge_fails(mut repo: TestRepo) {
     let post_remove_marker = temp_root.join("drop_postremove_marker.txt");
     let post_merge_marker = temp_root.join("drop_postmerge_marker.txt");
 
-    // post-merge references an undefined variable, so `register` errors after
+    // post-merge has a template syntax error, so `register` errors after
     // post-remove + post-switch are already pending in the announcer.
+    // (Semantic errors like undefined variables no longer fail prep — they
+    // surface when the runner renders the step; see
+    // test_background_hook_undefined_var_fails_in_runner.)
     // Convert to forward slashes so the rendered shell command parses the same
     // way under Windows Git Bash (where backslashes in unquoted paths get
     // eaten as escape-of-next-char).
@@ -1051,7 +1054,7 @@ cleanup = "echo POST_REMOVE_RAN > {}"
 notify = "echo switched"
 
 [post-merge]
-sync = "echo POST_MERGE_RAN > {} {{{{ does_not_exist }}}}"
+sync = "echo POST_MERGE_RAN > {} {{{{ bad..syntax }}}}"
 "#,
         post_remove_marker.to_slash_lossy(),
         post_merge_marker.to_slash_lossy(),
@@ -1065,7 +1068,7 @@ sync = "echo POST_MERGE_RAN > {} {{{{ does_not_exist }}}}"
         .unwrap();
     assert!(
         !output.status.success(),
-        "merge should fail when post-merge template references undefined variable"
+        "merge should fail when a post-merge template has a syntax error"
     );
 
     // Drop flushed the pending pipelines: post-remove ran despite the failure.
@@ -1080,6 +1083,81 @@ sync = "echo POST_MERGE_RAN > {} {{{{ does_not_exist }}}}"
     assert!(
         !post_merge_marker.exists(),
         "post-merge marker should not exist (template prep failed before spawn)"
+    );
+}
+
+/// A semantic template error (undefined variable) in a background hook does
+/// not fail the foreground command: templates render when each step runs, so
+/// the error surfaces in the detached runner and lands in its log. Only
+/// syntax errors abort at prep (see
+/// test_merge_drops_pending_hooks_when_post_merge_fails).
+#[rstest]
+fn test_background_hook_undefined_var_fails_in_runner(repo: TestRepo) {
+    repo.write_test_config(
+        r#"[post-start]
+broken = "echo {{ does_not_exist }} > should_not_exist.txt"
+"#,
+    );
+
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "post-start", "--yes"]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "background spawn should succeed; rendering fails later in the runner.\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    // The runner renders the template, fails, and reports into its own log
+    // at `{branch}/{source}/{hook_type}/runner.log`.
+    let runner_log = resolve_git_common_dir(repo.root_path())
+        .join("wt/logs")
+        .join(worktrunk::path::sanitize_for_filename("main"))
+        .join("user")
+        .join("post-start")
+        .join("runner.log");
+    wait_for_file_content(&runner_log);
+    let log_content = fs::read_to_string(&runner_log).unwrap();
+    assert!(
+        log_content.contains("Failed to expand"),
+        "runner log should contain the template error, got: {log_content}"
+    );
+
+    // The step never ran.
+    assert!(!repo.root_path().join("should_not_exist.txt").exists());
+}
+
+/// A semantic template error in a foreground pipeline step surfaces when that
+/// step runs: earlier steps execute first, then the broken step's render
+/// aborts the pipeline. (Pre-change, prep expanded every template upfront and
+/// nothing ran.) Syntax errors still abort before step 1.
+#[rstest]
+fn test_foreground_pipeline_undefined_var_runs_earlier_steps(repo: TestRepo) {
+    repo.write_test_config(
+        r#"pre-merge = [
+    { first = "echo FIRST_RAN > first_marker.txt" },
+    { broken = "echo {{ does_not_exist }}" },
+]
+"#,
+    );
+
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "pre-merge", "--yes"]);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        assert_cmd_snapshot!("foreground_pipeline_undefined_var_runs_earlier_steps", cmd);
+    });
+
+    let marker = repo.root_path().join("first_marker.txt");
+    assert!(
+        marker.exists(),
+        "step 1 should have run before step 2's template error"
     );
 }
 
@@ -3179,8 +3257,8 @@ fn test_user_post_start_pipeline_failure_skips_later_steps(repo: TestRepo) {
 #[rstest]
 fn test_user_post_start_pipeline_lazy_vars_foreground(repo: TestRepo) {
     // Pipeline step 1 sets a var, step 2 uses it via {{ vars.name }}.
-    // Foreground mode exercises the in-process lazy re-expansion path
-    // in run_hook_with_filter.
+    // Foreground mode exercises the in-process execution-time render path,
+    // which reads vars fresh from git config per step.
     repo.write_test_config(
         r#"post-start = [
     "git config worktrunk.state.main.vars.name '{{ branch | sanitize }}-postgres'",
@@ -3209,13 +3287,13 @@ fn test_user_post_start_pipeline_lazy_vars_foreground(repo: TestRepo) {
     let marker_file = repo.root_path().join("lazy_expanded.txt");
     assert!(
         marker_file.exists(),
-        "Foreground lazy expansion should create marker file"
+        "Foreground render should create marker file"
     );
 
     let content = fs::read_to_string(&marker_file).unwrap().trim().to_string();
     assert_eq!(
         content, "main-postgres",
-        "Lazy step should see var set by prior step"
+        "Step 2 should see var set by prior step"
     );
 }
 
@@ -3486,11 +3564,11 @@ fn test_user_post_remove_pipeline_serial_ordering(mut repo: TestRepo) {
 }
 
 // ============================================================================
-// Name-filtered lazy template (Bug 3 regression test)
+// Name-filtered vars template (Bug 3 regression test)
 // ============================================================================
 
 #[rstest]
-fn test_standalone_hook_name_filtered_lazy_template(repo: TestRepo) {
+fn test_standalone_hook_name_filtered_vars_template(repo: TestRepo) {
     // A pipeline step that uses {{ vars.X }} should expand correctly when
     // name-filtered via `wt hook post-start db`. Before the fix, the flat
     // spawn path passed the raw unexpanded template to the shell.
@@ -3499,7 +3577,7 @@ fn test_standalone_hook_name_filtered_lazy_template(repo: TestRepo) {
     repo.write_test_config(
         r#"post-start = [
     { setup = "echo setup" },
-    { db = "echo {{ vars.name }} > lazy_filtered.txt" }
+    { db = "echo {{ vars.name }} > vars_filtered.txt" }
 ]
 "#,
     );
@@ -3513,16 +3591,16 @@ fn test_standalone_hook_name_filtered_lazy_template(repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "hook", &["post-start", "db"], None);
-        assert_cmd_snapshot!("standalone_hook_name_filtered_lazy_template", cmd);
+        assert_cmd_snapshot!("standalone_hook_name_filtered_vars_template", cmd);
     });
 
-    let marker_file = repo.root_path().join("lazy_filtered.txt");
+    let marker_file = repo.root_path().join("vars_filtered.txt");
     wait_for_file_content(&marker_file);
 
     let content = fs::read_to_string(&marker_file).unwrap().trim().to_string();
     assert_eq!(
         content, "test-db",
-        "Lazy template should expand {{ vars.name }} from git config"
+        "Template should expand {{ vars.name }} from git config"
     );
 }
 
