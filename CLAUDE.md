@@ -131,7 +131,7 @@ Why: wt installs a `signal_hook` SIGINT/SIGTERM handler so it can forward signal
 
 ## Coverage
 
-**NEVER merge a PR with failing `codecov/patch` without explicit user approval.** It is marked "not required" in GitHub but still gates merge. On failure, investigate and fix the gap — write tests, or remove unused code (including specialized error handlers for rare cases where falling through to a general handler suffices). If you believe it's a false positive, ask the user before merging. Coverage runs include `--features shell-integration-tests` (CI `code-coverage` and local `task coverage`) — don't dismiss failures by claiming the feature is off. Investigation commands, rename false-positives, and the "N functions mismatched" warning: `tests/CLAUDE.md`.
+**NEVER merge a PR with failing `codecov/patch` without explicit user approval.** It is marked "not required" in GitHub but still gates merge. On PR heads codecov posts **check runs** (codecov GitHub App), not commit statuses: poll with `gh pr checks <number>` or the check-runs API; the combined-status API (`/commits/<sha>/status`) never shows them, and the check run lands a few minutes after the `code-coverage` job finishes. On failure, investigate and fix the gap — write tests, or remove unused code (including specialized error handlers for rare cases where falling through to a general handler suffices). If you believe it's a false positive, ask the user before merging. Coverage runs include `--features shell-integration-tests` (CI `code-coverage` and local `task coverage`) — don't dismiss failures by claiming the feature is off. Investigation commands, rename false-positives, and the "N functions mismatched" warning: `tests/CLAUDE.md`.
 
 ## Benchmarks & Traces
 
