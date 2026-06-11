@@ -260,13 +260,12 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
             } else {
                 // Approval is handled inside handle_squash (like step_commit).
                 let repo = Repository::current()?;
-                let config = UserConfig::load().context("Failed to load config")?;
                 let hooks = if verify {
                     HookGate::Run
                 } else {
                     HookGate::NoHooksFlag
                 };
-                let mut announcer = HookAnnouncer::new(&repo, &config, false);
+                let mut announcer = HookAnnouncer::new(&repo, false);
                 let format = args.format;
                 let result = handle_squash(
                     args.target.as_deref(),
@@ -1019,7 +1018,7 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                     yes,
                 )?;
 
-                let mut announcer = HookAnnouncer::new(&repo, &config, false);
+                let mut announcer = HookAnnouncer::new(&repo, false);
                 handle_remove_output(
                     &result,
                     args.foreground,
@@ -1082,7 +1081,7 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                 let show_branch =
                     plans.others.len() + plans.branch_only.len() + plans.current.iter().len() > 1;
                 let run = |result: &RemoveResult| -> anyhow::Result<()> {
-                    let mut announcer = HookAnnouncer::new(&repo, &config, show_branch);
+                    let mut announcer = HookAnnouncer::new(&repo, show_branch);
                     handle_remove_output(
                         result,
                         args.foreground,
