@@ -381,12 +381,12 @@ impl PrStatus {
     /// Get the indicator symbol for this status
     ///
     /// - Error: ⚠ (warning indicator)
-    /// - All others: ● (filled circle)
+    /// - All others: # (a PR reference with the number unavailable)
     pub fn indicator(&self) -> &'static str {
         if matches!(self.ci_status, CiStatus::Error) {
             "⚠"
         } else {
-            "●"
+            "#"
         }
     }
 
@@ -422,10 +422,10 @@ impl PrStatus {
     /// Format CI status for a cell `max_width` columns wide.
     ///
     /// Shows the PR/MR reference (`#3035`, `!3035`) colored by CI status when
-    /// one exists and fits; otherwise falls back to the indicator dot. The
-    /// fallback covers branch workflows (no PR), pre-number cache entries,
-    /// and numbers wider than the column's pre-allocated estimate — the
-    /// column never resizes mid-render. Statusline callers pass
+    /// one exists and fits; otherwise falls back to the bare `#` indicator.
+    /// The fallback covers branch workflows (no PR), pre-number cache
+    /// entries, and numbers wider than the column's pre-allocated estimate —
+    /// the column never resizes mid-render. Statusline callers pass
     /// `usize::MAX` (no width cap).
     pub fn format_cell(&self, max_width: usize, include_link: bool) -> String {
         match self.number {
@@ -587,7 +587,7 @@ mod tests {
             url: None,
             number: None,
         };
-        assert_eq!(pr_passed.indicator(), "●");
+        assert_eq!(pr_passed.indicator(), "#");
 
         let branch_running = PrStatus {
             ci_status: CiStatus::Running,
@@ -596,7 +596,7 @@ mod tests {
             url: None,
             number: None,
         };
-        assert_eq!(branch_running.indicator(), "●");
+        assert_eq!(branch_running.indicator(), "#");
 
         let error_status = PrStatus {
             ci_status: CiStatus::Error,
@@ -631,11 +631,11 @@ mod tests {
         };
 
         // With URL + include_link=true → has OSC 8 hyperlink
-        assert_snapshot!(with_url.format_indicator(true), @r"[4m[32m]8;;https://github.com/owner/repo/pull/123\●]8;;\[0m");
+        assert_snapshot!(with_url.format_indicator(true), @r"[4m[32m]8;;https://github.com/owner/repo/pull/123\#]8;;\[0m");
         // With URL + include_link=false → no OSC 8
-        assert_snapshot!(with_url.format_indicator(false), @"[32m●[0m");
+        assert_snapshot!(with_url.format_indicator(false), @"[32m#[0m");
         // No URL + include_link=true → no OSC 8
-        assert_snapshot!(no_url.format_indicator(true), @"[32m●[0m");
+        assert_snapshot!(no_url.format_indicator(true), @"[32m#[0m");
     }
 
     #[test]
@@ -656,15 +656,15 @@ mod tests {
         // Number fits → PR reference, hyperlinked when supported
         assert_snapshot!(pr.format_cell(4, false), @"[32m#123[0m");
         assert_snapshot!(pr.format_cell(4, true), @r"[4m[32m]8;;https://github.com/owner/repo/pull/123\#123]8;;\[0m");
-        // Number wider than the column → indicator dot
-        assert_snapshot!(pr.format_cell(3, false), @"[32m●[0m");
+        // Number wider than the column → bare # indicator
+        assert_snapshot!(pr.format_cell(3, false), @"[32m#[0m");
 
-        // No number (branch workflow or pre-number cache entry) → indicator dot
+        // No number (branch workflow or pre-number cache entry) → bare # indicator
         let branch = PrStatus {
             number: None,
             ..pr.clone()
         };
-        assert_snapshot!(branch.format_cell(10, false), @"[32m●[0m");
+        assert_snapshot!(branch.format_cell(10, false), @"[32m#[0m");
 
         // GitLab sigil
         let mr = PrStatus {

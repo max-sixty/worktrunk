@@ -45,7 +45,7 @@ Include CI status, line diffs, and LLM summaries:
 {% terminal(cmd="wt list --full") %}
 &#32;&#32;<b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Summary</b>                                                <b>Remote⇅</b>  <b>CI</b>    <b>Commit</b>
 @ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>  Refactor API to REST architecture with middleware       <span class=g>⇡3</span>      <span class=d><span style='color:var(--blue,#00a)'>#412</span></span>  <span class=d>6814f02a</span>
-^ main             <span class=d>^</span><span class=d>⇅</span>                                                                                           <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=g>●</span>     <span class=d>41ee0834</span>
+^ main             <span class=d>^</span><span class=d>⇅</span>                                                                                           <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=g>#</span>     <span class=d>41ee0834</span>
 + fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+25</span>  <span class=r>-11</span>  Harden auth with constant-time token validation           <span class=d>|</span>     <span class=g>#408</span>  <span class=d>b772e68b</span>
 + <span class=d>fix-typos</span>        <span class=d>_</span><span class=d>|</span>                                                                                             <span class=d>|</span>     <span class=g>#410</span>  <span class=d>41ee0834</span>
 
@@ -57,7 +57,7 @@ Include branches that don't have worktrees:
 {% terminal(cmd="wt list --branches --full") %}
 &#32;&#32;<b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Summary</b>                                                <b>Remote⇅</b>  <b>CI</b>    <b>Commit</b>
 @ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>  Refactor API to REST architecture with middleware       <span class=g>⇡3</span>      <span class=d><span style='color:var(--blue,#00a)'>#412</span></span>  <span class=d>6814f02a</span>
-^ main             <span class=d>^</span><span class=d>⇅</span>                                                                                           <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=g>●</span>     <span class=d>41ee0834</span>
+^ main             <span class=d>^</span><span class=d>⇅</span>                                                                                           <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=g>#</span>     <span class=d>41ee0834</span>
 + fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+25</span>  <span class=r>-11</span>  Harden auth with constant-time token validation           <span class=d>|</span>     <span class=g>#408</span>  <span class=d>b772e68b</span>
 + <span class=d>fix-typos</span>        <span class=d>_</span><span class=d>|</span>                                                                                             <span class=d>|</span>     <span class=g>#410</span>  <span class=d>41ee0834</span>
   exp             <span class=d>/</span><span class=d>↕</span>                 <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+137</span>       Explore GraphQL schema and resolvers                                  <span class=d>96379229</span>
@@ -92,7 +92,7 @@ The `main` header label is used regardless of the default branch's actual name.
 
 ### CI status
 
-The CI column shows the branch's open PR/MR — `#3035` on GitHub, Gitea, and Azure DevOps, `!3035` on GitLab — colored by pipeline status. Branch workflows without a PR/MR show a `●` indicator in the same colors:
+The CI column shows the branch's open PR/MR — `#3035` on GitHub, Gitea, and Azure DevOps, `!3035` on GitLab — colored by pipeline status, or a bare `#` when no number is available (e.g. branch workflows without a PR/MR):
 
 | Color | Meaning |
 |-------|---------|
@@ -105,8 +105,6 @@ The CI column shows the branch's open PR/MR — `#3035` on GitHub, Gitea, and Az
 | (blank) | No upstream or no PR/MR |
 
 CI cells are clickable links to the PR or pipeline page, and appear dimmed when unpushed local changes make the status stale. PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches — visible with `--remotes` — get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
-
-The column is sized from the largest PR number seen in earlier runs (the layout is fixed before CI data arrives). On the first run in a repo — or when a number outgrows the previous maximum — the cell falls back to the `●` indicator for that run and sizes correctly on the next.
 
 ### LLM summaries
 

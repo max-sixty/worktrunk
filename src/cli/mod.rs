@@ -713,7 +713,7 @@ Include CI status, line diffs, and LLM summaries:
 $ wt list --full
   Branch       Status        HEAD±    main↕     main…±  Summary                                                Remote⇅  CI    Commit
 @ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware       ⇡3      #412  6814f02a
-^ main             ^⇅                                                                                           ⇡1  ⇣1  ●     41ee0834
+^ main             ^⇅                                                                                           ⇡1  ⇣1  #     41ee0834
 + fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation           |     #408  b772e68b
 + fix-typos        _|                                                                                             |     #410  41ee0834
 
@@ -727,7 +727,7 @@ Include branches that don't have worktrees:
 $ wt list --branches --full
   Branch       Status        HEAD±    main↕     main…±  Summary                                                Remote⇅  CI    Commit
 @ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware       ⇡3      #412  6814f02a
-^ main             ^⇅                                                                                           ⇡1  ⇣1  ●     41ee0834
+^ main             ^⇅                                                                                           ⇡1  ⇣1  #     41ee0834
 + fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation           |     #408  b772e68b
 + fix-typos        _|                                                                                             |     #410  41ee0834
   exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and resolvers                                  96379229
@@ -764,7 +764,7 @@ The `main` header label is used regardless of the default branch's actual name.
 
 ### CI status
 
-The CI column shows the branch's open PR/MR — `#3035` on GitHub, Gitea, and Azure DevOps, `!3035` on GitLab — colored by pipeline status. Branch workflows without a PR/MR show a `●` indicator in the same colors:
+The CI column shows the branch's open PR/MR — `#3035` on GitHub, Gitea, and Azure DevOps, `!3035` on GitLab — colored by pipeline status, or a bare `#` when no number is available (e.g. branch workflows without a PR/MR):
 
 | Color | Meaning |
 |-------|---------|
@@ -777,8 +777,6 @@ The CI column shows the branch's open PR/MR — `#3035` on GitHub, Gitea, and Az
 | (blank) | No upstream or no PR/MR |
 
 CI cells are clickable links to the PR or pipeline page, and appear dimmed when unpushed local changes make the status stale. PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches — visible with `--remotes` — get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
-
-The column is sized from the largest PR number seen in earlier runs (the layout is fixed before CI data arrives). On the first run in a repo — or when a number outgrows the previous maximum — the cell falls back to the `●` indicator for that run and sizes correctly on the next.
 
 ### LLM summaries [experimental]
 

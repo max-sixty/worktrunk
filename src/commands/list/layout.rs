@@ -583,7 +583,7 @@ fn build_estimated_widths(
     let age_estimate = 4; // "11mo" (short format)
     // CI column: PR/MR reference ("#3035"), sized from the cached largest
     // number seen; "#9999" before the first fetch populates the cache. A
-    // number that outgrows the estimate renders as the indicator dot instead
+    // number that outgrows the estimate renders as the bare `#` indicator
     // (`PrStatus::format_cell`) — the layout never resizes mid-render — and
     // the ratcheted cache sizes the next invocation correctly.
     let ci_estimate = fit_header(

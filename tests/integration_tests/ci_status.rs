@@ -847,7 +847,7 @@ fn test_list_full_with_branch_fallback_using_fork_pushremote(mut repo: TestRepo)
         .find(|line| line.contains("feature-a"))
         .expect("expected feature-a line in wt list output");
     assert!(
-        feature_a_line.contains("●"),
+        feature_a_line.contains("#"),
         "expected feature-a to show passed branch CI from the fork repo fallback\nstdout:\n{stdout}",
     );
 }
