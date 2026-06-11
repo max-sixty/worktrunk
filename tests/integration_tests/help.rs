@@ -228,10 +228,9 @@ fn test_help_list_narrow_terminal() {
 }
 
 /// With no detectable width (piped output, no COLUMNS), `terminal_width()`
-/// returns its `usize::MAX` "don't truncate" sentinel. Help rendering must
-/// map that to "no width" rather than treating it as a real width —
-/// `wt list --help` used to panic with a capacity overflow trying to render
-/// a `---` rule `usize::MAX` characters wide.
+/// returns `None` and the markdown renderer falls back to its own defaults.
+/// Back when "no width" was a `usize::MAX` sentinel, `wt list --help` panicked
+/// with a capacity overflow trying to render a `---` rule that wide.
 #[test]
 fn test_help_without_detectable_width() {
     let mut cmd = wt_command();

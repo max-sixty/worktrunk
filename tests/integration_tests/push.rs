@@ -31,8 +31,9 @@ fn test_push_fast_forward(mut repo: TestRepo) {
 }
 
 /// With no detectable width (piped output, no COLUMNS), the diffstat omits
-/// `--stat-width` instead of passing `terminal_width()`'s `usize::MAX`
-/// sentinel to git, which used to make git truncate filenames to ~10 chars.
+/// `--stat-width` and lets git pick its default. Back when "no width" was a
+/// `usize::MAX` sentinel, it reached git as a real `--stat-width` and made
+/// git truncate filenames to ~10 chars.
 #[rstest]
 fn test_push_diffstat_without_detectable_width(mut repo: TestRepo) {
     repo.add_main_worktree();

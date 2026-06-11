@@ -239,14 +239,9 @@ pub fn maybe_handle_help_with_pager(alias_help_context: Option<crate::commands::
 
                 // Render markdown sections (tables, code blocks, prose) with proper wrapping.
                 // Since we disabled clap's wrapping above, our renderer controls all line breaks.
-                // `terminal_width()` returns a `usize::MAX` sentinel when no
-                // width is detectable (no TTY, no COLUMNS); map it to `None`
-                // so the renderer uses its own defaults instead of e.g.
-                // repeating a rule character `usize::MAX` times.
-                let width = worktrunk::styling::terminal_width();
                 let help = crate::md_help::render_markdown_in_help_with_width(
                     &clap_output,
-                    (width != usize::MAX).then_some(width),
+                    worktrunk::styling::terminal_width(),
                 );
 
                 // show_help_in_pager checks if stdout or stderr is a TTY.
