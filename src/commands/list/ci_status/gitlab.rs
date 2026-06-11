@@ -19,7 +19,7 @@ use std::path::Path;
 use worktrunk::git::Repository;
 
 use super::{
-    CiBranchName, CiSource, CiStatus, MAX_PRS_TO_FETCH, PrStatus, is_retriable_error,
+    CiBranchName, CiSource, CiStatus, MAX_PRS_TO_FETCH, PrRef, PrStatus, is_retriable_error,
     non_interactive_cmd, parse_json,
 };
 
@@ -187,6 +187,10 @@ pub(super) fn detect_gitlab(
         source: CiSource::PullRequest,
         is_stale,
         url: mr_entry.web_url.clone(),
+        number: Some(PrRef {
+            number: mr_entry.iid,
+            sigil: '!',
+        }),
     })
 }
 
@@ -253,6 +257,7 @@ pub(super) fn detect_gitlab_pipeline(
         source: CiSource::Branch,
         is_stale,
         url: pipeline.web_url.clone(),
+        number: None,
     })
 }
 

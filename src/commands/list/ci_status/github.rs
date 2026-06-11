@@ -6,7 +6,7 @@ use serde::Deserialize;
 use worktrunk::git::Repository;
 
 use super::{
-    CiBranchName, CiSource, CiStatus, MAX_PRS_TO_FETCH, PrStatus, branch_owner_repo,
+    CiBranchName, CiSource, CiStatus, MAX_PRS_TO_FETCH, PrRef, PrStatus, branch_owner_repo,
     non_interactive_cmd, parse_json, retriable_pr_error,
 };
 
@@ -68,7 +68,7 @@ pub(super) fn detect_github(
             "--limit",
             &MAX_PRS_TO_FETCH.to_string(),
             "--json",
-            "headRefOid,mergeStateStatus,statusCheckRollup,url,headRepositoryOwner",
+            "number,headRefOid,mergeStateStatus,statusCheckRollup,url,headRepositoryOwner",
         ])
         .current_dir(&repo_root)
         .run()
@@ -128,6 +128,7 @@ pub(super) fn detect_github(
         source: CiSource::PullRequest,
         is_stale,
         url: pr_info.url.clone(),
+        number: pr_info.number.map(|number| PrRef { number, sigil: '#' }),
     })
 }
 
@@ -193,6 +194,7 @@ pub(super) fn detect_github_commit_checks(
         source: CiSource::Branch,
         is_stale: false, // We're querying by SHA, so always current
         url: None,
+        number: None,
     })
 }
 
@@ -204,6 +206,7 @@ pub(super) fn detect_github_commit_checks(
 /// Note: We don't include `state` because we already filter with `--state open`.
 #[derive(Debug, Deserialize)]
 pub(super) struct GitHubPrInfo {
+    pub number: Option<u64>,
     #[serde(rename = "headRefOid")]
     pub head_ref_oid: Option<String>,
     #[serde(rename = "mergeStateStatus")]
@@ -326,6 +329,7 @@ mod tests {
     fn test_github_pr_info_ci_status() {
         // No checks = NoCI
         let pr = GitHubPrInfo {
+            number: None,
             head_ref_oid: None,
             merge_state_status: None,
             status_check_rollup: None,
@@ -336,6 +340,7 @@ mod tests {
 
         // Empty checks = NoCI
         let pr = GitHubPrInfo {
+            number: None,
             head_ref_oid: None,
             merge_state_status: None,
             status_check_rollup: Some(vec![]),
@@ -347,6 +352,7 @@ mod tests {
         // CheckRun pending states
         for status in ["IN_PROGRESS", "QUEUED", "PENDING", "EXPECTED"] {
             let pr = GitHubPrInfo {
+                number: None,
                 head_ref_oid: None,
                 merge_state_status: None,
                 status_check_rollup: Some(vec![GitHubCheck {
@@ -362,6 +368,7 @@ mod tests {
 
         // StatusContext pending
         let pr = GitHubPrInfo {
+            number: None,
             head_ref_oid: None,
             merge_state_status: None,
             status_check_rollup: Some(vec![GitHubCheck {
@@ -377,6 +384,7 @@ mod tests {
         // CheckRun failures
         for conclusion in ["FAILURE", "ERROR", "CANCELLED"] {
             let pr = GitHubPrInfo {
+                number: None,
                 head_ref_oid: None,
                 merge_state_status: None,
                 status_check_rollup: Some(vec![GitHubCheck {
@@ -393,6 +401,7 @@ mod tests {
         // StatusContext failures
         for state in ["FAILURE", "ERROR"] {
             let pr = GitHubPrInfo {
+                number: None,
                 head_ref_oid: None,
                 merge_state_status: None,
                 status_check_rollup: Some(vec![GitHubCheck {
@@ -408,6 +417,7 @@ mod tests {
 
         // Success
         let pr = GitHubPrInfo {
+            number: None,
             head_ref_oid: None,
             merge_state_status: None,
             status_check_rollup: Some(vec![GitHubCheck {

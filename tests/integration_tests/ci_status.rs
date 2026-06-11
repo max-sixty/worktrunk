@@ -145,6 +145,7 @@ fn test_list_full_with_github_pr_status(
 
     let pr_json = format!(
         r#"[{{
+        "number": 1,
         "headRefOid": "{}",
         "mergeStateStatus": "{}",
         "statusCheckRollup": [
@@ -176,6 +177,7 @@ fn test_list_full_with_status_context(
 
     let pr_json = format!(
         r#"[{{
+        "number": 1,
         "headRefOid": "{}",
         "mergeStateStatus": "{}",
         "statusCheckRollup": [
@@ -239,6 +241,7 @@ fn test_list_full_with_stale_pr(mut repo: TestRepo) {
 
     // PR HEAD differs from local HEAD - simulates stale PR
     let pr_json = r#"[{
+        "number": 1,
         "headRefOid": "old_sha_from_before_local_commit",
         "mergeStateStatus": "CLEAN",
         "statusCheckRollup": [
@@ -258,6 +261,7 @@ fn test_list_full_with_mixed_check_types(mut repo: TestRepo) {
     // Mixed: CheckRun (passed) + StatusContext (pending)
     let pr_json = format!(
         r#"[{{
+        "number": 1,
         "headRefOid": "{}",
         "mergeStateStatus": "UNKNOWN",
         "statusCheckRollup": [
@@ -279,6 +283,7 @@ fn test_list_full_with_no_ci_checks(mut repo: TestRepo) {
 
     let pr_json = format!(
         r#"[{{
+        "number": 1,
         "headRefOid": "{}",
         "mergeStateStatus": "CLEAN",
         "statusCheckRollup": [],
@@ -308,6 +313,7 @@ fn test_list_full_filters_by_repo_owner(mut repo: TestRepo) {
     let pr_json = format!(
         r#"[
         {{
+            "number": 99,
             "headRefOid": "wrong_sha",
             "mergeStateStatus": "CLEAN",
             "statusCheckRollup": [{{"status": "COMPLETED", "conclusion": "FAILURE"}}],
@@ -315,6 +321,7 @@ fn test_list_full_filters_by_repo_owner(mut repo: TestRepo) {
             "headRepositoryOwner": {{"login": "other-org"}}
         }},
         {{
+            "number": 1,
             "headRefOid": "{}",
             "mergeStateStatus": "CLEAN",
             "statusCheckRollup": [{{"status": "COMPLETED", "conclusion": "SUCCESS"}}],
@@ -365,6 +372,7 @@ platform = "github"
     // Setup mock gh with PR data - this should work because the platform is set to github
     let pr_json = format!(
         r#"[{{
+        "number": 1,
         "headRefOid": "{}",
         "mergeStateStatus": "CLEAN",
         "statusCheckRollup": [
@@ -461,6 +469,7 @@ platform = "invalid_platform"
     // Setup mock gh - platform should fall back to GitHub via URL detection
     let pr_json = format!(
         r#"[{{
+        "number": 1,
         "headRefOid": "{}",
         "mergeStateStatus": "CLEAN",
         "statusCheckRollup": [
@@ -780,6 +789,7 @@ fn test_list_full_with_url_based_pushremote(mut repo: TestRepo) {
     // The PR comes from the fork owner (matches pushremote URL)
     let pr_json = format!(
         r#"[{{
+        "number": 1,
         "headRefOid": "{}",
         "mergeStateStatus": "CLEAN",
         "statusCheckRollup": [

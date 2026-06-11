@@ -82,7 +82,7 @@ impl CiBranchName {
 }
 
 // Re-export public types
-pub(crate) use cache::CachedCiStatus;
+pub(crate) use cache::{CachedCiStatus, MaxPrNumber};
 
 /// Maximum number of PRs/MRs to fetch when filtering by source repository.
 ///
@@ -302,6 +302,36 @@ pub enum CiSource {
     Branch,
 }
 
+/// A PR/MR reference: number plus the forge's display sigil.
+///
+/// Displays as `#3035` (GitHub, Gitea, Azure DevOps) or `!3035` (GitLab).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrRef {
+    pub number: u64,
+    /// Display sigil: `#` (GitHub, Gitea, Azure DevOps) or `!` (GitLab)
+    pub sigil: char,
+}
+
+impl PrRef {
+    /// Rendered width in terminal columns (sigil + digits).
+    pub fn width(self) -> usize {
+        pr_ref_width(self.number)
+    }
+}
+
+impl std::fmt::Display for PrRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}{}", self.sigil, self.number)
+    }
+}
+
+/// Rendered width of a PR/MR reference with the given number: one sigil
+/// column plus the decimal digits. Sigil-independent (`#` and `!` are both
+/// one column), so layout can size the CI column from a bare number.
+pub fn pr_ref_width(number: u64) -> usize {
+    2 + number.checked_ilog10().unwrap_or(0) as usize
+}
+
 /// CI status from PR/MR or branch workflow
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrStatus {
@@ -313,6 +343,12 @@ pub struct PrStatus {
     /// URL to the PR/MR (if available)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// PR/MR reference (absent for branch workflows). `serde(default)` keeps
+    /// cache entries written before this field existed readable — they render
+    /// as the indicator dot until their TTL expires and a fresh fetch fills
+    /// the number in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number: Option<PrRef>,
 }
 
 impl CiStatus {
@@ -354,25 +390,47 @@ impl PrStatus {
         }
     }
 
-    /// Format CI status with control over link inclusion.
-    ///
-    /// When `include_link` is false, the indicator is colored but not clickable.
-    /// Used for environments that don't support OSC 8 hyperlinks (e.g., Claude Code).
-    pub fn format_indicator(&self, include_link: bool) -> String {
-        let indicator = self.indicator();
+    /// Wrap `text` in this status's style, optionally as an OSC 8 hyperlink
+    /// to the PR/pipeline URL.
+    fn styled(&self, text: &str, include_link: bool) -> String {
         if let (true, Some(url)) = (include_link, &self.url) {
             let style = self.style().underline();
             format!(
                 "{}{}{}{}{}",
                 style,
                 osc8::Hyperlink::new(url),
-                indicator,
+                text,
                 osc8::Hyperlink::END,
                 style.render_reset()
             )
         } else {
             let style = self.style();
-            format!("{style}{indicator}{style:#}")
+            format!("{style}{text}{style:#}")
+        }
+    }
+
+    /// Format CI status as the colored indicator dot.
+    ///
+    /// When `include_link` is false, the indicator is colored but not clickable
+    /// (for environments without OSC 8 hyperlinks, e.g. Claude Code).
+    /// External callers go through [`Self::format_cell`], which falls back to
+    /// this when no PR/MR reference fits.
+    fn format_indicator(&self, include_link: bool) -> String {
+        self.styled(self.indicator(), include_link)
+    }
+
+    /// Format CI status for a cell `max_width` columns wide.
+    ///
+    /// Shows the PR/MR reference (`#3035`, `!3035`) colored by CI status when
+    /// one exists and fits; otherwise falls back to the indicator dot. The
+    /// fallback covers branch workflows (no PR), pre-number cache entries,
+    /// and numbers wider than the column's pre-allocated estimate — the
+    /// column never resizes mid-render. Statusline callers pass
+    /// `usize::MAX` (no width cap).
+    pub fn format_cell(&self, max_width: usize, include_link: bool) -> String {
+        match self.number {
+            Some(r) if r.width() <= max_width => self.styled(&r.to_string(), include_link),
+            _ => self.format_indicator(include_link),
         }
     }
 
@@ -383,6 +441,7 @@ impl PrStatus {
             source: CiSource::Branch,
             is_stale: false,
             url: None,
+            number: None,
         }
     }
 
@@ -434,6 +493,11 @@ impl PrStatus {
 
         // Cache miss or expired - fetch fresh status
         let status = Self::detect_uncached(repo, branch, local_head, has_upstream);
+
+        // Ratchet the repo-level width hint that sizes the `wt list` CI column.
+        if let Some(r) = status.as_ref().and_then(|s| s.number) {
+            MaxPrNumber::ratchet(repo, r.number);
+        }
 
         // Cache the result (including None - means no CI found for this branch)
         let cached = CachedCiStatus {
@@ -521,6 +585,7 @@ mod tests {
             source: CiSource::PullRequest,
             is_stale: false,
             url: None,
+            number: None,
         };
         assert_eq!(pr_passed.indicator(), "●");
 
@@ -529,6 +594,7 @@ mod tests {
             source: CiSource::Branch,
             is_stale: false,
             url: None,
+            number: None,
         };
         assert_eq!(branch_running.indicator(), "●");
 
@@ -537,6 +603,7 @@ mod tests {
             source: CiSource::PullRequest,
             is_stale: false,
             url: None,
+            number: None,
         };
         assert_eq!(error_status.indicator(), "⚠");
     }
@@ -550,12 +617,17 @@ mod tests {
             source: CiSource::PullRequest,
             is_stale: false,
             url: Some("https://github.com/owner/repo/pull/123".to_string()),
+            number: Some(PrRef {
+                number: 123,
+                sigil: '#',
+            }),
         };
         let no_url = PrStatus {
             ci_status: CiStatus::Passed,
             source: CiSource::PullRequest,
             is_stale: false,
             url: None,
+            number: None,
         };
 
         // With URL + include_link=true → has OSC 8 hyperlink
@@ -567,12 +639,77 @@ mod tests {
     }
 
     #[test]
+    fn test_format_cell() {
+        use insta::assert_snapshot;
+
+        let pr = PrStatus {
+            ci_status: CiStatus::Passed,
+            source: CiSource::PullRequest,
+            is_stale: false,
+            url: Some("https://github.com/owner/repo/pull/123".to_string()),
+            number: Some(PrRef {
+                number: 123,
+                sigil: '#',
+            }),
+        };
+
+        // Number fits → PR reference, hyperlinked when supported
+        assert_snapshot!(pr.format_cell(4, false), @"[32m#123[0m");
+        assert_snapshot!(pr.format_cell(4, true), @r"[4m[32m]8;;https://github.com/owner/repo/pull/123\#123]8;;\[0m");
+        // Number wider than the column → indicator dot
+        assert_snapshot!(pr.format_cell(3, false), @"[32m●[0m");
+
+        // No number (branch workflow or pre-number cache entry) → indicator dot
+        let branch = PrStatus {
+            number: None,
+            ..pr.clone()
+        };
+        assert_snapshot!(branch.format_cell(10, false), @"[32m●[0m");
+
+        // GitLab sigil
+        let mr = PrStatus {
+            number: Some(PrRef {
+                number: 7,
+                sigil: '!',
+            }),
+            ..pr
+        };
+        assert_snapshot!(mr.format_cell(usize::MAX, false), @"[32m!7[0m");
+    }
+
+    #[test]
+    fn test_pr_ref_width() {
+        assert_eq!(pr_ref_width(1), 2);
+        assert_eq!(pr_ref_width(9), 2);
+        assert_eq!(pr_ref_width(10), 3);
+        assert_eq!(pr_ref_width(3035), 5);
+        assert_eq!(pr_ref_width(99999), 6);
+        assert_eq!(
+            PrRef {
+                number: 3035,
+                sigil: '!'
+            }
+            .to_string(),
+            "!3035"
+        );
+        assert_eq!(
+            PrRef {
+                number: 3035,
+                sigil: '!'
+            }
+            .width(),
+            5
+        );
+    }
+
+    #[test]
     fn test_pr_status_error_constructor() {
         let error = PrStatus::error();
         assert_eq!(error.ci_status, CiStatus::Error);
         assert_eq!(error.source, CiSource::Branch);
         assert!(!error.is_stale);
         assert!(error.url.is_none());
+        assert!(error.number.is_none());
     }
 
     #[test]
@@ -613,6 +750,7 @@ mod tests {
             source: CiSource::Branch,
             is_stale: true,
             url: None,
+            number: None,
         };
         let style = stale.style();
         // Just verify it doesn't panic and returns a style

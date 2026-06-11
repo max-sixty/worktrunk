@@ -18,6 +18,53 @@ use super::PrStatus;
 /// Subdirectory of `.git/wt/cache/` holding cached CI statuses.
 const KIND: &str = "ci-status";
 
+/// Repo-level ratchet of the largest PR/MR number seen, stored in
+/// `.git/wt/cache/pr-number/max.json`.
+///
+/// Sizes the `wt list` CI column before any CI data arrives: the layout is
+/// fixed at skeleton time, so the column must be wide enough for `#3035`
+/// without waiting on the network. PR numbers are monotonic per repo and a
+/// branch's number never changes, so the value only grows and needs no
+/// invalidation.
+///
+/// Kept separate from the per-branch [`CachedCiStatus`] entries so the width
+/// hint isn't coupled to branch-entry retention — entries come and go with
+/// branches, while the repo-wide digit count should persist. Cleared together
+/// with them by `wt config state cache clear` (see
+/// `clear_ci_status_reported`); it re-learns on the next fetch.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub(crate) struct MaxPrNumber {
+    pub number: u64,
+}
+
+impl MaxPrNumber {
+    const KIND: &str = "pr-number";
+    const KEY: &str = "max.json";
+
+    fn path(repo: &Repository) -> PathBuf {
+        cache::cache_dir(repo, Self::KIND).join(Self::KEY)
+    }
+
+    /// The largest PR/MR number seen in this repo, if any fetch has run.
+    pub(crate) fn read(repo: &Repository) -> Option<u64> {
+        cache::read_json::<Self>(&Self::path(repo)).map(|m| m.number)
+    }
+
+    /// Raise the stored maximum to `number` if it's larger. Concurrent
+    /// writers can race; last-write-wins is benign because the value is
+    /// monotonic and the next fetch re-ratchets.
+    pub(super) fn ratchet(repo: &Repository, number: u64) {
+        if Self::read(repo).is_none_or(|stored| number > stored) {
+            cache::write_json(&Self::path(repo), &Self { number });
+        }
+    }
+
+    /// Clear the stored maximum, returning the count cleared (0 or 1).
+    pub(crate) fn clear(repo: &Repository) -> anyhow::Result<usize> {
+        Ok(usize::from(cache::clear_one(&Self::path(repo))?))
+    }
+}
+
 /// Cached CI status stored in `.git/wt/cache/ci-status/<branch>.json`.
 ///
 /// Uses file-based caching instead of git config to avoid file locking
@@ -141,6 +188,29 @@ impl CachedCiStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use worktrunk::testing::TestRepo;
+
+    #[test]
+    fn test_max_pr_number_ratchet() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        assert_eq!(MaxPrNumber::read(&repo), None);
+
+        MaxPrNumber::ratchet(&repo, 42);
+        assert_eq!(MaxPrNumber::read(&repo), Some(42));
+
+        // Lower numbers never lower the ratchet
+        MaxPrNumber::ratchet(&repo, 7);
+        assert_eq!(MaxPrNumber::read(&repo), Some(42));
+
+        MaxPrNumber::ratchet(&repo, 100);
+        assert_eq!(MaxPrNumber::read(&repo), Some(100));
+
+        assert_eq!(MaxPrNumber::clear(&repo).unwrap(), 1);
+        assert_eq!(MaxPrNumber::read(&repo), None);
+        assert_eq!(MaxPrNumber::clear(&repo).unwrap(), 0);
+    }
 
     #[test]
     fn test_ttl_jitter_range_and_determinism() {

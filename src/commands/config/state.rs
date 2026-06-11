@@ -26,7 +26,8 @@
 //! (`handle_cache_clear`), which needs no prompt:
 //!
 //! - Previous branch (git config `worktrunk.history`)
-//! - CI status cache (`.git/wt/cache/ci-status/`)
+//! - CI status cache (`.git/wt/cache/ci-status/`, plus the PR-number width
+//!   ratchet in `.git/wt/cache/pr-number/`)
 //! - Summary cache (`.git/wt/cache/summary/`)
 //! - Git commands cache (`.git/wt/cache/{merge-tree-conflicts,is-ancestor,picker-preview,…}/`)
 //!   — one user-facing category covering every SHA-keyed disk cache, even
@@ -85,7 +86,7 @@ use crate::cli::{OutputFormat, SwitchFormat};
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
 use worktrunk::utils::epoch_now;
 
-use super::super::list::ci_status::{CachedCiStatus, CiBranchName};
+use super::super::list::ci_status::{CachedCiStatus, CiBranchName, MaxPrNumber};
 use crate::display::format_relative_time_short;
 use crate::help_pager::show_help_in_pager;
 use crate::summary::CachedSummary;
@@ -875,17 +876,10 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
         }
         "ci-status" => {
             if all {
-                let cleared = CachedCiStatus::clear_all(&repo)?;
-                if cleared == 0 {
+                // Same category as `state clear` / `cache clear` — includes
+                // the PR-number width ratchet.
+                if !clear_ci_status_reported(&repo)? {
                     eprintln!("{}", info_message("No CI cache entries to clear"));
-                } else {
-                    eprintln!(
-                        "{}",
-                        success_message(cformat!(
-                            "Cleared <bold>{cleared}</> CI cache entr{}",
-                            if cleared == 1 { "y" } else { "ies" }
-                        ))
-                    );
                 }
             } else {
                 // Clear CI status for specific branch
@@ -1066,7 +1060,9 @@ fn clear_markers_reported(repo: &Repository) -> anyhow::Result<bool> {
 }
 
 fn clear_ci_status_reported(repo: &Repository) -> anyhow::Result<bool> {
-    let cleared = CachedCiStatus::clear_all(repo)?;
+    // The PR-number width ratchet is part of the CI cache category — it is
+    // derived from the same fetches and re-learns on the next one.
+    let cleared = CachedCiStatus::clear_all(repo)? + MaxPrNumber::clear(repo)?;
     if cleared > 0 {
         eprintln!(
             "{}",
@@ -1254,6 +1250,7 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         "previous_branch": previous_branch,
         "markers": markers,
         "ci_status": ci_status,
+        "max_pr_number": MaxPrNumber::read(repo),
         "summaries": summaries,
         "git_commands_cache": sha_cache::count_all(repo) + picker_preview_count(repo),
         "vars": vars_data,
@@ -1418,6 +1415,7 @@ fn handle_cache_get_json(repo: &Repository) -> anyhow::Result<()> {
     let output = serde_json::json!({
         "previous_branch": repo.switch_previous(),
         "ci_status": ci_status_json(repo),
+        "max_pr_number": MaxPrNumber::read(repo),
         "summaries": summaries_json(repo),
         "git_commands_cache": sha_cache::count_all(repo) + picker_preview_count(repo),
         "hints": repo.list_shown_hints(),
@@ -1441,8 +1439,11 @@ fn render_previous_branch_section(out: &mut String, repo: &Repository) -> anyhow
 fn render_ci_status_section(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
     writeln!(out, "{}", format_heading("CI STATUS CACHE", None))?;
     let entries = CachedCiStatus::list_all(repo);
-    if entries.is_empty() {
+    let max_pr_number = MaxPrNumber::read(repo);
+    if entries.is_empty() && max_pr_number.is_none() {
         writeln!(out, "{}", format_with_gutter("(none)", None))?;
+    } else if entries.is_empty() {
+        writeln!(out, "{}", format_with_gutter("(no entries)", None))?;
     } else {
         let rows: Vec<Vec<String>> = entries
             .iter()
@@ -1462,6 +1463,13 @@ fn render_ci_status_section(out: &mut String, repo: &Repository) -> anyhow::Resu
         let rendered =
             crate::md_help::render_data_table(&["Branch", "Status", "Age", "Head"], &rows);
         writeln!(out, "{}", rendered.trim_end())?;
+    }
+    if let Some(number) = max_pr_number {
+        writeln!(
+            out,
+            "{}",
+            format_with_gutter(&format!("largest PR/MR number: {number}"), None)
+        )?;
     }
     Ok(())
 }

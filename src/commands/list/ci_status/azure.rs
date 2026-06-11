@@ -8,8 +8,8 @@ use worktrunk::git::remote_ref::azure as az_url;
 use worktrunk::git::{GitRemoteUrl, Repository};
 
 use super::{
-    CiBranchName, CiSource, CiStatus, PrStatus, branch_remote_url, non_interactive_cmd, parse_json,
-    retriable_pr_error,
+    CiBranchName, CiSource, CiStatus, PrRef, PrStatus, branch_remote_url, non_interactive_cmd,
+    parse_json, retriable_pr_error,
 };
 
 /// Resolve the Azure DevOps context (host, org, project, `--org` URL) for this
@@ -133,6 +133,10 @@ pub(super) fn detect_azure_pr(
         source: CiSource::PullRequest,
         is_stale,
         url,
+        number: Some(PrRef {
+            number: u64::from(pr.pull_request_id),
+            sigil: '#',
+        }),
     })
 }
 
@@ -211,6 +215,7 @@ pub(super) fn detect_azure_pipeline(
         source: CiSource::Branch,
         is_stale,
         url: web_url,
+        number: None,
     })
 }
 

@@ -1859,15 +1859,16 @@ TODO: Add request/response examples for each endpoint
     // The worktree is still around and can be removed. Shows dimmed in list output.
     let fix_typos = repo.add_worktree("fix-typos");
     repo.run_git_in(&fix_typos, &["push", "-u", "origin", "fix-typos"]);
-    mock_ci_status(repo, "fix-typos", "passed", "pr", false);
+    mock_ci_status(repo, "fix-typos", "passed", "pr", false, Some(410));
 
     // === Mock CI status ===
     // CI requires --full flag, but we mock it so examples show realistic output
     // Note: main's CI is mocked AFTER the merge commit so the hash matches
-    mock_ci_status(repo, "main", "passed", "pr", false);
-    mock_ci_status(repo, "fix-auth", "passed", "pr", false);
+    // main runs branch CI (no PR) — renders the ● indicator
+    mock_ci_status(repo, "main", "passed", "branch", false, None);
+    mock_ci_status(repo, "fix-auth", "passed", "pr", false, Some(408));
     // feature-api has unpushed commits, so CI is stale (shows dimmed)
-    mock_ci_status(repo, "feature-api", "running", "pr", true);
+    mock_ci_status(repo, "feature-api", "running", "pr", true, Some(412));
 
     // === Mock LLM summaries ===
     // Summary requires --full + [list] summary = true + [commit.generation] command
@@ -1899,8 +1900,19 @@ command = "echo unused"
     feature_api
 }
 
-/// Mock CI status by writing to file-based cache
-fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_stale: bool) {
+/// Mock CI status by writing to file-based cache.
+///
+/// `pr_number` also ratchets the `pr-number/max.json` width hint, so the CI
+/// column renders at its steady-state width (as if a previous run had
+/// already cached the number).
+pub(crate) fn mock_ci_status(
+    repo: &TestRepo,
+    branch: &str,
+    status: &str,
+    source: &str,
+    is_stale: bool,
+    pr_number: Option<u64>,
+) {
     // Get HEAD commit for the branch
     let output = repo
         .git_command()
@@ -1910,11 +1922,15 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
     let head = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
     // Build the cache JSON (matches CachedCiStatus struct)
+    let number_json = pr_number
+        .map(|n| format!(r##","number":{{"number":{n},"sigil":"#"}}"##))
+        .unwrap_or_default();
     let cache_json = format!(
-        r#"{{"status":{{"ci_status":"{}","source":"{}","is_stale":{}}},"checked_at":{},"head":"{}","branch":"{}"}}"#,
+        r#"{{"status":{{"ci_status":"{}","source":"{}","is_stale":{}{}}},"checked_at":{},"head":"{}","branch":"{}"}}"#,
         status,
         source,
         is_stale,
+        number_json,
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -1946,6 +1962,21 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
     let safe_branch = worktrunk::path::sanitize_for_filename(branch);
     let cache_file = cache_dir.join(format!("{safe_branch}.json"));
     std::fs::write(&cache_file, &cache_json).unwrap();
+
+    // Ratchet the width hint like a real fetch would
+    if let Some(n) = pr_number {
+        let max_file_dir = git_path.join("wt").join("cache").join("pr-number");
+        std::fs::create_dir_all(&max_file_dir).unwrap();
+        let max_file = max_file_dir.join("max.json");
+        let existing = std::fs::read_to_string(&max_file)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|v| v["number"].as_u64())
+            .unwrap_or(0);
+        if n > existing {
+            std::fs::write(&max_file, format!(r#"{{"number":{n}}}"#)).unwrap();
+        }
+    }
 }
 
 /// Mock summary cache by computing the real diff hash and writing a cache entry.
@@ -2212,7 +2243,7 @@ fn test_readme_example_list_full(mut repo: TestRepo) {
     assert_cmd_snapshot!("readme_example_list_full", {
         let mut cmd = list_snapshots::command_readme(&repo, &feature_api);
         cmd.arg("--full");
-        cmd.env("COLUMNS", "130");
+        cmd.env("COLUMNS", "134");
         cmd
     });
 }
@@ -2228,7 +2259,7 @@ fn test_readme_example_list_branches(mut repo: TestRepo) {
     assert_cmd_snapshot!("readme_example_list_branches", {
         let mut cmd = list_snapshots::command_readme(&repo, &feature_api);
         cmd.args(["--branches", "--full"]);
-        cmd.env("COLUMNS", "130");
+        cmd.env("COLUMNS", "134");
         cmd
     });
 }
