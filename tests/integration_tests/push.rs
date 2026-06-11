@@ -30,6 +30,32 @@ fn test_push_fast_forward(mut repo: TestRepo) {
     snapshot_push("push_fast_forward", &repo, &["main"], Some(&feature_wt));
 }
 
+/// With no detectable width (piped output, no COLUMNS), the diffstat omits
+/// `--stat-width` instead of passing `terminal_width()`'s `usize::MAX`
+/// sentinel to git, which used to make git truncate filenames to ~10 chars.
+#[rstest]
+fn test_push_diffstat_without_detectable_width(mut repo: TestRepo) {
+    repo.add_main_worktree();
+    let feature_wt = repo.add_worktree_with_commit(
+        "feature",
+        "a-reasonably-long-filename.txt",
+        "test content",
+        "Add test file",
+    );
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["step", "push", "main"])
+        .current_dir(&feature_wt)
+        .env_remove("COLUMNS");
+    let output = cmd.output().expect("failed to run command");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "push failed: {stderr}");
+    assert!(
+        stderr.contains("a-reasonably-long-filename.txt"),
+        "diffstat should show the full filename, got: {stderr}"
+    );
+}
+
 #[rstest]
 fn test_push_not_fast_forward(mut repo: TestRepo) {
     // Create commits in both worktrees

@@ -6,8 +6,9 @@ mod step;
 pub(crate) use config::{
     ApprovalsCommand, CacheAction, CiStatusAction, ConfigAliasCommand, ConfigCommand,
     ConfigPluginsClaudeCommand, ConfigPluginsCodexCommand, ConfigPluginsCommand,
-    ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction, HintsAction, LogsAction,
-    MarkerAction, PreviousBranchAction, StateCommand, StateWrite, VarsAction,
+    ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction, GlobalFormatFlag,
+    HintsAction, LogsAction, MarkerAction, PreviousBranchAction, StateCommand, StateWrite,
+    VarsAction,
 };
 pub(crate) use hook::{HOOK_TYPE_NAMES, HookCommand, HookOptions, parse_hook_type};
 pub(crate) use list::ListSubcommand;

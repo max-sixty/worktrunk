@@ -68,9 +68,9 @@ use worktrunk::git::BranchDeletionMode;
 use cli::{
     ApprovalsCommand, CacheAction, CiStatusAction, Cli, Commands, ConfigAliasCommand,
     ConfigCommand, ConfigPluginsClaudeCommand, ConfigPluginsCodexCommand, ConfigPluginsCommand,
-    ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction, HintsAction,
-    HookCommand, HookOptions, ListArgs, ListSubcommand, LogsAction, MarkerAction, MergeArgs,
-    PreviousBranchAction, RemoveArgs, StateCommand, StateWrite, StepCommand, SwitchArgs,
+    ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction, GlobalFormatFlag,
+    HintsAction, HookCommand, HookOptions, ListArgs, ListSubcommand, LogsAction, MarkerAction,
+    MergeArgs, PreviousBranchAction, RemoveArgs, StateCommand, StateWrite, StepCommand, SwitchArgs,
     SwitchFormat, VarsAction,
 };
 
@@ -460,7 +460,10 @@ fn guard_format_on_write(action_name: &str, format: SwitchFormat) -> anyhow::Res
 
 fn handle_state_command(action: StateCommand, yes: bool) -> anyhow::Result<()> {
     match action {
-        StateCommand::Cache { action, format } => {
+        StateCommand::Cache {
+            action,
+            format: GlobalFormatFlag { format },
+        } => {
             if let Some(verb) = action.as_ref().and_then(StateWrite::write_verb) {
                 guard_format_on_write(verb, format)?;
             }
@@ -492,7 +495,10 @@ fn handle_state_command(action: StateCommand, yes: bool) -> anyhow::Result<()> {
                 }
             }
         }
-        StateCommand::CiStatus { action, format } => {
+        StateCommand::CiStatus {
+            action,
+            format: GlobalFormatFlag { format },
+        } => {
             warn_state_subcommand_deprecated("ci-status");
             if let Some(verb) = action.as_ref().and_then(StateWrite::write_verb) {
                 guard_format_on_write(verb, format)?;
@@ -507,7 +513,10 @@ fn handle_state_command(action: StateCommand, yes: bool) -> anyhow::Result<()> {
                 }
             }
         }
-        StateCommand::Marker { action, format } => {
+        StateCommand::Marker {
+            action,
+            format: GlobalFormatFlag { format },
+        } => {
             if let Some(verb) = action.as_ref().and_then(StateWrite::write_verb) {
                 guard_format_on_write(verb, format)?;
             }
@@ -522,7 +531,10 @@ fn handle_state_command(action: StateCommand, yes: bool) -> anyhow::Result<()> {
                 }
             }
         }
-        StateCommand::Logs { action, format } => {
+        StateCommand::Logs {
+            action,
+            format: GlobalFormatFlag { format },
+        } => {
             if let Some(verb) = action.as_ref().and_then(StateWrite::write_verb) {
                 guard_format_on_write(verb, format)?;
             }
@@ -531,7 +543,10 @@ fn handle_state_command(action: StateCommand, yes: bool) -> anyhow::Result<()> {
                 Some(LogsAction::Clear) => handle_state_clear("logs", None, false),
             }
         }
-        StateCommand::Hints { action, format } => {
+        StateCommand::Hints {
+            action,
+            format: GlobalFormatFlag { format },
+        } => {
             warn_state_subcommand_deprecated("hints");
             if let Some(verb) = action.as_ref().and_then(StateWrite::write_verb) {
                 guard_format_on_write(verb, format)?;
