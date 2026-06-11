@@ -2,7 +2,9 @@ use anyhow::Context;
 use color_print::cformat;
 use shell_escape::unix::escape;
 use std::borrow::Cow;
+use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use worktrunk::config::CommitGenerationConfig;
 use worktrunk::git::{CommitMessageDetail, Repository};
@@ -11,6 +13,47 @@ use worktrunk::shell_exec::{Cmd, SUBPROCESS_FULL_TARGET, ShellConfig};
 use worktrunk::styling::{eprintln, warning_message};
 
 use minijinja::Environment;
+use minijinja::value::{Enumerator, Object, ObjectRepr, Value};
+
+/// minijinja view of one squashed commit, exposed to squash templates as an
+/// element of `commit_details`.
+///
+/// It renders as its bare subject (`{{ detail }}` yields the subject line) so a
+/// template that iterates the list and prints the loop variable directly
+/// behaves exactly like the deprecated `commits` list of subject strings. That
+/// equivalence is what lets `wt config update` migrate a `commits` template to
+/// `commit_details` as a plain identifier rename — no shape-changing hand edits
+/// (see #2984). The `.subject` and `.body` properties remain available for
+/// templates that want the structured form, and because minijinja coerces an
+/// object to a string via its `render`, string filters (`{{ c | upper }}`)
+/// operate on the subject too.
+#[derive(Debug)]
+struct CommitDetailValue {
+    subject: String,
+    body: String,
+}
+
+impl Object for CommitDetailValue {
+    fn repr(self: &Arc<Self>) -> ObjectRepr {
+        ObjectRepr::Map
+    }
+
+    fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
+        match key.as_str()? {
+            "subject" => Some(Value::from(self.subject.clone())),
+            "body" => Some(Value::from(self.body.clone())),
+            _ => None,
+        }
+    }
+
+    fn enumerate(self: &Arc<Self>) -> Enumerator {
+        Enumerator::Str(&["subject", "body"])
+    }
+
+    fn render(self: &Arc<Self>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.subject)
+    }
+}
 
 /// Characters that require shell wrapping when used in a command.
 /// If a command contains any of these, it needs `sh -c '...'` to execute correctly.
@@ -68,10 +111,6 @@ fn format_reproduction_command(base_cmd: &str, llm_command: &str) -> String {
 
 /// Track whether template-file deprecation warning has been shown this session
 static TEMPLATE_FILE_WARNING_SHOWN: AtomicBool = AtomicBool::new(false);
-
-/// Track whether the deprecated `commits` squash-template-variable warning has
-/// been shown this session.
-static COMMITS_TEMPLATE_VAR_WARNING_SHOWN: AtomicBool = AtomicBool::new(false);
 
 /// Maximum diff size in characters before filtering kicks in
 const DIFF_SIZE_THRESHOLD: usize = 400_000;
@@ -465,9 +504,10 @@ fn load_template(
 /// - `repo`: Repository directory name
 ///
 /// Squash-specific variables (empty for regular commits):
-/// - `commit_details`: Subject/body details for commits being squashed
-/// - `commits`: Commit subjects being squashed (deprecated — see #2984; use
-///   `commit_details` and its `.subject` property instead)
+/// - `commit_details`: Commits being squashed. Each element renders as its
+///   subject when printed bare and exposes `.subject` / `.body` properties.
+/// - `commits`: Commit subjects being squashed (deprecated — see #2984;
+///   `wt config update` rewrites it to `commit_details`)
 /// - `target_branch`: Target branch for merge
 fn build_prompt(
     config: &CommitGenerationConfig,
@@ -508,34 +548,34 @@ fn build_prompt(
     let env = Environment::new();
     let tmpl = env.template_from_str(&template)?;
 
+    // Reverse commits so they're in chronological order (oldest first).
+    //
     // `commits` (a list of bare subject strings) is deprecated in favor of
-    // `commit_details` (a list of `{ subject, body }` objects); see issue #2984.
-    // It still renders for now, but warn once per session when a squash template
-    // references it. Detect via `undeclared_variables` rather than a substring
-    // match so `recent_commits` and `{{ commits }}` inside `{% raw %}` don't
-    // trigger false positives. The default squash template no longer uses it, so
-    // this only fires for a user-customized `squash-template`.
-    if matches!(template_type, TemplateType::Squash)
-        && tmpl.undeclared_variables(false).contains("commits")
-        && !COMMITS_TEMPLATE_VAR_WARNING_SHOWN.swap(true, Ordering::Relaxed)
-    {
-        eprintln!(
-            "{}",
-            warning_message(cformat!(
-                "Squash template variable <bold>commits</> is deprecated in favor of <bold>commit_details</>; iterate it and use the <bold>.subject</> property (<bold>.body</> is also available)"
-            ))
-        );
-    }
-
-    // Reverse commits so they're in chronological order (oldest first)
+    // `commit_details` (see #2984). The deprecation warning and the
+    // `wt config update` rewrite both go through the standard config
+    // deprecation framework (`DEPRECATED_VARS`), so nothing is detected or
+    // warned here — `commits` is simply still rendered for templates that
+    // haven't migrated yet. The rename is safe because each `commit_details`
+    // element renders as its subject (see `CommitDetailValue`), so a migrated
+    // `{% for c in commit_details %}{{ c }}` reads identically to the old
+    // `{% for c in commits %}{{ c }}`.
     let commits_chronological: Vec<&String> = context
         .commit_details
         .iter()
         .rev()
         .map(|detail| &detail.subject)
         .collect();
-    let commit_details_chronological: Vec<&CommitMessageDetail> =
-        context.commit_details.iter().rev().collect();
+    let commit_details_chronological: Vec<Value> = context
+        .commit_details
+        .iter()
+        .rev()
+        .map(|detail| {
+            Value::from_object(CommitDetailValue {
+                subject: detail.subject.clone(),
+                body: detail.body.clone(),
+            })
+        })
+        .collect();
     let empty_commits: Vec<String> = vec![];
 
     // The append fragments are themselves minijinja templates. Render each

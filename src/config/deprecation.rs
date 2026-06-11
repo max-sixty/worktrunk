@@ -67,6 +67,11 @@ const DEPRECATED_VARS: &[(&str, &str)] = &[
     ("worktree", "worktree_path"),
     ("main_worktree", "repo"),
     ("main_worktree_path", "primary_worktree_path"),
+    // Squash-template-only. The rename is a safe mechanical rewrite because each
+    // `commit_details` element renders as its subject when printed bare, so a
+    // migrated `{% for c in commit_details %}{{ c }}` reads identically to the
+    // old `{% for c in commits %}{{ c }}` (see #2984 and `CommitDetailValue`).
+    ("commits", "commit_details"),
 ];
 
 /// Metadata for a deprecated top-level section key.

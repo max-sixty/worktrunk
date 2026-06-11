@@ -155,8 +155,8 @@ Diff:
 | `{{ branch }}` | Current branch name |
 | `{{ repo }}` | Repository name |
 | `{{ recent_commits }}` | Recent commit subjects (for style reference) |
-| `{{ commit_details }}` | Commits being squashed as `{ subject, body }` (squash template only) [experimental] |
-| `{{ commits }}` | Commit subjects being squashed (squash template only). Deprecated in favor of `commit_details` — iterate it and use `.subject` |
+| `{{ commit_details }}` | Commits being squashed (squash template only); each renders as its subject and exposes `.subject` / `.body` [experimental] |
+| `{{ commits }}` | Commit subjects being squashed (squash template only). Deprecated in favor of `commit_details`; `wt config update` rewrites it |
 | `{{ target_branch }}` | Merge target branch (squash template only) |
 | `{{ user_guidance }}` | Rendered user `template-append` fragment (see below) |
 | `{{ project_guidance }}` | Rendered project `template-append` fragment (see below) |

@@ -54,8 +54,9 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-Squashing 2 commits from feature
+<subjects>
+- Add a
+- Add b
+</subjects>
 
 ----- stderr -----
-[33m▲[39m [33mUser config: template variable [1mcommits[22m is deprecated in favor of [1mcommit_details[22m[39m
-[2m↳[22m [2mTo see details, run [4mwt config show[24m; to apply updates, run [4mwt config update[24m[22m

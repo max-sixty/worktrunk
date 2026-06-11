@@ -2553,9 +2553,40 @@ Combine these {{ commit_details | length }} commits into one message:
     ));
 }
 
+/// Each `commit_details` element renders as its subject when printed bare, so a
+/// template iterating the list and printing the loop variable directly produces
+/// the same output as the old `commits` list of strings. This is what makes the
+/// `commits` → `commit_details` migration a mechanical rename (see #2984).
+#[rstest]
+fn test_step_squash_show_prompt_commit_details_renders_subject_bare(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+
+    repo.commit_in_worktree(&feature_wt, "a.txt", "a\n", "Add a");
+    repo.commit_in_worktree(&feature_wt, "b.txt", "b\n", "Add b");
+
+    let worktrunk_config = r#"
+[commit.generation]
+squash-template = """
+<subjects>
+{% for c in commit_details %}- {{ c }}
+{% endfor -%}
+</subjects>"""
+"#;
+    fs::write(repo.test_config_path(), worktrunk_config).unwrap();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["squash", "--show-prompt"],
+        Some(&feature_wt),
+    ));
+}
+
 /// A custom squash template that references the deprecated `commits` variable
-/// still renders, but emits a one-time deprecation warning steering toward
-/// `commit_details` (see #2984).
+/// still renders, and the standard config-deprecation framework warns that it
+/// is replaced by `commit_details` and points at `wt config update` to apply
+/// the rewrite (see #2984). The rename is mechanical because each
+/// `commit_details` element renders as its subject when printed bare.
 #[rstest]
 fn test_step_squash_show_prompt_deprecated_commits_warns(mut repo: TestRepo) {
     let feature_wt = repo.add_worktree("feature");
