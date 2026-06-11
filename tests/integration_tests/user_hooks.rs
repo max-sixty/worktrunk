@@ -2276,7 +2276,7 @@ test = "echo '{{ branch }}' > branch_output.txt"
 #[rstest]
 fn test_var_flag_invalid_format_fails() {
     // Test that invalid KEY=VALUE format is rejected
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_wt"))
+    let output = crate::common::wt_command()
         .args(["hook", "pre-start", "--var", "no_equals_sign"])
         .output()
         .expect("Failed to run wt");
@@ -2624,7 +2624,7 @@ fn test_var_shorthand_does_not_leak_into_hook_show() {
     // `wt hook show` doesn't accept `--var`, so shorthand preprocessing must
     // leave its argv alone — an unknown flag should still produce clap's
     // "unexpected argument" error, not a template-variable error.
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_wt"))
+    let output = crate::common::wt_command()
         .args(["hook", "show", "--branch=feature"])
         .output()
         .expect("Failed to run wt");

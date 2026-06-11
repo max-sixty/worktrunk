@@ -364,12 +364,16 @@ fn test_statusline_detached_head(mut repo: TestRepo) {
         .run()
         .unwrap();
 
-    // Verify statusline shows HEAD (not "feature")
+    // Verify statusline shows the detached marker, not the prior branch name.
     let output = run_statusline_from_dir(&repo, &[], None, &feature_path);
-    // In detached state, we show "HEAD" as the branch name
+    // In detached state we render "(detached)" in place of a branch name.
     assert!(
-        output.contains("HEAD") || !output.contains("feature"),
-        "statusline should not show 'feature' in detached HEAD, got: {output}"
+        output.contains("(detached)"),
+        "statusline should show '(detached)' for detached HEAD, got: {output}"
+    );
+    assert!(
+        !output.contains("feature"),
+        "statusline should not show the prior branch name, got: {output}"
     );
 }
 
@@ -861,7 +865,7 @@ fn test_statusline_rate_limit_5h_24h_locale(repo: TestRepo) {
 
 #[rstest]
 fn test_statusline_rate_limit_drops_at_narrow_width(repo: TestRepo) {
-    // Same input as `5h_clock_time` but COLUMNS=80 — the rate-limit
+    // Same input as `5h_clock_time` but COLUMNS=40 — the rate-limit
     // segment is the lowest-priority Claude-Code segment, so it drops first.
     let json = build_claude_code_json(
         repo.root_path(),
