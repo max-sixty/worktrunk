@@ -714,9 +714,7 @@ fn run_json() -> Result<()> {
             all_vars.insert(branch.clone(), entries);
         }
     }
-    let repo_metadata = repo
-        .repo_info()
-        .map(|(remote, info)| json_output::JsonRepo::from_git_repo_info(info, Some(remote)));
+    let repo_metadata = repo.repo_info();
     let ci_provider_override = repo
         .project_config()
         .ok()

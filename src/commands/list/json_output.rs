@@ -20,7 +20,7 @@ use std::path::PathBuf;
 
 use schemars::JsonSchema;
 use serde::Serialize;
-use worktrunk::git::{GitRepoInfo, GitRepoProvider, LineDiff, Repository};
+use worktrunk::git::{GitRepoInfo, LineDiff, Repository};
 
 use super::ci_status::{CiSource, PrStatus};
 use super::model::{ItemKind, ListItem, UpstreamStatus};
@@ -92,7 +92,7 @@ pub struct JsonItem {
 
     /// Structured repository metadata derived from the primary remote.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub repo: Option<JsonRepo>,
+    pub repo: Option<GitRepoInfo>,
 
     /// Dev server URL from project config template
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -244,48 +244,7 @@ pub struct JsonCi {
 
     /// Structured metadata for the repository the PR/MR targets, derived from `url`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub repo: Option<JsonRepo>,
-}
-
-/// Structured repository metadata.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
-pub struct JsonRepo {
-    /// Repository web URL.
-    pub url: String,
-
-    /// Forge provider.
-    pub provider: GitRepoProvider,
-
-    /// Repository web host.
-    pub host: String,
-
-    /// Repository owner, organization, or namespace path.
-    pub owner: String,
-
-    /// Repository name.
-    pub name: String,
-
-    /// Azure DevOps project name.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub project: Option<String>,
-
-    /// Local remote name used for top-level repo metadata.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub remote: Option<String>,
-}
-
-impl JsonRepo {
-    pub(crate) fn from_git_repo_info(info: GitRepoInfo, remote: Option<String>) -> Self {
-        Self {
-            url: info.url,
-            provider: info.provider,
-            host: info.host,
-            owner: info.owner,
-            name: info.name,
-            project: info.project,
-            remote,
-        }
-    }
+    pub repo: Option<GitRepoInfo>,
 }
 
 impl JsonItem {
@@ -299,7 +258,7 @@ impl JsonItem {
     pub fn from_list_item(
         item: &ListItem,
         all_vars: &mut HashMap<String, BTreeMap<String, String>>,
-        repo: Option<&JsonRepo>,
+        repo: Option<&GitRepoInfo>,
         ci_provider_override: Option<&str>,
     ) -> Self {
         let (kind_str, worktree_data) = match &item.kind {
@@ -501,16 +460,9 @@ impl From<&PrStatus> for JsonCi {
 
 impl JsonCi {
     fn from_pr_status(pr: &PrStatus, provider_override: Option<&str>) -> Self {
-        let repo = pr
-            .url
-            .as_deref()
-            .and_then(|url| {
-                worktrunk::git::remote_ref::repo_info_from_ref_url_with_provider(
-                    url,
-                    provider_override,
-                )
-            })
-            .map(|info| JsonRepo::from_git_repo_info(info, None));
+        let repo = pr.url.as_deref().and_then(|url| {
+            worktrunk::git::remote_ref::repo_info_from_ref_url_with_provider(url, provider_override)
+        });
         Self {
             status: pr.ci_status.into(),
             source: pr.source,
@@ -581,9 +533,7 @@ fn format_raw_symbols(symbols: &super::model::StatusSymbols) -> String {
 /// Fetches all vars data in a single git call, then distributes per-branch.
 pub fn to_json_items(items: &[ListItem], repo: &Repository) -> Vec<JsonItem> {
     let mut all_vars = repo.all_vars_entries();
-    let repo_metadata = repo
-        .repo_info()
-        .map(|(remote, info)| JsonRepo::from_git_repo_info(info, Some(remote)));
+    let repo_metadata = repo.repo_info();
     let ci_provider_override = repo
         .project_config()
         .ok()
@@ -605,6 +555,7 @@ pub fn to_json_items(items: &[ListItem], repo: &Repository) -> Vec<JsonItem> {
 #[cfg(test)]
 mod tests {
     use insta::assert_snapshot;
+    use worktrunk::git::GitRepoProvider;
 
     use super::*;
     use crate::commands::list::ci_status::CiStatus;
@@ -661,7 +612,7 @@ mod tests {
         );
         assert_eq!(
             passed.repo,
-            Some(JsonRepo {
+            Some(GitRepoInfo {
                 url: "https://github.com/org/repo".to_string(),
                 provider: GitRepoProvider::GitHub,
                 host: "github.com".to_string(),
@@ -1039,7 +990,7 @@ mod tests {
         assert!(json_item.repo_url.is_none());
         assert!(json_item.repo.is_none());
 
-        let repo = JsonRepo {
+        let repo = GitRepoInfo {
             url: "https://github.com/owner/repo".to_string(),
             provider: GitRepoProvider::GitHub,
             host: "github.com".to_string(),
@@ -1085,7 +1036,7 @@ mod tests {
             stale: false,
             url: Some("https://github.com/org/repo/pull/7".to_string()),
             repo_url: Some("https://github.com/org/repo".to_string()),
-            repo: Some(JsonRepo {
+            repo: Some(GitRepoInfo {
                 url: "https://github.com/org/repo".to_string(),
                 provider: GitRepoProvider::GitHub,
                 host: "github.com".to_string(),

@@ -9,7 +9,11 @@ use serde::Serialize;
 use super::ci_platform::CiPlatform;
 
 /// Parsed, provider-neutral repository metadata.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// This is the single shape behind the `repo` / `ci.repo` JSON objects of
+/// `wt list`; serde controls the field rename/skip rules so there is no
+/// parallel output-only struct.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct GitRepoInfo {
     /// Repository web URL.
     pub url: String,
@@ -23,7 +27,13 @@ pub struct GitRepoInfo {
     /// Repository name.
     pub name: String,
     /// Azure DevOps project name.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
+    /// Local git remote this metadata was derived from. Set only for the
+    /// top-level `repo` of `wt list`; absent for PR/MR-URL-derived metadata
+    /// such as `ci.repo`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote: Option<String>,
 }
 
 /// Supported forge providers for repository metadata.
@@ -361,6 +371,7 @@ impl GitRemoteUrl {
                     owner: organization,
                     name: self.repo.clone(),
                     project: Some(project),
+                    remote: None,
                 });
             }
 
@@ -374,6 +385,7 @@ impl GitRemoteUrl {
                     owner: self.owner.clone(),
                     name: self.repo.clone(),
                     project: None,
+                    remote: None,
                 });
             }
         }
@@ -385,6 +397,7 @@ impl GitRemoteUrl {
             owner: self.owner.clone(),
             name: self.repo.clone(),
             project: None,
+            remote: None,
         })
     }
 

@@ -299,10 +299,10 @@ impl Repository {
     ///
     /// Local-only: built from the cached primary remote URL and optional
     /// `[forge].platform`, with no network access. This may load/cache project
-    /// config to inspect the configured forge platform. Returns the remote name
-    /// alongside metadata so structured JSON can report which local remote was
-    /// used.
-    pub fn repo_info(&self) -> Option<(String, GitRepoInfo)> {
+    /// config to inspect the configured forge platform. The returned
+    /// [`GitRepoInfo::remote`] names which local remote was used, so structured
+    /// JSON can report it.
+    pub fn repo_info(&self) -> Option<GitRepoInfo> {
         let remote = self.primary_remote().ok()?;
         let url = self.remote_url(&remote)?;
         let parsed = GitRemoteUrl::parse(&url)?;
@@ -311,8 +311,9 @@ impl Repository {
             .ok()
             .flatten()
             .and_then(|config| config.forge_platform().map(str::to_string));
-        let info = parsed.repo_info(provider_override.as_deref())?;
-        Some((remote, info))
+        let mut info = parsed.repo_info(provider_override.as_deref())?;
+        info.remote = Some(remote);
+        Some(info)
     }
 
     /// Parsed URL of the remote that belongs to a particular forge.

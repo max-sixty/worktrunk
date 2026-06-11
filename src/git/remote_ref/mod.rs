@@ -440,6 +440,7 @@ pub fn repo_info_from_ref_url_with_provider(
                 owner,
                 name,
                 project: Some(project),
+                remote: None,
             });
         }
 
@@ -452,6 +453,7 @@ pub fn repo_info_from_ref_url_with_provider(
             owner,
             name,
             project: None,
+            remote: None,
         });
     }
 
@@ -464,6 +466,7 @@ pub fn repo_info_from_ref_url_with_provider(
         owner,
         name,
         project: None,
+        remote: None,
     })
 }
 
