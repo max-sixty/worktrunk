@@ -185,10 +185,19 @@ The CI column shows GitHub/GitLab pipeline status:
  [32m●[0m green   All checks passed                 
  [34m●[0m blue    Checks running                    
  [31m●[0m red     Checks failed                     
+ [35m●[0m magenta Reviewer requested changes        
+ [36m●[0m cyan    Review required, not yet given    
  [33m●[0m yellow  Merge conflicts with base         
  [90m●[0m gray    No checks configured              
  [33m⚠[0m yellow  Fetch error (rate limit, network) 
  (blank)   No upstream or no PR/MR           
+
+Review state merges into the same dot where its required action ranks: 
+changes-requested (magenta) outranks running checks — waiting can't clear it — 
+while an outstanding required review (cyan) only recolors an otherwise green or 
+quiet branch. Cool colors mean waiting, warm colors mean act. A PR with no 
+review signal (no required reviewers and no reviews) keeps its plain CI color, 
+and draft PRs appear dimmed.
 
 CI indicators are clickable links to the PR or pipeline page. Any CI dot appears
  dimmed when unpushed local changes make the status stale. PRs/MRs are checked 
@@ -364,12 +373,16 @@ Query structured data with [2m--format=json[0m:
 
 [32mci object[0m
 
- Field   Type                      Description                    
- ────── ─────── ───────────────────────────────────────────────── 
- [2mstatus[0m string  CI status (see below)                             
- [2msource[0m string  [2m"pr"[0m (PR/MR) or [2m"branch"[0m (branch workflow)        
- [2mstale[0m  boolean Local HEAD differs from remote (unpushed changes) 
- [2murl[0m    string  URL to the PR/MR page                             
+    Field      Type                          Description                        
+ ──────────── ─────── ───────────────────────────────────────────────────────── 
+ [2mstatus[0m       string  CI status (see below)                                     
+ [2msource[0m       string  [2m"pr"[0m (PR/MR) or [2m"branch"[0m (branch workflow)                
+ [2mstale[0m        boolean Local HEAD differs from remote (unpushed changes)         
+ [2murl[0m          string  URL to the PR/MR page                                     
+ [2mrepo_url[0m     string  Web URL of the repo the PR/MR targets (the upstream for   
+                      fork PRs); absent when [2murl[0m is absent or unrecognized      
+ [2mreview_state[0m string  Review state (see below); absent when the forge reports   
+                      no review signal                                          
 
 [32mmain_state values[0m
 
@@ -386,6 +399,15 @@ When [2mmain_state == "integrated"[0m: [2m"ancestor"[0m [2m"trees-match"[0
 [32mci.status values[0m
 
 [2m"passed"[0m [2m"running"[0m [2m"failed"[0m [2m"conflicts"[0m [2m"no-ci"[0m [2m"error"[0m
+
+[32mci.review_state values[0m
+
+[2m"approved"[0m [2m"changes_requested"[0m [2m"pending"[0m [2m"draft"[0m
+
+The vocabulary matches Claude Code's statusline [2mpr.review_state[0m field. [2m"pending"[0m
+ means a review is required (e.g. branch protection) but not yet given; a PR 
+with no review signal at all has no [2mreview_state[0m. GitLab reports only [2m"pending"[0m 
+and [2m"draft"[0m — MR list data carries no approved or changes-requested signal.
 
 Missing a field that would be generally useful? Open an issue at 
 https://github.com/max-sixty/worktrunk.

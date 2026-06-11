@@ -99,10 +99,14 @@ The CI column shows GitHub/GitLab pipeline status:
 | <span style='color:#0a0'>●</span> green | All checks passed |
 | <span style='color:#00a'>●</span> blue | Checks running |
 | <span style='color:#a00'>●</span> red | Checks failed |
+| <span style='color:#a0a'>●</span> magenta | Reviewer requested changes |
+| <span style='color:#0aa'>●</span> cyan | Review required, not yet given |
 | <span style='color:#a60'>●</span> yellow | Merge conflicts with base |
 | <span style='color:#888'>●</span> gray | No checks configured |
 | <span style='color:#a60'>⚠</span> yellow | Fetch error (rate limit, network) |
 | (blank) | No upstream or no PR/MR |
+
+Review state merges into the same dot where its required action ranks: changes-requested (magenta) outranks running checks — waiting can't clear it — while an outstanding required review (cyan) only recolors an otherwise green or quiet branch. Cool colors mean waiting, warm colors mean act. A PR with no review signal (no required reviewers and no reviews) keeps its plain CI color, and draft PRs appear dimmed.
 
 CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when unpushed local changes make the status stale. PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches — visible with `--remotes` — get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
 
@@ -239,6 +243,8 @@ Query structured data with `--format=json`:
 | `source` | string | `"pr"` (PR/MR) or `"branch"` (branch workflow) |
 | `stale` | boolean | Local HEAD differs from remote (unpushed changes) |
 | `url` | string | URL to the PR/MR page |
+| `repo_url` | string | Web URL of the repo the PR/MR targets (the upstream for fork PRs); absent when `url` is absent or unrecognized |
+| `review_state` | string | Review state (see below); absent when the forge reports no review signal |
 
 ### main_state values
 
@@ -253,6 +259,12 @@ When `main_state == "integrated"`: `"ancestor"` `"trees-match"` `"no-added-chang
 ### ci.status values
 
 `"passed"` `"running"` `"failed"` `"conflicts"` `"no-ci"` `"error"`
+
+### ci.review_state values
+
+`"approved"` `"changes_requested"` `"pending"` `"draft"`
+
+The vocabulary matches Claude Code's statusline `pr.review_state` field. `"pending"` means a review is required (e.g. branch protection) but not yet given; a PR with no review signal at all has no `review_state`. GitLab reports only `"pending"` and `"draft"` — MR list data carries no approved or changes-requested signal.
 
 Missing a field that would be generally useful? [Open an issue](https://github.com/max-sixty/worktrunk/issues).
 

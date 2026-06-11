@@ -119,6 +119,7 @@ pub(super) fn detect_gitea_pr(
         source: CiSource::PullRequest,
         is_stale,
         url: Some(pr.html_url.clone()),
+        review_state: None,
     })
 }
 
@@ -138,6 +139,7 @@ pub(super) fn detect_gitea_commit_status(
         source: CiSource::Branch,
         is_stale: false,
         url: None,
+        review_state: None,
     })
 }
 
