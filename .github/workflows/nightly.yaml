@@ -115,6 +115,12 @@ jobs:
 
     - run: cargo hack check --feature-powerset --no-dev-deps
 
+    # The lib suite shells out to the mock-stub helper bin, which `--lib`
+    # doesn't build (tests/CLAUDE.md documents the fresh-target panic).
+    # mock-stub doesn't depend on worktrunk features, so one build serves
+    # every combo.
+    - run: cargo build -p mock-stub
+
     - run: cargo hack test --feature-powerset --lib
 
   release-target:
