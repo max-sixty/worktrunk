@@ -81,7 +81,7 @@ Create user config file with documented examples:
 
 Create project config file ([2m.config/wt.toml[0m) for hooks:
 
-[107m [0m [2m[0m[2m[34mwt[0m[2m config create [0m[2m[36m--project[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config create [0m[2m[36m--project[0m
 
 Show current configuration and file locations:
 

@@ -1128,7 +1128,12 @@ fn setup_snapshot_settings_for_paths_with_home(
     );
 
     // Remove trailing ANSI reset codes at end of lines for cross-platform consistency
-    // Windows terminal strips these trailing resets that Unix includes
+    // Windows terminal strips these trailing resets that Unix includes.
+    //
+    // CAUTION: this means committed snapshots never show the line-final `[0m`
+    // the binary actually emits, so a styled line-end in a `.snap` looks like
+    // an unclosed SGR attribute when it isn't. Don't diagnose color/dim-bleed
+    // bugs from snapshot bytes — capture fresh output (`cat -v`) instead.
     settings.add_filter(r"\x1b\[0m$", "");
     settings.add_filter(r"\x1b\[0m\n", "\n");
 

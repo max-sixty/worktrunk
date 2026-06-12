@@ -628,6 +628,7 @@ command = "npm install"
         }
     }
 
+    #[cfg(feature = "syntax-highlighting")]
     #[test]
     fn test_format_bash_with_gutter_template_command() {
         // Test that format_bash_with_gutter produces consistent dim styling
@@ -643,6 +644,7 @@ command = "npm install"
         assert_snapshot!(result);
     }
 
+    #[cfg(feature = "syntax-highlighting")]
     #[test]
     fn test_format_bash_multiline_command_consistent_styling() {
         // This test simulates the REAL user scenario: a multi-line command

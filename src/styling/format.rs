@@ -248,9 +248,11 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
     // Normalize line endings: CRLF to LF, and trim trailing newlines.
     // Trailing newlines would create spurious blank gutter lines because
     // style restoration after newlines produces `\n[DIM]` which becomes
-    // its own line when split.
+    // its own line when split. The trim also covers a bare trailing \r:
+    // askama strips a template's final newline, so a CRLF checkout leaves
+    // renders ending in a lone \r that the pair replacement can't catch.
     let content = content.replace("\r\n", "\n");
-    let content = content.trim_end_matches('\n');
+    let content = content.trim_end_matches(['\n', '\r']);
 
     // Replace Jinja template delimiters with identifier placeholders before parsing.
     // Tree-sitter can't parse `{{` and `}}` (especially when split across lines),
@@ -398,9 +400,21 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
         }
     }
 
-    // Phase 2: Split into lines, wrap each, add gutters
+    // Phase 2: Split into lines, wrap each, add gutters.
+    //
+    // Phase 1 reopens dim after every highlight close (and at line starts) to
+    // restore the base style for following text. At end of line that reopened
+    // dim has nothing left to style — strip it so lines end at their content
+    // and the closing reset, with no dangling SGR open at the line break.
+    let reopened_dim = format!("{reset}{dim}");
+    let dim_open = format!("{dim}");
     styled
         .lines()
+        .map(|line| {
+            line.strip_suffix(reopened_dim.as_str())
+                .or_else(|| line.strip_suffix(dim_open.as_str()))
+                .unwrap_or(line)
+        })
         .flat_map(|line| wrap_styled_text(line, available_width))
         .map(|wrapped| format!("{gutter} {gutter:#} {wrapped}{reset}"))
         .collect::<Vec<_>>()
@@ -567,7 +581,7 @@ mod tests {
         );
         assert_snapshot!(
             format_bash_with_gutter_at_width("npm install && cargo build --release", 100),
-            @"[107m [0m [2m[0m[2m[34mnpm[0m[2m install [0m[2m[36m&&[0m[2m [0m[2m[34mcargo[0m[2m build [0m[2m[36m--release[0m[2m[0m"
+            @"[107m [0m [2m[0m[2m[34mnpm[0m[2m install [0m[2m[36m&&[0m[2m [0m[2m[34mcargo[0m[2m build [0m[2m[36m--release[0m"
         );
     }
 
@@ -695,5 +709,24 @@ mod tests {
             .into_owned();
         assert!(stripped.contains("WTO"), "{stripped}");
         assert!(!stripped.contains("{{"), "{stripped}");
+    }
+    /// A bare trailing \r is normalized away rather than parsed as content.
+    ///
+    /// Askama strips a template's final newline; on a CRLF checkout (Windows
+    /// builds without eol control) that leaves the render ending in a lone \r,
+    /// which tree-sitter would otherwise emit as a trailing token that defeats
+    /// the end-of-line SGR cleanup below.
+    #[test]
+    #[cfg(feature = "syntax-highlighting")]
+    fn test_trailing_cr_is_normalized() {
+        assert_eq!(
+            format_bash_with_gutter_at_width("echo hello\r", 80),
+            format_bash_with_gutter_at_width("echo hello", 80),
+        );
+        // The failure shape: last line ends in a highlighted token.
+        assert_eq!(
+            format_bash_with_gutter_at_width("function wt\n    wt $argv\nend\r", 80),
+            format_bash_with_gutter_at_width("function wt\n    wt $argv\nend", 80),
+        );
     }
 }
