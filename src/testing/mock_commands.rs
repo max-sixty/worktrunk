@@ -291,32 +291,6 @@ API authentication.
         .write(bin_dir);
 }
 
-/// Create a mock llm command for API endpoint commits.
-pub fn create_mock_llm_api(bin_dir: &Path) {
-    MockConfig::new("llm")
-        .command(
-            "_default",
-            MockResponse::output(
-                "feat(api): Add user authentication endpoints
-
-Implement login and token refresh endpoints with JWT validation.
-Includes comprehensive test coverage and input validation.",
-            ),
-        )
-        .write(bin_dir);
-}
-
-/// Create a mock llm command for quickstart documentation.
-/// Simple output for clean documentation examples.
-pub fn create_mock_llm_quickstart(bin_dir: &Path) {
-    MockConfig::new("llm")
-        .command(
-            "_default",
-            MockResponse::output("Add authentication module"),
-        )
-        .write(bin_dir);
-}
-
 /// Create a mock uv command for dependency sync and dev server.
 pub fn create_mock_uv_sync(bin_dir: &Path) {
     MockConfig::new("uv")

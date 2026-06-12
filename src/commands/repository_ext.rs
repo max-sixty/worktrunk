@@ -308,8 +308,8 @@ impl RepositoryCliExt for Repository {
 
         // No `.config/wt.toml` snapshot: `pre-remove` / `post-remove` were
         // selected and frozen into the `ApprovedHookPlan` at the gate
-        // (`main.rs`'s `approve_remove`), anchored at this worktree's path, so
-        // the executor needs no config — it runs only the frozen plan.
+        // (`remove.rs`'s `approve_remove`), anchored at this worktree's path,
+        // so the executor needs no config — it runs only the frozen plan.
         Ok(RemoveResult::RemovedWorktree {
             main_path,
             worktree_path,

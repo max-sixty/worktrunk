@@ -32,7 +32,6 @@ info:
     OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     PSModulePath: ""
-    RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
@@ -67,4 +66,4 @@ sanitized=feature-with-slash
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m
 [36m◎[39m [36mExecuting (--execute) @ [1m_REPO_.feature-with-slash[22m:[39m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'sanitized=feature-with-slash'[0m[2m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'sanitized=feature-with-slash'

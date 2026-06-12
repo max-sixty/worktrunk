@@ -1697,23 +1697,24 @@ mod bare_repo_prompt_pty {
             "Legacy top-level skip key should no longer be written"
         );
 
-        // Round-trip through `wt config state`: the opt-out is listed by
-        // `state hints` and removed by the aggregate `state clear`.
+        // Round-trip through `wt config state`: the opt-out is listed by the
+        // cache view and removed by the aggregate `state clear`.
         let mut hints_cmd = wt_command();
         test.configure_wt_cmd(&mut hints_cmd);
         hints_cmd
-            .args(["config", "state", "hints"])
+            .args(["config", "state", "cache"])
             .current_dir(&main_worktree);
         let hints_listed = String::from_utf8(hints_cmd.output().unwrap().stdout).unwrap();
         assert!(
             hints_listed.contains("skip-bare-repo-prompt"),
-            "state hints should list the opt-out.\nstdout: {hints_listed}"
+            "state cache should list the opt-out hint.\nstdout: {hints_listed}"
         );
 
+        // `state clear` removes everything but prompts first — `--yes` skips it.
         let mut clear_cmd = wt_command();
         test.configure_wt_cmd(&mut clear_cmd);
         clear_cmd
-            .args(["config", "state", "clear"])
+            .args(["config", "state", "clear", "--yes"])
             .current_dir(&main_worktree);
         assert!(
             clear_cmd.output().unwrap().status.success(),

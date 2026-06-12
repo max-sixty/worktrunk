@@ -136,7 +136,7 @@ impl DiagnosticReport {
     /// Format the complete diagnostic report as markdown using minijinja template.
     fn format_report(repo: &Repository, command: &str, context: &str) -> String {
         // Strip ANSI codes from context - the diagnostic is a markdown file for GitHub
-        let context = strip_ansi_codes(context);
+        let context = context.ansi_strip();
 
         // Collect data for template
         let timestamp = worktrunk::utils::now_iso8601();
@@ -298,13 +298,6 @@ fn is_gh_installed() -> bool {
         .unwrap_or(false)
 }
 
-/// Strip ANSI escape codes from a string.
-///
-/// Used to clean terminal-formatted text for markdown output.
-fn strip_ansi_codes(s: &str) -> String {
-    s.ansi_strip().into_owned()
-}
-
 /// Truncate log content to ~50KB if it's too large.
 ///
 /// Keeps the last ~50KB of the log, cutting at a line boundary.
@@ -447,15 +440,6 @@ mod tests {
         let result = format_config_section(&path, "Test");
         assert!(result.contains("(truncated)"));
         assert!(result.len() < 5000);
-    }
-
-    #[test]
-    fn test_strip_ansi_codes() {
-        // Build ANSI codes programmatically to avoid lint
-        let esc = '\x1b';
-        let input = format!("{esc}[31mred{esc}[0m and {esc}[32mgreen{esc}[0m");
-        let result = strip_ansi_codes(&input);
-        assert_eq!(result, "red and green");
     }
 
     #[test]

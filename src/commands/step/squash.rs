@@ -16,7 +16,7 @@ use super::super::command_approval::{
 use super::super::command_executor::FailureStrategy;
 use super::super::commit::{CommitGenerator, CommitOutcome, HookGate, StageMode};
 use super::super::context::CommandEnv;
-use super::super::hooks::{self, HookAnnouncer, execute_hook};
+use super::super::hooks::{HookAnnouncer, execute_hook};
 use super::super::repository_ext::RepositoryCliExt;
 use super::super::template_vars::TemplateVars;
 use super::shared::print_dry_run;
@@ -107,9 +107,10 @@ pub fn handle_squash(
     // Check if any pre-commit hooks exist (needed for skip message and approval)
     let project_config = repo.load_project_config()?;
     let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
-    let (user_cfg, proj_cfg) =
-        hooks::lookup_hook_configs(&user_hooks, project_config.as_ref(), HookType::PreCommit);
-    let any_hooks_exist = user_cfg.is_some() || proj_cfg.is_some();
+    let any_hooks_exist = user_hooks.get(HookType::PreCommit).is_some()
+        || project_config
+            .as_ref()
+            .is_some_and(|c| c.hooks.get(HookType::PreCommit).is_some());
 
     // Resolve the hook gate: Run triggers an approval prompt and downgrades to Silent
     // on decline (approve_or_skip prints its own message). NoHooksFlag prints the skip
@@ -163,7 +164,6 @@ pub fn handle_squash(
             HookType::PreCommit,
             &template_vars.as_extra_vars(),
             FailureStrategy::FailFast,
-            crate::output::pre_hook_display_path(ctx.worktree_path),
         )?;
     }
 

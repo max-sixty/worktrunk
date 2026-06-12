@@ -84,6 +84,7 @@ fn snapshot_help(test_name: &str, args: &[&str]) {
     "config plugins codex install --help"
 )]
 #[case("help_config_state", "config state --help")]
+#[case("help_config_state_cache", "config state cache --help")]
 #[case(
     "help_config_state_default_branch",
     "config state default-branch --help"
@@ -224,6 +225,24 @@ fn test_help_list_narrow_terminal() {
         cmd.args(["list", "--help"]);
         assert_cmd_snapshot!("help_list_narrow_80", cmd);
     });
+}
+
+/// With no detectable width (piped output, no COLUMNS), `terminal_width()`
+/// returns `None` and the markdown renderer falls back to its own defaults.
+/// Back when "no width" was a `usize::MAX` sentinel, `wt list --help` panicked
+/// with a capacity overflow trying to render a `---` rule that wide.
+#[test]
+fn test_help_without_detectable_width() {
+    let mut cmd = wt_command();
+    cmd.env_remove("COLUMNS");
+    cmd.args(["list", "--help"]);
+    let output = cmd.output().expect("failed to run command");
+    assert!(
+        output.status.success(),
+        "wt list --help without COLUMNS failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!output.stdout.is_empty(), "help output should not be empty");
 }
 
 /// Tests --help-description outputs the meta description for docs frontmatter.

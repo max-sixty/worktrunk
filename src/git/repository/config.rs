@@ -135,10 +135,10 @@ impl Repository {
     /// via `{{ vars.key }}`.
     ///
     /// Reads git config directly — **not** via the bulk `all_config` cache —
-    /// because lazy template expansion in hook/alias pipelines depends on
-    /// seeing writes that earlier steps made via their own `git config`
-    /// subprocesses. Those external writes don't round-trip through our
-    /// coherent `set_config_value` helper.
+    /// because hook/alias templates render at execution time and depend on
+    /// seeing writes that earlier pipeline steps made via their own
+    /// `git config` subprocesses. Those external writes don't round-trip
+    /// through our coherent `set_config_value` helper.
     pub fn vars_entries(&self, branch: &str) -> std::collections::BTreeMap<String, String> {
         let escaped = regex::escape(branch);
         let pattern = format!(r"^worktrunk\.state\.{escaped}\.vars\.");
@@ -549,6 +549,24 @@ impl Repository {
     /// Propagates actual git config errors (corrupt config, permission denied).
     pub fn clear_default_branch_cache(&self) -> anyhow::Result<bool> {
         self.unset_config_value("worktrunk.default-branch")
+    }
+
+    /// Read the persisted default-branch cache without detecting or writing.
+    ///
+    /// Unlike `default_branch()`, this never falls through to detection
+    /// (`origin/HEAD`, `git ls-remote`, local inference) and never persists a
+    /// result. It reports only what is currently stored in
+    /// `worktrunk.default-branch`, so state-inspection commands
+    /// (`wt config state`) can display the cache without the act of inspecting
+    /// it repopulating the very value being cleared.
+    ///
+    /// Returns `None` when nothing is cached.
+    pub fn cached_default_branch(&self) -> Option<String> {
+        self.config_value("worktrunk.default-branch")
+            .ok()
+            .flatten()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
     }
 
     // =========================================================================

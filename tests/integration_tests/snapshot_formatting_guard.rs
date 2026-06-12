@@ -1,22 +1,39 @@
-//! Guard test to catch formatting violations in snapshot files
+//! Guard tests over the committed snapshot corpus.
 //!
-//! Snapshots capture real output and are approved by reviewers. Subtle formatting
-//! issues (stray blank lines, detached hints) can slip through review. This test
-//! scans all snapshot files to enforce output formatting rules.
+//! Snapshots capture real output and are approved by reviewers. Subtle
+//! problems slip through review: formatting issues (stray blank lines,
+//! detached hints), and host-specific paths that insta never compares.
+//! These tests scan every committed `.snap` file to enforce the rules.
 //!
 //! Rules enforced:
 //! - **Hints attach to their subject** — no blank line before `↳`
 //! - **No double blank lines** — one blank line maximum between elements
+//! - **No host-specific paths** — insta compares only snapshot *content*
+//!   (stdout/stderr/exit code); the `info:` block insta-cmd records
+//!   (`args:`, `env:`) is metadata that is written but never compared, and
+//!   `add_filter` doesn't apply to it. A test missing a redaction therefore
+//!   bakes the generating machine's paths into the committed file while
+//!   passing everywhere — surfacing only as churn when someone regenerates
+//!   the snapshot on another machine (and under libtest, the `repo`
+//!   fixture's leaked settings binding can mask the omission; see `repo()`
+//!   in `tests/common`). This rule makes the leak fail deterministically.
 //!
-//! When this test fails:
+//! When a formatting rule fails:
 //! 1. Fix the source code producing the bad output
 //! 2. Re-run the failing test to regenerate the snapshot
 //! 3. If the blank line is intentional (e.g., phase boundary before a status
 //!    item that uses `↳`), add the snapshot to the allowlist with a comment
+//!
+//! When the host-path rule fails: add a redaction — env values go in
+//! `add_standard_env_redactions`, path arguments are covered by the
+//! `.args[]` redaction in `add_repo_and_worktree_path_filters` (both in
+//! `tests/common/mod.rs`); see tests/CLAUDE.md "Snapshot env drift".
 
 use ansi_str::AnsiStr;
+use regex::Regex;
 use std::fs;
 use std::path::Path;
+use std::sync::LazyLock;
 
 /// Snapshots where a blank line before `↳` is intentional (phase boundary, not
 /// a detached hint). Each entry needs a comment explaining why.
@@ -103,21 +120,88 @@ fn test_no_double_blank_lines_in_snapshot_output() {
     }
 }
 
-fn for_each_snapshot(project_root: &Path, mut f: impl FnMut(&Path, &str)) {
-    let snap_dirs = [
-        project_root.join("tests/snapshots"),
-        project_root.join("tests/integration_tests/snapshots"),
-    ];
+/// Markers that only ever come from the generating machine: macOS per-user
+/// temp dirs, the LLVM profile fallback dir (always under the host temp
+/// dir), and tempfile's random `.tmpXXXXXX` directories.
+static HOST_MARKERS: LazyLock<[Regex; 3]> = LazyLock::new(|| {
+    [
+        Regex::new(r"/var/folders/").unwrap(),
+        Regex::new(r"wt-test-profraw").unwrap(),
+        Regex::new(r"\.tmp[A-Za-z0-9]{6}").unwrap(),
+    ]
+});
 
-    for dir in &snap_dirs {
-        let Ok(entries) = fs::read_dir(dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) != Some("snap") {
-                continue;
+/// Home-style paths are allowed only for the deliberate fake users in docs
+/// examples and mocked output; a real username means an unredacted $HOME
+/// leaked. `{1,2}` separators: YAML double-quoted scalars escape
+/// backslashes, so a Windows path arrives as `C:\\Users\\name`.
+static HOME_PATH: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[/\\]{1,2}(?:Users|home)[/\\]{1,2}([A-Za-z0-9._-]+)").unwrap());
+
+const FAKE_USERS: &[&str] = &["me", "user"];
+
+fn line_has_host_specific_path(line: &str) -> bool {
+    HOST_MARKERS.iter().any(|re| re.is_match(line))
+        || HOME_PATH
+            .captures_iter(line)
+            .any(|c| !FAKE_USERS.contains(&&c[1]))
+}
+
+#[test]
+fn test_no_host_specific_paths_in_snapshots() {
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut violations = Vec::new();
+
+    for_each_snapshot(project_root, |path, content| {
+        for (i, line) in content.lines().enumerate() {
+            if line_has_host_specific_path(line) {
+                let relative = path.strip_prefix(project_root).unwrap_or(path);
+                violations.push(format!("{}:{}: {}", relative.display(), i + 1, line.trim()));
             }
+        }
+    });
+
+    if !violations.is_empty() {
+        panic!(
+            "Host-specific paths in {} committed snapshot line(s):\n\n{}\n\n\
+             These churn whenever the snapshot is regenerated on another machine.\n\
+             Add a redaction: env values in `add_standard_env_redactions`, path\n\
+             arguments via the `.args[]` redaction in `add_repo_and_worktree_path_filters`\n\
+             (tests/common/mod.rs); see tests/CLAUDE.md \"Snapshot env drift\".\n\
+             Deliberate example paths use the fake users in FAKE_USERS.",
+            violations.len(),
+            violations.join("\n"),
+        );
+    }
+}
+
+/// Visit every committed `.snap` file. Snapshot dirs live under `src`
+/// (unit tests), `tests` (integration tests), and `docs` (demo fixtures).
+fn for_each_snapshot(project_root: &Path, mut f: impl FnMut(&Path, &str)) {
+    let mut seen = 0usize;
+    for root in ["src", "tests", "docs"] {
+        visit_snap_files(&project_root.join(root), &mut |path, content| {
+            seen += 1;
+            f(path, content);
+        });
+    }
+    // Every caller asserts absence over the corpus (~1200 files); an empty
+    // walk — say, after a directory-layout change — would pass vacuously.
+    assert!(
+        seen > 500,
+        "expected the full snapshot corpus, saw {seen} files"
+    );
+}
+
+fn visit_snap_files(dir: &Path, f: &mut impl FnMut(&Path, &str)) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            visit_snap_files(&path, f);
+        } else if path.extension().and_then(|s| s.to_str()) == Some("snap") {
             let content = fs::read_to_string(&path).unwrap();
             f(&path, &content);
         }
@@ -170,6 +254,42 @@ fn extract_output_sections(content: &str) -> Vec<(&str, &str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The corpus test passes vacuously if the detector rots — pin its
+    /// sensitivity on both sides. Leak lines are the shapes actually found
+    /// in committed snapshots (#3009 and the `args:` leak this fixed).
+    #[test]
+    fn test_host_specific_path_detection() {
+        let leaks = [
+            // macOS per-user temp dir (env value, the #3009 class)
+            "LLVM_PROFILE_FILE: /var/folders/v3/8k5q0_6j3/T/wt-test-profraw/cov.profraw",
+            // tempfile-crate dir in the args: block
+            "- /private/var/folders/wf/s6ycxvvs/T/.tmpSeGxzx/repo",
+            // tempfile-crate dir under /tmp (Linux)
+            "path: /tmp/.tmpAbC123/repo",
+            // real home dirs, Unix and YAML-escaped Windows
+            "HOME: /Users/maximilian/workspace",
+            "HOME: /home/runner/work",
+            r#"USERPROFILE: "C:\\Users\\runneradmin\\AppData""#,
+        ];
+        for line in leaks {
+            assert!(line_has_host_specific_path(line), "should flag: {line}");
+        }
+
+        let deterministic = [
+            // deliberate fake users in docs examples and mocked output
+            "e.g., /Users/me/code/myproject",
+            "To /Users/user/workspace/repo/.git",
+            r#"PSModulePath: "C:\\Users\\user\\Documents""#,
+            // machine-independent literals and placeholders
+            "WORKTRUNK_CONFIG_PATH: /nonexistent/wt/config.toml",
+            "LLVM_PROFILE_FILE: \"[LLVM_PROFILE_FILE]\"",
+            "WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml",
+        ];
+        for line in deterministic {
+            assert!(!line_has_host_specific_path(line), "should allow: {line}");
+        }
+    }
 
     #[test]
     fn test_extract_output_sections_ignores_mid_line_dashes() {

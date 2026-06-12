@@ -98,6 +98,9 @@
 //!   from this file — TOML I/O, not git config, and no subprocess.
 //! - Config resolution — merge project-specific settings (uses cached
 //!   project identifier).
+//! - CI column width hint — one read of `.git/wt/cache/pr-number/max.json`
+//!   (skipped when the CI task is skipped); the skeleton can't size the CI
+//!   column without it.
 //!
 //! ### First-run behavior
 //!
@@ -1049,19 +1052,30 @@ pub fn collect(
         effective_skip_tasks.insert(TaskKind::SummaryGenerate);
     }
 
+    // CI column width hint: the largest PR/MR number any previous fetch saw
+    // (one small file read — cheap enough for the pre-skeleton budget, and
+    // the skeleton can't size the column without it).
+    let max_pr_number = (!effective_skip_tasks.contains(&TaskKind::CiStatus))
+        .then(|| super::ci_status::MaxPrNumber::read(repo))
+        .flatten();
+
     // Calculate layout from items (worktrees, local branches, and remote branches).
     // The picker passes an explicit width because the list only gets part of the
     // terminal — the rest belongs to the preview pane.
     let layout = super::layout::calculate_layout_with_width(
         &all_items,
         &effective_skip_tasks,
-        list_width.unwrap_or_else(crate::display::terminal_width),
+        list_width
+            .or_else(crate::display::terminal_width)
+            .unwrap_or(usize::MAX),
         &main_worktree.path,
         url_template.as_deref(),
+        max_pr_number,
     );
 
-    // Single-line invariant: use safe width to prevent line wrapping
-    let max_width = crate::display::terminal_width();
+    // Single-line invariant: with no detectable width, an unlimited width
+    // keeps rows untruncated rather than wrapping at a guessed width
+    let max_width = crate::display::terminal_width().unwrap_or(usize::MAX);
 
     // Create collection options from skip set. `integration_targets` is
     // patched in after the parallel phase below extracts it — at this
@@ -1215,9 +1229,8 @@ pub fn collect(
         // plus — when default_branch is known and the per-base
         // ahead-behind cache doesn't already cover the branches — one
         // `for-each-ref %(ahead-behind:BASE)` walk (scoped to the cold
-        // subset; warm runs do neither). The snapshot replaces the prior
-        // `commit_shas` priming + `batch_ahead_behind` pair: tasks consume
-        // it by SHA, dodging ref→SHA cache staleness.
+        // subset; warm runs do neither). Tasks consume the snapshot by
+        // SHA, dodging ref→SHA cache staleness.
         //
         // After the snapshot is built, an inner spawn primes the
         // `Remote⇅` cache off its already-scanned inventories — see the
@@ -2003,35 +2016,14 @@ pub fn populate_item(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Strip ANSI escape sequences so snapshots read as plain text.
-    fn strip_ansi(s: &str) -> String {
-        let mut out = String::with_capacity(s.len());
-        let mut chars = s.chars().peekable();
-        while let Some(c) = chars.next() {
-            if c != '\x1b' {
-                out.push(c);
-                continue;
-            }
-            // CSI: ESC [ ... (letter terminator)
-            if chars.peek() == Some(&'[') {
-                chars.next();
-                for next in chars.by_ref() {
-                    if next.is_ascii_alphabetic() {
-                        break;
-                    }
-                }
-            }
-        }
-        out
-    }
+    use ansi_str::AnsiStr;
 
     #[test]
     fn test_format_stall_footer_single_pending() {
         let rendered =
             format_stall_footer("Showing 3 worktrees", 5, 12, 1, TaskKind::CiStatus, "feat");
         insta::assert_snapshot!(
-            strip_ansi(&rendered),
+            rendered.ansi_strip(),
             @"○ Showing 3 worktrees (5/12 loaded, no recent progress; waiting on ci-status for feat)"
         );
     }
@@ -2041,7 +2033,7 @@ mod tests {
         let rendered =
             format_stall_footer("Showing 3 worktrees", 5, 12, 3, TaskKind::CiStatus, "feat");
         insta::assert_snapshot!(
-            strip_ansi(&rendered),
+            rendered.ansi_strip(),
             @"○ Showing 3 worktrees (5/12 loaded, no recent progress; waiting on 3 tasks, including ci-status for feat)"
         );
     }
@@ -2052,7 +2044,7 @@ mod tests {
     fn test_format_drain_timeout_diag_no_items() {
         let rendered = format_drain_timeout_diag(7, &[]);
         insta::assert_snapshot!(
-            strip_ansi(&rendered),
+            rendered.ansi_strip(),
             @"Listing worktrees timed out after 120s (7 results received)"
         );
     }
@@ -2073,12 +2065,14 @@ mod tests {
         let lines = captured.lock().unwrap();
         assert_eq!(lines.len(), 2, "expected warning + hint, got: {lines:?}");
         assert!(
-            strip_ansi(&lines[0]).contains("Listing worktrees timed out after"),
+            lines[0]
+                .ansi_strip()
+                .contains("Listing worktrees timed out after"),
             "warning line: {}",
             lines[0]
         );
         assert!(
-            strip_ansi(&lines[1]).contains("re-run with -v"),
+            lines[1].ansi_strip().contains("re-run with -v"),
             "hint line: {}",
             lines[1]
         );
@@ -2134,7 +2128,7 @@ mod tests {
         ];
         let rendered = format_drain_timeout_diag(3, &items);
         insta::assert_snapshot!(
-            strip_ansi(&rendered),
+            rendered.ansi_strip(),
             @r"
         Listing worktrees timed out after 120s (3 results received); blocked tasks:
           feature-a: ci-status, branch-diff
@@ -2156,7 +2150,7 @@ mod tests {
             .collect();
         let rendered = format_drain_timeout_diag(2, &items);
         insta::assert_snapshot!(
-            strip_ansi(&rendered),
+            rendered.ansi_strip(),
             @r"
         Listing worktrees timed out after 120s (2 results received); blocked tasks:
           feature-0: ahead-behind
@@ -2187,7 +2181,8 @@ mod tests {
             ListItem::new_branch("bbb".into(), "row-one".into()),
         ];
         let skip_tasks: HashSet<TaskKind> = HashSet::new();
-        let layout = calculate_layout_with_width(&items, &skip_tasks, 80, Path::new("/tmp"), None);
+        let layout =
+            calculate_layout_with_width(&items, &skip_tasks, 80, Path::new("/tmp"), None, None);
         let placeholder = super::super::render::PLACEHOLDER;
 
         // Row 0 has data → format_list_item_line; row 1 doesn't → skeleton.

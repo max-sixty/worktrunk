@@ -117,9 +117,17 @@ pub fn pty_safe() {
 #[rstest::fixture]
 pub fn repo() -> TestRepo {
     let repo = TestRepo::standard();
-    // Bind insta snapshot filters for this test thread. `mem::forget` intentionally
-    // leaks the scope guard so settings persist without storing the guard in TestRepo.
-    // Safe: each test sets its own settings, and thread-locals are cleaned up on exit.
+    // Bind insta snapshot filters for this test thread, leaking the guard:
+    // rstest has no teardown, and the guard can't ride along in TestRepo
+    // (insta is a dev-dependency, invisible to the lib crate defining
+    // TestRepo; the guard is also !Send by design). Under nextest (process
+    // per test) the leak ends with the process. Under libtest the binding
+    // persists on the reused worker thread and bleeds into later tests on
+    // it — so a test must never rely on settings it didn't bind itself,
+    // and a missing redaction can be masked here but exposed under nextest.
+    // `test_no_host_specific_paths_in_snapshots` (snapshot_formatting_guard)
+    // enforces the observable invariant: no host-specific paths in committed
+    // snapshots.
     let guard =
         setup_snapshot_settings_for_paths(repo.root_path(), &repo.worktrees).bind_to_scope();
     std::mem::forget(guard);
@@ -677,6 +685,27 @@ fn add_repo_and_worktree_path_filters(
     settings.add_filter(&regex::escape(&root_str_normalized), "_REPO_");
     settings.add_filter(&regex::escape(&to_posix_path(root_str)), "_REPO_");
 
+    // Filters rewrite snapshot *content* only; the structured `info` block
+    // insta-cmd records is reachable solely via redactions. A test that
+    // passes a repo path as a CLI argument (`wt -C <root> list`) would
+    // otherwise bake the per-test temp path into the snapshot's `args:`
+    // block. Mirror the body filters: root-prefixed args become `_REPO_…`.
+    // No POSIX form here — args are built in-process from `root_path()`.
+    let arg_prefixes = [root_str.to_string(), root_str_normalized.clone()];
+    settings.add_dynamic_redaction(".args[]", move |value, _path| {
+        if let Some(arg) = value.as_str() {
+            for prefix in &arg_prefixes {
+                if let Some(suffix) = arg.strip_prefix(prefix.as_str()) {
+                    return insta::internals::Content::from(format!(
+                        "_REPO_{}",
+                        suffix.replace('\\', "/")
+                    ));
+                }
+            }
+        }
+        value
+    });
+
     // In tests, HOME is set to the temp directory containing the repo. Commands being tested
     // see HOME=temp_dir, so format_path_for_display() outputs ~/repo instead of the full path.
     // The repo is always at {temp_dir}/repo, so we hardcode ~/repo for the filter.
@@ -1099,7 +1128,12 @@ fn setup_snapshot_settings_for_paths_with_home(
     );
 
     // Remove trailing ANSI reset codes at end of lines for cross-platform consistency
-    // Windows terminal strips these trailing resets that Unix includes
+    // Windows terminal strips these trailing resets that Unix includes.
+    //
+    // CAUTION: this means committed snapshots never show the line-final `[0m`
+    // the binary actually emits, so a styled line-end in a `.snap` looks like
+    // an unclosed SGR attribute when it isn't. Don't diagnose color/dim-bleed
+    // bugs from snapshot bytes — capture fresh output (`cat -v`) instead.
     settings.add_filter(r"\x1b\[0m$", "");
     settings.add_filter(r"\x1b\[0m\n", "\n");
 

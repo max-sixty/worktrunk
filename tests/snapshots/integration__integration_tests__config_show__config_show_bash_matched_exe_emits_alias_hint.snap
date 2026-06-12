@@ -29,7 +29,6 @@ info:
     OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     PSModulePath: ""
-    RUST_LOG: warn
     SHELL: /bin/bash
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
@@ -68,8 +67,8 @@ exit_code: 0
 [107m [0m $SHELL: [1m/bin/bash[22m
 
 [2m○[22m [1mbash[22m: Already configured shell extension & completions @ ~/.bashrc:2
-[107m [0m [2m[0m[2m[35mif[0m[2m [0m[2m[34mcommand[0m[2m [0m[2m[36m-v[0m[2m wt [0m[2m[36m>[0m[2m/dev/null [0m[2m[33m2[0m[2m>&1; [0m[2m[35mthen[0m[2m [0m[2m[34meval[0m[2m [0m[2m[32m"$([0m[2m[34mcommand[0m[2m wt config shell init bash)"[0m[2m; [0m[2m[35mfi[0m[2m
-[107m [0m [2m[0m[2m[34meval[0m[2m [0m[2m[32m"$([0m[2m[34mwt[0m[2m config shell init bash)"[0m[2m
+[107m [0m [2m[0m[2m[35mif[0m[2m [0m[2m[34mcommand[0m[2m [0m[2m[36m-v[0m[2m wt [0m[2m[36m>[0m[2m/dev/null [0m[2m[33m2[0m[2m>&1; [0m[2m[35mthen[0m[2m [0m[2m[34meval[0m[2m [0m[2m[32m"$([0m[2m[34mcommand[0m[2m wt config shell init bash)"[0m[2m; [0m[2m[35mfi
+[107m [0m [2m[0m[2m[34meval[0m[2m [0m[2m[32m"$([0m[2m[34mwt[0m[2m config shell init bash)"
 [2m↳[22m [2mCreates shell function [1mwt[22m. Aliases should use [4mwt[24m, not [4mwt[24m[22m
 [2m↳[22m [2mTo verify wrapper loaded: [4mtype wt[24m[22m
 
