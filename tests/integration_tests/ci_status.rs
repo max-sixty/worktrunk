@@ -940,6 +940,88 @@ fn test_list_full_with_gitlab_ci_rate_limit(mut repo: TestRepo) {
     });
 }
 
+/// A branch pipeline with no MR renders the bare `#` colored by pipeline
+/// status, hyperlinked to the pipeline page (the success path of
+/// `detect_gitlab_pipeline`; the rate-limit test above covers its error path).
+#[rstest]
+fn test_list_full_with_gitlab_pipeline(mut repo: TestRepo) {
+    let head_sha = setup_gitlab_repo_with_feature(&mut repo);
+
+    let pipeline_json = format!(
+        r#"[{{
+        "status": "success",
+        "sha": "{head_sha}",
+        "web_url": "https://gitlab.com/test-group/test-project/-/pipelines/123"
+    }}]"#
+    );
+    repo.setup_mock_glab_with_pipeline(&pipeline_json, Some(12345));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+        repo.configure_mock_commands(&mut cmd);
+        assert_cmd_snapshot!("gitlab_pipeline_success", cmd);
+    });
+}
+
+/// An expired CI cache entry is refetched, not served: a stale "failed"
+/// entry past its 30-60s TTL must not mask the fresh status.
+#[rstest]
+fn test_ci_cache_expired_entry_refetches(mut repo: TestRepo) {
+    use crate::common::TEST_EPOCH;
+
+    let head_sha = setup_github_repo_with_feature(&mut repo);
+
+    // Fresh fetch reports passed
+    let pr_json = format!(
+        r#"[{{
+        "number": 1,
+        "headRefOid": "{head_sha}",
+        "mergeStateStatus": "CLEAN",
+        "statusCheckRollup": [{{"status": "COMPLETED", "conclusion": "SUCCESS"}}],
+        "url": "https://github.com/test-owner/test-repo/pull/1",
+        "headRepositoryOwner": {{"login": "test-owner"}}
+    }}]"#
+    );
+    repo.setup_mock_gh_with_ci_data(&pr_json, "[]");
+
+    // Expired cache entry claiming the CI failed
+    let git_dir = repo.git_output(&["rev-parse", "--git-common-dir"]);
+    let git_path = if Path::new(&git_dir).is_absolute() {
+        std::path::PathBuf::from(&git_dir)
+    } else {
+        repo.root_path().join(&git_dir)
+    };
+    let cache_dir = git_path.join("wt").join("cache").join("ci-status");
+    std::fs::create_dir_all(&cache_dir).unwrap();
+    let expired_at = TEST_EPOCH - 3600;
+    std::fs::write(
+        cache_dir.join("feature.json"),
+        format!(
+            r##"{{"status":{{"ci_status":"failed","source":"pr","is_stale":false,"number":{{"number":1,"sigil":"#"}}}},"checked_at":{expired_at},"head":"{head_sha}","branch":"feature"}}"##
+        ),
+    )
+    .unwrap();
+
+    let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+    repo.configure_mock_commands(&mut cmd);
+    // Debug logging evaluates the cache-expiry diagnostics' format args
+    cmd.env("RUST_LOG", "worktrunk=debug");
+    cmd.env("CLICOLOR_FORCE", "1");
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Fresh fetch wins: green #1, and the stale red #1 is gone
+    assert!(
+        stdout.contains("\x1b[32m#1"),
+        "expired entry should refetch as green #1:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("\x1b[31m#1"),
+        "stale failed entry must not be served:\n{stdout}"
+    );
+}
+
 // =============================================================================
 // Azure DevOps CI status tests
 // =============================================================================
