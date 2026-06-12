@@ -293,6 +293,7 @@ use worktrunk::styling::{
 
 use crate::commands::is_worktree_at_expected_path;
 
+use super::columns::ColumnVisibility;
 use super::model::{CommitDetails, ItemKind, ListItem, StatusSymbols, WorktreeData};
 use super::progressive::RenderTarget;
 use super::progressive_table::ProgressiveTable;
@@ -735,6 +736,7 @@ pub fn collect(
         list_width,
         progressive_handler,
         include_untracked_in_working_diff,
+        column_visibility,
     ) = match show_config {
         ShowConfig::Resolved {
             show_branches,
@@ -756,6 +758,7 @@ pub fn collect(
             // bucket as default `wt list` (skips BranchDiff/CiStatus), so
             // it also opts out of the untracked-inclusive working diff.
             false,
+            ColumnVisibility::all_with_automatic_path(),
         ),
         ShowConfig::DeferredToParallel {
             cli_branches,
@@ -766,17 +769,20 @@ pub fn collect(
             let show_branches = cli_branches || config.list.branches();
             let show_remotes = cli_remotes || config.list.remotes();
             let show_full = cli_full || config.list.full();
-            let skip_tasks: HashSet<TaskKind> = if show_full {
-                HashSet::new()
-            } else {
-                [
-                    TaskKind::BranchDiff,
-                    TaskKind::CiStatus,
-                    TaskKind::SummaryGenerate,
-                ]
-                .into_iter()
-                .collect()
-            };
+            let column_visibility = ColumnVisibility::from_config(config.list.columns(), show_full);
+            let mut skip_tasks = HashSet::new();
+            if !column_visibility.shows_branch_diff() {
+                skip_tasks.insert(TaskKind::BranchDiff);
+            }
+            if !column_visibility.shows_ci_status() {
+                skip_tasks.insert(TaskKind::CiStatus);
+            }
+            if !column_visibility.shows_summary() {
+                skip_tasks.insert(TaskKind::SummaryGenerate);
+            }
+            if !column_visibility.shows_url() {
+                skip_tasks.insert(TaskKind::UrlStatus);
+            }
             // Resolve timeouts from merged config (--full disables both)
             let (command_timeout, collect_deadline) = if show_full {
                 (None, None)
@@ -794,6 +800,7 @@ pub fn collect(
                 None,
                 None,
                 show_full,
+                column_visibility,
             )
         }
     };
@@ -1055,6 +1062,7 @@ pub fn collect(
     let layout = super::layout::calculate_layout_with_width(
         &all_items,
         &effective_skip_tasks,
+        &column_visibility,
         list_width
             .or_else(crate::display::terminal_width)
             .unwrap_or(usize::MAX),
@@ -2171,7 +2179,14 @@ mod tests {
             ListItem::new_branch("bbb".into(), "row-one".into()),
         ];
         let skip_tasks: HashSet<TaskKind> = HashSet::new();
-        let layout = calculate_layout_with_width(&items, &skip_tasks, 80, Path::new("/tmp"), None);
+        let layout = calculate_layout_with_width(
+            &items,
+            &skip_tasks,
+            &ColumnVisibility::default(),
+            80,
+            Path::new("/tmp"),
+            None,
+        );
         let placeholder = super::super::render::PLACEHOLDER;
 
         // Row 0 has data → format_list_item_line; row 1 doesn't → skeleton.

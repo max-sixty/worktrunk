@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/help.rs
+assertion_line: 226
 info:
   program: wt
   args:
@@ -8,7 +9,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "80"
-    GIT_EDITOR: ""
+    GIT_PAGER: ""
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
@@ -97,6 +98,10 @@ git operations complete.
 (GitHub/GitLab pipeline pass/fail), line diffs since the merge-base, and 
 LLM-generated summaries of each branch's changes.
 
+The same columns can be enabled one by one in user config with [2m[list.columns][0m 
+([2mmain-diff[0m, [2mci[0m, [2msummary[0m). [2m--full[0m forces those full-mode columns on for a single 
+invocation, even when a column is disabled in config.
+
 [1m[32mExamples[0m
 
 List all worktrees:
@@ -160,14 +165,15 @@ Output as JSON for scripting:
  ─────── ────────────────────────────────────────────────────────────────────── 
  Branch  Branch name                                                            
  Status  Compact symbols (see below)                                            
- HEAD±   Uncommitted changes: +added -deleted lines                             
- main↕   Commits ahead/behind default branch                                    
+ HEAD±   Uncommitted changes: +added -deleted lines ([2mhead-diff[0m)                 
+ main↕   Commits ahead/behind default branch ([2mmain-commits[0m)                     
  main…±  Line diffs since the merge-base (three-dot) with the default branch;   
-         [2m--full[0m only                                                            
- Summary LLM-generated branch summary; requires [2m--full[0m, [2msummary = true[0m, and     
-         [2mcommit.generation[0m [experimental]                                       
- Remote⇅ Commits ahead/behind tracking branch                                   
- CI      Pipeline status; [2m--full[0m only                                           
+         [2m--full[0m or [2mmain-diff = true[0m                                             
+ Summary LLM-generated branch summary; requires [2m--full[0m or [2msummary = true[0m in     
+         [2m[list.columns][0m, plus [2m[list] summary = true[0m and [2mcommit.generation[0m       
+         [experimental]                                                         
+ Remote⇅ Commits ahead/behind tracking branch ([2mremote-commits[0m)                  
+ CI      Pipeline status; [2m--full[0m or [2mci = true[0m                                   
  Path    Worktree directory                                                     
  URL     Dev server URL from project config; dimmed if port is not listening    
  Commit  Short hash (8 chars)                                                   
@@ -175,6 +181,27 @@ Output as JSON for scripting:
  Message Last commit message (truncated)                                        
 
 The [2mmain[0m header label is used regardless of the default branch's actual name.
+
+Column visibility is configured in user config under [2m[list.columns][0m. Branch and 
+the left gutter are always shown. Unset keys use the current defaults: the 
+ordinary [2mwt list[0m columns stay on, while [2mmain-diff[0m, [2msummary[0m, and [2mci[0m stay off 
+unless enabled or [2m--full[0m is used. [2mpath[0m is automatic when unset (shown when 
+needed for branch/worktree mismatches); set [2mpath = true[0m to always make it 
+eligible, or [2mpath = false[0m to hide it.
+
+[107m [0m [2m[36m[list.columns][0m
+[107m [0m [2mstatus = [0m[2m[33mtrue[0m
+[107m [0m [2mhead-diff = [0m[2m[33mtrue[0m
+[107m [0m [2mmain-commits = [0m[2m[33mtrue[0m
+[107m [0m [2mmain-diff = [0m[2m[33mfalse[0m
+[107m [0m [2msummary = [0m[2m[33mfalse[0m
+[107m [0m [2mremote-commits = [0m[2m[33mtrue[0m
+[107m [0m [2mci = [0m[2m[33mfalse[0m
+[107m [0m [2mpath = [0m[2m[33mfalse[0m
+[107m [0m [2murl = [0m[2m[33mtrue[0m
+[107m [0m [2mcommit = [0m[2m[33mtrue[0m
+[107m [0m [2mage = [0m[2m[33mtrue[0m
+[107m [0m [2mmessage = [0m[2m[33mtrue[0m
 
 [32mCI status[0m
 
@@ -209,8 +236,9 @@ view or clear.
 [32mLLM summaries [experimental][0m
 
 Reuses the [2mcommit.generation[0m command — the same LLM that generates commit 
-messages. Enable with [2msummary = true[0m in [2m[list][0m config; requires [2m--full[0m. Results 
-are cached until the branch's diff changes.
+messages. Enable generation with [2msummary = true[0m in [2m[list][0m config and show the 
+column with [2m--full[0m or [2msummary = true[0m in [2m[list.columns][0m. Results are cached until
+ the branch's diff changes.
 
 [1m[32mStatus symbols[0m
 

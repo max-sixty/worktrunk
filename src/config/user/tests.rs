@@ -276,6 +276,11 @@ fn test_list_config_serde() {
         branches: Some(false),
         remotes: None,
         summary: None,
+        columns: Some(ListColumnsConfig {
+            message: Some(false),
+            main_diff: Some(true),
+            ..Default::default()
+        }),
         task_timeout_ms: Some(500),
         timeout_ms: None,
     };
@@ -285,6 +290,17 @@ fn test_list_config_serde() {
     assert_eq!(parsed.branches, Some(false));
     assert_eq!(parsed.remotes, None);
     assert_eq!(parsed.summary, None);
+    assert_eq!(
+        parsed.columns.as_ref().and_then(|columns| columns.message),
+        Some(false)
+    );
+    assert_eq!(
+        parsed
+            .columns
+            .as_ref()
+            .and_then(|columns| columns.main_diff),
+        Some(true)
+    );
     assert_eq!(parsed.task_timeout_ms, Some(500));
     assert_eq!(parsed.timeout_ms, None);
 }
@@ -604,14 +620,23 @@ fn test_merge_list_config() {
         branches: Some(false),
         remotes: None,
         summary: Some(true),
+        columns: Some(ListColumnsConfig {
+            message: Some(false),
+            ci: Some(false),
+            ..Default::default()
+        }),
         task_timeout_ms: Some(1000),
         timeout_ms: Some(2000),
     };
     let override_config = ListConfig {
-        full: None,            // Should fall back to base
-        branches: Some(true),  // Should override
-        remotes: Some(true),   // Should override (base was None)
-        summary: None,         // Should fall back to base
+        full: None,           // Should fall back to base
+        branches: Some(true), // Should override
+        remotes: Some(true),  // Should override (base was None)
+        summary: None,        // Should fall back to base
+        columns: Some(ListColumnsConfig {
+            ci: Some(true), // Should override
+            ..Default::default()
+        }),
         task_timeout_ms: None, // Should fall back to base
         timeout_ms: None,      // Should fall back to base
     };
@@ -621,6 +646,9 @@ fn test_merge_list_config() {
     assert_eq!(merged.branches, Some(true)); // From override
     assert_eq!(merged.remotes, Some(true)); // From override
     assert_eq!(merged.summary, Some(true)); // From base
+    let merged_columns = merged.columns.expect("columns should merge");
+    assert_eq!(merged_columns.message, Some(false)); // From base
+    assert_eq!(merged_columns.ci, Some(true)); // From override
     assert_eq!(merged.task_timeout_ms, Some(1000)); // From base
     assert_eq!(merged.timeout_ms, Some(2000)); // From base
 }
@@ -1024,6 +1052,11 @@ fn test_list_config_accessor_methods_with_values() {
         branches: Some(true),
         remotes: Some(false),
         summary: Some(true),
+        columns: Some(ListColumnsConfig {
+            message: Some(false),
+            path: Some(true),
+            ..Default::default()
+        }),
         task_timeout_ms: Some(5000),
         timeout_ms: Some(3000),
     };
@@ -1031,6 +1064,8 @@ fn test_list_config_accessor_methods_with_values() {
     assert!(config.branches());
     assert!(!config.remotes());
     assert!(config.summary());
+    assert!(!config.columns().message());
+    assert_eq!(config.columns().path(), Some(true));
     assert_eq!(
         config.task_timeout(),
         Some(std::time::Duration::from_millis(5000))

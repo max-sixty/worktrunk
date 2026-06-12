@@ -9,7 +9,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
-    GIT_EDITOR: ""
+    GIT_PAGER: ""
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
@@ -168,6 +168,20 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# task-timeout-ms = 0   # Kill individual git commands after N ms; 0 disables[0m
 [107m [0m [2m# timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disables[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# [list.columns][0m
+[107m [0m [2m# status = true[0m
+[107m [0m [2m# head-diff = true[0m
+[107m [0m [2m# main-commits = true[0m
+[107m [0m [2m# main-diff = false[0m
+[107m [0m [2m# summary = false[0m
+[107m [0m [2m# remote-commits = true[0m
+[107m [0m [2m# ci = false[0m
+[107m [0m [2m# path = false[0m
+[107m [0m [2m# url = true[0m
+[107m [0m [2m# commit = true[0m
+[107m [0m [2m# age = true[0m
+[107m [0m [2m# message = true[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Commit[0m
 [107m [0m [2m#[0m

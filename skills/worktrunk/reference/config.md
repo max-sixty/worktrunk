@@ -187,6 +187,20 @@ remotes = false    # Include remote-only branches (--remotes)
 
 task-timeout-ms = 0   # Kill individual git commands after N ms; 0 disables
 timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disables
+
+[list.columns]
+status = true
+head-diff = true
+main-commits = true
+main-diff = false
+summary = false
+remote-commits = true
+ci = false
+path = false
+url = true
+commit = true
+age = true
+message = true
 ```
 
 ### Commit

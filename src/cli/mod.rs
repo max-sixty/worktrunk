@@ -691,6 +691,8 @@ The table renders progressively: branch names, paths, and commit hashes appear i
 
 `--full` adds columns that require network access or LLM calls: [CI status](#ci-status) (GitHub/GitLab pipeline pass/fail), line diffs since the merge-base, and [LLM-generated summaries](#llm-summaries) of each branch's changes.
 
+The same columns can be enabled one by one in user config with `[list.columns]` (`main-diff`, `ci`, `summary`). `--full` forces those full-mode columns on for a single invocation, even when a column is disabled in config.
+
 ## Examples
 
 List all worktrees:
@@ -749,12 +751,12 @@ $ wt list --format=json
 |--------|-------|
 | Branch | Branch name |
 | Status | Compact symbols (see below) |
-| HEAD± | Uncommitted changes: +added -deleted lines |
-| main↕ | Commits ahead/behind default branch |
-| main…± | Line diffs since the merge-base (three-dot) with the default branch; `--full` only |
-| Summary | LLM-generated branch summary; requires `--full`, `summary = true`, and [`commit.generation`](@/config.md#commit) [experimental] |
-| Remote⇅ | Commits ahead/behind tracking branch |
-| CI | Pipeline status; `--full` only |
+| HEAD± | Uncommitted changes: +added -deleted lines (`head-diff`) |
+| main↕ | Commits ahead/behind default branch (`main-commits`) |
+| main…± | Line diffs since the merge-base (three-dot) with the default branch; `--full` or `main-diff = true` |
+| Summary | LLM-generated branch summary; requires `--full` or `summary = true` in `[list.columns]`, plus `[list] summary = true` and [`commit.generation`](@/config.md#commit) [experimental] |
+| Remote⇅ | Commits ahead/behind tracking branch (`remote-commits`) |
+| CI | Pipeline status; `--full` or `ci = true` |
 | Path | Worktree directory |
 | URL | Dev server URL from project config; dimmed if port is not listening |
 | Commit | Short hash (8 chars) |
@@ -762,6 +764,24 @@ $ wt list --format=json
 | Message | Last commit message (truncated) |
 
 The `main` header label is used regardless of the default branch's actual name.
+
+Column visibility is configured in user config under `[list.columns]`. Branch and the left gutter are always shown. Unset keys use the current defaults: the ordinary `wt list` columns stay on, while `main-diff`, `summary`, and `ci` stay off unless enabled or `--full` is used. `path` is automatic when unset (shown when needed for branch/worktree mismatches); set `path = true` to always make it eligible, or `path = false` to hide it.
+
+```toml
+[list.columns]
+status = true
+head-diff = true
+main-commits = true
+main-diff = false
+summary = false
+remote-commits = true
+ci = false
+path = false
+url = true
+commit = true
+age = true
+message = true
+```
 
 ### CI status
 
@@ -785,7 +805,7 @@ CI indicators are clickable links to the PR or pipeline page. Any CI dot appears
 
 ### LLM summaries [experimental]
 
-Reuses the [`commit.generation`](@/config.md#commit) command — the same LLM that generates commit messages. Enable with `summary = true` in `[list]` config; requires `--full`. Results are cached until the branch's diff changes.
+Reuses the [`commit.generation`](@/config.md#commit) command — the same LLM that generates commit messages. Enable generation with `summary = true` in `[list]` config and show the column with `--full` or `summary = true` in `[list.columns]`. Results are cached until the branch's diff changes.
 
 ## Status symbols
 
@@ -1777,6 +1797,20 @@ remotes = false    # Include remote-only branches (--remotes)
 
 task-timeout-ms = 0   # Kill individual git commands after N ms; 0 disables
 timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disables
+
+[list.columns]
+status = true
+head-diff = true
+main-commits = true
+main-diff = false
+summary = false
+remote-commits = true
+ci = false
+path = false
+url = true
+commit = true
+age = true
+message = true
 ```
 
 ### Commit

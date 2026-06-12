@@ -147,6 +147,10 @@ pub struct ListConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<bool>,
 
+    /// Column visibility for the `wt list` table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub columns: Option<ListColumnsConfig>,
+
     /// Per-task timeout in milliseconds.
     /// Kills individual git commands that exceed this duration. Applies to both
     /// `wt list` and the `wt switch` picker. Set to 0 to explicitly disable
@@ -160,6 +164,110 @@ pub struct ListConfig {
     /// Disabled when --full is used. Default: no budget (wait for all results).
     #[serde(rename = "timeout-ms", skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
+}
+
+/// Column visibility configuration for the `wt list` table.
+///
+/// `None` means use the default for that column. The Path column is special:
+/// unset keeps today's automatic behavior (show only for branch/worktree
+/// mismatches), while `true` always makes the column eligible and `false`
+/// suppresses it.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Default, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub struct ListColumnsConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub head_diff: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub main_commits: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub main_diff: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote_commits: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ci: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub age: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<bool>,
+}
+
+impl ListColumnsConfig {
+    pub fn status(&self) -> bool {
+        self.status.unwrap_or(true)
+    }
+
+    pub fn head_diff(&self) -> bool {
+        self.head_diff.unwrap_or(true)
+    }
+
+    pub fn main_commits(&self) -> bool {
+        self.main_commits.unwrap_or(true)
+    }
+
+    pub fn main_diff(&self) -> bool {
+        self.main_diff.unwrap_or(false)
+    }
+
+    pub fn summary(&self) -> bool {
+        self.summary.unwrap_or(false)
+    }
+
+    pub fn remote_commits(&self) -> bool {
+        self.remote_commits.unwrap_or(true)
+    }
+
+    pub fn ci(&self) -> bool {
+        self.ci.unwrap_or(false)
+    }
+
+    pub fn path(&self) -> Option<bool> {
+        self.path
+    }
+
+    pub fn url(&self) -> bool {
+        self.url.unwrap_or(true)
+    }
+
+    pub fn commit(&self) -> bool {
+        self.commit.unwrap_or(true)
+    }
+
+    pub fn age(&self) -> bool {
+        self.age.unwrap_or(true)
+    }
+
+    pub fn message(&self) -> bool {
+        self.message.unwrap_or(true)
+    }
+}
+
+impl Merge for ListColumnsConfig {
+    fn merge_with(&self, other: &Self) -> Self {
+        Self {
+            status: other.status.or(self.status),
+            head_diff: other.head_diff.or(self.head_diff),
+            main_commits: other.main_commits.or(self.main_commits),
+            main_diff: other.main_diff.or(self.main_diff),
+            summary: other.summary.or(self.summary),
+            remote_commits: other.remote_commits.or(self.remote_commits),
+            ci: other.ci.or(self.ci),
+            path: other.path.or(self.path),
+            url: other.url.or(self.url),
+            commit: other.commit.or(self.commit),
+            age: other.age.or(self.age),
+            message: other.message.or(self.message),
+        }
+    }
 }
 
 impl ListConfig {
@@ -181,6 +289,11 @@ impl ListConfig {
     /// Enable LLM-generated branch summaries (default: false)
     pub fn summary(&self) -> bool {
         self.summary.unwrap_or(false)
+    }
+
+    /// Column visibility configuration with defaults applied per accessor.
+    pub fn columns(&self) -> ListColumnsConfig {
+        self.columns.clone().unwrap_or_default()
     }
 
     /// Per-task command timeout (default: None — no per-command timeout).
@@ -207,6 +320,7 @@ impl Merge for ListConfig {
             branches: other.branches.or(self.branches),
             remotes: other.remotes.or(self.remotes),
             summary: other.summary.or(self.summary),
+            columns: merge_optional(self.columns.as_ref(), other.columns.as_ref()),
             task_timeout_ms: other.task_timeout_ms.or(self.task_timeout_ms),
             timeout_ms: other.timeout_ms.or(self.timeout_ms),
         }

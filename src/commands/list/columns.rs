@@ -1,4 +1,5 @@
 use super::collect::TaskKind;
+use worktrunk::config::ListColumnsConfig;
 
 /// Logical identifier for each column rendered by `wt list`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -17,6 +18,94 @@ pub enum ColumnKind {
     Commit,
     Time,
     Message,
+}
+
+/// Column visibility for a single `wt list` table render.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ColumnVisibility {
+    columns: ListColumnsConfig,
+    force_full_columns: bool,
+}
+
+impl ColumnVisibility {
+    pub fn from_config(columns: ListColumnsConfig, force_full_columns: bool) -> Self {
+        Self {
+            columns,
+            force_full_columns,
+        }
+    }
+
+    /// Preserve pre-config visibility for callers that already pass explicit
+    /// task skips (picker/statusline-style collection): every column is
+    /// eligible, while Path keeps its automatic data-dependent priority.
+    pub fn all_with_automatic_path() -> Self {
+        Self::from_config(
+            ListColumnsConfig {
+                status: Some(true),
+                head_diff: Some(true),
+                main_commits: Some(true),
+                main_diff: Some(true),
+                summary: Some(true),
+                remote_commits: Some(true),
+                ci: Some(true),
+                path: None,
+                url: Some(true),
+                commit: Some(true),
+                age: Some(true),
+                message: Some(true),
+            },
+            false,
+        )
+    }
+
+    #[cfg(test)]
+    pub fn all() -> Self {
+        Self::all_with_automatic_path()
+    }
+
+    pub fn is_visible(&self, kind: ColumnKind) -> bool {
+        match kind {
+            ColumnKind::Gutter | ColumnKind::Branch => true,
+            ColumnKind::Status => self.columns.status(),
+            ColumnKind::WorkingDiff => self.columns.head_diff(),
+            ColumnKind::AheadBehind => self.columns.main_commits(),
+            ColumnKind::BranchDiff => self.force_full_columns || self.columns.main_diff(),
+            ColumnKind::Summary => self.force_full_columns || self.columns.summary(),
+            ColumnKind::Upstream => self.columns.remote_commits(),
+            ColumnKind::CiStatus => self.force_full_columns || self.columns.ci(),
+            ColumnKind::Path => self.columns.path().unwrap_or(true),
+            ColumnKind::Url => self.columns.url(),
+            ColumnKind::Commit => self.columns.commit(),
+            ColumnKind::Time => self.columns.age(),
+            ColumnKind::Message => self.columns.message(),
+        }
+    }
+
+    pub fn path_mode(&self) -> Option<bool> {
+        self.columns.path()
+    }
+
+    pub fn shows_branch_diff(&self) -> bool {
+        self.force_full_columns || self.columns.main_diff()
+    }
+
+    pub fn shows_ci_status(&self) -> bool {
+        self.force_full_columns || self.columns.ci()
+    }
+
+    pub fn shows_summary(&self) -> bool {
+        self.force_full_columns || self.columns.summary()
+    }
+
+    pub fn shows_url(&self) -> bool {
+        self.columns.url()
+    }
+}
+
+impl Default for ColumnVisibility {
+    fn default() -> Self {
+        Self::from_config(ListColumnsConfig::default(), false)
+    }
 }
 
 impl ColumnKind {
@@ -242,5 +331,45 @@ mod tests {
                 kind
             );
         }
+    }
+
+    #[test]
+    fn default_visibility_matches_non_full_columns() {
+        let visibility = ColumnVisibility::default();
+        assert!(visibility.is_visible(ColumnKind::Status));
+        assert!(visibility.is_visible(ColumnKind::WorkingDiff));
+        assert!(visibility.is_visible(ColumnKind::AheadBehind));
+        assert!(!visibility.is_visible(ColumnKind::BranchDiff));
+        assert!(!visibility.is_visible(ColumnKind::Summary));
+        assert!(visibility.is_visible(ColumnKind::Upstream));
+        assert!(!visibility.is_visible(ColumnKind::CiStatus));
+        assert!(visibility.is_visible(ColumnKind::Path));
+        assert!(visibility.is_visible(ColumnKind::Url));
+        assert!(visibility.is_visible(ColumnKind::Commit));
+        assert!(visibility.is_visible(ColumnKind::Time));
+        assert!(visibility.is_visible(ColumnKind::Message));
+    }
+
+    #[test]
+    fn full_visibility_forces_expensive_columns() {
+        let visibility = ColumnVisibility::from_config(
+            ListColumnsConfig {
+                main_diff: Some(false),
+                summary: Some(false),
+                ci: Some(false),
+                ..Default::default()
+            },
+            true,
+        );
+        assert!(visibility.is_visible(ColumnKind::BranchDiff));
+        assert!(visibility.is_visible(ColumnKind::Summary));
+        assert!(visibility.is_visible(ColumnKind::CiStatus));
+    }
+
+    #[test]
+    fn legacy_visibility_keeps_path_automatic() {
+        let visibility = ColumnVisibility::all_with_automatic_path();
+        assert!(visibility.is_visible(ColumnKind::Path));
+        assert_eq!(visibility.path_mode(), None);
     }
 }

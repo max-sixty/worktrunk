@@ -99,6 +99,87 @@ branches = true
 }
 
 #[rstest]
+fn test_list_config_columns_disable_message(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        r#"[list.columns]
+message = false
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_list_config_columns_enable_main_diff(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        r#"[list.columns]
+main-diff = true
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_list_config_full_overrides_disabled_full_columns(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        r#"[list.columns]
+main-diff = false
+ci = false
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["list", "--full"]).current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_list_config_summary_column_requires_generation_config(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        r#"[list.columns]
+summary = true
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
 fn test_list_no_config(repo: TestRepo) {
     // Create a branch without a worktree
     repo.run_git(&["branch", "feature"]);
@@ -375,6 +456,19 @@ branches = true
         // at deserialize time, so any value reproduces it; 0 (disabled) is
         // chosen so the timeout doesn't affect output.
         cmd.env("WORKTRUNK__LIST__TIMEOUT_MS", "0");
+        cmd.arg("list").current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_list_config_env_override_nested_column(repo: TestRepo) {
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.env("WORKTRUNK__LIST__COLUMNS__MESSAGE", "false");
         cmd.arg("list").current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd);
