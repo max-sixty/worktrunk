@@ -648,13 +648,7 @@ fn run_alias(
                 })
             })?;
             for step in steps {
-                sourced_steps.push(SourcedStep {
-                    step,
-                    source,
-                    // Aliases have no deprecated single-table form, so concurrent
-                    // commands always run concurrently.
-                    is_pipeline: true,
-                });
+                sourced_steps.push(SourcedStep { step, source });
             }
         }
         sourced_steps_to_foreground(sourced_steps, &PipelineKind::Alias { name: alias_name })

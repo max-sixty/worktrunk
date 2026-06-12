@@ -108,7 +108,7 @@ pub fn run_pipeline() -> anyhow::Result<()> {
                     spawn_shell_command(&expanded, &spec.worktree_path, &step_json, log_file)?;
                 let status = child.wait().context("failed to wait for child process")?;
                 if !status.success() {
-                    return Err(failure_error(&status, &expanded));
+                    return Err(failure_error(&status, name.as_deref().unwrap_or(&expanded)));
                 }
                 cmd_index += 1;
             }

@@ -488,8 +488,6 @@ pub enum DeprecationKind {
     NoCd,
     /// `timeout-ms` under `[switch.picker]` (removed — picker renders progressively).
     SwitchPickerTimeout,
-    /// Pre-* hooks using multi-entry table form, by display path.
-    PreHookTableForm(Vec<String>),
 }
 
 /// All deprecation patterns detected in a config file, in the order their
@@ -550,10 +548,6 @@ fn detect_deprecations_from_doc(
     }
     if find_switch_picker_timeout_from_doc(doc) {
         kinds.push(DeprecationKind::SwitchPickerTimeout);
-    }
-    let pre_hook_table_form = find_pre_hook_table_form_from_doc(doc);
-    if !pre_hook_table_form.is_empty() {
-        kinds.push(DeprecationKind::PreHookTableForm(pre_hook_table_form));
     }
 
     kinds
@@ -854,57 +848,6 @@ fn migrate_select_table(table: &mut toml_edit::Table) -> bool {
     true
 }
 
-/// The 5 canonical pre-* hook keys.
-const PRE_HOOK_KEYS: &[&str] = &[
-    "pre-switch",
-    "pre-start",
-    "pre-commit",
-    "pre-merge",
-    "pre-remove",
-];
-
-/// Check if a table has a multi-entry pre-* hook (table form with 2+ named commands).
-fn collect_pre_hook_table_form_keys(
-    table: &toml_edit::Table,
-    prefix: &str,
-    found: &mut Vec<String>,
-) {
-    for &key in PRE_HOOK_KEYS {
-        if let Some(item) = table.get(key)
-            && table_like_len(item).is_some_and(|len| len >= 2)
-        {
-            if prefix.is_empty() {
-                found.push(key.to_string());
-            } else {
-                found.push(format!("{prefix}.{key}"));
-            }
-        }
-    }
-}
-
-/// Find pre-* hooks using multi-entry table form.
-///
-/// Hooks are flattened into the top level of user config, project config, and
-/// each `[projects."id"]` subtree. Returns display paths for each deprecated
-/// hook found.
-fn find_pre_hook_table_form_from_doc(doc: &toml_edit::DocumentMut) -> Vec<String> {
-    let mut found = Vec::new();
-    any_config_table(doc, |scope, table| {
-        let prefix = scope.map_or_else(String::new, |key| format!("projects.\"{key}\""));
-        collect_pre_hook_table_form_keys(table, &prefix, &mut found);
-        false
-    });
-    found
-}
-
-fn table_like_len(item: &toml_edit::Item) -> Option<usize> {
-    match item {
-        toml_edit::Item::Table(t) => Some(t.len()),
-        toml_edit::Item::Value(toml_edit::Value::InlineTable(t)) => Some(t.len()),
-        _ => None,
-    }
-}
-
 fn find_ci_section_from_doc(doc: &toml_edit::DocumentMut) -> bool {
     // Skip if [forge] already exists
     if doc
@@ -1017,70 +960,6 @@ fn migrate_negated_bool_doc(
     })
 }
 
-/// Convert a multi-entry pre-* table section into an array-of-tables pipeline.
-///
-/// Removes `[key]` as a table section and inserts `[[key]]` blocks —
-/// one block per named step, preserving insertion order.
-///
-/// Iterates pre-* keys in document order (not [`PRE_HOOK_KEYS`] order) so
-/// migrated sections land in the same relative position they had in the
-/// source file.
-fn migrate_pre_hook_table_in(table: &mut toml_edit::Table) -> bool {
-    let keys_to_migrate: Vec<String> = table
-        .iter()
-        .filter(|(k, v)| {
-            PRE_HOOK_KEYS.contains(k)
-                && pre_hook_pipeline_entries(v).is_some_and(|entries| entries.len() >= 2)
-        })
-        .map(|(k, _)| k.to_string())
-        .collect();
-
-    let mut modified = false;
-    for key in keys_to_migrate {
-        let item = table.get_mut(&key).unwrap();
-        let entries = pre_hook_pipeline_entries(item).unwrap();
-
-        let mut arr = toml_edit::ArrayOfTables::new();
-        for (name, value) in entries.iter() {
-            let mut block = toml_edit::Table::new();
-            block.insert(name, toml_edit::value(value.as_str()));
-            arr.push(block);
-        }
-
-        *item = toml_edit::Item::ArrayOfTables(arr);
-        modified = true;
-    }
-    modified
-}
-
-fn pre_hook_pipeline_entries(item: &toml_edit::Item) -> Option<Vec<(String, String)>> {
-    match item {
-        toml_edit::Item::Table(t) => {
-            let entries = t
-                .iter()
-                .map(|(name, value)| Some((name.to_string(), value.as_str()?.to_string())))
-                .collect::<Option<Vec<_>>>()?;
-            Some(entries)
-        }
-        toml_edit::Item::Value(toml_edit::Value::InlineTable(t)) => {
-            let entries = t
-                .iter()
-                .map(|(name, value)| Some((name.to_string(), value.as_str()?.to_string())))
-                .collect::<Option<Vec<_>>>()?;
-            Some(entries)
-        }
-        _ => None,
-    }
-}
-
-/// Migrate multi-entry pre-* hook table sections to pipeline arrays.
-///
-/// Hooks are flattened into the top level of user config, project config, and
-/// each `[projects."id"]` subtree.
-fn migrate_pre_hook_table_form_doc(doc: &mut toml_edit::DocumentMut) -> bool {
-    for_each_config_table_mut(doc, |_, table| migrate_pre_hook_table_in(table))
-}
-
 /// Apply all structural TOML migrations to a parsed document.
 ///
 /// This is the single source of truth for config migration. Returns true if
@@ -1099,7 +978,6 @@ fn migrate_content_doc(doc: &mut toml_edit::DocumentMut) -> bool {
     // analysis (`unknown_tree`) coherent for the table and array-of-tables
     // forms, where serde aliases on the field don't cover every shape.
     modified |= migrate_create_hooks_doc(doc);
-    modified |= migrate_pre_hook_table_form_doc(doc);
     modified |= migrate_ci_doc(doc);
     modified |= migrate_negated_bool_doc(doc, "merge", "no-ff", "ff");
     modified |= migrate_negated_bool_doc(doc, "switch", "no-cd", "cd");
@@ -1663,23 +1541,6 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
                     "{}",
                     warning_message(cformat!(
                         "{label}: <bold>switch.picker.timeout-ms</> is no longer used — the picker now renders progressively"
-                    ))
-                );
-            }
-            DeprecationKind::PreHookTableForm(hooks) => {
-                let hook_list = hooks
-                    .iter()
-                    .map(|h| cformat!("<bold>{h}</>"))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let _ = writeln!(
-                    out,
-                    "{}",
-                    warning_message(cformat!(
-                        "{label}: table form for {hook_list} is deprecated in favor of the pipeline form. \
-                     We're unifying pre-hooks, post-hooks, and aliases so that list form always runs serially \
-                     and table form always runs in parallel — migrate now to keep the current serial behavior \
-                     once the table form is repurposed."
                     ))
                 );
             }
@@ -4213,214 +4074,5 @@ ff = true
             &path,
             "Project config",
         );
-    }
-
-    // ==================== pre-hook table form tests ====================
-
-    fn find_pre_hook_table_form(content: &str) -> Vec<String> {
-        content
-            .parse::<toml_edit::DocumentMut>()
-            .map(|doc| find_pre_hook_table_form_from_doc(&doc))
-            .unwrap_or_default()
-    }
-
-    fn migrate_pre_hook_table_form(content: &str) -> String {
-        let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
-            return content.to_string();
-        };
-        if migrate_pre_hook_table_form_doc(&mut doc) {
-            doc.to_string()
-        } else {
-            content.to_string()
-        }
-    }
-
-    #[test]
-    fn test_detect_pre_hook_table_form() {
-        // Multi-entry table → detected
-        let found = find_pre_hook_table_form("[pre-merge]\ntest = \"t\"\nlint = \"l\"\n");
-        assert_eq!(found, vec!["pre-merge"]);
-
-        // Single-entry table → not detected
-        let found = find_pre_hook_table_form("[pre-merge]\ntest = \"t\"\n");
-        assert!(found.is_empty());
-
-        // String form → not detected
-        let found = find_pre_hook_table_form("pre-merge = \"cargo test\"\n");
-        assert!(found.is_empty());
-
-        // Inline table form → detected like section table form
-        let found = find_pre_hook_table_form("pre-merge = { test = \"t\", lint = \"l\" }\n");
-        assert_eq!(found, vec!["pre-merge"]);
-
-        // Array/pipeline form → not detected
-        let found = find_pre_hook_table_form("pre-merge = [{test = \"t\"}, {lint = \"l\"}]\n");
-        assert!(found.is_empty());
-
-        // Post-* hooks → not detected (table form is canonical for post-*)
-        let found = find_pre_hook_table_form("[post-merge]\ntest = \"t\"\nlint = \"l\"\n");
-        assert!(found.is_empty());
-
-        // All 5 pre-* keys detected
-        let content = r#"
-[pre-switch]
-a = "1"
-b = "2"
-
-[pre-start]
-a = "1"
-b = "2"
-
-[pre-commit]
-a = "1"
-b = "2"
-
-[pre-merge]
-a = "1"
-b = "2"
-
-[pre-remove]
-a = "1"
-b = "2"
-"#;
-        let found = find_pre_hook_table_form(content);
-        assert_eq!(
-            found,
-            vec![
-                "pre-switch",
-                "pre-start",
-                "pre-commit",
-                "pre-merge",
-                "pre-remove"
-            ]
-        );
-    }
-
-    #[test]
-    fn test_detect_pre_hook_table_form_per_project() {
-        // Per-project overrides: hooks are flattened under [projects."id"]
-        let content = r#"
-[projects."github.com/user/repo".pre-start]
-install = "npm ci"
-build = "npm run build"
-"#;
-        let found = find_pre_hook_table_form(content);
-        assert_eq!(found, vec!["projects.\"github.com/user/repo\".pre-start"]);
-    }
-
-    #[test]
-    fn test_migrate_pre_hook_table_form_converts_to_pipeline() {
-        let content = r#"
-[pre-merge]
-test = "cargo test"
-lint = "cargo clippy"
-"#;
-        let result = migrate_pre_hook_table_form(content);
-        // Should produce `[[pre-merge]]` array-of-tables blocks
-        assert!(
-            result.contains("[[pre-merge]]"),
-            "Should emit [[pre-merge]] blocks: {result}"
-        );
-        // Verify it parses back as valid TOML with the right structure
-        let doc: toml_edit::DocumentMut = result.parse().unwrap();
-        let arr = doc["pre-merge"]
-            .as_array_of_tables()
-            .expect("should be array of tables");
-        assert_eq!(arr.len(), 2);
-        let first = arr.get(0).unwrap();
-        assert_eq!(first.get("test").unwrap().as_str().unwrap(), "cargo test");
-        let second = arr.get(1).unwrap();
-        assert_eq!(
-            second.get("lint").unwrap().as_str().unwrap(),
-            "cargo clippy"
-        );
-    }
-
-    #[test]
-    fn test_migrate_pre_hook_inline_table_form_converts_to_pipeline() {
-        let content = r#"pre-merge = { test = "cargo test", lint = "cargo clippy" }
-"#;
-        let result = migrate_pre_hook_table_form(content);
-        let doc: toml_edit::DocumentMut = result.parse().unwrap();
-        let arr = doc["pre-merge"]
-            .as_array_of_tables()
-            .expect("should be array of tables");
-        assert_eq!(arr.len(), 2);
-        assert_eq!(arr.get(0).unwrap()["test"].as_str(), Some("cargo test"));
-        assert_eq!(arr.get(1).unwrap()["lint"].as_str(), Some("cargo clippy"));
-    }
-
-    #[test]
-    fn test_migrate_pre_hook_table_form_preserves_order() {
-        let content = r#"
-[pre-merge]
-first = "1"
-second = "2"
-third = "3"
-"#;
-        let result = migrate_pre_hook_table_form(content);
-        let doc: toml_edit::DocumentMut = result.parse().unwrap();
-        let arr = doc["pre-merge"].as_array_of_tables().unwrap();
-        let names: Vec<&str> = arr.iter().map(|t| t.iter().next().unwrap().0).collect();
-        assert_eq!(names, vec!["first", "second", "third"]);
-    }
-
-    #[test]
-    fn test_migrate_pre_hook_table_form_single_entry_untouched() {
-        let content = "[pre-merge]\ntest = \"t\"\n";
-        let result = migrate_pre_hook_table_form(content);
-        assert_eq!(result, content, "Single-entry table should not be migrated");
-    }
-
-    #[test]
-    fn test_migrate_pre_hook_table_form_per_project() {
-        let content = r#"
-[projects."web".pre-start]
-install = "npm ci"
-build = "npm run build"
-"#;
-        let result = migrate_pre_hook_table_form(content);
-        let doc: toml_edit::DocumentMut = result.parse().unwrap();
-        let project = doc["projects"]["web"].as_table().unwrap();
-        let arr = project["pre-start"]
-            .as_array_of_tables()
-            .expect("should be array of tables");
-        assert_eq!(arr.len(), 2);
-    }
-
-    #[test]
-    fn test_migrate_content_includes_pre_hook_table_form() {
-        let content = r#"
-[pre-merge]
-test = "cargo test"
-lint = "cargo clippy"
-
-[merge]
-no-ff = true
-"#;
-        let result = migrate_content(content);
-        assert!(
-            result.contains("[[pre-merge]]"),
-            "Table section should become [[pre-merge]] blocks: {result}"
-        );
-        assert!(
-            result.contains("ff = false"),
-            "no-ff should also migrate: {result}"
-        );
-    }
-
-    #[test]
-    fn snapshot_migrate_pre_hook_table_form() {
-        let content = r#"[pre-merge]
-test = "cargo test"
-lint = "cargo clippy"
-
-[post-start]
-server = "npm run dev"
-"#;
-        // migrate_pre_hook_table_form only transforms pre-* pipeline hooks;
-        // post-start is a post-* hook and must pass through untouched.
-        let result = migrate_pre_hook_table_form(content);
-        insta::assert_snapshot!(migration_diff(content, &result));
     }
 }

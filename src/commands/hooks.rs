@@ -126,14 +126,12 @@ pub(crate) fn prepare_and_check(
             continue;
         }
 
-        let is_pipeline = config.is_pipeline();
         let steps = prepare_steps(config, ctx, extra_vars, hook_type, source)?;
         for step in steps {
             if let Some(filtered) = filter_step_by_name(step, source, &parsed_filters) {
                 result.push(SourcedStep {
                     step: filtered,
                     source,
-                    is_pipeline,
                 });
             }
         }
@@ -596,7 +594,6 @@ pub(crate) fn sourced_steps_to_foreground(
             };
             ForegroundStep {
                 step: sourced.step,
-                concurrent: sourced.is_pipeline,
                 announce: kind.clone(),
                 pipe_stdin,
                 redirect_stdout_to_stderr,
@@ -743,13 +740,5 @@ mod tests {
         let f = ParsedFilter::parse("project:");
         assert_eq!(f.source, Some(HookSource::Project));
         assert_eq!(f.name, "");
-    }
-
-    #[test]
-    fn test_is_pipeline() {
-        use worktrunk::config::CommandConfig;
-
-        let single = CommandConfig::single("npm install");
-        assert!(!single.is_pipeline());
     }
 }
