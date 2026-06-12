@@ -476,6 +476,15 @@ compared, a metadata-only difference never triggers a rewrite, so committed
 snapshots from before this redaction keep their stale markers until their body
 next changes and they're regenerated.
 
+The predicate keys on the empty *value*, so it can't distinguish a scrub marker
+from an affirmatively-set empty `GIT_*` / `WORKTRUNK_*` var — both serialize as
+`KEY: ""`. So an affirmatively-set empty one is dropped too: the known case is
+`test_list_config_env_override_validation_failure`, which sets
+`WORKTRUNK_WORKTREE_PATH=""` as the test's subject. That value is
+host-independent (not the churn this targets), so its `WORKTRUNK_WORKTREE_PATH:
+""` line stays in the committed snapshot until the body next changes, at which
+point the regen drops it — harmless, since the block is never compared.
+
 The `args:` block has the same property: a repo path passed as a CLI argument
 (`wt -C <root>`) is covered by the `.args[]` redaction in
 `add_repo_and_worktree_path_filters`, which rewrites it to `_REPO_…` like the

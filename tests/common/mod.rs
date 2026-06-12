@@ -638,19 +638,34 @@ pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
     // their local environment to CI. Normalizing it away here means they don't.
     //
     // This runs as its own pass after the per-key `.env.*` redactions above, so
-    // affirmatively-set vars (config paths → `[TEST_CONFIG]`, coverage →
-    // `[LLVM_PROFILE_FILE]`, etc.) already hold non-empty placeholders and are
-    // kept. The unconditional, explicitly-named scrubs (`NO_COLOR`, `SHELL`,
-    // `PSModulePath`) are deterministic across hosts and intentionally left as-is.
+    // affirmatively-set *non-empty* vars (config paths → `[TEST_CONFIG]`,
+    // coverage → `[LLVM_PROFILE_FILE]`, etc.) already hold non-empty placeholders
+    // and are kept. The unconditional, explicitly-named scrubs (`NO_COLOR`,
+    // `SHELL`, `PSModulePath`) are deterministic across hosts and intentionally
+    // left as-is.
+    //
+    // Caveat: the predicate keys on the empty *value*, which a scrub marker and
+    // an affirmatively-set empty `GIT_*` / `WORKTRUNK_*` var share — in the
+    // recorded YAML both serialize as `KEY: ""`, so this pass can't tell them
+    // apart and drops the affirmatively-set one too. The known case is
+    // `test_list_config_env_override_validation_failure`, which sets
+    // `WORKTRUNK_WORKTREE_PATH=""` as the test's subject (it triggers the
+    // "worktree-path cannot be empty" warning). That value is host-independent,
+    // so it isn't the churn this targets, but the next regen of its snapshot
+    // will drop the `WORKTRUNK_WORKTREE_PATH: ""` line — harmless, since insta
+    // never compares the `env:` block.
     settings.add_dynamic_redaction(".env", |content, _path| {
         strip_host_scrubbed_env_markers(content)
     });
 }
 
 /// Drop empty-valued `GIT_*` / `WORKTRUNK_*` entries from an insta-cmd `env`
-/// map node. These are the [`isolate_subprocess_env`](worktrunk::testing) scrub
-/// markers whose presence depends on the host environment; removing them makes
-/// the recorded block host-independent. See [`add_standard_env_redactions`].
+/// map node. These are usually the [`isolate_subprocess_env`](worktrunk::testing)
+/// scrub markers whose presence depends on the host environment; removing them
+/// makes the recorded block host-independent. An affirmatively-set empty value
+/// (e.g. `WORKTRUNK_WORKTREE_PATH=""`) is indistinguishable from a scrub marker
+/// in the recorded YAML and is dropped too — see the caveat on
+/// [`add_standard_env_redactions`].
 fn strip_host_scrubbed_env_markers(
     content: insta::internals::Content,
 ) -> insta::internals::Content {
