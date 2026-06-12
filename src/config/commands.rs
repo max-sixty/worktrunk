@@ -459,12 +459,11 @@ build = "cargo build"
 
         let wrapper: Wrapper = toml::from_str(toml_str).unwrap();
         assert_eq!(wrapper.command.steps().len(), 1);
-        if let HookStep::Single(cmd) = &wrapper.command.steps()[0] {
-            assert_eq!(cmd.name.as_deref(), Some("build"));
-            assert_eq!(cmd.template, "cargo build");
-        } else {
-            panic!("Expected Single step");
-        }
+        assert!(matches!(
+            &wrapper.command.steps()[0],
+            HookStep::Single(cmd)
+                if cmd.name.as_deref() == Some("build") && cmd.template == "cargo build"
+        ));
 
         assert_snapshot!(toml::to_string(&wrapper).unwrap(), @r#"
         [command]
