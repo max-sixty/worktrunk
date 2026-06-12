@@ -35,13 +35,13 @@ pub(crate) use alias::{
     try_alias,
 };
 pub(crate) use config::{
-    add_approvals, clear_approvals, handle_alias_dry_run, handle_alias_show, handle_claude_install,
-    handle_claude_install_statusline, handle_claude_uninstall, handle_codex_install,
-    handle_codex_uninstall, handle_config_create, handle_config_show, handle_config_update,
-    handle_hints_clear, handle_hints_get, handle_logs_list, handle_opencode_install,
-    handle_opencode_uninstall, handle_state_clear, handle_state_clear_all, handle_state_get,
-    handle_state_set, handle_state_show, handle_vars_clear, handle_vars_get, handle_vars_list,
-    handle_vars_set,
+    add_approvals, clear_approvals, handle_alias_dry_run, handle_alias_show, handle_cache_clear,
+    handle_cache_get, handle_claude_install, handle_claude_install_statusline,
+    handle_claude_uninstall, handle_codex_install, handle_codex_uninstall, handle_config_create,
+    handle_config_show, handle_config_update, handle_hints_clear, handle_hints_get,
+    handle_logs_list, handle_opencode_install, handle_opencode_uninstall, handle_state_clear,
+    handle_state_clear_all, handle_state_get, handle_state_set, handle_state_show,
+    handle_vars_clear, handle_vars_get, handle_vars_list, handle_vars_set,
 };
 pub(crate) use configure_shell::{
     handle_configure_shell, handle_show_theme, handle_unconfigure_shell,
@@ -177,18 +177,16 @@ pub(crate) fn force_serial_concurrent() -> bool {
 /// * `repo` - The repository to query
 /// * `range` - The commit range to diff (e.g., "HEAD~1..HEAD" or "main..HEAD")
 pub(crate) fn show_diffstat(repo: &worktrunk::git::Repository, range: &str) -> anyhow::Result<()> {
-    let term_width = crate::display::terminal_width();
-    let stat_width = term_width.saturating_sub(worktrunk::styling::GUTTER_OVERHEAD);
-    let diff_stat = repo
-        .run_command(&[
-            "diff",
-            "--color=always",
-            "--stat",
-            &format!("--stat-width={}", stat_width),
-            range,
-        ])?
-        .trim_end()
-        .to_string();
+    let mut args = vec!["diff", "--color=always", "--stat"];
+    // With no detectable width, omit the flag and let git use its default width.
+    let stat_width_arg;
+    if let Some(term_width) = crate::display::terminal_width() {
+        let stat_width = term_width.saturating_sub(worktrunk::styling::GUTTER_OVERHEAD);
+        stat_width_arg = format!("--stat-width={stat_width}");
+        args.push(&stat_width_arg);
+    }
+    args.push(range);
+    let diff_stat = repo.run_command(&args)?.trim_end().to_string();
 
     if !diff_stat.is_empty() {
         eprintln!("{}", format_with_gutter(&diff_stat, None));

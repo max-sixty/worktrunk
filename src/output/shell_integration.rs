@@ -11,7 +11,7 @@
 //! | Not installed | `Worktree for X @ path, but cannot change directory — shell integration not installed` | `To enable automatic cd, run wt config shell install` |
 //! | Needs restart | `Worktree for X @ path, but cannot change directory — shell requires restart` | `Restart shell to activate shell integration` |
 //! | Explicit path | `Worktree for X @ path, but cannot change directory — ran ./wt; shell integration wraps wt` | `To change directory, run wt switch X` |
-//! | Git subcommand | `Worktree for X @ path, but cannot change directory — ran git wt; running through git prevents cd` | `Use git-wt directly (via shell function) for automatic cd` |
+//! | Git subcommand | `Worktree for X @ path, but cannot change directory — ran git wt; running through git prevents cd` | `For automatic cd, invoke directly (with the -): git-wt` |
 //!
 //! ## Switch to New Worktree (`wt switch --create X`)
 //!
@@ -22,14 +22,14 @@
 //! | Shell active | `Created new worktree for X from base @ path` | (none) | (none) |
 //! | Not installed | `Created new worktree for X from base @ path` | `Cannot change directory — shell integration not installed` | `To enable automatic cd, run wt config shell install` |
 //! | Explicit path | `Created new worktree for X from base @ path` | `Cannot change directory — ran ./wt; shell integration wraps wt` | `To change directory, run wt switch X` |
-//! | Git subcommand | `Created new worktree for X from base @ path` | `Cannot change directory — ran git wt; running through git prevents cd` | `Use git-wt directly (via shell function) for automatic cd` |
+//! | Git subcommand | `Created new worktree for X from base @ path` | `Cannot change directory — ran git wt; running through git prevents cd` | `For automatic cd, invoke directly (with the -): git-wt` |
 //!
 //! ## After Merge/Remove (switching to main worktree)
 //!
 //! | Condition | Warning | Hint |
 //! |-----------|---------|------|
 //! | Shell active | (info) `Switched to worktree for main @ path` | (none) |
-//! | Git subcommand | `Cannot change directory — ran git wt; running through git prevents cd` | `Use git-wt directly (via shell function) for automatic cd` |
+//! | Git subcommand | `Cannot change directory — ran git wt; running through git prevents cd` | `For automatic cd, invoke directly (with the -): git-wt` |
 //! | Explicit path | `Cannot change directory — ran ./wt; shell integration wraps wt` | `To change directory, run wt switch main` |
 //! | Other | `Cannot change directory — {reason}` | `To enable automatic cd, run wt config shell install` |
 //!
@@ -311,16 +311,17 @@ pub fn print_shell_install_result(scan_result: &crate::commands::configure_shell
         }
     }
 
-    // Show legacy file cleanups (migration from conf.d to functions)
-    for legacy_path in &scan_result.legacy_cleanups {
+    // Show legacy file cleanups (fish conf.d → functions, nushell config-dir →
+    // data-dir vendor/autoload).
+    for (shell, legacy_path) in &scan_result.legacy_cleanups {
         let old_path = format_path_for_display(legacy_path);
-        // Find the new canonical path from the configured results
+        // Find the new canonical path for this shell from the configured results
         let new_path = scan_result
             .configured
             .iter()
-            .find(|r| r.shell == Shell::Fish)
+            .find(|r| r.shell == *shell)
             .map(|r| format_path_for_display(&r.path))
-            .unwrap_or_else(|| "~/.config/fish/functions/".to_string());
+            .unwrap_or_default();
         eprintln!(
             "{}",
             info_message(cformat!(

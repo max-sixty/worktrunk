@@ -22,7 +22,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use worktrunk::git::{LineDiff, Repository};
 
-use super::ci_status::{CiSource, PrStatus};
+use super::ci_status::{CiSource, PrStatus, ReviewState};
 use super::model::{ItemKind, ListItem, UpstreamStatus};
 
 /// JSON output for a single list item
@@ -237,6 +237,11 @@ pub struct JsonCi {
     /// is absent or not a recognized PR/MR link.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repo_url: Option<String>,
+
+    /// Review state: "approved", "changes_requested", "pending", "draft"
+    /// (absent when the forge reports no review signal)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub review_state: Option<ReviewState>,
 }
 
 impl JsonItem {
@@ -453,6 +458,7 @@ impl From<&PrStatus> for JsonCi {
                 .as_deref()
                 .and_then(worktrunk::git::remote_ref::repo_url_from_ref_url),
             url: pr.url.clone(),
+            review_state: pr.review_state,
         }
     }
 }
@@ -567,6 +573,7 @@ mod tests {
             source: CiSource::PullRequest,
             is_stale: false,
             url: Some("https://github.com/org/repo/pull/123".to_string()),
+            review_state: None,
         });
         assert_eq!(passed.status, "passed");
         assert_eq!(passed.source, CiSource::PullRequest);
@@ -587,6 +594,7 @@ mod tests {
             source: CiSource::Branch,
             is_stale: true,
             url: None,
+            review_state: None,
         });
         assert_eq!(failed.status, "failed");
         assert_eq!(failed.source, CiSource::Branch);
@@ -608,6 +616,7 @@ mod tests {
                 source: CiSource::Branch,
                 is_stale: false,
                 url: None,
+                review_state: None,
             });
             assert_eq!(json.status, expected);
         }
@@ -982,16 +991,19 @@ mod tests {
             source: CiSource::PullRequest,
             stale: false,
             url: Some("https://github.com/org/repo/pull/7".to_string()),
+            review_state: Some(ReviewState::ChangesRequested),
             repo_url: Some("https://github.com/org/repo".to_string()),
         })
         .unwrap();
+        // review_state vocabulary matches Claude Code's statusline `pr.review_state`
         assert_snapshot!(json, @r#"
         {
           "status": "passed",
           "source": "pr",
           "stale": false,
           "url": "https://github.com/org/repo/pull/7",
-          "repo_url": "https://github.com/org/repo"
+          "repo_url": "https://github.com/org/repo",
+          "review_state": "changes_requested"
         }
         "#);
     }

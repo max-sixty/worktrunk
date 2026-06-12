@@ -55,9 +55,7 @@ use super::command_executor::{
 };
 use super::hook_announcement::SourcedStep;
 use super::hook_filter::HookSource;
-use super::hooks::{
-    HookAnnouncer, into_source_groups, lookup_hook_configs, sourced_steps_to_foreground,
-};
+use super::hooks::{HookAnnouncer, into_source_groups, sourced_steps_to_foreground};
 use super::project_config::{ApprovableCommand, Phase};
 
 /// One `(hook_type, anchor)`'s frozen, source-tagged selection.
@@ -121,8 +119,8 @@ impl<'a> HookPlanBuilder<'a> {
     pub fn add(&mut self, anchor: &Path, hook_types: &[HookType]) -> &mut Self {
         let user_hooks = self.user.hooks(self.project_id);
         for &hook_type in hook_types {
-            let (user_cfg, proj_cfg) =
-                lookup_hook_configs(&user_hooks, self.project_config, hook_type);
+            let user_cfg = user_hooks.get(hook_type);
+            let proj_cfg = self.project_config.and_then(|c| c.hooks.get(hook_type));
             let mut selection: Selection = Vec::new();
             if let Some(cfg) = user_cfg {
                 selection.push((HookSource::User, cfg.clone()));
@@ -391,7 +389,7 @@ pub fn execute_planned_hook(
 ///
 /// The plan-backed counterpart of `HookAnnouncer::register`: steps are
 /// rendered from the frozen selection and added via the announcer's existing
-/// config-free `extend`, with no `load_project_config()` at execution.
+/// config-free `add_groups`, with no `load_project_config()` at execution.
 ///
 /// `anchor` is the worktree the hook runs in — the lookup key into the frozen
 /// plan (see [`execute_planned_hook`]).
@@ -406,12 +404,7 @@ pub fn register_planned(
 ) -> anyhow::Result<()> {
     let sourced = render_planned(plan.lookup(hook_type, anchor), ctx, extra_vars, hook_type)
         .context("failed to render planned hooks")?;
-    let dp = display_path.map(Path::to_path_buf);
-    announcer.extend(
-        into_source_groups(sourced)
-            .into_iter()
-            .map(|g| (*ctx, hook_type, dp.clone(), g)),
-    );
+    announcer.add_groups(ctx, hook_type, display_path, into_source_groups(sourced));
     Ok(())
 }
 

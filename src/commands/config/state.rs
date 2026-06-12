@@ -10,12 +10,22 @@
 //! removes. A user should never be able to run `state clear` and have something
 //! disappear that `state get` never mentioned.
 //!
-//! Categories covered by both paths:
+//! Categories split into two buckets by whether they are regenerable:
 //!
-//! - Default branch cache (git config `worktrunk.default_branch.*`)
-//! - Previous branch (git config `worktrunk.history`)
+//! **Authoritative** (hand-authored or override state; lost permanently if
+//! cleared). `state clear` prompts before removing these unless `--yes`:
+//!
+//! - Default branch override (git config `worktrunk.default_branch.*`)
 //! - Branch markers (git config `worktrunk.state.<branch>.marker`)
 //! - Vars (git config `worktrunk.state.<branch>.vars.*`)
+//! - Logs (`.git/wt/logs/`)
+//! - Trash (`.git/wt/trash/`)
+//!
+//! **Regenerable caches** — also surfaced by `wt config state cache get`
+//! (`handle_cache_get`) and dropped by `wt config state cache clear`
+//! (`handle_cache_clear`), which needs no prompt:
+//!
+//! - Previous branch (git config `worktrunk.history`)
 //! - CI status cache (`.git/wt/cache/ci-status/`)
 //! - Summary cache (`.git/wt/cache/summary/`)
 //! - Git commands cache (`.git/wt/cache/{merge-tree-conflicts,is-ancestor,picker-preview,…}/`)
@@ -23,12 +33,29 @@
 //!   when implementation lives in different modules (`sha_cache` for parsed
 //!   results, `commands::picker::preview_cache` for rendered previews)
 //! - Hints (git config `worktrunk.hints.*`)
-//! - Logs (`.git/wt/logs/`)
-//! - Trash (`.git/wt/trash/`)
+//!
+//! Each category has a `clear_*_reported` helper that clears it and prints its
+//! message; `handle_state_clear_all` composes all of them and
+//! `handle_cache_clear` composes the regenerable subset, so the two entry
+//! points report identically. The `ci-status`, `hints`, and `previous-branch`
+//! subcommands are `hide`-deprecated in favour of `cache` but still resolve to
+//! the same state.
 //!
 //! When adding a new category, update BOTH `handle_state_show` and
-//! `handle_state_clear_all`, plus the `after_long_help` blocks for `state get`
-//! and `state clear` in `src/cli/config.rs`, in the same change.
+//! `handle_state_clear_all` (and `handle_cache_*` if it is a cache), plus the
+//! `after_long_help` blocks for `state get`, `state clear`, and `state cache`
+//! in `src/cli/config.rs`, in the same change.
+//!
+//! # Reading vs resolving
+//!
+//! The aggregate `state get` is pure inspection: it reports stored values
+//! read-only and never detects, fetches, or persists (`default-branch` via
+//! `cached_default_branch()`, CI via `CachedCiStatus::list_all`). A per-key
+//! `get` for a *derived* value resolves it and caches the result
+//! (`default-branch get` -> `default_branch()`, `ci-status get` ->
+//! `PrStatus::detect`); for stored-only values (`previous-branch`, `marker`)
+//! it is a plain read. So a `clear` followed by the aggregate `get` shows the
+//! value gone, while the per-key `get` would re-resolve it.
 //!
 //! # Log layout invariant
 //!
@@ -55,6 +82,7 @@ use worktrunk::styling::{
 };
 
 use crate::cli::{OutputFormat, SwitchFormat};
+use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
 use worktrunk::utils::epoch_now;
 
 use super::super::list::ci_status::{CachedCiStatus, CiBranchName};
@@ -937,134 +965,213 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
 }
 
 /// Handle the state clear all command
-pub fn handle_state_clear_all() -> anyhow::Result<()> {
+pub fn handle_state_clear_all(yes: bool) -> anyhow::Result<()> {
     let repo = Repository::current()?;
+
+    // `clear` removes hand-authored markers and vars, so confirm first unless
+    // `--yes`. The regenerable caches have their own no-prompt path
+    // (`wt config state cache clear`).
+    if !yes {
+        match prompt_yes_no_preview(
+            "Clear all stored state, including branch markers and vars?",
+            || {},
+        )? {
+            PromptResponse::Accepted => {}
+            PromptResponse::Declined => {
+                eprintln!("{}", info_message("Clear cancelled"));
+                return Ok(());
+            }
+        }
+    }
+
     let mut cleared_any = false;
-
-    // Clear default branch cache
-    if repo.clear_default_branch_cache()? {
-        eprintln!("{}", success_message("Cleared default branch cache"));
-        cleared_any = true;
-    }
-
-    // Clear previous branch
-    if repo.unset_config("worktrunk.history")? {
-        eprintln!("{}", success_message("Cleared previous branch"));
-        cleared_any = true;
-    }
-
-    // Clear all markers
-    let markers_cleared = clear_all_markers(&repo)?;
-    if markers_cleared > 0 {
-        eprintln!(
-            "{}",
-            success_message(cformat!(
-                "Cleared <bold>{markers_cleared}</> marker{}",
-                if markers_cleared == 1 { "" } else { "s" }
-            ))
-        );
-        cleared_any = true;
-    }
-
-    // Clear all CI status cache
-    let ci_cleared = CachedCiStatus::clear_all(&repo)?;
-    if ci_cleared > 0 {
-        eprintln!(
-            "{}",
-            success_message(cformat!(
-                "Cleared <bold>{ci_cleared}</> CI cache entr{}",
-                if ci_cleared == 1 { "y" } else { "ies" }
-            ))
-        );
-        cleared_any = true;
-    }
-
-    // Clear all summary cache entries
-    let summary_cleared = CachedSummary::clear_all(&repo)?;
-    if summary_cleared > 0 {
-        eprintln!(
-            "{}",
-            success_message(cformat!(
-                "Cleared <bold>{summary_cleared}</> summary cache entr{}",
-                if summary_cleared == 1 { "y" } else { "ies" }
-            ))
-        );
-        cleared_any = true;
-    }
-
-    // Clear all SHA-keyed git command caches: parsed results
-    // (merge-tree, ancestry, diff-stats) plus rendered picker previews
-    // (log, branch-diff, upstream-diff). Surfaced as one user-facing
-    // category — see the parity docstring at the top of this file.
-    let cache_cleared = sha_cache::clear_all(&repo)? + picker_preview_clear(&repo)?;
-    if cache_cleared > 0 {
-        eprintln!(
-            "{}",
-            success_message(cformat!(
-                "Cleared <bold>{cache_cleared}</> git commands cache entr{}",
-                if cache_cleared == 1 { "y" } else { "ies" }
-            ))
-        );
-        cleared_any = true;
-    }
-
-    // Clear all vars data
-    let vars_cleared = clear_all_vars(&repo)?;
-    if vars_cleared > 0 {
-        eprintln!(
-            "{}",
-            success_message(cformat!(
-                "Cleared <bold>{vars_cleared}</> variable{}",
-                if vars_cleared == 1 { "" } else { "s" }
-            ))
-        );
-        cleared_any = true;
-    }
-
-    // Clear all logs
-    let logs_cleared = clear_logs(&repo)?;
-    if logs_cleared > 0 {
-        eprintln!(
-            "{}",
-            success_message(cformat!(
-                "Cleared <bold>{logs_cleared}</> log file{}",
-                if logs_cleared == 1 { "" } else { "s" }
-            ))
-        );
-        cleared_any = true;
-    }
-
-    // Clear all hints
-    let hints_cleared = repo.clear_all_hints()?;
-    if hints_cleared > 0 {
-        eprintln!(
-            "{}",
-            success_message(cformat!(
-                "Cleared <bold>{hints_cleared}</> hint{}",
-                if hints_cleared == 1 { "" } else { "s" }
-            ))
-        );
-        cleared_any = true;
-    }
-
-    // Clear stale trash from worktree removal
-    let trash_cleared = clear_trash(&repo)?;
-    if trash_cleared > 0 {
-        eprintln!(
-            "{}",
-            success_message(cformat!(
-                "Cleared <bold>{trash_cleared}</> trash entr{}",
-                if trash_cleared == 1 { "y" } else { "ies" }
-            ))
-        );
-        cleared_any = true;
-    }
+    cleared_any |= clear_default_branch_reported(&repo)?;
+    cleared_any |= clear_previous_branch_reported(&repo)?;
+    cleared_any |= clear_markers_reported(&repo)?;
+    cleared_any |= clear_ci_status_reported(&repo)?;
+    cleared_any |= clear_summary_reported(&repo)?;
+    cleared_any |= clear_git_commands_reported(&repo)?;
+    cleared_any |= clear_vars_reported(&repo)?;
+    cleared_any |= clear_logs_reported(&repo)?;
+    cleared_any |= clear_hints_reported(&repo)?;
+    cleared_any |= clear_trash_reported(&repo)?;
 
     if !cleared_any {
         eprintln!("{}", info_message("No stored state to clear"));
     }
 
     Ok(())
+}
+
+/// Handle `wt config state cache clear`.
+///
+/// Drops every regenerable cache — the same categories `clear` removes minus
+/// the authoritative state (markers, vars, default-branch override). No
+/// confirmation prompt: clearing only forces recomputation. Re-shows one-time
+/// hints and forgets the `wt switch -` target; both repopulate on their own.
+pub fn handle_cache_clear() -> anyhow::Result<()> {
+    let repo = Repository::current()?;
+
+    let mut cleared_any = false;
+    cleared_any |= clear_previous_branch_reported(&repo)?;
+    cleared_any |= clear_ci_status_reported(&repo)?;
+    cleared_any |= clear_summary_reported(&repo)?;
+    cleared_any |= clear_git_commands_reported(&repo)?;
+    cleared_any |= clear_hints_reported(&repo)?;
+
+    if !cleared_any {
+        eprintln!("{}", info_message("No cache to clear"));
+    }
+
+    Ok(())
+}
+
+// ==================== Per-category clear + report ====================
+//
+// Each helper clears one category and prints its success message when it
+// removed anything, returning whether it did. `handle_state_clear_all`
+// composes all ten; `handle_cache_clear` composes the regenerable subset.
+// Co-locating the clear call with its message keeps the two entry points
+// reporting identically.
+
+fn clear_default_branch_reported(repo: &Repository) -> anyhow::Result<bool> {
+    if repo.clear_default_branch_cache()? {
+        eprintln!("{}", success_message("Cleared default branch cache"));
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn clear_previous_branch_reported(repo: &Repository) -> anyhow::Result<bool> {
+    if repo.unset_config("worktrunk.history")? {
+        eprintln!("{}", success_message("Cleared previous branch"));
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn clear_markers_reported(repo: &Repository) -> anyhow::Result<bool> {
+    let cleared = clear_all_markers(repo)?;
+    if cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{cleared}</> marker{}",
+                if cleared == 1 { "" } else { "s" }
+            ))
+        );
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn clear_ci_status_reported(repo: &Repository) -> anyhow::Result<bool> {
+    let cleared = CachedCiStatus::clear_all(repo)?;
+    if cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{cleared}</> CI cache entr{}",
+                if cleared == 1 { "y" } else { "ies" }
+            ))
+        );
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn clear_summary_reported(repo: &Repository) -> anyhow::Result<bool> {
+    let cleared = CachedSummary::clear_all(repo)?;
+    if cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{cleared}</> summary cache entr{}",
+                if cleared == 1 { "y" } else { "ies" }
+            ))
+        );
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+/// Clear all SHA-keyed git command caches: parsed results (merge-tree,
+/// ancestry, diff-stats) plus rendered picker previews (log, branch-diff,
+/// upstream-diff). Surfaced as one user-facing category — see the parity
+/// docstring at the top of this file.
+fn clear_git_commands_reported(repo: &Repository) -> anyhow::Result<bool> {
+    let cleared = sha_cache::clear_all(repo)? + picker_preview_clear(repo)?;
+    if cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{cleared}</> git commands cache entr{}",
+                if cleared == 1 { "y" } else { "ies" }
+            ))
+        );
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn clear_vars_reported(repo: &Repository) -> anyhow::Result<bool> {
+    let cleared = clear_all_vars(repo)?;
+    if cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{cleared}</> variable{}",
+                if cleared == 1 { "" } else { "s" }
+            ))
+        );
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn clear_logs_reported(repo: &Repository) -> anyhow::Result<bool> {
+    let cleared = clear_logs(repo)?;
+    if cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{cleared}</> log file{}",
+                if cleared == 1 { "" } else { "s" }
+            ))
+        );
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn clear_hints_reported(repo: &Repository) -> anyhow::Result<bool> {
+    let cleared = repo.clear_all_hints()?;
+    if cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{cleared}</> hint{}",
+                if cleared == 1 { "" } else { "s" }
+            ))
+        );
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn clear_trash_reported(repo: &Repository) -> anyhow::Result<bool> {
+    let cleared = clear_trash(repo)?;
+    if cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{cleared}</> trash entr{}",
+                if cleared == 1 { "y" } else { "ies" }
+            ))
+        );
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 // ==================== State Show Commands ====================
@@ -1081,8 +1188,9 @@ pub fn handle_state_show(format: OutputFormat) -> anyhow::Result<()> {
 
 /// Output state as JSON
 fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
-    // Get default branch
-    let default_branch = repo.default_branch();
+    // Read-only: report the cached default branch without detecting/persisting
+    // (see handle_state_show_table).
+    let default_branch = repo.cached_default_branch();
 
     // Get previous branch
     let previous_branch = repo.switch_previous();
@@ -1099,34 +1207,9 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         })
         .collect();
 
-    // Get CI status cache (pre-sorted newest-first)
-    let ci_status: Vec<serde_json::Value> = CachedCiStatus::list_all(repo)
-        .into_iter()
-        .map(|cached| {
-            let status = cached
-                .status
-                .as_ref()
-                .map(|s| -> &'static str { s.ci_status.into() });
-            serde_json::json!({
-                "branch": cached.branch,
-                "status": status,
-                "checked_at": cached.checked_at,
-                "head": cached.head
-            })
-        })
-        .collect();
-
-    // Get summary cache (freshest entry per branch, pre-sorted newest-first)
-    let summaries: Vec<serde_json::Value> = CachedSummary::list_all(repo)
-        .into_iter()
-        .map(|cached| {
-            serde_json::json!({
-                "branch": cached.branch,
-                "summary": cached.summary,
-                "generated_at": cached.generated_at,
-            })
-        })
-        .collect();
+    // Get CI status and summary caches (pre-sorted newest-first)
+    let ci_status = ci_status_json(repo);
+    let summaries = summaries_json(repo);
 
     let (command_log, hook_output, diagnostic) = partition_log_files_json(repo)?;
 
@@ -1190,20 +1273,17 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     // Build complete output as a string
     let mut out = String::new();
 
-    // Show default branch cache
+    // Show default branch cache. Read-only: this inspection must not detect
+    // or persist, or it would silently repopulate a just-cleared cache.
     writeln!(out, "{}", format_heading("DEFAULT BRANCH", None))?;
-    match repo.default_branch() {
+    match repo.cached_default_branch() {
         Some(branch) => writeln!(out, "{}", format_with_gutter(&branch, None))?,
-        None => writeln!(out, "{}", format_with_gutter("(not available)", None))?,
+        None => writeln!(out, "{}", format_with_gutter("(none)", None))?,
     }
     writeln!(out)?;
 
     // Show previous branch (for `wt switch -`)
-    writeln!(out, "{}", format_heading("PREVIOUS BRANCH", None))?;
-    match repo.switch_previous() {
-        Some(prev) => writeln!(out, "{}", format_with_gutter(&prev, None))?,
-        None => writeln!(out, "{}", format_with_gutter("(none)", None))?,
-    }
+    render_previous_branch_section(&mut out, repo)?;
     writeln!(out)?;
 
     // Show branch markers
@@ -1248,79 +1328,19 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     writeln!(out)?;
 
     // Show CI status cache (pre-sorted newest-first)
-    writeln!(out, "{}", format_heading("CI STATUS CACHE", None))?;
-    let entries = CachedCiStatus::list_all(repo);
-    if entries.is_empty() {
-        writeln!(out, "{}", format_with_gutter("(none)", None))?;
-    } else {
-        let rows: Vec<Vec<String>> = entries
-            .iter()
-            .map(|cached| {
-                let status = match &cached.status {
-                    Some(pr_status) => {
-                        let s: &'static str = pr_status.ci_status.into();
-                        s.to_string()
-                    }
-                    None => "none".to_string(),
-                };
-                let age = format_relative_time_short(cached.checked_at as i64);
-                let head: String = cached.head.chars().take(8).collect();
-                vec![cached.branch.clone(), status, age, head]
-            })
-            .collect();
-        let rendered =
-            crate::md_help::render_data_table(&["Branch", "Status", "Age", "Head"], &rows);
-        writeln!(out, "{}", rendered.trim_end())?;
-    }
+    render_ci_status_section(&mut out, repo)?;
     writeln!(out)?;
 
-    // Show summary cache (LLM summaries keyed by branch + diff hash, pre-sorted newest-first)
-    writeln!(out, "{}", format_heading("SUMMARY CACHE", None))?;
-    let summary_entries = CachedSummary::list_all(repo);
-    if summary_entries.is_empty() {
-        writeln!(out, "{}", format_with_gutter("(none)", None))?;
-    } else {
-        let rows: Vec<Vec<String>> = summary_entries
-            .iter()
-            .map(|cached| {
-                let subject = cached.summary.lines().next().unwrap_or("").trim();
-                let age = format_relative_time_short(cached.generated_at as i64);
-                vec![cached.branch.clone(), truncate_display(subject, 40), age]
-            })
-            .collect();
-        let rendered = crate::md_help::render_data_table(&["Branch", "Summary", "Age"], &rows);
-        writeln!(out, "{}", rendered.trim_end())?;
-    }
+    // Show summary cache (LLM summaries keyed by branch + diff hash)
+    render_summary_section(&mut out, repo)?;
     writeln!(out)?;
 
-    // Show git commands cache summary. Spans both `sha_cache` (parsed
-    // SHA-keyed results) and the picker preview cache (rendered SHA-keyed
-    // previews) — one user-facing category covering every SHA-keyed disk
-    // cache, regardless of which module owns the entries.
-    writeln!(out, "{}", format_heading("GIT COMMANDS CACHE", None))?;
-    let cache_count = sha_cache::count_all(repo) + picker_preview_count(repo);
-    if cache_count == 0 {
-        writeln!(out, "{}", format_with_gutter("(none)", None))?;
-    } else {
-        let label = if cache_count == 1 { "entry" } else { "entries" };
-        writeln!(
-            out,
-            "{}",
-            format_with_gutter(&format!("{cache_count} {label}"), None)
-        )?;
-    }
+    // Show git commands cache summary
+    render_git_commands_section(&mut out, repo)?;
     writeln!(out)?;
 
     // Show hints
-    writeln!(out, "{}", format_heading("HINTS", None))?;
-    let hints = repo.list_shown_hints();
-    if hints.is_empty() {
-        writeln!(out, "{}", format_with_gutter("(none)", None))?;
-    } else {
-        for hint in hints {
-            writeln!(out, "{}", format_with_gutter(&hint, None))?;
-        }
-    }
+    render_hints_section(&mut out, repo)?;
     writeln!(out)?;
 
     // Show log files
@@ -1359,6 +1379,179 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     show_help_in_pager(&out, true);
 
     Ok(())
+}
+
+// ==================== Cache view ====================
+//
+// `cache get`/`cache clear` operate on the regenerable subset of state. The
+// section renderers and JSON builders below are shared with the aggregate
+// `state get` so both views render each category identically.
+
+/// Handle `wt config state cache get` (regenerable caches only).
+pub fn handle_cache_get(format: SwitchFormat) -> anyhow::Result<()> {
+    let repo = Repository::current()?;
+    match format {
+        SwitchFormat::Json => handle_cache_get_json(&repo),
+        SwitchFormat::Text => handle_cache_get_table(&repo),
+    }
+}
+
+fn handle_cache_get_table(repo: &Repository) -> anyhow::Result<()> {
+    let mut out = String::new();
+
+    render_previous_branch_section(&mut out, repo)?;
+    writeln!(out)?;
+    render_ci_status_section(&mut out, repo)?;
+    writeln!(out)?;
+    render_summary_section(&mut out, repo)?;
+    writeln!(out)?;
+    render_git_commands_section(&mut out, repo)?;
+    writeln!(out)?;
+    render_hints_section(&mut out, repo)?;
+
+    show_help_in_pager(&out, true);
+
+    Ok(())
+}
+
+fn handle_cache_get_json(repo: &Repository) -> anyhow::Result<()> {
+    let output = serde_json::json!({
+        "previous_branch": repo.switch_previous(),
+        "ci_status": ci_status_json(repo),
+        "summaries": summaries_json(repo),
+        "git_commands_cache": sha_cache::count_all(repo) + picker_preview_count(repo),
+        "hints": repo.list_shown_hints(),
+    });
+
+    println!("{}", serde_json::to_string_pretty(&output)?);
+    Ok(())
+}
+
+// ==================== Shared section renderers ====================
+
+fn render_previous_branch_section(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
+    writeln!(out, "{}", format_heading("PREVIOUS BRANCH", None))?;
+    match repo.switch_previous() {
+        Some(prev) => writeln!(out, "{}", format_with_gutter(&prev, None))?,
+        None => writeln!(out, "{}", format_with_gutter("(none)", None))?,
+    }
+    Ok(())
+}
+
+fn render_ci_status_section(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
+    writeln!(out, "{}", format_heading("CI STATUS CACHE", None))?;
+    let entries = CachedCiStatus::list_all(repo);
+    if entries.is_empty() {
+        writeln!(out, "{}", format_with_gutter("(none)", None))?;
+    } else {
+        let rows: Vec<Vec<String>> = entries
+            .iter()
+            .map(|cached| {
+                let status = match &cached.status {
+                    Some(pr_status) => {
+                        let s: &'static str = pr_status.ci_status.into();
+                        s.to_string()
+                    }
+                    None => "none".to_string(),
+                };
+                let age = format_relative_time_short(cached.checked_at as i64);
+                let head: String = cached.head.chars().take(8).collect();
+                vec![cached.branch.clone(), status, age, head]
+            })
+            .collect();
+        let rendered =
+            crate::md_help::render_data_table(&["Branch", "Status", "Age", "Head"], &rows);
+        writeln!(out, "{}", rendered.trim_end())?;
+    }
+    Ok(())
+}
+
+fn render_summary_section(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
+    writeln!(out, "{}", format_heading("SUMMARY CACHE", None))?;
+    let summary_entries = CachedSummary::list_all(repo);
+    if summary_entries.is_empty() {
+        writeln!(out, "{}", format_with_gutter("(none)", None))?;
+    } else {
+        let rows: Vec<Vec<String>> = summary_entries
+            .iter()
+            .map(|cached| {
+                let subject = cached.summary.lines().next().unwrap_or("").trim();
+                let age = format_relative_time_short(cached.generated_at as i64);
+                vec![cached.branch.clone(), truncate_display(subject, 40), age]
+            })
+            .collect();
+        let rendered = crate::md_help::render_data_table(&["Branch", "Summary", "Age"], &rows);
+        writeln!(out, "{}", rendered.trim_end())?;
+    }
+    Ok(())
+}
+
+/// Render the git commands cache summary. Spans both `sha_cache` (parsed
+/// SHA-keyed results) and the picker preview cache (rendered SHA-keyed
+/// previews) — one user-facing category covering every SHA-keyed disk cache,
+/// regardless of which module owns the entries.
+fn render_git_commands_section(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
+    writeln!(out, "{}", format_heading("GIT COMMANDS CACHE", None))?;
+    let cache_count = sha_cache::count_all(repo) + picker_preview_count(repo);
+    if cache_count == 0 {
+        writeln!(out, "{}", format_with_gutter("(none)", None))?;
+    } else {
+        let label = if cache_count == 1 { "entry" } else { "entries" };
+        writeln!(
+            out,
+            "{}",
+            format_with_gutter(&format!("{cache_count} {label}"), None)
+        )?;
+    }
+    Ok(())
+}
+
+fn render_hints_section(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
+    writeln!(out, "{}", format_heading("HINTS", None))?;
+    let hints = repo.list_shown_hints();
+    if hints.is_empty() {
+        writeln!(out, "{}", format_with_gutter("(none)", None))?;
+    } else {
+        for hint in hints {
+            writeln!(out, "{}", format_with_gutter(&hint, None))?;
+        }
+    }
+    Ok(())
+}
+
+/// CI status cache entries as JSON (pre-sorted newest-first). Shared by
+/// `state get` and `cache get`.
+fn ci_status_json(repo: &Repository) -> Vec<serde_json::Value> {
+    CachedCiStatus::list_all(repo)
+        .into_iter()
+        .map(|cached| {
+            let status = cached
+                .status
+                .as_ref()
+                .map(|s| -> &'static str { s.ci_status.into() });
+            serde_json::json!({
+                "branch": cached.branch,
+                "status": status,
+                "checked_at": cached.checked_at,
+                "head": cached.head
+            })
+        })
+        .collect()
+}
+
+/// Summary cache entries as JSON (freshest per branch, pre-sorted
+/// newest-first). Shared by `state get` and `cache get`.
+fn summaries_json(repo: &Repository) -> Vec<serde_json::Value> {
+    CachedSummary::list_all(repo)
+        .into_iter()
+        .map(|cached| {
+            serde_json::json!({
+                "branch": cached.branch,
+                "summary": cached.summary,
+                "generated_at": cached.generated_at,
+            })
+        })
+        .collect()
 }
 
 // ==================== Vars Operations ====================

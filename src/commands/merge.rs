@@ -267,7 +267,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // (from auto-commit or squash), post-remove + post-switch (from worktree
     // removal), and post-merge share a single `◎ Running …` line flushed at
     // the end.
-    let mut announcer = HookAnnouncer::new(repo, config, false);
+    let mut announcer = HookAnnouncer::new(repo, false);
 
     // The project commit-append is gated independently of hook approval:
     // declining it drops only the append, never the (possibly already-approved)

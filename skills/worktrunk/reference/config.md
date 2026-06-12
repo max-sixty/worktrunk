@@ -44,7 +44,7 @@ Organizations can deploy a system-wide config file for shared defaults — run `
 worktree-path = ".worktrees/{{ branch | sanitize }}"
 
 [commit.generation]
-command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
+command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
 ```
 
 **Project config** — shared team settings:
@@ -81,6 +81,8 @@ Controls where new worktrees are created.
 - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)
 - `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)
 - `{{ branch | codename(2) }}` — deterministic friendly name from a ~1.26M-combo pool (e.g., `malleable-opah`)
+
+This is a smaller set than [the variables hooks and aliases get](https://worktrunk.dev/hook/#template-variables).
 
 **Examples** for repo at `~/code/myproject`, branch `feature/auth`:
 
@@ -136,7 +138,7 @@ Generate commit messages automatically during merge. Requires an external CLI to
 
 ```toml
 [commit.generation]
-command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
+command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
 ```
 
 ### Codex
@@ -354,7 +356,8 @@ Branch: {{ branch }}
 
 Available variables (in addition to commit template variables):
 
-- `{{ commits }}` — list of commits being squashed
+- `{{ commits }}` — list of commit subjects being squashed
+- `{{ commit_details }}` — [experimental] list of commits being squashed as `{ subject, body }` objects
 - `{{ target_branch }}` — merge target branch
 
 Default template:
@@ -770,12 +773,11 @@ State is stored in `.git/` (config entries and log files), separate from configu
 
 ### Keys
 
+- **cache**: [Regenerable caches — CI status, summaries, git commands, hints, and the `wt switch -` target](https://worktrunk.dev/config/#wt-config-state-cache)
 - **default-branch**: [The repository's default branch (`main`, `master`, etc.)](https://worktrunk.dev/config/#wt-config-state-default-branch)
-- **previous-branch**: Previous branch for `wt switch -`
-- **logs**: [Operation and debug logs](https://worktrunk.dev/config/#wt-config-state-logs)
-- **ci-status**: [CI/PR status for a branch (passed, running, failed, conflicts, no-ci, error)](https://worktrunk.dev/config/#wt-config-state-ci-status)
 - **marker**: [Custom status marker for a branch (shown in `wt list`)](https://worktrunk.dev/config/#wt-config-state-marker)
 - **vars**: [experimental] [Custom variables per branch](https://worktrunk.dev/config/#wt-config-state-vars)
+- **logs**: [Operation and debug logs](https://worktrunk.dev/config/#wt-config-state-logs)
 
 ### Examples
 
@@ -799,9 +801,9 @@ Store arbitrary data:
 $ wt config state vars set env=staging
 ```
 
-Clear all CI status cache:
+Drop the regenerable caches:
 ```bash
-$ wt config state ci-status clear --all
+$ wt config state cache clear
 ```
 
 Show all stored state:
@@ -822,19 +824,81 @@ wt config state - Manage internal data and cache
 Usage: wt config state [OPTIONS] <COMMAND>
 
 Commands:
-  get              Get all stored state
-  clear            Clear all stored state
-  default-branch   Default branch detection and override
-  previous-branch  Previous branch (for wt switch -)
-  logs             Operation and debug logs
-  hints            One-time hints shown in this repo
-  ci-status        CI status cache
-  marker           Branch markers
-  vars             [experimental] Custom variables per branch
+  get             Get all stored state
+  clear           Clear all stored state
+  cache           Regenerable caches
+  default-branch  Default branch detection and override
+  logs            Operation and debug logs
+  marker          Branch markers
+  vars            [experimental] Custom variables per branch
 
 Options:
   -h, --help
           Print help (see a summary with '-h')
+
+Global Options:
+  -C <path>
+          Working directory for this command
+
+      --config <path>
+          User config file path
+
+  -v, --verbose...
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
+```
+
+## wt config state cache
+
+Regenerable caches.
+
+View or drop worktrunk's regenerable caches in one place. Everything here is rebuilt on demand — clearing only forces recomputation, never data loss.
+
+### What's cached
+
+- **CI status** — GitHub/GitLab CI per branch (30–60s TTL), shown in [`wt list`](https://worktrunk.dev/list/#ci-status)
+- **Summaries** — LLM-generated branch summaries (`wt list --full`, `wt switch` preview)
+- **Git commands** — SHA-keyed disk caches: merge-tree, ancestry, diff-stats, and `wt switch` preview renders
+- **Hints** — one-time hints already shown in this repo
+- **Previous branch** — the `wt switch -` target, re-recorded on the next switch
+
+`cache clear` drops all of the above with no prompt. It re-shows one-time hints and forgets the `wt switch -` target until the next switch — both repopulate on their own.
+
+Without a subcommand, runs `get`.
+
+### Examples
+
+Show cache contents:
+```bash
+$ wt config state cache
+```
+
+Drop all caches:
+```bash
+$ wt config state cache clear
+```
+
+### Command reference
+
+```
+wt config state cache - Regenerable caches
+
+Usage: wt config state cache [OPTIONS] [COMMAND]
+
+Commands:
+  get    Show cache contents
+  clear  Drop all caches
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+Output:
+      --format <FORMAT>
+          Output format (text, json) [default: text]
 
 Global Options:
   -C <path>
@@ -861,7 +925,11 @@ Useful in scripts to avoid hardcoding `main` or `master`:
 $ git rebase $(wt config state default-branch)
 ```
 
+In a hook or alias template, prefer the `{{ default_branch }}` [template variable](https://worktrunk.dev/hook/#template-variables); `$(wt config state default-branch)` is for plain shell scripts.
+
 Without a subcommand, runs `get`. Use `set` to override, or `clear` then `get` to re-detect.
+
+`default-branch get` resolves the value and caches it on a miss; the aggregate `wt config state get` only reports the cache (read-only), so it can show `(none)` until something populates it.
 
 ### Detection
 
@@ -879,6 +947,8 @@ The local inference fallback uses these heuristics in order:
 - For bare repos or empty repos, checks `symbolic-ref HEAD`
 - Checks `git config init.defaultBranch`
 - Looks for common names: `main`, `master`, `develop`, `trunk`
+
+If none of these match, detection fails; set it explicitly with `wt config state default-branch set BRANCH`.
 
 ### Command reference
 
@@ -1029,6 +1099,8 @@ Global Options:
 ## wt config state ci-status
 
 CI status cache.
+
+**Deprecated** — the CI status cache is now part of [`wt config state cache`](https://worktrunk.dev/config/#wt-config-state-cache). This subcommand still works but prints a deprecation notice.
 
 Caches GitHub/GitLab CI status for display in [`wt list`](https://worktrunk.dev/list/#ci-status).
 

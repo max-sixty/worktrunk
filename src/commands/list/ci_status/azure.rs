@@ -133,6 +133,7 @@ pub(super) fn detect_azure_pr(
         source: CiSource::PullRequest,
         is_stale,
         url,
+        review_state: None,
     })
 }
 
@@ -211,6 +212,7 @@ pub(super) fn detect_azure_pipeline(
         source: CiSource::Branch,
         is_stale,
         url: web_url,
+        review_state: None,
     })
 }
 

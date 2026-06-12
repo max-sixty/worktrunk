@@ -88,6 +88,8 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# - `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)[0m
 [107m [0m [2m# - `{{ branch | codename(2) }}` — deterministic friendly name from a ~1.26M-combo pool (e.g., `malleable-opah`)[0m
 [107m [0m [2m#[0m
+[107m [0m [2m# This is a smaller set than the variables hooks and aliases get (https://worktrunk.dev/hook/#template-variables).[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# **Examples** for repo at `~/code/myproject`, branch `feature/auth`:[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Default — sibling directory (`~/code/myproject.feature-auth`):[0m
@@ -127,7 +129,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# ### Claude Code[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [commit.generation][0m
-[107m [0m [2m# command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
+[107m [0m [2m# command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Codex[0m
 [107m [0m [2m#[0m
@@ -316,7 +318,8 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# Available variables (in addition to commit template variables):[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# - `{{ commits }}` — list of commits being squashed[0m
+[107m [0m [2m# - `{{ commits }}` — list of commit subjects being squashed[0m
+[107m [0m [2m# - `{{ commit_details }}` — [experimental] list of commits being squashed as `{ subject, body }` objects[0m
 [107m [0m [2m# - `{{ target_branch }}` — merge target branch[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Default template:[0m

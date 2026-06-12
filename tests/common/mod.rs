@@ -117,9 +117,17 @@ pub fn pty_safe() {
 #[rstest::fixture]
 pub fn repo() -> TestRepo {
     let repo = TestRepo::standard();
-    // Bind insta snapshot filters for this test thread. `mem::forget` intentionally
-    // leaks the scope guard so settings persist without storing the guard in TestRepo.
-    // Safe: each test sets its own settings, and thread-locals are cleaned up on exit.
+    // Bind insta snapshot filters for this test thread, leaking the guard:
+    // rstest has no teardown, and the guard can't ride along in TestRepo
+    // (insta is a dev-dependency, invisible to the lib crate defining
+    // TestRepo; the guard is also !Send by design). Under nextest (process
+    // per test) the leak ends with the process. Under libtest the binding
+    // persists on the reused worker thread and bleeds into later tests on
+    // it — so a test must never rely on settings it didn't bind itself,
+    // and a missing redaction can be masked here but exposed under nextest.
+    // `test_no_host_specific_paths_in_snapshots` (snapshot_formatting_guard)
+    // enforces the observable invariant: no host-specific paths in committed
+    // snapshots.
     let guard =
         setup_snapshot_settings_for_paths(repo.root_path(), &repo.worktrees).bind_to_scope();
     std::mem::forget(guard);
@@ -143,6 +151,25 @@ pub fn repo() -> TestRepo {
 #[rstest::fixture]
 pub fn temp_home() -> TempDir {
     TempDir::new().unwrap()
+}
+
+/// Canonicalize a `temp_home` for use as a base when building paths that
+/// production code will compare against the exported HOME.
+///
+/// `set_temp_home_env` exports HOME via `dunce::canonicalize`, so paths the
+/// command later prints (e.g. the nushell vendor-autoload dir) only tilde-
+/// shorten in `format_path_for_display` when they share that canonical prefix.
+/// Two platform pitfalls make a bare `temp_home.path()` wrong:
+///
+/// - **macOS**: the temp dir lives under `/var`, a symlink to `/private/var`.
+///   Canonicalizing resolves it to match the exported HOME, so the printed path
+///   shortens to `~/...` instead of the full temp path.
+/// - **Windows**: `std::fs::canonicalize` returns a `\\?\` verbatim path, where
+///   the forward slashes in a later `.join("a/b/c")` are treated as literal
+///   filename characters rather than separators — breaking both the file write
+///   and `.exists()`. `dunce::canonicalize` returns an ordinary path.
+pub fn canonical_temp_home(temp_home: &TempDir) -> std::path::PathBuf {
+    dunce::canonicalize(temp_home.path()).unwrap()
 }
 
 /// Repo with remote tracking set up.
@@ -556,6 +583,11 @@ pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
     settings.add_redaction(".env.PWD", "[PWD]");
     // Mock commands directory (temp path for mock gh/glab binaries)
     settings.add_redaction(".env.MOCK_CONFIG_DIR", "[MOCK_CONFIG_DIR]");
+    // Nushell vendor-autoload override (temp path pinned by shell-integration tests)
+    settings.add_redaction(
+        ".env.WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR",
+        "[TEST_NU_VENDOR_AUTOLOAD]",
+    );
     // OpenCode config directory (platform-independent override for tests)
     settings.add_redaction(".env.OPENCODE_CONFIG_DIR", "[TEST_OPENCODE_CONFIG]");
     // `wt config show --full` tests inject WORKTRUNK_TEST_LATEST_VERSION = the
@@ -652,6 +684,27 @@ fn add_repo_and_worktree_path_filters(
     settings.add_filter(&regex::escape(root_str), "_REPO_");
     settings.add_filter(&regex::escape(&root_str_normalized), "_REPO_");
     settings.add_filter(&regex::escape(&to_posix_path(root_str)), "_REPO_");
+
+    // Filters rewrite snapshot *content* only; the structured `info` block
+    // insta-cmd records is reachable solely via redactions. A test that
+    // passes a repo path as a CLI argument (`wt -C <root> list`) would
+    // otherwise bake the per-test temp path into the snapshot's `args:`
+    // block. Mirror the body filters: root-prefixed args become `_REPO_…`.
+    // No POSIX form here — args are built in-process from `root_path()`.
+    let arg_prefixes = [root_str.to_string(), root_str_normalized.clone()];
+    settings.add_dynamic_redaction(".args[]", move |value, _path| {
+        if let Some(arg) = value.as_str() {
+            for prefix in &arg_prefixes {
+                if let Some(suffix) = arg.strip_prefix(prefix.as_str()) {
+                    return insta::internals::Content::from(format!(
+                        "_REPO_{}",
+                        suffix.replace('\\', "/")
+                    ));
+                }
+            }
+        }
+        value
+    });
 
     // In tests, HOME is set to the temp directory containing the repo. Commands being tested
     // see HOME=temp_dir, so format_path_for_display() outputs ~/repo instead of the full path.

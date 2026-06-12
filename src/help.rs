@@ -239,9 +239,10 @@ pub fn maybe_handle_help_with_pager(alias_help_context: Option<crate::commands::
 
                 // Render markdown sections (tables, code blocks, prose) with proper wrapping.
                 // Since we disabled clap's wrapping above, our renderer controls all line breaks.
-                let width = worktrunk::styling::terminal_width();
-                let help =
-                    crate::md_help::render_markdown_in_help_with_width(&clap_output, Some(width));
+                let help = crate::md_help::render_markdown_in_help_with_width(
+                    &clap_output,
+                    worktrunk::styling::terminal_width(),
+                );
 
                 // show_help_in_pager checks if stdout or stderr is a TTY.
                 // If neither is a TTY (e.g., `wt --help &>file`), it skips the pager.
@@ -348,7 +349,7 @@ fn find_after_help_start(help: &str) -> Option<usize> {
 
     for line in help.lines() {
         // Strip ANSI codes for pattern matching
-        let plain_line = strip_ansi_codes(line);
+        let plain_line = line.ansi_strip();
 
         if plain_line.starts_with("Global Options:") {
             past_global_options = true;
@@ -371,11 +372,6 @@ fn find_after_help_start(help: &str) -> Option<usize> {
         offset += line.len() + 1;
     }
     None
-}
-
-/// Strip ANSI escape codes from a string for pattern matching.
-fn strip_ansi_codes(s: &str) -> String {
-    s.ansi_strip().into_owned()
 }
 
 /// Extract the `about` (definition) and subtitle from a command's metadata.
@@ -554,6 +550,8 @@ fn post_process_for_html(text: &str) -> String {
         .replace("`●` green", "<span style='color:#0a0'>●</span> green")
         .replace("`●` blue", "<span style='color:#00a'>●</span> blue")
         .replace("`●` red", "<span style='color:#a00'>●</span> red")
+        .replace("`●` magenta", "<span style='color:#a0a'>●</span> magenta")
+        .replace("`●` cyan", "<span style='color:#0aa'>●</span> cyan")
         .replace("`●` yellow", "<span style='color:#a60'>●</span> yellow")
         .replace("`⚠` yellow", "<span style='color:#a60'>⚠</span> yellow")
         .replace("`●` gray", "<span style='color:#888'>●</span> gray")

@@ -163,6 +163,16 @@ Reach for narrower asks only when the diagnostic is overkill:
 - `wt config show` — when the suspicion is purely config/shell-integration
   and you already have the command + repro.
 
+### Don't ship fixes you can't verify
+
+When the bug or proposed fix turns on runtime state the bot can't observe from CI — plugin hooks firing inside an agent CLI (Claude Code, Codex, Gemini), shell-integration side effects, interactive prompt rendering, signal forwarding into a TTY — do **not** open a PR premised on the hypothesis. Signals to stop:
+
+- The proposed transition fires inside a running agent session the bot can't drive from a test (`PostToolUse`, `Stop`, `Notification`, statusline redraws).
+- The "analysis" in the issue is an LLM-written trace pasted by the reporter, not a verified observation. Treat that as a starting hypothesis, not ground truth — a Claude-written explanation of why X is broken is no more trustworthy than the bot's own first guess.
+- The repro requires an interactive shell or `claude` running in a tmux that the bot can't spin up.
+
+Comment on the issue with what's known, ask the reporter for the concrete symptom they observe ("which marker shows where, when") rather than for a fix to validate, and exit without a PR. The bar for opening a fix PR is *the failure mode is reproducible and the fix is testable*, not *the hypothesis seems plausible*. If you post a fix despite limited testability (rare — usually only when the reporter has confirmed the exact symptom and the code change is obviously correct from inspection), explicitly flag what wasn't verified in the PR body.
+
 ### Closing Duplicates
 
 When an issue is clearly a duplicate, close it after commenting. Use
@@ -320,7 +330,7 @@ changelogs and flag changes that affect what Worktrunk consumes or produces.
 
 What to flag:
 
-- **New statusline JSON fields** — `src/commands/statusline.rs` parses `workspace.current_dir`, `model.display_name`, and `context_window.used_percentage`. A newly added field (rate limits, session cost, PR review state) may be worth surfacing in `wt list statusline`.
+- **New statusline JSON fields** — `src/commands/statusline.rs` parses `workspace.current_dir`, `model.display_name`, `context_window.used_percentage`, and `rate_limits.{five_hour,seven_day}.{used_percentage,resets_at}`. A newly added field (session cost, PR review state) may be worth surfacing in `wt list statusline`.
 - **Renamed or removed hook events** — `WorktreeCreate`/`WorktreeRemove` route agent worktree creation through `wt`; a renamed event silently disables isolation rather than erroring.
 - **Changed plugin install mechanisms** — `wt config plugins {claude,codex,opencode} install` and the Gemini extension manifest break if the marketplace or plugins-directory contract changes.
 
