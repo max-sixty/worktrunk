@@ -186,8 +186,9 @@ pub(crate) fn build_invalid_subcommand_error(
 /// `WORKTRUNK_TEST_SERIAL_CONCURRENT=1` to make output ordering deterministic
 /// for snapshot tests, mirroring how `RAYON_NUM_THREADS=1` is used elsewhere.
 ///
-/// Honored by both alias `HookStep::Concurrent` execution and the background
-/// pipeline runner's concurrent groups.
+/// The background pipeline runner reads it through this helper; the
+/// foreground concurrent executor (`output::concurrent`, shared by hook and
+/// alias `HookStep::Concurrent` groups) reads the env var directly.
 pub(crate) fn force_serial_concurrent() -> bool {
     std::env::var_os("WORKTRUNK_TEST_SERIAL_CONCURRENT").is_some()
 }

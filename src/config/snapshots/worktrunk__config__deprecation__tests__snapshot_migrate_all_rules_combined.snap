@@ -7,13 +7,6 @@ expression: "migration_diff(content, &migrated)"
 +worktree-path = "../{{ repo_path }}.{{ branch }}"
 +pre-start = "npm install"
  
--[pre-merge]
-+[[pre-merge]]
- test = "cargo test"
-+
-+[[pre-merge]]
- lint = "cargo clippy"
- 
 -[commit-generation]
 -command = "llm"
 -args = ["-m", "haiku"]
