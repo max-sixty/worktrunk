@@ -22,7 +22,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use worktrunk::git::{LineDiff, Repository};
 
-use super::ci_status::{CiSource, PrStatus};
+use super::ci_status::{CiSource, PrStatus, ReviewState};
 use super::custom_columns::ResolvedCustomColumn;
 use super::model::{ItemKind, ListItem, UpstreamStatus};
 
@@ -231,6 +231,10 @@ pub struct JsonCi {
     /// Source: "pr" or "branch"
     pub source: CiSource,
 
+    /// PR/MR number (absent for branch workflows)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub number: Option<u64>,
+
     /// True if local HEAD differs from remote HEAD (unpushed changes)
     pub stale: bool,
 
@@ -243,6 +247,11 @@ pub struct JsonCi {
     /// is absent or not a recognized PR/MR link.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repo_url: Option<String>,
+
+    /// Review state: "approved", "changes_requested", "pending", "draft"
+    /// (absent when the forge reports no review signal)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub review_state: Option<ReviewState>,
 }
 
 impl JsonItem {
@@ -464,12 +473,14 @@ impl From<&PrStatus> for JsonCi {
         Self {
             status: pr.ci_status.into(),
             source: pr.source,
+            number: pr.number.map(|r| r.number),
             stale: pr.is_stale,
             repo_url: pr
                 .url
                 .as_deref()
                 .and_then(worktrunk::git::remote_ref::repo_url_from_ref_url),
             url: pr.url.clone(),
+            review_state: pr.review_state,
         }
     }
 }
@@ -556,7 +567,7 @@ mod tests {
     use insta::assert_snapshot;
 
     use super::*;
-    use crate::commands::list::ci_status::CiStatus;
+    use crate::commands::list::ci_status::{CiStatus, PrRef};
     use crate::commands::list::model::{
         ActiveGitOperation, Divergence, MainState, OperationState, StatusSymbols,
         WorkingTreeStatus, WorktreeData, WorktreeState,
@@ -595,6 +606,8 @@ mod tests {
             source: CiSource::PullRequest,
             is_stale: false,
             url: Some("https://github.com/org/repo/pull/123".to_string()),
+            number: Some(PrRef::pr(123)),
+            review_state: None,
         });
         assert_eq!(passed.status, "passed");
         assert_eq!(passed.source, CiSource::PullRequest);
@@ -615,6 +628,8 @@ mod tests {
             source: CiSource::Branch,
             is_stale: true,
             url: None,
+            number: None,
+            review_state: None,
         });
         assert_eq!(failed.status, "failed");
         assert_eq!(failed.source, CiSource::Branch);
@@ -636,6 +651,8 @@ mod tests {
                 source: CiSource::Branch,
                 is_stale: false,
                 url: None,
+                number: None,
+                review_state: None,
             });
             assert_eq!(json.status, expected);
         }
@@ -1012,18 +1029,23 @@ mod tests {
         let json = serde_json::to_string_pretty(&JsonCi {
             status: "passed",
             source: CiSource::PullRequest,
+            number: Some(7),
             stale: false,
             url: Some("https://github.com/org/repo/pull/7".to_string()),
+            review_state: Some(ReviewState::ChangesRequested),
             repo_url: Some("https://github.com/org/repo".to_string()),
         })
         .unwrap();
+        // review_state vocabulary matches Claude Code's statusline `pr.review_state`
         assert_snapshot!(json, @r#"
         {
           "status": "passed",
           "source": "pr",
+          "number": 7,
           "stale": false,
           "url": "https://github.com/org/repo/pull/7",
-          "repo_url": "https://github.com/org/repo"
+          "repo_url": "https://github.com/org/repo",
+          "review_state": "changes_requested"
         }
         "#);
     }

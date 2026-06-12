@@ -515,7 +515,7 @@ impl ColumnLayout {
                     Some(Some(pr_status)) => {
                         let mut cell = StyledLine::new();
                         cell.push_raw(
-                            pr_status.format_indicator(supports_hyperlinks(Stream::Stdout)),
+                            pr_status.format_cell(self.width, supports_hyperlinks(Stream::Stdout)),
                         );
                         cell
                     }

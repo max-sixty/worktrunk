@@ -114,6 +114,14 @@ fn test_statusline_with_changes(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_statusline_ci_pr_number(repo: TestRepo) {
+    // Cached CI status with a PR number renders as the colored PR reference
+    super::list::mock_ci_status(&repo, "main", "passed", "pr", false, Some(3035));
+    let output = run_statusline(&repo, &[], None);
+    assert_snapshot!(output, @"[0m main  [2m^[22m[2m|[22m  [32m#3035");
+}
+
+#[rstest]
 fn test_statusline_commits_ahead(mut repo: TestRepo) {
     add_commits_ahead(&mut repo);
     // Run from the feature worktree to see commits ahead

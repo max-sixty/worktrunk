@@ -17,7 +17,6 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use anyhow::Context;
 use color_print::cformat;
 use minijinja::value::{Enumerator, Object, ObjectRepr};
 use minijinja::{Environment, ErrorKind, UndefinedBehavior, Value};
@@ -799,13 +798,19 @@ pub fn template_references_var(template: &str, var: &str) -> bool {
 /// a binding candidate for the whole invocation. A syntax error in any
 /// template fails here so the user sees it before flags are routed — a
 /// silent skip could mask a typo and change how subsequent CLI args bind.
-pub fn referenced_vars_for_config(cfg: &super::CommandConfig) -> anyhow::Result<BTreeSet<String>> {
+/// `name` labels the failing alias or hook in the error, which matches
+/// [`expand_template`]'s parse-failure shape so syntax errors render
+/// identically wherever they surface.
+pub fn referenced_vars_for_config(
+    cfg: &super::CommandConfig,
+    name: &str,
+) -> anyhow::Result<BTreeSet<String>> {
     let env = minijinja::Environment::new();
     let mut out = BTreeSet::new();
     for cmd in cfg.commands() {
         let tmpl = env
             .template_from_str(&cmd.template)
-            .with_context(|| format!("Failed to parse template: {:?}", cmd.template))?;
+            .map_err(|e| build_template_error(&e, &cmd.template, name, Vec::new()))?;
         out.extend(tmpl.undeclared_variables(false));
     }
     Ok(out)
@@ -813,13 +818,17 @@ pub fn referenced_vars_for_config(cfg: &super::CommandConfig) -> anyhow::Result<
 
 /// Parse-only syntax check for a template.
 ///
-/// Used on lazy-expansion paths (hooks + aliases) where rendering would fail
-/// because `vars.*` values are only known at execution time — we still want
-/// to catch typos like `{{ vars..foo }}` upfront.
-pub fn validate_template_syntax(template: &str, name: &str) -> Result<(), minijinja::Error> {
+/// Hook and alias preparation runs this on every template so syntax errors
+/// (e.g. `{{ vars..foo }}`) abort before the first pipeline step runs;
+/// rendering — and with it semantic errors like undefined variables — is
+/// deferred to execution time. The error matches [`expand_template`]'s
+/// parse-failure shape so syntax errors render identically wherever they
+/// surface.
+pub fn validate_template_syntax(template: &str, name: &str) -> Result<(), TemplateExpandError> {
     minijinja::Environment::new()
         .template_from_named_str(name, template)
         .map(|_| ())
+        .map_err(|e| build_template_error(&e, template, name, Vec::new()))
 }
 
 /// Validate that a template can be expanded without errors in the given scope.
@@ -2854,9 +2863,9 @@ mod tests {
     #[test]
     fn test_referenced_vars_for_config_syntax_error_propagates() {
         let cfg = super::super::CommandConfig::single("echo {{ unclosed");
-        let err = referenced_vars_for_config(&cfg).unwrap_err();
+        let err = referenced_vars_for_config(&cfg, "deploy").unwrap_err();
         let msg = format!("{err:#}");
-        assert!(msg.contains("Failed to parse template"), "got: {msg}");
+        assert!(msg.contains("Failed to expand deploy"), "got: {msg}");
         assert!(msg.contains("syntax error"), "got: {msg}");
     }
 

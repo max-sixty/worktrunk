@@ -98,6 +98,9 @@
 //!   from this file — TOML I/O, not git config, and no subprocess.
 //! - Config resolution — merge project-specific settings (uses cached
 //!   project identifier).
+//! - CI column width hint — one read of `.git/wt/cache/pr-number/max.json`
+//!   (skipped when the CI task is skipped); the skeleton can't size the CI
+//!   column without it.
 //!
 //! ### First-run behavior
 //!
@@ -1078,20 +1081,31 @@ pub fn collect(
         );
     }
 
+    // CI column width hint: the largest PR/MR number any previous fetch saw
+    // (one small file read — cheap enough for the pre-skeleton budget, and
+    // the skeleton can't size the column without it).
+    let max_pr_number = (!effective_skip_tasks.contains(&TaskKind::CiStatus))
+        .then(|| super::ci_status::MaxPrNumber::read(repo))
+        .flatten();
+
     // Calculate layout from items (worktrees, local branches, and remote branches).
     // The picker passes an explicit width because the list only gets part of the
     // terminal — the rest belongs to the preview pane.
     let layout = super::layout::calculate_layout_with_width(
         &all_items,
         &effective_skip_tasks,
-        list_width.unwrap_or_else(crate::display::terminal_width),
+        list_width
+            .or_else(crate::display::terminal_width)
+            .unwrap_or(usize::MAX),
         &main_worktree.path,
         url_template.as_deref(),
+        max_pr_number,
         &custom_columns,
     );
 
-    // Single-line invariant: use safe width to prevent line wrapping
-    let max_width = crate::display::terminal_width();
+    // Single-line invariant: with no detectable width, an unlimited width
+    // keeps rows untruncated rather than wrapping at a guessed width
+    let max_width = crate::display::terminal_width().unwrap_or(usize::MAX);
 
     // Create collection options from skip set. `integration_targets` is
     // patched in after the parallel phase below extracts it — at this
@@ -2202,8 +2216,15 @@ mod tests {
             ListItem::new_branch("bbb".into(), "row-one".into()),
         ];
         let skip_tasks: HashSet<TaskKind> = HashSet::new();
-        let layout =
-            calculate_layout_with_width(&items, &skip_tasks, 80, Path::new("/tmp"), None, &[]);
+        let layout = calculate_layout_with_width(
+            &items,
+            &skip_tasks,
+            80,
+            Path::new("/tmp"),
+            None,
+            None,
+            &[],
+        );
         let placeholder = super::super::render::PLACEHOLDER;
 
         // Row 0 has data → format_list_item_line; row 1 doesn't → skeleton.

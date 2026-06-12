@@ -580,6 +580,7 @@ fn build_estimated_widths(
     skip_tasks: &HashSet<TaskKind>,
     has_branch_worktree_mismatch: bool,
     url_width: usize,
+    max_pr_number: Option<u64>,
     custom_widths: Vec<usize>,
 ) -> LayoutMetadata {
     // Fixed widths for slow columns (require expensive git operations)
@@ -593,7 +594,15 @@ fn build_estimated_widths(
     let branch_diff_fixed = fit_header(ColumnKind::BranchDiff.header(), 9); // "+999 -999"
     let upstream_fixed = fit_header(ColumnKind::Upstream.header(), 7); // "↑99 ↓99"
     let age_estimate = 4; // "11mo" (short format)
-    let ci_estimate = fit_header(ColumnKind::CiStatus.header(), 1); // Single indicator symbol
+    // CI column: PR/MR reference ("#3035"), sized from the cached largest
+    // number seen; "#9999" before the first fetch populates the cache. A
+    // number that outgrows the estimate renders as the bare `#` indicator
+    // (`PrStatus::format_cell`) — the layout never resizes mid-render — and
+    // the ratcheted cache sizes the next invocation correctly.
+    let ci_estimate = fit_header(
+        ColumnKind::CiStatus.header(),
+        super::ci_status::pr_ref_width(max_pr_number.unwrap_or(9999)),
+    );
 
     // Assume columns will have data (better to show and hide than to not show).
     // This is a limitation of progressive mode - we can't know which columns have data
@@ -934,7 +943,8 @@ fn allocate_columns_with_priority(
 /// - Branch diff: 9 chars ("+999 -999")
 /// - Upstream: 7 chars ("↑99 ↓99")
 /// - Age: 4 chars ("11mo" short format)
-/// - CI: 1 char (indicator symbol)
+/// - CI: sized from `max_pr_number` (the cached largest PR/MR number seen,
+///   e.g. "#3035"); 5 chars ("#9999") before the first fetch populates it
 /// - Message: flexible (20-100 chars)
 /// - URL: estimated from template + longest branch
 pub fn calculate_layout_with_width(
@@ -943,6 +953,7 @@ pub fn calculate_layout_with_width(
     terminal_width: usize,
     main_worktree_path: &Path,
     url_template: Option<&str>,
+    max_pr_number: Option<u64>,
     custom_columns: &[ResolvedCustomColumn],
 ) -> LayoutConfig {
     // Calculate actual widths for things we know
@@ -999,6 +1010,7 @@ pub fn calculate_layout_with_width(
         skip_tasks,
         has_branch_worktree_mismatch,
         url_width,
+        max_pr_number,
         custom_widths,
     );
 
@@ -1272,7 +1284,7 @@ mod tests {
         // Empty skip set means all tasks are computed (equivalent to --full)
         // has_branch_worktree_mismatch=true to test the path flag is passed through
         // url_width=0 since we're not testing URL column here
-        let metadata = build_estimated_widths(20, &HashSet::new(), true, 0, Vec::new());
+        let metadata = build_estimated_widths(20, &HashSet::new(), true, 0, None, Vec::new());
         let widths = metadata.widths;
 
         // Line diffs (Signs variant: +/-) allocate 3 digits for 100-999 range
@@ -1334,6 +1346,21 @@ mod tests {
             widths.upstream.negative_digits, 2,
             "Pre-allocated for 2-digit negative count"
         );
+
+        // CI: no cached PR number → fallback estimate fits "#9999"
+        assert_eq!(widths.ci_status, 5, "CI fallback should fit '#9999'");
+    }
+
+    #[test]
+    fn test_ci_column_width_from_max_pr_number() {
+        // Cached largest number sizes the column: "#12345" → 6
+        let metadata =
+            build_estimated_widths(20, &HashSet::new(), false, 0, Some(12345), Vec::new());
+        assert_eq!(metadata.widths.ci_status, 6);
+
+        // Never below header width ("CI" → 2)
+        let metadata = build_estimated_widths(20, &HashSet::new(), false, 0, Some(1), Vec::new());
+        assert_eq!(metadata.widths.ci_status, 2);
     }
 
     #[test]
@@ -1404,8 +1431,9 @@ mod tests {
         let layout = calculate_layout_with_width(
             &items,
             &skip_tasks,
-            terminal_width(),
+            terminal_width().expect("COLUMNS=80 is set in .cargo/config.toml"),
             &main_worktree_path,
+            None,
             None,
             &[],
         );
@@ -1517,8 +1545,9 @@ mod tests {
         let layout = calculate_layout_with_width(
             &items,
             &skip_tasks,
-            terminal_width(),
+            terminal_width().expect("COLUMNS=80 is set in .cargo/config.toml"),
             &main_worktree_path,
+            None,
             None,
             &[],
         );
@@ -1640,7 +1669,15 @@ mod tests {
     /// Helper: compute layout with explicit terminal width and skip_tasks.
     fn layout_at_width(width: usize, skip_tasks: &HashSet<TaskKind>) -> LayoutConfig {
         let items = vec![make_test_item("feature-branch")];
-        calculate_layout_with_width(&items, skip_tasks, width, Path::new("/test"), None, &[])
+        calculate_layout_with_width(
+            &items,
+            skip_tasks,
+            width,
+            Path::new("/test"),
+            None,
+            None,
+            &[],
+        )
     }
 
     /// Default skip_tasks for non-full mode (Summary, BranchDiff, CI skipped).
@@ -1914,7 +1951,8 @@ mod tests {
         let skip = full_skip_tasks();
 
         // At very wide terminals: both Path and Summary coexist
-        let layout_wide = calculate_layout_with_width(&items, &skip, 300, main_path, None, &[]);
+        let layout_wide =
+            calculate_layout_with_width(&items, &skip, 300, main_path, None, None, &[]);
         assert!(
             find_column(&layout_wide, ColumnKind::Summary).is_some(),
             "Summary should be present at 300"
@@ -1927,7 +1965,8 @@ mod tests {
         // At moderate widths (170): Summary should reach at least 50 chars.
         // Currently Path eats ~30 chars from Summary's expansion budget,
         // leaving Summary at ~48 and dropping Message entirely.
-        let layout_170 = calculate_layout_with_width(&items, &skip, 170, main_path, None, &[]);
+        let layout_170 =
+            calculate_layout_with_width(&items, &skip, 170, main_path, None, None, &[]);
         let summary_170 = find_column(&layout_170, ColumnKind::Summary)
             .expect("Summary should be present at 170")
             .width;
@@ -2066,7 +2105,7 @@ mod tests {
         let main_path = Path::new("/test/worktrunk");
         let skip = full_skip_tasks();
 
-        let layout = calculate_layout_with_width(&items, &skip, 170, main_path, None, &[]);
+        let layout = calculate_layout_with_width(&items, &skip, 170, main_path, None, None, &[]);
 
         let mut lines = Vec::new();
         lines.push(layout.render_header_line().plain_text());
@@ -2093,7 +2132,7 @@ mod tests {
 
         // At 30 cols, ideal branch width (~57) can't fit, but Branch should still
         // be allocated at a reduced width rather than dropped.
-        let layout = calculate_layout_with_width(&items, &skip, 30, main_path, None, &[]);
+        let layout = calculate_layout_with_width(&items, &skip, 30, main_path, None, None, &[]);
         let branch = find_column(&layout, ColumnKind::Branch);
         assert!(
             branch.is_some(),
@@ -2106,7 +2145,7 @@ mod tests {
         );
 
         // At 80 cols, Branch should fit comfortably
-        let layout = calculate_layout_with_width(&items, &skip, 80, main_path, None, &[]);
+        let layout = calculate_layout_with_width(&items, &skip, 80, main_path, None, None, &[]);
         let branch = find_column(&layout, ColumnKind::Branch).unwrap();
         assert!(
             branch.width > 6,
@@ -2165,6 +2204,7 @@ mod tests {
             300,
             Path::new("/test"),
             None,
+            None,
             &columns,
         );
 
@@ -2203,6 +2243,7 @@ mod tests {
             300,
             Path::new("/test"),
             None,
+            None,
             &columns,
         );
 
@@ -2224,6 +2265,7 @@ mod tests {
             &non_full_skip_tasks(),
             30,
             Path::new("/test"),
+            None,
             None,
             &columns,
         );

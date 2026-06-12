@@ -63,53 +63,42 @@ pub fn verbosity() -> u8 {
     VERBOSITY.load(Ordering::Relaxed)
 }
 
-/// Get terminal width, or `usize::MAX` if detection fails.
+/// Get terminal width, or `None` if detection fails (piped context, no TTY).
 ///
 /// Prefers direct terminal size detection over COLUMNS environment variable,
 /// because tools like cargo may set COLUMNS incorrectly.
 ///
 /// Checks stderr first (for status messages), then stdout (for table output).
 ///
-/// When detection fails (piped context, no TTY), returns `usize::MAX` rather than
-/// an arbitrary default. Callers that need width-based formatting will produce
-/// full output, letting the consumer handle truncation.
-///
 /// Does **not** probe the parent process tree — that fallback is expensive
 /// (spawns `ps` up to 10 times plus `stty`) and only useful for `wt statusline`
 /// under Claude Code, where no TTY is inherited. Statusline calls
 /// [`terminal_width_for_statusline`] instead.
-pub fn terminal_width() -> usize {
+pub fn terminal_width() -> Option<usize> {
     // Prefer direct terminal detection (more accurate than COLUMNS which may be stale/wrong)
     // Check stderr first (status messages), then stdout (table output)
     if let Some((terminal_size::Width(w), _)) =
         terminal_size::terminal_size_of(std::io::stderr()).or_else(terminal_size::terminal_size)
     {
-        return w as usize;
+        return Some(w as usize);
     }
 
     // Fall back to COLUMNS env var (for scripts, piped contexts, or when detection fails)
-    if let Ok(cols) = std::env::var("COLUMNS")
-        && let Ok(width) = cols.parse::<usize>()
-    {
-        return width;
-    }
-
-    // Can't detect width — don't truncate, let the consumer handle it
-    usize::MAX
+    std::env::var("COLUMNS").ok()?.parse::<usize>().ok()
 }
 
 /// Terminal width for `wt statusline`, including a subprocess-compat fallback.
 ///
 /// Claude Code invokes `wt statusline` as a subprocess with pipes for stdin,
-/// stdout, and stderr — so [`terminal_width`] always falls through to its
-/// `usize::MAX` sentinel, and the statusline output would overflow the bar.
+/// stdout, and stderr — so [`terminal_width`] always returns `None`, and the
+/// statusline output would overflow the bar.
 /// As a last resort, this walks up to 10 parent processes looking for a TTY
 /// and asks `stty size` for its dimensions, reserving 5 columns for Claude
 /// Code's own UI messages.
 ///
 /// Every other caller should use [`terminal_width`] — the parent-TTY walk is
 /// a statusline-specific workaround, not a general fallback.
-pub fn terminal_width_for_statusline() -> usize {
+pub fn terminal_width_for_statusline() -> Option<usize> {
     statusline_width_fallback(terminal_width())
 }
 
@@ -117,12 +106,10 @@ pub fn terminal_width_for_statusline() -> usize {
 ///
 /// Split from [`terminal_width_for_statusline`] so tests can exercise the
 /// fallback path without racing the process-wide `COLUMNS` env var.
-fn statusline_width_fallback(base: usize) -> usize {
+fn statusline_width_fallback(base: Option<usize>) -> Option<usize> {
     #[cfg(unix)]
-    if base == usize::MAX
-        && let Some(width) = detect_parent_tty_width()
-    {
-        return width;
+    if base.is_none() {
+        return detect_parent_tty_width();
     }
     base
 }
@@ -213,24 +200,24 @@ mod tests {
     #[test]
     fn statusline_width_fallback_returns_base_when_known() {
         // Fast path: if `terminal_width()` found a real width, use it as-is.
-        assert_eq!(statusline_width_fallback(80), 80);
-        assert_eq!(statusline_width_fallback(1), 1);
+        assert_eq!(statusline_width_fallback(Some(80)), Some(80));
+        assert_eq!(statusline_width_fallback(Some(1)), Some(1));
     }
 
     #[test]
     fn statusline_width_fallback_probes_parent_tty_when_unknown() {
-        // Slow path: `usize::MAX` signals "direct detection failed" — the
-        // helper then walks the process tree. Whether a TTY is found depends
-        // on the test environment, so only assert the return type.
-        let _ = statusline_width_fallback(usize::MAX);
+        // Slow path: `None` signals "direct detection failed" — the helper
+        // then walks the process tree. Whether a TTY is found depends on the
+        // test environment, so only assert the return type.
+        let _ = statusline_width_fallback(None);
     }
 
     #[test]
     fn terminal_width_for_statusline_returns_a_width() {
         // End-to-end smoke test. Under cargo test, `COLUMNS=80` is set in
-        // `.cargo/config.toml`, so the fast path returns 80.
+        // `.cargo/config.toml`, so the fast path always finds a width.
         let width = terminal_width_for_statusline();
-        assert!(width > 0);
+        assert!(width.expect("COLUMNS=80 is set in .cargo/config.toml") > 0);
     }
 
     #[cfg(unix)]

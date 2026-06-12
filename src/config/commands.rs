@@ -44,34 +44,18 @@ use schemars::JsonSchema;
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 
-/// Represents a command with its template and optionally expanded form.
+/// Represents a configured command template.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Command {
     /// Optional name for the command (e.g., "build", "test")
     pub name: Option<String>,
     /// Template string that may contain variables like {{ branch }}, {{ worktree }}
     pub template: String,
-    /// Expanded command with variables substituted (same as template if not expanded yet)
-    pub expanded: String,
 }
 
 impl Command {
-    /// Create a new command from a template (not yet expanded)
     pub fn new(name: Option<String>, template: String) -> Self {
-        Self {
-            name,
-            expanded: template.clone(),
-            template,
-        }
-    }
-
-    /// Create a command with both template and expanded forms
-    pub fn with_expansion(name: Option<String>, template: String, expanded: String) -> Self {
-        Self {
-            name,
-            template,
-            expanded,
-        }
+        Self { name, template }
     }
 }
 
