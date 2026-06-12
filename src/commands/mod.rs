@@ -178,13 +178,10 @@ pub(crate) fn force_serial_concurrent() -> bool {
 /// * `repo` - The repository to query
 /// * `range` - The commit range to diff (e.g., "HEAD~1..HEAD" or "main..HEAD")
 pub(crate) fn show_diffstat(repo: &worktrunk::git::Repository, range: &str) -> anyhow::Result<()> {
-    let term_width = crate::display::terminal_width();
     let mut args = vec!["diff", "--color=always", "--stat"];
-    // `terminal_width()` returns a `usize::MAX` sentinel when no width is
-    // detectable (no TTY, no COLUMNS); git mangles a sentinel-sized
-    // `--stat-width`, so omit the flag and let git use its default width.
+    // With no detectable width, omit the flag and let git use its default width.
     let stat_width_arg;
-    if term_width != usize::MAX {
+    if let Some(term_width) = crate::display::terminal_width() {
         let stat_width = term_width.saturating_sub(worktrunk::styling::GUTTER_OVERHEAD);
         stat_width_arg = format!("--stat-width={stat_width}");
         args.push(&stat_width_arg);

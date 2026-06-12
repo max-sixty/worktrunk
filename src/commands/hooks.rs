@@ -501,6 +501,7 @@ fn spawn_hook_pipeline_quiet(repo: &Repository, pipeline: &PendingPipeline) -> a
         .map(|s| match &s.step {
             PreparedStep::Single(cmd) => PipelineStepSpec::Single {
                 name: cmd.name.clone(),
+                template_name: cmd.template_name.clone(),
                 template: cmd.template.clone(),
             },
             PreparedStep::Concurrent(cmds) => PipelineStepSpec::Concurrent {
@@ -508,6 +509,7 @@ fn spawn_hook_pipeline_quiet(repo: &Repository, pipeline: &PendingPipeline) -> a
                     .iter()
                     .map(|c| PipelineCommandSpec {
                         name: c.name.clone(),
+                        template_name: c.template_name.clone(),
                         template: c.template.clone(),
                     })
                     .collect(),

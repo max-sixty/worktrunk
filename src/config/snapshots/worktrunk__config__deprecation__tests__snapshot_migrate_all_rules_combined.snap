@@ -1,0 +1,38 @@
+---
+source: src/config/deprecation.rs
+expression: "migration_diff(content, &migrated)"
+---
+-worktree-path = "../{{ repo_root }}.{{ branch }}"
+-pre-create = "npm install"
++worktree-path = "../{{ repo_path }}.{{ branch }}"
++pre-start = "npm install"
+ 
+-[commit-generation]
+-command = "llm"
+-args = ["-m", "haiku"]
++[commit.generation]
++command = "llm -m haiku"
+ 
+-[select]
++[switch.picker]
+ pager = "delta"
+-timeout-ms = 500
+ 
+ [merge]
+-no-ff = true
++ff = false
+ 
+ [switch]
+-no-cd = true
++cd = false
+ 
+-[post-create]
++[post-start]
+ server = "npm run dev"
+ 
+-[ci]
++[forge]
+ platform = "github"
+-
+-[projects."github.com/user/repo"]
+-approved-commands = ["npm test"]

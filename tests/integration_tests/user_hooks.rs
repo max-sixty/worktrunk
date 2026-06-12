@@ -10,6 +10,7 @@ use crate::common::{
     TestRepo, make_snapshot_cmd, make_snapshot_cmd_with_global_flags, repo, resolve_git_common_dir,
     setup_snapshot_settings, wait_for_file, wait_for_file_content, wait_for_file_count,
 };
+use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
 use path_slash::PathExt as _;
 use rstest::rstest;
@@ -1123,13 +1124,57 @@ broken = "echo {{ does_not_exist }} > should_not_exist.txt"
         .join("runner.log");
     wait_for_file_content(&runner_log);
     let log_content = fs::read_to_string(&runner_log).unwrap();
-    assert!(
-        log_content.contains("Failed to expand"),
-        "runner log should contain the template error, got: {log_content}"
-    );
+    // Same label the foreground path renders for this command (see the
+    // foreground_pipeline_undefined_var_runs_earlier_steps snapshot).
+    assert_snapshot!(log_content, @"
+    [31m✗[39m [31mFailed to expand user:broken: undefined value @ line 1[39m
+    [107m [0m echo {{ does_not_exist }} > should_not_exist.txt
+    [2m↳[22m [2mAvailable variables: [4margs[24m, [4mbase[24m, [4mbase_worktree_path[24m, [4mbranch[24m, [4mcommit[24m, [4mcwd[24m, [4mdefault_branch[24m, [4mhook_name[24m, [4mhook_type[24m, [4mmain_worktree[24m, [4mmain_worktree_path[24m, [4mprimary_worktree_path[24m, [4mremote[24m, [4mremote_url[24m, [4mrepo[24m, [4mrepo_path[24m, [4mrepo_root[24m, [4mshort_commit[24m, [4mtarget[24m, [4mtarget_worktree_path[24m, [4mupstream[24m, [4mworktree[24m, [4mworktree_name[24m, [4mworktree_path[24m[22m
+    ");
 
     // The step never ran.
     assert!(!repo.root_path().join("should_not_exist.txt").exists());
+}
+
+/// Runner-log failure messages label steps the way the foreground does:
+/// named steps by command name, unnamed steps by the expanded command.
+#[rstest]
+fn test_background_hook_failure_labels_in_runner_log(repo: TestRepo) {
+    repo.write_test_config(
+        r#"post-start = [{ broken = "exit 7" }]
+post-switch = "exit 9"
+"#,
+    );
+
+    for hook_type in ["post-start", "post-switch"] {
+        let mut cmd = crate::common::wt_command();
+        cmd.current_dir(repo.root_path());
+        cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+        cmd.args(["hook", hook_type, "--yes"]);
+        let output = cmd.output().unwrap();
+        assert!(
+            output.status.success(),
+            "background spawn should succeed; the step fails later in the runner.\nstderr: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+
+    let runner_log = |hook_type: &str| {
+        resolve_git_common_dir(repo.root_path())
+            .join("wt/logs")
+            .join(worktrunk::path::sanitize_for_filename("main"))
+            .join("user")
+            .join(hook_type)
+            .join("runner.log")
+    };
+
+    let named = runner_log("post-start");
+    wait_for_file_content(&named);
+    assert_snapshot!(fs::read_to_string(&named).unwrap(), @"[31m✗[39m [31mcommand failed with exit code 7: broken[39m");
+
+    let unnamed = runner_log("post-switch");
+    wait_for_file_content(&unnamed);
+    assert_snapshot!(fs::read_to_string(&unnamed).unwrap(), @"[31m✗[39m [31mcommand failed with exit code 9: exit 9[39m");
 }
 
 /// A semantic template error in a foreground pipeline step surfaces when that

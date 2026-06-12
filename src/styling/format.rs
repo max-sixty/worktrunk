@@ -113,8 +113,9 @@ pub(super) fn wrap_text_at_width(text: &str, max_width: usize) -> Vec<String> {
 pub fn format_with_gutter(content: &str, max_width: Option<usize>) -> String {
     let gutter = super::GUTTER;
 
-    // Use provided width or detect terminal width (respects COLUMNS env var)
-    let term_width = max_width.unwrap_or_else(terminal_width);
+    // Use provided width or detect terminal width (respects COLUMNS env var);
+    // with no detectable width, wrap nothing
+    let term_width = max_width.or_else(terminal_width).unwrap_or(usize::MAX);
 
     // Account for gutter (1) + space (1)
     let available_width = term_width.saturating_sub(2);
@@ -278,8 +279,8 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
     let dim = anstyle::Style::new().dimmed();
     let string_style = bash_token_style("string").unwrap_or(dim);
 
-    // Calculate available width for content
-    let term_width = width_override.unwrap_or_else(terminal_width);
+    // Calculate available width for content; with no detectable width, wrap nothing
+    let term_width = width_override.or_else(terminal_width).unwrap_or(usize::MAX);
     let available_width = term_width.saturating_sub(2);
 
     // Set up tree-sitter bash highlighting
