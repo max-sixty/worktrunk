@@ -65,7 +65,7 @@ pub fn step_commit(
     // Only warn about untracked if we're staging all
     options.warn_about_untracked = stage_mode == StageMode::All;
 
-    let mut announcer = HookAnnouncer::new(ctx.repo, ctx.config, false);
+    let mut announcer = HookAnnouncer::new(ctx.repo, false);
     let outcome = options.commit(&mut announcer)?;
     announcer.flush()?;
     Ok(Some(outcome))

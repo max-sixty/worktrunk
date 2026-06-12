@@ -19,7 +19,9 @@ pub use detection::{
     is_shell_integration_line_for_uninstall, scan_for_detection_details,
 };
 pub use paths::{completion_path, config_paths, legacy_fish_conf_d_path};
-pub use utils::{current_shell, detect_zsh_compinit, extract_filename_from_path};
+pub use utils::{
+    current_shell, current_shell_name, detect_zsh_compinit, extract_filename_from_path,
+};
 
 /// Supported shells
 ///
@@ -160,7 +162,7 @@ impl Shell {
             }
             Self::Nushell => {
                 format!(
-                    "if (which {cmd} | is-not-empty) {{ {cmd} config shell init nu | save --force ($nu.default-config-dir | path join vendor/autoload/{cmd}.nu) }}",
+                    "if (which {cmd} | is-not-empty) {{ {cmd} config shell init nu | save --force ($nu.vendor-autoload-dirs | last | path join {cmd}.nu) }}",
                 )
             }
             Self::PowerShell => {

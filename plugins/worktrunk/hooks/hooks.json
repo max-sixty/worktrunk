@@ -21,6 +21,38 @@
         ]
       }
     ],
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config state marker set 💬 || true"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config state marker set 💬 || true"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config state marker set 💬 || true"
+          }
+        ]
+      }
+    ],
     "SessionEnd": [
       {
         "matcher": "",
@@ -37,7 +69,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.name' | xargs -I{} bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" switch --create {} --no-cd --format=json | jq -r '.path'"
+            "command": "bash -c 'set -o pipefail; jq -r .name | xargs -I{} bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" switch --create {} --no-cd --format=json | jq -r .path'"
           }
         ]
       }
@@ -47,7 +79,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.worktree_path' | xargs bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" remove --foreground"
+            "command": "bash -c 'set -o pipefail; jq -r .worktree_path | xargs -I{} bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" remove --foreground {}'"
           }
         ]
       }

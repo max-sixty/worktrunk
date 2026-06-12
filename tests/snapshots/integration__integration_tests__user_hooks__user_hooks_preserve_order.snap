@@ -30,7 +30,6 @@ info:
     OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     PSModulePath: ""
-    RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
@@ -48,6 +47,7 @@ info:
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
+    WORKTRUNK_TEST_SERIAL_CONCURRENT: "1"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WORKTRUNK_TEST_ZSH_INSTALLED: "0"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
@@ -57,17 +57,15 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mUser config: table form for [1mpre-start[22m is deprecated in favor of the pipeline form. We're unifying pre-hooks, post-hooks, and aliases so that list form always runs serially and table form always runs in parallel — migrate now to keep the current serial behavior once the table form is repurposed.[39m
-[2m↳[22m [2mTo see details, run [4mwt config show[24m; to apply updates, run [4mwt config update[24m[22m
 [36m◎[39m [36mRunning pre-start [1muser:vscode[22m @ [1m_REPO_.feature[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'1'[0m[2m [0m[2m[36m>>[0m[2m hook_order.txt
-[0m[36m◎[39m [36mRunning pre-start [1muser:claude[22m @ [1m_REPO_.feature[22m[39m
+[36m◎[39m [36mRunning pre-start [1muser:claude[22m @ [1m_REPO_.feature[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'2'[0m[2m [0m[2m[36m>>[0m[2m hook_order.txt
-[0m[36m◎[39m [36mRunning pre-start [1muser:copy[22m @ [1m_REPO_.feature[22m[39m
+[36m◎[39m [36mRunning pre-start [1muser:copy[22m @ [1m_REPO_.feature[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'3'[0m[2m [0m[2m[36m>>[0m[2m hook_order.txt
-[0m[36m◎[39m [36mRunning pre-start [1muser:submodule[22m @ [1m_REPO_.feature[22m[39m
+[36m◎[39m [36mRunning pre-start [1muser:submodule[22m @ [1m_REPO_.feature[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'4'[0m[2m [0m[2m[36m>>[0m[2m hook_order.txt
-[0m[32m✓[39m [32mCreated branch [1mfeature[22m from [1mmain[22m and worktree @ [1m_REPO_.feature[22m[39m
+[32m✓[39m [32mCreated branch [1mfeature[22m from [1mmain[22m and worktree @ [1m_REPO_.feature[22m[39m
 [2m↳[22m [2mTo customize worktree locations, run [4mwt config create[24m[22m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m

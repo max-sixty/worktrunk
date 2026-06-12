@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.57.0
+
+### Improved
+
+- **`wt step diff --branch`**: `wt step diff` gained a `-b`/`--branch` flag, mirroring `wt step commit`, so the diff can target another worktree's branch without leaving the current one. The branch must have a checked-out worktree. ([#2995](https://github.com/max-sixty/worktrunk/pull/2995))
+
+- **Squash templates can use commit bodies**: The squash commit-message template gains an experimental `{{ commit_details }}` variable — a list of `{ subject, body }` objects for the commits being squashed — alongside the existing `{{ commits }}` (now documented as the commit subjects). Templates can incorporate full commit bodies, not just subject lines. ([#2983](https://github.com/max-sixty/worktrunk/pull/2983), thanks @florianilch)
+
+- **Recommended Claude Code commit command drops the `CLAUDECODE=` prefix**: Claude Code removed the nested-session check that rejected `claude -p` launched from inside another session, so the workaround is gone. The recommended `[commit.generation]` command shown by `wt config create` no longer carries a leading `CLAUDECODE=`, and `wt` no longer strips `CLAUDECODE` from the environment before running commit-generation commands. ([#2979](https://github.com/max-sixty/worktrunk/pull/2979))
+
+### Fixed
+
+- **Nushell wrapper installs where Nushell actually autoloads it**: `wt config shell install nu` wrote `wt.nu` to `$nu.default-config-dir/vendor/autoload`, which Nushell never autoloads — on Linux the wrapper was written but silently never loaded, so `wt` was never wrapped (it happened to work on macOS/Windows by coincidence of path layout). It now installs to `$nu.vendor-autoload-dirs | last`, and install/uninstall clean up any worktrunk wrapper stranded at the old location. ([#2992](https://github.com/max-sixty/worktrunk/pull/2992), thanks @nnutter for reporting)
+
+- **Claude Code hooks work for Fish shell users**: The plugin's hook commands used `${CLAUDE_PLUGIN_ROOT}` brace syntax, which Fish doesn't expand; they now use `$CLAUDE_PLUGIN_ROOT`, so the activity and worktree-lifecycle hooks fire correctly under Fish. ([#2962](https://github.com/max-sixty/worktrunk/pull/2962), thanks @amw)
+
+- **Pager no longer wedges the terminal on Ctrl-C (Windows)**: Interrupting the `--help` pager (`less`) with Ctrl-C on Windows could leave the terminal in a broken state; `less` now quits cleanly on interrupt. ([#2969](https://github.com/max-sixty/worktrunk/pull/2969), thanks @ofek for reporting)
+
+- **Clearer error when the default branch has no commits**: In a freshly initialized repo whose default branch is unborn, `merge`/`rebase`/`squash`/`push` (and the diff report) failed with `Default branch main does not exist locally` plus a misleading hint to reset the cached value. They now report that the branch has no commits yet, without the wrong cache-reset suggestion. ([#2990](https://github.com/max-sixty/worktrunk/pull/2990))
+
+- **`diagnostic.md` uploads as a gist again**: The `-vv` diagnostic report inlined raw NUL bytes from NUL-separated git output, so `gh gist create` rejected it as a binary file. Control bytes in the subprocess preview are now escaped. ([#2991](https://github.com/max-sixty/worktrunk/pull/2991))
+
+- **`wt list` tolerates a missing index file**: A repo with no `<gitdir>/index` (nothing ever staged) made the temp-index probe fail; a missing index is now treated as an empty one, matching git's own behavior. ([#2884](https://github.com/max-sixty/worktrunk/pull/2884))
+
+- **Inline code renders in `--help` section headings**: Terminal `--help` showed literal backticks in headings authored with inline code (e.g. the `wt config state logs` heading `Command log (`commands.jsonl`)`). Headings now reduce inline code to plain text under the heading's uniform style. The `--stage`/`--dry-run` subsection headings in `wt step commit`/`squash` were also renamed to sentence case ("Staging", "Dry run"). ([#3003](https://github.com/max-sixty/worktrunk/pull/3003))
+
+### Documentation
+
+- **`wt switch` docs give forge PR/MR URLs equal billing with `pr:`/`mr:`**: The switch docs now present the full forge-URL form alongside the `pr:N` shortcut. ([#2970](https://github.com/max-sixty/worktrunk/pull/2970))
+
+- **New FAQ entry on moving uncommitted changes to a new worktree**. ([#3002](https://github.com/max-sixty/worktrunk/pull/3002))
+
+### Internal
+
+- **Bare-repo prompt opt-out stored as a hint**: `worktrunk.skip-bare-repo-prompt` moved under the `worktrunk.hints.` namespace, so it now lists under `wt config state hints` and clears with `wt config state clear` (previously a top-level key that escaped both). Clean cutover: users who already opted out are re-prompted once on their next `wt switch --create` in a dotted-name bare repo. ([#3001](https://github.com/max-sixty/worktrunk/pull/3001))
+
 ## 0.56.0
 
 ### Improved

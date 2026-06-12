@@ -135,10 +135,10 @@ impl Repository {
     /// via `{{ vars.key }}`.
     ///
     /// Reads git config directly — **not** via the bulk `all_config` cache —
-    /// because lazy template expansion in hook/alias pipelines depends on
-    /// seeing writes that earlier steps made via their own `git config`
-    /// subprocesses. Those external writes don't round-trip through our
-    /// coherent `set_config_value` helper.
+    /// because hook/alias templates render at execution time and depend on
+    /// seeing writes that earlier pipeline steps made via their own
+    /// `git config` subprocesses. Those external writes don't round-trip
+    /// through our coherent `set_config_value` helper.
     pub fn vars_entries(&self, branch: &str) -> std::collections::BTreeMap<String, String> {
         let escaped = regex::escape(branch);
         let pattern = format!(r"^worktrunk\.state\.{escaped}\.vars\.");
@@ -411,6 +411,9 @@ impl Repository {
         let branch = self.resolve_target_branch(target)?;
         if !self.branch(&branch).exists()? {
             if target.is_none() {
+                if self.is_unborn_branch(&branch) {
+                    return Err(GitError::UnbornDefaultBranch { branch }.into());
+                }
                 return Err(GitError::StaleDefaultBranch { branch }.into());
             }
             return Err(GitError::BranchNotFound {
@@ -437,11 +440,30 @@ impl Repository {
         let reference = self.resolve_target_branch(target)?;
         if !self.ref_exists(&reference)? {
             if target.is_none() {
+                if self.is_unborn_branch(&reference) {
+                    return Err(GitError::UnbornDefaultBranch { branch: reference }.into());
+                }
                 return Err(GitError::StaleDefaultBranch { branch: reference }.into());
             }
             return Err(GitError::ReferenceNotFound { reference }.into());
         }
         Ok(reference)
+    }
+
+    /// True when `branch` is checked out as an unborn HEAD (no commits yet)
+    /// in some worktree — e.g. a freshly `git init`'d repo before its first
+    /// commit. Such a branch has no `refs/heads/<branch>` ref, so the
+    /// `require_target_*` existence checks fail even though the cached
+    /// default branch is correct. Used to surface
+    /// [`GitError::UnbornDefaultBranch`] (no cache-reset hint) instead of
+    /// [`GitError::StaleDefaultBranch`] (which would wrongly suggest the
+    /// cache is bad).
+    fn is_unborn_branch(&self, branch: &str) -> bool {
+        self.list_worktrees().is_ok_and(|worktrees| {
+            worktrees
+                .iter()
+                .any(|wt| wt.branch.as_deref() == Some(branch) && !wt.has_commits())
+        })
     }
 
     /// Infer the default branch locally (without remote).
@@ -527,6 +549,24 @@ impl Repository {
     /// Propagates actual git config errors (corrupt config, permission denied).
     pub fn clear_default_branch_cache(&self) -> anyhow::Result<bool> {
         self.unset_config_value("worktrunk.default-branch")
+    }
+
+    /// Read the persisted default-branch cache without detecting or writing.
+    ///
+    /// Unlike `default_branch()`, this never falls through to detection
+    /// (`origin/HEAD`, `git ls-remote`, local inference) and never persists a
+    /// result. It reports only what is currently stored in
+    /// `worktrunk.default-branch`, so state-inspection commands
+    /// (`wt config state`) can display the cache without the act of inspecting
+    /// it repopulating the very value being cleared.
+    ///
+    /// Returns `None` when nothing is cached.
+    pub fn cached_default_branch(&self) -> Option<String> {
+        self.config_value("worktrunk.default-branch")
+            .ok()
+            .flatten()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
     }
 
     // =========================================================================

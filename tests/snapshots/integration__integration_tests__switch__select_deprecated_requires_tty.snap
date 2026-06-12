@@ -28,7 +28,6 @@ info:
     OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     PSModulePath: ""
-    RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
@@ -55,5 +54,5 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mwt select is deprecated; use wt switch instead[39m
+[33m▲[39m [33mwt select is deprecated; use [1mwt switch[22m instead[39m
 [31m✗[39m [31mInteractive picker requires an interactive terminal[39m

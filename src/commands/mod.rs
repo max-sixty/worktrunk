@@ -23,6 +23,7 @@ pub(crate) mod pipeline_spec;
 pub(crate) mod process;
 pub(crate) mod project_config;
 mod relocate;
+pub(crate) mod remove;
 pub(crate) mod repository_ext;
 mod run_pipeline;
 pub(crate) mod statusline;
@@ -35,13 +36,13 @@ pub(crate) use alias::{
     try_alias,
 };
 pub(crate) use config::{
-    add_approvals, clear_approvals, handle_alias_dry_run, handle_alias_show, handle_claude_install,
-    handle_claude_install_statusline, handle_claude_uninstall, handle_codex_install,
-    handle_codex_uninstall, handle_config_create, handle_config_show, handle_config_update,
-    handle_hints_clear, handle_hints_get, handle_logs_list, handle_opencode_install,
-    handle_opencode_uninstall, handle_state_clear, handle_state_clear_all, handle_state_get,
-    handle_state_set, handle_state_show, handle_vars_clear, handle_vars_get, handle_vars_list,
-    handle_vars_set,
+    add_approvals, clear_approvals, handle_alias_dry_run, handle_alias_show, handle_cache_clear,
+    handle_cache_get, handle_claude_install, handle_claude_install_statusline,
+    handle_claude_uninstall, handle_codex_install, handle_codex_uninstall, handle_config_create,
+    handle_config_show, handle_config_update, handle_hints_clear, handle_hints_get,
+    handle_logs_list, handle_opencode_install, handle_opencode_uninstall, handle_state_clear,
+    handle_state_clear_all, handle_state_get, handle_state_set, handle_state_show,
+    handle_vars_clear, handle_vars_get, handle_vars_list, handle_vars_set,
 };
 pub(crate) use configure_shell::{
     handle_configure_shell, handle_show_theme, handle_unconfigure_shell,
@@ -55,6 +56,7 @@ pub(crate) use list::handle_list;
 pub(crate) use merge::{MergeFlagOverrides, MergeOptions, handle_merge};
 #[cfg(unix)]
 pub(crate) use picker::handle_picker;
+pub(crate) use remove::handle_remove_command;
 pub(crate) use repository_ext::RemoveTarget;
 pub(crate) use run_pipeline::run_pipeline;
 pub(crate) use step::{
@@ -63,7 +65,7 @@ pub(crate) use step::{
     step_relocate, step_show_squash_prompt, step_tether,
 };
 pub(crate) use worktree::{
-    SwitchOptions, is_worktree_at_expected_path, resolve_worktree_arg, run_switch,
+    handle_switch_command, is_worktree_at_expected_path, resolve_worktree_arg,
     worktree_display_name,
 };
 
@@ -72,6 +74,28 @@ pub(crate) use worktrunk::shell::Shell;
 
 use color_print::cformat;
 use worktrunk::styling::{eprintln, format_with_gutter};
+
+pub(crate) fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
+    match (positive, negative) {
+        (true, _) => Some(true),
+        (_, true) => Some(false),
+        _ => None,
+    }
+}
+
+#[cfg(not(unix))]
+pub(crate) fn print_windows_picker_unavailable() {
+    use worktrunk::styling::{error_message, hint_message};
+
+    eprintln!(
+        "{}",
+        error_message("Interactive picker is not available on Windows")
+    );
+    eprintln!(
+        "{}",
+        hint_message(cformat!("Specify a branch: <underline>wt switch BRANCH</>"))
+    );
+}
 
 /// Format command execution label with optional command name.
 ///
@@ -162,8 +186,9 @@ pub(crate) fn build_invalid_subcommand_error(
 /// `WORKTRUNK_TEST_SERIAL_CONCURRENT=1` to make output ordering deterministic
 /// for snapshot tests, mirroring how `RAYON_NUM_THREADS=1` is used elsewhere.
 ///
-/// Honored by both alias `HookStep::Concurrent` execution and the background
-/// pipeline runner's concurrent groups.
+/// The background pipeline runner reads it through this helper; the
+/// foreground concurrent executor (`output::concurrent`, shared by hook and
+/// alias `HookStep::Concurrent` groups) reads the env var directly.
 pub(crate) fn force_serial_concurrent() -> bool {
     std::env::var_os("WORKTRUNK_TEST_SERIAL_CONCURRENT").is_some()
 }
@@ -177,18 +202,16 @@ pub(crate) fn force_serial_concurrent() -> bool {
 /// * `repo` - The repository to query
 /// * `range` - The commit range to diff (e.g., "HEAD~1..HEAD" or "main..HEAD")
 pub(crate) fn show_diffstat(repo: &worktrunk::git::Repository, range: &str) -> anyhow::Result<()> {
-    let term_width = crate::display::terminal_width();
-    let stat_width = term_width.saturating_sub(worktrunk::styling::GUTTER_OVERHEAD);
-    let diff_stat = repo
-        .run_command(&[
-            "diff",
-            "--color=always",
-            "--stat",
-            &format!("--stat-width={}", stat_width),
-            range,
-        ])?
-        .trim_end()
-        .to_string();
+    let mut args = vec!["diff", "--color=always", "--stat"];
+    // With no detectable width, omit the flag and let git use its default width.
+    let stat_width_arg;
+    if let Some(term_width) = crate::display::terminal_width() {
+        let stat_width = term_width.saturating_sub(worktrunk::styling::GUTTER_OVERHEAD);
+        stat_width_arg = format!("--stat-width={stat_width}");
+        args.push(&stat_width_arg);
+    }
+    args.push(range);
+    let diff_stat = repo.run_command(&args)?.trim_end().to_string();
 
     if !diff_stat.is_empty() {
         eprintln!("{}", format_with_gutter(&diff_stat, None));

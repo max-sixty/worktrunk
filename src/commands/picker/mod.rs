@@ -290,7 +290,7 @@ impl PickerCollector {
             } => {
                 let main_repo = Repository::at(main_path)?;
                 let plan = approved_removal_plan(repo, main_path, worktree_path, approvals)?;
-                let mut announcer = HookAnnouncer::new(&main_repo, main_repo.user_config(), false);
+                let mut announcer = HookAnnouncer::new(&main_repo, false);
                 handle_remove_output(
                     result,
                     /* foreground */ true,
@@ -540,7 +540,9 @@ pub fn handle_picker(
     // List width depends on the preview position. Right splits the terminal
     // ~50/50; Down gives the list the full width. Passed to `collect` so
     // the skeleton layout matches the picker's actual render width.
-    let terminal_width = crate::display::terminal_width();
+    // The picker requires a TTY, so detection essentially always succeeds;
+    // the unlimited-width fallback just keeps the math total.
+    let terminal_width = crate::display::terminal_width().unwrap_or(usize::MAX);
     let skim_list_width = match state.initial_layout {
         PreviewLayout::Right => terminal_width / 2,
         PreviewLayout::Down => terminal_width,

@@ -4,10 +4,11 @@ mod list;
 mod step;
 
 pub(crate) use config::{
-    ApprovalsCommand, CiStatusAction, ConfigAliasCommand, ConfigCommand,
+    ApprovalsCommand, CacheAction, CiStatusAction, ConfigAliasCommand, ConfigCommand,
     ConfigPluginsClaudeCommand, ConfigPluginsCodexCommand, ConfigPluginsCommand,
-    ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction, HintsAction, LogsAction,
-    MarkerAction, PreviousBranchAction, StateCommand, StateWrite, VarsAction,
+    ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction, GlobalFormatFlag,
+    HintsAction, LogsAction, MarkerAction, PreviousBranchAction, StateCommand, StateWrite,
+    VarsAction,
 };
 pub(crate) use hook::{HOOK_TYPE_NAMES, HookCommand, HookOptions, parse_hook_type};
 pub(crate) use list::ListSubcommand;
@@ -630,7 +631,7 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 2. **log** — Recent commits; commits already on the default branch have dimmed hashes
 3. **main…±** — Diff of changes since the merge-base with the default branch
 4. **remote⇅** — Ahead/behind diff vs upstream tracking branch
-5. **summary** — LLM-generated branch summary; requires `[list] summary = true` and `[commit.generation]`
+5. **summary** — LLM-generated branch summary; requires `[list] summary = true` and [`commit.generation`](@/config.md#commit)
 
 **Pager configuration:** The preview panel pipes diff output through git's pager. Override in user config:
 
@@ -711,11 +712,11 @@ Include CI status, line diffs, and LLM summaries:
 <!-- wt list --full -->
 ```console
 $ wt list --full
-  Branch       Status        HEAD±    main↕     main…±  Summary                                              Remote⇅  CI  Commit
-@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware     ⇡3      ●   6814f02a
-^ main             ^⇅                                                                                         ⇡1  ⇣1  ●   41ee0834
-+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation         |     ●   b772e68b
-+ fix-typos        _|                                                                                           |     ●   41ee0834
+  Branch       Status        HEAD±    main↕     main…±  Summary                                                Remote⇅  CI    Commit
+@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware       ⇡3      #412  6814f02a
+^ main             ^⇅                                                                                           ⇡1  ⇣1  #     41ee0834
++ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation           |     #408  b772e68b
++ fix-typos        _|                                                                                             |     #410  41ee0834
 
 ○ Showing 4 worktrees, 1 with changes, 2 ahead, 3 columns hidden
 ```
@@ -725,13 +726,13 @@ Include branches that don't have worktrees:
 <!-- wt list --branches --full -->
 ```console
 $ wt list --branches --full
-  Branch       Status        HEAD±    main↕     main…±  Summary                                              Remote⇅  CI  Commit
-@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware     ⇡3      ●   6814f02a
-^ main             ^⇅                                                                                         ⇡1  ⇣1  ●   41ee0834
-+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation         |     ●   b772e68b
-+ fix-typos        _|                                                                                           |     ●   41ee0834
-  exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and resolvers                              96379229
-  wip             /↕                 ↑1  ↓1   +33       Start API documentation                                           b40716dc
+  Branch       Status        HEAD±    main↕     main…±  Summary                                                Remote⇅  CI    Commit
+@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware       ⇡3      #412  6814f02a
+^ main             ^⇅                                                                                           ⇡1  ⇣1  #     41ee0834
++ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation           |     #408  b772e68b
++ fix-typos        _|                                                                                             |     #410  41ee0834
+  exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and resolvers                                  96379229
+  wip             /↕                 ↑1  ↓1   +33       Start API documentation                                               b40716dc
 
 ○ Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, 3 columns hidden
 ```
@@ -753,7 +754,7 @@ $ wt list --format=json
 | main…± | Line diffs since the merge-base (three-dot) with the default branch; `--full` only |
 | Summary | LLM-generated branch summary; requires `--full`, `summary = true`, and [`commit.generation`](@/config.md#commit) [experimental] |
 | Remote⇅ | Commits ahead/behind tracking branch |
-| CI | Pipeline status; `--full` only |
+| CI | PR/MR number colored by pipeline status; `--full` only |
 | Path | Worktree directory |
 | URL | Dev server URL from project config; dimmed if port is not listening |
 | Commit | Short hash (8 chars) |
@@ -764,19 +765,23 @@ The `main` header label is used regardless of the default branch's actual name.
 
 ### CI status
 
-The CI column shows GitHub/GitLab pipeline status:
+The CI column shows the branch's open PR/MR — `#3035` on GitHub, Gitea, and Azure DevOps, `!3035` on GitLab — colored by pipeline status, or a bare `#` when no number is available (e.g. branch workflows without a PR/MR):
 
 | Indicator | Meaning |
 |-----------|---------|
-| `●` green | All checks passed |
-| `●` blue | Checks running |
-| `●` red | Checks failed |
-| `●` yellow | Merge conflicts with base |
-| `●` gray | No checks configured |
+| `#` green | All checks passed |
+| `#` blue | Checks running |
+| `#` red | Checks failed |
+| `#` magenta | Reviewer requested changes |
+| `#` cyan | Review required, not yet given |
+| `#` yellow | Merge conflicts with base |
+| `#` gray | No checks configured |
 | `⚠` yellow | Fetch error (rate limit, network) |
 | (blank) | No upstream or no PR/MR |
 
-CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when unpushed local changes make the status stale. PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches — visible with `--remotes` — get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
+Review state merges into the same color where its required action ranks: changes-requested (magenta) outranks running checks — waiting can't clear it — while an outstanding required review (cyan) only recolors an otherwise green or quiet branch. Cool colors mean waiting, warm colors mean act. A PR with no review signal (no required reviewers and no reviews) keeps its plain CI color, and draft PRs appear dimmed.
+
+CI cells are clickable links to the PR or pipeline page, and appear dimmed when unpushed local changes make the status stale. PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches — visible with `--remotes` — get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
 
 ### LLM summaries [experimental]
 
@@ -931,8 +936,11 @@ $ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 |-------|------|-------------|
 | `status` | string | CI status (see below) |
 | `source` | string | `"pr"` (PR/MR) or `"branch"` (branch workflow) |
+| `number` | integer | PR/MR number; absent for branch workflows |
 | `stale` | boolean | Local HEAD differs from remote (unpushed changes) |
 | `url` | string | URL to the PR/MR page |
+| `repo_url` | string | Web URL of the repo the PR/MR targets (the upstream for fork PRs); absent when `url` is absent or unrecognized |
+| `review_state` | string | Review state (see below); absent when the forge reports no review signal |
 
 ### main_state values
 
@@ -942,11 +950,17 @@ These values describe the relation to the default branch.
 
 ### integration_reason values
 
-When `main_state == "integrated"`: `"ancestor"` `"trees_match"` `"no_added_changes"` `"merge_adds_nothing"` `"patch-id-match"`
+When `main_state == "integrated"`: `"ancestor"` `"trees-match"` `"no-added-changes"` `"merge-adds-nothing"` `"patch-id-match"`
 
 ### ci.status values
 
 `"passed"` `"running"` `"failed"` `"conflicts"` `"no-ci"` `"error"`
+
+### ci.review_state values
+
+`"approved"` `"changes_requested"` `"pending"` `"draft"`
+
+The vocabulary matches Claude Code's statusline `pr.review_state` field. `"pending"` means a review is required (e.g. branch protection) but not yet given; a PR with no review signal at all has no `review_state`. GitLab reports only `"pending"` and `"draft"` — MR list data carries no approved or changes-requested signal.
 
 Missing a field that would be generally useful? Open an issue at https://github.com/max-sixty/worktrunk.
 
@@ -1242,7 +1256,7 @@ $ wt step push
 | **merge** | `pre-merge` | `post-merge` |
 | **remove** | `pre-remove` | `post-remove` |
 
-`pre-*` hooks block — failure aborts the operation. `post-*` hooks run in the background with output logged (use [`wt config state logs`](@/config.md#wt-config-state-logs) to find and manage log files). Use `-v` to see expanded command details for background hooks.
+`pre-*` hooks block — failure aborts the operation. `post-*` hooks run in the background with output logged (use [`wt config state logs`](@/config.md#wt-config-state-logs) to find and manage log files). Use `-v` to see the template variables for background hooks; `wt hook <type> --dry-run` previews the commands.
 
 The most common creation hook is `post-start` — it runs background tasks (dev servers, file copying, builds) without blocking worktree creation. Prefer `post-start` over `pre-start` unless a later step needs the work completed first.
 
@@ -1321,9 +1335,9 @@ server = "npm run dev"
 
 Here `install` runs first, then `build` and `server` run together.
 
-Most hooks don't need `[[hook]]` blocks. Reach for them when there's a dependency chain — typically setup that must complete before later steps, like installing dependencies before running a build and dev server concurrently.
+Templates are syntax-checked before the pipeline starts and rendered as each step runs, so a step can store [per-branch vars](@/config.md#wt-config-state-vars) that later steps read via `{{ vars.<key> }}`.
 
-Table form for pre-* hooks is deprecated and its behavior will change in a future version — use `[[hook]]` blocks instead.
+Most hooks don't need `[[hook]]` blocks. Reach for them when there's a dependency chain — typically setup that must complete before later steps, like installing dependencies before running a build and dev server concurrently.
 
 ## Project vs user hooks
 
@@ -1366,6 +1380,8 @@ Hooks can use template variables that expand at runtime:
 |           | `{{ hook_name }}`             | Hook command name (if named) |
 |           | `{{ args }}`                  | Tokens forwarded from the CLI — see [Running Hooks Manually](#running-hooks-manually) |
 | user      | `{{ vars.<key> }}`            | Per-branch variables from [`wt config state vars`](@/config.md#wt-config-state-vars) |
+
+The `repo` variables (`repo`, `repo_path`, `owner`, `primary_worktree_path`, `default_branch`, `remote`, `remote_url`) are constant across the whole repository — `default_branch` is the same in every worktree. The `active` variables (`branch`, `worktree_path`, `worktree_name`, `commit`, `short_commit`, `upstream`) vary per worktree.
 
 Bare variables (`branch`, `worktree_path`, `commit`) refer to the branch the operation acts on: the destination for switch/create, the source for merge/remove. `base` and `target` give the other side:
 
@@ -1654,6 +1670,8 @@ Controls where new worktrees are created.
 - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)
 - `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)
 - `{{ branch | codename(2) }}` — deterministic friendly name from a ~1.26M-combo pool (e.g., `malleable-opah`)
+
+This is a smaller set than [the variables hooks and aliases get](@/hook.md#template-variables).
 
 **Examples** for repo at `~/code/myproject`, branch `feature/auth`:
 

@@ -83,6 +83,8 @@ Controls where new worktrees are created.
 - `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)
 - `{{ branch | codename(2) }}` — deterministic friendly name from a ~1.26M-combo pool (e.g., `malleable-opah`)
 
+This is a smaller set than [the variables hooks and aliases get](@/hook.md#template-variables).
+
 **Examples** for repo at `~/code/myproject`, branch `feature/auth`:
 
 Default — sibling directory (`~/code/myproject.feature-auth`):
@@ -757,12 +759,11 @@ State is stored in `.git/` (config entries and log files), separate from configu
 
 ### Keys
 
+- **cache**: [Regenerable caches — CI status, summaries, git commands, hints, and the `wt switch -` target](@/config.md#wt-config-state-cache)
 - **default-branch**: [The repository's default branch (`main`, `master`, etc.)](@/config.md#wt-config-state-default-branch)
-- **previous-branch**: Previous branch for `wt switch -`
-- **logs**: [Operation and debug logs](@/config.md#wt-config-state-logs)
-- **ci-status**: [CI/PR status for a branch (passed, running, failed, conflicts, no-ci, error)](@/config.md#wt-config-state-ci-status)
 - **marker**: [Custom status marker for a branch (shown in `wt list`)](@/config.md#wt-config-state-marker)
 - **vars**: <span class="badge-experimental"></span> [Custom variables per branch](@/config.md#wt-config-state-vars)
+- **logs**: [Operation and debug logs](@/config.md#wt-config-state-logs)
 
 ### Examples
 
@@ -778,8 +779,8 @@ Set a marker for current branch:
 Store arbitrary data:
 {{ terminal(cmd="wt config state vars set env=staging") }}
 
-Clear all CI status cache:
-{{ terminal(cmd="wt config state ci-status clear --all") }}
+Drop the regenerable caches:
+{{ terminal(cmd="wt config state cache clear") }}
 
 Show all stored state:
 {{ terminal(cmd="wt config state get") }}
@@ -795,19 +796,77 @@ wt config state - Manage internal data and cache
 Usage: <b><span class=c>wt config state</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
 
 <b><span class=g>Commands:</span></b>
-  <b><span class=c>get</span></b>              Get all stored state
-  <b><span class=c>clear</span></b>            Clear all stored state
-  <b><span class=c>default-branch</span></b>   Default branch detection and override
-  <b><span class=c>previous-branch</span></b>  Previous branch (for <b>wt switch -</b>)
-  <b><span class=c>logs</span></b>             Operation and debug logs
-  <b><span class=c>hints</span></b>            One-time hints shown in this repo
-  <b><span class=c>ci-status</span></b>        CI status cache
-  <b><span class=c>marker</span></b>           Branch markers
-  <b><span class=c>vars</span></b>             [experimental] Custom variables per branch
+  <b><span class=c>get</span></b>             Get all stored state
+  <b><span class=c>clear</span></b>           Clear all stored state
+  <b><span class=c>cache</span></b>           Regenerable caches
+  <b><span class=c>default-branch</span></b>  Default branch detection and override
+  <b><span class=c>logs</span></b>            Operation and debug logs
+  <b><span class=c>marker</span></b>          Branch markers
+  <b><span class=c>vars</span></b>            [experimental] Custom variables per branch
 
 <b><span class=g>Options:</span></b>
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+          Working directory for this command
+
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+          User config file path
+
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
+
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
+{% end %}
+
+## wt config state cache
+
+Regenerable caches.
+
+View or drop worktrunk's regenerable caches in one place. Everything here is rebuilt on demand — clearing only forces recomputation, never data loss.
+
+### What's cached
+
+- **CI status** — GitHub/GitLab CI per branch (30–60s TTL), shown in [`wt list`](@/list.md#ci-status), plus the largest PR/MR number seen (sizes the CI column)
+- **Summaries** — LLM-generated branch summaries (`wt list --full`, `wt switch` preview)
+- **Git commands** — SHA-keyed disk caches: merge-tree, ancestry, diff-stats, and `wt switch` preview renders
+- **Hints** — one-time hints already shown in this repo
+- **Previous branch** — the `wt switch -` target, re-recorded on the next switch
+
+`cache clear` drops all of the above with no prompt. It re-shows one-time hints and forgets the `wt switch -` target until the next switch — both repopulate on their own.
+
+Without a subcommand, runs `get`.
+
+### Examples
+
+Show cache contents:
+{{ terminal(cmd="wt config state cache") }}
+
+Drop all caches:
+{{ terminal(cmd="wt config state cache clear") }}
+
+### Command reference
+
+{% terminal() %}
+wt config state cache - Regenerable caches
+
+Usage: <b><span class=c>wt config state cache</span></b> <span class=c>[OPTIONS]</span> <span class=c>[COMMAND]</span>
+
+<b><span class=g>Commands:</span></b>
+  <b><span class=c>get</span></b>    Show cache contents
+  <b><span class=c>clear</span></b>  Drop all caches
+
+<b><span class=g>Options:</span></b>
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Output:</span></b>
+      <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
+          Output format (text, json) [default: text]
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
@@ -832,7 +891,11 @@ Useful in scripts to avoid hardcoding `main` or `master`:
 
 {{ terminal(cmd="git rebase $(wt config state default-branch)") }}
 
+In a hook or alias template, prefer the `{{ default_branch }}` [template variable](@/hook.md#template-variables); `$(wt config state default-branch)` is for plain shell scripts.
+
 Without a subcommand, runs `get`. Use `set` to override, or `clear` then `get` to re-detect.
+
+`default-branch get` resolves the value and caches it on a miss; the aggregate `wt config state get` only reports the cache (read-only), so it can show `(none)` until something populates it.
 
 ### Detection
 
@@ -850,6 +913,8 @@ The local inference fallback uses these heuristics in order:
 - For bare repos or empty repos, checks `symbolic-ref HEAD`
 - Checks `git config init.defaultBranch`
 - Looks for common names: `main`, `master`, `develop`, `trunk`
+
+If none of these match, detection fails; set it explicitly with `wt config state default-branch set BRANCH`.
 
 ### Command reference
 
@@ -990,6 +1055,8 @@ Usage: <b><span class=c>wt config state logs</span></b> <span class=c>[OPTIONS]<
 ## wt config state ci-status
 
 CI status cache.
+
+**Deprecated** — the CI status cache is now part of [`wt config state cache`](@/config.md#wt-config-state-cache). This subcommand still works but prints a deprecation notice.
 
 Caches GitHub/GitLab CI status for display in [`wt list`](@/list.md#ci-status).
 

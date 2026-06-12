@@ -64,6 +64,8 @@ Usage: [1m[36mwt config state previous-branch[0m [36m[OPTIONS][0m [36m[COM
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
 
+[1mDeprecated[0m — the previous branch is now part of [2mwt config state cache[0m. This subcommand still works but prints a deprecation notice.
+
 Enables [2mwt switch -[0m to return to the previous worktree, similar to [2mcd -[0m or [2mgit checkout -[0m.
 
 [1m[32mHow it works[0m

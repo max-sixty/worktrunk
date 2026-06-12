@@ -81,7 +81,7 @@ Create user config file with documented examples:
 
 Create project config file ([2m.config/wt.toml[0m) for hooks:
 
-[107m [0m [2m[0m[2m[34mwt[0m[2m config create [0m[2m[36m--project[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config create [0m[2m[36m--project[0m
 
 Show current configuration and file locations:
 
@@ -135,6 +135,8 @@ Controls where new worktrees are created.
 - [2m{{ branch | sanitize }}[0m — filesystem-safe: [2m/[0m and [2m\[0m become [2m-[0m (e.g., [2mfeature-auth[0m)
 - [2m{{ branch | sanitize_db }}[0m — database-safe: lowercase, underscores, hash suffix (e.g., [2mfeature_auth_x7k[0m)
 - [2m{{ branch | codename(2) }}[0m — deterministic friendly name from a ~1.26M-combo pool (e.g., [2mmalleable-opah[0m)
+
+This is a smaller set than the variables hooks and aliases get.
 
 [1mExamples[0m for repo at [2m~/code/myproject[0m, branch [2mfeature/auth[0m:
 
