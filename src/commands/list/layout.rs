@@ -515,6 +515,45 @@ pub struct LayoutConfig {
     pub status_position_mask: super::model::PositionMask,
 }
 
+/// `Send + Sync` snapshot of the column geometry: `(kind, start, width)` per
+/// visible column, in display order. `LayoutConfig` itself can't cross
+/// threads, so renderers running outside `collect` — the picker's `--prs`
+/// thread — take this snapshot to place their cells on the same grid as the
+/// worktree rows.
+#[derive(Clone, Debug, Default)]
+pub struct ColumnGrid {
+    pub columns: Vec<GridColumn>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct GridColumn {
+    pub kind: ColumnKind,
+    pub start: usize,
+    pub width: usize,
+}
+
+impl ColumnGrid {
+    pub fn column(&self, kind: ColumnKind) -> Option<GridColumn> {
+        self.columns.iter().copied().find(|col| col.kind == kind)
+    }
+}
+
+impl LayoutConfig {
+    pub fn column_grid(&self) -> ColumnGrid {
+        ColumnGrid {
+            columns: self
+                .columns
+                .iter()
+                .map(|col| GridColumn {
+                    kind: col.kind,
+                    start: col.start,
+                    width: col.width,
+                })
+                .collect(),
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct ColumnCandidate<'a> {
     spec: &'a ColumnSpec,

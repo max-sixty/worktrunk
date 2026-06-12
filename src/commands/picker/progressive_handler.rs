@@ -58,11 +58,21 @@ pub(super) struct PickerHandler {
     /// to fan out the bulk preview pre-compute for items 1..N. Set once
     /// (`OnceLock`) because skeletons fire exactly once per collect.
     pub(super) deferred_items: OnceLock<Vec<Arc<ListItem>>>,
+    /// Handoff of the layout's column geometry to the `--prs` thread, which
+    /// renders PR rows on the same grid as the worktree rows.
+    pub(super) grid_slot: Arc<super::prs::GridSlot>,
 }
 
 impl PickerProgressHandler for PickerHandler {
-    fn on_skeleton(&self, items: Vec<ListItem>, rendered: Vec<String>, header: StyledLine) {
+    fn on_skeleton(
+        &self,
+        items: Vec<ListItem>,
+        rendered: Vec<String>,
+        header: StyledLine,
+        grid: crate::commands::list::layout::ColumnGrid,
+    ) {
         debug_assert_eq!(items.len(), rendered.len());
+        self.grid_slot.set(grid);
 
         let mut slots: Vec<Arc<Mutex<String>>> = Vec::with_capacity(items.len());
         let mut skim_items: Vec<Arc<dyn SkimItem>> = Vec::with_capacity(items.len() + 1);
@@ -201,6 +211,7 @@ mod tests {
             summary_hint: Some("disabled".to_string()),
             stashed_warnings: Arc::new(Mutex::new(Vec::new())),
             deferred_items: OnceLock::new(),
+            grid_slot: Arc::new(super::super::prs::GridSlot::new()),
         };
         (handler, test, rx)
     }
@@ -209,6 +220,10 @@ mod tests {
         let mut line = StyledLine::new();
         line.push_raw(text);
         line
+    }
+
+    fn grid() -> crate::commands::list::layout::ColumnGrid {
+        crate::commands::list::layout::ColumnGrid::default()
     }
 
     /// Skeleton → update → reveal: verifies that each event writes through
@@ -224,7 +239,7 @@ mod tests {
         ];
         let rendered = vec!["skel-one".to_string(), "skel-two".to_string()];
 
-        handler.on_skeleton(items, rendered, header("hdr"));
+        handler.on_skeleton(items, rendered, header("hdr"), grid());
 
         // Header + 2 items sent to skim.
         let received: Vec<Arc<dyn SkimItem>> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
@@ -262,6 +277,7 @@ mod tests {
             items,
             vec!["skel-a".into(), "skel-b".into()],
             header("Branch Status"),
+            grid(),
         );
 
         let received: Vec<Arc<dyn SkimItem>> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
@@ -312,7 +328,7 @@ mod tests {
         ];
         let rendered = vec!["s1".into(), "s2".into(), "s3".into()];
 
-        handler.on_skeleton(items, rendered, header("hdr"));
+        handler.on_skeleton(items, rendered, header("hdr"), grid());
         handler.orchestrator.wait_for_idle();
 
         // Static Summary hint primed for every item at skeleton time.
@@ -405,7 +421,7 @@ mod tests {
         // left to defer; on_collect_complete must not add any entries.
         let (handler, _test, _rx) = make_handler();
         let items = vec![ListItem::new_branch("aaa".into(), "solo".into())];
-        handler.on_skeleton(items, vec!["s1".into()], header("hdr"));
+        handler.on_skeleton(items, vec!["s1".into()], header("hdr"), grid());
         handler.orchestrator.wait_for_idle();
         let before = handler.preview_cache.iter().count();
         for mode in [

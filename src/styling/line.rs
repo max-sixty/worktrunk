@@ -79,6 +79,13 @@ impl StyledString {
         self.text.ansi_strip().width()
     }
 
+    /// Visual width under CJK semantics, where ambiguous-width characters
+    /// (such as `…`) count as 2 columns. Skim measures lines this way when
+    /// deciding whether to repaint the trailing columns as `..`.
+    pub fn width_cjk(&self) -> usize {
+        self.text.ansi_strip().width_cjk()
+    }
+
     /// Renders to a string with ANSI escape codes
     pub fn render(&self) -> String {
         if let Some(style) = &self.style {
@@ -131,6 +138,11 @@ impl StyledLine {
     /// Returns the total visual width
     pub fn width(&self) -> usize {
         self.segments.iter().map(|s| s.width()).sum()
+    }
+
+    /// Total visual width under CJK semantics — see [`StyledString::width_cjk`].
+    pub fn width_cjk(&self) -> usize {
+        self.segments.iter().map(|s| s.width_cjk()).sum()
     }
 
     /// Renders the entire line with ANSI escape codes

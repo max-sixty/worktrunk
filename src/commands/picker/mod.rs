@@ -544,12 +544,15 @@ pub fn handle_picker(
 
     // List width depends on the preview position. Right splits the terminal
     // ~50/50; Down gives the list the full width. Passed to `collect` so
-    // the skeleton layout matches the picker's actual render width.
+    // the skeleton layout matches the picker's actual render width. Skim
+    // prefixes every line with a 2-column cursor gutter ("> "), so rows that
+    // use the full width would otherwise spill into its ".." truncation.
     let terminal_width = crate::display::terminal_width();
     let skim_list_width = match state.initial_layout {
         PreviewLayout::Right => terminal_width / 2,
         PreviewLayout::Down => terminal_width,
-    };
+    }
+    .saturating_sub(2);
 
     // Estimate item count for the preview window spec (only the Down
     // layout depends on it). Every row over MAX_VISIBLE_ITEMS is a no-op
@@ -727,6 +730,10 @@ pub fn handle_picker(
     // `Skim::run_with` returns and stderr is safe again).
     let stashed_warnings: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
 
+    // Column-geometry handoff: the collect thread fills it at skeleton time,
+    // the `--prs` thread reads it to align PR rows with the worktree rows.
+    let grid_slot = Arc::new(prs::GridSlot::new());
+
     let handler: Arc<dyn collect::PickerProgressHandler> =
         Arc::new(progressive_handler::PickerHandler {
             tx: tx.clone(),
@@ -739,6 +746,7 @@ pub fn handle_picker(
             summary_hint,
             stashed_warnings: Arc::clone(&stashed_warnings),
             deferred_items: std::sync::OnceLock::new(),
+            grid_slot: Arc::clone(&grid_slot),
         });
 
     // Spawn collect on a background thread. The handler holds the only
@@ -780,11 +788,18 @@ pub fn handle_picker(
         let prs_tx = tx.clone();
         let prs_repo = repo.clone();
         let prs_warnings = Arc::clone(&stashed_warnings);
+        let prs_grid = Arc::clone(&grid_slot);
         Some(
             std::thread::Builder::new()
                 .name("picker-prs".into())
                 .spawn(move || {
-                    prs::stream_open_prs(&prs_repo, skim_list_width, &prs_tx, &prs_warnings);
+                    prs::stream_open_prs(
+                        &prs_repo,
+                        skim_list_width,
+                        &prs_tx,
+                        &prs_warnings,
+                        &prs_grid,
+                    );
                 })
                 .context("Failed to spawn picker-prs thread")?,
         )

@@ -424,12 +424,15 @@ pub trait PickerProgressHandler: Send + Sync {
     /// before any task results arrive. `rendered` is one entry per item,
     /// with fast fields (branch, path, head) populated and blank
     /// placeholders for slow cells. `header` is the column-header line;
-    /// the handler calls `render()` / `plain_text()` as needed.
+    /// the handler calls `render()` / `plain_text()` as needed. `grid` is
+    /// the layout's column geometry, for rows rendered outside collect
+    /// (the picker's `--prs` rows align their cells to it).
     fn on_skeleton(
         &self,
         items: Vec<super::model::ListItem>,
         rendered: Vec<String>,
         header: worktrunk::styling::StyledLine,
+        grid: super::layout::ColumnGrid,
     );
 
     /// Fired after a single task result updates row `idx`. `rendered` is the
@@ -1138,7 +1141,12 @@ pub fn collect(
             .iter()
             .map(|item| layout.render_skeleton_row(item, placeholder).render())
             .collect();
-        handler.on_skeleton(all_items.clone(), skeletons, layout.render_header_line());
+        handler.on_skeleton(
+            all_items.clone(),
+            skeletons,
+            layout.render_header_line(),
+            layout.column_grid(),
+        );
         // Mirror the `wt list` progressive-table marker so `wt-perf phases`
         // sees the same boundary across both commands.
         worktrunk::trace::instant("Skeleton rendered");
