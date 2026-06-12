@@ -424,7 +424,7 @@ pub(crate) struct ListArgs {
 
 #[derive(Args)]
 pub(crate) struct RemoveArgs {
-    /// Branch name [default: current]
+    /// Branch name or worktree path [default: current]
     #[arg(add = crate::completion::local_branches_completer())]
     pub(crate) branches: Vec<String>,
 

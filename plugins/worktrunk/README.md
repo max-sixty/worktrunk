@@ -2,6 +2,9 @@
 
 Git worktree management CLI integration with activity tracking.
 
+Requires the `wt` CLI ([worktrunk.dev](https://worktrunk.dev)) and `jq` (used
+by the worktree-lifecycle hooks).
+
 ## Features
 
 1. **Configuration skill** — Guides LLM-powered commit message setup, project hooks (pre-start, pre-merge), and worktree path customization
@@ -26,4 +29,4 @@ The skill configures `.config/wt.toml` with project hooks. Pre-start hooks run w
 
 **Start work in a fresh worktree**
 
-`/wt-switch-create fix-auth Investigate the 5-minute session timeout` creates a `fix-auth` worktree in worktrunk's normal sibling layout (`<repo>.fix-auth/`), switches the session into it, and starts the task there. On session exit the worktree is offered for removal — a worktree with uncommitted changes is kept rather than removed.
+`/wt-switch-create fix-auth -- Investigate the 5-minute session timeout` creates a `fix-auth` worktree in worktrunk's normal sibling layout (`<repo>.fix-auth/`), switches the session into it, and starts the task there. On session exit the worktree is offered for removal — a worktree with uncommitted changes is kept rather than removed.
