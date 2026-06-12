@@ -23,6 +23,7 @@ pub(crate) mod pipeline_spec;
 pub(crate) mod process;
 pub(crate) mod project_config;
 mod relocate;
+pub(crate) mod remove;
 pub(crate) mod repository_ext;
 mod run_pipeline;
 pub(crate) mod statusline;
@@ -55,6 +56,7 @@ pub(crate) use list::handle_list;
 pub(crate) use merge::{MergeFlagOverrides, MergeOptions, handle_merge};
 #[cfg(unix)]
 pub(crate) use picker::handle_picker;
+pub(crate) use remove::handle_remove_command;
 pub(crate) use repository_ext::RemoveTarget;
 pub(crate) use run_pipeline::run_pipeline;
 pub(crate) use step::{
@@ -63,7 +65,7 @@ pub(crate) use step::{
     step_relocate, step_show_squash_prompt, step_tether,
 };
 pub(crate) use worktree::{
-    SwitchOptions, is_worktree_at_expected_path, resolve_worktree_arg, run_switch,
+    handle_switch_command, is_worktree_at_expected_path, resolve_worktree_arg,
     worktree_display_name,
 };
 
@@ -72,6 +74,28 @@ pub(crate) use worktrunk::shell::Shell;
 
 use color_print::cformat;
 use worktrunk::styling::{eprintln, format_with_gutter};
+
+pub(crate) fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
+    match (positive, negative) {
+        (true, _) => Some(true),
+        (_, true) => Some(false),
+        _ => None,
+    }
+}
+
+#[cfg(not(unix))]
+pub(crate) fn print_windows_picker_unavailable() {
+    use worktrunk::styling::{error_message, hint_message};
+
+    eprintln!(
+        "{}",
+        error_message("Interactive picker is not available on Windows")
+    );
+    eprintln!(
+        "{}",
+        hint_message(cformat!("Specify a branch: <underline>wt switch BRANCH</>"))
+    );
+}
 
 /// Format command execution label with optional command name.
 ///

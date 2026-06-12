@@ -71,7 +71,7 @@ View or drop worktrunk's regenerable caches in one place. Everything here is reb
 
 [1m[32mWhat's cached[0m
 
-- [1mCI status[0m — GitHub/GitLab CI per branch (30–60s TTL), shown in [2mwt list[0m
+- [1mCI status[0m — GitHub/GitLab CI per branch (30–60s TTL), shown in [2mwt list[0m, plus the largest PR/MR number seen (sizes the CI column)
 - [1mSummaries[0m — LLM-generated branch summaries ([2mwt list --full[0m, [2mwt switch[0m preview)
 - [1mGit commands[0m — SHA-keyed disk caches: merge-tree, ancestry, diff-stats, and [2mwt switch[0m preview renders
 - [1mHints[0m — one-time hints already shown in this repo

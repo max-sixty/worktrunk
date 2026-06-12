@@ -19,8 +19,8 @@ use std::path::Path;
 use worktrunk::git::Repository;
 
 use super::{
-    CiBranchName, CiSource, CiStatus, MAX_PRS_TO_FETCH, PrStatus, ReviewState, is_retriable_error,
-    non_interactive_cmd, parse_json,
+    CiBranchName, CiSource, CiStatus, MAX_PRS_TO_FETCH, PrRef, PrStatus, ReviewState,
+    is_retriable_error, non_interactive_cmd, parse_json,
 };
 
 /// Get the GitLab project ID for a repository.
@@ -175,9 +175,18 @@ pub(super) fn detect_gitlab(
         info.ci_status()
     } else {
         // Found MR but couldn't fetch details - treat as error so it surfaces
-        // (not NoCI, which would imply no MR exists)
+        // (not NoCI, which would imply no MR exists). Carry the MR identity
+        // already in hand: the ⚠ stays clickable and the iid still feeds the
+        // CI column width ratchet.
         log::debug!("Could not fetch MR details for !{}", mr_entry.iid);
-        return Some(PrStatus::error());
+        return Some(PrStatus {
+            ci_status: CiStatus::Error,
+            source: CiSource::PullRequest,
+            is_stale: mr_entry.sha != local_head,
+            url: mr_entry.web_url.clone(),
+            number: Some(PrRef::mr(mr_entry.iid)),
+            review_state: mr_entry.review_state(),
+        });
     };
 
     let is_stale = mr_entry.sha != local_head;
@@ -187,6 +196,7 @@ pub(super) fn detect_gitlab(
         source: CiSource::PullRequest,
         is_stale,
         url: mr_entry.web_url.clone(),
+        number: Some(PrRef::mr(mr_entry.iid)),
         review_state: mr_entry.review_state(),
     })
 }
@@ -254,6 +264,7 @@ pub(super) fn detect_gitlab_pipeline(
         source: CiSource::Branch,
         is_stale,
         url: pipeline.web_url.clone(),
+        number: None,
         review_state: None,
     })
 }
