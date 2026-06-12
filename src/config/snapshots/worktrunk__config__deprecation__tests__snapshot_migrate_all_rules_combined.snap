@@ -20,6 +20,10 @@ expression: "migration_diff(content, &migrated)"
 +[commit.generation]
 +command = "llm -m haiku"
  
+-[ci]
++[forge]
+ platform = "github"
+ 
 -[select]
 +[switch.picker]
  pager = "delta"
@@ -36,10 +40,6 @@ expression: "migration_diff(content, &migrated)"
 -[post-create]
 +[post-start]
  server = "npm run dev"
- 
--[ci]
-+[forge]
- platform = "github"
 -
 -[projects."github.com/user/repo"]
 -approved-commands = ["npm test"]

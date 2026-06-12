@@ -550,17 +550,18 @@ struct DeprecationRule {
 /// bottom, so a row's position is both its warning-emission position and its
 /// migration position.
 ///
-/// Most rows rewrite disjoint keys, but three orderings are load-bearing:
-/// - The silent `-create` → `-start` rename precedes the `[ci]` → `[forge]`
-///   rule. The rename re-appends its key, and the fresh `[forge]` table (no
-///   position) renders after the last-visited table — renaming later would
-///   hoist `[forge]` above the renamed hook in the migrated output.
-/// - The rename also precedes the pre-hook table-form rule, so a renamed
-///   `[pre-create]` multi-entry table still gets pipeline-migrated.
+/// Most rows rewrite disjoint keys, but two orderings are load-bearing:
+/// - The silent `-create` → `-start` rename precedes the pre-hook table-form
+///   rule, so a renamed `[pre-create]` multi-entry table still gets
+///   pipeline-migrated.
 /// - `[select]` → `[switch.picker]` precedes the rules that edit keys under
 ///   `[switch]`: it moves a `timeout-ms` written under `[select]` to where
 ///   the strip rule looks, and converts an inline `switch` table to a
 ///   standard one, which the `no-cd` rule's `as_table()` match requires.
+///
+/// The `[ci]` → `[forge]` rule is order-independent: `[forge]` takes over
+/// `[ci]`'s explicit document position (see [`migrate_ci_doc`]), so its
+/// rendered placement doesn't depend on which tables other rules re-append.
 ///
 /// Adding a deprecation: a detection fn and an idempotent migration fn
 /// (one-line `any_config_table` / `for_each_config_table_mut` compositions
@@ -616,8 +617,8 @@ const DEPRECATION_RULES: &[DeprecationRule] = &[
     // hook rename is paused (see #2838) — both names load via serde aliases,
     // but in-memory migration to canonical keeps round-trip analysis
     // (`unknown_tree`) coherent for the table and array-of-tables forms,
-    // where serde aliases on the field don't cover every shape. Position is
-    // load-bearing — see the ordering notes above.
+    // where serde aliases on the field don't cover every shape. Must precede
+    // the pre-hook table-form rule — see the ordering notes above.
     DeprecationRule {
         mode: RuleMode::Silent,
         migrate: |doc| {
@@ -1053,6 +1054,15 @@ fn find_ci_section_from_doc(doc: &toml_edit::DocumentMut) -> bool {
 /// Moves `platform` from `[ci]` to `[forge]`, preserving the value.
 /// Removes `[ci]` if `platform` was its only field.
 /// Skips migration if `[forge]` already exists.
+///
+/// `[forge]` takes over `[ci]`'s document position — a fresh table has no
+/// position and would render at the end of the file instead of in the user's
+/// original spot. The `platform` entry moves wholesale (key and item), so
+/// comments attached to the line survive. When `[ci]` is fully consumed, its
+/// decor (comments and blank lines above the header) moves to `[forge]` too;
+/// when other keys keep `[ci]` alive, the decor stays there and `[forge]`
+/// renders directly after the remainder — it shares `[ci]`'s position, the
+/// position sort is stable, and `[forge]` is inserted later in visit order.
 fn migrate_ci_doc(doc: &mut toml_edit::DocumentMut) -> bool {
     // Skip if [forge] already exists
     if doc
@@ -1062,30 +1072,30 @@ fn migrate_ci_doc(doc: &mut toml_edit::DocumentMut) -> bool {
         return false;
     }
 
-    // Get platform value from [ci]
-    let platform = doc
-        .get("ci")
-        .and_then(|ci| ci.as_table())
-        .and_then(|t| t.get("platform"))
-        .and_then(|p| p.as_str())
-        .map(String::from);
-
-    let Some(platform) = platform else {
+    let Some(ci_table) = doc.get_mut("ci").and_then(|ci| ci.as_table_mut()) else {
         return false;
     };
-
-    // Remove only the migrated key; keep any other keys so we don't silently
-    // drop config that wasn't part of the migration.
-    if let Some(ci_table) = doc.get_mut("ci").and_then(|ci| ci.as_table_mut()) {
-        ci_table.remove("platform");
-        if ci_table.is_empty() {
-            doc.remove("ci");
-        }
+    // Gate before mutating: a missing or non-string platform is left untouched.
+    if ci_table
+        .get("platform")
+        .is_none_or(|p| p.as_str().is_none())
+    {
+        return false;
     }
 
-    // Create [forge] section with platform
+    // Move only the migrated entry; keep any other keys so we don't silently
+    // drop config that wasn't part of the migration.
+    let (key, item) = ci_table
+        .remove_entry("platform")
+        .expect("checked platform exists above");
     let mut forge_table = toml_edit::Table::new();
-    forge_table.insert("platform", toml_edit::value(platform));
+    forge_table.insert_formatted(&key, item);
+    forge_table.set_position(ci_table.position());
+    if ci_table.is_empty() {
+        *forge_table.decor_mut() = ci_table.decor().clone();
+        doc.remove("ci");
+    }
+
     doc.insert("forge", toml_edit::Item::Table(forge_table));
 
     true
@@ -3154,22 +3164,53 @@ args = [1, "--ok"]
     }
 
     /// `[ci]` migration only owns `platform`; other keys in the same section
-    /// must be preserved, not dropped along with the section.
+    /// must be preserved, not dropped along with the section. The new
+    /// `[forge]` lands directly after the surviving `[ci]` remainder, not at
+    /// the end of the file.
     #[test]
     fn test_ci_migration_preserves_other_keys() {
         let content = r#"[ci]
 platform = "github"
 hostname = "ghe.example"
+
+[merge]
+ff = false
 "#;
         let result = migrate_content(content);
-        assert!(
-            result.contains(r#"platform = "github""#) && result.contains("[forge]"),
-            "platform should have moved into [forge]; got:\n{result}"
-        );
-        assert!(
-            result.contains(r#"hostname = "ghe.example""#),
-            "Unrelated [ci].hostname must be preserved; got:\n{result}"
-        );
+        insta::assert_snapshot!(result, @r#"
+        [ci]
+        hostname = "ghe.example"
+
+        [forge]
+        platform = "github"
+
+        [merge]
+        ff = false
+        "#);
+    }
+
+    /// The migrated `[forge]` takes over `[ci]`'s file position — and its
+    /// decor (the comment above) when the section is fully consumed — instead
+    /// of rendering as a fresh position-less table at the end of the file.
+    /// Comments on the `platform` line itself survive the move too.
+    #[test]
+    fn test_ci_migration_keeps_section_position() {
+        let content = r#"# which forge to talk to
+[ci]
+platform = "github" # not gitlab
+
+[merge]
+ff = false
+"#;
+        let result = migrate_content(content);
+        insta::assert_snapshot!(result, @r#"
+        # which forge to talk to
+        [forge]
+        platform = "github" # not gitlab
+
+        [merge]
+        ff = false
+        "#);
     }
 
     #[test]
@@ -4461,11 +4502,11 @@ server = "npm run dev"
     }
 
     /// Every `DEPRECATION_RULES` row's migration fires on one config, pinning
-    /// cross-rule interactions the per-rule tests can't see — in particular the renamed
-    /// `[post-create]` staying above the inserted `[forge]` (the rename runs
-    /// before the `[ci]` rule; see the table's ordering notes) and a
-    /// `timeout-ms` under `[select]` being moved into `[switch.picker]` and
-    /// then stripped.
+    /// cross-rule interactions the per-rule tests can't see — in particular
+    /// the inserted `[forge]` staying in the mid-file spot where the user
+    /// wrote `[ci]` (it would render at the end without an explicit position;
+    /// see [`migrate_ci_doc`]) and a `timeout-ms` under `[select]` being
+    /// moved into `[switch.picker]` and then stripped.
     #[test]
     fn snapshot_migrate_all_rules_combined() {
         let content = r#"worktree-path = "../{{ repo_root }}.{{ branch }}"
@@ -4479,6 +4520,9 @@ lint = "cargo clippy"
 command = "llm"
 args = ["-m", "haiku"]
 
+[ci]
+platform = "github"
+
 [select]
 pager = "delta"
 timeout-ms = 500
@@ -4491,9 +4535,6 @@ no-cd = true
 
 [post-create]
 server = "npm run dev"
-
-[ci]
-platform = "github"
 
 [projects."github.com/user/repo"]
 approved-commands = ["npm test"]
