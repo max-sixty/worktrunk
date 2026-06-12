@@ -4,7 +4,7 @@ expression: "&output.combined"
 ---
 
 [36m◎[39m [36mRunning pre-merge [1mproject:format[22m[39m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'✓ Code formatting check passed'[0m[2m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'✓ Code formatting check passed'
 ✓ Code formatting check passed
 [36m◎[39m [36mRunning pre-merge [1mproject:test[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'✗ Test suite failed: 3 tests failing'[0m[2m [0m[2m[36m&&[0m[2m [0m[2m[34mexit[0m[2m 1

@@ -112,7 +112,7 @@ Merge to the default branch:
 [107m [0m [2m[0m[2m[34mwt[0m[2m merge[0m
 [107m [0m [2m[0m[2m[34m◎[0m[2m Running pre-merge project:test[0m
 [107m [0m [2m  [0m[2m[34mcargo[0m[2m nextest run[0m
-[107m [0m [2m    [0m[2m[34mFinished[0m[2m `[0m[2m[34mtest[0m[2m` profile [unoptimized + debuginfo] target([0m[2m[34ms[0m[2m) [0m[2m[35min[0m[2m [0m[2m[34m0.02s[0m[2m[0m
+[107m [0m [2m    [0m[2m[34mFinished[0m[2m `[0m[2m[34mtest[0m[2m` profile [unoptimized + debuginfo] target([0m[2m[34ms[0m[2m) [0m[2m[35min[0m[2m [0m[2m[34m0.02s[0m
 [107m [0m [2m     [0m[2m[34mSummary[0m[2m [   0.002s] 2 tests run: 2 passed, 0 skipped[0m
 [107m [0m [2m[0m[2m[34m◎[0m[2m Merging 1 commit to main @ a1b2c3d ([0m[2m[34mno[0m[2m commit/squash/rebase needed)[0m
 [107m [0m [2m  [0m[2m[34m*[0m[2m a1b2c3d feat: add hook registration[0m
@@ -128,19 +128,19 @@ Merge to a different branch:
 
 Keep the worktree after merging:
 
-[107m [0m [2m[0m[2m[34mwt[0m[2m merge [0m[2m[36m--no-remove[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m merge [0m[2m[36m--no-remove[0m
 
 Preserve commit history (no squash):
 
-[107m [0m [2m[0m[2m[34mwt[0m[2m merge [0m[2m[36m--no-squash[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m merge [0m[2m[36m--no-squash[0m
 
 Create a merge commit — semi-linear history:
 
-[107m [0m [2m[0m[2m[34mwt[0m[2m merge [0m[2m[36m--no-ff[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m merge [0m[2m[36m--no-ff[0m
 
 Skip committing/squashing (rebase still runs unless --no-rebase):
 
-[107m [0m [2m[0m[2m[34mwt[0m[2m merge [0m[2m[36m--no-commit[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m merge [0m[2m[36m--no-commit[0m
 
 [1m[32mPipeline[0m
 

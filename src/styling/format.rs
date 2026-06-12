@@ -398,9 +398,21 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
         }
     }
 
-    // Phase 2: Split into lines, wrap each, add gutters
+    // Phase 2: Split into lines, wrap each, add gutters.
+    //
+    // Phase 1 reopens dim after every highlight close (and at line starts) to
+    // restore the base style for following text. At end of line that reopened
+    // dim has nothing left to style — strip it so lines end at their content
+    // and the closing reset, with no dangling SGR open at the line break.
+    let reopened_dim = format!("{reset}{dim}");
+    let dim_open = format!("{dim}");
     styled
         .lines()
+        .map(|line| {
+            line.strip_suffix(reopened_dim.as_str())
+                .or_else(|| line.strip_suffix(dim_open.as_str()))
+                .unwrap_or(line)
+        })
         .flat_map(|line| wrap_styled_text(line, available_width))
         .map(|wrapped| format!("{gutter} {gutter:#} {wrapped}{reset}"))
         .collect::<Vec<_>>()
@@ -567,7 +579,7 @@ mod tests {
         );
         assert_snapshot!(
             format_bash_with_gutter_at_width("npm install && cargo build --release", 100),
-            @"[107m [0m [2m[0m[2m[34mnpm[0m[2m install [0m[2m[36m&&[0m[2m [0m[2m[34mcargo[0m[2m build [0m[2m[36m--release[0m[2m[0m"
+            @"[107m [0m [2m[0m[2m[34mnpm[0m[2m install [0m[2m[36m&&[0m[2m [0m[2m[34mcargo[0m[2m build [0m[2m[36m--release[0m"
         );
     }
 
