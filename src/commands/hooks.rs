@@ -29,7 +29,7 @@
 //!
 //! | Plan-backed hook | Runs in (the anchor) | Gate |
 //! |---|---|---|
-//! | `pre-merge`, `pre-remove`, `post-remove` | the feature/removed worktree | `merge::approve_merge_plan`, `main.rs`'s `approve_remove`, `step::prune::approve_prune_hooks` |
+//! | `pre-merge`, `pre-remove`, `post-remove` | the feature/removed worktree | `merge::approve_merge_plan`, `remove::handle_remove_command`'s `approve_remove`, `step::prune::approve_prune_hooks` |
 //! | `post-merge`, `post-switch` (after a removal) | the merge/removal destination | the same gates |
 //! | `pre-start`, `post-start`, `post-switch` (on switch) | the new/destination worktree | `worktree::switch::approve_switch_hooks` |
 //!
