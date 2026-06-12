@@ -180,12 +180,12 @@ pub(super) fn detect_gitlab(
         // CI column width ratchet.
         log::debug!("Could not fetch MR details for !{}", mr_entry.iid);
         return Some(PrStatus {
+            ci_status: CiStatus::Error,
             source: CiSource::PullRequest,
             is_stale: mr_entry.sha != local_head,
             url: mr_entry.web_url.clone(),
             number: Some(PrRef::mr(mr_entry.iid)),
             review_state: mr_entry.review_state(),
-            ..PrStatus::error()
         });
     };
 
