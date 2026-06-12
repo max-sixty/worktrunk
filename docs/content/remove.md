@@ -97,7 +97,7 @@ Usage: <b><span class=c>wt remove</span></b> <span class=c>[OPTIONS]</span> <spa
 
 <b><span class=g>Arguments:</span></b>
   <span class=c>[BRANCHES]...</span>
-          Branch name [default: current]
+          Branch name or worktree path [default: current]
 
 <b><span class=g>Options:</span></b>
       <b><span class=c>--no-delete-branch</span></b>

@@ -40,7 +40,7 @@ Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[BRANCHES]...[0m
 
 [1m[32mArguments:[0m
   [36m[BRANCHES]...[0m
-          Branch name [default: current]
+          Branch name or worktree path [default: current]
 
 [1m[32mOptions:[0m
       [1m[36m--no-delete-branch[0m

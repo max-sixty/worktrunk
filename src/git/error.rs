@@ -1980,6 +1980,9 @@ mod tests {
         );
     }
 
+    // The third snapshot renders a failed command through `format_bash_with_gutter`,
+    // whose output is highlighted only with the feature on.
+    #[cfg(feature = "syntax-highlighting")]
     #[test]
     fn snapshot_worktree_creation_failed() {
         let err = GitError::WorktreeCreationFailed {
