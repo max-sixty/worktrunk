@@ -16,7 +16,7 @@ Worktrunk ships a plugin for each supported agent CLI. What a plugin provides de
 | Worktree isolation | ✓ |  |  |  |
 | `/wt-switch-create` command | ✓ |  |  |  |
 
-The configuration skill is documentation the agent reads to help set up LLM commits, hooks, and troubleshooting. Activity tracking shows which worktrees have running sessions. Worktree isolation and `/wt-switch-create` need worktree-lifecycle hooks that only Claude Code exposes, so Codex, OpenCode, and Gemini users invoke `wt switch --create` and `wt remove` directly. Codex omits activity tracking because its hooks have no turn-end event, so a 🤖 marker could never clear back to 💬.
+The configuration skill is documentation the agent reads to help set up LLM commits, hooks, and troubleshooting. Activity tracking shows which worktrees have running sessions. Worktree isolation needs worktree-lifecycle hooks and `/wt-switch-create` needs session working-directory switching — both Claude Code-only, so Codex, OpenCode, and Gemini users invoke `wt switch --create` and `wt remove` directly. Codex omits activity tracking because its hooks have no turn-end event, so a 🤖 marker could never clear back to 💬.
 
 ## Installation
 
@@ -101,9 +101,7 @@ Claude Code agents can run in isolated worktrees (`isolation: "worktree"`). By d
 
 ## `/wt-switch-create` command (Claude Code only)
 
-`/wt-switch-create <branch> [<repo>] [-- <task>]` starts work in a fresh worktree without leaving the session. It creates (or re-enters) the named worktrunk worktree — sibling layout `<repo>.<branch>/`, not `.claude/worktrees/` — switches the session's working directory into it, then runs the task there. An optional second token names a different repository to create the worktree in; the task is whatever follows `--` (or, with no `--`, whatever follows the branch). The command rides the same `WorktreeCreate` hook as agent isolation, so the worktree gets worktrunk's naming, hooks, and lifecycle.
-
-On session exit the worktree is offered for removal via the `WorktreeRemove` hook; one with uncommitted changes is kept rather than removed.
+`/wt-switch-create [<branch>] [<repo>] [-- <task>]` starts work in a fresh worktree without leaving the session. It creates (or re-enters) a worktrunk worktree with `wt switch`, switches the session's working directory into it, then runs the task there. Every argument is optional: a missing branch name is picked from the task, a path-shaped token names a different repository, and the task is whatever follows `--` (or the trailing words, when there is no `--`). The worktree is a normal worktrunk worktree — it persists after the session and is merged or removed with `wt merge` / `wt remove` like any other.
 
 ## Statusline (Claude Code only)
 
