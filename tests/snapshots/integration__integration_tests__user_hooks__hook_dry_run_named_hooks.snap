@@ -57,6 +57,6 @@ exit_code: 0
 
 ----- stderr -----
 [2m○[22m pre-merge [1mproject:lint[22m would run:
-[107m [0m [2m[0m[2m[34mpre-commit[0m[2m run [0m[2m[36m--all-files
+[107m [0m [2m[0m[2m[34mpre-commit[0m[2m run [0m[2m[36m--all-files[0m
 [2m○[22m pre-merge [1mproject:test[22m would run:
-[107m [0m [2m[0m[2m[34mcargo[0m[2m test
+[107m [0m [2m[0m[2m[34mcargo[0m[2m test[0m

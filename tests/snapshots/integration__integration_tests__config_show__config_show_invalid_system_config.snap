@@ -29,7 +29,6 @@ info:
     OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     PSModulePath: ""
-    RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
@@ -61,7 +60,7 @@ exit_code: 0
 [107m [0m 1 | invalid = [toml
 [107m [0m   |                ^
 [107m [0m unclosed array, expected `]`
-[107m [0m [2minvalid = [toml
+[107m [0m [2minvalid = [toml[0m
 
 [36mUSER CONFIG[39m @ ~/.config/worktrunk/config.toml
 [2m↳[22m [2mEmpty file (using defaults)[22m

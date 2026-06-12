@@ -32,7 +32,6 @@ info:
     OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     PSModulePath: ""
-    RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
@@ -67,4 +66,4 @@ exit_code: 0
 [2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m
 [36m◎[39m [36mRunning post-start: project @ [1m_REPO_.feature[22m[39m
 [36m◎[39m [36mExecuting (--execute) @ [1m_REPO_.feature[22m:[39m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Execute flag'[0m[2m [0m[2m[36m>[0m[2m execute.txt
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Execute flag'[0m[2m [0m[2m[36m>[0m[2m execute.txt[0m

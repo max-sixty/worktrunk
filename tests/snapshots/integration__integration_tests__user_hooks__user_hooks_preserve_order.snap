@@ -58,13 +58,13 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎[39m [36mRunning pre-start [1muser:vscode[22m @ [1m_REPO_.feature[22m[39m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'1'[0m[2m [0m[2m[36m>>[0m[2m hook_order.txt
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'1'[0m[2m [0m[2m[36m>>[0m[2m hook_order.txt[0m
 [36m◎[39m [36mRunning pre-start [1muser:claude[22m @ [1m_REPO_.feature[22m[39m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'2'[0m[2m [0m[2m[36m>>[0m[2m hook_order.txt
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'2'[0m[2m [0m[2m[36m>>[0m[2m hook_order.txt[0m
 [36m◎[39m [36mRunning pre-start [1muser:copy[22m @ [1m_REPO_.feature[22m[39m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'3'[0m[2m [0m[2m[36m>>[0m[2m hook_order.txt
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'3'[0m[2m [0m[2m[36m>>[0m[2m hook_order.txt[0m
 [36m◎[39m [36mRunning pre-start [1muser:submodule[22m @ [1m_REPO_.feature[22m[39m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'4'[0m[2m [0m[2m[36m>>[0m[2m hook_order.txt
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'4'[0m[2m [0m[2m[36m>>[0m[2m hook_order.txt[0m
 [32m✓[39m [32mCreated branch [1mfeature[22m from [1mmain[22m and worktree @ [1m_REPO_.feature[22m[39m
 [2m↳[22m [2mTo customize worktree locations, run [4mwt config create[24m[22m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m

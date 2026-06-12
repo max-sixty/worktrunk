@@ -95,7 +95,7 @@ Branch: main
 </context>
 
 [36mCOMMAND[39m
-[107m [0m [2m[0m[2m[34msh[0m[2m [0m[2m[36m-c[0m[2m [0m[2m[32m'cat >/dev/null && echo '[0m[2m\'[0m[2m[32m'feat: add new_file'[0m[2m\'[0m[2m[32m''
+[107m [0m [2m[0m[2m[34msh[0m[2m [0m[2m[36m-c[0m[2m [0m[2m[32m'cat >/dev/null && echo '[0m[2m\'[0m[2m[32m'feat: add new_file'[0m[2m\'[0m[2m[32m''[0m
 
 [36mMESSAGE[39m
 [107m [0m [1mfeat: add new_file[22m

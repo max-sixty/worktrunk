@@ -56,6 +56,6 @@ success: true
 exit_code: 0
 ----- stdout -----
 [2m○[22m Alias [1mdeploy[22m (project):
-[107m [0m [2m[0m[2m[34mmake[0m[2m deploy BRANCH=[0m[2m[32m{{[0m[2m branch [0m[2m[32m}}
+[107m [0m [2m[0m[2m[34mmake[0m[2m deploy BRANCH=[0m[2m[32m{{[0m[2m branch [0m[2m[32m}}[0m
 
 ----- stderr -----

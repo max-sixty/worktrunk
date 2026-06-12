@@ -70,6 +70,6 @@ echo '\''line3'\'''[24m[22m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m
 [36m◎[39m [36mExecuting (--execute) @ [1m_REPO_.multiline-test[22m:[39m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'line1'
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'line2'
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'line3'
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'line1'[0m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'line2'[0m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'line3'[0m

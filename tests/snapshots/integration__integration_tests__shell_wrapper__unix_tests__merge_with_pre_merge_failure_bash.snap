@@ -4,10 +4,11 @@ expression: "&output.combined"
 ---
 
 [36m◎[39m [36mRunning pre-merge [1mproject:format[22m[39m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'✓ Code formatting check passed'
-✓ Code formatting check passed
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'✓ Code formatting check passed'[0m
+[0m✓ Code formatting check passed
 [36m◎[39m [36mRunning pre-merge [1mproject:test[22m[39m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'✗ Test suite failed: 3 tests failing'[0m[2m [0m[2m[36m&&[0m[2m [0m[2m[34mexit[0m[2m 1
-✗ Test suite failed: 3 tests failing
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'✗ Test suite failed: 3 tests failing'[0m[2m [0m[2m[36m&&[0m[2m [0m[2m[34mexit[0m[2m 1[0m
+[0m✗ Test suite failed: 3 tests failing
 [31m✗[39m [31mpre-merge command failed: [1mtest[22m: exit status: 1[39m
 [2m↳[22m [2mTo skip pre-merge hooks, re-run with [4m--no-hooks[24m[22m
+[0m

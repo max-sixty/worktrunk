@@ -55,15 +55,15 @@ success: true
 exit_code: 0
 ----- stdout -----
 [2m○[22m Alias [1mdeploy[22m (user):
-[107m [0m [2m[0m[2m[34mecho[0m[2m from user
+[107m [0m [2m[0m[2m[34mecho[0m[2m from user[0m
 [2m○[22m Alias [1mdeploy[22m (project):
-[107m [0m [2m[0m[2m[34mecho[0m[2m from project
+[107m [0m [2m[0m[2m[34mecho[0m[2m from project[0m
 [2m○[22m Alias [1mgreet[22m (user):
-[107m [0m [2m[0m[2m[34mecho[0m[2m hi [0m[2m[32m{{[0m[2m branch [0m[2m[32m}}
+[107m [0m [2m[0m[2m[34mecho[0m[2m hi [0m[2m[32m{{[0m[2m branch [0m[2m[32m}}[0m
 [2m○[22m Alias [1mlist[22m (project):
-[107m [0m [2m[0m[2m[34mecho[0m[2m custom list
+[107m [0m [2m[0m[2m[34mecho[0m[2m custom list[0m
 [2m○[22m Alias [1monly-project[22m (project):
-[107m [0m [2m[0m[2m[34mecho[0m[2m p
+[107m [0m [2m[0m[2m[34mecho[0m[2m p[0m
 
 ----- stderr -----
 [33m▲[39m [33mAlias [1mlist[22m is shadowed by built-in [1mwt list[22m[39m

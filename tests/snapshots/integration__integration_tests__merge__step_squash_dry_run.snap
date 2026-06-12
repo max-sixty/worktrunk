@@ -102,7 +102,7 @@ index 0000000..9f8f8ac
 </diff>
 
 [36mCOMMAND[39m
-[107m [0m [2m[0m[2m[34msh[0m[2m [0m[2m[36m-c[0m[2m [0m[2m[32m'cat >/dev/null && echo '[0m[2m\'[0m[2m[32m'feat: combined feature work'[0m[2m\'[0m[2m[32m''
+[107m [0m [2m[0m[2m[34msh[0m[2m [0m[2m[36m-c[0m[2m [0m[2m[32m'cat >/dev/null && echo '[0m[2m\'[0m[2m[32m'feat: combined feature work'[0m[2m\'[0m[2m[32m''[0m
 
 [36mMESSAGE[39m
 [107m [0m [1mfeat: combined feature work[22m

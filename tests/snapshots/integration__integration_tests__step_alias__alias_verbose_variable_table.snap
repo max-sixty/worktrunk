@@ -75,6 +75,7 @@ hello world
 [107m [0m args                  = world
 [36m◎[39m [36mRunning alias [1mgreet[22m[39m
 [2m○[22m Expanding [1mgreet[22m
-[107m [0m [2m[0m[2m[34mecho[0m[2m hello [0m[2m[32m{{[0m[2m args [0m[2m[32m}}
+[107m [0m [2m[0m[2m[34mecho[0m[2m hello [0m[2m[32m{{[0m[2m args [0m[2m[32m}}[0m
 [107m [0m [2m→[22m
-[107m [0m [2m[0m[2m[34mecho[0m[2m hello world
+[107m [0m [2m[0m[2m[34mecho[0m[2m hello world[0m
+[0m

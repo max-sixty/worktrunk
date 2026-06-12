@@ -56,11 +56,11 @@ success: true
 exit_code: 0
 ----- stdout -----
 [2m○[22m Alias [1mrelease[22m (project):
-[107m [0m [2m# install
-[107m [0m [2m[0m[2m[34mnpm[0m[2m install
-[107m [0m [2m# build
-[107m [0m [2m[0m[2m[34mnpm[0m[2m run build
-[107m [0m [2m# lint
-[107m [0m [2m[0m[2m[34mnpm[0m[2m run lint
+[107m [0m [2m# install[0m
+[107m [0m [2m[0m[2m[34mnpm[0m[2m install[0m
+[107m [0m [2m# build[0m
+[107m [0m [2m[0m[2m[34mnpm[0m[2m run build[0m
+[107m [0m [2m# lint[0m
+[107m [0m [2m[0m[2m[34mnpm[0m[2m run lint[0m
 
 ----- stderr -----

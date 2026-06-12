@@ -32,7 +32,6 @@ info:
     OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     PSModulePath: ""
-    RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
@@ -66,4 +65,5 @@ exit_code: 0
 [2m↳[22m [2mComment at [4mhttps://github.com/max-sixty/worktrunk/issues/2860[24m if the new single-program form would make a workflow worse; to run this command line unchanged, pass it to a shell: [4m--execute fish -- -c 'set -lx FOO bar; echo $FOO'[24m[22m
 [32m✓[39m [32mCreated branch [1mdep-fish[22m from [1mmain[22m and worktree @ [1m_REPO_.dep-fish[22m[39m
 [36m◎[39m [36mExecuting (--execute):[39m
-[107m [0m [2m[0m[2m[34mset[0m[2m [0m[2m[36m-lx[0m[2m FOO bar; [0m[2m[34mecho[0m[2m [0m[2m[36m$[0m[2mFOO
+[107m [0m [2m[0m[2m[34mset[0m[2m [0m[2m[36m-lx[0m[2m FOO bar; [0m[2m[34mecho[0m[2m [0m[2m[36m$[0m[2mFOO[0m
+[0m
