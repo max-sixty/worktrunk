@@ -339,12 +339,10 @@ fn render_planned(
 ) -> anyhow::Result<Vec<SourcedStep>> {
     let mut out = Vec::new();
     for (source, cfg) in entries {
-        let is_pipeline = cfg.is_pipeline();
         for step in prepare_steps(cfg, ctx, extra_vars, hook_type, *source)? {
             out.push(SourcedStep {
                 step,
                 source: *source,
-                is_pipeline,
             });
         }
     }
