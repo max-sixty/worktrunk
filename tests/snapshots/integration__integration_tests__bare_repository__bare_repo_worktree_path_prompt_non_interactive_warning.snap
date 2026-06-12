@@ -7,25 +7,15 @@ info:
     - "--create"
     - feature
   env:
-    CLICOLOR_FORCE: ""
     COLUMNS: "500"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
-    GIT_COMMON_DIR: ""
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
-    GIT_DIR: ""
-    GIT_EDITOR: ""
-    GIT_INDEX_FILE: ""
-    GIT_OBJECT_DIRECTORY: ""
     GIT_TERMINAL_PROMPT: "0"
-    GIT_WORK_TREE: ""
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
-    NO_COLOR: ""
-    PSModulePath: ""
-    SHELL: ""
     TERM: alacritty
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"

@@ -449,10 +449,9 @@ Setup-side path-redaction placeholders in the strip list (`add_placeholder_ansi_
 block. New or reordered env lines split into two cases — check the *value*
 before dismissing:
 
-- **Cosmetic (accept silently):** value is identical on every machine — `""`,
-  a deterministic literal (`"0"`, `C`), or an already-redacted placeholder
-  (`[TEST_HOME]`). A `NO_COLOR: ""` line appearing where it didn't before is
-  drift, not a bug.
+- **Cosmetic (accept silently):** value is identical on every machine — a
+  deterministic literal (`"0"`, `C`) or an already-redacted placeholder
+  (`[TEST_HOME]`).
 - **A leak (must fix):** value is host/platform/run-specific — a temp path
   (`/var/folders/…`, `/tmp/…`), `$HOME`/`$USER`, a PID, a timestamp. It will
   diff spuriously when the snapshot is regenerated elsewhere. Redact it with
@@ -460,6 +459,14 @@ before dismissing:
   `add_standard_env_redactions` (bound by the `repo` rstest fixture). Note
   `add_filter` does **not** work on the `env:` block — it only substitutes on
   captured snapshot content; use a redaction.
+
+Empty-valued entries never appear: a dynamic redaction in
+`add_standard_env_redactions` drops them. insta-cmd records `env_remove` as
+`VAR: ""` (indistinguishable from a deliberate set-to-empty), and the
+isolation scrub removes whatever `GIT_*`/`WORKTRUNK_*` keys exist in the
+*host* environment — so recording removals would leak host state (a developer
+with `GIT_EDITOR` exported would stamp `GIT_EDITOR: ""` into every
+regenerated header).
 
 The `args:` block has the same property: a repo path passed as a CLI argument
 (`wt -C <root>`) is covered by the `.args[]` redaction in

@@ -559,6 +559,29 @@ pub fn shell_command(
 /// These redact volatile metadata captured by insta-cmd in the `info` block.
 /// Called by all snapshot settings helpers for consistency.
 pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
+    // Drop empty-valued entries from the recorded `env:` block. insta-cmd
+    // records `env_remove` calls as `VAR: ""` (`get_envs()` yields None for
+    // removals, rendered via `unwrap_or("")`), so an empty value can't be
+    // told apart from a deliberate set-to-empty. Worse, the harness's
+    // isolation scrub (`isolate_subprocess_env`) removes whatever
+    // GIT_*/WORKTRUNK_* keys exist in the *host* environment, so recording
+    // the removals leaks host state into committed snapshots (a developer
+    // with `GIT_EDITOR` exported regenerates every header with a
+    // `GIT_EDITOR: ""` line). Empty entries carry no trustworthy signal —
+    // drop the whole class.
+    settings.add_dynamic_redaction(".env", |value, _path| {
+        if let insta::internals::Content::Map(entries) = value {
+            insta::internals::Content::Map(
+                entries
+                    .into_iter()
+                    .filter(|(_, v)| v.as_str() != Some(""))
+                    .collect(),
+            )
+        } else {
+            value
+        }
+    });
+
     settings.add_redaction(".env.GIT_CONFIG_GLOBAL", "[TEST_GIT_CONFIG]");
     settings.add_redaction(".env.WORKTRUNK_CONFIG_PATH", "[TEST_CONFIG]");
     settings.add_redaction(".env.WORKTRUNK_SYSTEM_CONFIG_PATH", "[TEST_SYSTEM_CONFIG]");
