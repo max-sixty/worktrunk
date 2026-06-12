@@ -1358,7 +1358,6 @@ fn run_pre_switch_hooks(
             HookType::PreSwitch,
             &extra_vars,
             FailureStrategy::FailFast,
-            crate::output::pre_hook_display_path(pre_ctx.worktree_path),
         )?;
     }
     Ok(())
@@ -1443,7 +1442,7 @@ fn spawn_switch_background_hooks(
     let hook_repo = Repository::at(result.path())?;
     let ctx = CommandContext::new(&hook_repo, config, branch, result.path(), yes);
 
-    let mut announcer = HookAnnouncer::new(&hook_repo, config, false);
+    let mut announcer = HookAnnouncer::new(&hook_repo, false);
     register_planned(
         &mut announcer,
         hook_plan,
@@ -1977,17 +1976,15 @@ fn validate_switch_templates(
     let user_hooks = config.hooks(repo.project_identifier().ok().as_deref());
 
     for &hook_type in switch_post_hook_types(plan.is_create()) {
-        let (user_cfg, proj_cfg) = crate::commands::hooks::lookup_hook_configs(
-            &user_hooks,
-            project_config.as_ref(),
-            hook_type,
-        );
+        let user_cfg = user_hooks.get(hook_type);
+        let proj_cfg = project_config.as_ref().and_then(|c| c.hooks.get(hook_type));
         for (source, cfg) in [("user", user_cfg), ("project", proj_cfg)] {
             if let Some(cfg) = cfg {
                 for cmd in cfg.commands() {
-                    // Skip full validation for lazy templates ({{ vars.X }}) —
-                    // they're expanded at runtime after prior pipeline steps set
-                    // the vars. Syntax is still checked by expand_commands.
+                    // Skip full validation for templates referencing {{ vars.X }} —
+                    // those values come from git config at execution time, after
+                    // prior pipeline steps set them. Syntax is still checked by
+                    // prepare_steps.
                     if template_references_var(&cmd.template, "vars") {
                         continue;
                     }

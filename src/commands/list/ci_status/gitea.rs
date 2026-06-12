@@ -120,6 +120,7 @@ pub(super) fn detect_gitea_pr(
         is_stale,
         url: Some(pr.html_url.clone()),
         number: pr.number.map(PrRef::pr),
+        review_state: None,
     })
 }
 
@@ -140,6 +141,7 @@ pub(super) fn detect_gitea_commit_status(
         is_stale: false,
         url: None,
         number: None,
+        review_state: None,
     })
 }
 

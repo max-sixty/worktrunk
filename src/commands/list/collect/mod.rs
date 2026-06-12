@@ -1065,14 +1065,17 @@ pub fn collect(
     let layout = super::layout::calculate_layout_with_width(
         &all_items,
         &effective_skip_tasks,
-        list_width.unwrap_or_else(crate::display::terminal_width),
+        list_width
+            .or_else(crate::display::terminal_width)
+            .unwrap_or(usize::MAX),
         &main_worktree.path,
         url_template.as_deref(),
         max_pr_number,
     );
 
-    // Single-line invariant: use safe width to prevent line wrapping
-    let max_width = crate::display::terminal_width();
+    // Single-line invariant: with no detectable width, an unlimited width
+    // keeps rows untruncated rather than wrapping at a guessed width
+    let max_width = crate::display::terminal_width().unwrap_or(usize::MAX);
 
     // Create collection options from skip set. `integration_targets` is
     // patched in after the parallel phase below extracts it — at this

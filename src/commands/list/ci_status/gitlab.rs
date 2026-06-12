@@ -19,7 +19,8 @@ use std::path::Path;
 use worktrunk::git::Repository;
 
 use super::{
-    CiBranchName, CiSource, CiStatus, MAX_PRS_TO_FETCH, PrRef, PrStatus, is_retriable_error,
+    CiBranchName, CiSource, CiStatus, MAX_PRS_TO_FETCH, PrRef, PrStatus, ReviewState,
+    is_retriable_error,
     non_interactive_cmd, parse_json,
 };
 
@@ -184,6 +185,7 @@ pub(super) fn detect_gitlab(
             is_stale: mr_entry.sha != local_head,
             url: mr_entry.web_url.clone(),
             number: Some(PrRef::mr(mr_entry.iid)),
+            review_state: mr_entry.review_state(),
             ..PrStatus::error()
         });
     };
@@ -196,6 +198,7 @@ pub(super) fn detect_gitlab(
         is_stale,
         url: mr_entry.web_url.clone(),
         number: Some(PrRef::mr(mr_entry.iid)),
+        review_state: mr_entry.review_state(),
     })
 }
 
@@ -263,6 +266,7 @@ pub(super) fn detect_gitlab_pipeline(
         is_stale,
         url: pipeline.web_url.clone(),
         number: None,
+        review_state: None,
     })
 }
 
@@ -284,6 +288,26 @@ struct GitLabMrListEntry {
     pub source_project_id: Option<u64>,
     /// URL to the MR page for clickable links
     pub web_url: Option<String>,
+    /// Draft/WIP flag (absent in older glab versions)
+    pub draft: Option<bool>,
+}
+
+impl GitLabMrListEntry {
+    /// Map draft + `detailed_merge_status` to a [`ReviewState`].
+    ///
+    /// GitLab has no changes-requested equivalent in MR list data; draft and
+    /// "not_approved" (approvals required but missing) are the available
+    /// signals. Draft wins: a draft is intentionally parked, so its approval
+    /// gap shouldn't demand attention.
+    fn review_state(&self) -> Option<ReviewState> {
+        if self.draft == Some(true) {
+            return Some(ReviewState::Draft);
+        }
+        if self.detailed_merge_status.as_deref() == Some("not_approved") {
+            return Some(ReviewState::Pending);
+        }
+        None
+    }
 }
 
 /// Full MR info from `glab mr view <iid> --output json`.
@@ -365,6 +389,32 @@ impl GitLabPipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_mr_list_entry_review_state() {
+        let entry = |draft: Option<bool>, status: Option<&str>| GitLabMrListEntry {
+            iid: 1,
+            sha: "abc".into(),
+            has_conflicts: false,
+            detailed_merge_status: status.map(Into::into),
+            source_project_id: None,
+            web_url: None,
+            draft,
+        };
+
+        // Draft wins over the approval gap
+        assert_eq!(
+            entry(Some(true), Some("not_approved")).review_state(),
+            Some(ReviewState::Draft)
+        );
+        assert_eq!(
+            entry(Some(false), Some("not_approved")).review_state(),
+            Some(ReviewState::Pending)
+        );
+        // Other merge statuses carry no review signal
+        assert_eq!(entry(Some(false), Some("mergeable")).review_state(), None);
+        assert_eq!(entry(None, None).review_state(), None);
+    }
 
     #[test]
     fn test_parse_gitlab_status() {

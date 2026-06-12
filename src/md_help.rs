@@ -32,7 +32,7 @@ fn help_table_skin() -> MadSkin {
     skin.table_border_chars = &HELP_TABLE_BORDERS;
     // Render backtick-enclosed text as dimmed, matching render_inline_formatting().
     // This is needed for colorize_status_symbols() to find and recolor symbols
-    // like `●` that appear in table cells.
+    // like `#` that appear in table cells.
     skin.inline_code = CompoundStyle::with_attr(Attribute::Dim);
     skin
 }
@@ -394,6 +394,8 @@ fn colorize_status_symbols(text: &str) -> String {
     let progress = Style::new().fg_color(Some(AnsiStyleColor::Ansi(AnsiColor::Blue)));
     let disabled = Style::new().fg_color(Some(AnsiStyleColor::Ansi(AnsiColor::BrightBlack)));
     let working_tree = Style::new().fg_color(Some(AnsiStyleColor::Ansi(AnsiColor::Cyan)));
+    let changes_requested = Style::new().fg_color(Some(AnsiStyleColor::Ansi(AnsiColor::Magenta)));
+    let pending_review = Style::new().fg_color(Some(AnsiStyleColor::Ansi(AnsiColor::Cyan)));
 
     // Pattern for dimmed text (from inline `code` rendering)
     // render_inline_formatting wraps backticked text in dimmed style
@@ -426,42 +428,42 @@ fn colorize_status_symbols(text: &str) -> String {
     result = replace_dim(result, "⊟", warning);
     result = replace_dim(result, "⊞", warning);
 
-    // CI status circles: replace dimmed ● followed by color name
-    let dimmed_bullet = format!("{dim}●{dim:#}");
+    // CI legend samples: replace dimmed `#` followed by a color name
+    let dimmed_hash = format!("{dim}#{dim:#}");
     result = result
         .replace(
-            &format!("{dimmed_bullet} green"),
-            &format!("{success}●{success:#} green"),
+            &format!("{dimmed_hash} green"),
+            &format!("{success}#{success:#} green"),
         )
         .replace(
-            &format!("{dimmed_bullet} blue"),
-            &format!("{progress}●{progress:#} blue"),
+            &format!("{dimmed_hash} blue"),
+            &format!("{progress}#{progress:#} blue"),
         )
         .replace(
-            &format!("{dimmed_bullet} red"),
-            &format!("{error}●{error:#} red"),
+            &format!("{dimmed_hash} red"),
+            &format!("{error}#{error:#} red"),
         )
         .replace(
-            &format!("{dimmed_bullet} yellow"),
-            &format!("{warning}●{warning:#} yellow"),
+            &format!("{dimmed_hash} magenta"),
+            &format!("{changes_requested}#{changes_requested:#} magenta"),
         )
         .replace(
-            &format!("{dimmed_bullet} gray"),
-            &format!("{disabled}●{disabled:#} gray"),
+            &format!("{dimmed_hash} cyan"),
+            &format!("{pending_review}#{pending_review:#} cyan"),
+        )
+        .replace(
+            &format!("{dimmed_hash} yellow"),
+            &format!("{warning}#{warning:#} yellow"),
+        )
+        .replace(
+            &format!("{dimmed_hash} gray"),
+            &format!("{disabled}#{disabled:#} gray"),
         )
         // CI error indicator: ⚠ symbol (also rendered dimmed initially)
         .replace(
             &format!("{dim}⚠{dim:#} yellow"),
             &format!("{warning}⚠{warning:#} yellow"),
         );
-
-    // Legacy CI status circles (for statusline format)
-    result = result
-        .replace("● passed", &format!("{success}●{success:#} passed"))
-        .replace("● running", &format!("{progress}●{progress:#} running"))
-        .replace("● failed", &format!("{error}●{error:#} failed"))
-        .replace("● conflicts", &format!("{warning}●{warning:#} conflicts"))
-        .replace("● no-ci", &format!("{disabled}●{disabled:#} no-ci"));
 
     // Symbols that should remain dimmed are already dimmed from backtick rendering:
     // - Main state: _ (same commit), ⊂ (content integrated), ^, ↑, ↓, ↕
@@ -718,15 +720,15 @@ mod tests {
         let git_ops = colorize_status_symbols(&format!("{dim}⤴{dim:#} rebase"));
         assert_snapshot!(git_ops, @"[33m⤴[0m rebase");
 
-        // CI status: passed → green, failed → red, running → blue
-        let ci_passed = colorize_status_symbols("● passed");
-        assert_snapshot!(ci_passed, @"[32m●[0m passed");
+        // CI legend samples: dimmed `#` + color name recolors the sample
+        let ci_passed = colorize_status_symbols(&format!("{dim}#{dim:#} green"));
+        assert_snapshot!(ci_passed, @"[32m#[0m green");
 
-        let ci_failed = colorize_status_symbols("● failed");
-        assert_snapshot!(ci_failed, @"[31m●[0m failed");
+        let ci_failed = colorize_status_symbols(&format!("{dim}#{dim:#} red"));
+        assert_snapshot!(ci_failed, @"[31m#[0m red");
 
-        let ci_running = colorize_status_symbols("● running");
-        assert_snapshot!(ci_running, @"[34m●[0m running");
+        let ci_review = colorize_status_symbols(&format!("{dim}#{dim:#} magenta"));
+        assert_snapshot!(ci_review, @"[35m#[0m magenta");
     }
 
     #[test]

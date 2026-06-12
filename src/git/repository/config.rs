@@ -135,10 +135,10 @@ impl Repository {
     /// via `{{ vars.key }}`.
     ///
     /// Reads git config directly — **not** via the bulk `all_config` cache —
-    /// because lazy template expansion in hook/alias pipelines depends on
-    /// seeing writes that earlier steps made via their own `git config`
-    /// subprocesses. Those external writes don't round-trip through our
-    /// coherent `set_config_value` helper.
+    /// because hook/alias templates render at execution time and depend on
+    /// seeing writes that earlier pipeline steps made via their own
+    /// `git config` subprocesses. Those external writes don't round-trip
+    /// through our coherent `set_config_value` helper.
     pub fn vars_entries(&self, branch: &str) -> std::collections::BTreeMap<String, String> {
         let escaped = regex::escape(branch);
         let pattern = format!(r"^worktrunk\.state\.{escaped}\.vars\.");

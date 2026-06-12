@@ -342,6 +342,23 @@ pub fn pr_ref_width(number: u64) -> usize {
     2 + number.checked_ilog10().unwrap_or(0) as usize
 }
 
+/// Review state of a PR/MR.
+///
+/// The vocabulary matches Claude Code's statusline `pr.review_state` field so
+/// the two surfaces never disagree on names. A PR with no review signal at all
+/// (e.g. GitHub's `reviewDecision` is empty on repos without required
+/// reviewers and no reviews) carries `None` on [`PrStatus`], not `Pending`,
+/// so unreviewed branches keep their plain CI colors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewState {
+    Approved,
+    ChangesRequested,
+    /// Review is required before merge (e.g. branch protection) but not given yet
+    Pending,
+    Draft,
+}
+
 /// CI status from PR/MR or branch workflow
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrStatus {
@@ -359,6 +376,9 @@ pub struct PrStatus {
     /// number in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub number: Option<PrRef>,
+    /// Review state of the PR/MR (absent when the forge reports no review signal)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub review_state: Option<ReviewState>,
 }
 
 impl CiStatus {
@@ -382,10 +402,31 @@ impl CiStatus {
 }
 
 impl PrStatus {
-    /// Get the style for this PR status (color + optional dimming for stale)
+    /// Display color merging CI status with review state.
+    ///
+    /// Review states slot in where their required action ranks: conflicts and
+    /// fetch errors still lead; changes-requested outranks a running build
+    /// because waiting can't clear it; an outstanding required review only
+    /// recolors an otherwise green or quiet branch. Cool colors mean waiting
+    /// (blue: on CI, cyan: on a reviewer), warm colors mean act.
+    pub fn color(&self) -> AnsiColor {
+        match (self.ci_status, self.review_state) {
+            (CiStatus::Conflicts | CiStatus::Error, _) => self.ci_status.color(),
+            (_, Some(ReviewState::ChangesRequested)) => AnsiColor::Magenta,
+            (CiStatus::Running | CiStatus::Failed, _) => self.ci_status.color(),
+            (_, Some(ReviewState::Pending)) => AnsiColor::Cyan,
+            _ => self.ci_status.color(),
+        }
+    }
+
+    /// Get the style for this PR status (color + dimming for stale/draft)
     pub fn style(&self) -> Style {
-        let style = Style::new().fg_color(Some(Color::Ansi(self.ci_status.color())));
-        if self.is_stale { style.dimmed() } else { style }
+        let style = Style::new().fg_color(Some(Color::Ansi(self.color())));
+        if self.is_stale || self.review_state == Some(ReviewState::Draft) {
+            style.dimmed()
+        } else {
+            style
+        }
     }
 
     /// Get the indicator symbol for this status
@@ -449,6 +490,7 @@ impl PrStatus {
             is_stale: false,
             url: None,
             number: None,
+            review_state: None,
         }
     }
 
@@ -600,6 +642,7 @@ mod tests {
             is_stale: false,
             url: None,
             number: None,
+            review_state: None,
         };
         assert_eq!(pr_passed.indicator(), "#");
 
@@ -609,6 +652,7 @@ mod tests {
             is_stale: false,
             url: None,
             number: None,
+            review_state: None,
         };
         assert_eq!(branch_running.indicator(), "#");
 
@@ -618,6 +662,7 @@ mod tests {
             is_stale: false,
             url: None,
             number: None,
+            review_state: None,
         };
         assert_eq!(error_status.indicator(), "⚠");
     }
@@ -632,6 +677,7 @@ mod tests {
             is_stale: false,
             url: Some("https://github.com/owner/repo/pull/123".to_string()),
             number: Some(PrRef::pr(123)),
+            review_state: None,
         };
 
         // Number fits → PR reference, hyperlinked when supported
@@ -724,10 +770,74 @@ mod tests {
             is_stale: true,
             url: None,
             number: None,
+            review_state: None,
         };
         let style = stale.style();
         // Just verify it doesn't panic and returns a style
         let _ = format!("{style}test{style:#}");
+    }
+
+    #[test]
+    fn test_pr_status_color_merges_review_state() {
+        let pr = |ci_status, review_state| PrStatus {
+            ci_status,
+            source: CiSource::PullRequest,
+            is_stale: false,
+            url: None,
+            review_state,
+        };
+
+        // Changes-requested outranks running and passed — waiting can't clear it
+        assert_eq!(
+            pr(CiStatus::Running, Some(ReviewState::ChangesRequested)).color(),
+            AnsiColor::Magenta
+        );
+        assert_eq!(
+            pr(CiStatus::Passed, Some(ReviewState::ChangesRequested)).color(),
+            AnsiColor::Magenta
+        );
+        // Conflicts and fetch errors still lead
+        assert_eq!(
+            pr(CiStatus::Conflicts, Some(ReviewState::ChangesRequested)).color(),
+            AnsiColor::Yellow
+        );
+        assert_eq!(
+            pr(CiStatus::Error, Some(ReviewState::ChangesRequested)).color(),
+            AnsiColor::Yellow
+        );
+        // An outstanding required review only recolors a green or quiet branch
+        assert_eq!(
+            pr(CiStatus::Passed, Some(ReviewState::Pending)).color(),
+            AnsiColor::Cyan
+        );
+        assert_eq!(
+            pr(CiStatus::NoCI, Some(ReviewState::Pending)).color(),
+            AnsiColor::Cyan
+        );
+        assert_eq!(
+            pr(CiStatus::Failed, Some(ReviewState::Pending)).color(),
+            AnsiColor::Red
+        );
+        assert_eq!(
+            pr(CiStatus::Running, Some(ReviewState::Pending)).color(),
+            AnsiColor::Blue
+        );
+        // Approved and absent review keep plain CI colors
+        assert_eq!(
+            pr(CiStatus::Passed, Some(ReviewState::Approved)).color(),
+            AnsiColor::Green
+        );
+        assert_eq!(pr(CiStatus::Passed, None).color(), AnsiColor::Green);
+
+        // Draft dims rather than recoloring
+        let draft = pr(CiStatus::Passed, Some(ReviewState::Draft));
+        assert_eq!(draft.color(), AnsiColor::Green);
+        assert_eq!(
+            draft.style(),
+            Style::new()
+                .fg_color(Some(Color::Ansi(AnsiColor::Green)))
+                .dimmed()
+        );
     }
 
     /// Build a synthetic non-success `Output` with the given stderr/stdout

@@ -6,7 +6,8 @@ use serde::Deserialize;
 use worktrunk::git::Repository;
 
 use super::{
-    CiBranchName, CiSource, CiStatus, MAX_PRS_TO_FETCH, PrRef, PrStatus, branch_owner_repo,
+    CiBranchName, CiSource, CiStatus, MAX_PRS_TO_FETCH, PrRef, PrStatus, ReviewState,
+    branch_owner_repo,
     non_interactive_cmd, parse_json, retriable_pr_error,
 };
 
@@ -68,7 +69,7 @@ pub(super) fn detect_github(
             "--limit",
             &MAX_PRS_TO_FETCH.to_string(),
             "--json",
-            "number,headRefOid,mergeStateStatus,statusCheckRollup,url,headRepositoryOwner",
+            "number,headRefOid,mergeStateStatus,statusCheckRollup,url,headRepositoryOwner,reviewDecision,isDraft",
         ])
         .current_dir(&repo_root)
         .run()
@@ -129,6 +130,7 @@ pub(super) fn detect_github(
         is_stale,
         url: pr_info.url.clone(),
         number: pr_info.number.map(PrRef::pr),
+        review_state: pr_info.review_state(),
     })
 }
 
@@ -195,6 +197,7 @@ pub(super) fn detect_github_commit_checks(
         is_stale: false, // We're querying by SHA, so always current
         url: None,
         number: None,
+        review_state: None,
     })
 }
 
@@ -218,6 +221,12 @@ pub(super) struct GitHubPrInfo {
     /// Used to filter PRs by source fork (see `parse_owner_repo()`).
     #[serde(rename = "headRepositoryOwner")]
     pub head_repository_owner: Option<HeadRepositoryOwner>,
+    /// GraphQL review decision: "APPROVED", "CHANGES_REQUESTED",
+    /// "REVIEW_REQUIRED", or empty when no reviews exist and none are required.
+    #[serde(rename = "reviewDecision")]
+    pub review_decision: Option<String>,
+    #[serde(rename = "isDraft")]
+    pub is_draft: Option<bool>,
 }
 
 /// Owner info for the head repository of a PR.
@@ -251,6 +260,23 @@ pub(super) struct GitHubCheck {
 }
 
 impl GitHubPrInfo {
+    /// Map `isDraft` + `reviewDecision` to a [`ReviewState`].
+    ///
+    /// Draft wins over the review decision: a draft is intentionally parked,
+    /// so its review verdict shouldn't demand attention. An empty
+    /// `reviewDecision` means no review signal and maps to `None`.
+    pub fn review_state(&self) -> Option<ReviewState> {
+        if self.is_draft == Some(true) {
+            return Some(ReviewState::Draft);
+        }
+        match self.review_decision.as_deref() {
+            Some("APPROVED") => Some(ReviewState::Approved),
+            Some("CHANGES_REQUESTED") => Some(ReviewState::ChangesRequested),
+            Some("REVIEW_REQUIRED") => Some(ReviewState::Pending),
+            _ => None,
+        }
+    }
+
     pub fn ci_status(&self) -> CiStatus {
         match &self.status_check_rollup {
             None => CiStatus::NoCI,
@@ -335,6 +361,8 @@ mod tests {
             status_check_rollup: None,
             url: None,
             head_repository_owner: None,
+            review_decision: None,
+            is_draft: None,
         };
         assert_eq!(pr.ci_status(), CiStatus::NoCI);
 
@@ -346,6 +374,8 @@ mod tests {
             status_check_rollup: Some(vec![]),
             url: None,
             head_repository_owner: None,
+            review_decision: None,
+            is_draft: None,
         };
         assert_eq!(pr.ci_status(), CiStatus::NoCI);
 
@@ -362,6 +392,8 @@ mod tests {
                 }]),
                 url: None,
                 head_repository_owner: None,
+                review_decision: None,
+                is_draft: None,
             };
             assert_eq!(pr.ci_status(), CiStatus::Running, "status={status}");
         }
@@ -378,6 +410,8 @@ mod tests {
             }]),
             url: None,
             head_repository_owner: None,
+            review_decision: None,
+            is_draft: None,
         };
         assert_eq!(pr.ci_status(), CiStatus::Running);
 
@@ -394,6 +428,8 @@ mod tests {
                 }]),
                 url: None,
                 head_repository_owner: None,
+                review_decision: None,
+                is_draft: None,
             };
             assert_eq!(pr.ci_status(), CiStatus::Failed, "conclusion={conclusion}");
         }
@@ -411,6 +447,8 @@ mod tests {
                 }]),
                 url: None,
                 head_repository_owner: None,
+                review_decision: None,
+                is_draft: None,
             };
             assert_eq!(pr.ci_status(), CiStatus::Failed, "state={state}");
         }
@@ -427,8 +465,44 @@ mod tests {
             }]),
             url: None,
             head_repository_owner: None,
+            review_decision: None,
+            is_draft: None,
         };
         assert_eq!(pr.ci_status(), CiStatus::Passed);
+    }
+
+    #[test]
+    fn test_github_pr_info_review_state() {
+        let pr = |review_decision: Option<&str>, is_draft: Option<bool>| GitHubPrInfo {
+            head_ref_oid: None,
+            merge_state_status: None,
+            status_check_rollup: None,
+            url: None,
+            head_repository_owner: None,
+            review_decision: review_decision.map(Into::into),
+            is_draft,
+        };
+
+        assert_eq!(
+            pr(Some("APPROVED"), None).review_state(),
+            Some(ReviewState::Approved)
+        );
+        assert_eq!(
+            pr(Some("CHANGES_REQUESTED"), Some(false)).review_state(),
+            Some(ReviewState::ChangesRequested)
+        );
+        assert_eq!(
+            pr(Some("REVIEW_REQUIRED"), None).review_state(),
+            Some(ReviewState::Pending)
+        );
+        // Empty decision = no review signal, not pending
+        assert_eq!(pr(Some(""), None).review_state(), None);
+        assert_eq!(pr(None, None).review_state(), None);
+        // Draft wins over the decision
+        assert_eq!(
+            pr(Some("APPROVED"), Some(true)).review_state(),
+            Some(ReviewState::Draft)
+        );
     }
 
     #[test]

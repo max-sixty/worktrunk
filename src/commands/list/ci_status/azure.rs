@@ -136,6 +136,7 @@ pub(super) fn detect_azure_pr(
         is_stale,
         url,
         number: Some(PrRef::pr(u64::from(pr.pull_request_id))),
+        review_state: None,
     })
 }
 
@@ -215,6 +216,7 @@ pub(super) fn detect_azure_pipeline(
         is_stale,
         url: web_url,
         number: None,
+        review_state: None,
     })
 }
 

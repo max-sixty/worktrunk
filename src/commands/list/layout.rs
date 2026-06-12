@@ -1370,7 +1370,7 @@ mod tests {
         let layout = calculate_layout_with_width(
             &items,
             &skip_tasks,
-            terminal_width(),
+            terminal_width().expect("COLUMNS=80 is set in .cargo/config.toml"),
             &main_worktree_path,
             None,
             None,
@@ -1482,7 +1482,7 @@ mod tests {
         let layout = calculate_layout_with_width(
             &items,
             &skip_tasks,
-            terminal_width(),
+            terminal_width().expect("COLUMNS=80 is set in .cargo/config.toml"),
             &main_worktree_path,
             None,
             None,

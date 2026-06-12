@@ -68,9 +68,9 @@ use worktrunk::git::BranchDeletionMode;
 use cli::{
     ApprovalsCommand, CacheAction, CiStatusAction, Cli, Commands, ConfigAliasCommand,
     ConfigCommand, ConfigPluginsClaudeCommand, ConfigPluginsCodexCommand, ConfigPluginsCommand,
-    ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction, HintsAction,
-    HookCommand, HookOptions, ListArgs, ListSubcommand, LogsAction, MarkerAction, MergeArgs,
-    PreviousBranchAction, RemoveArgs, StateCommand, StateWrite, StepCommand, SwitchArgs,
+    ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction, GlobalFormatFlag,
+    HintsAction, HookCommand, HookOptions, ListArgs, ListSubcommand, LogsAction, MarkerAction,
+    MergeArgs, PreviousBranchAction, RemoveArgs, StateCommand, StateWrite, StepCommand, SwitchArgs,
     SwitchFormat, VarsAction,
 };
 
@@ -260,13 +260,12 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
             } else {
                 // Approval is handled inside handle_squash (like step_commit).
                 let repo = Repository::current()?;
-                let config = UserConfig::load().context("Failed to load config")?;
                 let hooks = if verify {
                     HookGate::Run
                 } else {
                     HookGate::NoHooksFlag
                 };
-                let mut announcer = HookAnnouncer::new(&repo, &config, false);
+                let mut announcer = HookAnnouncer::new(&repo, false);
                 let format = args.format;
                 let result = handle_squash(
                     args.target.as_deref(),
@@ -461,7 +460,10 @@ fn guard_format_on_write(action_name: &str, format: SwitchFormat) -> anyhow::Res
 
 fn handle_state_command(action: StateCommand, yes: bool) -> anyhow::Result<()> {
     match action {
-        StateCommand::Cache { action, format } => {
+        StateCommand::Cache {
+            action,
+            format: GlobalFormatFlag { format },
+        } => {
             if let Some(verb) = action.as_ref().and_then(StateWrite::write_verb) {
                 guard_format_on_write(verb, format)?;
             }
@@ -493,7 +495,10 @@ fn handle_state_command(action: StateCommand, yes: bool) -> anyhow::Result<()> {
                 }
             }
         }
-        StateCommand::CiStatus { action, format } => {
+        StateCommand::CiStatus {
+            action,
+            format: GlobalFormatFlag { format },
+        } => {
             warn_state_subcommand_deprecated("ci-status");
             if let Some(verb) = action.as_ref().and_then(StateWrite::write_verb) {
                 guard_format_on_write(verb, format)?;
@@ -508,7 +513,10 @@ fn handle_state_command(action: StateCommand, yes: bool) -> anyhow::Result<()> {
                 }
             }
         }
-        StateCommand::Marker { action, format } => {
+        StateCommand::Marker {
+            action,
+            format: GlobalFormatFlag { format },
+        } => {
             if let Some(verb) = action.as_ref().and_then(StateWrite::write_verb) {
                 guard_format_on_write(verb, format)?;
             }
@@ -523,7 +531,10 @@ fn handle_state_command(action: StateCommand, yes: bool) -> anyhow::Result<()> {
                 }
             }
         }
-        StateCommand::Logs { action, format } => {
+        StateCommand::Logs {
+            action,
+            format: GlobalFormatFlag { format },
+        } => {
             if let Some(verb) = action.as_ref().and_then(StateWrite::write_verb) {
                 guard_format_on_write(verb, format)?;
             }
@@ -532,7 +543,10 @@ fn handle_state_command(action: StateCommand, yes: bool) -> anyhow::Result<()> {
                 Some(LogsAction::Clear) => handle_state_clear("logs", None, false),
             }
         }
-        StateCommand::Hints { action, format } => {
+        StateCommand::Hints {
+            action,
+            format: GlobalFormatFlag { format },
+        } => {
             warn_state_subcommand_deprecated("hints");
             if let Some(verb) = action.as_ref().and_then(StateWrite::write_verb) {
                 guard_format_on_write(verb, format)?;
@@ -1019,7 +1033,7 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                     yes,
                 )?;
 
-                let mut announcer = HookAnnouncer::new(&repo, &config, false);
+                let mut announcer = HookAnnouncer::new(&repo, false);
                 handle_remove_output(
                     &result,
                     args.foreground,
@@ -1082,7 +1096,7 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                 let show_branch =
                     plans.others.len() + plans.branch_only.len() + plans.current.iter().len() > 1;
                 let run = |result: &RemoveResult| -> anyhow::Result<()> {
-                    let mut announcer = HookAnnouncer::new(&repo, &config, show_branch);
+                    let mut announcer = HookAnnouncer::new(&repo, show_branch);
                     handle_remove_output(
                         result,
                         args.foreground,
