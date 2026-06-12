@@ -98,6 +98,9 @@
 //!   from this file — TOML I/O, not git config, and no subprocess.
 //! - Config resolution — merge project-specific settings (uses cached
 //!   project identifier).
+//! - CI column width hint — one read of `.git/wt/cache/pr-number/max.json`
+//!   (skipped when the CI task is skipped); the skeleton can't size the CI
+//!   column without it.
 //!
 //! ### First-run behavior
 //!

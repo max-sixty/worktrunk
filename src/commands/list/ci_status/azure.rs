@@ -111,8 +111,10 @@ pub(super) fn detect_azure_pr(
     let pr = pr_list.first()?;
 
     // mergeStatus reflects merge feasibility, not pipeline result. We surface
-    // conflicts and queued states; pipeline pass/fail comes from the pipelines
-    // fallback below (callers invoke detect_branch when this returns NoCI).
+    // conflicts and queued states; everything else shows as NoCI. The
+    // pipelines fallback below never runs for an open PR — detect_ci returns
+    // on the first Some — so pipeline pass/fail is not surfaced here.
+    // TODO(azure-pr-pipeline): fetch the PR's pipeline status instead of NoCI.
     let ci_status = match pr.merge_status.as_deref() {
         Some("conflicts") => CiStatus::Conflicts,
         Some("queued") => CiStatus::Running,
@@ -133,10 +135,7 @@ pub(super) fn detect_azure_pr(
         source: CiSource::PullRequest,
         is_stale,
         url,
-        number: Some(PrRef {
-            number: u64::from(pr.pull_request_id),
-            sigil: '#',
-        }),
+        number: Some(PrRef::pr(u64::from(pr.pull_request_id))),
     })
 }
 

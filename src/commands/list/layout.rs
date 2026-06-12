@@ -588,7 +588,7 @@ fn build_estimated_widths(
     // the ratcheted cache sizes the next invocation correctly.
     let ci_estimate = fit_header(
         ColumnKind::CiStatus.header(),
-        max_pr_number.map_or(5, super::ci_status::pr_ref_width),
+        super::ci_status::pr_ref_width(max_pr_number.unwrap_or(9999)),
     );
 
     // Assume columns will have data (better to show and hide than to not show).

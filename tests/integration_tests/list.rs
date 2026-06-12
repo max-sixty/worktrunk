@@ -1864,7 +1864,7 @@ TODO: Add request/response examples for each endpoint
     // === Mock CI status ===
     // CI requires --full flag, but we mock it so examples show realistic output
     // Note: main's CI is mocked AFTER the merge commit so the hash matches
-    // main runs branch CI (no PR) — renders the ● indicator
+    // main runs branch CI (no PR) — renders the bare `#`
     mock_ci_status(repo, "main", "passed", "branch", false, None);
     mock_ci_status(repo, "fix-auth", "passed", "pr", false, Some(408));
     // feature-api has unpushed commits, so CI is stale (shows dimmed)
@@ -2235,7 +2235,7 @@ fn test_readme_example_list(mut repo: TestRepo) {
 /// Generate README example: `wt list --full` output
 ///
 /// Shows additional columns: main…± (line diffs), CI status, and LLM summaries.
-/// Uses wider terminal (130 cols) than the base example to fit the Summary column.
+/// Uses wider terminal (134 cols) than the base example to fit the Summary column.
 /// Output: tests/snapshots/integration__integration_tests__list__readme_example_list_full.snap
 #[rstest]
 fn test_readme_example_list_full(mut repo: TestRepo) {
@@ -2251,7 +2251,7 @@ fn test_readme_example_list_full(mut repo: TestRepo) {
 /// Generate README example: `wt list --branches --full` output
 ///
 /// Shows branches without worktrees (⎇ symbol) alongside worktrees, plus CI status.
-/// Uses wider terminal (130 cols) than the base example to fit the Summary column.
+/// Uses wider terminal (134 cols) than the base example to fit the Summary column.
 /// Output: tests/snapshots/integration__integration_tests__list__readme_example_list_branches.snap
 #[rstest]
 fn test_readme_example_list_branches(mut repo: TestRepo) {

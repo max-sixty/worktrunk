@@ -24,8 +24,7 @@ const KIND: &str = "ci-status";
 /// Sizes the `wt list` CI column before any CI data arrives: the layout is
 /// fixed at skeleton time, so the column must be wide enough for `#3035`
 /// without waiting on the network. PR numbers are monotonic per repo and a
-/// branch's number never changes, so the value only grows and needs no
-/// invalidation.
+/// branch's number never changes, so the stored value needs no invalidation.
 ///
 /// Kept separate from the per-branch [`CachedCiStatus`] entries so the width
 /// hint isn't coupled to branch-entry retention — entries come and go with
@@ -50,9 +49,11 @@ impl MaxPrNumber {
         cache::read_json::<Self>(&Self::path(repo)).map(|m| m.number)
     }
 
-    /// Raise the stored maximum to `number` if it's larger. Concurrent
-    /// writers can race; last-write-wins is benign because the value is
-    /// monotonic and the next fetch re-ratchets.
+    /// Raise the stored maximum to `number` if it's larger. The unlocked
+    /// read-compare-write can race concurrent writers, briefly storing a
+    /// smaller number; that's benign because every `detect()` — cache hit or
+    /// fresh fetch — re-ratchets, so the next render heals it. Worst case is
+    /// one run where a wide number degrades to the bare `#`.
     pub(super) fn ratchet(repo: &Repository, number: u64) {
         if Self::read(repo).is_none_or(|stored| number > stored) {
             cache::write_json(&Self::path(repo), &Self { number });

@@ -572,10 +572,7 @@ mod tests {
             source: CiSource::PullRequest,
             is_stale: false,
             url: Some("https://github.com/org/repo/pull/123".to_string()),
-            number: Some(PrRef {
-                number: 123,
-                sigil: '#',
-            }),
+            number: Some(PrRef::pr(123)),
         });
         assert_eq!(passed.status, "passed");
         assert_eq!(passed.source, CiSource::PullRequest);

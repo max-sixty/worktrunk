@@ -128,7 +128,7 @@ pub(super) fn detect_github(
         source: CiSource::PullRequest,
         is_stale,
         url: pr_info.url.clone(),
-        number: pr_info.number.map(|number| PrRef { number, sigil: '#' }),
+        number: pr_info.number.map(PrRef::pr),
     })
 }
 

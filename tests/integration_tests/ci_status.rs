@@ -1118,6 +1118,7 @@ fn run_gitea_ci_status_test(
 fn gitea_feature_pr_json(head_sha: &str, mergeable: bool) -> String {
     format!(
         r#"[{{
+        "number": 7,
         "mergeable": {mergeable},
         "html_url": "https://gitea.example.com/owner/test-repo/pulls/7",
         "head": {{
@@ -1234,7 +1235,7 @@ fn test_list_full_with_gitea_commit_status_retriable_error(mut repo: TestRepo) {
 /// primary one. Two Gitea remotes (`origin` → `owner/test-repo`, `fork` →
 /// `forkowner/test-repo`) plus a remote-only `fork/feature-remote` ref. The
 /// mock answers only `forkowner/test-repo` SHA-status requests, so a primary-
-/// remote lookup in the fallback would return no CI; the green `●` in the
+/// remote lookup in the fallback would return no CI; the green `#` in the
 /// snapshot proves the SHA-status path honors `branch.remote`. (The PR path
 /// intentionally uses the primary remote, mirroring the `gh` backend; for this
 /// branch it returns no PR and we fall through to the SHA-status path.)
@@ -1288,7 +1289,7 @@ fn test_list_remotes_full_with_gitea_remote_branch(mut repo: TestRepo) {
 /// and the `feature` branch pushes to `fork`. The mock returns two open PRs for
 /// the `feature` ref — a decoy from `other-owner` that must be filtered out and
 /// the real one from `forkowner` — and answers the upstream's commit-status
-/// lookup with `success`. The green `●` proves the fork PR matched; a revert to
+/// lookup with `success`. The green `#7` proves the fork PR matched; a revert to
 /// querying/filtering by the branch's own remote would query `forkowner`'s
 /// (unmocked) `/pulls` and lose the indicator. Mirrors the GitHub backend's
 /// `test_list_full_filters_by_repo_owner`.
@@ -1319,11 +1320,13 @@ fn test_list_full_with_gitea_fork_pr(mut repo: TestRepo) {
     let pulls_json = format!(
         r#"[
         {{
+            "number": 98,
             "mergeable": true,
             "html_url": "https://gitea.example.com/upstream/test-repo/pulls/98",
             "head": {{"ref": "feature", "sha": "wrong_sha", "repo": {{"owner": {{"login": "other-owner"}}}}}}
         }},
         {{
+            "number": 7,
             "mergeable": true,
             "html_url": "https://gitea.example.com/upstream/test-repo/pulls/7",
             "head": {{"ref": "feature", "sha": "{head_sha}", "repo": {{"owner": {{"login": "forkowner"}}}}}}

@@ -119,7 +119,7 @@ pub(super) fn detect_gitea_pr(
         source: CiSource::PullRequest,
         is_stale,
         url: Some(pr.html_url.clone()),
-        number: pr.number.map(|number| PrRef { number, sigil: '#' }),
+        number: pr.number.map(PrRef::pr),
     })
 }
 

@@ -391,7 +391,7 @@ impl ListItem {
         }
 
         // 7. CI status (priority 9) — PR/MR reference when one exists,
-        // indicator dot otherwise (no width cap in the statusline)
+        // bare `#` otherwise (no width cap in the statusline)
         if let Some(Some(ref pr_status)) = self.pr_status {
             segments.push(StatuslineSegment::from_column(
                 pr_status.format_cell(usize::MAX, include_links),
