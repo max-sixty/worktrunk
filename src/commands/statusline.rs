@@ -485,8 +485,8 @@ fn select_binding_window(
 
 /// Build the rate-limit segment, or `None` to hide.
 ///
-/// Shape: `<pace>×pace(<window_bounds>)` — e.g. `1.4×pace(10am–3pm)` or
-/// `1.9×pace(Mon–Mon 3pm)`. `pace` is the **naive `u/t` ratio**: what the
+/// Shape: `<pace>×(<window_bounds>)` — e.g. `1.4×(10am–3pm)` or
+/// `1.9×(Mon–Mon 3pm)`. `pace` is the **naive `u/t` ratio**: what the
 /// user has actually consumed per unit elapsed window. `1.0×` is on pace
 /// to exactly fill the window; `>1.0×` is over-pace. The Bayesian
 /// posterior `m₁` is only used by [`p_over`] to decide whether to show —
@@ -511,7 +511,7 @@ fn format_rate_limit_segment(readings: &[RateLimitReading], now_unix: i64) -> Op
     // the warning. Unlike informational segments where color picks out one
     // sub-glyph (`@+1` green, `?` cyan), here the entire string is the
     // "you should look at this" signal.
-    Some(color_print::cformat!("<yellow>{pace:.1}×pace({bounds})</>"))
+    Some(color_print::cformat!("<yellow>{pace:.1}×({bounds})</>"))
 }
 
 /// Format context usage as a moon phase gauge.
@@ -1390,7 +1390,7 @@ mod tests {
         // is wrapped in `<yellow>…</>`.
         let visible = out.ansi_strip();
         assert!(
-            visible.starts_with("1.3×pace(") && visible.ends_with(')'),
+            visible.starts_with("1.3×(") && visible.ends_with(')'),
             "unexpected format: {visible:?}"
         );
     }

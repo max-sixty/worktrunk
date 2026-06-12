@@ -2094,6 +2094,35 @@ impl TestRepo {
         self.mock_bin_path = Some(mock_bin);
     }
 
+    /// Set up mock glab with no MRs and a successful `ci list` pipeline.
+    ///
+    /// Used to test `detect_gitlab_pipeline`'s success path: a branch
+    /// pipeline with no MR renders the bare `#` colored by pipeline status.
+    pub fn setup_mock_glab_with_pipeline(&mut self, pipeline_json: &str, project_id: Option<u64>) {
+        let mock_bin = self.temp_dir.path().join("mock-bin");
+        std::fs::create_dir_all(&mock_bin).unwrap();
+
+        let project_id_response = match project_id {
+            Some(id) => format!(r#"{{"id": {}}}"#, id),
+            None => r#"{"error": "not found"}"#.to_string(),
+        };
+
+        // glab mock: mr list returns empty (no MRs), ci list returns the pipeline
+        MockConfig::new("glab")
+            .version("glab version 1.0.0 (mock)")
+            .command("auth", MockResponse::exit(0))
+            .command("mr list", MockResponse::output("[]")) // No MRs - triggers ci list fallback
+            .command("repo", MockResponse::output(&project_id_response))
+            .command("ci", MockResponse::output(pipeline_json))
+            .write(&mock_bin);
+
+        MockConfig::new("gh")
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+
+        self.mock_bin_path = Some(mock_bin);
+    }
+
     /// Set up mock glab that returns a rate limit error on `ci list`.
     ///
     /// Used to test the `is_retriable_error` path in `detect_gitlab_pipeline`.

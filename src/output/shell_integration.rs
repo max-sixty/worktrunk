@@ -64,7 +64,7 @@ use color_print::cformat;
 use worktrunk::config::{UserConfig, require_config_path};
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
-use worktrunk::shell::{Shell, current_shell, extract_filename_from_path};
+use worktrunk::shell::{Shell, current_shell, current_shell_name, extract_filename_from_path};
 use worktrunk::styling::{
     eprintln, format_bash_with_gutter, hint_message, info_message, success_message, warning_message,
 };
@@ -365,9 +365,7 @@ pub fn print_shell_install_result(scan_result: &crate::commands::configure_shell
 
     // Restart hint for current shell
     if shells_configured_count > 0 {
-        let current_shell = std::env::var("SHELL")
-            .ok()
-            .and_then(|s| extract_filename_from_path(&s).map(String::from));
+        let current_shell = current_shell_name();
 
         let current_shell_result = current_shell.as_ref().and_then(|shell_name| {
             scan_result
@@ -587,9 +585,7 @@ pub fn print_shell_uninstall_result(scan_result: &UninstallScanResult, explicit_
     );
 
     // Hint about restarting shell (only if current shell was affected)
-    let current_shell = std::env::var("SHELL")
-        .ok()
-        .and_then(|s| extract_filename_from_path(&s).map(String::from));
+    let current_shell = current_shell_name();
 
     let current_shell_affected = current_shell.as_ref().is_some_and(|shell_name| {
         scan_result

@@ -29,7 +29,7 @@
 //!
 //! | Plan-backed hook | Runs in (the anchor) | Gate |
 //! |---|---|---|
-//! | `pre-merge`, `pre-remove`, `post-remove` | the feature/removed worktree | `merge::approve_merge_plan`, `main.rs`'s `approve_remove`, `step::prune::approve_prune_hooks` |
+//! | `pre-merge`, `pre-remove`, `post-remove` | the feature/removed worktree | `merge::approve_merge_plan`, `remove::handle_remove_command`'s `approve_remove`, `step::prune::approve_prune_hooks` |
 //! | `post-merge`, `post-switch` (after a removal) | the merge/removal destination | the same gates |
 //! | `pre-start`, `post-start`, `post-switch` (on switch) | the new/destination worktree | `worktree::switch::approve_switch_hooks` |
 //!
@@ -126,14 +126,12 @@ pub(crate) fn prepare_and_check(
             continue;
         }
 
-        let is_pipeline = config.is_pipeline();
         let steps = prepare_steps(config, ctx, extra_vars, hook_type, source)?;
         for step in steps {
             if let Some(filtered) = filter_step_by_name(step, source, &parsed_filters) {
                 result.push(SourcedStep {
                     step: filtered,
                     source,
-                    is_pipeline,
                 });
             }
         }
@@ -598,7 +596,6 @@ pub(crate) fn sourced_steps_to_foreground(
             };
             ForegroundStep {
                 step: sourced.step,
-                concurrent: sourced.is_pipeline,
                 announce: kind.clone(),
                 pipe_stdin,
                 redirect_stdout_to_stderr,
@@ -745,13 +742,5 @@ mod tests {
         let f = ParsedFilter::parse("project:");
         assert_eq!(f.source, Some(HookSource::Project));
         assert_eq!(f.name, "");
-    }
-
-    #[test]
-    fn test_is_pipeline() {
-        use worktrunk::config::CommandConfig;
-
-        let single = CommandConfig::single("npm install");
-        assert!(!single.is_pipeline());
     }
 }

@@ -719,11 +719,11 @@ Include CI status, line diffs, and LLM summaries:
 <!-- wt list --full -->
 ```console
 $ wt list --full
-  Branch       Status        HEAD±    main↕     main…±  Summary                                              Remote⇅  CI  Commit
-@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware     ⇡3      ●   6814f02a
-^ main             ^⇅                                                                                         ⇡1  ⇣1  ●   41ee0834
-+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation         |     ●   b772e68b
-+ fix-typos        _|                                                                                           |     ●   41ee0834
+  Branch       Status        HEAD±    main↕     main…±  Summary                                                Remote⇅  CI    Commit
+@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware       ⇡3      #412  6814f02a
+^ main             ^⇅                                                                                           ⇡1  ⇣1  #     41ee0834
++ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation           |     #408  b772e68b
++ fix-typos        _|                                                                                             |     #410  41ee0834
 
 ○ Showing 4 worktrees, 1 with changes, 2 ahead, 3 columns hidden
 ```
@@ -733,13 +733,13 @@ Include branches that don't have worktrees:
 <!-- wt list --branches --full -->
 ```console
 $ wt list --branches --full
-  Branch       Status        HEAD±    main↕     main…±  Summary                                              Remote⇅  CI  Commit
-@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware     ⇡3      ●   6814f02a
-^ main             ^⇅                                                                                         ⇡1  ⇣1  ●   41ee0834
-+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation         |     ●   b772e68b
-+ fix-typos        _|                                                                                           |     ●   41ee0834
-  exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and resolvers                              96379229
-  wip             /↕                 ↑1  ↓1   +33       Start API documentation                                           b40716dc
+  Branch       Status        HEAD±    main↕     main…±  Summary                                                Remote⇅  CI    Commit
+@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware       ⇡3      #412  6814f02a
+^ main             ^⇅                                                                                           ⇡1  ⇣1  #     41ee0834
++ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation           |     #408  b772e68b
++ fix-typos        _|                                                                                             |     #410  41ee0834
+  exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and resolvers                                  96379229
+  wip             /↕                 ↑1  ↓1   +33       Start API documentation                                               b40716dc
 
 ○ Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, 3 columns hidden
 ```
@@ -761,7 +761,7 @@ $ wt list --format=json
 | main…± | Line diffs since the merge-base (three-dot) with the default branch; `--full` only |
 | Summary | LLM-generated branch summary; requires `--full`, `summary = true`, and [`commit.generation`](@/config.md#commit) [experimental] |
 | Remote⇅ | Commits ahead/behind tracking branch |
-| CI | Pipeline status; `--full` only |
+| CI | PR/MR number colored by pipeline status; `--full` only |
 | Path | Worktree directory |
 | URL | Dev server URL from project config; dimmed if port is not listening |
 | Commit | Short hash (8 chars) |
@@ -772,23 +772,23 @@ The `main` header label is used regardless of the default branch's actual name.
 
 ### CI status
 
-The CI column shows GitHub/GitLab pipeline status:
+The CI column shows the branch's open PR/MR — `#3035` on GitHub, Gitea, and Azure DevOps, `!3035` on GitLab — colored by pipeline status, or a bare `#` when no number is available (e.g. branch workflows without a PR/MR):
 
 | Indicator | Meaning |
 |-----------|---------|
-| `●` green | All checks passed |
-| `●` blue | Checks running |
-| `●` red | Checks failed |
-| `●` magenta | Reviewer requested changes |
-| `●` cyan | Review required, not yet given |
-| `●` yellow | Merge conflicts with base |
-| `●` gray | No checks configured |
+| `#` green | All checks passed |
+| `#` blue | Checks running |
+| `#` red | Checks failed |
+| `#` magenta | Reviewer requested changes |
+| `#` cyan | Review required, not yet given |
+| `#` yellow | Merge conflicts with base |
+| `#` gray | No checks configured |
 | `⚠` yellow | Fetch error (rate limit, network) |
 | (blank) | No upstream or no PR/MR |
 
-Review state merges into the same dot where its required action ranks: changes-requested (magenta) outranks running checks — waiting can't clear it — while an outstanding required review (cyan) only recolors an otherwise green or quiet branch. Cool colors mean waiting, warm colors mean act. A PR with no review signal (no required reviewers and no reviews) keeps its plain CI color, and draft PRs appear dimmed.
+Review state merges into the same color where its required action ranks: changes-requested (magenta) outranks running checks — waiting can't clear it — while an outstanding required review (cyan) only recolors an otherwise green or quiet branch. Cool colors mean waiting, warm colors mean act. A PR with no review signal (no required reviewers and no reviews) keeps its plain CI color, and draft PRs appear dimmed.
 
-CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when unpushed local changes make the status stale. PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches — visible with `--remotes` — get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
+CI cells are clickable links to the PR or pipeline page, and appear dimmed when unpushed local changes make the status stale. PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches — visible with `--remotes` — get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
 
 ### LLM summaries [experimental]
 
@@ -943,6 +943,7 @@ $ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 |-------|------|-------------|
 | `status` | string | CI status (see below) |
 | `source` | string | `"pr"` (PR/MR) or `"branch"` (branch workflow) |
+| `number` | integer | PR/MR number; absent for branch workflows |
 | `stale` | boolean | Local HEAD differs from remote (unpushed changes) |
 | `url` | string | URL to the PR/MR page |
 | `repo_url` | string | Web URL of the repo the PR/MR targets (the upstream for fork PRs); absent when `url` is absent or unrecognized |
@@ -1344,8 +1345,6 @@ Here `install` runs first, then `build` and `server` run together.
 Templates are syntax-checked before the pipeline starts and rendered as each step runs, so a step can store [per-branch vars](@/config.md#wt-config-state-vars) that later steps read via `{{ vars.<key> }}`.
 
 Most hooks don't need `[[hook]]` blocks. Reach for them when there's a dependency chain — typically setup that must complete before later steps, like installing dependencies before running a build and dev server concurrently.
-
-Table form for pre-* hooks is deprecated and its behavior will change in a future version — use `[[hook]]` blocks instead.
 
 ## Project vs user hooks
 
