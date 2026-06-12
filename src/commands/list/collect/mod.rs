@@ -1081,10 +1081,27 @@ pub fn collect(
         );
     }
 
+    // The picker skips the networked CiStatus task, but cached statuses are
+    // local data: fill rows from `.git/wt/cache/ci-status/` so PR/MR numbers
+    // appear in the picker without touching the wire. The CI column is
+    // allocated only when some row actually had a usable cache entry —
+    // `layout_skip_tasks` diverges from `effective_skip_tasks` exactly then
+    // (the skip set still governs task spawning; this copy only tells layout
+    // which columns will have data).
+    let mut layout_skip_tasks = effective_skip_tasks.clone();
+    if progressive_handler.is_some()
+        && effective_skip_tasks.contains(&TaskKind::CiStatus)
+        && super::ci_status::populate_from_cache(repo, &mut all_items)
+    {
+        layout_skip_tasks.remove(&TaskKind::CiStatus);
+    }
+
     // CI column width hint: the largest PR/MR number any previous fetch saw
     // (one small file read — cheap enough for the pre-skeleton budget, and
-    // the skeleton can't size the column without it).
-    let max_pr_number = (!effective_skip_tasks.contains(&TaskKind::CiStatus))
+    // the skeleton can't size the column without it). Also covers the
+    // cache-populated picker rows: `detect` re-ratchets on every cache hit,
+    // so the stored maximum is at least as wide as any cached number.
+    let max_pr_number = (!layout_skip_tasks.contains(&TaskKind::CiStatus))
         .then(|| super::ci_status::MaxPrNumber::read(repo))
         .flatten();
 
@@ -1093,7 +1110,7 @@ pub fn collect(
     // terminal — the rest belongs to the preview pane.
     let layout = super::layout::calculate_layout_with_width(
         &all_items,
-        &effective_skip_tasks,
+        &layout_skip_tasks,
         list_width
             .or_else(crate::display::terminal_width)
             .unwrap_or(usize::MAX),

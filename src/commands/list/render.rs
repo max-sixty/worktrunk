@@ -328,6 +328,23 @@ impl LayoutConfig {
                         .unwrap_or("");
                     return col.render_text_cell(text, None);
                 }
+                ColumnKind::CiStatus if item.pr_status.is_some() => {
+                    // Resolved before the skeleton only by the picker's
+                    // cache-only fill, where no task will repaint the cell;
+                    // `wt list` never sets pr_status this early and keeps
+                    // the placeholder arm below.
+                    return match &item.pr_status {
+                        Some(Some(pr_status)) => {
+                            let mut ci = StyledLine::new();
+                            ci.push_raw(
+                                pr_status
+                                    .format_cell(col.width, supports_hyperlinks(Stream::Stdout)),
+                            );
+                            ci
+                        }
+                        _ => StyledLine::new(),
+                    };
+                }
                 _ => {
                     // Show spinner for data columns (placeholder_cell handles alignment)
                     return col.placeholder_cell(spinner);

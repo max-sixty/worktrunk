@@ -594,9 +594,74 @@ impl PrStatus {
     }
 }
 
+/// Fill `pr_status` on items from the CI cache without touching the network.
+///
+/// The interactive picker skips the `CiStatus` task — fetching would put
+/// network latency inside a synchronous TUI — but cached results are local
+/// data. A valid entry (HEAD unchanged, within TTL) is used as-is. An
+/// expired entry that names a PR/MR is kept with `is_stale` set: a PR/MR
+/// number is stable per branch *identity*, so it still identifies the PR
+/// even when the pipeline color may be outdated, and `is_stale` renders it
+/// dimmed like the existing unpushed-changes treatment. (Deleting a branch
+/// and reusing its name can leave the old PR's number showing dimmed until
+/// the next fetching surface — `wt list --full`, the statusline — rewrites
+/// the entry; the picker accepts that brief skew rather than fetching.) An
+/// expired entry without a number is dropped — a stale dot conveys nothing
+/// but the outdated color.
+///
+/// `item.branch` is the cache key for every row shape: local worktrees and
+/// branches cache under the bare name, remote rows under `origin/...` —
+/// the same `full_name` the `CiStatus` task writes.
+///
+/// Returns whether any row gained a status; the caller allocates the CI
+/// column only in that case. The cache read is the column's complete data
+/// source — no task will fill cells in later — so when the column will
+/// render, every remaining row resolves to "checked, nothing to show"
+/// (blank) rather than staying in the pending-placeholder state.
+pub(crate) fn populate_from_cache(repo: &Repository, items: &mut [super::model::ListItem]) -> bool {
+    // Common never-fetched case (no `wt list --full`/statusline run yet):
+    // skip the per-row file probes entirely.
+    if !CachedCiStatus::cache_dir_exists(repo) {
+        return false;
+    }
+    let Ok(repo_path) = repo.current_worktree().root() else {
+        return false;
+    };
+    let now_secs = epoch_now();
+    let mut any = false;
+    for item in items.iter_mut() {
+        let Some(branch) = item.branch.as_deref() else {
+            continue;
+        };
+        let Some(cached) = CachedCiStatus::read(repo, branch) else {
+            continue;
+        };
+        if cached.is_valid(&item.head, now_secs, &repo_path) {
+            any |= cached.status.is_some();
+            item.pr_status = Some(cached.status);
+        } else if let Some(stale) = cached.status.filter(|s| s.number.is_some()) {
+            item.pr_status = Some(Some(PrStatus {
+                is_stale: true,
+                ..stale
+            }));
+            any = true;
+        }
+    }
+    if any {
+        for item in items.iter_mut() {
+            if item.pr_status.is_none() {
+                item.pr_status = Some(None);
+            }
+        }
+    }
+    any
+}
+
 #[cfg(test)]
 mod tests {
+    use super::super::model::ListItem;
     use super::*;
+    use worktrunk::testing::TestRepo;
 
     #[test]
     fn test_is_retriable_error() {
@@ -886,5 +951,131 @@ mod tests {
         // No body at all → None.
         let out = fake_output("", "");
         assert!(retriable_pr_error(&out).is_none());
+    }
+
+    fn passed_pr_status(number: Option<u64>) -> PrStatus {
+        PrStatus {
+            ci_status: CiStatus::Passed,
+            source: CiSource::PullRequest,
+            is_stale: false,
+            url: None,
+            number: number.map(PrRef::pr),
+            review_state: None,
+        }
+    }
+
+    fn seed_cache(
+        repo: &Repository,
+        branch: &str,
+        status: Option<PrStatus>,
+        checked_at: u64,
+        head: &str,
+    ) {
+        CachedCiStatus {
+            status,
+            checked_at,
+            head: head.to_string(),
+            branch: branch.to_string(),
+        }
+        .write(repo, branch);
+    }
+
+    #[test]
+    fn test_populate_from_cache() {
+        let test = TestRepo::new();
+        let repo = &test.repo;
+        let now = epoch_now();
+
+        seed_cache(repo, "fresh", Some(passed_pr_status(Some(123))), now, "aaa");
+        // Expired (past the 60s max TTL) but carries a number
+        seed_cache(
+            repo,
+            "expired-pr",
+            Some(passed_pr_status(Some(77))),
+            now - 10_000,
+            "bbb",
+        );
+        // Expired branch-workflow dot — no number to preserve
+        seed_cache(
+            repo,
+            "expired-dot",
+            Some(passed_pr_status(None)),
+            now - 10_000,
+            "ccc",
+        );
+        // Fresh "no CI found" entry
+        seed_cache(repo, "fresh-none", None, now, "ddd");
+
+        let mut items = vec![
+            ListItem::new_branch("aaa".to_string(), "fresh".to_string()),
+            ListItem::new_branch("bbb".to_string(), "expired-pr".to_string()),
+            ListItem::new_branch("ccc".to_string(), "expired-dot".to_string()),
+            ListItem::new_branch("ddd".to_string(), "fresh-none".to_string()),
+            ListItem::new_branch("eee".to_string(), "uncached".to_string()),
+        ];
+        assert!(populate_from_cache(repo, &mut items));
+
+        let fresh = items[0].pr_status.as_ref().unwrap().as_ref().unwrap();
+        assert_eq!(fresh.number.unwrap().number, 123);
+        assert!(!fresh.is_stale);
+
+        let expired = items[1].pr_status.as_ref().unwrap().as_ref().unwrap();
+        assert_eq!(expired.number.unwrap().number, 77);
+        assert!(expired.is_stale, "expired entries render dimmed");
+
+        assert!(
+            matches!(items[2].pr_status, Some(None)),
+            "expired dot conveys only its outdated color — resolved to blank"
+        );
+        assert!(
+            matches!(items[3].pr_status, Some(None)),
+            "fresh no-CI entry marks the cell as resolved-empty"
+        );
+        assert!(
+            matches!(items[4].pr_status, Some(None)),
+            "no task will fill the cell later — blank, not pending"
+        );
+    }
+
+    #[test]
+    fn test_populate_from_cache_head_moved_keeps_number_as_stale() {
+        let test = TestRepo::new();
+        let repo = &test.repo;
+
+        // Fresh timestamp but the branch has new commits since the fetch —
+        // the number still identifies the PR, the colors may not.
+        seed_cache(
+            repo,
+            "feature",
+            Some(passed_pr_status(Some(9))),
+            epoch_now(),
+            "old-head",
+        );
+        let mut items = vec![ListItem::new_branch(
+            "new-head".to_string(),
+            "feature".to_string(),
+        )];
+        assert!(populate_from_cache(repo, &mut items));
+        let status = items[0].pr_status.as_ref().unwrap().as_ref().unwrap();
+        assert_eq!(status.number.unwrap().number, 9);
+        assert!(status.is_stale);
+    }
+
+    #[test]
+    fn test_populate_from_cache_without_usable_entries_returns_false() {
+        // No cache at all
+        let test = TestRepo::new();
+        let mut items = vec![ListItem::new_branch(
+            "aaa".to_string(),
+            "feature".to_string(),
+        )];
+        assert!(!populate_from_cache(&test.repo, &mut items));
+        assert!(items[0].pr_status.is_none());
+
+        // Only a fresh "no CI" entry: the cell resolves to empty, but no row
+        // gained a status, so the CI column shouldn't be allocated.
+        seed_cache(&test.repo, "feature", None, epoch_now(), "aaa");
+        assert!(!populate_from_cache(&test.repo, &mut items));
+        assert!(matches!(items[0].pr_status, Some(None)));
     }
 }

@@ -245,9 +245,10 @@ impl PreviewOrchestrator {
         }
     }
 
-    /// Dump cache state as JSON for dry-run diagnostics. Byte-length only
+    /// Preview-cache inventory for the dry-run dump: one sorted
+    /// `{branch, mode, bytes}` object per cached preview. Byte-length only
     /// (not content) keeps output small and deterministic across terminals.
-    pub(super) fn dump_cache_json(&self) -> String {
+    pub(super) fn cache_entries_json(&self) -> serde_json::Value {
         let mut entries: Vec<_> = self
             .cache
             .iter()
@@ -258,13 +259,12 @@ impl PreviewOrchestrator {
             .collect();
         entries.sort();
 
-        let items: Vec<String> = entries
-            .iter()
+        entries
+            .into_iter()
             .map(|(branch, mode, bytes)| {
-                format!("    {{ \"branch\": {branch:?}, \"mode\": {mode}, \"bytes\": {bytes} }}")
+                serde_json::json!({ "branch": branch, "mode": mode, "bytes": bytes })
             })
-            .collect();
-        format!("{{\n  \"entries\": [\n{}\n  ]\n}}", items.join(",\n"))
+            .collect()
     }
 }
 
@@ -447,7 +447,7 @@ mod tests {
     }
 
     #[test]
-    fn dump_cache_json_format() {
+    fn cache_entries_json_format() {
         let t = TestRepo::new();
         let orch = orch_for(&t);
         orch.cache.insert(
@@ -456,10 +456,14 @@ mod tests {
         );
         orch.cache
             .insert(("branch-b".to_string(), PreviewMode::Log), "xy".to_string());
-        let json = orch.dump_cache_json();
         // Structural assertion — future field additions shouldn't flake the test.
-        let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
-        let entries = parsed["entries"].as_array().expect("entries array");
+        let entries = orch.cache_entries_json();
+        let entries = entries.as_array().expect("entries array");
         assert_eq!(entries.len(), 2);
+        for e in entries {
+            assert!(e["branch"].is_string());
+            assert!(e["mode"].is_number());
+            assert!(e["bytes"].is_number());
+        }
     }
 }
