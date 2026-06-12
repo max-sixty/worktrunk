@@ -651,9 +651,7 @@ pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
     // empty" warning) loses that header line too — the recorded YAML can't
     // tell it apart from a removal. Harmless: the test body still asserts the
     // warning, and insta never compares the `env:` block.
-    settings.add_dynamic_redaction(".env", |content, _path| {
-        drop_empty_env_entries(content)
-    });
+    settings.add_dynamic_redaction(".env", |content, _path| drop_empty_env_entries(content));
 }
 
 /// Drop empty-valued entries from an insta-cmd `env` map node. These are
