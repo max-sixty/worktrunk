@@ -1354,8 +1354,6 @@ Templates are syntax-checked before the pipeline starts and rendered as each ste
 
 Most hooks don't need `[[hook]]` blocks. Reach for them when there's a dependency chain — typically setup that must complete before later steps, like installing dependencies before running a build and dev server concurrently.
 
-Table form for pre-* hooks is deprecated and its behavior will change in a future version — use `[[hook]]` blocks instead.
-
 ## Project vs user hooks
 
 | Aspect | Project hooks | User hooks |

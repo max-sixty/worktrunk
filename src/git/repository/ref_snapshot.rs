@@ -1,17 +1,12 @@
 //! `RefSnapshot` — a captured, immutable view of repository ref state.
 //!
-//! The snapshot is the structural answer to ref-name cache staleness. Today's
-//! `RepoCache` ambient ref-name → SHA fields (`commit_shas`, `tree_shas`,
-//! `effective_integration_targets`, `integration_reasons`, `ahead_behind`)
-//! become stale the moment wt updates a ref mid-command — `wt merge`'s
-//! `git update-ref refs/heads/main` is the canonical example. Any code that
-//! reads through those caches afterwards gets pre-write SHAs.
-//!
-//! A `RefSnapshot` replaces that ambient cache with an explicit, named,
-//! point-in-time value. Callers thread it through. After a ref-mutating
-//! write, the caller captures a new snapshot and uses it for downstream
-//! reads — the old snapshot remains valid as a pre-write view, but cannot
-//! masquerade as current state.
+//! A `RefSnapshot` is an explicit, named, point-in-time value: callers
+//! capture it once and thread it through. Unlike an ambient ref-name → SHA
+//! cache, it cannot go stale invisibly when wt updates a ref mid-command —
+//! `wt merge`'s `git update-ref refs/heads/main` is the canonical example.
+//! After a ref-mutating write, the caller captures a new snapshot and uses
+//! it for downstream reads — the old snapshot remains valid as a pre-write
+//! view, but cannot masquerade as current state.
 //!
 //! # Construction
 //!

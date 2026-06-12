@@ -1276,9 +1276,8 @@ pub fn collect(
         // plus — when default_branch is known and the per-base
         // ahead-behind cache doesn't already cover the branches — one
         // `for-each-ref %(ahead-behind:BASE)` walk (scoped to the cold
-        // subset; warm runs do neither). The snapshot replaces the prior
-        // `commit_shas` priming + `batch_ahead_behind` pair: tasks consume
-        // it by SHA, dodging ref→SHA cache staleness.
+        // subset; warm runs do neither). Tasks consume the snapshot by
+        // SHA, dodging ref→SHA cache staleness.
         //
         // After the snapshot is built, an inner spawn primes the
         // `Remote⇅` cache off its already-scanned inventories — see the

@@ -502,12 +502,14 @@ long = "sh -c 'echo start >> hook.log; sleep 30; echo done >> hook.log'"
 fn test_pre_merge_pipeline_aborts_on_signal_exit(repo: TestRepo) {
     repo.commit("Initial commit");
 
-    // Two pre-merge hooks: the first writes a marker then self-signals with
-    // SIGTERM; the second (which must NOT run) would write its own marker.
+    // Two pre-merge pipeline steps: the first writes a marker then
+    // self-signals with SIGTERM; the second (which must NOT run) would write
+    // its own marker.
     repo.write_project_config(
-        r#"[pre-merge]
-abort = "sh -c 'echo first >> hook.log; kill -TERM $$'"
-after = "sh -c 'echo second >> hook.log'"
+        r#"pre-merge = [
+    { abort = "sh -c 'echo first >> hook.log; kill -TERM $$'" },
+    { after = "sh -c 'echo second >> hook.log'" },
+]
 "#,
     );
     repo.commit("Add pre-merge hooks");
@@ -2801,6 +2803,9 @@ test = "echo '{{ main_worktree }}' > alias_output.txt"
 fn test_user_hooks_preserve_toml_order(repo: TestRepo) {
     // Write user config with hooks in specific order (NOT alphabetical: vscode, claude, copy, submodule)
     // If order were alphabetical, it would be: claude, copy, submodule, vscode
+    // Table-form commands run concurrently; WORKTRUNK_TEST_SERIAL_CONCURRENT
+    // runs the group one command at a time in declaration order, so the file
+    // appends (and the snapshot) expose the parsed TOML order.
     repo.write_test_config(
         r#"[pre-start]
 vscode = "echo '1' >> hook_order.txt"
@@ -2810,7 +2815,12 @@ submodule = "echo '4' >> hook_order.txt"
 "#,
     );
 
-    snapshot_switch("user_hooks_preserve_order", &repo, &["--create", "feature"]);
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "feature"], None);
+        cmd.env("WORKTRUNK_TEST_SERIAL_CONCURRENT", "1");
+        assert_cmd_snapshot!("user_hooks_preserve_order", cmd);
+    });
 
     // Verify execution order by reading the output file
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
@@ -3768,10 +3778,11 @@ test = "echo TEST"
     );
 }
 
-/// Deprecated single-table form (`[pre-merge]`) still runs commands serially,
-/// even though the commands are parsed as a `Concurrent` step.
+/// Table form (`[pre-merge]` with multiple keys) runs commands concurrently,
+/// like every other multi-key step — `[pre-merge]` and a single `[[pre-merge]]`
+/// block parse to the same `Concurrent` step.
 #[rstest]
-fn test_pre_merge_deprecated_table_runs_serially(repo: TestRepo) {
+fn test_pre_merge_table_form_runs_concurrently(repo: TestRepo) {
     repo.write_project_config(
         r#"[pre-merge]
 lint = "echo LINT"
@@ -3784,44 +3795,17 @@ test = "echo TEST"
     cmd.args(["hook", "pre-merge", "--yes"]);
     let output = cmd.output().unwrap();
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("LINT") && stderr.contains("TEST"),
-        "both commands should run: {stderr}",
-    );
-    // Serial execution does not use the "│" prefix labels.
-    assert!(
-        !stderr.contains("│ LINT") && !stderr.contains("│ TEST"),
-        "deprecated table form should run serially (no prefix labels): {stderr}",
-    );
-}
-
-/// A single `[[pre-merge]]` block (one block, multiple entries) runs
-/// concurrently — the `[[]]` syntax is the pipeline form even with one block.
-#[rstest]
-fn test_pre_merge_single_pipeline_block_runs_concurrently(repo: TestRepo) {
-    repo.write_project_config(
-        r#"[[pre-merge]]
-lint = "echo LINT"
-test = "echo TEST"
-"#,
-    );
-    repo.commit("Add single-block pipeline pre-merge hooks");
-
-    let mut cmd = repo.wt_command();
-    cmd.args(["hook", "pre-merge", "--yes"]);
-    let output = cmd.output().unwrap();
-
     assert!(
         output.status.success(),
-        "single-block pipeline should succeed.\nstderr: {}",
+        "pre-merge table form should succeed.\nstderr: {}",
         String::from_utf8_lossy(&output.stderr),
     );
 
+    // Concurrent commands get prefixed labels (e.g., "lint │ LINT").
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("│ LINT") && stderr.contains("│ TEST"),
-        "single [[pre-merge]] block should run concurrently: {stderr}",
+        "table-form commands should run concurrently (prefixed labels): {stderr}",
     );
 }
 

@@ -112,9 +112,6 @@ impl PipelineKind {
 /// A pipeline step ready for foreground execution, with rendering / error policy.
 pub struct ForegroundStep {
     pub step: PreparedStep,
-    /// Whether `Concurrent` steps actually run concurrently. When `false`,
-    /// concurrent commands execute serially (deprecated pre-* table form).
-    pub concurrent: bool,
     /// Which pipeline this step belongs to. Drives how each command is
     /// announced before execution: hooks render a per-command "Running …"
     /// line plus the bash gutter; aliases stay silent (the caller emits one
@@ -457,10 +454,8 @@ pub(crate) fn command_summary_name(name: Option<&str>, source: HookSource) -> St
 /// Handles serial/concurrent step execution, per-command announcement,
 /// execution-time template rendering, and policy-driven error handling.
 ///
-/// Each `ForegroundStep` carries a `concurrent` flag. When true, `Concurrent`
-/// steps spawn threads via `thread::scope`. When false (deprecated pre-*
-/// single-table form), `Concurrent` steps execute serially. Pipeline configs
-/// (`[[hook]]` blocks), aliases, and post-* hooks set `concurrent: true`.
+/// `Single` steps run one at a time; `Concurrent` steps run all their
+/// commands in parallel via the prefixed-line executor.
 pub fn execute_pipeline_foreground(
     steps: &[ForegroundStep],
     repo: &Repository,
@@ -473,13 +468,7 @@ pub fn execute_pipeline_foreground(
                 run_one_command(cmd, fg_step, repo, wt_path, failure_strategy)?;
             }
             PreparedStep::Concurrent(cmds) => {
-                if !fg_step.concurrent {
-                    for cmd in cmds {
-                        run_one_command(cmd, fg_step, repo, wt_path, failure_strategy)?;
-                    }
-                } else {
-                    run_concurrent_group(cmds, fg_step, repo, wt_path, failure_strategy)?;
-                }
+                run_concurrent_group(cmds, fg_step, repo, wt_path, failure_strategy)?;
             }
         }
     }
