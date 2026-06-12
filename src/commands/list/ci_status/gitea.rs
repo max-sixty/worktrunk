@@ -8,7 +8,7 @@ use std::process::Output;
 use worktrunk::git::{Repository, parse_owner_repo};
 
 use super::{
-    CiBranchName, CiSource, CiStatus, MAX_PRS_TO_FETCH, PrStatus, branch_owner_repo,
+    CiBranchName, CiSource, CiStatus, MAX_PRS_TO_FETCH, PrRef, PrStatus, branch_owner_repo,
     is_retriable_error, non_interactive_cmd, output_error_text, parse_json, retriable_pr_error,
 };
 
@@ -119,6 +119,7 @@ pub(super) fn detect_gitea_pr(
         source: CiSource::PullRequest,
         is_stale,
         url: Some(pr.html_url.clone()),
+        number: pr.number.map(PrRef::pr),
         review_state: None,
     })
 }
@@ -139,6 +140,7 @@ pub(super) fn detect_gitea_commit_status(
         source: CiSource::Branch,
         is_stale: false,
         url: None,
+        number: None,
         review_state: None,
     })
 }
@@ -171,6 +173,8 @@ struct GiteaCombinedStatus {
 /// A pull request from `GET /repos/{owner}/{repo}/pulls`.
 #[derive(Debug, Deserialize)]
 struct GiteaPr {
+    #[serde(default)]
+    number: Option<u64>,
     #[serde(default)]
     mergeable: Option<bool>,
     html_url: String,

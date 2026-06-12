@@ -145,6 +145,7 @@ fn test_list_full_with_github_pr_status(
 
     let pr_json = format!(
         r#"[{{
+        "number": 1,
         "headRefOid": "{}",
         "mergeStateStatus": "{}",
         "statusCheckRollup": [
@@ -178,6 +179,7 @@ fn test_list_full_with_github_review_state(
 
     let pr_json = format!(
         r#"[{{
+        "number": 1,
         "headRefOid": "{}",
         "mergeStateStatus": "CLEAN",
         "statusCheckRollup": [
@@ -211,6 +213,7 @@ fn test_list_full_with_status_context(
 
     let pr_json = format!(
         r#"[{{
+        "number": 1,
         "headRefOid": "{}",
         "mergeStateStatus": "{}",
         "statusCheckRollup": [
@@ -274,6 +277,7 @@ fn test_list_full_with_stale_pr(mut repo: TestRepo) {
 
     // PR HEAD differs from local HEAD - simulates stale PR
     let pr_json = r#"[{
+        "number": 1,
         "headRefOid": "old_sha_from_before_local_commit",
         "mergeStateStatus": "CLEAN",
         "statusCheckRollup": [
@@ -293,6 +297,7 @@ fn test_list_full_with_mixed_check_types(mut repo: TestRepo) {
     // Mixed: CheckRun (passed) + StatusContext (pending)
     let pr_json = format!(
         r#"[{{
+        "number": 1,
         "headRefOid": "{}",
         "mergeStateStatus": "UNKNOWN",
         "statusCheckRollup": [
@@ -314,6 +319,7 @@ fn test_list_full_with_no_ci_checks(mut repo: TestRepo) {
 
     let pr_json = format!(
         r#"[{{
+        "number": 1,
         "headRefOid": "{}",
         "mergeStateStatus": "CLEAN",
         "statusCheckRollup": [],
@@ -343,6 +349,7 @@ fn test_list_full_filters_by_repo_owner(mut repo: TestRepo) {
     let pr_json = format!(
         r#"[
         {{
+            "number": 99,
             "headRefOid": "wrong_sha",
             "mergeStateStatus": "CLEAN",
             "statusCheckRollup": [{{"status": "COMPLETED", "conclusion": "FAILURE"}}],
@@ -350,6 +357,7 @@ fn test_list_full_filters_by_repo_owner(mut repo: TestRepo) {
             "headRepositoryOwner": {{"login": "other-org"}}
         }},
         {{
+            "number": 1,
             "headRefOid": "{}",
             "mergeStateStatus": "CLEAN",
             "statusCheckRollup": [{{"status": "COMPLETED", "conclusion": "SUCCESS"}}],
@@ -400,6 +408,7 @@ platform = "github"
     // Setup mock gh with PR data - this should work because the platform is set to github
     let pr_json = format!(
         r#"[{{
+        "number": 1,
         "headRefOid": "{}",
         "mergeStateStatus": "CLEAN",
         "statusCheckRollup": [
@@ -496,6 +505,7 @@ platform = "invalid_platform"
     // Setup mock gh - platform should fall back to GitHub via URL detection
     let pr_json = format!(
         r#"[{{
+        "number": 1,
         "headRefOid": "{}",
         "mergeStateStatus": "CLEAN",
         "statusCheckRollup": [
@@ -815,6 +825,7 @@ fn test_list_full_with_url_based_pushremote(mut repo: TestRepo) {
     // The PR comes from the fork owner (matches pushremote URL)
     let pr_json = format!(
         r#"[{{
+        "number": 1,
         "headRefOid": "{}",
         "mergeStateStatus": "CLEAN",
         "statusCheckRollup": [
@@ -872,7 +883,7 @@ fn test_list_full_with_branch_fallback_using_fork_pushremote(mut repo: TestRepo)
         .find(|line| line.contains("feature-a"))
         .expect("expected feature-a line in wt list output");
     assert!(
-        feature_a_line.contains("●"),
+        feature_a_line.contains("#"),
         "expected feature-a to show passed branch CI from the fork repo fallback\nstdout:\n{stdout}",
     );
 }
@@ -927,6 +938,88 @@ fn test_list_full_with_gitlab_ci_rate_limit(mut repo: TestRepo) {
         repo.configure_mock_commands(&mut cmd);
         assert_cmd_snapshot!("gitlab_ci_rate_limit", cmd);
     });
+}
+
+/// A branch pipeline with no MR renders the bare `#` colored by pipeline
+/// status, hyperlinked to the pipeline page (the success path of
+/// `detect_gitlab_pipeline`; the rate-limit test above covers its error path).
+#[rstest]
+fn test_list_full_with_gitlab_pipeline(mut repo: TestRepo) {
+    let head_sha = setup_gitlab_repo_with_feature(&mut repo);
+
+    let pipeline_json = format!(
+        r#"[{{
+        "status": "success",
+        "sha": "{head_sha}",
+        "web_url": "https://gitlab.com/test-group/test-project/-/pipelines/123"
+    }}]"#
+    );
+    repo.setup_mock_glab_with_pipeline(&pipeline_json, Some(12345));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+        repo.configure_mock_commands(&mut cmd);
+        assert_cmd_snapshot!("gitlab_pipeline_success", cmd);
+    });
+}
+
+/// An expired CI cache entry is refetched, not served: a stale "failed"
+/// entry past its 30-60s TTL must not mask the fresh status.
+#[rstest]
+fn test_ci_cache_expired_entry_refetches(mut repo: TestRepo) {
+    use crate::common::TEST_EPOCH;
+
+    let head_sha = setup_github_repo_with_feature(&mut repo);
+
+    // Fresh fetch reports passed
+    let pr_json = format!(
+        r#"[{{
+        "number": 1,
+        "headRefOid": "{head_sha}",
+        "mergeStateStatus": "CLEAN",
+        "statusCheckRollup": [{{"status": "COMPLETED", "conclusion": "SUCCESS"}}],
+        "url": "https://github.com/test-owner/test-repo/pull/1",
+        "headRepositoryOwner": {{"login": "test-owner"}}
+    }}]"#
+    );
+    repo.setup_mock_gh_with_ci_data(&pr_json, "[]");
+
+    // Expired cache entry claiming the CI failed
+    let git_dir = repo.git_output(&["rev-parse", "--git-common-dir"]);
+    let git_path = if Path::new(&git_dir).is_absolute() {
+        std::path::PathBuf::from(&git_dir)
+    } else {
+        repo.root_path().join(&git_dir)
+    };
+    let cache_dir = git_path.join("wt").join("cache").join("ci-status");
+    std::fs::create_dir_all(&cache_dir).unwrap();
+    let expired_at = TEST_EPOCH - 3600;
+    std::fs::write(
+        cache_dir.join("feature.json"),
+        format!(
+            r##"{{"status":{{"ci_status":"failed","source":"pr","is_stale":false,"number":{{"number":1,"sigil":"#"}}}},"checked_at":{expired_at},"head":"{head_sha}","branch":"feature"}}"##
+        ),
+    )
+    .unwrap();
+
+    let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+    repo.configure_mock_commands(&mut cmd);
+    // Debug logging evaluates the cache-expiry diagnostics' format args
+    cmd.env("RUST_LOG", "worktrunk=debug");
+    cmd.env("CLICOLOR_FORCE", "1");
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Fresh fetch wins: green #1, and the stale red #1 is gone
+    assert!(
+        stdout.contains("\x1b[32m#1"),
+        "expired entry should refetch as green #1:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("\x1b[31m#1"),
+        "stale failed entry must not be served:\n{stdout}"
+    );
 }
 
 // =============================================================================
@@ -1143,6 +1236,7 @@ fn run_gitea_ci_status_test(
 fn gitea_feature_pr_json(head_sha: &str, mergeable: bool) -> String {
     format!(
         r#"[{{
+        "number": 7,
         "mergeable": {mergeable},
         "html_url": "https://gitea.example.com/owner/test-repo/pulls/7",
         "head": {{
@@ -1259,7 +1353,7 @@ fn test_list_full_with_gitea_commit_status_retriable_error(mut repo: TestRepo) {
 /// primary one. Two Gitea remotes (`origin` → `owner/test-repo`, `fork` →
 /// `forkowner/test-repo`) plus a remote-only `fork/feature-remote` ref. The
 /// mock answers only `forkowner/test-repo` SHA-status requests, so a primary-
-/// remote lookup in the fallback would return no CI; the green `●` in the
+/// remote lookup in the fallback would return no CI; the green `#` in the
 /// snapshot proves the SHA-status path honors `branch.remote`. (The PR path
 /// intentionally uses the primary remote, mirroring the `gh` backend; for this
 /// branch it returns no PR and we fall through to the SHA-status path.)
@@ -1313,7 +1407,7 @@ fn test_list_remotes_full_with_gitea_remote_branch(mut repo: TestRepo) {
 /// and the `feature` branch pushes to `fork`. The mock returns two open PRs for
 /// the `feature` ref — a decoy from `other-owner` that must be filtered out and
 /// the real one from `forkowner` — and answers the upstream's commit-status
-/// lookup with `success`. The green `●` proves the fork PR matched; a revert to
+/// lookup with `success`. The green `#7` proves the fork PR matched; a revert to
 /// querying/filtering by the branch's own remote would query `forkowner`'s
 /// (unmocked) `/pulls` and lose the indicator. Mirrors the GitHub backend's
 /// `test_list_full_filters_by_repo_owner`.
@@ -1344,11 +1438,13 @@ fn test_list_full_with_gitea_fork_pr(mut repo: TestRepo) {
     let pulls_json = format!(
         r#"[
         {{
+            "number": 98,
             "mergeable": true,
             "html_url": "https://gitea.example.com/upstream/test-repo/pulls/98",
             "head": {{"ref": "feature", "sha": "wrong_sha", "repo": {{"owner": {{"login": "other-owner"}}}}}}
         }},
         {{
+            "number": 7,
             "mergeable": true,
             "html_url": "https://gitea.example.com/upstream/test-repo/pulls/7",
             "head": {{"ref": "feature", "sha": "{head_sha}", "repo": {{"owner": {{"login": "forkowner"}}}}}}
