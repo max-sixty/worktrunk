@@ -29,4 +29,4 @@ The skill configures `.config/wt.toml` with project hooks. Pre-start hooks run w
 
 **Start work in a fresh worktree**
 
-`/wt-switch-create fix-auth -- Investigate the 5-minute session timeout` creates a `fix-auth` worktree in worktrunk's normal sibling layout (`<repo>.fix-auth/`), switches the session into it, and starts the task there. On session exit the worktree is offered for removal — a worktree with uncommitted changes is kept rather than removed.
+`/wt-switch-create fix-auth Investigate the 5-minute session timeout` creates a `fix-auth` worktree in worktrunk's normal sibling layout (`<repo>.fix-auth/`), switches the session into it, and starts the task there. The branch name is optional (`/wt-switch-create -- <task>`). The worktree persists after the session — merge or remove it with `wt merge` / `wt remove` like any other.

@@ -22,7 +22,9 @@ use worktrunk::styling::{
 };
 
 use super::command_approval::approve_hooks_filtered;
-use super::command_executor::{CommandContext, FailureStrategy, build_hook_context};
+use super::command_executor::{
+    CommandContext, FailureStrategy, build_hook_context, render_template_preview,
+};
 use super::context::CommandEnv;
 use super::hooks::{HookAnnouncer, prepare_and_check, run_hooks_foreground};
 use super::template_vars::TemplateVars;
@@ -134,13 +136,20 @@ fn parse_shorthand_token(raw: &str) -> anyhow::Result<(String, String, String)> 
 fn referenced_vars_union(
     user_config: Option<&CommandConfig>,
     project_config: Option<&CommandConfig>,
+    hook_type: HookType,
 ) -> anyhow::Result<std::collections::BTreeSet<String>> {
     let mut out = std::collections::BTreeSet::new();
     if let Some(cfg) = user_config {
-        out.extend(referenced_vars_for_config(cfg)?);
+        out.extend(referenced_vars_for_config(
+            cfg,
+            &format!("user {hook_type} hook"),
+        )?);
     }
     if let Some(cfg) = project_config {
-        out.extend(referenced_vars_for_config(cfg)?);
+        out.extend(referenced_vars_for_config(
+            cfg,
+            &format!("project {hook_type} hook"),
+        )?);
     }
     Ok(out)
 }
@@ -229,7 +238,7 @@ pub fn run_hook(
 
     // Smart-route shorthand: bind when the template references the key,
     // forward otherwise. Mirrors `AliasOptions::parse` for the alias path.
-    let referenced = referenced_vars_union(user_config, proj_config)?;
+    let referenced = referenced_vars_union(user_config, proj_config, hook_type)?;
     let mut bindings: Vec<(String, String)> = Vec::new();
     let mut args: Vec<String> = Vec::new();
     for raw in shorthand_vars {
@@ -288,6 +297,8 @@ pub fn run_hook(
 
         for sourced in steps {
             for cmd in sourced.step.into_commands() {
+                let preview =
+                    render_template_preview(&cmd.template, &cmd.context, repo, &cmd.template_name)?;
                 let label = if cmd.name.is_some() {
                     cformat!("{hook_type} <bold>{}</> would run:", cmd.label)
                 } else {
@@ -295,10 +306,7 @@ pub fn run_hook(
                 };
                 eprintln!(
                     "{}",
-                    info_message(cformat!(
-                        "{label}\n{}",
-                        format_bash_with_gutter(&cmd.expanded)
-                    ))
+                    info_message(cformat!("{label}\n{}", format_bash_with_gutter(&preview)))
                 );
             }
         }

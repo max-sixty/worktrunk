@@ -69,7 +69,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "name=$(jq -er '.name') || exit 1; out=$(bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" switch --create \"$name\" --no-cd --format=json) || out=$(bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" switch \"$name\" --no-cd --format=json) || exit 1; printf %s \"$out\" | jq -er '.path'"
+            "command": "name=$(jq -er '.name') || exit 1; out=$(bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" switch --create \"$name\" --no-cd --format=json) || exit 1; printf %s \"$out\" | jq -er '.path'"
           }
         ]
       }

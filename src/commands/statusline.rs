@@ -227,6 +227,13 @@ const SEVEN_DAY_SECS: i64 = 7 * 86400;
 /// Show the rate-limit segment when P(over) crosses this threshold.
 const RATE_LIMIT_P_THRESHOLD: f64 = 0.50;
 
+/// Above this usage (in percent), display used % instead of pace.
+///
+/// Close to the cap, proximity beats velocity: pace answers "will the limit
+/// be hit?", but once usage is nearly there that's all but settled, and "how
+/// much is left?" becomes the actionable number.
+const RATE_LIMIT_NEAR_CAP_PCT: f64 = 90.0;
+
 /// Extract any present rate-limit windows from the Claude Code JSON.
 ///
 /// Both windows are independently optional: subscribers see `rate_limits`
@@ -485,13 +492,17 @@ fn select_binding_window(
 
 /// Build the rate-limit segment, or `None` to hide.
 ///
-/// Shape: `<pace>×pace(<window_bounds>)` — e.g. `1.4×pace(10am–3pm)` or
-/// `1.9×pace(Mon–Mon 3pm)`. `pace` is the **naive `u/t` ratio**: what the
+/// Shape: `<pace>×(<window_bounds>)` — e.g. `1.4×(10am–3pm)` or
+/// `1.9×(Mon–Mon 3pm)`. `pace` is the **naive `u/t` ratio**: what the
 /// user has actually consumed per unit elapsed window. `1.0×` is on pace
 /// to exactly fill the window; `>1.0×` is over-pace. The Bayesian
 /// posterior `m₁` is only used by [`p_over`] to decide whether to show —
 /// for the *displayed* number, the raw measurement is more honest, more
 /// transparent, and tracks bursts naturally.
+///
+/// Above [`RATE_LIMIT_NEAR_CAP_PCT`] used, the shape becomes
+/// `<used>%(<window_bounds>)` — e.g. `93%(10am–3pm)` — showing how close
+/// the limit is rather than how fast it's being approached.
 fn format_rate_limit_segment(readings: &[RateLimitReading], now_unix: i64) -> Option<String> {
     let r = select_binding_window(readings, now_unix)?;
     let u = r.used_percentage / 100.0;
@@ -500,7 +511,11 @@ fn format_rate_limit_segment(readings: &[RateLimitReading], now_unix: i64) -> Op
     // returns a reading whose `P(over) ≥ 0.5`, which requires `t > 0`.
     let elapsed = (now_unix - (r.resets_at - r.window_secs)) as f64 / r.window_secs as f64;
     let t = elapsed.clamp(0.001, 1.0);
-    let pace = u / t;
+    let reading = if r.used_percentage > RATE_LIMIT_NEAR_CAP_PCT {
+        format!("{:.0}%", r.used_percentage)
+    } else {
+        format!("{:.1}×", u / t)
+    };
     let bounds = format_window_bounds(
         r.resets_at,
         r.window_secs,
@@ -511,7 +526,7 @@ fn format_rate_limit_segment(readings: &[RateLimitReading], now_unix: i64) -> Op
     // the warning. Unlike informational segments where color picks out one
     // sub-glyph (`@+1` green, `?` cyan), here the entire string is the
     // "you should look at this" signal.
-    Some(color_print::cformat!("<yellow>{pace:.1}×pace({bounds})</>"))
+    Some(color_print::cformat!("<yellow>{reading}({bounds})</>"))
 }
 
 /// Format context usage as a moon phase gauge.
@@ -647,8 +662,9 @@ pub fn run(format: OutputFormat) -> Result<()> {
         return Ok(());
     }
 
-    // Fit segments to terminal width using priority-based dropping
-    let max_width = terminal_width_for_statusline();
+    // Fit segments to terminal width using priority-based dropping; with no
+    // detectable width (even via the parent-TTY walk), render everything
+    let max_width = terminal_width_for_statusline().unwrap_or(usize::MAX);
     // Reserve 1 char for leading space (ellipsis handled by truncate_visible fallback)
     let content_budget = max_width.saturating_sub(1);
     let fitted_segments = StatuslineSegment::fit_to_width(segments, content_budget);
@@ -1389,7 +1405,31 @@ mod tests {
         // is wrapped in `<yellow>…</>`.
         let visible = out.ansi_strip();
         assert!(
-            visible.starts_with("1.3×pace(") && visible.ends_with(')'),
+            visible.starts_with("1.3×(") && visible.ends_with(')'),
+            "unexpected format: {visible:?}"
+        );
+    }
+
+    #[test]
+    fn test_format_rate_limit_segment_near_cap_shows_used_pct() {
+        let now = 1_700_000_000_i64;
+        // Above 90% used the displayed number switches from pace to used %:
+        // remaining headroom, not speed, is the actionable quantity there.
+        let r = make_reading(95.0, 0.60, &FIVE_HOUR_PRIORS, now, FIVE_HOUR_SECS);
+        let out =
+            format_rate_limit_segment(std::slice::from_ref(&r), now).expect("should be visible");
+        let visible = out.ansi_strip();
+        assert!(
+            visible.starts_with("95%(") && visible.ends_with(')'),
+            "unexpected format: {visible:?}"
+        );
+        // Exactly 90% stays on the pace form — the switch is strictly above.
+        let r = make_reading(90.0, 0.60, &FIVE_HOUR_PRIORS, now, FIVE_HOUR_SECS);
+        let out =
+            format_rate_limit_segment(std::slice::from_ref(&r), now).expect("should be visible");
+        let visible = out.ansi_strip();
+        assert!(
+            visible.starts_with("1.5×("),
             "unexpected format: {visible:?}"
         );
     }

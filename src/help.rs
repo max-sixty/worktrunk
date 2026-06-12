@@ -11,7 +11,7 @@
 //!
 //! ```text
 //! cli.rs (source of truth)
-//!   ├── after_long_help: markdown prose with [experimental] markers, `●` dots, plain URLs
+//!   ├── after_long_help: markdown prose with [experimental] markers, `#` CI samples, plain URLs
 //!   └── doc comments (/// lines): definition + subtitle for lead paragraph
 //!         │
 //!         ▼
@@ -24,7 +24,7 @@
 //!         ▼
 //! post_process_for_html()        — text replacements on after_long_help markdown:
 //!         │                        [experimental] → badge <span>
-//!         │                        `●` green → colored <span>
+//!         │                        `#` green → colored <span>
 //!         │                        plain URLs → markdown links
 //!         ▼
 //! --help-page stdout             — markdown with embedded HTML spans
@@ -239,9 +239,10 @@ pub fn maybe_handle_help_with_pager(alias_help_context: Option<crate::commands::
 
                 // Render markdown sections (tables, code blocks, prose) with proper wrapping.
                 // Since we disabled clap's wrapping above, our renderer controls all line breaks.
-                let width = worktrunk::styling::terminal_width();
-                let help =
-                    crate::md_help::render_markdown_in_help_with_width(&clap_output, Some(width));
+                let help = crate::md_help::render_markdown_in_help_with_width(
+                    &clap_output,
+                    worktrunk::styling::terminal_width(),
+                );
 
                 // show_help_in_pager checks if stdout or stderr is a TTY.
                 // If neither is a TTY (e.g., `wt --help &>file`), it skips the pager.
@@ -529,7 +530,7 @@ Commands with pages: merge, switch, remove, list"
 ///
 /// | CLI source | Web docs |
 /// |------------|----------|
-/// | `` `●` green `` | `<span style='color:#0a0'>●</span> green` |
+/// | `` `#` green `` | `<span style='color:#0a0'>#</span> green` |
 /// | `[experimental]` | `<span class="badge-experimental"></span>` (text via CSS) |
 /// | plain URL | markdown link |
 /// | approval prompt code block | `{% terminal() %}` with colored symbols and gutter |
@@ -546,12 +547,14 @@ fn post_process_for_html(text: &str) -> String {
 
     text
         // CI status colors (in table cells)
-        .replace("`●` green", "<span style='color:#0a0'>●</span> green")
-        .replace("`●` blue", "<span style='color:#00a'>●</span> blue")
-        .replace("`●` red", "<span style='color:#a00'>●</span> red")
-        .replace("`●` yellow", "<span style='color:#a60'>●</span> yellow")
+        .replace("`#` green", "<span style='color:#0a0'>#</span> green")
+        .replace("`#` blue", "<span style='color:#00a'>#</span> blue")
+        .replace("`#` red", "<span style='color:#a00'>#</span> red")
+        .replace("`#` magenta", "<span style='color:#a0a'>#</span> magenta")
+        .replace("`#` cyan", "<span style='color:#0aa'>#</span> cyan")
+        .replace("`#` yellow", "<span style='color:#a60'>#</span> yellow")
         .replace("`⚠` yellow", "<span style='color:#a60'>⚠</span> yellow")
-        .replace("`●` gray", "<span style='color:#888'>●</span> gray")
+        .replace("`#` gray", "<span style='color:#888'>#</span> gray")
         .replace("[experimental]", BADGE_EXPERIMENTAL_HTML)
         // Convert plain URL references to markdown links for web docs
         // CLI shows: "Open an issue at https://github.com/max-sixty/worktrunk."

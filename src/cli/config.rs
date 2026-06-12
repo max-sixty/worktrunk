@@ -1,7 +1,24 @@
-use clap::Subcommand;
+use clap::{Args, Subcommand};
 
 use super::SwitchFormat;
 use crate::commands::Shell;
+
+/// Shared global `--format` flag for the `wt config state` subcommands whose
+/// action subcommands inherit it (`cache`, `logs`, `hints`, `ci-status`,
+/// `marker`).
+#[derive(Args)]
+pub struct GlobalFormatFlag {
+    /// Output format (text, json) [default: text]
+    #[arg(
+        long,
+        default_value = "text",
+        global = true,
+        hide_possible_values = true,
+        hide_default_value = true,
+        help_heading = "Output"
+    )]
+    pub format: SwitchFormat,
+}
 
 // Ordering: primitive (init prints the code) → convenience (install writes
 // it) → inverse (uninstall removes it), then unrelated utilities. Hidden
@@ -668,7 +685,7 @@ pub enum StateCommand {
 - **Previous branch**: Previous branch for `wt switch -`
 - **Branch markers**: User-defined branch notes
 - **Vars**: Custom variables per branch
-- **CI status**: Cached GitHub/GitLab CI status per branch (30s TTL)
+- **CI status**: Cached GitHub/GitLab CI status per branch (30-60s TTL), plus the largest PR/MR number seen (sizes the `wt list` CI column)
 - **Summaries**: Cached LLM-generated branch summaries (shown in `wt list --full` and `wt switch` preview)
 - **Git commands cache**: SHA-keyed disk caches — merge-tree, ancestry, diff-stats, and `wt switch` preview renders
 - **Hints**: One-time hints that have been shown
@@ -711,7 +728,7 @@ untouched."#)]
 
 ## What's cached
 
-- **CI status** — GitHub/GitLab CI per branch (30–60s TTL), shown in [`wt list`](@/list.md#ci-status)
+- **CI status** — GitHub/GitLab CI per branch (30–60s TTL), shown in [`wt list`](@/list.md#ci-status), plus the largest PR/MR number seen (sizes the CI column)
 - **Summaries** — LLM-generated branch summaries (`wt list --full`, `wt switch` preview)
 - **Git commands** — SHA-keyed disk caches: merge-tree, ancestry, diff-stats, and `wt switch` preview renders
 - **Hints** — one-time hints already shown in this repo
@@ -737,16 +754,8 @@ $ wt config state cache clear
         #[command(subcommand)]
         action: Option<CacheAction>,
 
-        /// Output format (text, json) [default: text]
-        #[arg(
-            long,
-            default_value = "text",
-            global = true,
-            hide_possible_values = true,
-            hide_default_value = true,
-            help_heading = "Output"
-        )]
-        format: SwitchFormat,
+        #[command(flatten)]
+        format: GlobalFormatFlag,
     },
 
     /// Default branch detection and override
@@ -890,16 +899,8 @@ $ wt config state logs clear
         #[command(subcommand)]
         action: Option<LogsAction>,
 
-        /// Output format (text, json) [default: text]
-        #[arg(
-            long,
-            default_value = "text",
-            global = true,
-            hide_possible_values = true,
-            hide_default_value = true,
-            help_heading = "Output"
-        )]
-        format: SwitchFormat,
+        #[command(flatten)]
+        format: GlobalFormatFlag,
     },
 
     /// One-time hints shown in this repo
@@ -929,16 +930,8 @@ $ wt config state hints clear NAME   # re-show specific hint
         #[command(subcommand)]
         action: Option<HintsAction>,
 
-        /// Output format (text, json) [default: text]
-        #[arg(
-            long,
-            default_value = "text",
-            global = true,
-            hide_possible_values = true,
-            hide_default_value = true,
-            help_heading = "Output"
-        )]
-        format: SwitchFormat,
+        #[command(flatten)]
+        format: GlobalFormatFlag,
     },
 
     /// CI status cache
@@ -974,16 +967,8 @@ Without a subcommand, runs `get` for the current branch. Use `clear` to reset ca
         #[command(subcommand)]
         action: Option<CiStatusAction>,
 
-        /// Output format (text, json) [default: text]
-        #[arg(
-            long,
-            default_value = "text",
-            global = true,
-            hide_possible_values = true,
-            hide_default_value = true,
-            help_heading = "Output"
-        )]
-        format: SwitchFormat,
+        #[command(flatten)]
+        format: GlobalFormatFlag,
     },
 
     /// Branch markers
@@ -1019,16 +1004,8 @@ Without a subcommand, runs `get` for the current branch. For `--branch`, use `ge
         #[command(subcommand)]
         action: Option<MarkerAction>,
 
-        /// Output format (text, json) [default: text]
-        #[arg(
-            long,
-            default_value = "text",
-            global = true,
-            hide_possible_values = true,
-            hide_default_value = true,
-            help_heading = "Output"
-        )]
-        format: SwitchFormat,
+        #[command(flatten)]
+        format: GlobalFormatFlag,
     },
 
     /// \[experimental\] Custom variables per branch

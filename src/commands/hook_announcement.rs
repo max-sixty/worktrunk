@@ -75,18 +75,12 @@ use super::hook_filter::HookSource;
 /// Used by both hook and alias dispatch as the source-tagged shape that feeds
 /// `sourced_steps_to_foreground`. Per-pipeline metadata (`hook_type`,
 /// `display_path` for hooks; `name` for aliases) lives on `PipelineKind`,
-/// supplied at conversion time so this struct stays neutral. The two fields
-/// here are genuinely per-step: alias flows mix steps from both sources into
-/// one flat vec, and a config using `[[hook.x]]` on one side with `[hook.x]`
-/// on the other can produce mixed `is_pipeline` values within a single hook
-/// run.
+/// supplied at conversion time so this struct stays neutral. `source` is
+/// genuinely per-step: alias flows mix steps from both sources into one flat
+/// vec.
 pub struct SourcedStep {
     pub step: PreparedStep,
     pub source: HookSource,
-    /// Whether `Concurrent` steps run concurrently. For hooks: derived from
-    /// `is_pipeline()` (deprecated single-table form runs serially). For
-    /// aliases: always true — no deprecated form.
-    pub is_pipeline: bool,
 }
 
 /// Extract the per-step command name lists from a `CommandConfig`.
@@ -221,22 +215,20 @@ mod tests {
         SourcedStep {
             step,
             source: HookSource::User,
-            is_pipeline: false,
         }
     }
 
-    fn make_cmd(name: Option<&str>, expanded: &str) -> PreparedCommand {
+    fn make_cmd(name: Option<&str>, template: &str) -> PreparedCommand {
         let label = match name {
             Some(n) => format!("user:{n}"),
             None => "user".to_string(),
         };
         PreparedCommand {
             name: name.map(String::from),
-            expanded: expanded.to_string(),
-            context_json: "{}".to_string(),
-            lazy_template: None,
+            template: template.to_string(),
+            context: std::collections::HashMap::new(),
+            template_name: label.clone(),
             label,
-            log_label: None,
         }
     }
 
