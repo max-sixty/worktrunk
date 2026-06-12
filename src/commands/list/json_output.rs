@@ -225,6 +225,10 @@ pub struct JsonCi {
     /// Source: "pr" or "branch"
     pub source: CiSource,
 
+    /// PR/MR number (absent for branch workflows)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub number: Option<u64>,
+
     /// True if local HEAD differs from remote HEAD (unpushed changes)
     pub stale: bool,
 
@@ -452,6 +456,7 @@ impl From<&PrStatus> for JsonCi {
         Self {
             status: pr.ci_status.into(),
             source: pr.source,
+            number: pr.number.map(|r| r.number),
             stale: pr.is_stale,
             repo_url: pr
                 .url
@@ -534,7 +539,7 @@ mod tests {
     use insta::assert_snapshot;
 
     use super::*;
-    use crate::commands::list::ci_status::CiStatus;
+    use crate::commands::list::ci_status::{CiStatus, PrRef};
     use crate::commands::list::model::{
         ActiveGitOperation, Divergence, MainState, OperationState, StatusSymbols,
         WorkingTreeStatus, WorktreeData, WorktreeState,
@@ -573,6 +578,7 @@ mod tests {
             source: CiSource::PullRequest,
             is_stale: false,
             url: Some("https://github.com/org/repo/pull/123".to_string()),
+            number: Some(PrRef::pr(123)),
             review_state: None,
         });
         assert_eq!(passed.status, "passed");
@@ -594,6 +600,7 @@ mod tests {
             source: CiSource::Branch,
             is_stale: true,
             url: None,
+            number: None,
             review_state: None,
         });
         assert_eq!(failed.status, "failed");
@@ -616,6 +623,7 @@ mod tests {
                 source: CiSource::Branch,
                 is_stale: false,
                 url: None,
+                number: None,
                 review_state: None,
             });
             assert_eq!(json.status, expected);
@@ -989,6 +997,7 @@ mod tests {
         let json = serde_json::to_string_pretty(&JsonCi {
             status: "passed",
             source: CiSource::PullRequest,
+            number: Some(7),
             stale: false,
             url: Some("https://github.com/org/repo/pull/7".to_string()),
             review_state: Some(ReviewState::ChangesRequested),
@@ -1000,6 +1009,7 @@ mod tests {
         {
           "status": "passed",
           "source": "pr",
+          "number": 7,
           "stale": false,
           "url": "https://github.com/org/repo/pull/7",
           "repo_url": "https://github.com/org/repo",

@@ -10,6 +10,7 @@ use super::command_approval::approve_commit_template_append;
 use super::command_executor::FailureStrategy;
 use super::commit::{CommitOptions, HookGate};
 use super::context::CommandEnv;
+use super::flag_pair;
 use super::hook_plan::{ApprovedHookPlan, HookPlanBuilder, execute_planned_hook};
 use super::hooks::HookAnnouncer;
 use super::repository_ext::RepositoryCliExt;
@@ -33,12 +34,12 @@ pub struct MergeFlagOverrides {
 impl MergeFlagOverrides {
     pub fn from_cli(args: &crate::cli::MergeArgs) -> Self {
         Self {
-            squash: crate::flag_pair(args.squash, args.no_squash),
-            commit: crate::flag_pair(args.commit, args.no_commit),
-            rebase: crate::flag_pair(args.rebase, args.no_rebase),
-            remove: crate::flag_pair(args.remove, args.no_remove),
-            ff: crate::flag_pair(args.ff, args.no_ff),
-            verify: crate::flag_pair(args.verify, args.no_hooks || args.no_verify),
+            squash: flag_pair(args.squash, args.no_squash),
+            commit: flag_pair(args.commit, args.no_commit),
+            rebase: flag_pair(args.rebase, args.no_rebase),
+            remove: flag_pair(args.remove, args.no_remove),
+            ff: flag_pair(args.ff, args.no_ff),
+            verify: flag_pair(args.verify, args.no_hooks || args.no_verify),
         }
     }
 

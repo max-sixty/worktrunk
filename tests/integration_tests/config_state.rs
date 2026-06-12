@@ -1172,6 +1172,7 @@ fn test_state_cache_get_json_empty(repo: TestRepo) {
       "ci_status": [],
       "git_commands_cache": 0,
       "hints": [],
+      "max_pr_number": null,
       "previous_branch": null,
       "summaries": []
     }
@@ -1183,6 +1184,49 @@ fn test_state_cache_clear_empty(repo: TestRepo) {
     let output = wt_state_cmd(&repo, "cache", "clear", &[]).output().unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No cache to clear");
+}
+
+/// The PR-number width ratchet surfaces in the CI cache category: shown by
+/// `cache get` (table and JSON) even with no branch entries, and counted by
+/// `cache clear`.
+#[rstest]
+fn test_state_cache_pr_number_ratchet(repo: TestRepo) {
+    let dir = repo.root_path().join(".git/wt/cache/pr-number");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("max.json"), r#"{"number":3035}"#).unwrap();
+
+    let output = wt_state_cmd(&repo, "cache", "get", &[]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let ci_section = stdout
+        .split("\n\n")
+        .find(|s| s.contains("CI STATUS CACHE"))
+        .unwrap();
+    assert_snapshot!(ci_section, @"
+    [36mCI STATUS CACHE[39m
+    [107m [0m (no entries)
+    [107m [0m largest PR/MR number: 3035
+    ");
+
+    let output = wt_state_cmd(&repo, "cache", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
+    {
+      "ci_status": [],
+      "git_commands_cache": 0,
+      "hints": [],
+      "max_pr_number": 3035,
+      "previous_branch": null,
+      "summaries": []
+    }
+    "#);
+
+    let output = wt_state_cmd(&repo, "cache", "clear", &[]).output().unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1m1[22m CI cache entry[39m");
+    assert!(!dir.join("max.json").exists());
 }
 
 #[rstest]
@@ -1473,6 +1517,7 @@ fn test_state_get_json_empty(repo: TestRepo) {
       "hints": [],
       "hook_output": [],
       "markers": [],
+      "max_pr_number": null,
       "previous_branch": null,
       "summaries": [],
       "trash": [],
@@ -1567,6 +1612,7 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
               "set_at": 1735776000
             }
           ],
+          "max_pr_number": null,
           "previous_branch": "feature",
           "summaries": [
             {
@@ -1668,6 +1714,7 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
             }
           ],
           "markers": [],
+          "max_pr_number": null,
           "previous_branch": null,
           "summaries": [],
           "trash": [],

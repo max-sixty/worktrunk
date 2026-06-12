@@ -163,12 +163,13 @@ pub(super) fn is_codex_available() -> bool {
 
 /// Get the home directory for Claude Code config detection
 pub(super) fn home_dir() -> Option<PathBuf> {
-    // Try HOME/USERPROFILE env vars first (for tests and explicit overrides), then fall back to dirs
+    // Try HOME/USERPROFILE env vars first (for tests and explicit overrides),
+    // then fall back to the OS lookup
     std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .ok()
         .map(PathBuf::from)
-        .or_else(dirs::home_dir)
+        .or_else(worktrunk::path::home_dir)
 }
 
 /// Check if the worktrunk plugin is installed in Claude Code
