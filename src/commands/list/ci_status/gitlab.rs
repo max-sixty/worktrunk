@@ -20,8 +20,7 @@ use worktrunk::git::Repository;
 
 use super::{
     CiBranchName, CiSource, CiStatus, MAX_PRS_TO_FETCH, PrRef, PrStatus, ReviewState,
-    is_retriable_error,
-    non_interactive_cmd, parse_json,
+    is_retriable_error, non_interactive_cmd, parse_json,
 };
 
 /// Get the GitLab project ID for a repository.

@@ -7,8 +7,7 @@ use worktrunk::git::Repository;
 
 use super::{
     CiBranchName, CiSource, CiStatus, MAX_PRS_TO_FETCH, PrRef, PrStatus, ReviewState,
-    branch_owner_repo,
-    non_interactive_cmd, parse_json, retriable_pr_error,
+    branch_owner_repo, non_interactive_cmd, parse_json, retriable_pr_error,
 };
 
 /// Detect GitHub PR CI status for a branch.
@@ -474,6 +473,7 @@ mod tests {
     #[test]
     fn test_github_pr_info_review_state() {
         let pr = |review_decision: Option<&str>, is_draft: Option<bool>| GitHubPrInfo {
+            number: None,
             head_ref_oid: None,
             merge_state_status: None,
             status_check_rollup: None,

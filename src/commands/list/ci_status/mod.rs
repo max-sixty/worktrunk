@@ -784,6 +784,7 @@ mod tests {
             source: CiSource::PullRequest,
             is_stale: false,
             url: None,
+            number: None,
             review_state,
         };
 
