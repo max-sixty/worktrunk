@@ -201,7 +201,6 @@ url = true
 commit = true
 age = true
 message = true
-# Optional: path = true always makes Path eligible; path = false hides it.
 ```
 
 ### Commit

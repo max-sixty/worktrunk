@@ -1,6 +1,5 @@
 ---
 source: tests/integration_tests/help.rs
-assertion_line: 226
 info:
   program: wt
   args:
@@ -9,7 +8,6 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "80"
-    GIT_PAGER: ""
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
@@ -173,7 +171,7 @@ Output as JSON for scripting:
          [2m[list.columns][0m, plus [2m[list] summary = true[0m and [2mcommit.generation[0m       
          [experimental]                                                         
  Remote⇅ Commits ahead/behind tracking branch ([2mremote-commits[0m)                  
- CI      Pipeline status; [2m--full[0m or [2mci = true[0m                                   
+ CI      PR/MR number colored by pipeline status; [2m--full[0m or [2mci = true[0m           
  Path    Worktree directory                                                     
  URL     Dev server URL from project config; dimmed if port is not listening    
  Commit  Short hash (8 chars)                                                   
@@ -197,7 +195,6 @@ eligible, or [2mpath = false[0m to hide it.
 [107m [0m [2msummary = [0m[2m[33mfalse[0m
 [107m [0m [2mremote-commits = [0m[2m[33mtrue[0m
 [107m [0m [2mci = [0m[2m[33mfalse[0m
-[107m [0m [2mpath = [0m[2m[33mfalse[0m
 [107m [0m [2murl = [0m[2m[33mtrue[0m
 [107m [0m [2mcommit = [0m[2m[33mtrue[0m
 [107m [0m [2mage = [0m[2m[33mtrue[0m
