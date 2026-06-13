@@ -71,6 +71,22 @@ required-features = ["cli"]
 name = "git-wt"
 path = "src/git_wt.rs"
 required-features = ["cli", "git-wt"]
+# `git_wt.rs` is `include!("main.rs")`, so its unit tests are byte-identical
+# duplicates of the `wt` binary's. Running them adds no coverage and breaks
+# under `cargo hack test --feature-powerset`: insta derives snapshot filenames
+# from the crate name, so the duplicates look for `git_wt__*.snap` files that
+# don't exist (only `wt__*`). The `check` powerset still compiles this target.
+test = false
+
+# The integration suite execs the `wt` binary (needs `cli`) and snapshots its
+# rendered output, which bakes in syntax highlighting (needs
+# `syntax-highlighting`). Declaring both lets `cargo hack test
+# --feature-powerset` skip this target on combinations that can't satisfy it
+# rather than fail; lib and doc tests still run on every combination.
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+required-features = ["cli", "syntax-highlighting"]
 
 [dependencies]
 anyhow = "1.0"
