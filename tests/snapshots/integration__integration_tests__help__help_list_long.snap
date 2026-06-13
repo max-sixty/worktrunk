@@ -164,7 +164,6 @@ Column visibility is configured in user config under [2m[list.columns][0m. Bra
 [107m [0m [2mcommit = [0m[2m[33mtrue[0m
 [107m [0m [2mage = [0m[2m[33mtrue[0m
 [107m [0m [2mmessage = [0m[2m[33mtrue[0m
-[107m [0m [2m# Optional: path = true always makes Path eligible; path = false hides it.[0m
 
 [32mCI status[0m
 

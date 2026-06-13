@@ -228,7 +228,6 @@ Persistent flag values for [2mwt list[0m. Override on command line as needed.
 [107m [0m [2mcommit = [0m[2m[33mtrue[0m
 [107m [0m [2mage = [0m[2m[33mtrue[0m
 [107m [0m [2mmessage = [0m[2m[33mtrue[0m
-[107m [0m [2m# Optional: path = true always makes Path eligible; path = false hides it.[0m
 
 [32mCommit[0m
 
