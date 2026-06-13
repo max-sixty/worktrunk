@@ -181,7 +181,7 @@ The wt-switch-picker demo showcases the interactive picker (`wt switch` without 
 
 | Column | Demonstration |
 |--------|---------------|
-| CI | Hollow ○ (branch CI) vs filled ● (PR CI) vs none |
+| CI | PR/MR number (`#412`) vs bare `#` (branch CI) vs none |
 | HEAD± | Large staged diff (+54), small unstaged (+8), none |
 | Status | Staged changes (+), unstaged (!), ahead/behind (↕) |
 | main↕ | Some branches ahead-only, some ahead-and-behind |

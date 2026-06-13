@@ -32,7 +32,6 @@ info:
     OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     PSModulePath: ""
-    RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
@@ -66,3 +65,4 @@ exit_code: 0
 [2m↳[22m [2mTo customize worktree locations, run [4mwt config create[24m[22m
 [33m▲[39m [33m[1m--execute[22m disabled inside project alias / hook bodies for safety; skipping [1mecho should-not-run[22m[39m
 [2m↳[22m [2mUser-source aliases allow it. Comment at [4mhttps://github.com/max-sixty/worktrunk/issues/2101[24m if you need it for project aliases or hooks[22m
+[0m

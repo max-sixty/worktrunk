@@ -8,8 +8,8 @@ use worktrunk::git::remote_ref::azure as az_url;
 use worktrunk::git::{GitRemoteUrl, Repository};
 
 use super::{
-    CiBranchName, CiSource, CiStatus, PrStatus, branch_remote_url, non_interactive_cmd, parse_json,
-    retriable_pr_error,
+    CiBranchName, CiSource, CiStatus, PrRef, PrStatus, branch_remote_url, non_interactive_cmd,
+    parse_json, retriable_pr_error,
 };
 
 /// Resolve the Azure DevOps context (host, org, project, `--org` URL) for this
@@ -111,8 +111,10 @@ pub(super) fn detect_azure_pr(
     let pr = pr_list.first()?;
 
     // mergeStatus reflects merge feasibility, not pipeline result. We surface
-    // conflicts and queued states; pipeline pass/fail comes from the pipelines
-    // fallback below (callers invoke detect_branch when this returns NoCI).
+    // conflicts and queued states; everything else shows as NoCI. The
+    // pipelines fallback below never runs for an open PR — detect_ci returns
+    // on the first Some — so pipeline pass/fail is not surfaced here.
+    // TODO(azure-pr-pipeline): fetch the PR's pipeline status instead of NoCI.
     let ci_status = match pr.merge_status.as_deref() {
         Some("conflicts") => CiStatus::Conflicts,
         Some("queued") => CiStatus::Running,
@@ -133,6 +135,7 @@ pub(super) fn detect_azure_pr(
         source: CiSource::PullRequest,
         is_stale,
         url,
+        number: Some(PrRef::pr(u64::from(pr.pull_request_id))),
         review_state: None,
     })
 }
@@ -212,6 +215,7 @@ pub(super) fn detect_azure_pipeline(
         source: CiSource::Branch,
         is_stale,
         url: web_url,
+        number: None,
         review_state: None,
     })
 }

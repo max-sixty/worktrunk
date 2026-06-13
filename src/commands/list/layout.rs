@@ -570,6 +570,7 @@ fn build_estimated_widths(
     skip_tasks: &HashSet<TaskKind>,
     path_has_data: bool,
     url_width: usize,
+    max_pr_number: Option<u64>,
 ) -> LayoutMetadata {
     // Fixed widths for slow columns (require expensive git operations)
     // Values exceeding these widths use compact notation (K suffix)
@@ -582,7 +583,15 @@ fn build_estimated_widths(
     let branch_diff_fixed = fit_header(ColumnKind::BranchDiff.header(), 9); // "+999 -999"
     let upstream_fixed = fit_header(ColumnKind::Upstream.header(), 7); // "↑99 ↓99"
     let age_estimate = 4; // "11mo" (short format)
-    let ci_estimate = fit_header(ColumnKind::CiStatus.header(), 1); // Single indicator symbol
+    // CI column: PR/MR reference ("#3035"), sized from the cached largest
+    // number seen; "#9999" before the first fetch populates the cache. A
+    // number that outgrows the estimate renders as the bare `#` indicator
+    // (`PrStatus::format_cell`) — the layout never resizes mid-render — and
+    // the ratcheted cache sizes the next invocation correctly.
+    let ci_estimate = fit_header(
+        ColumnKind::CiStatus.header(),
+        super::ci_status::pr_ref_width(max_pr_number.unwrap_or(9999)),
+    );
 
     // Assume columns will have data (better to show and hide than to not show).
     // This is a limitation of progressive mode - we can't know which columns have data
@@ -905,7 +914,8 @@ fn allocate_columns_with_priority(
 /// - Branch diff: 9 chars ("+999 -999")
 /// - Upstream: 7 chars ("↑99 ↓99")
 /// - Age: 4 chars ("11mo" short format)
-/// - CI: 1 char (indicator symbol)
+/// - CI: sized from `max_pr_number` (the cached largest PR/MR number seen,
+///   e.g. "#3035"); 5 chars ("#9999") before the first fetch populates it
 /// - Message: flexible (20-100 chars)
 /// - URL: estimated from template + longest branch
 pub fn calculate_layout_with_width(
@@ -915,6 +925,7 @@ pub fn calculate_layout_with_width(
     terminal_width: usize,
     main_worktree_path: &Path,
     url_template: Option<&str>,
+    max_pr_number: Option<u64>,
 ) -> LayoutConfig {
     // Calculate actual widths for things we know
     // Include branch names from both worktrees and standalone branches
@@ -950,7 +961,13 @@ pub fn calculate_layout_with_width(
     let url_width = estimate_url_width(url_template, supports_hyperlinks(Stream::Stdout));
 
     // Build pre-allocated width estimates (same as buffered mode)
-    let metadata = build_estimated_widths(max_branch, skip_tasks, path_has_data, url_width);
+    let metadata = build_estimated_widths(
+        max_branch,
+        skip_tasks,
+        path_has_data,
+        url_width,
+        max_pr_number,
+    );
 
     let commit_width = fit_header(ColumnKind::Commit.header(), COMMIT_HASH_WIDTH);
 
@@ -1220,7 +1237,7 @@ mod tests {
         // Empty skip set means all tasks are computed (equivalent to --full)
         // has_branch_worktree_mismatch=true to test the path flag is passed through
         // url_width=0 since we're not testing URL column here
-        let metadata = build_estimated_widths(20, &HashSet::new(), true, 0);
+        let metadata = build_estimated_widths(20, &HashSet::new(), true, 0, None);
         let widths = metadata.widths;
 
         // Line diffs (Signs variant: +/-) allocate 3 digits for 100-999 range
@@ -1282,6 +1299,20 @@ mod tests {
             widths.upstream.negative_digits, 2,
             "Pre-allocated for 2-digit negative count"
         );
+
+        // CI: no cached PR number → fallback estimate fits "#9999"
+        assert_eq!(widths.ci_status, 5, "CI fallback should fit '#9999'");
+    }
+
+    #[test]
+    fn test_ci_column_width_from_max_pr_number() {
+        // Cached largest number sizes the column: "#12345" → 6
+        let metadata = build_estimated_widths(20, &HashSet::new(), false, 0, Some(12345));
+        assert_eq!(metadata.widths.ci_status, 6);
+
+        // Never below header width ("CI" → 2)
+        let metadata = build_estimated_widths(20, &HashSet::new(), false, 0, Some(1));
+        assert_eq!(metadata.widths.ci_status, 2);
     }
 
     #[test]
@@ -1354,6 +1385,7 @@ mod tests {
             &ColumnVisibility::default(),
             terminal_width().expect("COLUMNS=80 is set in .cargo/config.toml"),
             &main_worktree_path,
+            None,
             None,
         );
 
@@ -1466,6 +1498,7 @@ mod tests {
             &ColumnVisibility::default(),
             terminal_width().expect("COLUMNS=80 is set in .cargo/config.toml"),
             &main_worktree_path,
+            None,
             None,
         );
 
@@ -1591,6 +1624,7 @@ mod tests {
             &ColumnVisibility::all(),
             width,
             Path::new("/test"),
+            None,
             None,
         )
     }
@@ -1872,6 +1906,7 @@ mod tests {
             300,
             main_path,
             None,
+            None,
         );
         assert!(
             find_column(&layout_wide, ColumnKind::Summary).is_some(),
@@ -1891,6 +1926,7 @@ mod tests {
             &ColumnVisibility::all(),
             170,
             main_path,
+            None,
             None,
         );
         let summary_170 = find_column(&layout_170, ColumnKind::Summary)
@@ -2037,6 +2073,7 @@ mod tests {
             170,
             main_path,
             None,
+            None,
         );
 
         let mut lines = Vec::new();
@@ -2071,6 +2108,7 @@ mod tests {
             30,
             main_path,
             None,
+            None,
         );
         let branch = find_column(&layout, ColumnKind::Branch);
         assert!(
@@ -2090,6 +2128,7 @@ mod tests {
             &ColumnVisibility::all(),
             80,
             main_path,
+            None,
             None,
         );
         let branch = find_column(&layout, ColumnKind::Branch).unwrap();

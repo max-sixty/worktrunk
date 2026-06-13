@@ -622,6 +622,69 @@ pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
         ".env.CARGO_LLVM_COV_TARGET_DIR",
         "[CARGO_LLVM_COV_TARGET_DIR]",
     );
+
+    // Drop the host-dependent `GIT_*` / `WORKTRUNK_*` scrub markers from the
+    // recorded `env:` block so it depends only on what the test affirmatively
+    // sets — identically on every contributor's machine.
+    //
+    // `isolate_subprocess_env` scrubs every `GIT_*` / `WORKTRUNK_*` key it finds
+    // in the *parent* environment via `Command::env_remove`, and insta-cmd
+    // records each removed key as `KEY: ""` (it serializes `get_envs()`, which
+    // includes removals). Which keys appear is therefore a property of the host:
+    // CI has `GIT_EDITOR`, a contributor's box might have `GIT_PAGER`, neither,
+    // or both. insta never *compares* the `info:` block (only stdout/stderr/exit),
+    // so this only churns regenerated snapshots from machine to machine — but
+    // that churn is exactly what makes contributors think they have to match
+    // their local environment to CI. Normalizing it away here means they don't.
+    //
+    // This runs as its own pass after the per-key `.env.*` redactions above, so
+    // affirmatively-set *non-empty* vars (config paths → `[TEST_CONFIG]`,
+    // coverage → `[LLVM_PROFILE_FILE]`, etc.) already hold non-empty placeholders
+    // and are kept. The unconditional, explicitly-named scrubs (`NO_COLOR`,
+    // `SHELL`, `PSModulePath`) are deterministic across hosts and intentionally
+    // left as-is.
+    //
+    // Caveat: the predicate keys on the empty *value*, which a scrub marker and
+    // an affirmatively-set empty `GIT_*` / `WORKTRUNK_*` var share — in the
+    // recorded YAML both serialize as `KEY: ""`, so this pass can't tell them
+    // apart and drops the affirmatively-set one too. The known case is
+    // `test_list_config_env_override_validation_failure`, which sets
+    // `WORKTRUNK_WORKTREE_PATH=""` as the test's subject (it triggers the
+    // "worktree-path cannot be empty" warning). That value is host-independent,
+    // so it isn't the churn this targets, but the next regen of its snapshot
+    // will drop the `WORKTRUNK_WORKTREE_PATH: ""` line — harmless, since insta
+    // never compares the `env:` block.
+    settings.add_dynamic_redaction(".env", |content, _path| {
+        strip_host_scrubbed_env_markers(content)
+    });
+}
+
+/// Drop empty-valued `GIT_*` / `WORKTRUNK_*` entries from an insta-cmd `env`
+/// map node. These are usually the [`isolate_subprocess_env`](worktrunk::testing)
+/// scrub markers whose presence depends on the host environment; removing them
+/// makes the recorded block host-independent. An affirmatively-set empty value
+/// (e.g. `WORKTRUNK_WORKTREE_PATH=""`) is indistinguishable from a scrub marker
+/// in the recorded YAML and is dropped too — see the caveat on
+/// [`add_standard_env_redactions`].
+fn strip_host_scrubbed_env_markers(
+    content: insta::internals::Content,
+) -> insta::internals::Content {
+    use insta::internals::Content;
+
+    let Content::Map(entries) = content else {
+        return content;
+    };
+    let kept = entries
+        .into_iter()
+        .filter(|(key, value)| {
+            let is_scrub_key = key
+                .as_str()
+                .is_some_and(|k| k.starts_with("GIT_") || k.starts_with("WORKTRUNK_"));
+            let is_empty = value.as_str() == Some("");
+            !(is_scrub_key && is_empty)
+        })
+        .collect();
+    Content::Map(kept)
 }
 
 fn canonical_home_dir() -> Option<PathBuf> {
@@ -785,16 +848,6 @@ fn add_placeholder_cleanup_filters(settings: &mut insta::Settings) {
     settings.add_filter(
         r"(\x1b\[1m)(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/[^\x1b]+\.toml)(\x1b\[m)",
         "$1--- a$2$3",
-    );
-
-    // Normalize syntax highlighting around placeholders.
-    settings.add_filter(
-        r"\x1b\[2m \x1b\[0m\x1b\[2m(?:\x1b\[32m)?(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:\.[a-zA-Z0-9_-]+)?)(?:\x1b\[0m)?\x1b\[2m \x1b\[0m",
-        "\x1b[2m $1 \x1b[0m",
-    );
-    settings.add_filter(
-        r"(?:\x1b\[\d+m)*\x1b\[32m(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:/[^\x1b\s]+)?)(?:\x1b\[\d+m)*",
-        "$1",
     );
 }
 
@@ -1127,22 +1180,6 @@ fn setup_snapshot_settings_for_paths_with_home(
         "${1}[BINARY_PATH]$2$3",
     );
 
-    // Remove trailing ANSI reset codes at end of lines for cross-platform consistency
-    // Windows terminal strips these trailing resets that Unix includes
-    settings.add_filter(r"\x1b\[0m$", "");
-    settings.add_filter(r"\x1b\[0m\n", "\n");
-
-    // Normalize tree-sitter bash syntax highlighting differences between platforms.
-    // On Linux, tree-sitter-bash may parse paths as "string" tokens (green: [32m),
-    // while on macOS the same paths are just dimmed (no color). This causes snapshot
-    // mismatches when the same code produces different ANSI sequences.
-    // Strip green color from _REPO_ placeholders and normalize the surrounding sequences.
-    // Pattern: [2m [0m[2m[32m_REPO_...[0m[2m [0m[2m  ->  [2m _REPO_... [0m[2m
-    settings.add_filter(
-        r"\x1b\[2m \x1b\[0m\x1b\[2m\x1b\[32m(_REPO_[^\x1b]*)\x1b\[0m\x1b\[2m \x1b\[0m\x1b\[2m",
-        "\x1b[2m $1 \x1b[0m\x1b[2m",
-    );
-
     // Normalize commit hashes throughout output.
     // Git on Windows produces different tree hashes due to filemode handling, causing
     // commit hashes to differ between platforms. Redact to [HASH] for consistency.
@@ -1307,20 +1344,11 @@ fn add_remove_stats_byte_filter(settings: &mut insta::Settings) {
 
 /// Add filters for PTY-specific artifacts that vary between platforms.
 ///
-/// This handles:
-/// - macOS PTY control sequences (^D followed by backspaces)
-/// - Leading ANSI reset codes that vary between macOS and Linux
-///
 /// Note: CRLF normalization is done eagerly in PTY exec functions, not here.
 pub fn add_pty_filters(settings: &mut insta::Settings) {
     // macOS PTYs emit ^D (literal caret-D) followed by backspaces (0x08)
     // when EOF is signaled. Linux PTYs don't. Strip these for consistency.
     settings.add_filter(r"\^D\x08+", "");
-
-    // Remove redundant leading reset codes per line.
-    // macOS and Linux PTYs generate ANSI codes slightly differently.
-    // This handles lines that start with ESC[0m (reset).
-    settings.add_filter(r"(?m)^\x1b\[0m", "");
 }
 
 /// Add filters for binary paths (target/debug/wt) in PTY output.
@@ -1394,5 +1422,55 @@ mod tests {
             assert_snapshot!(linux_home_eq_tempdir, @"▲ [TEST_CONFIG] failed");
             assert_snapshot!(linux_home_above_tempdir, @"▲ [TEST_CONFIG] failed");
         });
+    }
+
+    /// The `env:` redaction drops the host-dependent `GIT_*` / `WORKTRUNK_*`
+    /// scrub markers (`KEY: ""`) while keeping everything a test affirmatively
+    /// sets — including affirmatively-empty non-scrub vars and already-redacted
+    /// scrub vars that hold a placeholder. A non-map node passes through.
+    #[test]
+    fn strip_host_scrubbed_env_markers_normalizes_env_block() {
+        use insta::internals::Content;
+
+        let env = Content::Map(vec![
+            // Host-dependent scrub markers — dropped.
+            (Content::from("GIT_EDITOR"), Content::from("")),
+            (Content::from("GIT_PAGER"), Content::from("")),
+            (Content::from("WORKTRUNK_LEAKED"), Content::from("")),
+            // Affirmatively set vars — kept.
+            (Content::from("CLICOLOR_FORCE"), Content::from("1")),
+            (Content::from("LANG"), Content::from("C")),
+            // A scrub-prefixed var the test set to a real (redacted) value — kept.
+            (
+                Content::from("WORKTRUNK_CONFIG_PATH"),
+                Content::from("[TEST_CONFIG]"),
+            ),
+            // A scrub-prefixed var set to "0", not removed — kept.
+            (
+                Content::from("WORKTRUNK_TEST_CLAUDE_INSTALLED"),
+                Content::from("0"),
+            ),
+            // Unconditional, explicitly-named scrubs are not GIT_/WORKTRUNK_ — kept.
+            (Content::from("NO_COLOR"), Content::from("")),
+        ]);
+
+        let Content::Map(kept) = strip_host_scrubbed_env_markers(env) else {
+            panic!("expected a map back");
+        };
+        let keys: Vec<&str> = kept.iter().filter_map(|(k, _)| k.as_str()).collect();
+        assert_eq!(
+            keys,
+            vec![
+                "CLICOLOR_FORCE",
+                "LANG",
+                "WORKTRUNK_CONFIG_PATH",
+                "WORKTRUNK_TEST_CLAUDE_INSTALLED",
+                "NO_COLOR",
+            ]
+        );
+
+        // Non-map nodes pass through untouched.
+        let scalar = Content::from("not a map");
+        assert_eq!(strip_host_scrubbed_env_markers(scalar.clone()), scalar);
     }
 }

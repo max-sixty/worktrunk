@@ -461,6 +461,30 @@ before dismissing:
   `add_filter` does **not** work on the `env:` block — it only substitutes on
   captured snapshot content; use a redaction.
 
+`GIT_*` / `WORKTRUNK_*` scrub markers are a special case the harness already
+neutralizes — you don't redact them per-key. `isolate_subprocess_env` scrubs
+whichever of those keys exist in the *parent* environment via
+`Command::env_remove`, and insta-cmd records each removal as `KEY: ""` — so
+which ones appear depends on the host (CI has `GIT_EDITOR`; a contributor's box
+might have `GIT_PAGER`, neither, or both). A dynamic `.env` redaction in
+`add_standard_env_redactions` (`strip_host_scrubbed_env_markers`) drops every
+empty-valued `GIT_*` / `WORKTRUNK_*` entry, so regenerating on any machine
+produces the same block — you don't have to match CI's `GIT_*` environment. The
+explicitly-named unconditional scrubs (`NO_COLOR`, `SHELL`, `PSModulePath`) are
+host-independent and left intact. Because the `info:` metadata is never
+compared, a metadata-only difference never triggers a rewrite, so committed
+snapshots from before this redaction keep their stale markers until their body
+next changes and they're regenerated.
+
+The predicate keys on the empty *value*, so it can't distinguish a scrub marker
+from an affirmatively-set empty `GIT_*` / `WORKTRUNK_*` var — both serialize as
+`KEY: ""`. So an affirmatively-set empty one is dropped too: the known case is
+`test_list_config_env_override_validation_failure`, which sets
+`WORKTRUNK_WORKTREE_PATH=""` as the test's subject. That value is
+host-independent (not the churn this targets), so its `WORKTRUNK_WORKTREE_PATH:
+""` line stays in the committed snapshot until the body next changes, at which
+point the regen drops it — harmless, since the block is never compared.
+
 The `args:` block has the same property: a repo path passed as a CLI argument
 (`wt -C <root>`) is covered by the `.args[]` redaction in
 `add_repo_and_worktree_path_filters`, which rewrites it to `_REPO_…` like the

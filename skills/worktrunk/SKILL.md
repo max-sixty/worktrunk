@@ -163,15 +163,24 @@ When users want to add automation to an existing project:
 
 3. **Handle format conversion if needed**
 
-   Single command to named table:
+   Single command to a pipeline of dependent steps:
    ```toml
    # Before
    pre-start = "npm install"
 
-   # After (adding db:migrate)
+   # After (adding db:migrate, which needs install to finish first)
+   [[pre-start]]
+   install = "npm install"
+
+   [[pre-start]]
+   migrate = "npm run db:migrate"
+   ```
+
+   For independent commands, a named table runs them concurrently:
+   ```toml
    [pre-start]
    install = "npm install"
-   migrate = "npm run db:migrate"
+   env = "cp .env.example .env"
    ```
 
 4. **Preserve existing structure and comments**

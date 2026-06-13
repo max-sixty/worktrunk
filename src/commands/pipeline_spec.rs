@@ -31,6 +31,12 @@ pub struct PipelineSpec {
 pub enum PipelineStepSpec {
     Single {
         name: Option<String>,
+        /// Label for template-expansion errors, copied from
+        /// `PreparedCommand::template_name` so runner-log errors read the
+        /// same as foreground ones (`"Failed to expand user:foo: …"`).
+        /// Command-failure messages instead use `name`, mirroring the
+        /// foreground's `HookCommandFailed { command_name }`.
+        template_name: String,
         template: String,
     },
     Concurrent {
@@ -41,6 +47,8 @@ pub enum PipelineStepSpec {
 #[derive(Serialize, Deserialize)]
 pub struct PipelineCommandSpec {
     pub name: Option<String>,
+    /// See `PipelineStepSpec::Single::template_name`.
+    pub template_name: String,
     pub template: String,
 }
 
@@ -62,16 +70,19 @@ mod tests {
             steps: vec![
                 PipelineStepSpec::Single {
                     name: Some("install".into()),
+                    template_name: "user:install".into(),
                     template: "npm install".into(),
                 },
                 PipelineStepSpec::Concurrent {
                     commands: vec![
                         PipelineCommandSpec {
                             name: Some("build".into()),
+                            template_name: "user:build".into(),
                             template: "npm run build".into(),
                         },
                         PipelineCommandSpec {
                             name: None,
+                            template_name: "user post-create hook".into(),
                             template: "echo {{ vars.tag }}".into(),
                         },
                     ],
@@ -91,8 +102,13 @@ mod tests {
 
         // Verify step structure survives roundtrip
         match &roundtripped.steps[0] {
-            PipelineStepSpec::Single { name, template } => {
+            PipelineStepSpec::Single {
+                name,
+                template_name,
+                template,
+            } => {
                 assert_eq!(name.as_deref(), Some("install"));
+                assert_eq!(template_name, "user:install");
                 assert_eq!(template, "npm install");
             }
             _ => panic!("expected Single step"),

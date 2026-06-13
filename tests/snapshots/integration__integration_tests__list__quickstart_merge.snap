@@ -68,3 +68,4 @@ exit_code: 0
 [32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 2 files, [32m+53[39m[39m[90m)[39m[39m
 [36m◎[39m [36mRemoving [1mfeature-auth[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
 [2m○[22m Switched to worktree for [1mmain[22m @ [1m_REPO_[22m
+[0m

@@ -685,7 +685,7 @@ pub enum StateCommand {
 - **Previous branch**: Previous branch for `wt switch -`
 - **Branch markers**: User-defined branch notes
 - **Vars**: Custom variables per branch
-- **CI status**: Cached GitHub/GitLab CI status per branch (30s TTL)
+- **CI status**: Cached GitHub/GitLab CI status per branch (30-60s TTL), plus the largest PR/MR number seen (sizes the `wt list` CI column)
 - **Summaries**: Cached LLM-generated branch summaries (shown in `wt list --full` and `wt switch` preview)
 - **Git commands cache**: SHA-keyed disk caches — merge-tree, ancestry, diff-stats, and `wt switch` preview renders
 - **Hints**: One-time hints that have been shown
@@ -728,7 +728,7 @@ untouched."#)]
 
 ## What's cached
 
-- **CI status** — GitHub/GitLab CI per branch (30–60s TTL), shown in [`wt list`](@/list.md#ci-status)
+- **CI status** — GitHub/GitLab CI per branch (30–60s TTL), shown in [`wt list`](@/list.md#ci-status), plus the largest PR/MR number seen (sizes the CI column)
 - **Summaries** — LLM-generated branch summaries (`wt list --full`, `wt switch` preview)
 - **Git commands** — SHA-keyed disk caches: merge-tree, ancestry, diff-stats, and `wt switch` preview renders
 - **Hints** — one-time hints already shown in this repo

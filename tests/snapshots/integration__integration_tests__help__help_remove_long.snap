@@ -44,7 +44,7 @@ Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[BRANCHES]...[0m
 
 [1m[32mArguments:[0m
   [36m[BRANCHES]...[0m
-          Branch name [default: current]
+          Branch name or worktree path [default: current]
 
 [1m[32mOptions:[0m
       [1m[36m--no-delete-branch[0m
@@ -144,9 +144,9 @@ Worktrunk has two force flags for different situations:
  [2m--force[0m ([2m-f[0m)        Worktree Worktree has uncommitted changes 
  [2m--force-delete[0m ([2m-D[0m) Branch   Branch has unmerged commits      
 
-[107m [0m [2m[0m[2m[34mwt[0m[2m remove feature [0m[2m[36m--force[0m[2m       # Remove dirty worktree[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m remove feature [0m[2m[36m-D[0m[2m            # Delete unmerged branch[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m remove feature [0m[2m[36m--force[0m[2m [0m[2m[36m-D[0m[2m    # Both[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m remove feature [0m[2m[36m--force[0m[2m       # Remove dirty worktree[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m remove feature [0m[2m[36m-D[0m[2m            # Delete unmerged branch[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m remove feature [0m[2m[36m--force[0m[2m [0m[2m[36m-D[0m[2m    # Both[0m
 
 Use [2m--no-delete-branch[0m to keep the branch regardless of merge status.
 

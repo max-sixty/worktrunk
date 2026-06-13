@@ -24,12 +24,12 @@ info:
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
+    LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     NO_COLOR: ""
     OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     PSModulePath: ""
-    RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
@@ -38,9 +38,11 @@ info:
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_CODEX_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_FISH_INSTALLED: "0"
+    WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
@@ -53,15 +55,15 @@ success: true
 exit_code: 0
 ----- stdout -----
 [2m○[22m Alias [1mdeploy[22m (user):
-[107m [0m [2m[0m[2m[34mecho[0m[2m from user
+[107m [0m [2m[0m[2m[34mecho[0m[2m from user[0m
 [2m○[22m Alias [1mdeploy[22m (project):
-[107m [0m [2m[0m[2m[34mecho[0m[2m from project
+[107m [0m [2m[0m[2m[34mecho[0m[2m from project[0m
 [2m○[22m Alias [1mgreet[22m (user):
-[107m [0m [2m[0m[2m[34mecho[0m[2m hi [0m[2m[32m{{[0m[2m branch [0m[2m[32m}}[0m[2m
+[107m [0m [2m[0m[2m[34mecho[0m[2m hi [0m[2m[32m{{[0m[2m branch [0m[2m[32m}}[0m
 [2m○[22m Alias [1mlist[22m (project):
-[107m [0m [2m[0m[2m[34mecho[0m[2m custom list
+[107m [0m [2m[0m[2m[34mecho[0m[2m custom list[0m
 [2m○[22m Alias [1monly-project[22m (project):
-[107m [0m [2m[0m[2m[34mecho[0m[2m p
+[107m [0m [2m[0m[2m[34mecho[0m[2m p[0m
 
 ----- stderr -----
 [33m▲[39m [33mAlias [1mlist[22m is shadowed by built-in [1mwt list[22m[39m

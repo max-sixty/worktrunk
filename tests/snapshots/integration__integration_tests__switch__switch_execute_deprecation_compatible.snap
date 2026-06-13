@@ -32,7 +32,6 @@ info:
     OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     PSModulePath: ""
-    RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
@@ -63,4 +62,5 @@ exit_code: 0
 ----- stderr -----
 [32m✓[39m [32mCreated branch [1mdep-ok[22m from [1mmain[22m and worktree @ [1m_REPO_.dep-ok[22m[39m
 [36m◎[39m [36mExecuting (--execute):[39m
-[107m [0m [2m[0m[2m[34mgit[0m[2m
+[107m [0m [2m[0m[2m[34mgit[0m
+[0m

@@ -1,7 +1,7 @@
 name: nightly
 # Slower checks that aren't worth running on every PR but should run before a
 # release. Jobs:
-#   - feature-powerset: feature-flag unification (motivated by #2442)
+#   - feature-powerset: feature-flag unification, check + lib tests (motivated by #2442)
 #   - release-target: PTY+shell suite on the release triples ci.yaml doesn't cover
 #   - benchmarks: full criterion suite + time-series gist append (cron only)
 #   - check-unused-dependencies: cargo-udeps on nightly toolchain
@@ -89,6 +89,15 @@ jobs:
     # Workspace members must use `default-features = false` when depending on
     # worktrunk, or feature unification will mask gating bugs by silently
     # enabling `cli` in the lib build (see tests/helpers/wt-perf/Cargo.toml).
+    #
+    # The test step runs the unit tests per combination — the check step
+    # strips dev-deps, so `#[cfg(test)]` code is invisible to it, and a test
+    # importing a feature-gated symbol without its own gate, or a snapshot
+    # baking feature-dependent output, only surfaces when tests are built and
+    # run per combo. Bounded to `--lib`: the integration suite snapshots `wt`
+    # output, which bakes in syntax-highlighted command rendering, so it only
+    # passes with syntax-highlighting on; ci.yaml's `test` matrix already
+    # runs it (with shell-integration-tests) on every PR.
     needs: gate
     if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-24.04
@@ -104,8 +113,15 @@ jobs:
       with:
         tool: cargo-hack
 
-    - name: cargo hack check --feature-powerset --no-dev-deps
-      run: cargo hack check --feature-powerset --no-dev-deps
+    - run: cargo hack check --feature-powerset --no-dev-deps
+
+    # The lib suite shells out to the mock-stub helper bin, which `--lib`
+    # doesn't build (tests/CLAUDE.md documents the fresh-target panic).
+    # mock-stub doesn't depend on worktrunk features, so one build serves
+    # every combo.
+    - run: cargo build -p mock-stub
+
+    - run: cargo hack test --feature-powerset --lib
 
   release-target:
     # Build and run the test suite on the release triples that ci.yaml's
@@ -179,7 +195,7 @@ jobs:
     - name: Install nushell
       uses: hustcer/setup-nu@v3
       with:
-        version: '0.113.0'
+        version: '0.113.1'
 
     - name: 💰 Rust repo cache
       uses: actions/cache@v5

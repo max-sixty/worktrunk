@@ -98,6 +98,9 @@
 //!   from this file — TOML I/O, not git config, and no subprocess.
 //! - Config resolution — merge project-specific settings (uses cached
 //!   project identifier).
+//! - CI column width hint — one read of `.git/wt/cache/pr-number/max.json`
+//!   (skipped when the CI task is skipped); the skeleton can't size the CI
+//!   column without it.
 //!
 //! ### First-run behavior
 //!
@@ -1056,6 +1059,13 @@ pub fn collect(
         effective_skip_tasks.insert(TaskKind::SummaryGenerate);
     }
 
+    // CI column width hint: the largest PR/MR number any previous fetch saw
+    // (one small file read — cheap enough for the pre-skeleton budget, and
+    // the skeleton can't size the column without it).
+    let max_pr_number = (!effective_skip_tasks.contains(&TaskKind::CiStatus))
+        .then(|| super::ci_status::MaxPrNumber::read(repo))
+        .flatten();
+
     // Calculate layout from items (worktrees, local branches, and remote branches).
     // The picker passes an explicit width because the list only gets part of the
     // terminal — the rest belongs to the preview pane.
@@ -1068,6 +1078,7 @@ pub fn collect(
             .unwrap_or(usize::MAX),
         &main_worktree.path,
         url_template.as_deref(),
+        max_pr_number,
     );
 
     // Single-line invariant: with no detectable width, an unlimited width
@@ -1226,9 +1237,8 @@ pub fn collect(
         // plus — when default_branch is known and the per-base
         // ahead-behind cache doesn't already cover the branches — one
         // `for-each-ref %(ahead-behind:BASE)` walk (scoped to the cold
-        // subset; warm runs do neither). The snapshot replaces the prior
-        // `commit_shas` priming + `batch_ahead_behind` pair: tasks consume
-        // it by SHA, dodging ref→SHA cache staleness.
+        // subset; warm runs do neither). Tasks consume the snapshot by
+        // SHA, dodging ref→SHA cache staleness.
         //
         // After the snapshot is built, an inner spawn primes the
         // `Remote⇅` cache off its already-scanned inventories — see the
@@ -2185,6 +2195,7 @@ mod tests {
             &ColumnVisibility::default(),
             80,
             Path::new("/tmp"),
+            None,
             None,
         );
         let placeholder = super::super::render::PLACEHOLDER;

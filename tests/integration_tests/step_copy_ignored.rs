@@ -1107,7 +1107,7 @@ fn test_copy_ignored_directory_with_symlinks(mut repo: TestRepo) {
 
 /// Test that copy errors include file paths in the message (GitHub issue #1084)
 ///
-/// Tests both the directory recursive copy error path (copy_dir_recursive_fallback)
+/// Tests both the directory recursive copy error path (copy_dir_recursive)
 /// and the top-level file copy error path (step_copy_ignored main loop).
 #[cfg(unix)]
 #[rstest]
@@ -1149,7 +1149,7 @@ fn test_copy_ignored_error_includes_path_directory(mut repo: TestRepo) {
 
 /// Test that top-level file copy errors include file paths (GitHub issue #1084)
 ///
-/// This exercises the error path in the main copy loop (not copy_dir_recursive_fallback).
+/// This exercises the error path in the main copy loop (not copy_dir_recursive).
 #[cfg(unix)]
 #[rstest]
 fn test_copy_ignored_error_includes_path_file(mut repo: TestRepo) {
@@ -1435,7 +1435,7 @@ fn test_copy_ignored_preserves_file_executable_permissions(mut repo: TestRepo) {
     );
 
     // Verify executable file inside directory was copied with permissions preserved
-    // (exercises copy.rs copy_dir_recursive_inner path)
+    // (exercises copy.rs copy_dir_recursive path)
     let dest_exec = feature_path.join("node_modules/.bin/playwright");
     assert!(dest_exec.exists(), "executable file should be copied");
     let dest_mode = fs::metadata(&dest_exec).unwrap().permissions().mode() & 0o777;

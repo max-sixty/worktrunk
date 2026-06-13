@@ -54,9 +54,9 @@ exit_code: 0
 ----- stdout -----
 wt step - Run individual operations
 
-Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>
+Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 
-[1m[32mCommands:
+[1m[32mCommands:[0m
   [1m[36mcommit[0m        Stage and commit with LLM-generated message
   [1m[36msquash[0m        Squash commits since branching
   [1m[36mrebase[0m        Rebase onto target
@@ -70,10 +70,10 @@ Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>
   [1m[36mrelocate[0m      [experimental] Move worktrees to expected paths
   [1m[36mtether[0m        [experimental] Run a command; kill its whole process tree when its worktree is removed
 
-[1m[32mOptions:
+[1m[32mOptions:[0m
   [1m[36m-h[0m, [1m[36m--help[0m  Print help (see more with '--help')
 
-[1m[32mGlobal Options:
+[1m[32mGlobal Options:[0m
   [1m[36m-C[0m[36m [0m[36m<path>[0m            Working directory for this command
       [1m[36m--config[0m[36m [0m[36m<path>[0m  User config file path
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m     Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/)

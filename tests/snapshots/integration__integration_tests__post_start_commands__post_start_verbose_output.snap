@@ -58,9 +58,9 @@ exit_code: 0
 
 ----- stderr -----
 [2m○[22m Expanding [1mworktree-path[22m
-[107m [0m [2m[0m[2m[32m{{[0m[2m[0m[2m repo_path [0m[2m[32m}}[0m[2m/../[0m[2m[32m{{[0m[2m repo [0m[2m[32m}}[0m[2m.[0m[2m[32m{{[0m[2m branch [0m[2m[36m|[0m[2m [0m[2m[34msanitize[0m[2m [0m[2m[32m}}[0m[2m
+[107m [0m [2m[0m[2m[32m{{[0m[2m[0m[2m repo_path [0m[2m[32m}}[0m[2m/../[0m[2m[32m{{[0m[2m repo [0m[2m[32m}}[0m[2m.[0m[2m[32m{{[0m[2m branch [0m[2m[36m|[0m[2m [0m[2m[34msanitize[0m[2m [0m[2m[32m}}[0m
 [107m [0m [2m→[22m
-[107m [0m [2m[0m[2m[34m_REPO_/../repo.feature[0m[2m
+[107m [0m [2m[0m[2m[34m_REPO_/../repo.feature[0m
 [32m✓[39m [32mCreated branch [1mfeature[22m from [1mmain[22m and worktree @ [1m_REPO_.feature[22m[39m
 [2m↳[22m [2mTo customize worktree locations, run [4mwt config create[24m[22m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
