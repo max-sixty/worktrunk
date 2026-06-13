@@ -54,7 +54,7 @@ that every repo-root skill is listed); Codex and Gemini pick up the whole
 
 ### Status persists after user interrupt (Claude)
 
-The Claude hooks track activity via git config (`worktrunk.status.{branch}`):
+The Claude hooks track activity via git config (`worktrunk.state.{branch}.marker`):
 - `UserPromptSubmit` → 🤖 (working)
 - `Notification`, `PreToolUse`(`AskUserQuestion`), `PermissionRequest`, `Stop` → 💬 (waiting for input)
 - `SessionEnd` → clears status
