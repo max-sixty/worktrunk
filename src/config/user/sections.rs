@@ -202,6 +202,25 @@ pub struct ListColumnsConfig {
 }
 
 impl ListColumnsConfig {
+    /// Enable every configurable column while preserving the Path column's
+    /// automatic branch/worktree-mismatch behavior.
+    pub fn all_enabled_with_automatic_path() -> Self {
+        Self {
+            status: Some(true),
+            head_diff: Some(true),
+            main_commits: Some(true),
+            main_diff: Some(true),
+            summary: Some(true),
+            remote_commits: Some(true),
+            ci: Some(true),
+            path: None,
+            url: Some(true),
+            commit: Some(true),
+            age: Some(true),
+            message: Some(true),
+        }
+    }
+
     pub fn status(&self) -> bool {
         self.status.unwrap_or(true)
     }

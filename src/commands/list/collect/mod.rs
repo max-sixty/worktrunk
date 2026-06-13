@@ -296,7 +296,7 @@ use worktrunk::styling::{
 
 use crate::commands::is_worktree_at_expected_path;
 
-use super::columns::ColumnVisibility;
+use super::columns::{ColumnKind, ColumnVisibility};
 use super::model::{CommitDetails, ItemKind, ListItem, StatusSymbols, WorktreeData};
 use super::progressive::RenderTarget;
 use super::progressive_table::ProgressiveTable;
@@ -773,17 +773,19 @@ pub fn collect(
             let show_remotes = cli_remotes || config.list.remotes();
             let show_full = cli_full || config.list.full();
             let column_visibility = ColumnVisibility::from_config(config.list.columns(), show_full);
+            let summary_generation_enabled =
+                config.list.summary() && config.commit_generation.command.is_some();
             let mut skip_tasks = HashSet::new();
-            if !column_visibility.shows_branch_diff() {
+            if !column_visibility.is_visible(ColumnKind::BranchDiff) {
                 skip_tasks.insert(TaskKind::BranchDiff);
             }
-            if !column_visibility.shows_ci_status() {
+            if !column_visibility.is_visible(ColumnKind::CiStatus) {
                 skip_tasks.insert(TaskKind::CiStatus);
             }
-            if !column_visibility.shows_summary() {
+            if !column_visibility.is_visible(ColumnKind::Summary) || !summary_generation_enabled {
                 skip_tasks.insert(TaskKind::SummaryGenerate);
             }
-            if !column_visibility.shows_url() {
+            if !column_visibility.is_visible(ColumnKind::Url) {
                 skip_tasks.insert(TaskKind::UrlStatus);
             }
             // Resolve timeouts from merged config (--full disables both)

@@ -39,23 +39,7 @@ impl ColumnVisibility {
     /// task skips (picker/statusline-style collection): every column is
     /// eligible, while Path keeps its automatic data-dependent priority.
     pub fn all_with_automatic_path() -> Self {
-        Self::from_config(
-            ListColumnsConfig {
-                status: Some(true),
-                head_diff: Some(true),
-                main_commits: Some(true),
-                main_diff: Some(true),
-                summary: Some(true),
-                remote_commits: Some(true),
-                ci: Some(true),
-                path: None,
-                url: Some(true),
-                commit: Some(true),
-                age: Some(true),
-                message: Some(true),
-            },
-            false,
-        )
+        Self::from_config(ListColumnsConfig::all_enabled_with_automatic_path(), false)
     }
 
     #[cfg(test)]
@@ -83,22 +67,6 @@ impl ColumnVisibility {
 
     pub fn path_mode(&self) -> Option<bool> {
         self.columns.path()
-    }
-
-    pub fn shows_branch_diff(&self) -> bool {
-        self.force_full_columns || self.columns.main_diff()
-    }
-
-    pub fn shows_ci_status(&self) -> bool {
-        self.force_full_columns || self.columns.ci()
-    }
-
-    pub fn shows_summary(&self) -> bool {
-        self.force_full_columns || self.columns.summary()
-    }
-
-    pub fn shows_url(&self) -> bool {
-        self.columns.url()
     }
 }
 
@@ -371,5 +339,8 @@ mod tests {
         let visibility = ColumnVisibility::all_with_automatic_path();
         assert!(visibility.is_visible(ColumnKind::Path));
         assert_eq!(visibility.path_mode(), None);
+        assert!(visibility.is_visible(ColumnKind::BranchDiff));
+        assert!(visibility.is_visible(ColumnKind::Summary));
+        assert!(visibility.is_visible(ColumnKind::CiStatus));
     }
 }

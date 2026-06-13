@@ -776,11 +776,11 @@ main-diff = false
 summary = false
 remote-commits = true
 ci = false
-path = false
 url = true
 commit = true
 age = true
 message = true
+# Optional: path = true always makes Path eligible; path = false hides it.
 ```
 
 ### CI status
@@ -1805,11 +1805,11 @@ main-diff = false
 summary = false
 remote-commits = true
 ci = false
-path = false
 url = true
 commit = true
 age = true
 message = true
+# Optional: path = true always makes Path eligible; path = false hides it.
 ```
 
 ### Commit
