@@ -251,8 +251,7 @@
 #
 # Available variables (in addition to commit template variables):
 #
-# - `{{ commit_details }}` — [experimental] list of commits being squashed; each renders as its subject and exposes `.subject` / `.body`
-# - `{{ commits }}` — list of commit subjects being squashed (deprecated in favor of `commit_details`; `wt config update` rewrites it)
+# - `{{ commit_details }}` — list of commits being squashed; each renders as its subject and exposes `.subject` / `.body`
 # - `{{ target_branch }}` — merge target branch
 #
 # Default template:
