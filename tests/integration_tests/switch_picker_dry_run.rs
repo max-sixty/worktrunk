@@ -238,3 +238,100 @@ fn test_picker_preview_bench_produces_no_output(mut repo: TestRepo) {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+/// The picker renders custom `[list.custom-columns]` cells in its skeleton
+/// rows — the `ColumnKind::Custom` arm of `render_skeleton_row`, which the
+/// piped `wt list` snapshot tests never reach because they skip the skeleton.
+#[rstest]
+fn test_picker_dry_run_renders_custom_columns(mut repo: TestRepo) {
+    repo.add_worktree("feature-a");
+    std::fs::write(
+        repo.test_config_path(),
+        r#"[list.custom-columns.Ticket]
+template = "{{ vars.ticket }}"
+"#,
+    )
+    .unwrap();
+    repo.run_git(&[
+        "config",
+        "worktrunk.state.feature-a.vars.ticket",
+        "JIRA-1234",
+    ]);
+
+    let output = repo
+        .wt_command()
+        .args(["switch"])
+        .env("WORKTRUNK_PICKER_DRY_RUN", "1")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "dry-run should exit 0; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
+    let rows: Vec<&str> = parsed["rows"]
+        .as_array()
+        .expect("top-level `rows` array")
+        .iter()
+        .map(|r| r.as_str().expect("row is a string"))
+        .collect();
+
+    let feature_row = rows
+        .iter()
+        .find(|r| r.contains("feature-a"))
+        .expect("feature-a row present");
+    assert!(
+        feature_row.contains("JIRA-1234"),
+        "custom column value renders in the picker skeleton row, got: {feature_row}"
+    );
+}
+
+/// A broken custom-column template aborts `wt list`, but the picker shares the
+/// collect path while skim owns the terminal and can't surface an abort: it
+/// stashes a warning (drained after close) and renders without the column.
+/// Covers the `progressive_handler` degradation arm in `collect`.
+#[rstest]
+fn test_picker_dry_run_invalid_custom_column_degrades(mut repo: TestRepo) {
+    repo.add_worktree("feature-a");
+    std::fs::write(
+        repo.test_config_path(),
+        r#"[list.custom-columns.Ticket]
+template = "{{ branhc }}"
+"#,
+    )
+    .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["switch"])
+        .env("WORKTRUNK_PICKER_DRY_RUN", "1")
+        .output()
+        .unwrap();
+
+    // The picker degrades rather than aborting: it still exits 0 and renders
+    // its rows, with the broken column dropped.
+    assert!(
+        output.status.success(),
+        "picker degrades on a broken column instead of aborting; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr is utf-8");
+    assert!(
+        stderr.contains("Custom columns disabled"),
+        "expected a stashed degradation warning on stderr, got: {stderr}"
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
+    let rows = parsed["rows"].as_array().expect("top-level `rows` array");
+    assert!(
+        rows.iter()
+            .any(|r| r.as_str().unwrap_or("").contains("feature-a")),
+        "rows still render without the broken column, got: {stdout}"
+    );
+}
