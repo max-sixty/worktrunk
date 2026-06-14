@@ -11,7 +11,7 @@
 //! | Not installed | `Worktree for X @ path, but cannot change directory — shell integration not installed` | `To enable automatic cd, run wt config shell install` |
 //! | Needs restart | `Worktree for X @ path, but cannot change directory — shell requires restart` | `Restart shell to activate shell integration` |
 //! | Explicit path | `Worktree for X @ path, but cannot change directory — ran ./wt; shell integration wraps wt` | `To change directory, run wt switch X` |
-//! | Git subcommand | `Worktree for X @ path, but cannot change directory — ran git wt; running through git prevents cd` | `Use git-wt directly (via shell function) for automatic cd` |
+//! | Git subcommand | `Worktree for X @ path, but cannot change directory — ran git wt; running through git prevents cd` | `For automatic cd, invoke directly (with the -): git-wt` |
 //!
 //! ## Switch to New Worktree (`wt switch --create X`)
 //!
@@ -22,14 +22,14 @@
 //! | Shell active | `Created new worktree for X from base @ path` | (none) | (none) |
 //! | Not installed | `Created new worktree for X from base @ path` | `Cannot change directory — shell integration not installed` | `To enable automatic cd, run wt config shell install` |
 //! | Explicit path | `Created new worktree for X from base @ path` | `Cannot change directory — ran ./wt; shell integration wraps wt` | `To change directory, run wt switch X` |
-//! | Git subcommand | `Created new worktree for X from base @ path` | `Cannot change directory — ran git wt; running through git prevents cd` | `Use git-wt directly (via shell function) for automatic cd` |
+//! | Git subcommand | `Created new worktree for X from base @ path` | `Cannot change directory — ran git wt; running through git prevents cd` | `For automatic cd, invoke directly (with the -): git-wt` |
 //!
 //! ## After Merge/Remove (switching to main worktree)
 //!
 //! | Condition | Warning | Hint |
 //! |-----------|---------|------|
 //! | Shell active | (info) `Switched to worktree for main @ path` | (none) |
-//! | Git subcommand | `Cannot change directory — ran git wt; running through git prevents cd` | `Use git-wt directly (via shell function) for automatic cd` |
+//! | Git subcommand | `Cannot change directory — ran git wt; running through git prevents cd` | `For automatic cd, invoke directly (with the -): git-wt` |
 //! | Explicit path | `Cannot change directory — ran ./wt; shell integration wraps wt` | `To change directory, run wt switch main` |
 //! | Other | `Cannot change directory — {reason}` | `To enable automatic cd, run wt config shell install` |
 //!
@@ -64,7 +64,7 @@ use color_print::cformat;
 use worktrunk::config::{UserConfig, require_config_path};
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
-use worktrunk::shell::{Shell, current_shell, extract_filename_from_path};
+use worktrunk::shell::{Shell, current_shell, current_shell_name, extract_filename_from_path};
 use worktrunk::styling::{
     eprintln, format_bash_with_gutter, hint_message, info_message, success_message, warning_message,
 };
@@ -311,16 +311,17 @@ pub fn print_shell_install_result(scan_result: &crate::commands::configure_shell
         }
     }
 
-    // Show legacy file cleanups (migration from conf.d to functions)
-    for legacy_path in &scan_result.legacy_cleanups {
+    // Show legacy file cleanups (fish conf.d → functions, nushell config-dir →
+    // data-dir vendor/autoload).
+    for (shell, legacy_path) in &scan_result.legacy_cleanups {
         let old_path = format_path_for_display(legacy_path);
-        // Find the new canonical path from the configured results
+        // Find the new canonical path for this shell from the configured results
         let new_path = scan_result
             .configured
             .iter()
-            .find(|r| r.shell == Shell::Fish)
+            .find(|r| r.shell == *shell)
             .map(|r| format_path_for_display(&r.path))
-            .unwrap_or_else(|| "~/.config/fish/functions/".to_string());
+            .unwrap_or_default();
         eprintln!(
             "{}",
             info_message(cformat!(
@@ -364,9 +365,7 @@ pub fn print_shell_install_result(scan_result: &crate::commands::configure_shell
 
     // Restart hint for current shell
     if shells_configured_count > 0 {
-        let current_shell = std::env::var("SHELL")
-            .ok()
-            .and_then(|s| extract_filename_from_path(&s).map(String::from));
+        let current_shell = current_shell_name();
 
         let current_shell_result = current_shell.as_ref().and_then(|shell_name| {
             scan_result
@@ -586,9 +585,7 @@ pub fn print_shell_uninstall_result(scan_result: &UninstallScanResult, explicit_
     );
 
     // Hint about restarting shell (only if current shell was affected)
-    let current_shell = std::env::var("SHELL")
-        .ok()
-        .and_then(|s| extract_filename_from_path(&s).map(String::from));
+    let current_shell = current_shell_name();
 
     let current_shell_affected = current_shell.as_ref().is_some_and(|shell_name| {
         scan_result

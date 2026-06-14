@@ -8,13 +8,9 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
-    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
-    NO_COLOR: ""
-    PSModulePath: ""
-    SHELL: ""
     TERM: alacritty
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -126,11 +122,12 @@ Worktrees are addressed by branch name; paths are computed from a configurable t
 
 [1m[32mExamples[0m
 
-[107m [0m [2m[0m[2m[34mwt[0m[2m switch feature-auth           # Switch to worktree[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m-[0m[2m                      # Previous worktree (like cd -)[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m new-feature   # Create new branch and worktree[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch feature-auth           # Switch to worktree[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m-[0m[2m                      # Previous worktree (like cd -)[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m new-feature   # Create new branch and worktree[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m hotfix [0m[2m[36m--base[0m[2m production[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m switch pr:123                 # Switch to PR #123's branch[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch pr:123                 # Switch to PR #123's branch[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch https://github.com/owner/repo/pull/123   # ...or paste the PR's URL[0m
 
 [1m[32mCreating a branch[0m
 
@@ -146,10 +143,10 @@ If the branch already has a worktree, [2mwt switch[0m changes directories to i
 4. Runs pre-start hooks, blocking until complete
 5. Spawns post-start and post-switch hooks in the background
 
-[107m [0m [2m[0m[2m[34mwt[0m[2m switch feature                        # Existing branch → creates worktree[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m feature               # New branch and worktree[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m fix [0m[2m[36m--base[0m[2m release    # New branch from release[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m temp [0m[2m[36m--no-hooks[0m[2m       # Skip hooks[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch feature                        # Existing branch → creates worktree[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m feature               # New branch and worktree[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m fix [0m[2m[36m--base[0m[2m release    # New branch from release[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m temp [0m[2m[36m--no-hooks[0m[2m       # Skip hooks[0m
 
 [1m[32mShortcuts[0m
 
@@ -161,14 +158,14 @@ If the branch already has a worktree, [2mwt switch[0m changes directories to i
  [2mpr:{N}[0m   GitHub PR #N's branch         
  [2mmr:{N}[0m   GitLab MR !N's branch         
 
-[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m-[0m[2m                           # Back to previous[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m switch ^                           # Default branch worktree[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m fix [0m[2m[36m--base=@[0m[2m       # Branch from current HEAD[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m fix [0m[2m[36m--base=pr:123[0m[2m  # Branch from PR #123's head[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m switch pr:123                      # PR #123's branch[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m switch mr:101                      # MR !101's branch[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m-[0m[2m                           # Back to previous[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch ^                           # Default branch worktree[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m fix [0m[2m[36m--base=@[0m[2m       # Branch from current HEAD[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m fix [0m[2m[36m--base=pr:123[0m[2m  # Branch from PR #123's head[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch pr:123                      # PR #123's branch[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch mr:101                      # MR !101's branch[0m
 
-Shortcuts also apply to [2m--base[0m. For a fork PR/MR, the head commit is fetched and used as the base SHA without creating a tracking branch. (Web URLs like [2mhttps://github.com/owner/repo/pull/N[0m or [2mhttps://gitlab.com/owner/repo/-/merge_requests/N[0m work in place of [2mpr:N[0m / [2mmr:N[0m anywhere a shortcut does.)
+Shortcuts also apply to [2m--base[0m. For a fork PR/MR, the head commit is fetched and used as the base SHA without creating a tracking branch.
 
 [1m[32mInteractive picker[0m
 
@@ -193,7 +190,7 @@ When called without arguments, [2mwt switch[0m opens an interactive picker to 
 2. [1mlog[0m — Recent commits; commits already on the default branch have dimmed hashes
 3. [1mmain…±[0m — Diff of changes since the merge-base with the default branch
 4. [1mremote⇅[0m — Ahead/behind diff vs upstream tracking branch
-5. [1msummary[0m — LLM-generated branch summary; requires [2m[list] summary = true[0m and [2m[commit.generation][0m
+5. [1msummary[0m — LLM-generated branch summary; requires [2m[list] summary = true[0m and [2mcommit.generation[0m
 
 [1mPager configuration:[0m The preview panel pipes diff output through git's pager. Override in user config:
 
@@ -204,12 +201,16 @@ Available on Unix only (macOS, Linux). On Windows, use [2mwt list[0m or [2mwt
 
 [1m[32mPull requests and merge requests[0m
 
-The [2mpr:<number>[0m and [2mmr:<number>[0m shortcuts resolve a GitHub PR or GitLab MR to its branch. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref ([2mrefs/pull/N/head[0m or [2mrefs/merge-requests/N/head[0m) and configures [2mpushRemote[0m to the fork URL.
+The [2mpr:<number>[0m / [2mmr:<number>[0m shortcut and the PR/MR's web URL both resolve to its branch. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref ([2mrefs/pull/N/head[0m or [2mrefs/merge-requests/N/head[0m) and configures [2mpushRemote[0m to the fork URL.
 
-[107m [0m [2m[0m[2m[34mwt[0m[2m switch pr:101                 # GitHub PR #101[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m switch mr:101                 # GitLab MR !101[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch pr:101                                  # GitHub PR #101[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch https://github.com/owner/repo/pull/101  # ...the same PR, by URL[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch mr:101                                  # GitLab MR !101[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch https://gitlab.com/owner/repo/-/merge_requests/101  # ...the same MR, by URL[0m
 
-Requires [2mgh[0m (GitHub) or [2mglab[0m (GitLab) CLI to be installed and authenticated. The [2m--create[0m flag cannot be used with [2mpr:[0m/[2mmr:[0m syntax since the branch already exists.
+Both work anywhere a branch is accepted, including [2m--base[0m.
+
+Requires [2mgh[0m (GitHub) or [2mglab[0m (GitLab) CLI to be installed and authenticated. The [2m--create[0m flag cannot be used with a PR/MR reference since the branch already exists.
 
 [1mForks:[0m The local branch uses the PR/MR's branch name directly (e.g., [2mfeature-fix[0m), so [2mgit push[0m works normally. If a local branch with that name already exists tracking something else, rename it first.
 

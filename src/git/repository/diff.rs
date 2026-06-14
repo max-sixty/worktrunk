@@ -7,6 +7,37 @@ use dashmap::mapref::entry::Entry;
 
 use super::{DiffStats, LineDiff, Repository};
 
+/// Subject and body for one commit in a range.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct CommitMessageDetail {
+    /// Commit subject from git's `%s` pretty format.
+    pub subject: String,
+    /// Commit body from git's `%b` pretty format, including trailer-like lines.
+    pub body: String,
+}
+
+fn parse_commit_message_details_output(output: &str) -> anyhow::Result<Vec<CommitMessageDetail>> {
+    if output.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let parts = output.split('\0').collect::<Vec<_>>();
+    if parts.len() % 2 != 0 {
+        bail!(
+            "Malformed git log output: expected NUL-separated subject/body pairs, got {} field(s)",
+            parts.len()
+        );
+    }
+
+    Ok(parts
+        .chunks_exact(2)
+        .map(|pair| CommitMessageDetail {
+            subject: pair[0].to_string(),
+            body: pair[1].to_string(),
+        })
+        .collect())
+}
+
 impl Repository {
     /// Count commits between base and head.
     pub fn count_commits(&self, base: &str, head: &str) -> anyhow::Result<usize> {
@@ -112,16 +143,21 @@ impl Repository {
         Ok(result)
     }
 
-    /// Get commit subjects (first line of commit message) from a range.
-    pub fn commit_subjects(&self, range: &str) -> anyhow::Result<Vec<String>> {
+    /// Get commit subjects and bodies from a range.
+    pub fn commit_message_details(&self, range: &str) -> anyhow::Result<Vec<CommitMessageDetail>> {
+        // Git pretty-format placeholders:
+        // - `%s`: subject
+        // - `%x00`: literal NUL delimiter
+        // - `%b`: body as Git reports it; trailer-like lines remain part of this text
         let output = self.run_command(&[
             "log",
+            "-z",
             "--no-show-signature",
-            "--format=%s",
+            "--pretty=format:%s%x00%b",
             "--end-of-options",
             range,
         ])?;
-        Ok(output.lines().map(String::from).collect())
+        parse_commit_message_details_output(&output)
     }
 
     /// Get recent commit subjects for style reference.
@@ -233,35 +269,36 @@ impl Repository {
 
     fn compute_ahead_behind(&self, base: &str, head: &str) -> anyhow::Result<(usize, usize)> {
         // Get merge-base (cached in shared repo cache)
-        let Some(merge_base) = self.merge_base(base, head)? else {
+        let Some(merge_base) = self.merge_base_by_sha(base, head)? else {
             // Orphan branch - no common ancestor
             return Ok((0, 0));
         };
 
-        // Count commits using two-dot syntax (faster when merge-base is cached)
-        // ahead = commits in head but not in merge_base
-        // behind = commits in base but not in merge_base
+        // Count commits using two-dot syntax (faster when merge-base is cached).
+        // ahead = commits in head but not in merge_base.
+        // behind = commits in base but not in merge_base.
         //
-        // Skip rev-list when merge_base equals head (count would be 0).
-        // Note: we don't check merge_base == base because base is typically a
-        // refname like "main" while merge_base is a SHA.
-        let ahead = if merge_base == head {
-            0
-        } else {
-            let output =
-                self.run_command(&["rev-list", "--count", &format!("{}..{}", merge_base, head)])?;
+        // Skip rev-list when merge_base equals either side (count would be 0).
+        // Both inputs are SHAs (the only caller is `ahead_behind_by_sha`), and
+        // `merge_base_by_sha` returns a SHA, so the equality check is sound on
+        // both sides.
+        let count = |range: String| -> anyhow::Result<usize> {
+            let output = self.run_command(&["rev-list", "--count", &range])?;
             output
                 .trim()
                 .parse()
-                .context("Failed to parse ahead count")?
+                .context("Failed to parse rev-list count")
         };
-
-        let behind_output =
-            self.run_command(&["rev-list", "--count", &format!("{}..{}", merge_base, base)])?;
-        let behind = behind_output
-            .trim()
-            .parse()
-            .context("Failed to parse behind count")?;
+        let ahead = if merge_base == head {
+            0
+        } else {
+            count(format!("{merge_base}..{head}"))?
+        };
+        let behind = if merge_base == base {
+            0
+        } else {
+            count(format!("{merge_base}..{base}"))?
+        };
 
         Ok((ahead, behind))
     }
@@ -366,5 +403,18 @@ impl Repository {
             .ok()
             .map(|output| DiffStats::from_shortstat(&output).format_summary())
             .unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn parse_commit_message_details_output_rejects_odd_field_count() {
+        let err =
+            super::parse_commit_message_details_output("subject\0body\0dangling").unwrap_err();
+        assert!(
+            err.to_string().contains("subject/body pairs"),
+            "unexpected error: {err}"
+        );
     }
 }

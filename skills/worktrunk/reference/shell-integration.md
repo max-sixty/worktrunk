@@ -38,7 +38,7 @@ eval "$(wt config shell init zsh)"
 wt config shell init fish | source
 
 # nushell (experimental) — save to vendor autoload directory:
-wt config shell init nu | save -f ($nu.default-config-dir | path join vendor/autoload/wt.nu)
+wt config shell init nu | save -f ($nu.vendor-autoload-dirs | last | path join wt.nu)
 
 # PowerShell ($PROFILE):
 Invoke-Expression (& wt config shell init powershell | Out-String)

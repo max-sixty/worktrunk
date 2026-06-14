@@ -212,6 +212,54 @@ impl GitRemoteUrl {
             parts.first().copied()
         }
     }
+
+    /// Build the repository web URL from the already-parsed components.
+    ///
+    /// Local-only: derives purely from the parsed remote, with no network
+    /// access. This is the single place that knows the per-forge "web URL from
+    /// a parsed remote" shape.
+    ///
+    /// - Standard forges (GitHub, GitLab incl. nested groups, Gitea, generic):
+    ///   `https://{host}/{owner}/{repo}`.
+    /// - Azure DevOps: `https://dev.azure.com/{org}/{project}/_git/{repo}`, or
+    ///   `https://{host}/{project}/_git/{repo}` for legacy `*.visualstudio.com`
+    ///   (where the org is in the hostname). The naive `host/owner/repo` form is
+    ///   wrong for the SSH (`ssh.dev.azure.com:v3/...`) remote shape, so the
+    ///   [`azure_organization`](Self::azure_organization) /
+    ///   [`azure_project`](Self::azure_project) accessors feed the canonical
+    ///   [`fork_remote_url`](crate::git::remote_ref::azure::fork_remote_url)
+    ///   builder. The SSH `ssh.dev.azure.com` host is normalized to the
+    ///   `dev.azure.com` web host.
+    ///
+    /// Returns `None` only when an Azure DevOps URL is missing its org/project.
+    pub fn web_url(&self) -> Option<String> {
+        if self.is_azure_devops() {
+            let organization = self.azure_organization()?;
+            let project = self.azure_project()?;
+            // `*.visualstudio.com` keeps the org in the hostname; every other
+            // Azure remote shape (including `ssh.dev.azure.com`) maps to the
+            // `dev.azure.com` web host.
+            let host = if self
+                .host
+                .to_ascii_lowercase()
+                .ends_with(".visualstudio.com")
+            {
+                self.host.as_str()
+            } else {
+                "dev.azure.com"
+            };
+            return Some(crate::git::remote_ref::azure::fork_remote_url(
+                host,
+                organization,
+                project,
+                &self.repo,
+            ));
+        }
+        Some(format!(
+            "https://{}/{}/{}",
+            self.host, self.owner, self.repo
+        ))
+    }
 }
 
 /// Extract owner and repository name from a git remote URL.
@@ -1081,5 +1129,56 @@ mod tests {
         let url = GitRemoteUrl::parse("https://github.com/owner/repo").unwrap();
         assert_eq!(url.azure_organization(), None);
         assert_eq!(url.azure_project(), None);
+    }
+
+    #[test]
+    fn test_web_url() {
+        let web_url = |input: &str| GitRemoteUrl::parse(input).unwrap().web_url();
+
+        // github.com: SSH input produces HTTPS output (the core value).
+        assert_eq!(
+            web_url("git@github.com:owner/repo.git"),
+            Some("https://github.com/owner/repo".to_string())
+        );
+        assert_eq!(
+            web_url("https://github.com/owner/repo.git"),
+            Some("https://github.com/owner/repo".to_string())
+        );
+
+        // GitHub Enterprise host.
+        assert_eq!(
+            web_url("git@github.mycompany.com:owner/repo.git"),
+            Some("https://github.mycompany.com/owner/repo".to_string())
+        );
+
+        // GitLab nested group.
+        assert_eq!(
+            web_url("git@gitlab.com:group/subgroup/repo.git"),
+            Some("https://gitlab.com/group/subgroup/repo".to_string())
+        );
+
+        // Gitea.
+        assert_eq!(
+            web_url("git@gitea.example.com:owner/repo.git"),
+            Some("https://gitea.example.com/owner/repo".to_string())
+        );
+
+        // Azure DevOps: HTTPS dev.azure.com.
+        assert_eq!(
+            web_url("https://dev.azure.com/myorg/myproject/_git/myrepo"),
+            Some("https://dev.azure.com/myorg/myproject/_git/myrepo".to_string())
+        );
+
+        // Azure DevOps: SSH ssh.dev.azure.com normalizes to the dev.azure.com web host.
+        assert_eq!(
+            web_url("git@ssh.dev.azure.com:v3/myorg/myproject/myrepo"),
+            Some("https://dev.azure.com/myorg/myproject/_git/myrepo".to_string())
+        );
+
+        // Azure DevOps: legacy *.visualstudio.com keeps the org in the hostname.
+        assert_eq!(
+            web_url("https://myorg.visualstudio.com/myproject/_git/myrepo"),
+            Some("https://myorg.visualstudio.com/myproject/_git/myrepo".to_string())
+        );
     }
 }

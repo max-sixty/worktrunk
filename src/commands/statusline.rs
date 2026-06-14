@@ -39,6 +39,8 @@ struct ClaudeCodeContext {
 /// A single rate-limit window reading parsed from Claude Code's JSON.
 #[derive(Clone, Debug)]
 struct RateLimitReading {
+    /// Window key in Claude Code's JSON: `five_hour` or `seven_day`.
+    name: &'static str,
     /// 0–100 from `.rate_limits.<window>.used_percentage`.
     used_percentage: f64,
     /// Unix epoch seconds from `.rate_limits.<window>.resets_at`.
@@ -225,11 +227,26 @@ const SEVEN_DAY_SECS: i64 = 7 * 86400;
 /// Show the rate-limit segment when P(over) crosses this threshold.
 const RATE_LIMIT_P_THRESHOLD: f64 = 0.50;
 
+/// Above this usage (in percent), display used % instead of pace.
+///
+/// Close to the cap, proximity beats velocity: pace answers "will the limit
+/// be hit?", but once usage is nearly there that's all but settled, and "how
+/// much is left?" becomes the actionable number.
+const RATE_LIMIT_NEAR_CAP_PCT: f64 = 90.0;
+
 /// Extract any present rate-limit windows from the Claude Code JSON.
 ///
 /// Both windows are independently optional: subscribers see `rate_limits`
 /// only after the first API response, and each window may be missing.
 fn parse_rate_limits(v: &serde_json::Value) -> Vec<RateLimitReading> {
+    // Ground truth for debugging window selection: which windows Claude Code
+    // actually sent, before any parsing or clamping. The explicit absent case
+    // distinguishes "no rate_limits key" from "stdin context never parsed"
+    // (which logs nothing at all).
+    match v.get("rate_limits") {
+        Some(rl) => log::debug!("rate_limits input: {rl}"),
+        None => log::debug!("rate_limits input: absent"),
+    }
     let mut out = Vec::new();
     for (key, window_secs, priors) in [
         ("five_hour", FIVE_HOUR_SECS, &FIVE_HOUR_PRIORS),
@@ -243,6 +260,7 @@ fn parse_rate_limits(v: &serde_json::Value) -> Vec<RateLimitReading> {
             .and_then(|x| x.as_i64());
         if let (Some(u), Some(r)) = (used, resets) {
             out.push(RateLimitReading {
+                name: key,
                 used_percentage: u,
                 resets_at: r,
                 window_secs,
@@ -395,8 +413,8 @@ where
 }
 
 /// Format the rate-limit window's start and end as a short label that
-/// goes inside the parenthetical: `10am-3pm` (12h) / `10:00–15:00` (24h) for
-/// the 5-hour window, `Mon-Mon 3pm` / `Mon-Mon 15:00` for the 7-day window.
+/// goes inside the parenthetical: `10am–3pm` (12h) / `10:00–15:00` (24h) for
+/// the 5-hour window, `Mon–Mon 3pm` / `Mon–Mon 15:00` for the 7-day window.
 ///
 /// The 5h variant uses clock times on both endpoints. The longer window
 /// uses the weekday on both ends (they're equal for a true 7-day rolling
@@ -459,6 +477,13 @@ fn select_binding_window(
             let elapsed = (now_unix - (r.resets_at - r.window_secs)) as f64 / r.window_secs as f64;
             let t = elapsed.clamp(0.0, 1.0);
             let p = p_over(u, t, r.priors);
+            log::debug!(
+                "rate-limit {} window: used={:.1}% elapsed={:.1}% pace={:.2}× P(over)={p:.3} (show threshold {RATE_LIMIT_P_THRESHOLD})",
+                r.name,
+                u * 100.0,
+                t * 100.0,
+                u / t.max(0.001),
+            );
             (p >= RATE_LIMIT_P_THRESHOLD).then_some((p, r))
         })
         .max_by(|(a, _), (b, _)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
@@ -467,13 +492,17 @@ fn select_binding_window(
 
 /// Build the rate-limit segment, or `None` to hide.
 ///
-/// Shape: `<pace>×pace(<window_bounds>)` — e.g. `1.4×pace(10am-3pm)` or
-/// `1.9×pace(Mon-Mon 3pm)`. `pace` is the **naive `u/t` ratio**: what the
+/// Shape: `<pace>×(<window_bounds>)` — e.g. `1.4×(10am–3pm)` or
+/// `1.9×(Mon–Mon 3pm)`. `pace` is the **naive `u/t` ratio**: what the
 /// user has actually consumed per unit elapsed window. `1.0×` is on pace
 /// to exactly fill the window; `>1.0×` is over-pace. The Bayesian
 /// posterior `m₁` is only used by [`p_over`] to decide whether to show —
 /// for the *displayed* number, the raw measurement is more honest, more
 /// transparent, and tracks bursts naturally.
+///
+/// Above [`RATE_LIMIT_NEAR_CAP_PCT`] used, the shape becomes
+/// `<used>%(<window_bounds>)` — e.g. `93%(10am–3pm)` — showing how close
+/// the limit is rather than how fast it's being approached.
 fn format_rate_limit_segment(readings: &[RateLimitReading], now_unix: i64) -> Option<String> {
     let r = select_binding_window(readings, now_unix)?;
     let u = r.used_percentage / 100.0;
@@ -482,7 +511,11 @@ fn format_rate_limit_segment(readings: &[RateLimitReading], now_unix: i64) -> Op
     // returns a reading whose `P(over) ≥ 0.5`, which requires `t > 0`.
     let elapsed = (now_unix - (r.resets_at - r.window_secs)) as f64 / r.window_secs as f64;
     let t = elapsed.clamp(0.001, 1.0);
-    let pace = u / t;
+    let reading = if r.used_percentage > RATE_LIMIT_NEAR_CAP_PCT {
+        format!("{:.0}%", r.used_percentage)
+    } else {
+        format!("{:.1}×", u / t)
+    };
     let bounds = format_window_bounds(
         r.resets_at,
         r.window_secs,
@@ -493,7 +526,7 @@ fn format_rate_limit_segment(readings: &[RateLimitReading], now_unix: i64) -> Op
     // the warning. Unlike informational segments where color picks out one
     // sub-glyph (`@+1` green, `?` cyan), here the entire string is the
     // "you should look at this" signal.
-    Some(color_print::cformat!("<yellow>{pace:.1}×pace({bounds})</>"))
+    Some(color_print::cformat!("<yellow>{reading}({bounds})</>"))
 }
 
 /// Format context usage as a moon phase gauge.
@@ -629,8 +662,9 @@ pub fn run(format: OutputFormat) -> Result<()> {
         return Ok(());
     }
 
-    // Fit segments to terminal width using priority-based dropping
-    let max_width = terminal_width_for_statusline();
+    // Fit segments to terminal width using priority-based dropping; with no
+    // detectable width (even via the parent-TTY walk), render everything
+    let max_width = terminal_width_for_statusline().unwrap_or(usize::MAX);
     // Reserve 1 char for leading space (ellipsis handled by truncate_visible fallback)
     let content_budget = max_width.saturating_sub(1);
     let fitted_segments = StatuslineSegment::fit_to_width(segments, content_budget);
@@ -714,7 +748,8 @@ fn run_json() -> Result<()> {
             all_vars.insert(branch.clone(), entries);
         }
     }
-    let json_item = json_output::JsonItem::from_list_item(&item, &mut all_vars);
+    let json_item =
+        json_output::JsonItem::from_list_item(&item, &mut all_vars, repo.repo_web_url().as_deref());
 
     // Output as JSON array (consistent with wt list --format=json)
     let output = serde_json::to_string_pretty(&[json_item])?;
@@ -1282,6 +1317,11 @@ mod tests {
     ) -> RateLimitReading {
         let resets_at = now + ((1.0 - t_elapsed) * window_secs as f64).round() as i64;
         RateLimitReading {
+            name: if window_secs == FIVE_HOUR_SECS {
+                "five_hour"
+            } else {
+                "seven_day"
+            },
             used_percentage: used_pct,
             resets_at,
             window_secs,
@@ -1309,6 +1349,23 @@ mod tests {
         let r = make_reading(80.0, 0.60, &FIVE_HOUR_PRIORS, now, FIVE_HOUR_SECS);
         let sel = select_binding_window(std::slice::from_ref(&r), now);
         assert!(sel.is_some());
+        assert_eq!(sel.unwrap().used_percentage, 80.0);
+    }
+
+    #[test]
+    fn test_select_binding_window_logs_at_debug() {
+        // The per-window debug line's format args are lazily skipped at
+        // default verbosity; enabling Debug evaluates them. The
+        // not-yet-started window (negative elapsed, clamped to 0) is the
+        // case the `t.max(0.001)` division guard exists for.
+        log::set_max_level(log::LevelFilter::Debug);
+        let now = 1_700_000_000_i64;
+        let readings = [
+            make_reading(80.0, 0.60, &FIVE_HOUR_PRIORS, now, FIVE_HOUR_SECS),
+            make_reading(5.0, -0.10, &SEVEN_DAY_PRIORS, now, SEVEN_DAY_SECS),
+        ];
+        let sel = select_binding_window(&readings, now);
+        log::set_max_level(log::LevelFilter::Off);
         assert_eq!(sel.unwrap().used_percentage, 80.0);
     }
 
@@ -1348,7 +1405,31 @@ mod tests {
         // is wrapped in `<yellow>…</>`.
         let visible = out.ansi_strip();
         assert!(
-            visible.starts_with("1.3×pace(") && visible.ends_with(')'),
+            visible.starts_with("1.3×(") && visible.ends_with(')'),
+            "unexpected format: {visible:?}"
+        );
+    }
+
+    #[test]
+    fn test_format_rate_limit_segment_near_cap_shows_used_pct() {
+        let now = 1_700_000_000_i64;
+        // Above 90% used the displayed number switches from pace to used %:
+        // remaining headroom, not speed, is the actionable quantity there.
+        let r = make_reading(95.0, 0.60, &FIVE_HOUR_PRIORS, now, FIVE_HOUR_SECS);
+        let out =
+            format_rate_limit_segment(std::slice::from_ref(&r), now).expect("should be visible");
+        let visible = out.ansi_strip();
+        assert!(
+            visible.starts_with("95%(") && visible.ends_with(')'),
+            "unexpected format: {visible:?}"
+        );
+        // Exactly 90% stays on the pace form — the switch is strictly above.
+        let r = make_reading(90.0, 0.60, &FIVE_HOUR_PRIORS, now, FIVE_HOUR_SECS);
+        let out =
+            format_rate_limit_segment(std::slice::from_ref(&r), now).expect("should be visible");
+        let visible = out.ansi_strip();
+        assert!(
+            visible.starts_with("1.5×("),
             "unexpected format: {visible:?}"
         );
     }

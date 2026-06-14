@@ -163,12 +163,13 @@ pub(super) fn is_codex_available() -> bool {
 
 /// Get the home directory for Claude Code config detection
 pub(super) fn home_dir() -> Option<PathBuf> {
-    // Try HOME/USERPROFILE env vars first (for tests and explicit overrides), then fall back to dirs
+    // Try HOME/USERPROFILE env vars first (for tests and explicit overrides),
+    // then fall back to the OS lookup
     std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .ok()
         .map(PathBuf::from)
-        .or_else(dirs::home_dir)
+        .or_else(worktrunk::path::home_dir)
 }
 
 /// Check if the worktrunk plugin is installed in Claude Code
@@ -511,7 +512,10 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
     if !commit_config.is_configured() {
         writeln!(out, "{}", hint_message("Commit generation not configured"))?;
     } else {
-        let command_display = commit_config.command.as_ref().unwrap().clone();
+        // `is_configured()` guarantees `command` is `Some` and non-empty here;
+        // `unwrap_or_default()` avoids a panic-prone `unwrap()` in this
+        // `Result`-returning function (the default is unreachable).
+        let command_display = commit_config.command.clone().unwrap_or_default();
 
         match test_commit_generation(&commit_config) {
             Ok(message) => {

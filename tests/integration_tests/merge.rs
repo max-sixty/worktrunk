@@ -2488,6 +2488,126 @@ fn test_step_squash_show_prompt(repo_with_multi_commit_feature: TestRepo) {
     ));
 }
 
+#[rstest]
+fn test_step_squash_show_prompt_custom_template_renders_commit_details(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+
+    repo.commit_in_worktree(
+        &feature_wt,
+        "empty_body.txt",
+        "empty body change\n",
+        "Add empty-body change",
+    );
+
+    let commit_with_body = |file: &str, content: &str, subject: &str, body: &str| {
+        let message = format!("{subject}\n\n{body}");
+        repo.commit_in_worktree(&feature_wt, file, content, &message);
+    };
+    commit_with_body(
+        "with_body.txt",
+        "body change\n",
+        "Describe body",
+        "Body line",
+    );
+    commit_with_body(
+        "multiline_body.txt",
+        "multiline body change\n",
+        "Describe multiline body",
+        "First body line\nSecond body line\n\nThird body line",
+    );
+    commit_with_body(
+        "multiline_body.txt",
+        "multiline body next change\n",
+        "Describe multiline body",
+        "- First line\n- Second line",
+    );
+    commit_with_body(
+        "trailer_body.txt",
+        "trailer body change\n",
+        "Keep trailer-like text",
+        "Implements the workflow.\n\nRefs: #123",
+    );
+
+    let worktrunk_config = r#"
+[commit.generation]
+squash-template = """
+Combine these {{ commit_details | length }} commits into one message:
+{% for c in commit_details -%}
+- {{ c.subject }}
+{% if c.body -%}
+{{ c.body | trim | indent(2, true) }}
+{% endif -%}
+{% endfor %}
+<diff>
+{{ git_diff_stat -}}
+</diff>
+"""
+"#;
+    fs::write(repo.test_config_path(), worktrunk_config).unwrap();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["squash", "--show-prompt"],
+        Some(&feature_wt),
+    ));
+}
+
+/// Each `commit_details` element renders as its subject when printed bare, so a
+/// template iterating the list and printing the loop variable directly produces
+/// the same output as the old `commits` list of strings. This is what makes the
+/// `commits` → `commit_details` migration a mechanical rename (see #2984).
+#[rstest]
+fn test_step_squash_show_prompt_commit_details_renders_subject_bare(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+
+    repo.commit_in_worktree(&feature_wt, "a.txt", "a\n", "Add a");
+    repo.commit_in_worktree(&feature_wt, "b.txt", "b\n", "Add b");
+
+    let worktrunk_config = r#"
+[commit.generation]
+squash-template = """
+<subjects>
+{% for c in commit_details %}- {{ c }}
+{% endfor -%}
+</subjects>"""
+"#;
+    fs::write(repo.test_config_path(), worktrunk_config).unwrap();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["squash", "--show-prompt"],
+        Some(&feature_wt),
+    ));
+}
+
+/// A custom squash template that references the deprecated `commits` variable
+/// still renders, and the standard config-deprecation framework warns that it
+/// is replaced by `commit_details` and points at `wt config update` to apply
+/// the rewrite (see #2984). The rename is mechanical because each
+/// `commit_details` element renders as its subject when printed bare.
+#[rstest]
+fn test_step_squash_show_prompt_deprecated_commits_warns(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+
+    repo.commit_in_worktree(&feature_wt, "a.txt", "a\n", "Add a");
+    repo.commit_in_worktree(&feature_wt, "b.txt", "b\n", "Add b");
+
+    let worktrunk_config = r#"
+[commit.generation]
+squash-template = "Squashing {{ commits | length }} commits from {{ branch }}"
+"#;
+    fs::write(repo.test_config_path(), worktrunk_config).unwrap();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["squash", "--show-prompt"],
+        Some(&feature_wt),
+    ));
+}
+
 // =============================================================================
 // --dry-run tests
 // =============================================================================
@@ -2723,6 +2843,46 @@ fn test_step_commit_dry_run_propagates_git_add_failure(repo: TestRepo) {
     assert!(
         stderr.contains("git add -A failed"),
         "expected bail! to surface 'git add -A failed'; got stderr:\n{stderr}"
+    );
+}
+
+/// Regression: `--dry-run` must tolerate a missing `<gitdir>/index`. The
+/// temp-index copy used to error with ENOENT (`Failed to copy index file`)
+/// when the real index was absent; the fix mirrors git's own behaviour and
+/// treats a missing index as empty, letting `git add` populate a fresh
+/// temp index.
+#[rstest]
+fn test_step_commit_dry_run_tolerates_missing_index(repo: TestRepo) {
+    fs::write(repo.root_path().join("new.txt"), "x").expect("Failed to write file");
+
+    let index_path = repo.root_path().join(".git").join("index");
+    fs::remove_file(&index_path).expect("Failed to remove index");
+
+    let worktrunk_config = r#"
+[commit.generation]
+command = "cat >/dev/null && echo 'feat: missing-index'"
+"#;
+    fs::write(repo.test_config_path(), worktrunk_config).unwrap();
+
+    let output = make_snapshot_cmd(&repo, "step", &["commit", "--dry-run"], None)
+        .output()
+        .expect("wt step commit --dry-run failed to spawn");
+    assert!(
+        output.status.success(),
+        "missing index must not fail --dry-run; stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("Failed to copy index file"),
+        "missing index must not surface as a copy error; got stderr:\n{stderr}"
+    );
+
+    // Real index must remain absent — dry-run must not resurrect it.
+    assert!(
+        !index_path.exists(),
+        "wt step commit --dry-run must not write the real index"
     );
 }
 

@@ -58,6 +58,14 @@ pub fn shell_from_name(shell_name: &str) -> Option<Shell> {
     }
 }
 
+/// Read `$SHELL` and extract the executable name (e.g. `/usr/bin/zsh` -> "zsh").
+///
+/// Returns `None` when `$SHELL` is unset or has no extractable filename.
+pub fn current_shell_name() -> Option<String> {
+    let shell_path = std::env::var("SHELL").ok()?;
+    extract_filename_from_path(&shell_path).map(String::from)
+}
+
 /// Detect the current shell from the environment.
 ///
 /// Uses two strategies:
@@ -72,10 +80,8 @@ pub fn shell_from_name(shell_name: &str) -> Option<Shell> {
 /// - Windows PowerShell: `PSModulePath` set -> PowerShell
 pub fn current_shell() -> Option<Shell> {
     // Primary: $SHELL (Unix standard, also set by Git Bash on Windows)
-    if let Ok(shell_path) = std::env::var("SHELL")
-        && let Some(name) = extract_filename_from_path(&shell_path)
-    {
-        return shell_from_name(name);
+    if let Some(name) = current_shell_name() {
+        return shell_from_name(&name);
     }
 
     // Fallback: PSModulePath indicates PowerShell (set on all platforms when

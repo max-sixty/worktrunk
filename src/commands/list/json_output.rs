@@ -22,7 +22,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use worktrunk::git::{LineDiff, Repository};
 
-use super::ci_status::{CiSource, PrStatus};
+use super::ci_status::{CiSource, PrStatus, ReviewState};
 use super::model::{ItemKind, ListItem, UpstreamStatus};
 
 /// JSON output for a single list item
@@ -83,6 +83,12 @@ pub struct JsonItem {
     /// CI status from PR or branch workflow
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ci: Option<JsonCi>,
+
+    /// Repository web URL derived from the primary remote (absent when no parseable forge remote).
+    /// This is the local checkout's repo; for the repo a PR/MR targets (e.g. the upstream of a
+    /// fork), see `ci.repo_url`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_url: Option<String>,
 
     /// Dev server URL from project config template
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -219,12 +225,27 @@ pub struct JsonCi {
     /// Source: "pr" or "branch"
     pub source: CiSource,
 
+    /// PR/MR number (absent for branch workflows)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub number: Option<u64>,
+
     /// True if local HEAD differs from remote HEAD (unpushed changes)
     pub stale: bool,
 
     /// URL to the PR/MR (if available)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+
+    /// Web URL of the repository the PR/MR targets, derived from `url`. For a
+    /// fork PR this is the upstream repo (not the local fork). Absent when `url`
+    /// is absent or not a recognized PR/MR link.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_url: Option<String>,
+
+    /// Review state: "approved", "changes_requested", "pending", "draft"
+    /// (absent when the forge reports no review signal)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub review_state: Option<ReviewState>,
 }
 
 impl JsonItem {
@@ -232,9 +253,13 @@ impl JsonItem {
     ///
     /// `all_vars` is pre-fetched vars data for all branches (from `repo.all_vars_entries()`),
     /// avoiding N+1 git process spawns. Entries are moved out via `.remove()` to avoid cloning.
+    ///
+    /// `repo_url` is the repository web URL (from `repo.repo_web_url()`). It is repo-wide, so
+    /// the caller computes it once and passes the same value to every item.
     pub fn from_list_item(
         item: &ListItem,
         all_vars: &mut HashMap<String, BTreeMap<String, String>>,
+        repo_url: Option<&str>,
     ) -> Self {
         let (kind_str, worktree_data) = match &item.kind {
             ItemKind::Worktree(data) => ("worktree", Some(data.as_ref())),
@@ -368,6 +393,7 @@ impl JsonItem {
             is_current,
             is_previous,
             ci,
+            repo_url: repo_url.map(String::from),
             url: item.url.clone(),
             url_active: item.url_active,
             summary,
@@ -430,8 +456,14 @@ impl From<&PrStatus> for JsonCi {
         Self {
             status: pr.ci_status.into(),
             source: pr.source,
+            number: pr.number.map(|r| r.number),
             stale: pr.is_stale,
+            repo_url: pr
+                .url
+                .as_deref()
+                .and_then(worktrunk::git::remote_ref::repo_url_from_ref_url),
             url: pr.url.clone(),
+            review_state: pr.review_state,
         }
     }
 }
@@ -495,9 +527,10 @@ fn format_raw_symbols(symbols: &super::model::StatusSymbols) -> String {
 /// Fetches all vars data in a single git call, then distributes per-branch.
 pub fn to_json_items(items: &[ListItem], repo: &Repository) -> Vec<JsonItem> {
     let mut all_vars = repo.all_vars_entries();
+    let repo_url = repo.repo_web_url();
     items
         .iter()
-        .map(|item| JsonItem::from_list_item(item, &mut all_vars))
+        .map(|item| JsonItem::from_list_item(item, &mut all_vars, repo_url.as_deref()))
         .collect()
 }
 
@@ -506,7 +539,7 @@ mod tests {
     use insta::assert_snapshot;
 
     use super::*;
-    use crate::commands::list::ci_status::CiStatus;
+    use crate::commands::list::ci_status::{CiStatus, PrRef};
     use crate::commands::list::model::{
         ActiveGitOperation, Divergence, MainState, OperationState, StatusSymbols,
         WorkingTreeStatus, WorktreeData, WorktreeState,
@@ -545,6 +578,8 @@ mod tests {
             source: CiSource::PullRequest,
             is_stale: false,
             url: Some("https://github.com/org/repo/pull/123".to_string()),
+            number: Some(PrRef::pr(123)),
+            review_state: None,
         });
         assert_eq!(passed.status, "passed");
         assert_eq!(passed.source, CiSource::PullRequest);
@@ -553,6 +588,11 @@ mod tests {
             passed.url,
             Some("https://github.com/org/repo/pull/123".to_string())
         );
+        // repo_url is derived from the PR URL (the target repo).
+        assert_eq!(
+            passed.repo_url,
+            Some("https://github.com/org/repo".to_string())
+        );
 
         // Stale branch with no URL
         let failed = JsonCi::from(&PrStatus {
@@ -560,11 +600,15 @@ mod tests {
             source: CiSource::Branch,
             is_stale: true,
             url: None,
+            number: None,
+            review_state: None,
         });
         assert_eq!(failed.status, "failed");
         assert_eq!(failed.source, CiSource::Branch);
         assert!(failed.stale);
         assert!(failed.url.is_none());
+        // No PR URL means no derived repo_url.
+        assert!(failed.repo_url.is_none());
 
         // All status string mappings
         let status_mappings = [
@@ -579,6 +623,8 @@ mod tests {
                 source: CiSource::Branch,
                 is_stale: false,
                 url: None,
+                number: None,
+                review_state: None,
             });
             assert_eq!(json.status, expected);
         }
@@ -911,8 +957,18 @@ mod tests {
 
         let mut item = ListItem::new_branch("abc1234".into(), "feature".into());
         item.summary = Some(Some("Add login page".to_string()));
-        let json_item = JsonItem::from_list_item(&item, &mut all_vars);
+
+        // repo_url is set when provided, absent (skipped) when None.
+        let json_item = JsonItem::from_list_item(&item, &mut all_vars, None);
         assert_eq!(json_item.summary, Some("Add login page".to_string()));
+        assert!(json_item.repo_url.is_none());
+
+        let json_item =
+            JsonItem::from_list_item(&item, &mut all_vars, Some("https://github.com/owner/repo"));
+        assert_eq!(
+            json_item.repo_url,
+            Some("https://github.com/owner/repo".to_string())
+        );
     }
 
     #[test]
@@ -923,14 +979,14 @@ mod tests {
         let mut item = ListItem::new_branch("abc1234".into(), "feature".into());
         // Both "not collected" and "no summary" should be absent in JSON
         assert!(
-            JsonItem::from_list_item(&item, &mut all_vars)
+            JsonItem::from_list_item(&item, &mut all_vars, None)
                 .summary
                 .is_none()
         );
 
         item.summary = Some(None);
         assert!(
-            JsonItem::from_list_item(&item, &mut all_vars)
+            JsonItem::from_list_item(&item, &mut all_vars, None)
                 .summary
                 .is_none()
         );
@@ -941,16 +997,23 @@ mod tests {
         let json = serde_json::to_string_pretty(&JsonCi {
             status: "passed",
             source: CiSource::PullRequest,
+            number: Some(7),
             stale: false,
-            url: Some("https://example.com".to_string()),
+            url: Some("https://github.com/org/repo/pull/7".to_string()),
+            review_state: Some(ReviewState::ChangesRequested),
+            repo_url: Some("https://github.com/org/repo".to_string()),
         })
         .unwrap();
+        // review_state vocabulary matches Claude Code's statusline `pr.review_state`
         assert_snapshot!(json, @r#"
         {
           "status": "passed",
           "source": "pr",
+          "number": 7,
           "stale": false,
-          "url": "https://example.com"
+          "url": "https://github.com/org/repo/pull/7",
+          "repo_url": "https://github.com/org/repo",
+          "review_state": "changes_requested"
         }
         "#);
     }

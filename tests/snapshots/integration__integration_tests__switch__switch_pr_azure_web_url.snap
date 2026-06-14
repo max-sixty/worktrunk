@@ -1,37 +1,26 @@
 ---
-source: tests/integration_tests/user_hooks.rs
+source: tests/integration_tests/switch.rs
 info:
   program: wt
   args:
-    - hook
-    - post-start
-    - db
+    - switch
+    - "https://dev.azure.com/myorg/myproject/_git/test-repo/pullrequest/101"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
-    GIT_COMMON_DIR: ""
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
-    GIT_DIR: ""
-    GIT_EDITOR: ""
-    GIT_INDEX_FILE: ""
-    GIT_OBJECT_DIRECTORY: ""
     GIT_TERMINAL_PROMPT: "0"
-    GIT_WORK_TREE: ""
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
-    NO_COLOR: ""
     OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
-    PSModulePath: ""
-    RUST_LOG: warn
-    SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
@@ -57,4 +46,9 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRunning post-start: [1mdb[22m (user)[39m
+[36m◎[39m [36mFetching PR #101...[39m
+[107m [0m [1mFix authentication bug in login flow[22m (#101)
+[107m [0m by @alice@example.com · active · feature-auth · [90mhttps://dev.azure.com/myorg/myproject/_git/test-repo/pullrequest/101[39m
+[36m◎[39m [36mFetching [1mfeature-auth[22m from origin...[39m
+[33m▲[39m [33mWorktree for [1mfeature-auth[22m @ [1m_REPO_.feature-auth[22m, but cannot change directory — shell integration not installed[39m
+[2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m

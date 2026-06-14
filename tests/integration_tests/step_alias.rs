@@ -309,6 +309,46 @@ emit = "echo hello"
     );
 }
 
+/// A one-entry alias table is a single named command, not a concurrent group
+/// of one: its output passes through on stdout without a `name │` prefix,
+/// identical to the string and `[[aliases.x]]` spellings.
+#[rstest]
+fn test_alias_single_entry_table_writes_to_stdout(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases.emit]
+say = "echo hello"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let output = repo
+        .wt_command()
+        .args(["-y", "emit"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "alias failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stdout.lines().any(|line| line.trim() == "hello"),
+        "expected unprefixed `hello` on stdout, got stdout={stdout:?} stderr={stderr:?}"
+    );
+    assert!(
+        !stdout.contains('│') && !stderr.contains("say │"),
+        "single named command must not use the concurrent `name │` prefix, \
+         got stdout={stdout:?} stderr={stderr:?}"
+    );
+}
+
 /// Alias command failure propagates exit code (-y bypasses approval)
 #[rstest]
 fn test_step_alias_exit_code(mut repo: TestRepo) {
@@ -1536,11 +1576,14 @@ fn test_alias_concurrent_handles_non_utf8(repo: TestRepo) {
     // `printf` emits a raw 0xff byte (invalid as a lone UTF-8 sequence), a
     // CRLF-terminated line, then `yes` floods 50_000 more valid UTF-8 lines.
     // If the reader stopped at the bad byte, the pipe would fill and the
-    // child would block — we'd time out.
+    // child would block — we'd time out. The trivial `other` command keeps
+    // the step a multi-command group so it routes through the concurrent
+    // executor (a one-command map parses as a plain `Single` step).
     repo.write_test_config(
         r#"
 [aliases.noisy]
 mixed = "sh -c 'printf \"BEFORE\\n\\xff\\nCRLF-LINE\\r\\nAFTER\\n\"; yes PAYLOAD | head -n 50000'"
+other = "true"
 "#,
     );
     repo.commit("initial");

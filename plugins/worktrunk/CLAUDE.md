@@ -21,7 +21,7 @@ worktrunk/                          ← repo root = marketplace root
     ├── .codex-plugin/plugin.json   ← Codex manifest (Codex's required wrapper)
     ├── hooks/hooks.json            ← Claude activity + WorktreeCreate/Remove hooks
     ├── hooks/wt.sh                 ← canonical hook shim; Claude/Codex reach it via
-    │                                  ${CLAUDE_PLUGIN_ROOT}, Gemini via
+    │                                  $CLAUDE_PLUGIN_ROOT, Gemini via
     │                                  ${extensionPath}/plugins/worktrunk/hooks/wt.sh
     ├── skills -> ../../skills       ← symlink; single-sources skills across all
     │                                  tools and the docs auto-sync
@@ -35,7 +35,7 @@ Path resolution differs by tool, all verified end-to-end against the real CLIs:
   Claude reads `plugins/worktrunk/plugin.json` (at the plugin root, *not* a
   `.claude-plugin/` subdir). `hooks` and `skills` paths in `plugin.json` resolve
   from the plugin root, so `./skills/worktrunk` follows the `skills` symlink to
-  the repo-root `skills/worktrunk`. `${CLAUDE_PLUGIN_ROOT}` is the plugin root.
+  the repo-root `skills/worktrunk`. `$CLAUDE_PLUGIN_ROOT` is the plugin root.
 - **Codex**: `.agents/plugins/marketplace.json` `source` object
   `{ "source": "local", "path": "./plugins/worktrunk" }`. Codex reads
   `plugins/worktrunk/.codex-plugin/plugin.json`. `skills: "./skills/"` resolves
@@ -54,10 +54,12 @@ that every repo-root skill is listed); Codex and Gemini pick up the whole
 
 ### Status persists after user interrupt (Claude)
 
-The Claude hooks track activity via git config (`worktrunk.status.{branch}`):
+The Claude hooks track activity via git config (`worktrunk.state.{branch}.marker`):
 - `UserPromptSubmit` → 🤖 (working)
-- `Notification` → 💬 (waiting for input)
+- `Notification`, `PreToolUse`(`AskUserQuestion`), `PermissionRequest`, `Stop` → 💬 (waiting for input)
 - `SessionEnd` → clears status
+
+The 💬 transitions overlap deliberately: `Notification` covers the documented permission/idle path, but on platforms where it doesn't fire (VS Code extension, Windows CLI) `PermissionRequest` and `Stop` still mark the wait; `PreToolUse`(`AskUserQuestion`) catches the built-in question picker, which fires no `Notification` on any platform ([claude-code#13024](https://github.com/anthropics/claude-code/issues/13024)). There is currently no transition back to 🤖 once a turn-end/permission marker is set except a fresh `UserPromptSubmit`, so 💬 can persist into resumed work after a permission grant (the original symptom in [#2916](https://github.com/max-sixty/worktrunk/issues/2916)).
 
 **Problem**: If the user interrupts Claude Code (Escape/Ctrl+C), the 🤖 status persists because there's no `UserInterrupt` hook. The `Stop` hook explicitly does not fire on user interrupt.
 
@@ -71,4 +73,4 @@ Re-add a Codex `hooks.json`, the `hooks` manifest key, the install hints in `src
 
 ### Accepted tradeoff: shared `skills/` exposes `wt-switch-create`
 
-Codex's `"skills": "./skills/"` and Gemini's `${extensionPath}/skills/` both resolve the entire repo-root `skills/`, including `wt-switch-create`, which depends on Claude session-cwd switching and the `WorktreeCreate` hook neither provides. Accepted: a tool loading a skill it can't act on is harmless, and a single repo-root `skills/` keeps the `worktrunk` skill single-source across all three tools and the docs sync. Don't add per-tool skills subtrees to exclude it.
+Codex's `"skills": "./skills/"` and Gemini's `${extensionPath}/skills/` both resolve the entire repo-root `skills/`, including `wt-switch-create`, which depends on Claude session-cwd switching (`EnterWorktree`) that neither provides. Accepted: a tool loading a skill it can't act on is harmless, and a single repo-root `skills/` keeps the `worktrunk` skill single-source across all three tools and the docs sync. Don't add per-tool skills subtrees to exclude it.

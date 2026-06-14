@@ -3,7 +3,7 @@
 //! Walks the tree iteratively (no recursion), unlinks files in parallel, then
 //! removes the now-empty directories deepest-first. Each unlinked leaf bumps
 //! a [`Progress`] counter so a TTY spinner can render live updates; the
-//! returned `(files, bytes)` tuple drives the matching post-op summary.
+//! caller reads `progress.totals()` to drive the matching post-op summary.
 //!
 //! Best-effort by design: this is the trash-cleanup phase that runs *after*
 //! the worktree has already been pruned from git's metadata, so a partial
@@ -18,7 +18,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use rayon::prelude::*;
 
@@ -35,10 +34,12 @@ static REMOVE_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
 
 /// Remove a directory tree, reporting per-file progress.
 ///
-/// Returns `(files_removed, bytes_removed)`. Bytes use `symlink_metadata`, so
-/// symlinks count as their own size, not the target's. Any I/O errors are
-/// silently skipped — a leaf that can't be unlinked is simply not counted.
-pub fn remove_dir_with_progress(path: &Path, progress: &Progress) -> (usize, u64) {
+/// Each successful unlink is recorded on `progress`, so a `progress` dedicated
+/// to this call reports `(files_removed, bytes_removed)` in `totals()`
+/// afterwards. Bytes use `symlink_metadata`, so symlinks count as their own
+/// size, not the target's. Any I/O errors are silently skipped — a leaf that
+/// can't be unlinked is simply not counted.
+pub fn remove_dir_with_progress(path: &Path, progress: &Progress) {
     let mut leaves: Vec<PathBuf> = Vec::new();
     let mut dirs: Vec<PathBuf> = Vec::new();
     let mut stack = vec![path.to_path_buf()];
@@ -68,8 +69,6 @@ pub fn remove_dir_with_progress(path: &Path, progress: &Progress) -> (usize, u64
         }
     }
 
-    let removed_files = AtomicUsize::new(0);
-    let removed_bytes = AtomicU64::new(0);
     REMOVE_POOL.install(|| {
         leaves.par_iter().for_each(|leaf| {
             // Capture size before unlinking. Best-effort: symlink_metadata may
@@ -77,8 +76,6 @@ pub fn remove_dir_with_progress(path: &Path, progress: &Progress) -> (usize, u64
             // count the leaf with zero bytes.
             let bytes = leaf.symlink_metadata().map(|m| m.len()).unwrap_or(0);
             if fs::remove_file(leaf).is_ok() {
-                removed_files.fetch_add(1, Ordering::Relaxed);
-                removed_bytes.fetch_add(bytes, Ordering::Relaxed);
                 progress.record(bytes);
             }
         });
@@ -89,8 +86,6 @@ pub fn remove_dir_with_progress(path: &Path, progress: &Progress) -> (usize, u64
     for dir in dirs.iter().rev() {
         let _ = fs::remove_dir(dir);
     }
-
-    (removed_files.into_inner(), removed_bytes.into_inner())
 }
 
 #[cfg(test)]
@@ -103,10 +98,10 @@ mod tests {
         let dir = temp.path().join("empty");
         std::fs::create_dir(&dir).unwrap();
 
-        let (files, bytes) = remove_dir_with_progress(&dir, &Progress::disabled());
+        let progress = Progress::disabled();
+        remove_dir_with_progress(&dir, &progress);
 
-        assert_eq!(files, 0);
-        assert_eq!(bytes, 0);
+        assert_eq!(progress.totals(), (0, 0));
         assert!(!dir.exists());
     }
 
@@ -119,10 +114,10 @@ mod tests {
         std::fs::write(root.join("a/b/file2.txt"), b"world!").unwrap(); // 6 bytes
         std::fs::write(root.join("top.txt"), b"x").unwrap(); // 1 byte
 
-        let (files, bytes) = remove_dir_with_progress(&root, &Progress::disabled());
+        let progress = Progress::disabled();
+        remove_dir_with_progress(&root, &progress);
 
-        assert_eq!(files, 3);
-        assert_eq!(bytes, 12);
+        assert_eq!(progress.totals(), (3, 12));
         assert!(!root.exists());
     }
 
@@ -131,10 +126,10 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let missing = temp.path().join("does-not-exist");
 
-        let (files, bytes) = remove_dir_with_progress(&missing, &Progress::disabled());
+        let progress = Progress::disabled();
+        remove_dir_with_progress(&missing, &progress);
 
-        assert_eq!(files, 0);
-        assert_eq!(bytes, 0);
+        assert_eq!(progress.totals(), (0, 0));
     }
 
     #[cfg(unix)]
@@ -146,10 +141,12 @@ mod tests {
         std::fs::write(root.join("real.txt"), b"abc").unwrap();
         std::os::unix::fs::symlink(root.join("real.txt"), root.join("link")).unwrap();
 
-        let (files, _bytes) = remove_dir_with_progress(&root, &Progress::disabled());
+        let progress = Progress::disabled();
+        remove_dir_with_progress(&root, &progress);
 
         // 1 file + 1 symlink = 2 leaves removed; the symlink is unlinked
         // without following.
+        let (files, _bytes) = progress.totals();
         assert_eq!(files, 2);
         assert!(!root.exists());
     }
@@ -182,12 +179,16 @@ mod tests {
             return;
         }
 
-        let (files, bytes) = remove_dir_with_progress(&root, &Progress::disabled());
+        let progress = Progress::disabled();
+        remove_dir_with_progress(&root, &progress);
 
         // Restore so the tempdir's Drop can clean up.
         std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o755)).ok();
 
-        assert_eq!(files, 0, "no leaves should be unlinked when blocked");
-        assert_eq!(bytes, 0);
+        assert_eq!(
+            progress.totals(),
+            (0, 0),
+            "no leaves should be unlinked when blocked"
+        );
     }
 }

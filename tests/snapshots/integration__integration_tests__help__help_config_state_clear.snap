@@ -10,13 +10,9 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
-    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
-    NO_COLOR: ""
-    PSModulePath: ""
-    SHELL: ""
     TERM: alacritty
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -70,7 +66,12 @@ Clears all stored state:
 - All log files
 - Stale trash from worktree removal ([2m.git/wt/trash/[0m)
 
-Use individual subcommands ([2mdefault-branch clear[0m, [2mci-status clear --all[0m, etc.)
-to clear specific state.
+Prompts for confirmation before clearing, since this removes hand-authored
+markers and vars. Pass [2m--yes[0m to skip the prompt.
+
+To drop only the regenerable caches (CI status, summaries, git commands,
+hints, previous branch), run [2mwt config state cache clear[0m — it needs no
+confirmation and leaves markers, vars, and the default-branch override
+untouched.
 
 ----- stderr -----

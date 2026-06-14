@@ -217,7 +217,7 @@ fn try_remove(candidate: &Candidate, ctx: &RemovalContext<'_>) -> anyhow::Result
             return Ok(false);
         }
     };
-    let mut announcer = HookAnnouncer::new(ctx.repo, ctx.config, true);
+    let mut announcer = HookAnnouncer::new(ctx.repo, true);
     // `SynchronousForNonCurrent`: prune keeps the rename-failure fallback's
     // `.git/config` rewrite serialized with its integration-check readers.
     handle_remove_output(

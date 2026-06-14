@@ -41,8 +41,9 @@
 //! piped stdio, detached escapes the PTY entirely).
 
 use std::ffi::{OsStr, OsString};
+use std::fs::Metadata;
 use std::io::{ErrorKind, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -136,6 +137,35 @@ fn inherited_git_env_overrides() -> &'static [(&'static str, OsString)] {
         };
         compute_git_env_overrides(cwd, |var| std::env::var_os(var))
     })
+}
+
+fn ensure_executable_path(path: &Path) -> std::io::Result<()> {
+    let metadata = std::fs::metadata(path)?;
+    if !metadata.is_file() {
+        return Err(std::io::Error::new(
+            ErrorKind::PermissionDenied,
+            format!("{} is not an executable file", path.display()),
+        ));
+    }
+    if !is_executable(&metadata) {
+        return Err(std::io::Error::new(
+            ErrorKind::PermissionDenied,
+            format!("{} is not executable", path.display()),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn is_executable(metadata: &Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn is_executable(_metadata: &Metadata) -> bool {
+    true
 }
 
 /// Default concurrent external commands. Tuned to avoid hitting OS limits
@@ -515,6 +545,13 @@ fn format_stream_full(bytes: &[u8], prefix: &str) -> Vec<String> {
 /// `tracing::enabled!` against [`SUBPROCESS_FULL_TARGET`] — true iff the
 /// `subprocess.log` layer is registered and accepting that target (`-vv` opened
 /// the file successfully).
+///
+/// Preview lines are emitted raw here; control bytes (most commonly NUL from
+/// `-z`/`--null` git output) are escaped downstream at the single point that
+/// feeds both human-facing sinks — `render_event_message` in the binary's
+/// logging layer, which renders this target's records to stderr and `trace.log`.
+/// The uncapped [`SUBPROCESS_FULL_TARGET`] copy bypasses that escape and keeps
+/// the bytes verbatim in `subprocess.log`.
 fn format_stream_bounded(bytes: &[u8], prefix: &str) -> Vec<String> {
     if bytes.is_empty() {
         return Vec::new();
@@ -836,6 +873,25 @@ impl Cmd {
         cmd
     }
 
+    fn check_spawn_preconditions(&self) -> std::io::Result<()> {
+        if let Some(dir) = &self.current_dir {
+            let metadata = std::fs::metadata(dir)?;
+            if !metadata.is_dir() {
+                return Err(std::io::Error::new(
+                    ErrorKind::NotADirectory,
+                    format!("{} is not a directory", dir.display()),
+                ));
+            }
+        }
+
+        let program = Path::new(&self.program);
+        if !self.shell_wrap && program.is_absolute() {
+            ensure_executable_path(program)?;
+        }
+
+        Ok(())
+    }
+
     fn apply_common_settings(&self, cmd: &mut Command) {
         if let Some(dir) = &self.current_dir {
             cmd.current_dir(dir);
@@ -1084,6 +1140,12 @@ impl Cmd {
 
         let trace_log = WtTraceLog::new(self.context.as_deref(), &cmd_str);
 
+        if let Err(e) = self.check_spawn_preconditions() {
+            trace_log.errored(&e);
+            external_log.record(None);
+            return Err(e);
+        }
+
         let mut cmd = self.direct_command();
         self.apply_common_settings(&mut cmd);
 
@@ -1184,6 +1246,15 @@ impl Cmd {
 
         let first_log = WtTraceLog::new(self.context.as_deref(), &first_cmd_str);
         let second_log = WtTraceLog::new(next.context.as_deref(), &second_cmd_str);
+
+        if let Err(e) = self.check_spawn_preconditions() {
+            first_log.errored(&e);
+            return Err(e);
+        }
+        if let Err(e) = next.check_spawn_preconditions() {
+            second_log.errored(&e);
+            return Err(e);
+        }
 
         let source_stdin = self.stdin_data.take();
 
@@ -1340,6 +1411,15 @@ impl Cmd {
             cmd.env(DIRECTIVE_FILE_ENV_VAR, path);
         }
 
+        let trace_log = WtTraceLog::new(self.context.as_deref(), &cmd_str);
+
+        if let Err(e) = self.check_spawn_preconditions() {
+            trace_log.errored(&e);
+            return Err(anyhow::Error::from(GitError::Other {
+                message: format!("Failed to execute command ({}): {}", exec_mode, e),
+            }));
+        }
+
         #[cfg(not(unix))]
         let _ = self.forward_signals;
 
@@ -1382,8 +1462,6 @@ impl Cmd {
             .stderr(std::process::Stdio::inherit()) // Preserve TTY for errors
             // Prevent vergen "overridden" warning in nested cargo builds
             .env_remove("VERGEN_GIT_DESCRIBE");
-
-        let trace_log = WtTraceLog::new(self.context.as_deref(), &cmd_str);
 
         let mut child = match cmd.spawn() {
             Ok(child) => child,
@@ -1966,10 +2044,55 @@ mod tests {
     }
 
     #[test]
+    fn test_cmd_run_spawn_failure_is_errored() {
+        let err = Cmd::new("/no/such/binary-7f3a9b2c").run().unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn test_cmd_run_missing_current_dir_is_errored() {
+        let err = Cmd::new("sh")
+            .args(["-c", "true"])
+            .current_dir("/no/such/dir-7f3a9b2c")
+            .run()
+            .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn test_cmd_run_file_current_dir_is_errored() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let err = Cmd::new("sh")
+            .args(["-c", "true"])
+            .current_dir(file.path())
+            .run()
+            .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::NotADirectory);
+    }
+
+    #[test]
+    fn test_cmd_run_directory_program_path_is_errored() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = Cmd::new(dir.path().to_string_lossy()).run().unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::PermissionDenied);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_run_non_executable_program_path_is_errored() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::set_permissions(file.path(), std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let err = Cmd::new(file.path().to_string_lossy()).run().unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::PermissionDenied);
+    }
+
+    #[test]
     fn test_cmd_stream_spawn_failure_is_errored() {
-        // Spawning a non-existent binary fails inside `cmd.spawn()`, exercising
-        // the `Err` arm of the new spawn-match in `stream()` (and the
-        // `WtTraceLog::errored` path that fires alongside it).
+        // A non-existent absolute binary path should surface as a command
+        // execution failure before the child can report only exit status 127.
         let result = Cmd::new("/no/such/binary-7f3a9b2c").stream();
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();

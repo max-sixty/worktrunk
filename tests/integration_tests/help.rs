@@ -16,10 +16,22 @@ use insta::Settings;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 
-fn snapshot_help(test_name: &str, args: &[&str]) {
+/// Insta settings shared by every help / version / usage snapshot: the
+/// standard env redactions plus the snapshot path. Routing all of them through
+/// one builder is deliberate — a test that constructs its own `Settings` and
+/// forgets `add_standard_env_redactions` leaks host-specific env (e.g.
+/// `LLVM_PROFILE_FILE`'s temp path) into the recorded `env:` block, which then
+/// diffs whenever the snapshot is regenerated on another machine. Callers layer
+/// extra filters (e.g. the version-string filter) on the returned value.
+fn help_settings() -> Settings {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
     add_standard_env_redactions(&mut settings);
+    settings
+}
+
+fn snapshot_help(test_name: &str, args: &[&str]) {
+    let settings = help_settings();
     settings.bind(|| {
         let mut cmd = wt_command();
         cmd.args(args);
@@ -72,6 +84,7 @@ fn snapshot_help(test_name: &str, args: &[&str]) {
     "config plugins codex install --help"
 )]
 #[case("help_config_state", "config state --help")]
+#[case("help_config_state_cache", "config state cache --help")]
 #[case(
     "help_config_state_default_branch",
     "config state default-branch --help"
@@ -99,8 +112,7 @@ fn test_help(#[case] test_name: &str, #[case] args_str: &str) {
 
 #[test]
 fn test_version() {
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
+    let mut settings = help_settings();
     // Filter out version number for stable snapshots
     // Formats:
     // - wt v0.4.0-25-gc9bcf6c0 (version with git commit info)
@@ -186,9 +198,7 @@ fn test_version_goes_to_stdout() {
 
 #[test]
 fn test_help_md() {
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
-    settings.bind(|| {
+    help_settings().bind(|| {
         let mut cmd = wt_command();
         cmd.args(["--help-md"]);
         assert_cmd_snapshot!("help_md_root", cmd);
@@ -197,9 +207,7 @@ fn test_help_md() {
 
 #[test]
 fn test_help_md_subcommand() {
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
-    settings.bind(|| {
+    help_settings().bind(|| {
         let mut cmd = wt_command();
         cmd.args(["merge", "--help-md"]);
         assert_cmd_snapshot!("help_md_merge", cmd);
@@ -211,14 +219,30 @@ fn test_help_md_subcommand() {
 /// rather than wrap incorrectly.
 #[test]
 fn test_help_list_narrow_terminal() {
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
-    settings.bind(|| {
+    help_settings().bind(|| {
         let mut cmd = wt_command();
         cmd.env("COLUMNS", "80");
         cmd.args(["list", "--help"]);
         assert_cmd_snapshot!("help_list_narrow_80", cmd);
     });
+}
+
+/// With no detectable width (piped output, no COLUMNS), `terminal_width()`
+/// returns `None` and the markdown renderer falls back to its own defaults.
+/// Back when "no width" was a `usize::MAX` sentinel, `wt list --help` panicked
+/// with a capacity overflow trying to render a `---` rule that wide.
+#[test]
+fn test_help_without_detectable_width() {
+    let mut cmd = wt_command();
+    cmd.env_remove("COLUMNS");
+    cmd.args(["list", "--help"]);
+    let output = cmd.output().expect("failed to run command");
+    assert!(
+        output.status.success(),
+        "wt list --help without COLUMNS failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!output.stdout.is_empty(), "help output should not be empty");
 }
 
 /// Tests --help-description outputs the meta description for docs frontmatter.
@@ -286,9 +310,7 @@ fn test_nested_subcommand_suggestion(
     #[case] subcommand: &str,
     #[case] expected_suggestion: &str,
 ) {
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
-    settings.bind(|| {
+    help_settings().bind(|| {
         let mut cmd = wt_command();
         cmd.arg(subcommand);
         let output = cmd.output().expect("failed to run wt");

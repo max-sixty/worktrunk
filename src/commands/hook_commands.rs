@@ -22,38 +22,12 @@ use worktrunk::styling::{
 };
 
 use super::command_approval::approve_hooks_filtered;
-use super::command_executor::build_hook_context;
-
-use super::command_executor::CommandContext;
-use super::command_executor::FailureStrategy;
-use super::context::CommandEnv;
-use super::hooks::{
-    HookAnnouncer, HookCommandSpec, lookup_hook_configs, prepare_and_check, run_hooks_foreground,
+use super::command_executor::{
+    CommandContext, FailureStrategy, build_hook_context, render_template_preview,
 };
+use super::context::CommandEnv;
+use super::hooks::{HookAnnouncer, prepare_and_check, run_hooks_foreground};
 use super::template_vars::TemplateVars;
-
-fn run_filtered_hook(
-    ctx: &CommandContext,
-    user_config: Option<&CommandConfig>,
-    project_config: Option<&CommandConfig>,
-    hook_type: HookType,
-    extra_vars: &[(&str, &str)],
-    name_filters: &[String],
-    failure_strategy: FailureStrategy,
-) -> anyhow::Result<()> {
-    run_hooks_foreground(
-        ctx,
-        HookCommandSpec {
-            user_config,
-            project_config,
-            hook_type,
-            extra_vars,
-            name_filters,
-            display_path: crate::output::pre_hook_display_path(ctx.worktree_path),
-        },
-        failure_strategy,
-    )
-}
 
 fn run_post_hook(
     ctx: &CommandContext,
@@ -66,7 +40,7 @@ fn run_post_hook(
 ) -> anyhow::Result<()> {
     // --foreground is for debugging; default is background.
     if foreground.unwrap_or(false) {
-        return run_filtered_hook(
+        return run_hooks_foreground(
             ctx,
             user_config,
             project_config,
@@ -80,25 +54,20 @@ fn run_post_hook(
     // Filter path merges user + project matches into one pipeline (the user
     // cherry-picked specific names across sources). The default path keeps
     // sources independent so a user hook failure doesn't abort project hooks.
-    let mut announcer = HookAnnouncer::new(ctx.repo, ctx.config, false);
+    let mut announcer = HookAnnouncer::new(ctx.repo, false);
     if name_filters.is_empty() {
         announcer.register(ctx, hook_type, extra_vars, None)?;
     } else {
         let flat = prepare_and_check(
             ctx,
-            HookCommandSpec {
-                user_config,
-                project_config,
-                hook_type,
-                extra_vars,
-                name_filters,
-                display_path: None,
-            },
+            user_config,
+            project_config,
+            hook_type,
+            extra_vars,
+            name_filters,
         )?;
-        if flat.is_empty() {
-            return Ok(());
-        }
-        announcer.extend(std::iter::once((*ctx, hook_type, None, flat)));
+        // `flat` is non-empty: a filter that matches nothing errors above.
+        announcer.add_groups(ctx, hook_type, None, vec![flat]);
     }
     announcer.flush()
 }
@@ -167,13 +136,20 @@ fn parse_shorthand_token(raw: &str) -> anyhow::Result<(String, String, String)> 
 fn referenced_vars_union(
     user_config: Option<&CommandConfig>,
     project_config: Option<&CommandConfig>,
+    hook_type: HookType,
 ) -> anyhow::Result<std::collections::BTreeSet<String>> {
     let mut out = std::collections::BTreeSet::new();
     if let Some(cfg) = user_config {
-        out.extend(referenced_vars_for_config(cfg)?);
+        out.extend(referenced_vars_for_config(
+            cfg,
+            &format!("user {hook_type} hook"),
+        )?);
     }
     if let Some(cfg) = project_config {
-        out.extend(referenced_vars_for_config(cfg)?);
+        out.extend(referenced_vars_for_config(
+            cfg,
+            &format!("project {hook_type} hook"),
+        )?);
     }
     Ok(out)
 }
@@ -247,8 +223,8 @@ pub fn run_hook(
 
     // Get effective user hooks (global + per-project merged)
     let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
-    let (user_config, proj_config) =
-        lookup_hook_configs(&user_hooks, project_config.as_ref(), hook_type);
+    let user_config = user_hooks.get(hook_type);
+    let proj_config = project_config.as_ref().and_then(|c| c.hooks.get(hook_type));
     // No hooks configured: warn and exit successfully. Running hooks that
     // don't exist is a no-op, so scripts can invoke `wt hook <type>`
     // unconditionally without special-casing empty configuration.
@@ -262,7 +238,7 @@ pub fn run_hook(
 
     // Smart-route shorthand: bind when the template references the key,
     // forward otherwise. Mirrors `AliasOptions::parse` for the alias path.
-    let referenced = referenced_vars_union(user_config, proj_config)?;
+    let referenced = referenced_vars_union(user_config, proj_config, hook_type)?;
     let mut bindings: Vec<(String, String)> = Vec::new();
     let mut args: Vec<String> = Vec::new();
     for raw in shorthand_vars {
@@ -312,18 +288,17 @@ pub fn run_hook(
     if dry_run {
         let steps = prepare_and_check(
             &ctx,
-            HookCommandSpec {
-                user_config,
-                project_config: proj_config,
-                hook_type,
-                extra_vars: &extra_vars,
-                name_filters,
-                display_path: None,
-            },
+            user_config,
+            proj_config,
+            hook_type,
+            &extra_vars,
+            name_filters,
         )?;
 
         for sourced in steps {
             for cmd in sourced.step.into_commands() {
+                let preview =
+                    render_template_preview(&cmd.template, &cmd.context, repo, &cmd.template_name)?;
                 let label = if cmd.name.is_some() {
                     cformat!("{hook_type} <bold>{}</> would run:", cmd.label)
                 } else {
@@ -331,10 +306,7 @@ pub fn run_hook(
                 };
                 eprintln!(
                     "{}",
-                    info_message(cformat!(
-                        "{label}\n{}",
-                        format_bash_with_gutter(&cmd.expanded)
-                    ))
+                    info_message(cformat!("{label}\n{}", format_bash_with_gutter(&preview)))
                 );
             }
         }
@@ -343,7 +315,7 @@ pub fn run_hook(
 
     // pre-* hooks block (fail-fast); post-* hooks default to background.
     if hook_type.is_pre() {
-        run_filtered_hook(
+        run_hooks_foreground(
             &ctx,
             user_config,
             proj_config,

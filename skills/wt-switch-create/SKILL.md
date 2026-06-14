@@ -1,67 +1,91 @@
 ---
 name: wt-switch-create
-description: Create a new worktrunk worktree (optionally in another repo) and switch this session's working directory into it. Use when launching a session that should work in its own worktree (e.g. `/wt-switch-create my-branch -- <task>`, or `/wt-switch-create my-branch ~/workspace/other-repo -- <task>`), or mid-session to move work into a fresh branch.
-argument-hint: "<branch-name> [<repo>] [-- task...]"
+description: Create a new worktrunk worktree (optionally in another repo) and switch this session's working directory into it. The branch name is optional — one is picked from the task when omitted. Use when launching a session that should work in its own worktree (e.g. `/wt-switch-create -- <task>`, `/wt-switch-create my-branch -- <task>`, or `/wt-switch-create my-branch ~/workspace/other-repo -- <task>`), or mid-session to move work into a fresh branch.
+argument-hint: "[<branch>] [<repo>] [-- <task>]"
 license: MIT OR Apache-2.0
-compatibility: Requires the `wt` CLI (https://worktrunk.dev) and this plugin's WorktreeCreate hook
+compatibility: Requires the `wt` CLI (https://worktrunk.dev)
 ---
 
-Arguments: `$ARGUMENTS`. Grammar: `<branch> [<repo>] [-- <task>]`.
+Arguments: `$ARGUMENTS`. Grammar: `[<branch>] [<repo>] [-- <task>]`.
 
-- **branch** — required first token; the branch name for the new worktree.
+- **branch** — optional; the branch name for the new worktree. When omitted,
+  pick one (step 1 below).
 - **repo** — optional path; create the worktree in this repo instead of the
   session's current one.
 - **task** — optional; what to do inside the new worktree. No task means enter
   the worktree and wait.
 
-Without a `--`: a path-shaped second token (absolute, `~`-relative, `./`- or
-`../`-relative, or an existing directory) is the repo, and the task starts
-after it. Otherwise the task starts at the second token.
+Tokens before the `--` are the branch and/or repo: a path-shaped token
+(starting with `/`, `~`, `./`, or `../`) is the repo; any other token is the
+branch (`docs` is a branch name, never the `docs/` directory). More than one
+branch-shaped token before a `--` doesn't fit the grammar — ask. Without a
+`--`, judge where the task starts: leading tokens that read as a branch name
+(`fix-auth`) or a repo path are consumed as such, and the rest is the task;
+otherwise the whole input is the task (`fix the parser bug` has no
+branch-shaped lead — all task).
 
 ```
 /wt-switch-create my-feature -- fix the parser bug
+/wt-switch-create -- fix the parser bug
 /wt-switch-create my-feature ~/workspace/other-repo -- fix the parser bug
 /wt-switch-create my-feature
 ```
 
 ## What to do
 
-1. **First action — before reading any files or running any commands:**
+Steps 1–3 come before any other work.
 
-   - If a repo was given, `cd` into it first with a `Bash` call (the working
-     directory persists for the rest of the session). `EnterWorktree` has no
-     repo parameter — it creates the worktree wherever the session is rooted.
-   - Then call `EnterWorktree({name: "<branch-name>"})`. This re-roots the
-     session into the new worktree. If a repo was given, confirm the new
-     worktree landed under it; if not, the `cd` didn't take — report it and
-     stop.
-   - It works because this plugin maps `WorktreeCreate` →
-     `wt switch --create <name> --no-cd --format=json`, so the new worktree
-     lands in worktrunk's normal sibling layout (`<repo>.<branch>/`), not under
-     `.claude/worktrees/`.
-   - `wt switch --create` is idempotent: if the branch already exists, this
-     just re-enters its worktree.
-   - If you are *already* inside an `EnterWorktree`-created worktree (e.g. the
-     background harness isolated this session), **skip `EnterWorktree`** — it
-     refuses to nest. Reuse the existing worktree and continue. But if a repo
-     was given and that worktree belongs to a different repo, you can't honor
-     it — say so and stop rather than running the task in the wrong repo.
-   - If `EnterWorktree` fails (not a git repo, invalid branch name, etc.),
-     report the error and stop — do not fall back to working in the original
-     directory, since that defeats the purpose.
+<!-- Maintainers: the design choices here are backed by tested evidence in
+rationale.md (same directory) — read it before re-adding guards or routes. -->
 
-2. After the cwd switch succeeds, do the task in the new worktree. If there was
-   no task text, confirm the worktree is ready and wait for the next
-   instruction.
+1. **Pick the branch name** if none was given: short, from the task ("fix the
+   parser bug" → `fix-parser-bug`) and consistent with existing worktree
+   names, or, mid-session, from the work being moved; with nothing to derive
+   from, ask.
+
+2. **Create the worktree** with a `Bash` call (omit `-C <repo>` when no repo
+   was given):
+
+   ```
+   wt -C <repo> switch --create <branch> --no-cd --format=json
+   ```
+
+   Stdout is JSON whose `path` field is the worktree's absolute path (status
+   lines go to stderr). On `Branch <branch> already exists`:
+
+   - the user named the branch → rerun the same command without `--create`;
+     it enters the existing branch, creating its worktree if missing.
+   - the name was picked in step 1 → the user never chose that branch; pick
+     another name and rerun.
+
+   Any other failure (not a git repo, invalid name): report it and stop — do
+   not do the task in the original directory.
+
+   Mid-session, when the work to move is uncommitted in the current worktree,
+   carry it across: `git stash push -u` before creating the worktree, then
+   `git -C <path> stash pop` after (the stash is shared across worktrees).
+
+3. **Re-root the session** with `EnterWorktree({path: "<path from the JSON>"})`.
+
+   If it is rejected (worktree in a different repo, session already in a
+   worktree, pinned cwd — the rejections are graceful and create nothing),
+   leave the session rooted where it is and work in the worktree through
+   absolute paths instead; name the worktree path when reporting back. Don't
+   try to `cd` there: the harness resets `cd` that leaves the session's
+   working directories, and `EnterWorktree` is the supported way to move a
+   session.
+
+4. **Do the task** in the worktree. If there was no task text, confirm the
+   worktree is ready and wait for the next instruction.
 
 ## Cleanup
 
-Don't remove the worktree yourself. `ExitWorktree({action: "remove"})` (if the
-user asks to leave) or the session-exit prompt routes through this plugin's
-`WorktreeRemove` hook → `wt remove --foreground`. A worktree with uncommitted
-changes won't be auto-removed without confirmation — that's intended. A branch
-with committed-but-unmerged work is retained (with a `wt remove -D <branch>`
-hint) instead of being silently force-deleted.
+The worktree is a normal worktrunk worktree: it persists after the session
+ends, shows up in `wt list`, and is merged or removed with `wt merge` /
+`wt remove <branch>` like any other. Don't remove it unprompted. If the user
+asks to leave mid-session, `ExitWorktree({action: "keep"})` returns the
+session to its original directory; `ExitWorktree` cannot remove a worktree
+entered by `path`, so removal is always `wt remove <branch>`.
 
 ## Scope
 

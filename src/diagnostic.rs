@@ -136,7 +136,7 @@ impl DiagnosticReport {
     /// Format the complete diagnostic report as markdown using minijinja template.
     fn format_report(repo: &Repository, command: &str, context: &str) -> String {
         // Strip ANSI codes from context - the diagnostic is a markdown file for GitHub
-        let context = strip_ansi_codes(context);
+        let context = context.ansi_strip();
 
         // Collect data for template
         let timestamp = worktrunk::utils::now_iso8601();
@@ -174,21 +174,32 @@ impl DiagnosticReport {
         // Render template
         let env = Environment::new();
         let tmpl = env.template_from_str(REPORT_TEMPLATE).unwrap();
-        tmpl.render(context! {
-            timestamp,
-            command,
-            context,
-            version,
-            os,
-            arch,
-            git_version,
-            shell_integration,
-            worktree_list,
-            config_show,
-            trace_log,
-            subprocess_log_path,
-        })
-        .unwrap()
+        let rendered = tmpl
+            .render(context! {
+                timestamp,
+                command,
+                context,
+                version,
+                os,
+                arch,
+                git_version,
+                shell_integration,
+                worktree_list,
+                config_show,
+                trace_log,
+                subprocess_log_path,
+            })
+            .unwrap();
+
+        // Final sanitize at the upload boundary. This is the only place that
+        // covers *every* inlined source at once: `config_show` and
+        // `worktree_list` are spliced in directly, never through the
+        // already-escaped `trace.log`, so a control byte from either (or from
+        // the `context` error string) would still make `gh gist create` reject
+        // diagnostic.md as binary. `escape_controls` preserves tabs/newlines,
+        // so the markdown structure is intact, and is idempotent over the
+        // trace.log the formatter already cleaned.
+        worktrunk::utils::escape_controls(&rendered).into_owned()
     }
 
     /// Write the diagnostic report to a file.
@@ -285,13 +296,6 @@ fn is_gh_installed() -> bool {
         .run()
         .map(|o| o.status.success())
         .unwrap_or(false)
-}
-
-/// Strip ANSI escape codes from a string.
-///
-/// Used to clean terminal-formatted text for markdown output.
-fn strip_ansi_codes(s: &str) -> String {
-    s.ansi_strip().into_owned()
 }
 
 /// Truncate log content to ~50KB if it's too large.
@@ -436,15 +440,6 @@ mod tests {
         let result = format_config_section(&path, "Test");
         assert!(result.contains("(truncated)"));
         assert!(result.len() < 5000);
-    }
-
-    #[test]
-    fn test_strip_ansi_codes() {
-        // Build ANSI codes programmatically to avoid lint
-        let esc = '\x1b';
-        let input = format!("{esc}[31mred{esc}[0m and {esc}[32mgreen{esc}[0m");
-        let result = strip_ansi_codes(&input);
-        assert_eq!(result, "red and green");
     }
 
     #[test]

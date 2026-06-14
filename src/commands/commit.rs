@@ -224,12 +224,10 @@ impl CommitOptions<'_> {
     pub fn commit(self, announcer: &mut HookAnnouncer<'_>) -> anyhow::Result<CommitOutcome> {
         let project_config = self.ctx.repo.load_project_config()?;
         let user_hooks = self.ctx.config.hooks(self.ctx.project_id().as_deref());
-        let (user_cfg, proj_cfg) = super::hooks::lookup_hook_configs(
-            &user_hooks,
-            project_config.as_ref(),
-            HookType::PreCommit,
-        );
-        let any_hooks_exist = user_cfg.is_some() || proj_cfg.is_some();
+        let any_hooks_exist = user_hooks.get(HookType::PreCommit).is_some()
+            || project_config
+                .as_ref()
+                .is_some_and(|c| c.hooks.get(HookType::PreCommit).is_some());
 
         // Only print "Skipping pre-commit hooks (--no-hooks)" when --no-hooks was actually
         // passed. If hooks are disabled because the caller declined an approval prompt
@@ -249,7 +247,6 @@ impl CommitOptions<'_> {
                 HookType::PreCommit,
                 &template_vars.as_extra_vars(),
                 FailureStrategy::FailFast,
-                crate::output::pre_hook_display_path(self.ctx.worktree_path),
             )?;
         }
 
