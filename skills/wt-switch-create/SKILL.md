@@ -38,9 +38,10 @@ Steps 1–3 come before any other work.
 <!-- Maintainers: the design choices here are backed by tested evidence in
 rationale.md (same directory) — read it before re-adding guards or routes. -->
 
-1. **Pick the branch name** if none was given: short kebab-case from the task
-   ("fix the parser bug" → `fix-parser-bug`) or, mid-session, from the work
-   being moved; with nothing to derive from, ask.
+1. **Pick the branch name** if none was given: short, from the task ("fix the
+   parser bug" → `fix-parser-bug`) and consistent with existing worktree
+   names, or, mid-session, from the work being moved; with nothing to derive
+   from, ask.
 
 2. **Create the worktree** with a `Bash` call (omit `-C <repo>` when no repo
    was given):

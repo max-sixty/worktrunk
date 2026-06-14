@@ -600,10 +600,13 @@ fn test_bare_repo_commands_from_bare_directory() {
     });
 }
 
+/// Full merge workflow in a bare repo: create main + feature worktrees, merge
+/// feature into main, and confirm the merge landed.
 ///
-/// Skipped on Windows due to file locking issues that prevent worktree removal
-/// during background cleanup after merge. The merge functionality itself works
-/// correctly - this is a timing/cleanup issue specific to Windows file handles.
+/// Runs on all platforms. Background worktree cleanup after merge is tolerated
+/// via `wait_for_worktree_removed` — on Windows, file locking can leave an empty
+/// placeholder dir behind, which is production-harmless (see the predicate note
+/// at the call site below).
 #[test]
 fn test_bare_repo_merge_workflow() {
     let test = BareRepoTest::new();
