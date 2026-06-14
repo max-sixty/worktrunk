@@ -192,11 +192,11 @@ timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disabl
 #### Custom columns [experimental]
 
 Custom columns add per-branch context to the `wt list` table. Each
-`[list.columns]` entry is a column: the key is the header, the template renders
-each row's cell.
+`[list.custom-columns]` entry is a column: the key is the header, the template
+renders each row's cell.
 
 ```toml
-[list.columns.Ticket]
+[list.custom-columns.Ticket]
 template = "{{ vars.ticket }}"   # Required; the result is the cell text
 width = 20                       # Optional max display width (default: 40)
 priority = 9                     # Optional drop order when the terminal narrows;
@@ -216,7 +216,7 @@ A `Note` column showing free-form descriptions, set per branch with
 `wt config state vars set note "Bug fix for production fire"`:
 
 ```toml
-[list.columns.Note]
+[list.custom-columns.Note]
 template = "{{ vars.note }}"
 ```
 

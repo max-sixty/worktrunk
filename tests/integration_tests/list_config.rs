@@ -639,10 +639,10 @@ fn test_list_custom_columns(repo: TestRepo) {
     // empty cells) and a filter-driven column with a value on every row.
     fs::write(
         repo.test_config_path(),
-        r#"[list.columns.Ticket]
+        r#"[list.custom-columns.Ticket]
 template = "{{ vars.ticket }}"
 
-[list.columns.Codename]
+[list.custom-columns.Codename]
 template = "{{ branch | codename }}"
 priority = 12
 "#,
@@ -670,7 +670,7 @@ fn test_list_custom_column_empty_everywhere_dropped(repo: TestRepo) {
     // entirely (no header, no reserved width).
     fs::write(
         repo.test_config_path(),
-        r#"[list.columns.Ticket]
+        r#"[list.custom-columns.Ticket]
 template = "{{ vars.ticket }}"
 "#,
     )
@@ -690,7 +690,7 @@ template = "{{ vars.ticket }}"
 fn test_list_custom_columns_json(repo: TestRepo) {
     fs::write(
         repo.test_config_path(),
-        r#"[list.columns.Ticket]
+        r#"[list.custom-columns.Ticket]
 template = "{{ vars.ticket }}"
 "#,
     )
@@ -728,7 +728,7 @@ fn test_list_custom_column_invalid_template(repo: TestRepo) {
     // An unknown top-level variable aborts wt list with the available set
     fs::write(
         repo.test_config_path(),
-        r#"[list.columns.Ticket]
+        r#"[list.custom-columns.Ticket]
 template = "{{ branhc }}"
 "#,
     )

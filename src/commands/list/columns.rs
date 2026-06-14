@@ -17,7 +17,7 @@ pub enum ColumnKind {
     Commit,
     Time,
     Message,
-    /// User-defined column from `[list.columns]`; the index points into the
+    /// User-defined column from `[list.custom-columns]`; the index points into the
     /// resolved column list for this invocation. Values are expanded before
     /// layout, so widths are measured from content and headers come from the
     /// resolved name (not [`ColumnKind::header`]).

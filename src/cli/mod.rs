@@ -759,7 +759,7 @@ $ wt list --format=json
 | CI | PR/MR number colored by pipeline status; `--full` only |
 | Path | Worktree directory |
 | URL | Dev server URL from project config; dimmed if port is not listening |
-| *(custom)* | User-defined [custom columns](#custom-columns) from `[list.columns]` user config [experimental] |
+| *(custom)* | User-defined [custom columns](#custom-columns) from `[list.custom-columns]` user config [experimental] |
 | Commit | Short hash (8 chars) |
 | Age | Time since last commit |
 | Message | Last commit message (truncated) |
@@ -792,10 +792,10 @@ Reuses the [`commit.generation`](@/config.md#commit) command — the same LLM th
 
 ### Custom columns [experimental]
 
-Each `[list.columns]` entry in user config adds a column: the key is the header, the template renders each row's cell. Templates can reference per-branch `{{ vars.* }}` stored with [`wt config state vars set`](@/config.md#wt-config-state-vars) — useful for tracking what each of many (often agent-driven) branches is for:
+Each `[list.custom-columns]` entry in user config adds a column: the key is the header, the template renders each row's cell. Templates can reference per-branch `{{ vars.* }}` stored with [`wt config state vars set`](@/config.md#wt-config-state-vars) — useful for tracking what each of many (often agent-driven) branches is for:
 
 ```toml
-[list.columns.Ticket]
+[list.custom-columns.Ticket]
 template = "{{ vars.ticket }}"
 ```
 
@@ -1796,11 +1796,11 @@ timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disabl
 #### Custom columns [experimental]
 
 Custom columns add per-branch context to the `wt list` table. Each
-`[list.columns]` entry is a column: the key is the header, the template renders
-each row's cell.
+`[list.custom-columns]` entry is a column: the key is the header, the template
+renders each row's cell.
 
 ```toml
-[list.columns.Ticket]
+[list.custom-columns.Ticket]
 template = "{{ vars.ticket }}"   # Required; the result is the cell text
 width = 20                       # Optional max display width (default: 40)
 priority = 9                     # Optional drop order when the terminal narrows;
@@ -1820,7 +1820,7 @@ A `Note` column showing free-form descriptions, set per branch with
 `wt config state vars set note "Bug fix for production fire"`:
 
 ```toml
-[list.columns.Note]
+[list.custom-columns.Note]
 template = "{{ vars.note }}"
 ```
 

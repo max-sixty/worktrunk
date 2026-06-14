@@ -1053,7 +1053,7 @@ pub fn collect(
         effective_skip_tasks.insert(TaskKind::SummaryGenerate);
     }
 
-    // Custom [list.columns] values expand before layout: their inputs
+    // Custom [list.custom-columns] values expand before layout: their inputs
     // (branch, worktree identity, vars from the bulk config snapshot) are
     // already in memory, so cells paint with the skeleton and column widths
     // are measured from content like Branch/Path. Pure CPU — no subprocess.
@@ -1063,7 +1063,7 @@ pub fn collect(
     // owns the terminal, so it can't surface an abort — it stashes a warning
     // (drained after the picker closes) and renders without custom columns.
     let custom_columns =
-        match super::custom_columns::resolve_custom_columns(&config.list.columns, repo) {
+        match super::custom_columns::resolve_custom_columns(&config.list.custom_columns, repo) {
             Ok(columns) => columns,
             Err(e) if progressive_handler.is_some() => {
                 emit_warning(warning_message(format!("Custom columns disabled: {e}")).to_string());

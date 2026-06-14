@@ -138,7 +138,7 @@ impl Merge for CommitGenerationConfig {
 /// *(Experimental — fields may change in future releases.)*
 ///
 /// ```toml
-/// [list.columns.Ticket]
+/// [list.custom-columns.Ticket]
 /// template = "{{ vars.ticket }}"
 /// ```
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
@@ -195,8 +195,12 @@ pub struct ListConfig {
     /// Custom columns, keyed by header text. See [`ListColumnConfig`].
     ///
     /// *(Experimental — fields may change in future releases.)*
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub columns: BTreeMap<String, ListColumnConfig>,
+    #[serde(
+        default,
+        rename = "custom-columns",
+        skip_serializing_if = "BTreeMap::is_empty"
+    )]
+    pub custom_columns: BTreeMap<String, ListColumnConfig>,
 }
 
 impl ListConfig {
@@ -239,10 +243,15 @@ impl ListConfig {
 
 impl Merge for ListConfig {
     fn merge_with(&self, other: &Self) -> Self {
-        // Columns merge per key: a more specific layer overrides or adds
-        // individual columns without clearing the rest.
-        let mut columns = self.columns.clone();
-        columns.extend(other.columns.iter().map(|(k, v)| (k.clone(), v.clone())));
+        // Custom columns merge per key: a more specific layer overrides or
+        // adds individual columns without clearing the rest.
+        let mut custom_columns = self.custom_columns.clone();
+        custom_columns.extend(
+            other
+                .custom_columns
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone())),
+        );
         Self {
             full: other.full.or(self.full),
             branches: other.branches.or(self.branches),
@@ -250,7 +259,7 @@ impl Merge for ListConfig {
             summary: other.summary.or(self.summary),
             task_timeout_ms: other.task_timeout_ms.or(self.task_timeout_ms),
             timeout_ms: other.timeout_ms.or(self.timeout_ms),
-            columns,
+            custom_columns,
         }
     }
 }

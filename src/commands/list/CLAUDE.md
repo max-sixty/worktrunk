@@ -39,7 +39,7 @@ Results update cells progressively as they complete.
 Default: defer to post-skeleton. Only add a pre-skeleton operation when the
 skeleton literally cannot render without the data. Current exceptions, all
 small local reads: column sizing (the CI column's cached width hint), custom
-`[list.columns]` expansion (values come from the in-memory config snapshot and
+`[list.custom-columns]` expansion (values come from the in-memory config snapshot and
 must be measured for layout), and the picker's cache-only CI fill (the CiStatus
 task is skipped there, so the cache read is the column's entire data source).
 Template expansion and other file I/O wait; new columns can render a

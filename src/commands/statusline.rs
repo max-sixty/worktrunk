@@ -748,7 +748,7 @@ fn run_json() -> Result<()> {
             all_vars.insert(branch.clone(), entries);
         }
     }
-    // No custom columns: the statusline path never expands `[list.columns]`
+    // No custom columns: the statusline path never expands `[list.custom-columns]`
     // (prompt hot path; its compact format has no column grid).
     let json_item = json_output::JsonItem::from_list_item(
         &item,

@@ -115,7 +115,7 @@ pub struct JsonItem {
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub vars: BTreeMap<String, String>,
 
-    /// Rendered `[list.columns]` values, keyed by column header.
+    /// Rendered `[list.custom-columns]` values, keyed by column header.
     /// Empty cells are omitted.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub columns: BTreeMap<String, String>,

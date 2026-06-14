@@ -1,4 +1,4 @@
-//! User-defined `wt list` columns from `[list.columns]` in user config.
+//! User-defined `wt list` columns from `[list.custom-columns]` in user config.
 //!
 //! Resolved once per invocation, then expanded eagerly for every row before
 //! the table skeleton renders: the template inputs (branch, worktree
@@ -43,7 +43,7 @@ pub struct ResolvedCustomColumn {
     pub priority: u8,
 }
 
-/// Resolve `[list.columns]` config into expansion-ready columns.
+/// Resolve `[list.custom-columns]` config into expansion-ready columns.
 ///
 /// Validates each definition and orders the result by (priority, name),
 /// which is also the display order among custom columns. Errors abort
@@ -58,7 +58,7 @@ pub fn resolve_custom_columns(
     // u8 can address would silently alias columns.
     anyhow::ensure!(
         columns.len() <= usize::from(u8::MAX) + 1,
-        "[list.columns] supports at most 256 columns ({} configured)",
+        "[list.custom-columns] supports at most 256 columns ({} configured)",
         columns.len()
     );
     let mut resolved: Vec<ResolvedCustomColumn> = columns
@@ -66,13 +66,13 @@ pub fn resolve_custom_columns(
         .map(|(name, config)| {
             anyhow::ensure!(
                 !name.trim().is_empty() && !name.chars().any(char::is_control),
-                "Invalid [list.columns] name {name:?}: must be non-empty without control characters"
+                "Invalid [list.custom-columns] name {name:?}: must be non-empty without control characters"
             );
             anyhow::ensure!(
                 config.width != Some(0),
-                "Invalid [list.columns.{name}] width: must be at least 1"
+                "Invalid [list.custom-columns.{name}] width: must be at least 1"
             );
-            validate_list_column_template(&config.template, repo, &format!("list.columns.{name}"))?;
+            validate_list_column_template(&config.template, repo, &format!("list.custom-columns.{name}"))?;
             Ok(ResolvedCustomColumn {
                 name: name.clone(),
                 template: config.template.clone(),
@@ -102,7 +102,7 @@ pub fn expand_custom_columns(
     let env = template_environment(repo);
     let names: Vec<String> = columns
         .iter()
-        .map(|column| format!("list.columns.{}", column.name))
+        .map(|column| format!("list.custom-columns.{}", column.name))
         .collect();
     // Parse once per column; resolution already validated syntax, so a
     // failure here is unreachable in practice and renders empty cells.

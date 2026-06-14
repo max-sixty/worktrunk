@@ -84,7 +84,7 @@ Output as JSON for scripting:
 | CI | PR/MR number colored by pipeline status; `--full` only |
 | Path | Worktree directory |
 | URL | Dev server URL from project config; dimmed if port is not listening |
-| *(custom)* | User-defined [custom columns](#custom-columns) from `[list.columns]` user config <span class="badge-experimental"></span> |
+| *(custom)* | User-defined [custom columns](#custom-columns) from `[list.custom-columns]` user config <span class="badge-experimental"></span> |
 | Commit | Short hash (8 chars) |
 | Age | Time since last commit |
 | Message | Last commit message (truncated) |
@@ -121,10 +121,10 @@ Reuses the [`commit.generation`](@/config.md#commit) command — the same LLM th
 
 <span class="badge-experimental"></span>
 
-Each `[list.columns]` entry in user config adds a column: the key is the header, the template renders each row's cell. Templates can reference per-branch `{{ vars.* }}` stored with [`wt config state vars set`](@/config.md#wt-config-state-vars) — useful for tracking what each of many (often agent-driven) branches is for:
+Each `[list.custom-columns]` entry in user config adds a column: the key is the header, the template renders each row's cell. Templates can reference per-branch `{{ vars.* }}` stored with [`wt config state vars set`](@/config.md#wt-config-state-vars) — useful for tracking what each of many (often agent-driven) branches is for:
 
 ```toml
-[list.columns.Ticket]
+[list.custom-columns.Ticket]
 template = "{{ vars.ticket }}"
 ```
 

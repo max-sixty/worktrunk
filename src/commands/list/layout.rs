@@ -275,7 +275,7 @@ pub struct ColumnWidths {
     pub working_diff: DiffWidths,
     pub branch_diff: DiffWidths,
     pub upstream: DiffWidths,
-    /// Measured widths for `[list.columns]` columns, indexed like the
+    /// Measured widths for `[list.custom-columns]` columns, indexed like the
     /// resolved column list. Values are final before layout (no estimates);
     /// 0 means the column is empty for every row and is excluded entirely.
     pub custom: Vec<usize>,

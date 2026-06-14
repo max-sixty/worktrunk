@@ -168,10 +168,10 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# #### Custom columns [experimental][0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Custom columns add per-branch context to the `wt list` table. Each[0m
-[107m [0m [2m# `[list.columns]` entry is a column: the key is the header, the template renders[0m
-[107m [0m [2m# each row's cell.[0m
+[107m [0m [2m# `[list.custom-columns]` entry is a column: the key is the header, the template[0m
+[107m [0m [2m# renders each row's cell.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# [list.columns.Ticket][0m
+[107m [0m [2m# [list.custom-columns.Ticket][0m
 [107m [0m [2m# template = "{{ vars.ticket }}"   # Required; the result is the cell text[0m
 [107m [0m [2m# width = 20                       # Optional max display width (default: 40)[0m
 [107m [0m [2m# priority = 9                     # Optional drop order when the terminal narrows;[0m
@@ -189,7 +189,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# A `Note` column showing free-form descriptions, set per branch with[0m
 [107m [0m [2m# `wt config state vars set note "Bug fix for production fire"`:[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# [list.columns.Note][0m
+[107m [0m [2m# [list.custom-columns.Note][0m
 [107m [0m [2m# template = "{{ vars.note }}"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Commit[0m

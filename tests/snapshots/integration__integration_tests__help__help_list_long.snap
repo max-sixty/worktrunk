@@ -139,7 +139,7 @@ Output as JSON for scripting:
  CI       PR/MR number colored by pipeline status; [2m--full[0m only                                                
  Path     Worktree directory                                                                                  
  URL      Dev server URL from project config; dimmed if port is not listening                                 
- (custom) User-defined custom columns from [2m[list.columns][0m user config [experimental]                          
+ (custom) User-defined custom columns from [2m[list.custom-columns][0m user config [experimental]                   
  Commit   Short hash (8 chars)                                                                                
  Age      Time since last commit                                                                              
  Message  Last commit message (truncated)                                                                     
@@ -172,9 +172,9 @@ Reuses the [2mcommit.generation[0m command — the same LLM that generates com
 
 [32mCustom columns [experimental][0m
 
-Each [2m[list.columns][0m entry in user config adds a column: the key is the header, the template renders each row's cell. Templates can reference per-branch [2m{{ vars.* }}[0m stored with [2mwt config state vars set[0m — useful for tracking what each of many (often agent-driven) branches is for:
+Each [2m[list.custom-columns][0m entry in user config adds a column: the key is the header, the template renders each row's cell. Templates can reference per-branch [2m{{ vars.* }}[0m stored with [2mwt config state vars set[0m — useful for tracking what each of many (often agent-driven) branches is for:
 
-[107m [0m [2m[36m[list.columns.Ticket][0m
+[107m [0m [2m[36m[list.custom-columns.Ticket][0m
 [107m [0m [2mtemplate = [0m[2m[32m"{{ vars.ticket }}"[0m
 
 A column that renders empty for every row is dropped from the table. Templates, widths, and drop priority: custom columns config.

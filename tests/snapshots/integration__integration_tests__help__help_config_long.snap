@@ -216,10 +216,10 @@ Persistent flag values for [2mwt list[0m. Override on command line as needed.
 [1mCustom columns [experimental][0m
 
 Custom columns add per-branch context to the [2mwt list[0m table. Each
-[2m[list.columns][0m entry is a column: the key is the header, the template renders
-each row's cell.
+[2m[list.custom-columns][0m entry is a column: the key is the header, the template
+renders each row's cell.
 
-[107m [0m [2m[36m[list.columns.Ticket][0m
+[107m [0m [2m[36m[list.custom-columns.Ticket][0m
 [107m [0m [2mtemplate = [0m[2m[32m"{{ vars.ticket }}"[0m[2m   [0m[2m# Required; the result is the cell text[0m
 [107m [0m [2mwidth = [0m[2m[33m20[0m[2m                       [0m[2m# Optional max display width (default: 40)[0m
 [107m [0m [2mpriority = [0m[2m[33m9[0m[2m                     [0m[2m# Optional drop order when the terminal narrows;[0m
@@ -237,7 +237,7 @@ empty cell; a column that is empty for every row is dropped from the table.
 A [2mNote[0m column showing free-form descriptions, set per branch with
 [2mwt config state vars set note "Bug fix for production fire"[0m:
 
-[107m [0m [2m[36m[list.columns.Note][0m
+[107m [0m [2m[36m[list.custom-columns.Note][0m
 [107m [0m [2mtemplate = [0m[2m[32m"{{ vars.note }}"[0m
 
 [32mCommit[0m
