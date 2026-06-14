@@ -200,7 +200,7 @@ vergen-gitcl = { version = "9.1.0", features = ["build"] }
 
 [dev-dependencies]
 insta = { version = "1.47.2", features = ["yaml", "redactions", "filters"] }
-insta-cmd = "0.6"
+insta-cmd = "0.7"
 rstest = "0.26"
 tempfile = "3.27"
 toml = "1.0"
