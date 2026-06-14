@@ -424,6 +424,14 @@ pub enum GitError {
     StaleDefaultBranch {
         branch: String,
     },
+    /// The default branch resolves to a worktree whose HEAD is unborn (no
+    /// commits yet) — e.g. a freshly `git init`'d repo. Distinct from
+    /// [`StaleDefaultBranch`](Self::StaleDefaultBranch): the cache is
+    /// correct, so the cache-reset hint would be misleading; the branch
+    /// simply has nothing to diff or merge against yet.
+    UnbornDefaultBranch {
+        branch: String,
+    },
 
     // Worktree errors
     NotInWorktree {
@@ -608,6 +616,10 @@ impl GitError {
 
             GitError::StaleDefaultBranch { branch } => {
                 cformat!("Default branch <bold>{branch}</> does not exist locally")
+            }
+
+            GitError::UnbornDefaultBranch { branch } => {
+                cformat!("Default branch <bold>{branch}</> has no commits yet")
             }
 
             GitError::NotInWorktree { action } => match action {
@@ -886,6 +898,18 @@ impl GitError {
                     error_message(&title),
                     hint_message(cformat!(
                         "Reset the cached value with <underline>wt config state default-branch clear</>, or set it explicitly with <underline>wt config state default-branch set BRANCH</>"
+                    ))
+                )
+            }
+
+            GitError::UnbornDefaultBranch { branch } => {
+                let title = self.title();
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(&title),
+                    hint_message(cformat!(
+                        "Make an initial commit on <underline>{branch}</> first, or pass an explicit target."
                     ))
                 )
             }
@@ -1956,6 +1980,9 @@ mod tests {
         );
     }
 
+    // The third snapshot renders a failed command through `format_bash_with_gutter`,
+    // whose output is highlighted only with the feature on.
+    #[cfg(feature = "syntax-highlighting")]
     #[test]
     fn snapshot_worktree_creation_failed() {
         let err = GitError::WorktreeCreationFailed {

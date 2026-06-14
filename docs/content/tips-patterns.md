@@ -105,7 +105,7 @@ docker run -d --rm \
 db-stop = "docker stop {{ vars.container }} 2>/dev/null || true"
 ```
 
-The first pipeline step derives values from the branch and stores them as vars. The second step references `{{ vars.container }}` and `{{ vars.port }}` — expanded at execution time, after the vars are set. `post-remove` reads the same vars to stop the container.
+The first pipeline step derives values from the branch and stores them as vars. The second step references `{{ vars.container }}` and `{{ vars.port }}` — templates render when each step runs, so the vars are already set. `pre-remove` reads the same vars to stop the container.
 
 The `('db-' ~ branch)` concatenation hashes differently than plain `branch`, so database and dev server ports don't collide. The `sanitize_db` filter produces database-safe identifiers (lowercase, underscores, no leading digits, with a short hash suffix).
 
@@ -206,6 +206,8 @@ Worktrunk maintains useful state. Default branch [detection](@/config.md#wt-conf
 
 {{ terminal(cmd="git rebase $(wt config state default-branch)") }}
 
+In hooks and aliases, the same value is the `{{ default_branch }}` [template variable](@/hook.md#template-variables); reserve this command for plain shell scripts.
+
 ## Task runners in hooks
 
 Reference Taskfile/Justfile/Makefile in hooks:
@@ -232,7 +234,7 @@ test = "npm test"
 build = "npm run build"
 ```
 
-`pre-commit` runs on every squash commit during `wt merge`; `pre-merge` runs once per merge after the rebase, so it's the right place for the slow tests.
+`pre-commit` runs during `wt merge`, before the squash commit; `pre-merge` runs once per merge after the rebase, so it's the right place for the slow tests.
 
 ## Target-specific hooks
 
@@ -314,7 +316,7 @@ tmux = "tmux kill-session -t {{ branch | sanitize }} 2>/dev/null || true"
 To create a worktree and immediately attach:
 
 {% terminal() %}
-<span class="cmd">wt switch --create feature -x 'tmux attach -t {{ branch | sanitize }}'</span>
+<span class="cmd">wt switch --create feature -x tmux -- attach -t '{{ branch | sanitize }}'</span>
 {% end %}
 
 ## cmux workspace per worktree
@@ -432,20 +434,42 @@ With `worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"`, worktrees b
 ```
 myproject/
 ├── .git/       # bare repository
-├── main/       # default branch
-├── feature/    # feature branch
-└── bugfix/     # bugfix branch
+├── main/       # default branch worktree
+├── feature/    # feature branch worktree
+└── bugfix/     # bugfix branch worktree
 ```
 
-Configure worktrunk:
+### Configure the worktree path
+
+On first `wt switch` in a bare repo at a hidden path (`.git`, `.bare`), worktrunk detects that the default template would produce broken paths like `myproject/.git.main` and offers a fix:
+
+```
+▲ Bare repo at myproject/.git — worktrees will be at myproject/.git.main
+◎ Configure worktree-path to place worktrees at myproject/main? [y/N/?]
+```
+
+Accepting writes a project-scoped entry to user config:
 
 ```toml
 # ~/.config/worktrunk/config.toml
+[projects."github.com/myorg/myrepo"]
 worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"
 ```
 
-Create the first worktree:
+Run `wt config show` from inside any worktree to find the project identifier (`Identifier: …` in the PROJECT CONFIG section). Set it globally with `worktree-path = "..."` at the top level if this layout is preferred for all bare repos.
 
-{{ terminal(cmd="wt switch --create main") }}
+### Create the first worktree
+
+{{ terminal(cmd="wt switch main") }}
+
+For a freshly cloned bare repo the default branch already exists, so `wt switch main` (without `--create`) is enough. Use `wt switch --create <branch>` for new branches.
 
 Now `wt switch --create feature` creates `myproject/feature/`.
+
+### Set up the project config
+
+The project config (`.config/wt.toml`) must live inside a worktree — the bare `.git` directory has no tracked files. Once the first worktree exists, create it from there:
+
+{{ terminal(cmd="cd myproject/main|||wt config create --project") }}
+
+Commit the file and it will appear in every worktree automatically.

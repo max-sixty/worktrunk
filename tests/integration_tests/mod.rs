@@ -40,6 +40,7 @@ pub mod list_column_alignment;
 pub mod list_config;
 pub mod list_progressive;
 pub mod merge;
+pub mod nushell_default_config_dir;
 pub mod output_system_guard;
 pub mod post_start_commands;
 pub mod push;

@@ -124,6 +124,7 @@ mod worktrees;
 
 // Re-export WorkingTree, Branch, IntegrationTargets, and RefSnapshot
 pub use branch::Branch;
+pub use diff::CommitMessageDetail;
 pub use integration::IntegrationTargets;
 pub use ref_snapshot::RefSnapshot;
 pub(super) use working_tree::path_to_logging_context;

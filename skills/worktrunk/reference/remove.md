@@ -95,7 +95,7 @@ Usage: wt remove [OPTIONS] [BRANCHES]...
 
 Arguments:
   [BRANCHES]...
-          Branch name [default: current]
+          Branch name or worktree path [default: current]
 
 Options:
       --no-delete-branch

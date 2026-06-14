@@ -943,7 +943,7 @@ mod tests {
     #[test]
     fn test_nushell_save_pattern() {
         // Nushell's config_line uses `save --force` (detected via "save" keyword)
-        let line = "if (which wt | is-not-empty) { wt config shell init nu | save --force ($nu.default-config-dir | path join vendor/autoload/wt.nu) }";
+        let line = "if (which wt | is-not-empty) { wt config shell init nu | save --force ($nu.vendor-autoload-dirs | last | path join wt.nu) }";
         assert_detects(line, "wt", "nushell save pattern (actual config line)");
     }
 

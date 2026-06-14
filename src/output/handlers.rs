@@ -64,9 +64,10 @@ fn cleanup_staged_with_progress(staged: &Path) -> (usize, u64) {
     } else {
         Progress::start("Removing")
     };
-    let result = remove_dir_with_progress(staged, &progress);
+    remove_dir_with_progress(staged, &progress);
+    let totals = progress.totals();
     progress.finish();
-    result
+    totals
 }
 
 // ============================================================================

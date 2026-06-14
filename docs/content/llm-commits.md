@@ -24,16 +24,16 @@ Any command that reads a prompt from stdin and outputs a commit message works. A
 
 ```toml
 [commit.generation]
-command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
+command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
 ```
 
-`CLAUDECODE=` unsets the nesting guard so `claude -p` works from within a Claude Code session. `--no-session-persistence` prevents the commit conversation from polluting `claude --continue`. The other flags disable tools, skills, settings, and system prompt for fast text-only output. See [Claude Code docs](https://docs.anthropic.com/en/docs/build-with-claude/claude-code) for installation.
+`--no-session-persistence` prevents the commit conversation from polluting `claude --continue`. The other flags disable tools, skills, settings, and system prompt for fast text-only output. See [Claude Code docs](https://docs.anthropic.com/en/docs/build-with-claude/claude-code) for installation.
 
 ### Codex
 
 ```toml
 [commit.generation]
-command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
+command = "codex exec -m gpt-5.4-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
 ```
 
 Uses the fast mini model with low reasoning effort and an empty system prompt for faster output. Requires `jq` for JSON parsing. See [Codex CLI docs](https://developers.openai.com/codex/cli/).
@@ -162,9 +162,9 @@ Diff:
 """
 
 squash-template = """
-Combine these {{ commits | length }} commits into one message:
-{% for c in commits %}
-- {{ c }}
+Combine these {{ commit_details | length }} commits into one message:
+{% for c in commit_details %}
+- {{ c.subject }}
 {% endfor %}
 
 Diff:
@@ -181,7 +181,7 @@ Diff:
 | `{{ branch }}` | Current branch name |
 | `{{ repo }}` | Repository name |
 | `{{ recent_commits }}` | Recent commit subjects (for style reference) |
-| `{{ commits }}` | Commits being squashed (squash template only) |
+| `{{ commit_details }}` | Commits being squashed (squash template only); each renders as its subject and exposes `.subject` / `.body` |
 | `{{ target_branch }}` | Merge target branch (squash template only) |
 | `{{ user_guidance }}` | Rendered user `template-append` fragment (see below) |
 | `{{ project_guidance }}` | Rendered project `template-append` fragment (see below) |
@@ -191,9 +191,9 @@ Diff:
 Templates use [minijinja](https://docs.rs/minijinja/latest/minijinja/syntax/index.html), which supports:
 
 - **Variables**: `{{ branch }}`, `{{ repo | upper }}`
-- **Filters**: `{{ commits | length }}`, `{{ repo | upper }}`
+- **Filters**: `{{ commit_details | length }}`, `{{ repo | upper }}`
 - **Conditionals**: `{% if recent_commits %}...{% endif %}`
-- **Loops**: `{% for c in commits %}{{ c }}{% endfor %}`
+- **Loops**: `{% for c in commit_details %}{{ c.subject }}{% endfor %}`
 - **Loop variables**: `{{ loop.index }}`, `{{ loop.length }}`
 - **Whitespace control**: `{%- ... -%}` strips surrounding whitespace
 

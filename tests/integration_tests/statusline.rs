@@ -110,7 +110,15 @@ fn test_statusline_basic(repo: TestRepo) {
 fn test_statusline_with_changes(repo: TestRepo) {
     add_uncommitted_changes(&repo);
     let output = run_statusline(&repo, &[], None);
-    assert_snapshot!(output, @"[0m main  [36m?[0m[2m^[22m[2m|[22m  @[32m+1");
+    assert_snapshot!(output, @"[0m main  [36m?[0m[2m^[22m[2m|[22m  @[32m+1[0m");
+}
+
+#[rstest]
+fn test_statusline_ci_pr_number(repo: TestRepo) {
+    // Cached CI status with a PR number renders as the colored PR reference
+    super::list::mock_ci_status(&repo, "main", "passed", "pr", false, Some(3035));
+    let output = run_statusline(&repo, &[], None);
+    assert_snapshot!(output, @"[0m main  [2m^[22m[2m|[22m  [32m#3035[0m");
 }
 
 #[rstest]
@@ -119,7 +127,7 @@ fn test_statusline_commits_ahead(mut repo: TestRepo) {
     // Run from the feature worktree to see commits ahead
     let feature_path = repo.worktree_path("feature");
     let output = run_statusline_from_dir(&repo, &[], None, feature_path);
-    assert_snapshot!(output, @"[0m feature  [2m↑[22m  [32m↑2[0m  ^[32m+2");
+    assert_snapshot!(output, @"[0m feature  [2m↑[22m  [32m↑2[0m  ^[32m+2[0m");
 }
 
 #[rstest]
@@ -167,8 +175,6 @@ fn claude_code_snapshot_settings() -> insta::Settings {
     settings.add_filter(r"_REPO_", "[PATH]");
     // Normalize fish-abbreviated paths (on macOS) to [PATH]
     settings.add_filter(r"/[a-zA-Z0-9/._-]+/repo", "[PATH]");
-    // Strip leading ANSI reset code if present (output starts with [0m)
-    settings.add_filter(r"^\x1b\[0m ", "");
     settings
 }
 
@@ -201,7 +207,7 @@ fn test_statusline_claude_code_full_context(repo: TestRepo) {
 
     let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
     claude_code_snapshot_settings().bind(|| {
-        assert_snapshot!(output, @"[PATH]  main  [36m?[0m[2m^[22m[2m|[22m  @[32m+1[0m  Opus");
+        assert_snapshot!(output, @"[0m [PATH]  main  [36m?[0m[2m^[22m[2m|[22m  @[32m+1[0m  Opus");
     });
 }
 
@@ -212,7 +218,7 @@ fn test_statusline_claude_code_minimal(repo: TestRepo) {
 
     let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
     claude_code_snapshot_settings().bind(|| {
-        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m");
+        assert_snapshot!(output, @"[0m [PATH]  main  [2m^[22m[2m|[22m");
     });
 }
 
@@ -228,7 +234,7 @@ fn test_statusline_claude_code_with_model(repo: TestRepo) {
 
     let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
     claude_code_snapshot_settings().bind(|| {
-        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  Haiku");
+        assert_snapshot!(output, @"[0m [PATH]  main  [2m^[22m[2m|[22m  Haiku");
     });
 }
 
@@ -247,7 +253,7 @@ fn test_statusline_claude_code_with_context_gauge(repo: TestRepo) {
 
     let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
     claude_code_snapshot_settings().bind(|| {
-        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  Opus  🌕 42%");
+        assert_snapshot!(output, @"[0m [PATH]  main  [2m^[22m[2m|[22m  Opus  🌕 42%");
     });
 }
 
@@ -264,7 +270,7 @@ fn test_statusline_claude_code_context_gauge_low(repo: TestRepo) {
 
     let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
     claude_code_snapshot_settings().bind(|| {
-        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  Opus  🌕 5%");
+        assert_snapshot!(output, @"[0m [PATH]  main  [2m^[22m[2m|[22m  Opus  🌕 5%");
     });
 }
 
@@ -281,7 +287,7 @@ fn test_statusline_claude_code_context_gauge_high(repo: TestRepo) {
 
     let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
     claude_code_snapshot_settings().bind(|| {
-        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  Opus  🌑 98%");
+        assert_snapshot!(output, @"[0m [PATH]  main  [2m^[22m[2m|[22m  Opus  🌑 98%");
     });
 }
 
@@ -298,7 +304,7 @@ fn test_statusline_claude_code_missing_context_window(repo: TestRepo) {
 
     let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
     claude_code_snapshot_settings().bind(|| {
-        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  Opus");
+        assert_snapshot!(output, @"[0m [PATH]  main  [2m^[22m[2m|[22m  Opus");
     });
 }
 
@@ -364,12 +370,16 @@ fn test_statusline_detached_head(mut repo: TestRepo) {
         .run()
         .unwrap();
 
-    // Verify statusline shows HEAD (not "feature")
+    // Verify statusline shows the detached marker, not the prior branch name.
     let output = run_statusline_from_dir(&repo, &[], None, &feature_path);
-    // In detached state, we show "HEAD" as the branch name
+    // In detached state we render "(detached)" in place of a branch name.
     assert!(
-        output.contains("HEAD") || !output.contains("feature"),
-        "statusline should not show 'feature' in detached HEAD, got: {output}"
+        output.contains("(detached)"),
+        "statusline should show '(detached)' for detached HEAD, got: {output}"
+    );
+    assert!(
+        !output.contains("feature"),
+        "statusline should not show the prior branch name, got: {output}"
     );
 }
 
@@ -861,7 +871,7 @@ fn test_statusline_rate_limit_5h_24h_locale(repo: TestRepo) {
 
 #[rstest]
 fn test_statusline_rate_limit_drops_at_narrow_width(repo: TestRepo) {
-    // Same input as `5h_clock_time` but COLUMNS=80 — the rate-limit
+    // Same input as `5h_clock_time` but COLUMNS=40 — the rate-limit
     // segment is the lowest-priority Claude-Code segment, so it drops first.
     let json = build_claude_code_json(
         repo.root_path(),

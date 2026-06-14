@@ -32,11 +32,12 @@ use worktrunk::styling::{
 
 use super::resolve::{compute_worktree_path, offer_bare_repo_worktree_path_fix, path_mismatch};
 use super::types::{CreationMethod, SwitchBranchInfo, SwitchPlan, SwitchResult};
-use crate::cli::SwitchFormat;
+use crate::cli::{SwitchArgs, SwitchFormat};
 use crate::commands::backup::back_up_clobbered_path_now;
 use crate::commands::command_approval::approve_hooks;
 use crate::commands::command_executor::FailureStrategy;
 use crate::commands::command_executor::{CommandContext, build_hook_context};
+use crate::commands::flag_pair;
 use crate::commands::hook_plan::{ApprovedHookPlan, HookPlanBuilder, register_planned};
 use crate::commands::hooks::{HookAnnouncer, execute_hook};
 use crate::commands::template_vars::TemplateVars;
@@ -1298,18 +1299,18 @@ fn emit_switch_json(
 }
 
 /// Options for the switch command
-pub struct SwitchOptions<'a> {
-    pub branch: &'a str,
-    pub create: bool,
-    pub base: Option<&'a str>,
-    pub execute: Option<&'a str>,
-    pub execute_args: &'a [String],
-    pub yes: bool,
-    pub clobber: bool,
+struct SwitchOptions<'a> {
+    branch: &'a str,
+    create: bool,
+    base: Option<&'a str>,
+    execute: Option<&'a str>,
+    execute_args: &'a [String],
+    yes: bool,
+    clobber: bool,
     /// Resolved from --cd/--no-cd flags: Some(true) = cd, Some(false) = no cd, None = use config
-    pub change_dir: Option<bool>,
-    pub verify: bool,
-    pub format: crate::cli::SwitchFormat,
+    change_dir: Option<bool>,
+    verify: bool,
+    format: crate::cli::SwitchFormat,
 }
 
 /// Run pre-switch hooks before branch resolution or worktree creation.
@@ -1358,7 +1359,6 @@ fn run_pre_switch_hooks(
             HookType::PreSwitch,
             &extra_vars,
             FailureStrategy::FailFast,
-            crate::output::pre_hook_display_path(pre_ctx.worktree_path),
         )?;
     }
     Ok(())
@@ -1443,7 +1443,7 @@ fn spawn_switch_background_hooks(
     let hook_repo = Repository::at(result.path())?;
     let ctx = CommandContext::new(&hook_repo, config, branch, result.path(), yes);
 
-    let mut announcer = HookAnnouncer::new(&hook_repo, config, false);
+    let mut announcer = HookAnnouncer::new(&hook_repo, false);
     register_planned(
         &mut announcer,
         hook_plan,
@@ -1573,7 +1573,7 @@ impl SwitchPipeline<'_> {
 
         // Offer to fix worktree-path for bare repos with hidden directory names
         // (.git, .bare) before anything reads worktree-path config.
-        offer_bare_repo_worktree_path_fix(repo, config)?;
+        offer_bare_repo_worktree_path_fix(repo, config, identifier)?;
 
         // Run pre-switch hooks before branch resolution or worktree creation.
         // {{ branch }} receives the raw user input (before resolution). Skip
@@ -1769,7 +1769,7 @@ impl SwitchPipeline<'_> {
 }
 
 /// Handle the switch command.
-pub fn run_switch(
+fn run_switch(
     opts: SwitchOptions<'_>,
     config: &mut UserConfig,
     binary_name: &str,
@@ -1826,6 +1826,64 @@ pub fn run_switch(
         shell_integration_binary: Some(binary_name),
     }
     .run()
+}
+
+/// Entry point for the `wt switch` command.
+pub fn handle_switch_command(args: SwitchArgs, yes: bool) -> anyhow::Result<()> {
+    let verify = args.hooks.resolve();
+
+    // With no branch argument, `wt switch` opens a TUI picker — config
+    // deprecation warnings would render above the picker and push it down.
+    // They're still shown by other commands (`wt list`, `wt merge`, …).
+    if args.branch.is_none() {
+        worktrunk::config::suppress_warnings();
+    }
+
+    UserConfig::load()
+        .context("Failed to load config")
+        .and_then(|mut config| {
+            // No branch argument: open interactive picker
+            let change_dir_flag = flag_pair(args.cd, args.no_cd);
+
+            let Some(branch) = args.branch else {
+                #[cfg(unix)]
+                {
+                    return crate::commands::handle_picker(
+                        args.branches,
+                        args.remotes,
+                        change_dir_flag,
+                        args.format,
+                    );
+                }
+
+                #[cfg(not(unix))]
+                {
+                    use worktrunk::git::WorktrunkError;
+                    // Suppress unused variable warnings on Windows
+                    let _ = (args.branches, args.remotes, change_dir_flag);
+
+                    crate::commands::print_windows_picker_unavailable();
+                    return Err(WorktrunkError::AlreadyDisplayed { exit_code: 2 }.into());
+                }
+            };
+
+            run_switch(
+                SwitchOptions {
+                    branch: &branch,
+                    create: args.create,
+                    base: args.base.as_deref(),
+                    execute: args.execute.as_deref(),
+                    execute_args: &args.execute_args,
+                    yes,
+                    clobber: args.clobber,
+                    change_dir: change_dir_flag,
+                    verify,
+                    format: args.format,
+                },
+                &mut config,
+                &crate::binary_name(),
+            )
+        })
 }
 
 /// Whether `value` is a single clean program-name token — the form `--execute`
@@ -1977,17 +2035,15 @@ fn validate_switch_templates(
     let user_hooks = config.hooks(repo.project_identifier().ok().as_deref());
 
     for &hook_type in switch_post_hook_types(plan.is_create()) {
-        let (user_cfg, proj_cfg) = crate::commands::hooks::lookup_hook_configs(
-            &user_hooks,
-            project_config.as_ref(),
-            hook_type,
-        );
+        let user_cfg = user_hooks.get(hook_type);
+        let proj_cfg = project_config.as_ref().and_then(|c| c.hooks.get(hook_type));
         for (source, cfg) in [("user", user_cfg), ("project", proj_cfg)] {
             if let Some(cfg) = cfg {
                 for cmd in cfg.commands() {
-                    // Skip full validation for lazy templates ({{ vars.X }}) —
-                    // they're expanded at runtime after prior pipeline steps set
-                    // the vars. Syntax is still checked by expand_commands.
+                    // Skip full validation for templates referencing {{ vars.X }} —
+                    // those values come from git config at execution time, after
+                    // prior pipeline steps set them. Syntax is still checked by
+                    // prepare_steps.
                     if template_references_var(&cmd.template, "vars") {
                         continue;
                     }

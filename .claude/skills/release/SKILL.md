@@ -9,29 +9,35 @@ metadata:
 
 ## Steps
 
-1. **Run tests**: `cargo run -- hook pre-merge --yes`
-2. **Check current version**: Read `version` in `Cargo.toml`
-3. **Review commits**: Check commits since last release to understand scope of changes. Audit the cumulative diff for the data-loss surface (see [Data-Loss Surface Review](#data-loss-surface-review)) before proceeding.
-4. **Check library API compatibility**: Run `cargo semver-checks check-release -p worktrunk` (install with `cargo install cargo-semver-checks --locked` if missing). If it reports breaking changes, the bump must be minor (pre-1.0) or major (post-1.0). See "Library API Compatibility" below.
-5. **Credit contributors**: Check for external PR authors and issue reporters (see "Credit External Contributors" and "Credit Issue Reporters" below)
-6. **Determine release type**: Pick the bump from the changes (including semver-checks result). Ask the user only if the choice is genuinely ambiguous (see below).
-7. **Bump version** (must run on a clean tree — before editing CHANGELOG):
+1. **Sync the release branch with `main`**: The release worktree's branch lags `main` between releases — it's only reset to `main` after a release lands. Cutting from a stale branch silently drops everything merged since. Fast-forward to the tip of `main` before anything else:
+   ```bash
+   git fetch origin
+   git merge --ff-only origin/main
+   ```
+   `--ff-only` advances the branch when it's a strict ancestor of `origin/main` and **fails** (rather than creating a merge commit or discarding work) if it has diverged — reconcile manually before continuing. This is the release-branch equivalent of `wt up`, spelled out because the `up` alias rebases each branch onto its own upstream (`origin/release`), not `main`.
+2. **Run tests**: `cargo run -- hook pre-merge --yes`
+3. **Check current version**: Read `version` in `Cargo.toml`
+4. **Review commits**: Check commits since last release to understand scope of changes. Audit the cumulative diff for the data-loss surface (see [Data-Loss Surface Review](#data-loss-surface-review)) before proceeding.
+5. **Check library API compatibility**: Run `cargo semver-checks check-release -p worktrunk` (install with `cargo install cargo-semver-checks --locked` if missing). If it reports breaking changes, the bump must be minor (pre-1.0) or major (post-1.0). See "Library API Compatibility" below.
+6. **Credit contributors**: Check for external PR authors and issue reporters (see "Credit External Contributors" and "Credit Issue Reporters" below)
+7. **Determine release type**: Pick the bump from the changes (including semver-checks result). Ask the user only if the choice is genuinely ambiguous (see below).
+8. **Bump version** (must run on a clean tree — before editing CHANGELOG):
    ```bash
    cargo release X.Y.Z -p worktrunk -x --no-publish --no-push --no-tag --no-verify --no-confirm && cargo check
    ```
-   This bumps `Cargo.toml` and `Cargo.lock`, then auto-commits. We'll reset this commit in step 9 to fold in the CHANGELOG.
-8. **Update CHANGELOG**: Add `## X.Y.Z` section at top with changes (see MANDATORY verification below)
-9. **Commit**: Reset the auto-commit from step 7, stage everything, and create the final release commit:
-   ```bash
-   git reset --soft HEAD~1 && git add -A && git commit -m "Release vX.Y.Z"
-   ```
-10. **Merge to main**: `/gpk` — opens a PR, waits for CI, merges via PR (preserves worktree)
-11. **Tag the merge commit and push**: After `/gpk` squash-merges, the local branch HEAD is not the commit on main. Tag the PR's merge commit explicitly so the tag is reachable from main:
+   This bumps `Cargo.toml` and `Cargo.lock`, then auto-commits. We'll reset this commit in step 10 to fold in the CHANGELOG.
+9. **Update CHANGELOG**: Add `## X.Y.Z` section at top with changes (see MANDATORY verification below)
+10. **Commit**: Reset the auto-commit from step 8, stage everything, and create the final release commit:
+    ```bash
+    git reset --soft HEAD~1 && git add -A && git commit -m "Release vX.Y.Z"
+    ```
+11. **Merge to main**: `/gpk` — opens a PR, waits for CI, merges via PR (preserves worktree)
+12. **Tag the merge commit and push**: After `/gpk` squash-merges, the local branch HEAD is not the commit on main. Tag the PR's merge commit explicitly so the tag is reachable from main:
     ```bash
     MERGE_SHA=$(gh pr view --json mergeCommit --jq '.mergeCommit.oid')
     git tag vX.Y.Z "$MERGE_SHA" && git push origin vX.Y.Z
     ```
-12. **Wait for the release workflow**: The tag push triggers `release.yaml`. Launch a ci-reporter agent to monitor the run through to completion (avoid `gh run watch` — it can hang); the run ID comes from:
+13. **Wait for the release workflow**: The tag push triggers `release.yaml`. Launch a ci-reporter agent to monitor the run through to completion (avoid `gh run watch` — it can hang); the run ID comes from:
     ```bash
     gh run list --workflow=release.yaml --event=push --branch=vX.Y.Z --limit 1 --json databaseId --jq '.[0].databaseId'
     ```

@@ -4,8 +4,8 @@ expression: "&output.combined"
 ---
 
 [36m◎[39m [36mRunning pre-merge [1mproject:check1[22m[39m
-[107m [0m [2m[0m[2m[34m./mixed-output.sh[0m[2m check1 3
-[check1] stdout line 1
+[107m [0m [2m[0m[2m[34m./mixed-output.sh[0m[2m check1 3[0m
+[0m[check1] stdout line 1
 [check1] stderr line 1
 [check1] stdout line 2
 [check1] stderr line 2
@@ -14,8 +14,8 @@ expression: "&output.combined"
 [check1] stdout complete
 [check1] stderr complete
 [36m◎[39m [36mRunning pre-merge [1mproject:check2[22m[39m
-[107m [0m [2m[0m[2m[34m./mixed-output.sh[0m[2m check2 3
-[check2] stdout line 1
+[107m [0m [2m[0m[2m[34m./mixed-output.sh[0m[2m check2 3[0m
+[0m[check2] stdout line 1
 [check2] stderr line 1
 [check2] stdout line 2
 [check2] stderr line 2
@@ -30,3 +30,4 @@ expression: "&output.combined"
 [32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m
 [36m◎[39m [36mRemoving [1mfeature[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
 [2m○[22m Switched to worktree for [1mmain[22m @ [1m_REPO_[22m
+[0m

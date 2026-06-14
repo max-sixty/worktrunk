@@ -8,13 +8,9 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
-    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
-    NO_COLOR: ""
-    PSModulePath: ""
-    SHELL: ""
     TERM: alacritty
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -81,7 +77,7 @@ Create user config file with documented examples:
 
 Create project config file ([2m.config/wt.toml[0m) for hooks:
 
-[107m [0m [2m[0m[2m[34mwt[0m[2m config create [0m[2m[36m--project[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config create [0m[2m[36m--project[0m
 
 Show current configuration and file locations:
 
@@ -102,7 +98,7 @@ Organizations can deploy a system-wide config file for shared defaults — run 
 [107m [0m [2mworktree-path = [0m[2m[32m".worktrees/{{ branch | sanitize }}"[0m
 [107m [0m 
 [107m [0m [2m[36m[commit.generation][0m
-[107m [0m [2mcommand = [0m[2m[32m"CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
+[107m [0m [2mcommand = [0m[2m[32m"MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
 
 [1mProject config[0m — shared team settings:
 
@@ -135,6 +131,8 @@ Controls where new worktrees are created.
 - [2m{{ branch | sanitize }}[0m — filesystem-safe: [2m/[0m and [2m\[0m become [2m-[0m (e.g., [2mfeature-auth[0m)
 - [2m{{ branch | sanitize_db }}[0m — database-safe: lowercase, underscores, hash suffix (e.g., [2mfeature_auth_x7k[0m)
 - [2m{{ branch | codename(2) }}[0m — deterministic friendly name from a ~1.26M-combo pool (e.g., [2mmalleable-opah[0m)
+
+This is a smaller set than the variables hooks and aliases get.
 
 [1mExamples[0m for repo at [2m~/code/myproject[0m, branch [2mfeature/auth[0m:
 
@@ -175,12 +173,12 @@ Generate commit messages automatically during merge. Requires an external CLI to
 [32mClaude Code[0m
 
 [107m [0m [2m[36m[commit.generation][0m
-[107m [0m [2mcommand = [0m[2m[32m"CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
+[107m [0m [2mcommand = [0m[2m[32m"MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
 
 [32mCodex[0m
 
 [107m [0m [2m[36m[commit.generation][0m
-[107m [0m [2mcommand = [0m[2m[32m"codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"[0m
+[107m [0m [2mcommand = [0m[2m[32m"codex exec -m gpt-5.4-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"[0m
 
 [32mOpenCode[0m
 
@@ -362,7 +360,7 @@ Default template:
 
 Available variables (in addition to commit template variables):
 
-- [2m{{ commits }}[0m — list of commits being squashed
+- [2m{{ commit_details }}[0m — list of commits being squashed; each renders as its subject and exposes [2m.subject[0m / [2m.body[0m
 - [2m{{ target_branch }}[0m — merge target branch
 
 Default template:
@@ -392,7 +390,7 @@ Default template:
 [107m [0m [2m[32m</project-guidance>[0m
 [107m [0m [2m[32m{% endif %}[0m
 [107m [0m [2m[32m<commits branch="[0m[2m{{ branch }}[0m[2m[32m" target="[0m[2m{{ target_branch }}[0m[2m[32m">[0m
-[107m [0m [2m[32m{% for commit in commits %}- {{ commit }}[0m
+[107m [0m [2m[32m{% for detail in commit_details %}- {{ detail.subject }}[0m
 [107m [0m [2m[32m{% endfor %}</commits>[0m
 [107m [0m 
 [107m [0m [2m[32m<diffstat>[0m

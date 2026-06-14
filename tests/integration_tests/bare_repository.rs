@@ -600,10 +600,13 @@ fn test_bare_repo_commands_from_bare_directory() {
     });
 }
 
+/// Full merge workflow in a bare repo: create main + feature worktrees, merge
+/// feature into main, and confirm the merge landed.
 ///
-/// Skipped on Windows due to file locking issues that prevent worktree removal
-/// during background cleanup after merge. The merge functionality itself works
-/// correctly - this is a timing/cleanup issue specific to Windows file handles.
+/// Runs on all platforms. Background worktree cleanup after merge is tolerated
+/// via `wait_for_worktree_removed` — on Windows, file locking can leave an empty
+/// placeholder dir behind, which is production-harmless (see the predicate note
+/// at the call site below).
 #[test]
 fn test_bare_repo_merge_workflow() {
     let test = BareRepoTest::new();
@@ -1554,6 +1557,57 @@ fn test_bare_repo_worktree_path_prompt_non_interactive_warning() {
     });
 }
 
+/// Symbolic identifiers (-, @, pr:N) are passed before branch resolution, so
+/// the example paths in the prompt would show the raw symbol. The function
+/// must return early without prompting.
+#[test]
+fn test_bare_repo_worktree_path_prompt_skipped_for_symbolic_identifier() {
+    let test = setup_unconfigured_nested_bare_repo();
+    let main_worktree = test.project_path().join("main");
+
+    // `@` means HEAD — resolves to `main`, which already exists. The prompt
+    // must not appear because `@` is a symbolic form.
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    cmd.args(["switch", "@"]).current_dir(&main_worktree);
+    let output = cmd.output().unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("Configure worktree-path"),
+        "Prompt should not appear for symbolic identifier '@', got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("Bare repo at"),
+        "Warning should not appear for symbolic identifier '@', got: {stderr}"
+    );
+}
+
+/// Once the opt-out is recorded (the `skip-bare-repo-prompt` hint is set), the
+/// bare-repo warning/prompt is suppressed on later switches — the read path
+/// early-returns via `has_shown_hint`.
+#[test]
+fn test_bare_repo_prompt_suppressed_when_opted_out() {
+    let test = setup_unconfigured_nested_bare_repo();
+    let main_worktree = test.project_path().join("main");
+
+    // Record the opt-out the way a decline does: `worktrunk.hints.<name> = <count>`.
+    test.run_git_in(
+        &main_worktree,
+        &["config", "worktrunk.hints.skip-bare-repo-prompt", "1"],
+    );
+
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    cmd.args(["switch", "--create", "feature"])
+        .current_dir(&main_worktree);
+    let stderr = String::from_utf8(cmd.output().unwrap().stderr).unwrap();
+    assert!(
+        !stderr.contains("Bare repo at"),
+        "Opted-out repo should not re-show the bare-repo warning.\nstderr: {stderr}"
+    );
+}
+
 // =============================================================================
 // PTY-based interactive prompt tests
 // =============================================================================
@@ -1620,18 +1674,65 @@ mod bare_repo_prompt_pty {
             assert_snapshot!("bare_repo_prompt_decline", &output);
         });
 
-        // Verify skip flag was saved in git config
-        let git_config_output = Cmd::new("git")
+        // Declining records the opt-out as a hint (count 1), not under the legacy
+        // top-level key — so it participates in `wt config state`.
+        let hint_value = Cmd::new("git")
+            .args(["config", "worktrunk.hints.skip-bare-repo-prompt"])
+            .current_dir(&main_worktree)
+            .env("GIT_CONFIG_GLOBAL", test.git_config_path())
+            .run()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&hint_value.stdout).trim(),
+            "1",
+            "Declining should record the opt-out as a hint"
+        );
+
+        // The legacy top-level key must not be written anymore.
+        let legacy_key = Cmd::new("git")
             .args(["config", "worktrunk.skip-bare-repo-prompt"])
             .current_dir(&main_worktree)
             .env("GIT_CONFIG_GLOBAL", test.git_config_path())
             .run()
             .unwrap();
-        let value = String::from_utf8_lossy(&git_config_output.stdout);
-        assert_eq!(
-            value.trim(),
-            "true",
-            "Skip flag should be saved in git config"
+        assert!(
+            !legacy_key.status.success(),
+            "Legacy top-level skip key should no longer be written"
+        );
+
+        // Round-trip through `wt config state`: the opt-out is listed by the
+        // cache view and removed by the aggregate `state clear`.
+        let mut hints_cmd = wt_command();
+        test.configure_wt_cmd(&mut hints_cmd);
+        hints_cmd
+            .args(["config", "state", "cache"])
+            .current_dir(&main_worktree);
+        let hints_listed = String::from_utf8(hints_cmd.output().unwrap().stdout).unwrap();
+        assert!(
+            hints_listed.contains("skip-bare-repo-prompt"),
+            "state cache should list the opt-out hint.\nstdout: {hints_listed}"
+        );
+
+        // `state clear` removes everything but prompts first — `--yes` skips it.
+        let mut clear_cmd = wt_command();
+        test.configure_wt_cmd(&mut clear_cmd);
+        clear_cmd
+            .args(["config", "state", "clear", "--yes"])
+            .current_dir(&main_worktree);
+        assert!(
+            clear_cmd.output().unwrap().status.success(),
+            "state clear should succeed"
+        );
+
+        let mut hints_after = wt_command();
+        test.configure_wt_cmd(&mut hints_after);
+        hints_after
+            .args(["config", "state", "hints"])
+            .current_dir(&main_worktree);
+        let hints_remaining = String::from_utf8(hints_after.output().unwrap().stdout).unwrap();
+        assert!(
+            !hints_remaining.contains("skip-bare-repo-prompt"),
+            "state clear should remove the opt-out hint.\nstdout: {hints_remaining}"
         );
     }
 

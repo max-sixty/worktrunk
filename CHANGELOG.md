@@ -1,5 +1,111 @@
 # Changelog
 
+## 0.58.0
+
+### Improved
+
+- **Table-form `pre-*` hooks run concurrently**: A multi-entry table hook (`[pre-merge]` with several keys) now runs its commands concurrently, completing the cut-over announced in v0.37.0: every hook type has one execution semantic, where table form is concurrent and pipeline form (`[[pre-merge]]` blocks) is serial. Configs that need ordering should use pipeline form; affected configs have warned on every invocation since v0.37.0, with `wt config update` offering a serial-preserving migration. Two adjacent inconsistencies are also gone: `wt hook <post-type>` foreground runs of multi-entry table hooks now run concurrently like their background counterpart, and single-entry table aliases write to stdout like the other alias spellings, so `wt <alias> | …` works for that spelling too. (Breaking: multi-entry table-form `pre-*` hooks no longer run serially) ([#3052](https://github.com/max-sixty/worktrunk/pull/3052))
+
+- **CI column shows the PR/MR number and review state**: The CI column in `wt list --full` and the statusline shows the branch's open PR/MR reference (`#3041` on GitHub/Gitea/Azure DevOps, `!3041` on GitLab) instead of a plain dot: colored by CI status, hyperlinked to the PR, dimmed when stale or draft. Review state folds into the color, with magenta for changes requested and cyan for awaiting review. `wt list --format=json` gains `ci.number` and `ci.review_state`. ([#3041](https://github.com/max-sixty/worktrunk/pull/3041), [#3044](https://github.com/max-sixty/worktrunk/pull/3044))
+
+- **Hook and alias templates render when each step runs**: Templates are syntax-checked before the first step runs and rendered as each step executes, so `{{ vars.* }}` always reads fresh values and hooks and aliases share one expansion model. Two consequences: a pipeline step with an undefined variable fails when that step is reached (earlier steps run first), and a template error in a background hook surfaces in the hook log rather than failing the foreground command. The background runner also labels template errors the way the foreground does. ([#3042](https://github.com/max-sixty/worktrunk/pull/3042), [#3047](https://github.com/max-sixty/worktrunk/pull/3047))
+
+- **`wt config state cache`**: The regenerable caches (CI status, branch summaries, git-command caches, hints, the `wt switch -` target) are consolidated under `wt config state cache`; `cache clear` drops them all without prompting, since everything regenerates. `wt config state clear`, which also wipes hand-authored markers and vars, now asks for confirmation; `--yes` skips, and non-interactive runs without `--yes` cancel. The `ci-status`, `hints`, and `previous-branch` subcommands are deprecated but still work. ([#3027](https://github.com/max-sixty/worktrunk/pull/3027))
+
+- **Statusline rate-limit segment**: Above 90% of the binding window the segment shows the used percentage (`95%(8:30am–1:30pm)`) instead of the pace ratio; near the cap, what's left matters more than the rate. The pace form drops the word "pace" (`2.9×(Tue–Tue 5pm)`), and `-vv` logs each window's inputs and selection to `.git/wt/logs/trace.log` so the binding-window choice can be reconstructed. ([#3057](https://github.com/max-sixty/worktrunk/pull/3057), [#3053](https://github.com/max-sixty/worktrunk/pull/3053), [#3029](https://github.com/max-sixty/worktrunk/pull/3029))
+
+- **`/wt-switch-create` branch name is optional**: The Claude Code plugin command picks a branch name from the task when none is given, and the skill's workflow is one route (create, then enter) with an error-driven fallback instead of three guarded paths. Worktrees created mid-session persist after the session ends. ([#3058](https://github.com/max-sixty/worktrunk/pull/3058))
+
+### Fixed
+
+- **Plugin worktree hooks fail before side effects**: The Claude Code plugin's `WorktreeCreate`/`WorktreeRemove` hooks validate the payload before running `wt`; a malformed payload previously created a branch named `null` or could remove the wrong worktree. `wt remove`'s help now documents that the positional argument accepts a worktree path as well as a branch name. ([#3058](https://github.com/max-sixty/worktrunk/pull/3058), [#3060](https://github.com/max-sixty/worktrunk/pull/3060))
+
+- **Waiting-for-input marker covers questions, permission prompts, and turn end**: The Claude Code plugin sets the 💬 marker on `AskUserQuestion`, permission requests, and turn end. Previously only the `Notification` event set it, which never fires for the built-in question picker (and on some platforms not for permission prompts), so the marker stayed 🤖 while Claude waited. Part of [#2916](https://github.com/max-sixty/worktrunk/issues/2916). ([#3023](https://github.com/max-sixty/worktrunk/pull/3023), thanks @Ismael for reporting)
+
+- **`wt list --help` no longer panics when piped**: With no detectable terminal width (output piped, `COLUMNS` unset), `wt list --help` panicked with a capacity overflow, and the post-commit diffstat truncated filenames to ~10 characters. Both now handle unknown width. ([#3040](https://github.com/max-sixty/worktrunk/pull/3040))
+
+- **Deprecation warnings match `wt config update`**: A config deprecation warning now fires exactly when `wt config update` would change the file. The old detection and migration logic had drifted in several places: `ff` and `no-ff` together silently dropped `no-ff`, a scalar `forge` key was overwritten by the `[ci]` migration, an empty `[ci] platform` migrated without warning, and an empty `approved-commands = []` could be removed by an unrelated update. ([#3055](https://github.com/max-sixty/worktrunk/pull/3055))
+
+- **Migrated `[forge]` keeps `[ci]`'s spot**: The `[ci]` → `[forge]` migration rendered the new section at the end of the file and could drop comments above `[ci]`; it now takes over `[ci]`'s position, comments included, so `wt config show` and `wt config update` diffs stay minimal. ([#3051](https://github.com/max-sixty/worktrunk/pull/3051))
+
+- **`wt config state get` is read-only**: The aggregate dump resolved (and re-cached) the default branch, so running it right after `clear` silently repopulated the cache, and on a cold clone it could hit the network. It now reports the cached value or `(none)`. `wt config state default-branch get` still resolves and caches. ([#3024](https://github.com/max-sixty/worktrunk/pull/3024))
+
+### Documentation
+
+- **Reading vs resolving cached state**: `wt config state default-branch get` resolves and caches; the aggregate `wt config state get` only reports the cache. The help text and module docs now state the split. ([#3028](https://github.com/max-sixty/worktrunk/pull/3028))
+
+### Internal
+
+- `wt switch`/`wt remove` orchestration moved from `main.rs` to their command modules, and the hook execution call chain lost two delegation layers. ([#3049](https://github.com/max-sixty/worktrunk/pull/3049), [#3036](https://github.com/max-sixty/worktrunk/pull/3036))
+
+- Config deprecations are driven by a single rule table; each rule is one function that migrates and reports what it changed. ([#3045](https://github.com/max-sixty/worktrunk/pull/3045), [#3055](https://github.com/max-sixty/worktrunk/pull/3055))
+
+- `terminal_width()` returns `Option<usize>` instead of a `usize::MAX` sentinel, making the no-width case a compile-time concern. ([#3043](https://github.com/max-sixty/worktrunk/pull/3043))
+
+- Snapshot tests regenerate identically across machines: host-specific paths are guarded, host-dependent env-block markers are normalized, and help snapshots share one settings builder. ([#3009](https://github.com/max-sixty/worktrunk/pull/3009), [#3026](https://github.com/max-sixty/worktrunk/pull/3026), [#3037](https://github.com/max-sixty/worktrunk/pull/3037), [#3061](https://github.com/max-sixty/worktrunk/pull/3061))
+
+- Nightly CI runs lib tests across the full feature powerset. ([#3059](https://github.com/max-sixty/worktrunk/pull/3059))
+
+- MSRV bumped from 1.94 to 1.95. ([#2948](https://github.com/max-sixty/worktrunk/pull/2948))
+
+## 0.57.0
+
+### Improved
+
+- **`wt step diff --branch`**: `wt step diff` gained a `-b`/`--branch` flag, mirroring `wt step commit`, so the diff can target another worktree's branch without leaving the current one. The branch must have a checked-out worktree. ([#2995](https://github.com/max-sixty/worktrunk/pull/2995))
+
+- **Squash templates can use commit bodies**: The squash commit-message template gains an experimental `{{ commit_details }}` variable — a list of `{ subject, body }` objects for the commits being squashed — alongside the existing `{{ commits }}` (now documented as the commit subjects). Templates can incorporate full commit bodies, not just subject lines. ([#2983](https://github.com/max-sixty/worktrunk/pull/2983), thanks @florianilch)
+
+- **Recommended Claude Code commit command drops the `CLAUDECODE=` prefix**: Claude Code removed the nested-session check that rejected `claude -p` launched from inside another session, so the workaround is gone. The recommended `[commit.generation]` command shown by `wt config create` no longer carries a leading `CLAUDECODE=`, and `wt` no longer strips `CLAUDECODE` from the environment before running commit-generation commands. ([#2979](https://github.com/max-sixty/worktrunk/pull/2979))
+
+### Fixed
+
+- **Nushell wrapper installs where Nushell actually autoloads it**: `wt config shell install nu` wrote `wt.nu` to `$nu.default-config-dir/vendor/autoload`, which Nushell never autoloads — on Linux the wrapper was written but silently never loaded, so `wt` was never wrapped (it happened to work on macOS/Windows by coincidence of path layout). It now installs to `$nu.vendor-autoload-dirs | last`, and install/uninstall clean up any worktrunk wrapper stranded at the old location. ([#2992](https://github.com/max-sixty/worktrunk/pull/2992), thanks @nnutter for reporting)
+
+- **Claude Code hooks work for Fish shell users**: The plugin's hook commands used `${CLAUDE_PLUGIN_ROOT}` brace syntax, which Fish doesn't expand; they now use `$CLAUDE_PLUGIN_ROOT`, so the activity and worktree-lifecycle hooks fire correctly under Fish. ([#2962](https://github.com/max-sixty/worktrunk/pull/2962), thanks @amw)
+
+- **Pager no longer wedges the terminal on Ctrl-C (Windows)**: Interrupting the `--help` pager (`less`) with Ctrl-C on Windows could leave the terminal in a broken state; `less` now quits cleanly on interrupt. ([#2969](https://github.com/max-sixty/worktrunk/pull/2969), thanks @ofek for reporting)
+
+- **Clearer error when the default branch has no commits**: In a freshly initialized repo whose default branch is unborn, `merge`/`rebase`/`squash`/`push` (and the diff report) failed with `Default branch main does not exist locally` plus a misleading hint to reset the cached value. They now report that the branch has no commits yet, without the wrong cache-reset suggestion. ([#2990](https://github.com/max-sixty/worktrunk/pull/2990))
+
+- **`diagnostic.md` uploads as a gist again**: The `-vv` diagnostic report inlined raw NUL bytes from NUL-separated git output, so `gh gist create` rejected it as a binary file. Control bytes in the subprocess preview are now escaped. ([#2991](https://github.com/max-sixty/worktrunk/pull/2991))
+
+- **`wt list` tolerates a missing index file**: A repo with no `<gitdir>/index` (nothing ever staged) made the temp-index probe fail; a missing index is now treated as an empty one, matching git's own behavior. ([#2884](https://github.com/max-sixty/worktrunk/pull/2884))
+
+- **Inline code renders in `--help` section headings**: Terminal `--help` showed literal backticks in headings authored with inline code (e.g. the `wt config state logs` heading `Command log (`commands.jsonl`)`). Headings now reduce inline code to plain text under the heading's uniform style. The `--stage`/`--dry-run` subsection headings in `wt step commit`/`squash` were also renamed to sentence case ("Staging", "Dry run"). ([#3003](https://github.com/max-sixty/worktrunk/pull/3003))
+
+### Documentation
+
+- **`wt switch` docs give forge PR/MR URLs equal billing with `pr:`/`mr:`**: The switch docs now present the full forge-URL form alongside the `pr:N` shortcut. ([#2970](https://github.com/max-sixty/worktrunk/pull/2970))
+
+- **New FAQ entry on moving uncommitted changes to a new worktree**. ([#3002](https://github.com/max-sixty/worktrunk/pull/3002))
+
+### Internal
+
+- **Bare-repo prompt opt-out stored as a hint**: `worktrunk.skip-bare-repo-prompt` moved under the `worktrunk.hints.` namespace, so it now lists under `wt config state hints` and clears with `wt config state clear` (previously a top-level key that escaped both). Clean cutover: users who already opted out are re-prompted once on their next `wt switch --create` in a dotted-name bare repo. ([#3001](https://github.com/max-sixty/worktrunk/pull/3001))
+
+## 0.56.0
+
+### Improved
+
+- **`wt list` JSON output includes `repo_url`**: Each item now carries `repo_url`, the repository's web URL derived from the primary remote (absent when there's no parseable forge remote). It's the local checkout's repo — distinct from `ci.repo_url`, which is the repo a PR/MR targets. ([#2941](https://github.com/max-sixty/worktrunk/pull/2941), thanks @bendrucker)
+
+### Fixed
+
+- **Bare-repo prompts**: Two UX fixes. `wt config create --project` run in a bare repo with no linked worktrees now explains the next step (`wt switch <branch>` first, then create from inside the worktree) instead of failing with a generic "no worktree found". And the bare-repo worktree-path prompt no longer fires for symbolic identifiers (`-`, `@`, `^`, `pr:`/`mr:`), where the example paths would be misleading — it waits for the next switch to a concrete branch name. ([#2951](https://github.com/max-sixty/worktrunk/pull/2951), thanks @ammachado)
+
+- **Context gauge spacing in the Claude Code statusline**: The context-gauge moon emoji rendered flush against the percent (`🌕42%`). Most terminals draw the emoji double-width and bleed it into the next cell, so the moon collided with the digits; it now carries a trailing space (`🌕 42%`). ([#2944](https://github.com/max-sixty/worktrunk/pull/2944))
+
+- **Console storm on Windows**: Detached background hook processes were created with `DETACHED_PROCESS`, which could flash a burst of console windows. They now use `CREATE_NO_WINDOW` and spawn fully hidden. ([#2959](https://github.com/max-sixty/worktrunk/pull/2959), thanks @nathanbabcock)
+
+### Documentation
+
+- **Codex commit-generation model bumped to `gpt-5.4-mini`**: The recommended `[commit.generation]` command for Codex — shown by `wt config create` and in the LLM-commits docs — now uses `gpt-5.4-mini` (was `gpt-5.1-codex-mini`). ([#2949](https://github.com/max-sixty/worktrunk/pull/2949))
+
+### Internal
+
+- **Config-deprecation layer refactor**: The deprecation detector now returns a `Vec<DeprecationKind>` instead of a struct of per-field flags, and the per-section config-table walks collapse into two combinators. Behavior-neutral — warning text and migration output are byte-for-byte unchanged. ([#2946](https://github.com/max-sixty/worktrunk/pull/2946))
+
 ## 0.55.0
 
 ### Improved

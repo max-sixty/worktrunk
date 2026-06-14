@@ -10,13 +10,9 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
-    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
-    NO_COLOR: ""
-    PSModulePath: ""
-    SHELL: ""
     TERM: alacritty
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -73,7 +69,7 @@ View and manage log files — hook output, command audit trail, and debug diagno
 
 Three kinds of logs live in [2m.git/wt/logs/[0m:
 
-[32mCommand log (`commands.jsonl`)[0m
+[32mCommand log (commands.jsonl)[0m
 
 All hook executions and LLM commands are recorded automatically — one JSON object per line. Rotates to [2mcommands.jsonl.old[0m at 1MB (~2MB total). Fields:
 
@@ -126,10 +122,10 @@ Query the command log:
 [107m [0m [2m[0m[2m[34mtail[0m[2m [0m[2m[36m-5[0m[2m .git/wt/logs/commands.jsonl [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m .[0m
 
 Path to one hook log (e.g. the [2mpost-start[0m [2mserver[0m hook for the current branch):
-[107m [0m [2m[0m[2m[34mwt[0m[2m config state logs [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[36m-r[0m[2m [0m[2m[32m'.hook_output[] | select(.source == "user" and .hook_type == "post-start" and (.name | startswith("server"))) | .path'[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config state logs [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[36m-r[0m[2m [0m[2m[32m'.hook_output[] | select(.source == "user" and .hook_type == "post-start" and (.name | startswith("server"))) | .path'[0m
 
 Logs for a specific branch:
-[107m [0m [2m[0m[2m[34mwt[0m[2m config state logs [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.hook_output[] | select(.branch | startswith("feature"))'[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config state logs [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.hook_output[] | select(.branch | startswith("feature"))'[0m
 
 Clear all logs:
 [107m [0m [2m[0m[2m[34mwt[0m[2m config state logs clear[0m

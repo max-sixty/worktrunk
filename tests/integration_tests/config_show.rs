@@ -1,6 +1,7 @@
 use crate::common::{
-    TestRepo, repo, set_temp_home_env, set_xdg_config_path, setup_home_snapshot_settings,
-    setup_snapshot_settings, setup_snapshot_settings_with_home, temp_home, wt_command,
+    TestRepo, canonical_temp_home, repo, set_temp_home_env, set_xdg_config_path,
+    setup_home_snapshot_settings, setup_snapshot_settings, setup_snapshot_settings_with_home,
+    temp_home, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -948,8 +949,10 @@ fn test_config_show_nushell_outdated_wrapper(mut repo: TestRepo, temp_home: Temp
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(global_config_dir.join("config.toml"), "").unwrap();
 
-    // Create nushell vendor/autoload directory with an outdated wt.nu
-    let autoload = temp_home.path().join(".config/nushell/vendor/autoload");
+    // Create the nushell vendor-autoload directory with an outdated wt.nu.
+    // Pin the dir via the test override so the path is deterministic across
+    // platforms (and independent of whether `nu` is installed).
+    let autoload = canonical_temp_home(&temp_home).join(".local/share/nushell/vendor/autoload");
     fs::create_dir_all(&autoload).unwrap();
     fs::write(
         autoload.join("wt.nu"),
@@ -965,6 +968,7 @@ fn test_config_show_nushell_outdated_wrapper(mut repo: TestRepo, temp_home: Temp
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
+        cmd.env("WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR", &autoload);
 
         assert_cmd_snapshot!(cmd);
     });
@@ -3380,43 +3384,51 @@ pre-start = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
     );
 }
 
-/// `wt config show` displays deprecation details for pre-* hooks in table form.
-/// Uses project config with two multi-entry pre-* tables to cover the
-/// "Project config" label and the multi-hook list form of the warning.
+/// `wt config update` migrates the deprecated `commits` squash-template
+/// variable to `commit_details` (see #2984). The rewrite is a plain identifier
+/// rename — the loop variable stays bare — because each `commit_details`
+/// element renders as its subject, so the migrated template renders identically
+/// to the original.
 #[rstest]
-fn test_config_show_displays_pre_hook_table_form_deprecation(
-    mut repo: TestRepo,
-    temp_home: TempDir,
-) {
-    repo.setup_mock_ci_tools_unauthenticated();
-
-    let project_config_dir = repo.root_path().join(".config");
-    fs::create_dir_all(&project_config_dir).unwrap();
-    let project_config_path = project_config_dir.join("wt.toml");
+fn test_config_update_migrates_commits_squash_var(repo: TestRepo) {
+    let config_path = repo.test_config_path();
     fs::write(
-        &project_config_path,
-        r#"[pre-merge]
-test = "cargo test"
-lint = "cargo clippy"
-
-[pre-start]
-install = "npm ci"
-env = "cp .env.example .env"
+        config_path,
+        r#"[commit.generation]
+squash-template = """
+Combine {{ commits | length }} commits:
+{% for c in commits %}- {{ c }}
+{% endfor %}"""
 "#,
     )
     .unwrap();
 
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
-        cmd.arg("config").arg("show").current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        set_xdg_config_path(&mut cmd, temp_home.path());
+    let output = repo
+        .wt_command()
+        .args(["config", "update", "--yes"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
 
-        assert_cmd_snapshot!(cmd);
-    });
+    let updated = fs::read_to_string(config_path).unwrap();
+    assert!(
+        updated.contains("{{ commit_details | length }}"),
+        "filter use of commits should migrate: {updated}"
+    );
+    assert!(
+        updated.contains("for c in commit_details"),
+        "loop source should migrate: {updated}"
+    );
+    // The loop variable stays bare — no `.subject` is injected, since the
+    // element renders as its subject on its own.
+    assert!(
+        updated.contains("- {{ c }}"),
+        "loop body should be left untouched: {updated}"
+    );
+    assert!(
+        !updated.contains("{{ commits"),
+        "no deprecated commits reference should remain: {updated}"
+    );
 }
 
 /// `wt config show` displays deprecation details for `[select]` → `[switch.picker]`.
@@ -3909,7 +3921,7 @@ fn test_plugin_layout_is_consolidated() {
     );
     assert!(
         !read("plugins/worktrunk/hooks/hooks.json").contains(".claude-plugin/hooks/"),
-        "hooks.json must reference ${{CLAUDE_PLUGIN_ROOT}}/hooks/wt.sh, not the old wrapper path"
+        "hooks.json must reference $CLAUDE_PLUGIN_ROOT/hooks/wt.sh, not the old wrapper path"
     );
 
     // The description is duplicated across the Claude marketplace pointer and
@@ -3987,6 +3999,35 @@ fn test_plugin_layout_is_consolidated() {
     // and prints a `wt remove -D <branch>` hint for the user to act on.
     let hooks = read("plugins/worktrunk/hooks/hooks.json");
     let hooks_json = json("plugins/worktrunk/hooks/hooks.json");
+
+    // Claude hands each hook command to the user's LOGIN shell before `bash`
+    // launches, so the outer command line must parse under fish/zsh/bash. fish
+    // rejects bash brace syntax ("Variables cannot be bracketed"), so the plugin
+    // root must be referenced as `$CLAUDE_PLUGIN_ROOT`, never `${CLAUDE_PLUGIN_ROOT}`.
+    let all_commands: Vec<&str> = hooks_json["hooks"]
+        .as_object()
+        .expect("hooks.json must have a `hooks` object")
+        .values()
+        .flat_map(|event| event.as_array().expect("each hook event must be an array"))
+        .flat_map(|group| {
+            group["hooks"]
+                .as_array()
+                .expect("each hook group must have a `hooks` array")
+        })
+        .map(|hook| {
+            hook["command"]
+                .as_str()
+                .expect("each hook must define a command")
+        })
+        .collect();
+    for cmd in &all_commands {
+        assert!(
+            cmd.contains("$CLAUDE_PLUGIN_ROOT") && !cmd.contains("${CLAUDE_PLUGIN_ROOT}"),
+            "hook command must use unbraced $CLAUDE_PLUGIN_ROOT (braces break fish \
+             login-shell parsing: \"fish: Variables cannot be bracketed\"). command:\n{cmd}"
+        );
+    }
+
     let worktree_remove_cmd = hooks_json["hooks"]["WorktreeRemove"][0]["hooks"][0]["command"]
         .as_str()
         .expect("WorktreeRemove hook must define a command");
@@ -4020,6 +4061,60 @@ fn test_plugin_layout_is_consolidated() {
             val.starts_with(STEM),
             "{label} description must start with the canonical product sentence; got: {val}"
         );
+    }
+}
+
+/// Claude hands each hook `command` to the user's LOGIN shell, which parses the
+/// whole line before the leading `bash …` ever launches. The command must
+/// therefore parse cleanly under fish, zsh, and bash — fish in particular
+/// rejects bash brace syntax (`${VAR}` → "Variables cannot be bracketed"). This
+/// syntax-checks every Claude hook command under all three shells with their
+/// no-execute flags, so a reintroduced brace (or any other non-portable
+/// construct) fails here instead of silently breaking fish users at runtime.
+#[cfg(all(unix, feature = "shell-integration-tests"))]
+#[test]
+fn test_claude_hook_commands_parse_in_all_shells() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let hooks_json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join("plugins/worktrunk/hooks/hooks.json")).unwrap(),
+    )
+    .unwrap();
+
+    let commands: Vec<&str> = hooks_json["hooks"]
+        .as_object()
+        .expect("hooks.json must have a `hooks` object")
+        .values()
+        .flat_map(|event| event.as_array().expect("each hook event must be an array"))
+        .flat_map(|group| {
+            group["hooks"]
+                .as_array()
+                .expect("each hook group must have a `hooks` array")
+        })
+        .map(|hook| {
+            hook["command"]
+                .as_str()
+                .expect("each hook must define a command")
+        })
+        .collect();
+    assert!(
+        !commands.is_empty(),
+        "expected at least one hook command to syntax-check"
+    );
+
+    // Each shell's no-execute flag: parse and report syntax errors without
+    // running the command. fish/zsh/bash all spell this `-n`.
+    for command in &commands {
+        for shell in ["fish", "bash", "zsh"] {
+            let output = std::process::Command::new(shell)
+                .args(["-n", "-c", command])
+                .output()
+                .unwrap_or_else(|e| panic!("failed to spawn {shell}: {e}"));
+            assert!(
+                output.status.success(),
+                "{shell} failed to parse hook command:\n  {command}\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
     }
 }
 

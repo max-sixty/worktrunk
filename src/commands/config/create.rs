@@ -43,9 +43,16 @@ pub(super) fn comment_out_config(content: &str) -> String {
 pub fn handle_config_create(project: bool) -> anyhow::Result<()> {
     if project {
         let repo = Repository::current()?;
-        let config_path = repo
-            .project_config_path()?
-            .context("Cannot determine project config location — no worktree found")?;
+        let config_path = repo.project_config_path()?.ok_or_else(|| {
+            if repo.is_bare().unwrap_or(false) {
+                anyhow::anyhow!(
+                    "Bare repository has no linked worktrees yet.\n\
+                     Run `wt switch <branch>` to create a worktree first, then run `wt config create --project` from inside it."
+                )
+            } else {
+                anyhow::anyhow!("Cannot determine project config location — no worktree found")
+            }
+        })?;
         let user_config_exists = require_config_path().map(|p| p.exists()).unwrap_or(false);
         create_config_file(
             config_path,

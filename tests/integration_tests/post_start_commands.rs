@@ -124,8 +124,16 @@ approved-commands = [
 "#,
     );
 
-    // Commands should execute sequentially
-    snapshot_switch("post_start_named_commands", &repo, &["--create", "feature"]);
+    // Table-form commands run concurrently with prefixed output;
+    // WORKTRUNK_TEST_SERIAL_CONCURRENT pins the line order for the snapshot.
+    let temp_home = TempDir::new().unwrap();
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "feature"], None);
+        cmd.env("WORKTRUNK_TEST_SERIAL_CONCURRENT", "1");
+        set_temp_home_env(&mut cmd, temp_home.path());
+        assert_cmd_snapshot!("post_start_named_commands", cmd);
+    });
 }
 
 #[rstest]
@@ -152,14 +160,16 @@ approved-commands = ["exit 1"]
 
 #[rstest]
 fn test_post_start_template_expansion(repo: TestRepo) {
-    // Create project config with template variables
+    // Create project config with template variables. Pipeline form: the
+    // steps append to one file, so they must run serially.
     repo.write_project_config(
-        r#"[pre-start]
-repo = "echo 'Repo: {{ repo }}' > info.txt"
-branch = "echo 'Branch: {{ branch }}' >> info.txt"
-hash_port = "echo 'Port: {{ branch | hash_port }}' >> info.txt"
-worktree = "echo 'Worktree: {{ worktree_path }}' >> info.txt"
-root = "echo 'Root: {{ repo_path }}' >> info.txt"
+        r#"pre-start = [
+    { repo = "echo 'Repo: {{ repo }}' > info.txt" },
+    { branch = "echo 'Branch: {{ branch }}' >> info.txt" },
+    { hash_port = "echo 'Port: {{ branch | hash_port }}' >> info.txt" },
+    { worktree = "echo 'Worktree: {{ worktree_path }}' >> info.txt" },
+    { root = "echo 'Root: {{ repo_path }}' >> info.txt" },
+]
 "#,
     );
 
@@ -317,13 +327,15 @@ fn test_post_start_git_variables_template(#[from(repo_with_remote)] repo: TestRe
         .run()
         .expect("failed to push");
 
-    // Create project config with git-related template variables
+    // Create project config with git-related template variables. Pipeline
+    // form: the steps append to one file, so they must run serially.
     repo.write_project_config(
-        r#"[pre-start]
-commit = "echo 'Commit: {{ commit }}' > git_vars.txt"
-short = "echo 'Short: {{ short_commit }}' >> git_vars.txt"
-remote = "echo 'Remote: {{ remote }}' >> git_vars.txt"
-worktree_name = "echo 'Worktree Name: {{ worktree_name }}' >> git_vars.txt"
+        r#"pre-start = [
+    { commit = "echo 'Commit: {{ commit }}' > git_vars.txt" },
+    { short = "echo 'Short: {{ short_commit }}' >> git_vars.txt" },
+    { remote = "echo 'Remote: {{ remote }}' >> git_vars.txt" },
+    { worktree_name = "echo 'Worktree Name: {{ worktree_name }}' >> git_vars.txt" },
+]
 "#,
     );
 
@@ -465,11 +477,13 @@ approved-commands = ["{% if not upstream %}echo 'no-upstream' > upstream.txt{% e
 
 #[rstest]
 fn test_post_start_base_variables(repo: TestRepo) {
-    // Create project config with base template variables
+    // Create project config with base template variables. Pipeline form: the
+    // steps append to one file, so they must run serially.
     repo.write_project_config(
-        r#"[pre-start]
-base = "echo 'Base: {{ base }}' > base_info.txt"
-base_path = "echo 'Base Path: {{ base_worktree_path }}' >> base_info.txt"
+        r#"pre-start = [
+    { base = "echo 'Base: {{ base }}' > base_info.txt" },
+    { base_path = "echo 'Base Path: {{ base_worktree_path }}' >> base_info.txt" },
+]
 "#,
     );
 

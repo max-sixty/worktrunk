@@ -64,10 +64,11 @@ pub fn require_config_path() -> Result<PathBuf, ConfigError> {
 /// Returns the etcetera-based platform default. Called by `config_path()`
 /// as the final fallback when no CLI or env var override is set.
 ///
-///
-/// Uses the `etcetera` crate which returns:
-/// - Linux: `$XDG_CONFIG_HOME/worktrunk/config.toml` (default `~/.config/...`)
-/// - macOS: `~/Library/Application Support/worktrunk/config.toml`
+/// `etcetera::choose_base_strategy` follows the CLI convention of using XDG
+/// on every Unix platform (including macOS) and the native APPDATA strategy on
+/// Windows. Concretely:
+/// - Unix (Linux + macOS): `$XDG_CONFIG_HOME/worktrunk/config.toml`
+///   (default `~/.config/worktrunk/config.toml`)
 /// - Windows: `%APPDATA%\worktrunk\config.toml`
 pub fn default_config_path() -> Option<PathBuf> {
     let strategy = choose_base_strategy().ok()?;

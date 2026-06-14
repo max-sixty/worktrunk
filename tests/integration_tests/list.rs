@@ -1,10 +1,8 @@
 use crate::common::{
-    DAY, HOUR, MINUTE, TestRepo, list_snapshots, make_snapshot_cmd,
-    mock_commands::create_mock_llm_quickstart, repo, repo_with_remote,
+    DAY, HOUR, MINUTE, TestRepo, list_snapshots, make_snapshot_cmd, repo, repo_with_remote,
     setup_snapshot_settings_for_paths, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
-use path_slash::PathExt as _;
 use rstest::rstest;
 
 /// Creates worktrees with specific timestamps for ordering tests.
@@ -225,6 +223,35 @@ fn test_list_json_with_metadata(mut repo: TestRepo) {
         cmd.arg("--format=json");
         cmd
     });
+}
+
+/// `repo_url` is derived locally from the primary remote, converting an SSH
+/// remote to its HTTPS web URL without shelling out to a forge.
+#[rstest]
+fn test_list_json_repo_url_from_ssh_remote(repo: TestRepo) {
+    // A real forge SSH remote. The local-path remote the fixture configures
+    // doesn't parse as a forge, so `repo_url` would be absent for it.
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "git@github.com:owner/repo.git",
+    ]);
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "wt list should succeed");
+
+    let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let row = json.first().expect("at least one row");
+    assert_eq!(
+        row["repo_url"].as_str(),
+        Some("https://github.com/owner/repo"),
+        "SSH remote should derive the HTTPS web URL"
+    );
 }
 
 /// This tests the merge commit scenario where content matches main even with different commit history.
@@ -1832,15 +1859,16 @@ TODO: Add request/response examples for each endpoint
     // The worktree is still around and can be removed. Shows dimmed in list output.
     let fix_typos = repo.add_worktree("fix-typos");
     repo.run_git_in(&fix_typos, &["push", "-u", "origin", "fix-typos"]);
-    mock_ci_status(repo, "fix-typos", "passed", "pr", false);
+    mock_ci_status(repo, "fix-typos", "passed", "pr", false, Some(410));
 
     // === Mock CI status ===
     // CI requires --full flag, but we mock it so examples show realistic output
     // Note: main's CI is mocked AFTER the merge commit so the hash matches
-    mock_ci_status(repo, "main", "passed", "pr", false);
-    mock_ci_status(repo, "fix-auth", "passed", "pr", false);
+    // main runs branch CI (no PR) — renders the bare `#`
+    mock_ci_status(repo, "main", "passed", "branch", false, None);
+    mock_ci_status(repo, "fix-auth", "passed", "pr", false, Some(408));
     // feature-api has unpushed commits, so CI is stale (shows dimmed)
-    mock_ci_status(repo, "feature-api", "running", "pr", true);
+    mock_ci_status(repo, "feature-api", "running", "pr", true, Some(412));
 
     // === Mock LLM summaries ===
     // Summary requires --full + [list] summary = true + [commit.generation] command
@@ -1872,8 +1900,19 @@ command = "echo unused"
     feature_api
 }
 
-/// Mock CI status by writing to file-based cache
-fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_stale: bool) {
+/// Mock CI status by writing to file-based cache.
+///
+/// `pr_number` also ratchets the `pr-number/max.json` width hint, so the CI
+/// column renders at its steady-state width (as if a previous run had
+/// already cached the number).
+pub(crate) fn mock_ci_status(
+    repo: &TestRepo,
+    branch: &str,
+    status: &str,
+    source: &str,
+    is_stale: bool,
+    pr_number: Option<u64>,
+) {
     // Get HEAD commit for the branch
     let output = repo
         .git_command()
@@ -1883,11 +1922,15 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
     let head = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
     // Build the cache JSON (matches CachedCiStatus struct)
+    let number_json = pr_number
+        .map(|n| format!(r##","number":{{"number":{n},"sigil":"#"}}"##))
+        .unwrap_or_default();
     let cache_json = format!(
-        r#"{{"status":{{"ci_status":"{}","source":"{}","is_stale":{}}},"checked_at":{},"head":"{}","branch":"{}"}}"#,
+        r#"{{"status":{{"ci_status":"{}","source":"{}","is_stale":{}{}}},"checked_at":{},"head":"{}","branch":"{}"}}"#,
         status,
         source,
         is_stale,
+        number_json,
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -1919,6 +1962,21 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
     let safe_branch = worktrunk::path::sanitize_for_filename(branch);
     let cache_file = cache_dir.join(format!("{safe_branch}.json"));
     std::fs::write(&cache_file, &cache_json).unwrap();
+
+    // Ratchet the width hint like a real fetch would
+    if let Some(n) = pr_number {
+        let max_file_dir = git_path.join("wt").join("cache").join("pr-number");
+        std::fs::create_dir_all(&max_file_dir).unwrap();
+        let max_file = max_file_dir.join("max.json");
+        let existing = std::fs::read_to_string(&max_file)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|v| v["number"].as_u64())
+            .unwrap_or(0);
+        if n > existing {
+            std::fs::write(&max_file, format!(r#"{{"number":{n}}}"#)).unwrap();
+        }
+    }
 }
 
 /// Mock summary cache by computing the real diff hash and writing a cache entry.
@@ -2141,25 +2199,16 @@ mod tests {
         .join(".wt-directive-temp");
     std::fs::write(&directive_file, "").unwrap();
 
-    // Create a cross-platform mock LLM command (uses mock-stub binary system)
-    // The mock-bin directory is already created by setup_mock_gh() via the repo fixture
-    let mock_bin_dir = repo.root_path().parent().unwrap().join("mock-bin");
-    create_mock_llm_quickstart(&mock_bin_dir);
-
-    // Configure the LLM path (Windows needs .exe extension)
-    let llm_name = if cfg!(windows) { "llm.exe" } else { "llm" };
-    let llm_path = mock_bin_dir.join(llm_name);
-
     // Merge feature-auth into main
     assert_cmd_snapshot!("quickstart_merge", {
         let mut cmd = make_snapshot_cmd(&repo, "merge", &["main"], Some(&feature_auth));
         cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", &directive_file);
-        // Set MOCK_CONFIG_DIR so mock-stub can find llm.json
-        cmd.env("MOCK_CONFIG_DIR", &mock_bin_dir);
-        // Use to_slash_lossy() for Windows compatibility - bash can't handle backslash paths
+        // Inline generation command (the suite's standard mock): a binary
+        // path here would bake the per-test temp dir into the snapshot's
+        // env block, which redactions don't cover for this key.
         cmd.env(
             "WORKTRUNK_COMMIT__GENERATION__COMMAND",
-            llm_path.to_slash_lossy().as_ref(),
+            "cat >/dev/null && echo 'Add authentication module'",
         );
         cmd
     });
@@ -2186,7 +2235,7 @@ fn test_readme_example_list(mut repo: TestRepo) {
 /// Generate README example: `wt list --full` output
 ///
 /// Shows additional columns: main…± (line diffs), CI status, and LLM summaries.
-/// Uses wider terminal (130 cols) than the base example to fit the Summary column.
+/// Uses wider terminal (134 cols) than the base example to fit the Summary column.
 /// Output: tests/snapshots/integration__integration_tests__list__readme_example_list_full.snap
 #[rstest]
 fn test_readme_example_list_full(mut repo: TestRepo) {
@@ -2194,7 +2243,7 @@ fn test_readme_example_list_full(mut repo: TestRepo) {
     assert_cmd_snapshot!("readme_example_list_full", {
         let mut cmd = list_snapshots::command_readme(&repo, &feature_api);
         cmd.arg("--full");
-        cmd.env("COLUMNS", "130");
+        cmd.env("COLUMNS", "134");
         cmd
     });
 }
@@ -2202,7 +2251,7 @@ fn test_readme_example_list_full(mut repo: TestRepo) {
 /// Generate README example: `wt list --branches --full` output
 ///
 /// Shows branches without worktrees (⎇ symbol) alongside worktrees, plus CI status.
-/// Uses wider terminal (130 cols) than the base example to fit the Summary column.
+/// Uses wider terminal (134 cols) than the base example to fit the Summary column.
 /// Output: tests/snapshots/integration__integration_tests__list__readme_example_list_branches.snap
 #[rstest]
 fn test_readme_example_list_branches(mut repo: TestRepo) {
@@ -2210,7 +2259,7 @@ fn test_readme_example_list_branches(mut repo: TestRepo) {
     assert_cmd_snapshot!("readme_example_list_branches", {
         let mut cmd = list_snapshots::command_readme(&repo, &feature_api);
         cmd.args(["--branches", "--full"]);
-        cmd.env("COLUMNS", "130");
+        cmd.env("COLUMNS", "134");
         cmd
     });
 }
@@ -3228,9 +3277,8 @@ fn test_list_nested_worktree_json_is_current(mut repo: TestRepo) {
 #[test]
 fn test_list_empty_repo() {
     let repo = TestRepo::empty();
-    let guard =
+    let _settings_guard =
         setup_snapshot_settings_for_paths(repo.root_path(), &repo.worktrees).bind_to_scope();
-    std::mem::forget(guard);
     // Pre-set default branch so the unborn-HEAD case has something to resolve to
     repo.run_git(&["config", "worktrunk.default-branch", "main"]);
     // Should show the branch with empty commit columns and no errors
@@ -3492,5 +3540,63 @@ fn test_list_integrated_when_squash_merged_on_remote_with_local_diverged(
     assert_eq!(
         feature["main_state"], "integrated",
         "main_state must be \"integrated\" — instead got entry: {feature}"
+    );
+}
+
+/// Regression: `wt list` against a worktree whose `<gitdir>/index` file is
+/// absent must not surface `working-tree-conflicts (Failed to copy index
+/// file)`. A missing index is semantically empty (nothing staged), so the
+/// conflict probe should compute against the working tree as if the real
+/// index were empty.
+#[rstest]
+fn test_list_tolerates_missing_index(mut repo: TestRepo) {
+    std::fs::write(repo.root_path().join("shared.txt"), "original").unwrap();
+    repo.commit("Initial commit");
+
+    let feature = repo.add_worktree("feature");
+
+    // Dirty the worktree so WorkingTreeConflictsTask exercises the temp-index path.
+    std::fs::write(feature.join("shared.txt"), "feature changes").unwrap();
+    std::fs::write(feature.join("untracked.txt"), "extra\n").unwrap();
+
+    // Delete the worktree's index file — the state the dispatching session
+    // observed across 37 of 38 user worktrees. The linked worktree's gitdir
+    // is recorded in its `.git` pointer file (`gitdir: <abs path>`).
+    let dot_git = std::fs::read_to_string(feature.join(".git")).unwrap();
+    let feature_gitdir = std::path::PathBuf::from(
+        dot_git
+            .trim()
+            .strip_prefix("gitdir: ")
+            .expect("worktree .git points at a gitdir")
+            .trim(),
+    );
+    let feature_index = feature_gitdir.join("index");
+    std::fs::remove_file(&feature_index).unwrap();
+    assert!(
+        !feature_index.exists(),
+        "precondition: feature index removed"
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--full"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}{stderr}");
+
+    assert!(
+        !combined.contains("Failed to copy index file"),
+        "missing index must not surface as a copy error.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        !combined.contains("working-tree-conflicts ("),
+        "missing index must not produce a working-tree-conflicts task error.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        !feature_index.exists(),
+        "wt list must not resurrect the real index"
     );
 }

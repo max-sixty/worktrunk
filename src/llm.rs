@@ -2,15 +2,59 @@ use anyhow::Context;
 use color_print::cformat;
 use shell_escape::unix::escape;
 use std::borrow::Cow;
+use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use worktrunk::config::CommitGenerationConfig;
-use worktrunk::git::Repository;
+use worktrunk::git::{CommitMessageDetail, Repository};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::{Cmd, SUBPROCESS_FULL_TARGET, ShellConfig};
 use worktrunk::styling::{eprintln, warning_message};
 
 use minijinja::Environment;
+use minijinja::value::{Enumerator, Object, Value};
+
+/// minijinja view of one squashed commit, exposed to squash templates as an
+/// element of `commit_details`.
+///
+/// It renders as its bare subject (`{{ detail }}` yields the subject line) so a
+/// template that iterates the list and prints the loop variable directly
+/// behaves exactly like the deprecated `commits` list of subject strings. That
+/// equivalence is what lets `wt config update` migrate a `commits` template to
+/// `commit_details` as a plain identifier rename — no shape-changing hand edits
+/// (see #2984). The `.subject` and `.body` properties remain available for
+/// templates that want the structured form, and because minijinja coerces an
+/// object to a string via its `render`, string filters (`{{ c | upper }}`)
+/// operate on the subject too.
+#[derive(Debug)]
+struct CommitDetailValue {
+    subject: String,
+    body: String,
+}
+
+impl Object for CommitDetailValue {
+    // `repr` is left at the trait default (`ObjectRepr::Map`).
+
+    fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
+        match key.as_str()? {
+            "subject" => Some(Value::from(self.subject.clone())),
+            "body" => Some(Value::from(self.body.clone())),
+            _ => None,
+        }
+    }
+
+    // Report the two keys so the object is non-empty: with the default
+    // `Map`-repr enumerator (`Empty`) the object would be falsy in `{% if c %}`,
+    // breaking the equivalence with the old non-empty subject string.
+    fn enumerate(self: &Arc<Self>) -> Enumerator {
+        Enumerator::Str(&["subject", "body"])
+    }
+
+    fn render(self: &Arc<Self>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.subject)
+    }
+}
 
 /// Characters that require shell wrapping when used in a command.
 /// If a command contains any of these, it needs `sh -c '...'` to execute correctly.
@@ -235,7 +279,7 @@ pub(crate) fn prepare_diff(diff: String, stat: String) -> PreparedDiff {
 /// Context data for building LLM prompts
 ///
 /// All fields are available to both commit and squash templates.
-/// Squash-specific fields (`commits`, `target_branch`) are empty/None for regular commits.
+/// Squash-specific fields (`commit_details`, `target_branch`) are empty/None for regular commits.
 struct TemplateContext<'a> {
     /// The diff to describe (staged changes for commit, combined diff for squash)
     git_diff: &'a str,
@@ -247,8 +291,8 @@ struct TemplateContext<'a> {
     recent_commits: Option<&'a Vec<String>>,
     /// Repository name
     repo_name: &'a str,
-    /// Commits being squashed (squash only)
-    commits: &'a [String],
+    /// Subject/body details for commits being squashed (squash only)
+    commit_details: &'a [CommitMessageDetail],
     /// Target branch for merge (squash only)
     target_branch: Option<&'a str>,
     /// Approved project-level append fragment. `None` when no project
@@ -329,7 +373,7 @@ const DEFAULT_SQUASH_TEMPLATE: &str = r#"<task>Write a commit message for the co
 </project-guidance>
 {% endif %}
 <commits branch="{{ branch }}" target="{{ target_branch }}">
-{% for commit in commits %}- {{ commit }}
+{% for detail in commit_details %}- {{ detail.subject }}
 {% endfor %}</commits>
 
 <diffstat>
@@ -364,18 +408,11 @@ pub(crate) fn execute_llm_command(command: &str, prompt: &str) -> anyhow::Result
     }
 
     let shell = ShellConfig::get()?;
-    // TODO(claude-code-nesting): Claude Code sets CLAUDECODE=1 and blocks nested
-    // invocations, even non-interactive `claude -p`. Remove this env_remove if
-    // Claude Code relaxes the check for non-interactive mode. If they don't fix
-    // it, replace with a deprecation warning + config.new migration to have users
-    // add `CLAUDECODE=` to their command string themselves.
-    // https://github.com/anthropics/claude-code/issues/25803
     let output = Cmd::new(shell.executable.to_string_lossy())
         .args(&shell.args)
         .arg(command)
         .external("commit.generation")
         .stdin_bytes(prompt)
-        .env_remove("CLAUDECODE")
         .run()
         .context("Failed to spawn LLM command")?;
 
@@ -468,7 +505,10 @@ fn load_template(
 /// - `repo`: Repository directory name
 ///
 /// Squash-specific variables (empty for regular commits):
-/// - `commits`: Commits being squashed
+/// - `commit_details`: Commits being squashed. Each element renders as its
+///   subject when printed bare and exposes `.subject` / `.body` properties.
+/// - `commits`: Commit subjects being squashed (deprecated — see #2984;
+///   `wt config update` rewrites it to `commit_details`)
 /// - `target_branch`: Target branch for merge
 fn build_prompt(
     config: &CommitGenerationConfig,
@@ -509,8 +549,34 @@ fn build_prompt(
     let env = Environment::new();
     let tmpl = env.template_from_str(&template)?;
 
-    // Reverse commits so they're in chronological order (oldest first)
-    let commits_chronological: Vec<&String> = context.commits.iter().rev().collect();
+    // Reverse commits so they're in chronological order (oldest first).
+    //
+    // `commits` (a list of bare subject strings) is deprecated in favor of
+    // `commit_details` (see #2984). The deprecation warning and the
+    // `wt config update` rewrite both go through the standard config
+    // deprecation framework (`DEPRECATED_VARS`), so nothing is detected or
+    // warned here — `commits` is simply still rendered for templates that
+    // haven't migrated yet. The rename is safe because each `commit_details`
+    // element renders as its subject (see `CommitDetailValue`), so a migrated
+    // `{% for c in commit_details %}{{ c }}` reads identically to the old
+    // `{% for c in commits %}{{ c }}`.
+    let commits_chronological: Vec<&String> = context
+        .commit_details
+        .iter()
+        .rev()
+        .map(|detail| &detail.subject)
+        .collect();
+    let commit_details_chronological: Vec<Value> = context
+        .commit_details
+        .iter()
+        .rev()
+        .map(|detail| {
+            Value::from_object(CommitDetailValue {
+                subject: detail.subject.clone(),
+                body: detail.body.clone(),
+            })
+        })
+        .collect();
     let empty_commits: Vec<String> = vec![];
 
     // The append fragments are themselves minijinja templates. Render each
@@ -531,6 +597,7 @@ fn build_prompt(
             recent_commits => context.recent_commits.unwrap_or(&empty_commits),
             repo => context.repo_name,
             commits => &commits_chronological,
+            commit_details => &commit_details_chronological,
             target_branch => context.target_branch.unwrap_or(""),
         })?)
     };
@@ -555,6 +622,7 @@ fn build_prompt(
         recent_commits => context.recent_commits.unwrap_or(&empty_commits),
         repo => context.repo_name,
         commits => commits_chronological,
+        commit_details => commit_details_chronological,
         target_branch => context.target_branch.unwrap_or(""),
         user_guidance => user_guidance,
         project_guidance => project_guidance,
@@ -720,7 +788,7 @@ pub(crate) fn build_commit_prompt(
         branch: &current_branch,
         recent_commits: recent_commits.as_ref(),
         repo_name,
-        commits: &[],
+        commit_details: &[],
         target_branch: None,
         project_append,
     };
@@ -730,7 +798,7 @@ pub(crate) fn build_commit_prompt(
 pub(crate) fn generate_squash_message(
     target_branch: &str,
     merge_base: &str,
-    subjects: &[String],
+    commit_details: &[CommitMessageDetail],
     current_branch: &str,
     repo_name: &str,
     commit_generation_config: &CommitGenerationConfig,
@@ -743,7 +811,7 @@ pub(crate) fn generate_squash_message(
         let prompt = build_squash_prompt(
             target_branch,
             merge_base,
-            subjects,
+            commit_details,
             current_branch,
             repo_name,
             commit_generation_config,
@@ -766,21 +834,21 @@ pub(crate) fn generate_squash_message(
     // Fallback: deterministic commit message (only when not configured)
     let mut commit_message = format!("Squash commits from {}\n\n", current_branch);
     commit_message.push_str("Combined commits:\n");
-    for subject in subjects.iter().rev() {
+    for detail in commit_details.iter().rev() {
         // Reverse so they're in chronological order
-        commit_message.push_str(&format!("- {}\n", subject));
+        commit_message.push_str(&format!("- {}\n", detail.subject));
     }
     Ok(commit_message)
 }
 
 /// Build the squash prompt from commits being squashed.
 ///
-/// Gathers the combined diff, commit subjects, branch names, and recent commits, then
+/// Gathers the combined diff, commit message details, branch names, and recent commits, then
 /// renders the prompt template. Used by both normal squash generation and `--show-prompt`.
 pub(crate) fn build_squash_prompt(
     target_branch: &str,
     merge_base: &str,
-    subjects: &[String],
+    commit_details: &[CommitMessageDetail],
     current_branch: &str,
     repo_name: &str,
     config: &CommitGenerationConfig,
@@ -812,7 +880,7 @@ pub(crate) fn build_squash_prompt(
         branch: current_branch,
         recent_commits: recent_commits.as_ref(),
         repo_name,
-        commits: subjects,
+        commit_details,
         target_branch: Some(target_branch),
         project_append,
     };
@@ -864,7 +932,7 @@ pub(crate) fn test_commit_generation(
         branch: "feature/example",
         recent_commits: Some(&recent_commits),
         repo_name: "test-repo",
-        commits: &[],
+        commit_details: &[],
         target_branch: None,
         // The connectivity test sends a synthetic prompt — keep it independent
         // of any project guidance so it doesn't surface team-policy text in
@@ -931,6 +999,49 @@ mod tests {
         );
     }
 
+    /// Render a one-off template with a single `CommitDetailValue` bound to `c`.
+    fn render_with_detail(template: &str, subject: &str, body: &str) -> String {
+        let env = Environment::new();
+        let detail = Value::from_object(CommitDetailValue {
+            subject: subject.to_string(),
+            body: body.to_string(),
+        });
+        env.template_from_str(template)
+            .unwrap()
+            .render(minijinja::context! { c => detail })
+            .unwrap()
+    }
+
+    /// A `commit_details` element renders as its bare subject and exposes
+    /// `.subject` / `.body`. This is the equivalence that lets the
+    /// `commits` → `commit_details` rename be a mechanical identifier rewrite
+    /// (see #2984 and `CommitDetailValue`).
+    #[test]
+    fn test_commit_detail_value_render_and_properties() {
+        assert_eq!(render_with_detail("{{ c }}", "Add a", "body a"), "Add a");
+        assert_eq!(
+            render_with_detail("{{ c.subject }}|{{ c.body }}", "Add a", "body a"),
+            "Add a|body a"
+        );
+    }
+
+    /// An unknown attribute resolves to undefined (renders empty), exercising the
+    /// catch-all in `get_value`. A bare `{% if c %}` is truthy because
+    /// `enumerate` reports two keys — without that override a `Map`-repr object
+    /// defaults to an empty enumerator and would read as falsy, diverging from
+    /// the old non-empty subject string.
+    #[test]
+    fn test_commit_detail_value_unknown_key_and_truthiness() {
+        assert_eq!(
+            render_with_detail("[{{ c.nope }}]", "Add a", "body a"),
+            "[]"
+        );
+        assert_eq!(
+            render_with_detail("{% if c %}yes{% else %}no{% endif %}", "Add a", "body a"),
+            "yes"
+        );
+    }
+
     /// Helper to create a commit context (no squash-specific fields)
     fn commit_context<'a>(
         git_diff: &'a str,
@@ -944,7 +1055,7 @@ mod tests {
             branch,
             recent_commits,
             repo_name,
-            commits: &[],
+            commit_details: &[],
             target_branch: None,
             project_append: None,
         }
@@ -956,7 +1067,7 @@ mod tests {
         branch: &'a str,
         recent_commits: Option<&'a Vec<String>>,
         repo_name: &'a str,
-        commits: &'a [String],
+        commit_details: &'a [CommitMessageDetail],
         target_branch: &'a str,
     ) -> TemplateContext<'a> {
         TemplateContext {
@@ -965,7 +1076,7 @@ mod tests {
             branch,
             recent_commits,
             repo_name,
-            commits,
+            commit_details,
             target_branch: Some(target_branch),
             project_append: None,
         }
@@ -1298,8 +1409,24 @@ mod tests {
     #[test]
     fn test_default_squash_template_renders_project_fragment() {
         let config = CommitGenerationConfig::default();
-        let commits = vec!["feat: A".to_string(), "fix: B".to_string()];
-        let mut context = squash_context("diff content", "feature", None, "repo", &commits, "main");
+        let commit_details = vec![
+            CommitMessageDetail {
+                subject: "feat: A".to_string(),
+                body: String::new(),
+            },
+            CommitMessageDetail {
+                subject: "fix: B".to_string(),
+                body: String::new(),
+            },
+        ];
+        let mut context = squash_context(
+            "diff content",
+            "feature",
+            None,
+            "repo",
+            &commit_details,
+            "main",
+        );
         context.project_append = Some("- Reference the related issue");
         let prompt = build_prompt(&config, TemplateType::Squash, &context).unwrap();
         assert_snapshot!(prompt, @r#"
@@ -1339,8 +1466,24 @@ mod tests {
     #[test]
     fn test_build_squash_prompt_with_default_template() {
         let config = CommitGenerationConfig::default();
-        let commits = vec!["feat: A".to_string(), "fix: B".to_string()];
-        let context = squash_context("diff content", "feature", None, "repo", &commits, "main");
+        let commit_details = vec![
+            CommitMessageDetail {
+                subject: "feat: A".to_string(),
+                body: String::new(),
+            },
+            CommitMessageDetail {
+                subject: "fix: B".to_string(),
+                body: String::new(),
+            },
+        ];
+        let context = squash_context(
+            "diff content",
+            "feature",
+            None,
+            "repo",
+            &commit_details,
+            "main",
+        );
         let prompt = build_prompt(&config, TemplateType::Squash, &context).unwrap();
         assert_snapshot!(prompt, @r#"
         <task>Write a commit message for the combined effect of these commits.</task>
@@ -1385,8 +1528,17 @@ mod tests {
             squash_template_file: None,
             template_append: None,
         };
-        let commits = vec!["A".to_string(), "B".to_string()];
-        let context = squash_context("diff", "feature", None, "repo", &commits, "main");
+        let commit_details = vec![
+            CommitMessageDetail {
+                subject: "A".to_string(),
+                body: "body A".to_string(),
+            },
+            CommitMessageDetail {
+                subject: "B".to_string(),
+                body: "body B".to_string(),
+            },
+        ];
+        let context = squash_context("diff", "feature", None, "repo", &commit_details, "main");
         let result = build_prompt(&config, TemplateType::Squash, &context);
         assert!(result.is_ok());
         // Commits are reversed, so chronological order is B, A
@@ -1394,10 +1546,45 @@ mod tests {
     }
 
     #[test]
+    fn test_build_squash_prompt_with_commit_details() {
+        let config = CommitGenerationConfig {
+            command: None,
+            template: None,
+            template_file: None,
+            squash_template: Some(
+                r#"{% for detail in commit_details %}{{ loop.index }}. {{ detail.subject }}
+{{ detail.body }}
+{% endfor %}"#
+                    .to_string(),
+            ),
+            squash_template_file: None,
+            template_append: None,
+        };
+        let commit_details = vec![
+            CommitMessageDetail {
+                subject: "newer subject".to_string(),
+                body: "newer body".to_string(),
+            },
+            CommitMessageDetail {
+                subject: "older subject".to_string(),
+                body: "older body line 1\nolder body line 2".to_string(),
+            },
+        ];
+        let context = squash_context("diff", "feature", None, "repo", &commit_details, "main");
+
+        let prompt = build_prompt(&config, TemplateType::Squash, &context).unwrap();
+
+        assert_eq!(
+            prompt,
+            "1. older subject\nolder body line 1\nolder body line 2\n2. newer subject\nnewer body\n"
+        );
+    }
+
+    #[test]
     fn test_build_squash_prompt_empty_commits() {
         let config = CommitGenerationConfig::default();
-        let commits: Vec<String> = vec![];
-        let context = squash_context("diff", "feature", None, "repo", &commits, "main");
+        let commit_details = vec![];
+        let context = squash_context("diff", "feature", None, "repo", &commit_details, "main");
         let result = build_prompt(&config, TemplateType::Squash, &context);
         assert!(result.is_ok());
     }
@@ -1412,8 +1599,8 @@ mod tests {
             squash_template_file: None,
             template_append: None,
         };
-        let commits: Vec<String> = vec![];
-        let context = squash_context("diff", "feature", None, "repo", &commits, "main");
+        let commit_details = vec![];
+        let context = squash_context("diff", "feature", None, "repo", &commit_details, "main");
         let result = build_prompt(&config, TemplateType::Squash, &context);
         assert!(result.is_err());
     }
@@ -1428,8 +1615,8 @@ mod tests {
             squash_template_file: None,
             template_append: None,
         };
-        let commits: Vec<String> = vec![];
-        let context = squash_context("diff", "feature", None, "repo", &commits, "main");
+        let commit_details = vec![];
+        let context = squash_context("diff", "feature", None, "repo", &commit_details, "main");
         let result = build_prompt(&config, TemplateType::Squash, &context);
         assert_snapshot!(result.unwrap_err().to_string(), @"Squash template is empty");
     }
@@ -1448,14 +1635,23 @@ mod tests {
             squash_template_file: None,
             template_append: None,
         };
-        let commits = vec!["A".to_string(), "B".to_string()];
+        let commit_details = vec![
+            CommitMessageDetail {
+                subject: "A".to_string(),
+                body: String::new(),
+            },
+            CommitMessageDetail {
+                subject: "B".to_string(),
+                body: String::new(),
+            },
+        ];
         let recent = vec!["prev1".to_string(), "prev2".to_string()];
         let context = squash_context(
             "the diff",
             "feature",
             Some(&recent),
             "myrepo",
-            &commits,
+            &commit_details,
             "main",
         );
         let result = build_prompt(&config, TemplateType::Squash, &context);
@@ -1551,12 +1747,21 @@ Single commit: {{ commits[0] }}
         };
 
         // Multiple commits — reversed for chronological order (C, B, A)
-        let commits = vec![
-            "commit A".to_string(),
-            "commit B".to_string(),
-            "commit C".to_string(),
+        let commit_details = vec![
+            CommitMessageDetail {
+                subject: "commit A".to_string(),
+                body: String::new(),
+            },
+            CommitMessageDetail {
+                subject: "commit B".to_string(),
+                body: String::new(),
+            },
+            CommitMessageDetail {
+                subject: "commit C".to_string(),
+                body: String::new(),
+            },
         ];
-        let context = squash_context("diff", "feature", None, "repo", &commits, "main");
+        let context = squash_context("diff", "feature", None, "repo", &commit_details, "main");
         let prompt = build_prompt(&config, TemplateType::Squash, &context).unwrap();
         assert_snapshot!(prompt, @"
         Squashing 3 commit(s) from feature to main
@@ -1567,7 +1772,10 @@ Single commit: {{ commits[0] }}
         ");
 
         // Single commit — exercises else-branch
-        let single_commit = vec!["solo commit".to_string()];
+        let single_commit = vec![CommitMessageDetail {
+            subject: "solo commit".to_string(),
+            body: String::new(),
+        }];
         let context = squash_context("diff", "feature", None, "repo", &single_commit, "main");
         let prompt = build_prompt(&config, TemplateType::Squash, &context).unwrap();
         assert_snapshot!(prompt, @"
@@ -1642,8 +1850,17 @@ Single commit: {{ commits[0] }}
             squash_template_file: Some(template_path.to_string_lossy().to_string()),
             template_append: None,
         };
-        let commits = vec!["A".to_string(), "B".to_string()];
-        let context = squash_context("diff", "feature", None, "repo", &commits, "main");
+        let commit_details = vec![
+            CommitMessageDetail {
+                subject: "A".to_string(),
+                body: String::new(),
+            },
+            CommitMessageDetail {
+                subject: "B".to_string(),
+                body: String::new(),
+            },
+        ];
+        let context = squash_context("diff", "feature", None, "repo", &commit_details, "main");
         let result = build_prompt(&config, TemplateType::Squash, &context);
         assert!(result.is_ok());
         // Commits are reversed for chronological order
@@ -1681,7 +1898,7 @@ Single commit: {{ commits[0] }}
         let config = CommitGenerationConfig {
             command: None,
             template: Some(
-                "Branch: {{ branch }}\nTarget: {{ target_branch }}\nCommits: {{ commits | length }}"
+                "Branch: {{ branch }}\nTarget: {{ target_branch }}\nCommit subjects: {{ commits | length }}\nCommit details: {{ commit_details | length }}"
                     .to_string(),
             ),
             template_file: None,
@@ -1694,7 +1911,10 @@ Single commit: {{ commits[0] }}
         assert!(result.is_ok());
         let prompt = result.unwrap();
         // Squash-specific variables are empty for regular commits
-        assert_eq!(prompt, "Branch: feature\nTarget: \nCommits: 0");
+        assert_eq!(
+            prompt,
+            "Branch: feature\nTarget: \nCommit subjects: 0\nCommit details: 0"
+        );
     }
 
     // Tests for diff filtering

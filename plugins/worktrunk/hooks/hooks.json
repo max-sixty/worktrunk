@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/wt.sh\" config state marker set 🤖 || true"
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config state marker set 🤖 || true"
           }
         ]
       }
@@ -16,7 +16,39 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/wt.sh\" config state marker set 💬 || true"
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config state marker set 💬 || true"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config state marker set 💬 || true"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config state marker set 💬 || true"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config state marker set 💬 || true"
           }
         ]
       }
@@ -27,7 +59,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/wt.sh\" config state marker clear || true"
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config state marker clear || true"
           }
         ]
       }
@@ -37,7 +69,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.name' | xargs -I{} bash \"${CLAUDE_PLUGIN_ROOT}/hooks/wt.sh\" switch --create {} --no-cd --format=json | jq -r '.path'"
+            "command": "bash -c 'name=$(jq -er .name) || exit 1; bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" switch --create \"$name\" --no-cd --format=json | jq -er .path'"
           }
         ]
       }
@@ -47,7 +79,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.worktree_path' | xargs bash \"${CLAUDE_PLUGIN_ROOT}/hooks/wt.sh\" remove --foreground"
+            "command": "bash -c 'p=$(jq -er .worktree_path) || exit 1; bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" remove --foreground \"$p\"'"
           }
         ]
       }

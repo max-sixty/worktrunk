@@ -295,6 +295,18 @@ impl Repository {
             .and_then(GitRemoteUrl::parse)
     }
 
+    /// Repository web URL derived from the primary remote.
+    ///
+    /// Local-only: built from the cached primary remote URL via
+    /// [`GitRemoteUrl::web_url`], with no network access. Returns `None` when no
+    /// remote is configured or the URL doesn't parse as a forge remote. In rare
+    /// multi-remote mirror setups this may name a different forge than a
+    /// branch's CI URL, since it always derives from the primary remote
+    /// (matching [`project_identifier`](Self::project_identifier)).
+    pub fn repo_web_url(&self) -> Option<String> {
+        self.primary_remote_parsed_url().and_then(|u| u.web_url())
+    }
+
     /// Parsed URL of the remote that belongs to a particular forge.
     ///
     /// Prefers the primary remote when it matches `is_forge`, then the first
