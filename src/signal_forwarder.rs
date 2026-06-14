@@ -120,10 +120,7 @@ impl ForegroundSignals {
                 }
             };
             for &pgid in &child_pgids {
-                let _ = nix::sys::signal::killpg(
-                    nix::unistd::Pid::from_raw(pgid),
-                    signal_to_send,
-                );
+                let _ = nix::sys::signal::killpg(nix::unistd::Pid::from_raw(pgid), signal_to_send);
             }
         })
     }
