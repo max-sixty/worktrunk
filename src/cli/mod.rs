@@ -425,7 +425,7 @@ pub(crate) struct ListArgs {
 
 #[derive(Args)]
 pub(crate) struct RemoveArgs {
-    /// Branch name [default: current]
+    /// Branch name or worktree path [default: current]
     #[arg(add = crate::completion::local_branches_completer())]
     pub(crate) branches: Vec<String>,
 
@@ -1991,8 +1991,7 @@ Branch: {{ branch }}
 
 Available variables (in addition to commit template variables):
 
-- `{{ commits }}` — list of commit subjects being squashed
-- `{{ commit_details }}` — [experimental] list of commits being squashed as `{ subject, body }` objects
+- `{{ commit_details }}` — list of commits being squashed; each renders as its subject and exposes `.subject` / `.body`
 - `{{ target_branch }}` — merge target branch
 
 Default template:
@@ -2024,7 +2023,7 @@ squash-template = """
 </project-guidance>
 {% endif %}
 <commits branch="{{ branch }}" target="{{ target_branch }}">
-{% for commit in commits %}- {{ commit }}
+{% for detail in commit_details %}- {{ detail.subject }}
 {% endfor %}</commits>
 
 <diffstat>

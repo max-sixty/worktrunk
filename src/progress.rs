@@ -1,9 +1,16 @@
-//! TTY spinner for long-running file-walk operations.
+//! TTY spinner and file/byte counters for long-running file-walk operations.
 //!
 //! Shows a single-line stderr spinner (`⠋ Copying 1,234 files · 312 MiB`,
 //! `⠋ Removing 7,272 files · 64.5 MiB`) that updates in place while the work
 //! runs. Workers bump atomic counters via [`Progress::record`]; a background
 //! thread renders at ~10Hz using crossterm cursor control.
+//!
+//! `Progress` is the single owner of operation counts: every state (spinner
+//! enabled, disabled, and the no-`cli` stub) accumulates files/bytes, and
+//! [`Progress::totals`] reads the running totals from `&self` mid-operation.
+//! Callers report from `totals()` rather than keeping their own counters.
+//! Counts accumulate for the lifetime of the reporter, so each counted
+//! operation (or batch reported as one) gets its own `Progress`.
 //!
 //! `start` is named deliberately (not `new`) because it spawns a ticker thread
 //! as a side effect — `Default`-style semantics would be misleading. The verb
@@ -12,11 +19,11 @@
 //! The progress line is cleared on [`Progress::finish`] or on drop, so the
 //! caller can print a summary message immediately afterward without overlap.
 //!
-//! The full spinner machinery (crossterm, the ticker thread, the render loop)
-//! is gated on the `cli` feature. Without `cli`, [`Progress`] is a zero-cost
-//! stub: `start` always returns a no-op reporter and `record` does nothing.
-//! Pure formatting helpers ([`format_bytes`], [`format_stats_paren`]) are
-//! always available since callers in both modes want them.
+//! The spinner machinery (crossterm, the ticker thread, the render loop) is
+//! gated on the `cli` feature. Without `cli`, [`Progress`] keeps the counters
+//! but never renders. Pure formatting helpers ([`format_bytes`],
+//! [`format_stats_paren`]) are always available since callers in both modes
+//! want them.
 
 use color_print::cformat;
 
@@ -48,26 +55,35 @@ mod imp {
         files: AtomicUsize,
         bytes: AtomicU64,
         done: AtomicBool,
-        verb: &'static str,
     }
 
-    struct Inner {
-        shared: Arc<Shared>,
-        ticker: JoinHandle<()>,
+    impl Shared {
+        fn new() -> Self {
+            Self {
+                files: AtomicUsize::new(0),
+                bytes: AtomicU64::new(0),
+                done: AtomicBool::new(false),
+            }
+        }
     }
 
     /// Live spinner displaying file and byte counters for a single operation.
     ///
+    /// Counters accumulate in every state; only the rendering is conditional.
     /// See [module docs](super) for the output format and lifecycle.
-    pub struct Progress(Option<Inner>);
+    pub struct Progress {
+        shared: Arc<Shared>,
+        /// Render thread; present only when the spinner is enabled (stderr TTY).
+        ticker: Option<JoinHandle<()>>,
+    }
 
     impl Progress {
         /// Start a progress reporter, enabling the spinner iff stderr is a TTY.
         ///
         /// `verb` is the present-participle label shown to the user (e.g.
         /// `"Copying"`, `"Removing"`). Spawns a background ticker thread when a
-        /// TTY is detected. When stderr is not a TTY, returns a disabled reporter
-        /// and does no work.
+        /// TTY is detected. When stderr is not a TTY, returns a disabled
+        /// reporter that still counts but renders nothing.
         pub fn start(verb: &'static str) -> Self {
             Self::start_with(verb, std::io::stderr().is_terminal())
         }
@@ -86,9 +102,13 @@ mod imp {
             }
         }
 
-        /// A reporter that does nothing — for benchmarks, tests, and internal moves.
+        /// A reporter that renders nothing but still counts — for non-TTY
+        /// contexts, benchmarks, tests, and internal moves.
         pub fn disabled() -> Self {
-            Self(None)
+            Self {
+                shared: Arc::new(Shared::new()),
+                ticker: None,
+            }
         }
 
         /// Constructor for the enabled state, separated so the TTY-gated branch in
@@ -96,25 +116,32 @@ mod imp {
         /// implementation. Spawns the ticker thread; safe to call from any
         /// context that genuinely wants live output.
         fn enabled(verb: &'static str) -> Self {
-            let shared = Arc::new(Shared {
-                files: AtomicUsize::new(0),
-                bytes: AtomicU64::new(0),
-                done: AtomicBool::new(false),
-                verb,
-            });
+            let shared = Arc::new(Shared::new());
             let ticker = {
                 let shared = Arc::clone(&shared);
-                thread::spawn(move || ticker_loop(&shared))
+                thread::spawn(move || ticker_loop(&shared, verb))
             };
-            Self(Some(Inner { shared, ticker }))
+            Self {
+                shared,
+                ticker: Some(ticker),
+            }
         }
 
         /// Record that a file (or symlink) was processed. Safe to call from any thread.
         pub fn record(&self, bytes: u64) {
-            if let Some(inner) = &self.0 {
-                inner.shared.files.fetch_add(1, Ordering::Relaxed);
-                inner.shared.bytes.fetch_add(bytes, Ordering::Relaxed);
-            }
+            self.shared.files.fetch_add(1, Ordering::Relaxed);
+            self.shared.bytes.fetch_add(bytes, Ordering::Relaxed);
+        }
+
+        /// Running `(files, bytes)` totals recorded so far.
+        ///
+        /// Relaxed loads — exact only once the recording threads have finished
+        /// (e.g. after the rayon pool call returns).
+        pub fn totals(&self) -> (usize, u64) {
+            (
+                self.shared.files.load(Ordering::Relaxed),
+                self.shared.bytes.load(Ordering::Relaxed),
+            )
         }
 
         /// Stop the spinner and clear the progress line.
@@ -126,18 +153,16 @@ mod imp {
 
     impl Drop for Progress {
         fn drop(&mut self) {
-            // `Inner` is Drop-free, so we can take ownership of its fields and
-            // run shutdown without partial-move conflicts.
-            if let Some(inner) = self.0.take() {
-                inner.shared.done.store(true, Ordering::Relaxed);
-                inner.ticker.thread().unpark();
-                let _ = inner.ticker.join();
+            if let Some(ticker) = self.ticker.take() {
+                self.shared.done.store(true, Ordering::Relaxed);
+                ticker.thread().unpark();
+                let _ = ticker.join();
                 let _ = clear_line(&mut std::io::stderr().lock());
             }
         }
     }
 
-    fn ticker_loop(shared: &Shared) {
+    fn ticker_loop(shared: &Shared, verb: &str) {
         let start = Instant::now();
         // Sub-300ms operations render nothing — the line never gets drawn.
         // park_timeout returns immediately on `unpark` from drop, so short
@@ -153,7 +178,7 @@ mod imp {
                 % SPINNER_FRAMES.len();
             let files = shared.files.load(Ordering::Relaxed);
             let bytes = shared.bytes.load(Ordering::Relaxed);
-            let line = format_line(shared.verb, files, bytes, SPINNER_FRAMES[frame_idx]);
+            let line = format_line(verb, files, bytes, SPINNER_FRAMES[frame_idx]);
             let _ = render_line(&mut std::io::stderr().lock(), &line);
             thread::park_timeout(TICK_INTERVAL);
         }
@@ -229,13 +254,13 @@ mod imp {
 
         #[test]
         fn test_start_with_non_tty_is_disabled() {
-            assert!(Progress::start_with("Copying", false).0.is_none());
+            assert!(Progress::start_with("Copying", false).ticker.is_none());
         }
 
         #[test]
         fn test_start_with_tty_is_enabled() {
             let p = Progress::start_with("Copying", true);
-            assert!(p.0.is_some());
+            assert!(p.ticker.is_some());
             p.finish();
         }
 
@@ -244,9 +269,7 @@ mod imp {
             let p = Progress::enabled("Copying");
             p.record(1024);
             p.record(2048);
-            let inner = p.0.as_ref().expect("expected enabled");
-            assert_eq!(inner.shared.files.load(Ordering::Relaxed), 2);
-            assert_eq!(inner.shared.bytes.load(Ordering::Relaxed), 3072);
+            assert_eq!(p.totals(), (2, 3072));
             p.finish();
         }
 
@@ -264,22 +287,41 @@ mod imp {
 
 #[cfg(not(feature = "cli"))]
 mod imp {
-    /// Zero-cost stub when the `cli` feature is off. The spinner depends on
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+
+    /// Spinner-less stub when the `cli` feature is off. The spinner depends on
     /// `crossterm`, which is only pulled in by `cli`; library consumers that
-    /// disable default features get this no-op type instead. Counters are
-    /// dropped on the floor — no allocation, no thread, no rendering.
-    pub struct Progress;
+    /// disable default features get this thread-free, render-free type. The
+    /// counters still accumulate so [`Progress::totals`] reports the same
+    /// numbers in both builds.
+    pub struct Progress {
+        files: AtomicUsize,
+        bytes: AtomicU64,
+    }
 
     impl Progress {
         pub fn start(_verb: &'static str) -> Self {
-            Self
+            Self::disabled()
         }
 
         pub fn disabled() -> Self {
-            Self
+            Self {
+                files: AtomicUsize::new(0),
+                bytes: AtomicU64::new(0),
+            }
         }
 
-        pub fn record(&self, _bytes: u64) {}
+        pub fn record(&self, bytes: u64) {
+            self.files.fetch_add(1, Ordering::Relaxed);
+            self.bytes.fetch_add(bytes, Ordering::Relaxed);
+        }
+
+        pub fn totals(&self) -> (usize, u64) {
+            (
+                self.files.load(Ordering::Relaxed),
+                self.bytes.load(Ordering::Relaxed),
+            )
+        }
 
         pub fn finish(self) {}
     }
@@ -382,13 +424,14 @@ mod tests {
         assert!(s.contains("5.0 MiB"));
     }
 
+    // Not cfg-gated: covers the disabled-state counting contract in both the
+    // `cli` implementation and the no-`cli` stub.
     #[test]
-    fn test_disabled_record_is_noop() {
+    fn test_disabled_still_counts() {
         let p = Progress::disabled();
         p.record(1_000_000);
         p.record(2_000_000);
-        // No counters to inspect — Disabled has no fields. The assertion is
-        // simply that the call doesn't panic and finish() returns cleanly.
+        assert_eq!(p.totals(), (2, 3_000_000));
         p.finish();
     }
 }

@@ -424,6 +424,7 @@ command = "npm install"
         ");
     }
 
+    #[cfg(feature = "syntax-highlighting")]
     #[test]
     fn test_bash_gutter_formatting_ends_with_reset() {
         // Test that bash gutter formatting properly resets colors at the end of each line
@@ -628,6 +629,7 @@ command = "npm install"
         }
     }
 
+    #[cfg(feature = "syntax-highlighting")]
     #[test]
     fn test_format_bash_with_gutter_template_command() {
         // Test that format_bash_with_gutter produces consistent dim styling
@@ -643,6 +645,7 @@ command = "npm install"
         assert_snapshot!(result);
     }
 
+    #[cfg(feature = "syntax-highlighting")]
     #[test]
     fn test_format_bash_multiline_command_consistent_styling() {
         // This test simulates the REAL user scenario: a multi-line command
@@ -673,17 +676,20 @@ cp -cR {{ repo_root }}/target/debug/.fingerprint {{ repo_root }}/target/debug/bu
         assert_snapshot!(result);
     }
 
+    #[cfg(feature = "syntax-highlighting")]
     #[test]
     fn test_unhighlighted_text_has_consistent_dim_across_lines() {
         assert_snapshot!(format_bash_with_gutter("echo {{ worktree\n}}/path"));
     }
 
+    #[cfg(feature = "syntax-highlighting")]
     #[test]
     fn test_syntax_highlighting_produces_multiple_colors() {
         let command = "echo 'hello' | grep hello > output.txt && cat output.txt";
         assert_snapshot!(format_bash_with_gutter(command));
     }
 
+    #[cfg(feature = "syntax-highlighting")]
     #[test]
     fn test_no_color_discontinuity_in_template_variables() {
         // Regression test: wrap_ansi injects [39m (reset foreground color) at line ends
@@ -737,6 +743,7 @@ cp -cR {{ repo_root }}/target/debug/.fingerprint {{ repo_root }}/target/debug/bu
         );
     }
 
+    #[cfg(feature = "syntax-highlighting")]
     #[test]
     fn test_no_bold_dim_conflict() {
         // Regression test: We must never mix bold (SGR 1) and dim (SGR 2) in the same
@@ -761,6 +768,7 @@ cp -cR {{ repo_root }}/target/debug/.fingerprint {{ repo_root }}/target/debug/bu
         );
     }
 
+    #[cfg(feature = "syntax-highlighting")]
     #[test]
     fn test_all_tokens_are_dimmed() {
         // Regression test: All highlighted tokens should be dimmed to match the base text.

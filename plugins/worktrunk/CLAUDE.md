@@ -54,7 +54,7 @@ that every repo-root skill is listed); Codex and Gemini pick up the whole
 
 ### Status persists after user interrupt (Claude)
 
-The Claude hooks track activity via git config (`worktrunk.status.{branch}`):
+The Claude hooks track activity via git config (`worktrunk.state.{branch}.marker`):
 - `UserPromptSubmit` → 🤖 (working)
 - `Notification`, `PreToolUse`(`AskUserQuestion`), `PermissionRequest`, `Stop` → 💬 (waiting for input)
 - `SessionEnd` → clears status
@@ -73,4 +73,4 @@ Re-add a Codex `hooks.json`, the `hooks` manifest key, the install hints in `src
 
 ### Accepted tradeoff: shared `skills/` exposes `wt-switch-create`
 
-Codex's `"skills": "./skills/"` and Gemini's `${extensionPath}/skills/` both resolve the entire repo-root `skills/`, including `wt-switch-create`, which depends on Claude session-cwd switching and the `WorktreeCreate` hook neither provides. Accepted: a tool loading a skill it can't act on is harmless, and a single repo-root `skills/` keeps the `worktrunk` skill single-source across all three tools and the docs sync. Don't add per-tool skills subtrees to exclude it.
+Codex's `"skills": "./skills/"` and Gemini's `${extensionPath}/skills/` both resolve the entire repo-root `skills/`, including `wt-switch-create`, which depends on Claude session-cwd switching (`EnterWorktree`) that neither provides. Accepted: a tool loading a skill it can't act on is harmless, and a single repo-root `skills/` keeps the `worktrunk` skill single-source across all three tools and the docs sync. Don't add per-tool skills subtrees to exclude it.

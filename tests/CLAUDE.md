@@ -10,7 +10,7 @@ cargo test --test integration                                      # integration
 cargo test --test integration --features shell-integration-tests   # + shell tests
 ```
 
-A filtered `--test integration` run on a fresh `target/` panics with "mock-stub binary not found" (a target filter skips the helper-bin build). Fix: `cargo build -p mock-stub`, or use `cargo nextest run` / `cargo llvm-cov nextest`.
+A target-filtered run (`--lib`, `--test integration`, …) on a fresh `target/` panics with "mock-stub binary not found" (a target filter skips the helper-bin build). Fix: `cargo build -p mock-stub`, or use `cargo nextest run` / `cargo llvm-cov nextest`.
 
 **Claude Code web:** `task setup-web` installs zsh/fish/nushell, `gh`, and dev tools. Install `task` first if needed: `sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b ~/bin` then `export PATH="$HOME/bin:$PATH"`. The permission tests (`test_permission_error_prevents_save`, `test_approval_prompt_permission_error`) skip automatically when running as root.
 
@@ -449,10 +449,9 @@ Setup-side path-redaction placeholders in the strip list (`add_placeholder_ansi_
 block. New or reordered env lines split into two cases — check the *value*
 before dismissing:
 
-- **Cosmetic (accept silently):** value is identical on every machine — `""`,
-  a deterministic literal (`"0"`, `C`), or an already-redacted placeholder
-  (`[TEST_HOME]`). A `NO_COLOR: ""` line appearing where it didn't before is
-  drift, not a bug.
+- **Cosmetic (accept silently):** value is identical on every machine — a
+  deterministic literal (`"0"`, `C`) or an already-redacted placeholder
+  (`[TEST_HOME]`).
 - **A leak (must fix):** value is host/platform/run-specific — a temp path
   (`/var/folders/…`, `/tmp/…`), `$HOME`/`$USER`, a PID, a timestamp. It will
   diff spuriously when the snapshot is regenerated elsewhere. Redact it with
@@ -460,6 +459,23 @@ before dismissing:
   `add_standard_env_redactions` (bound by the `repo` rstest fixture). Note
   `add_filter` does **not** work on the `env:` block — it only substitutes on
   captured snapshot content; use a redaction.
+
+Empty-valued entries never appear: a dynamic `.env` redaction in
+`add_standard_env_redactions` (`drop_empty_env_entries`) drops them. insta-cmd
+records each `Command::env_remove` as `KEY: ""` (it serializes `get_envs()`,
+which includes removals), so a removal is indistinguishable from a deliberate
+set-to-empty — and `isolate_subprocess_env` scrubs whichever `GIT_*` /
+`WORKTRUNK_*` keys exist in the *parent* environment, so which markers would
+appear depends on the host (CI has `GIT_EDITOR`; a contributor's box might
+have `GIT_PAGER`, neither, or both). Dropping the whole class means
+regenerating on any machine produces the same block — you don't have to match
+CI's `GIT_*` environment.
+
+The predicate keys on the empty *value*, so a test that affirmatively sets a
+var to `""` as its subject (`test_list_config_env_override_validation_failure`
+sets `WORKTRUNK_WORKTREE_PATH=""` to trigger the validation warning) loses
+that header line too — harmless, since the test body still asserts the
+behavior and insta never compares the `env:` block.
 
 The `args:` block has the same property: a repo path passed as a CLI argument
 (`wt -C <root>`) is covered by the `.args[]` redaction in

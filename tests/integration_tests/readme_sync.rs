@@ -563,9 +563,6 @@ fn parse_snapshot_content_for_docs(content: &str) -> Result<String, String> {
     let content = parse_snapshot_raw(content);
     let content = replace_placeholders(&content);
     let content = literal_to_escape(&content);
-    // Ensure each line ends with a reset so ansi-to-html produces clean per-line HTML.
-    // This handles snapshots where trailing resets were stripped for cross-platform consistency.
-    let content = ensure_line_resets(&content);
     let html = ansi_to_html(&content).map_err(|e| format!("ANSI conversion failed: {e}"))?;
     Ok(clean_ansi_html(&html))
 }
@@ -578,26 +575,13 @@ fn parse_snapshot_content_for_skill(content: &str) -> String {
     content.ansi_strip().into_owned()
 }
 
-/// Ensure each line ends with a reset code so ansi-to-html produces clean per-line HTML
-///
-/// When trailing ANSI resets are stripped from snapshots for cross-platform consistency,
-/// the ansi-to-html library will carry styles across lines (e.g., `<b>text\nmore</b>`).
-/// By adding a reset at the end of each line, we ensure proper HTML tag closure.
-fn ensure_line_resets(ansi: &str) -> String {
-    ensure_line_resets_impl(ansi, false)
-}
-
-/// Like `ensure_line_resets`, but also carries active styles to the next line
+/// Ensure each line ends with a reset code, carrying active styles to the next line
 ///
 /// Clap resets styles at line breaks when wrapping, so a bold span that wraps across
-/// lines loses its bold on the continuation. This variant tracks active SGR styles
+/// lines loses its bold on the continuation. This tracks active SGR styles
 /// and re-opens them at the start of each continuation line, producing clean per-line
 /// HTML like `<b>first part</b>\n<b>second part</b>` instead of `<b>first part</b>\nsecond part`.
 fn ensure_line_resets_with_carry(ansi: &str) -> String {
-    ensure_line_resets_impl(ansi, true)
-}
-
-fn ensure_line_resets_impl(ansi: &str, carry_styles: bool) -> String {
     const RESET: &str = "\x1b[0m";
     // Match SGR sequences: ESC [ <params> m
     static SGR_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\x1b\[([0-9;]*)m").unwrap());
@@ -607,8 +591,8 @@ fn ensure_line_resets_impl(ansi: &str, carry_styles: bool) -> String {
     let mut active_styles: Vec<String> = Vec::new();
 
     for line in lines {
-        // Prepend active styles from previous line (only when carrying)
-        let line = if !carry_styles || active_styles.is_empty() {
+        // Prepend active styles from previous line
+        let line = if active_styles.is_empty() {
             line.to_string()
         } else {
             let prefix: String = active_styles.iter().map(|s| s.as_str()).collect();

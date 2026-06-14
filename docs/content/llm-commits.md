@@ -162,9 +162,9 @@ Diff:
 """
 
 squash-template = """
-Combine these {{ commits | length }} commits into one message:
-{% for c in commits %}
-- {{ c }}
+Combine these {{ commit_details | length }} commits into one message:
+{% for c in commit_details %}
+- {{ c.subject }}
 {% endfor %}
 
 Diff:
@@ -181,8 +181,7 @@ Diff:
 | `{{ branch }}` | Current branch name |
 | `{{ repo }}` | Repository name |
 | `{{ recent_commits }}` | Recent commit subjects (for style reference) |
-| `{{ commits }}` | Commit subjects being squashed (squash template only) |
-| `{{ commit_details }}` | Commits being squashed as `{ subject, body }` (squash template only) <span class="badge-experimental"></span> |
+| `{{ commit_details }}` | Commits being squashed (squash template only); each renders as its subject and exposes `.subject` / `.body` |
 | `{{ target_branch }}` | Merge target branch (squash template only) |
 | `{{ user_guidance }}` | Rendered user `template-append` fragment (see below) |
 | `{{ project_guidance }}` | Rendered project `template-append` fragment (see below) |
@@ -192,9 +191,9 @@ Diff:
 Templates use [minijinja](https://docs.rs/minijinja/latest/minijinja/syntax/index.html), which supports:
 
 - **Variables**: `{{ branch }}`, `{{ repo | upper }}`
-- **Filters**: `{{ commits | length }}`, `{{ repo | upper }}`
+- **Filters**: `{{ commit_details | length }}`, `{{ repo | upper }}`
 - **Conditionals**: `{% if recent_commits %}...{% endif %}`
-- **Loops**: `{% for c in commits %}{{ c }}{% endfor %}`
+- **Loops**: `{% for c in commit_details %}{{ c.subject }}{% endfor %}`
 - **Loop variables**: `{{ loop.index }}`, `{{ loop.length }}`
 - **Whitespace control**: `{%- ... -%}` strips surrounding whitespace
 

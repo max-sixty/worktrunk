@@ -205,8 +205,6 @@ pub fn step_copy_ignored(
         Progress::start("Copying")
     };
 
-    let mut copied_count = 0usize;
-    let mut copied_bytes = 0u64;
     for (src_entry, is_dir) in &entries_to_copy {
         let relative = src_entry
             .strip_prefix(&source_path)
@@ -214,13 +212,10 @@ pub fn step_copy_ignored(
         let dest_entry = dest_path.join(relative);
 
         if *is_dir {
-            let (n, b) =
-                copy_dir_recursive(src_entry, &dest_entry, Some(&dest_path), force, &progress)
-                    .with_context(|| {
-                        format!("copying directory {}", format_path_for_display(relative))
-                    })?;
-            copied_count += n;
-            copied_bytes += b;
+            copy_dir_recursive(src_entry, &dest_entry, Some(&dest_path), force, &progress)
+                .with_context(|| {
+                    format!("copying directory {}", format_path_for_display(relative))
+                })?;
         } else {
             if let Some(parent) = dest_entry.parent() {
                 fs::create_dir_all(parent).with_context(|| {
@@ -231,12 +226,11 @@ pub fn step_copy_ignored(
                 })?;
             }
             if let Some(bytes) = copy_leaf(src_entry, &dest_entry, Some(&dest_path), force)? {
-                copied_count += 1;
-                copied_bytes += bytes;
                 progress.record(bytes);
             }
         }
     }
+    let (copied_count, copied_bytes) = progress.totals();
     progress.finish();
 
     if json_mode {

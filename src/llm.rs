@@ -2,7 +2,9 @@ use anyhow::Context;
 use color_print::cformat;
 use shell_escape::unix::escape;
 use std::borrow::Cow;
+use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use worktrunk::config::CommitGenerationConfig;
 use worktrunk::git::{CommitMessageDetail, Repository};
@@ -11,6 +13,48 @@ use worktrunk::shell_exec::{Cmd, SUBPROCESS_FULL_TARGET, ShellConfig};
 use worktrunk::styling::{eprintln, warning_message};
 
 use minijinja::Environment;
+use minijinja::value::{Enumerator, Object, Value};
+
+/// minijinja view of one squashed commit, exposed to squash templates as an
+/// element of `commit_details`.
+///
+/// It renders as its bare subject (`{{ detail }}` yields the subject line) so a
+/// template that iterates the list and prints the loop variable directly
+/// behaves exactly like the deprecated `commits` list of subject strings. That
+/// equivalence is what lets `wt config update` migrate a `commits` template to
+/// `commit_details` as a plain identifier rename — no shape-changing hand edits
+/// (see #2984). The `.subject` and `.body` properties remain available for
+/// templates that want the structured form, and because minijinja coerces an
+/// object to a string via its `render`, string filters (`{{ c | upper }}`)
+/// operate on the subject too.
+#[derive(Debug)]
+struct CommitDetailValue {
+    subject: String,
+    body: String,
+}
+
+impl Object for CommitDetailValue {
+    // `repr` is left at the trait default (`ObjectRepr::Map`).
+
+    fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
+        match key.as_str()? {
+            "subject" => Some(Value::from(self.subject.clone())),
+            "body" => Some(Value::from(self.body.clone())),
+            _ => None,
+        }
+    }
+
+    // Report the two keys so the object is non-empty: with the default
+    // `Map`-repr enumerator (`Empty`) the object would be falsy in `{% if c %}`,
+    // breaking the equivalence with the old non-empty subject string.
+    fn enumerate(self: &Arc<Self>) -> Enumerator {
+        Enumerator::Str(&["subject", "body"])
+    }
+
+    fn render(self: &Arc<Self>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.subject)
+    }
+}
 
 /// Characters that require shell wrapping when used in a command.
 /// If a command contains any of these, it needs `sh -c '...'` to execute correctly.
@@ -329,7 +373,7 @@ const DEFAULT_SQUASH_TEMPLATE: &str = r#"<task>Write a commit message for the co
 </project-guidance>
 {% endif %}
 <commits branch="{{ branch }}" target="{{ target_branch }}">
-{% for commit in commits %}- {{ commit }}
+{% for detail in commit_details %}- {{ detail.subject }}
 {% endfor %}</commits>
 
 <diffstat>
@@ -461,8 +505,10 @@ fn load_template(
 /// - `repo`: Repository directory name
 ///
 /// Squash-specific variables (empty for regular commits):
-/// - `commits`: Commit subjects being squashed
-/// - `commit_details`: Subject/body details for commits being squashed
+/// - `commit_details`: Commits being squashed. Each element renders as its
+///   subject when printed bare and exposes `.subject` / `.body` properties.
+/// - `commits`: Commit subjects being squashed (deprecated — see #2984;
+///   `wt config update` rewrites it to `commit_details`)
 /// - `target_branch`: Target branch for merge
 fn build_prompt(
     config: &CommitGenerationConfig,
@@ -503,15 +549,34 @@ fn build_prompt(
     let env = Environment::new();
     let tmpl = env.template_from_str(&template)?;
 
-    // Reverse commits so they're in chronological order (oldest first)
+    // Reverse commits so they're in chronological order (oldest first).
+    //
+    // `commits` (a list of bare subject strings) is deprecated in favor of
+    // `commit_details` (see #2984). The deprecation warning and the
+    // `wt config update` rewrite both go through the standard config
+    // deprecation framework (`DEPRECATED_VARS`), so nothing is detected or
+    // warned here — `commits` is simply still rendered for templates that
+    // haven't migrated yet. The rename is safe because each `commit_details`
+    // element renders as its subject (see `CommitDetailValue`), so a migrated
+    // `{% for c in commit_details %}{{ c }}` reads identically to the old
+    // `{% for c in commits %}{{ c }}`.
     let commits_chronological: Vec<&String> = context
         .commit_details
         .iter()
         .rev()
         .map(|detail| &detail.subject)
         .collect();
-    let commit_details_chronological: Vec<&CommitMessageDetail> =
-        context.commit_details.iter().rev().collect();
+    let commit_details_chronological: Vec<Value> = context
+        .commit_details
+        .iter()
+        .rev()
+        .map(|detail| {
+            Value::from_object(CommitDetailValue {
+                subject: detail.subject.clone(),
+                body: detail.body.clone(),
+            })
+        })
+        .collect();
     let empty_commits: Vec<String> = vec![];
 
     // The append fragments are themselves minijinja templates. Render each
@@ -931,6 +996,49 @@ mod tests {
         assert!(
             rendered.contains(r#"'echo '\''hi'\'''"#),
             "single quotes not escaped: {rendered}"
+        );
+    }
+
+    /// Render a one-off template with a single `CommitDetailValue` bound to `c`.
+    fn render_with_detail(template: &str, subject: &str, body: &str) -> String {
+        let env = Environment::new();
+        let detail = Value::from_object(CommitDetailValue {
+            subject: subject.to_string(),
+            body: body.to_string(),
+        });
+        env.template_from_str(template)
+            .unwrap()
+            .render(minijinja::context! { c => detail })
+            .unwrap()
+    }
+
+    /// A `commit_details` element renders as its bare subject and exposes
+    /// `.subject` / `.body`. This is the equivalence that lets the
+    /// `commits` → `commit_details` rename be a mechanical identifier rewrite
+    /// (see #2984 and `CommitDetailValue`).
+    #[test]
+    fn test_commit_detail_value_render_and_properties() {
+        assert_eq!(render_with_detail("{{ c }}", "Add a", "body a"), "Add a");
+        assert_eq!(
+            render_with_detail("{{ c.subject }}|{{ c.body }}", "Add a", "body a"),
+            "Add a|body a"
+        );
+    }
+
+    /// An unknown attribute resolves to undefined (renders empty), exercising the
+    /// catch-all in `get_value`. A bare `{% if c %}` is truthy because
+    /// `enumerate` reports two keys — without that override a `Map`-repr object
+    /// defaults to an empty enumerator and would read as falsy, diverging from
+    /// the old non-empty subject string.
+    #[test]
+    fn test_commit_detail_value_unknown_key_and_truthiness() {
+        assert_eq!(
+            render_with_detail("[{{ c.nope }}]", "Add a", "body a"),
+            "[]"
+        );
+        assert_eq!(
+            render_with_detail("{% if c %}yes{% else %}no{% endif %}", "Add a", "body a"),
+            "yes"
         );
     }
 
