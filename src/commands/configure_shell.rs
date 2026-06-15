@@ -997,12 +997,17 @@ pub fn handle_unconfigure_shell(
         return Ok(preview);
     }
 
-    // For --dry-run, show preview and return without prompting or applying
+    // For --dry-run, show preview and return without prompting or applying. The
+    // early-return above guarantees at least one result, and
+    // show_uninstall_preview emits a line per result, so the preview is never
+    // empty here (unlike the install path, where AlreadyExists entries are
+    // skipped and the preview can be empty). The preview is the command's
+    // answer, so it goes to stdout. See /writing-user-outputs.
     if dry_run {
-        let preview_text = show_uninstall_preview(&preview.results, &preview.completion_results);
-        if !preview_text.is_empty() {
-            println!("{preview_text}");
-        }
+        println!(
+            "{}",
+            show_uninstall_preview(&preview.results, &preview.completion_results)
+        );
         return Ok(preview);
     }
 
