@@ -23,7 +23,7 @@
 //! 1. `current_or_recover` + config resolution.
 //! 2. `PreviewState::new` — auto-detects Right vs Down layout.
 //! 3. Allocates the `PreviewOrchestrator` and kicks off a *speculative*
-//!    `git diff HEAD` for the current worktree on the global rayon pool.
+//!    `git diff HEAD` for the current worktree on `COLLECT_POOL`.
 //!    That bg work overlaps with everything below.
 //! 4. Computes `num_items_estimate` — `list_worktrees` plus (conditionally)
 //!    `local_branches` / `remote_branches`, capped at
@@ -486,7 +486,7 @@ pub fn handle_picker(
 
     // Preview cache is created up-front so the speculative first-item
     // preview can run in parallel with `collect::collect` below. Tasks
-    // route to the global rayon pool (shared with the row pipeline).
+    // route to `COLLECT_POOL` (shared with the row pipeline).
     // Wrapped in `Arc` because the progressive handler (running on the
     // collect background thread) also calls `spawn_preview`.
     //
@@ -805,7 +805,7 @@ pub fn handle_picker(
 
     // Dry-run / preview-bench: skim is bypassed. Wait for collect (which
     // spawns previews via the handler) to finish, then for the orchestrator's
-    // pending tasks to drain on the global rayon pool. Dry-run additionally
+    // pending tasks to drain on `COLLECT_POOL`. Dry-run additionally
     // drains stashed warnings and dumps the cache inventory; preview-bench
     // returns immediately so the measured wall clock is just "spawn → all
     // preview tasks drained", with no JSON serialization or stderr I/O in
