@@ -1823,6 +1823,31 @@ mod pty_tests {
         );
     }
 
+    /// Typing `?` at the install prompt re-shows the preview (the interactive
+    /// re-preview path), then declining with `n` leaves the rcfile untouched.
+    #[rstest]
+    fn test_install_preview_question_mark(repo: TestRepo, temp_home: TempDir) {
+        let zshrc_path = temp_home.path().join(".zshrc");
+        fs::write(&zshrc_path, "# Existing config\n").unwrap();
+
+        // `?` re-shows the preview, then `n` declines (both lines are buffered
+        // and consumed across the two prompt cycles).
+        let (output, exit_code) = exec_install_in_pty(&temp_home, &repo, "?\nn\n");
+
+        assert_eq!(exit_code, 1, "declining returns exit 1:\n{output}");
+        assert!(
+            output.contains("wt config shell init"),
+            "Typing ? should re-show the install preview:\n{output}"
+        );
+
+        // Declined, so the file is untouched.
+        let content = fs::read_to_string(&zshrc_path).unwrap();
+        assert!(
+            !content.contains("wt config shell init"),
+            "File should not be modified when user declines"
+        );
+    }
+
     /// Declining the interactive `wt config shell uninstall` prompt
     /// exercises `prompt_for_uninstall_confirmation` — the one render
     /// path that neither `--yes` nor `--dry-run` reaches. Verifies the
@@ -1918,6 +1943,52 @@ fn test_configure_shell_nushell(repo: TestRepo, temp_home: TempDir) {
         content.contains("def --env --wrapped wt"),
         "Should contain nushell function definition: {}",
         content
+    );
+}
+
+/// Dry-run install for nushell previews what would be added, on stdout (the
+/// command's answer), including the experimental note, without writing the file.
+#[rstest]
+fn test_configure_shell_nushell_dry_run(repo: TestRepo, temp_home: TempDir) {
+    let home = canonical_temp_home(&temp_home);
+    let autoload = home.join(".local/share/nushell/vendor/autoload");
+    let nu_config = autoload.join("wt.nu");
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR", &autoload);
+    cmd.env("SHELL", "/bin/nu");
+    cmd.arg("config")
+        .arg("shell")
+        .arg("install")
+        .arg("nu")
+        .arg("--dry-run")
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().expect("Failed to execute command");
+    assert!(
+        output.status.success(),
+        "Dry-run install should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The dry-run preview is the command's answer, so it lands on stdout, and
+    // for nushell it carries the experimental note.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("shell extension & completions for") && stdout.contains("nu"),
+        "Dry-run preview should show nushell would be added:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Nushell support is experimental"),
+        "Dry-run preview should include the nushell experimental note:\n{stdout}"
+    );
+
+    // Nothing should be written in dry-run mode.
+    assert!(
+        !nu_config.exists(),
+        "wt.nu should NOT be created with --dry-run: {nu_config:?}"
     );
 }
 
