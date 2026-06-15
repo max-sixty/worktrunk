@@ -1712,10 +1712,11 @@ fn test_uninstall_shell_dry_run_nushell(repo: TestRepo, temp_home: TempDir) {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    // The dry-run preview is the command's answer, so it lands on stdout.
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stderr.contains("shell extension & completions for") && stderr.contains("nu"),
-        "Dry-run output should label nushell as 'shell extension & completions':\n{stderr}"
+        stdout.contains("shell extension & completions for") && stdout.contains("nu"),
+        "Dry-run output should label nushell as 'shell extension & completions':\n{stdout}"
     );
 }
 

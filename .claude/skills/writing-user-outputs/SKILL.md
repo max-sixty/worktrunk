@@ -93,14 +93,17 @@ format_heading("USER CONFIG", Some("@ ~/.config/wt.toml"))
 
 ## stdout vs stderr
 
-**Decision principle:** If this command is piped, what should the receiving program get?
+**Decision principle:** stdout carries the command's *answer*; stderr carries *narration* about producing it.
 
-- **stdout** → Data for pipes, scripts, `eval` (tables, JSON, shell code)
-- **stderr** → Status for the human watching (progress, success, errors, hints)
-- **directive file** → Shell commands executed after wt exits (cd, exec)
+- **stdout** → the answer, in whatever format the user selected. Data (tables, JSON, shell code, an expanded template) and `--dry-run` previews both qualify: a preview is the whole answer when nothing mutates. Human-formatted output belongs here too. Color strips automatically on a pipe (anstream), so `wt list | grep` stays safe.
+- **stderr** → narration about doing it: progress, success/warning/error messages, hints, interactive prompts, and `-v`/`-vv` diagnostics.
+- **directive file** → shell commands executed after wt exits (cd, exec).
+
+A `--dry-run` answers "what would this do?", so its preview goes to stdout. It pages like any long answer (`wt step commit --dry-run`) and shares the stream with the command's `--format=json` form: `wt step prune --dry-run` prints the same removal plan as human text or as json, both to stdout. One case stays on stderr: a preview shown *inside* an interactive prompt, such as the `?` re-preview during `wt config shell install`, is mid-prompt narration.
 
 Examples:
-- `wt list` → table/JSON to stdout (for grep, jq, scripts)
+- `wt list`, `wt config show` → human table/dump or `--format=json`, both to stdout
+- `wt step prune --dry-run` → the removal plan to stdout (human or json); "nothing to remove" and skipped-young caveats to stderr
 - `wt config shell init` → shell code to stdout (for `eval`)
 - `wt switch` → status messages only (nothing to pipe)
 

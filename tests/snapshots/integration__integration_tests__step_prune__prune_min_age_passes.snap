@@ -45,7 +45,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 [2m○[22m [1mold-merged[22m — same commit as main
 [2m↳[22m [2m1 worktree & branch would be removed (dry run)[22m
+
+----- stderr -----

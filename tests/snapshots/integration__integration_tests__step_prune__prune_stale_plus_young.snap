@@ -45,8 +45,8 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+[2m○[22m [1mstale-branch[22m (stale) — same commit as main
+[2m↳[22m [2m1 branch would be removed (dry run)[22m
 
 ----- stderr -----
-[2m○[22m [1mstale-branch[22m (stale) — same commit as main
 [2m○[22m Skipped [1myoung-branch[22m, [1myoung-orphan[22m (younger than 1d)
-[2m↳[22m [2m1 branch would be removed (dry run)[22m

@@ -45,7 +45,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 [2m○[22m 1 worktree would be relocated:
 [107m [0m [1mfeature[22m: _PARENT_/wrong-location → _REPO_.feature
+
+----- stderr -----
