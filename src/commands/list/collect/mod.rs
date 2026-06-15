@@ -337,12 +337,11 @@ pub(crate) static COLLECT_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
         .expect("failed to build collect thread pool")
 });
 
-/// The `num_threads` argument for [`COLLECT_POOL`]. Mirrors `main.rs`'s
-/// global-pool sizing: when `RAYON_NUM_THREADS` is set, return 0 so Rayon
-/// reads and validates the env var itself; otherwise return
-/// [`crate::rayon_thread_count`] (`2× CPU`), since Rayon's own default is
-/// `1× CPU`. Takes the env presence as a parameter so both branches are
-/// unit-testable without mutating process-global environment.
+/// The `num_threads` argument for [`COLLECT_POOL`]. When `RAYON_NUM_THREADS`
+/// is set, return 0 so Rayon reads and validates the env var itself.
+/// Otherwise return [`crate::rayon_thread_count`] (`2× CPU`), since Rayon's
+/// own default is `1× CPU`. Takes the env presence as a parameter so both
+/// branches are unit-testable without mutating process-global environment.
 fn collect_pool_num_threads(rayon_num_threads_set: bool) -> usize {
     if rayon_num_threads_set {
         0
