@@ -326,20 +326,30 @@ use types::{MissingResult, TaskError, TaskResult};
 /// Routing collection and preview work through this pool leaves the global pool
 /// free for skim. Same isolation pattern as `copy::COPY_POOL` and
 /// `remove_dir::REMOVE_POOL`, but sized like the global pool
-/// ([`crate::rayon_thread_count`], i.e. `2× CPU`, honoring `RAYON_NUM_THREADS`)
+/// ([`collect_pool_num_threads`], i.e. `2× CPU`, honoring `RAYON_NUM_THREADS`)
 /// so collection throughput is unchanged. The goal is separation, not a
 /// smaller pool.
 pub(crate) static COLLECT_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
-    let num_threads = if std::env::var_os("RAYON_NUM_THREADS").is_some() {
-        0 // Let Rayon handle the env var (includes validation)
-    } else {
-        crate::rayon_thread_count()
-    };
+    let num_threads = collect_pool_num_threads(std::env::var_os("RAYON_NUM_THREADS").is_some());
     rayon::ThreadPoolBuilder::new()
         .num_threads(num_threads)
         .build()
         .expect("failed to build collect thread pool")
 });
+
+/// The `num_threads` argument for [`COLLECT_POOL`]. Mirrors `main.rs`'s
+/// global-pool sizing: when `RAYON_NUM_THREADS` is set, return 0 so Rayon
+/// reads and validates the env var itself; otherwise return
+/// [`crate::rayon_thread_count`] (`2× CPU`), since Rayon's own default is
+/// `1× CPU`. Takes the env presence as a parameter so both branches are
+/// unit-testable without mutating process-global environment.
+fn collect_pool_num_threads(rayon_num_threads_set: bool) -> usize {
+    if rayon_num_threads_set {
+        0
+    } else {
+        crate::rayon_thread_count()
+    }
+}
 
 struct TableRenderPlan {
     progressive_table: Option<ProgressiveTable>,
@@ -2056,6 +2066,14 @@ pub fn populate_item(
 mod tests {
     use super::*;
     use ansi_str::AnsiStr;
+
+    #[test]
+    fn test_collect_pool_num_threads_honors_env() {
+        // Env var set: defer to Rayon (0 means "read RAYON_NUM_THREADS").
+        assert_eq!(collect_pool_num_threads(true), 0);
+        // Env var unset: explicit 2× CPU, since Rayon's own default is 1×.
+        assert_eq!(collect_pool_num_threads(false), crate::rayon_thread_count());
+    }
 
     #[test]
     fn test_format_stall_footer_single_pending() {
