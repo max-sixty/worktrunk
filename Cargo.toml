@@ -23,15 +23,21 @@ filterset = "binary_id(=worktrunk::integration)"
 globs = ["src/**/*.snap"]
 filterset = "binary_id(=worktrunk) | binary_id(=worktrunk::bin/wt)"
 
-# tests/integration_tests/readme_sync.rs reads these inputs at runtime (via
-# fs::read_to_string) and asserts the committed copies stay in sync: README.md,
-# docs/content markdown, the dev/*.example.toml files generated from src/llm.rs
-# and src/cli/mod.rs, the skill references, and Taskfile.yaml. A change to any of
-# them must rerun that module, which coverage cannot link to the changed file.
+# tests/integration_tests/readme_sync.rs reads each of these at runtime (via
+# fs::read_to_string) and asserts the committed copies stay in sync — both the
+# sources (README.md, docs/content markdown, docs/config.toml's site title and
+# description, src/cli/mod.rs, src/llm.rs, the skill references, Taskfile.yaml)
+# and the generated artifacts it regenerates and compares against (the
+# dev/*.example.toml files, docs/static/llms.txt, the agent-skills index.json).
+# Editing any of them flips the test, but coverage can't link a runtime-read
+# file to it.
 [[workspace.metadata.affected.rule]]
 globs = [
     "README.md",
     "docs/**/*.md",
+    "docs/config.toml",
+    "docs/static/llms.txt",
+    "docs/static/.well-known/agent-skills/index.json",
     "dev/*.toml",
     "src/cli/mod.rs",
     "src/llm.rs",
