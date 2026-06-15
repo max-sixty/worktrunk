@@ -103,6 +103,7 @@ What currently reaches the wire:
 - generating a branch summary with a `commit.generation` command
 - generating a commit message with a `commit.generation` command
 - `wt switch pr:<n>`, `wt switch mr:<n>` — host API to resolve the PR/MR, then `git fetch` of its branch
+- `wt switch` (interactive picker, no target) — per-branch CI status, fetched progressively after the frame paints (same `gh pr list --head` path as `wt list --full`)
 - `wt switch --prs` — one `gh pr list` / `glab mr list` to populate the interactive picker (streamed in after the frame paints)
 - `wt config show --full` — version check against GitHub
 - the first `Repository::default_branch()` per repo — `git ls-remote` (above)

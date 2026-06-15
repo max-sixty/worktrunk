@@ -46,7 +46,10 @@ use unicode_width::UnicodeWidthStr;
 use worktrunk::git::{CiPlatform, Repository};
 use worktrunk::styling::{StyledLine, warning_message};
 
-use super::super::list::ci_status::{non_interactive_cmd, tool_available};
+use super::super::list::ci_status::{
+    CiSource, CiStatus, GitHubPrInfo, PrRef, PrStatus, ReviewState, non_interactive_cmd,
+    tool_available,
+};
 use super::super::list::columns::ColumnKind;
 use super::super::list::layout::ColumnGrid;
 
@@ -119,6 +122,21 @@ struct PrEntry {
     is_draft: bool,
     url: Option<String>,
     kind: RefKind,
+    /// CI + review status for the CI column, built from the same forge call.
+    /// `None` when the forge can't supply it in one call (the row then keeps
+    /// its `#N` in the title instead of the CI column).
+    status: Option<PrStatus>,
+}
+
+impl PrEntry {
+    /// The forge-correct reference: `#N` on GitHub, `!N` on GitLab. Shared by
+    /// the row and preview renderers so both pick the sigil from one place.
+    fn pr_ref(&self) -> PrRef {
+        match self.kind {
+            RefKind::Pr => PrRef::pr(u64::from(self.number)),
+            RefKind::Mr => PrRef::mr(u64::from(self.number)),
+        }
+    }
 }
 
 /// Fetch open PRs/MRs, build picker rows, and stream them into skim.
@@ -192,16 +210,17 @@ fn fetch_open_prs(repo: &Repository) -> anyhow::Result<Vec<PrEntry>> {
 
 #[derive(Deserialize)]
 struct GhPr {
-    number: u32,
     title: String,
     #[serde(rename = "headRefName")]
     head_ref_name: String,
     #[serde(default)]
     author: GhAuthor,
-    #[serde(rename = "isDraft", default)]
-    is_draft: bool,
-    #[serde(default)]
-    url: Option<String>,
+    /// CI/review fields reused via the shared `gh pr list` mapping: number,
+    /// `isDraft`, `url`, `statusCheckRollup`, `reviewDecision`,
+    /// `mergeStateStatus`. Flattened so one parse feeds both display and the
+    /// CI-column status.
+    #[serde(flatten)]
+    info: GitHubPrInfo,
 }
 
 #[derive(Deserialize, Default)]
@@ -224,7 +243,8 @@ fn fetch_github(repo_root: &Path) -> anyhow::Result<Vec<PrEntry>> {
             "--limit",
             &MAX_PRS.to_string(),
             "--json",
-            "number,title,headRefName,author,isDraft,url",
+            // CI/review fields ride the one call; no extra round-trip.
+            "number,title,headRefName,author,isDraft,url,statusCheckRollup,reviewDecision,mergeStateStatus",
         ])
         .current_dir(repo_root)
         .run()
@@ -246,13 +266,14 @@ fn parse_github_prs(stdout: &[u8]) -> anyhow::Result<Vec<PrEntry>> {
     Ok(prs
         .into_iter()
         .map(|pr| PrEntry {
-            number: pr.number,
+            number: pr.info.number.unwrap_or(0) as u32,
             title: pr.title,
             head_branch: pr.head_ref_name,
             author: pr.author.login,
-            is_draft: pr.is_draft,
-            url: pr.url,
+            is_draft: pr.info.is_draft == Some(true),
+            url: pr.info.url.clone(),
             kind: RefKind::Pr,
+            status: Some(pr.info.open_pr_status()),
         })
         .collect())
 }
@@ -269,6 +290,10 @@ struct GlabMr {
     draft: bool,
     #[serde(default)]
     web_url: Option<String>,
+    /// Coarse merge/CI signal the list call carries (full pipeline status
+    /// needs a per-MR `glab mr view`, which `--prs` avoids).
+    #[serde(default)]
+    detailed_merge_status: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -310,16 +335,58 @@ fn parse_gitlab_mrs(stdout: &[u8]) -> anyhow::Result<Vec<PrEntry>> {
 
     Ok(mrs
         .into_iter()
-        .map(|mr| PrEntry {
-            number: mr.iid,
-            title: mr.title,
-            head_branch: mr.source_branch,
-            author: mr.author.username,
-            is_draft: mr.draft,
-            url: mr.web_url,
-            kind: RefKind::Mr,
+        .map(|mr| {
+            let status = gitlab_mr_status(
+                mr.iid,
+                mr.draft,
+                mr.detailed_merge_status.as_deref(),
+                mr.web_url.clone(),
+            );
+            PrEntry {
+                number: mr.iid,
+                title: mr.title,
+                head_branch: mr.source_branch,
+                author: mr.author.username,
+                is_draft: mr.draft,
+                url: mr.web_url,
+                kind: RefKind::Mr,
+                status: Some(status),
+            }
         })
         .collect())
+}
+
+/// Best-effort MR status from the single `glab mr list` call. The list payload
+/// carries `draft` and `detailed_merge_status` but not pipeline detail (that
+/// needs a per-MR `glab mr view`, which `--prs` avoids), so CI is coarse:
+/// conflicts and a still-running merge pipeline are the only states the list
+/// reports. `not_approved` maps to a pending review; draft outranks it.
+fn gitlab_mr_status(
+    iid: u32,
+    draft: bool,
+    detailed_merge_status: Option<&str>,
+    url: Option<String>,
+) -> PrStatus {
+    let ci_status = match detailed_merge_status {
+        Some("broken_status") | Some("conflict") => CiStatus::Conflicts,
+        Some("ci_still_running") => CiStatus::Running,
+        _ => CiStatus::NoCI,
+    };
+    let review_state = if draft {
+        Some(ReviewState::Draft)
+    } else if detailed_merge_status == Some("not_approved") {
+        Some(ReviewState::Pending)
+    } else {
+        None
+    };
+    PrStatus {
+        ci_status,
+        source: CiSource::PullRequest,
+        is_stale: false,
+        url,
+        number: Some(PrRef::mr(u64::from(iid))),
+        review_state,
+    }
 }
 
 /// A picker row for one open PR/MR. Distinct from `WorktreeSkimItem`: it
@@ -354,8 +421,8 @@ impl PrSkimItem {
             None => render_freeform_row(&entry, list_width),
         };
 
+        let pr_ref = entry.pr_ref();
         let PrEntry {
-            number,
             title,
             head_branch,
             author,
@@ -364,7 +431,7 @@ impl PrSkimItem {
             ..
         } = entry;
         let mut preview_text = cformat!(
-            "<bold>#{number}</>  {title}\n\n<dim>branch</>   {head_branch}\n<dim>author</>   @{author}\n"
+            "<bold>{pr_ref}</>  {title}\n\n<dim>branch</>   {head_branch}\n<dim>author</>   @{author}\n"
         );
         if is_draft {
             preview_text.push_str(&cformat!("<dim>state</>    <yellow>draft</>\n"));
@@ -386,82 +453,128 @@ impl PrSkimItem {
 }
 
 /// Place the PR's cells on the worktree rows' grid: head branch in the
-/// Branch column, `#N title` in the Summary column, author in the Message
-/// column. The gutter is blank like a branch-only row's.
+/// Branch column, the number in the CI column (colored by CI + review state,
+/// like worktree rows), the title in the flexible text region, author in the
+/// Message column. The gutter is blank like a branch-only row's.
+///
+/// The number lives in the CI column when the grid has one and a status was
+/// fetched — aligning with the worktree rows' PR numbers. Without a CI column
+/// (narrow layouts) it falls back to a dim `#N` prefix on the title.
 ///
 /// The Summary column only exists when `[list] summary` is enabled, and
 /// Message only on wide layouts — without either there is no flexible text
-/// column, so the title runs from the first column after Branch to the end
-/// of the pane. The worktree-data columns it underlaps (status, diffs, URL,
-/// age) are blank on PR rows, so nothing collides; titles still start on a
-/// shared column.
+/// column, so the title runs from the first column after Branch up to the CI
+/// column (or the pane edge). The worktree-data columns it underlaps (status,
+/// diffs, URL, age) are blank on PR rows, so nothing collides.
 fn render_grid_row(entry: &PrEntry, grid: &ColumnGrid, list_width: usize) -> String {
-    let magenta = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Magenta)));
     let yellow = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Yellow)));
     let dim = Style::new().dimmed();
 
-    let mut line = StyledLine::new();
-
     let branch_col = grid.column(ColumnKind::Branch);
-    if let Some(col) = branch_col {
-        line.pad_to(col.start);
-        let mut cell = StyledLine::new();
-        cell.push_raw(entry.head_branch.clone());
-        line.extend(cell.truncate_to_width(col.width));
-    }
-
     let summary_col = grid.column(ColumnKind::Summary);
     let message_col = grid.column(ColumnKind::Message);
-    let (start, width) = match (summary_col, message_col) {
+
+    // The number rides in the CI column — the same cell worktree rows show
+    // their PR number in. Falls back to a `#N` title prefix without one.
+    let number_cell = grid.column(ColumnKind::CiStatus).zip(entry.status.as_ref());
+
+    let (title_start, title_width) = match (summary_col, message_col) {
         // Confined to Summary so the columns after it stay on grid.
         (Some(col), _) => (col.start, col.width),
         // Message is the last column; running to the pane edge is safe.
         (None, Some(col)) => (col.start, list_width.saturating_sub(col.start)),
         (None, None) => {
             let start = branch_col.map_or(0, |col| col.start + col.width + 2);
-            (start, list_width.saturating_sub(start))
+            // Stop before the CI column so the title never overruns the number.
+            let end = number_cell
+                .map(|(col, _)| col.start.saturating_sub(1))
+                .unwrap_or(list_width);
+            (start, end.saturating_sub(start))
         }
     };
 
-    line.pad_to(start);
-    let mut cell = StyledLine::new();
-    cell.push_styled(format!("#{}", entry.number), magenta);
-    cell.push_raw(" ");
-    if entry.is_draft {
-        cell.push_styled("draft ", yellow);
-    }
-    cell.push_raw(entry.title.clone());
-
-    // The author rides in the Message column when the title didn't claim
-    // it; otherwise it trails the title (and truncates first, being last).
+    // The author rides in the Message column when a Summary column already
+    // claimed the title; otherwise it trails the title.
     let author_col = summary_col.and(message_col);
-    if author_col.is_none() && !entry.author.is_empty() {
-        cell.push_styled(format!("  @{}", entry.author), dim);
-    }
-    line.extend(cell.truncate_to_width(width));
 
-    if let Some(col) = author_col
-        && !entry.author.is_empty()
-    {
-        line.pad_to(col.start);
-        let mut cell = StyledLine::new();
-        cell.push_styled(format!("@{}", entry.author), dim);
-        line.extend(cell.truncate_to_width(col.width));
-    }
+    // Assemble the row for a given title width. Cells are emitted left-to-right
+    // by column start (`pad_to` only moves forward, and the CI column can sit
+    // either side of the title). Built as a closure so the title — the one
+    // flexible cell — can be re-truncated to satisfy skim's overflow check
+    // without disturbing the fixed branch and CI-number cells.
+    let assemble = |title_w: usize| -> StyledLine {
+        let mut segments: Vec<(usize, StyledLine)> = Vec::new();
+
+        if let Some(col) = branch_col {
+            let mut cell = StyledLine::new();
+            cell.push_raw(entry.head_branch.clone());
+            segments.push((col.start, cell.truncate_to_width(col.width)));
+        }
+
+        let mut title = StyledLine::new();
+        if number_cell.is_none() {
+            title.push_styled(entry.pr_ref().to_string(), dim);
+            title.push_raw(" ");
+            if entry.is_draft {
+                title.push_styled("draft ", yellow);
+            }
+        }
+        title.push_raw(entry.title.clone());
+        if author_col.is_none() && !entry.author.is_empty() {
+            title.push_styled(format!("  @{}", entry.author), dim);
+        }
+        segments.push((title_start, title.truncate_to_width(title_w)));
+
+        if let Some((col, status)) = number_cell {
+            let mut cell = StyledLine::new();
+            cell.push_raw(status.format_cell(col.width, false));
+            segments.push((col.start, cell));
+        }
+
+        if let Some(col) = author_col
+            && !entry.author.is_empty()
+        {
+            let mut cell = StyledLine::new();
+            cell.push_styled(format!("@{}", entry.author), dim);
+            segments.push((col.start, cell.truncate_to_width(col.width)));
+        }
+
+        segments.sort_by_key(|(start, _)| *start);
+        let mut line = StyledLine::new();
+        for (start, cell) in segments {
+            line.pad_to(start);
+            line.extend(cell);
+        }
+        line
+    };
+
+    let mut line = assemble(title_width);
 
     // Skim's overflow check measures the line with `width_cjk`, counting
-    // ambiguous-width characters (such as the `…` our truncation adds) as 2
-    // columns, while terminals — and the column math above — render them as
-    // 1. A full-width row holding one would fail that check and get its last
-    // two columns repainted as `..`, so trim until the line passes. Each
-    // pass shortens the line by at least one column; one usually suffices.
+    // ambiguous-width characters (the `…` our truncation adds, or the status
+    // arrows) as 2 columns, while terminals — and the column math above —
+    // render them as 1. A row that overflows there gets its last two columns
+    // repainted as `..`.
     //
-    // TODO(vendor-skim): a one-word fix in skim's `draw_item` removes this
-    // clamp. See `vendor/NOTES.md` → "width_cjk vs width mismatch".
-    while line.width() > 0 && line.width_cjk() > list_width {
-        let excess = line.width_cjk() - list_width;
-        let target = line.width().saturating_sub(excess);
-        line = line.truncate_to_width(target);
+    // Only one case is fixable here. When the title is the rightmost cell (no
+    // CI column), shrink it until the row passes — each pass removes at least
+    // one column. When the number is in the CI column it anchors the right
+    // edge: trimming the title only opens blank space upstream and can't shrink
+    // the line, and the number itself can't be trimmed without mangling it, so
+    // at narrow widths such a row may still lose its last two columns to skim's
+    // spurious `..` — the same width_cjk bug worktree rows hit, accepted as a
+    // known limitation.
+    //
+    // TODO(vendor-skim): a one-word fix in skim's `draw_item` removes the check
+    // entirely (and with it the CI-column clip). See `vendor/NOTES.md` →
+    // "width_cjk vs width mismatch".
+    if number_cell.is_none() {
+        let mut title_w = title_width;
+        while title_w > 0 && line.width_cjk() > list_width {
+            let excess = line.width_cjk() - list_width;
+            title_w = title_w.saturating_sub(excess.max(1));
+            line = assemble(title_w);
+        }
     }
 
     line.render()
@@ -471,14 +584,14 @@ fn render_grid_row(entry: &PrEntry, grid: &ColumnGrid, list_width: usize) -> Str
 /// `pr #N  title  branch  @author`.
 fn render_freeform_row(entry: &PrEntry, list_width: usize) -> String {
     let label = entry.kind.shortcut();
-    let number = entry.number;
+    let pr_ref = entry.pr_ref();
     let head_branch = &entry.head_branch;
     let author = &entry.author;
 
     // Truncate the title so the branch and author stay visible. Measure
     // the fixed pieces (plain text) and give the rest to the title.
     let draft_plain = if entry.is_draft { "draft " } else { "" };
-    let prefix_plain = format!("{label} #{number}  ");
+    let prefix_plain = format!("{label} {pr_ref}  ");
     let suffix_plain = format!("  {head_branch}  @{author}");
     let fixed = prefix_plain.width() + draft_plain.width() + suffix_plain.width();
     let title_budget = list_width.saturating_sub(fixed).max(8);
@@ -490,7 +603,7 @@ fn render_freeform_row(entry: &PrEntry, list_width: usize) -> String {
         String::new()
     };
     cformat!(
-        "<magenta>{label}</> <bold>#{number}</>  {draft}{title}  <cyan>{head_branch}</>  <dim>@{author}</>"
+        "<dim>{label}</> <bold>{pr_ref}</>  {draft}{title}  <cyan>{head_branch}</>  <dim>@{author}</>"
     )
 }
 
@@ -517,6 +630,10 @@ mod tests {
     use super::*;
 
     fn entry(kind: RefKind, number: u32, title: &str) -> PrEntry {
+        let number_ref = match kind {
+            RefKind::Pr => PrRef::pr(u64::from(number)),
+            RefKind::Mr => PrRef::mr(u64::from(number)),
+        };
         PrEntry {
             number,
             title: title.to_string(),
@@ -525,6 +642,27 @@ mod tests {
             is_draft: false,
             url: Some("https://github.com/owner/repo/pull/123".to_string()),
             kind,
+            status: Some(PrStatus {
+                ci_status: CiStatus::Passed,
+                source: CiSource::PullRequest,
+                is_stale: false,
+                url: None,
+                number: Some(number_ref),
+                review_state: None,
+            }),
+        }
+    }
+
+    /// Grid that includes a CI column (the picker's layout once CiStatus is no
+    /// longer skipped). Gutter 0–2, Branch 2–22, Status 24–32, CI 34–40.
+    fn grid_with_ci() -> ColumnGrid {
+        ColumnGrid {
+            columns: vec![
+                grid_col(ColumnKind::Gutter, 0, 2),
+                grid_col(ColumnKind::Branch, 2, 20),
+                grid_col(ColumnKind::Status, 24, 8),
+                grid_col(ColumnKind::CiStatus, 34, 6),
+            ],
         }
     }
 
@@ -652,6 +790,34 @@ mod tests {
     }
 
     #[test]
+    fn rows_use_the_forge_sigil_for_the_reference() {
+        // GitLab MRs render `!N`, not `#N` — matching `PrRef` everywhere else
+        // (the CI column, `wt list`). The grid row, freeform row, and preview
+        // all derive the sigil from `PrEntry::pr_ref`.
+        let mr = PrSkimItem::new(entry(RefKind::Mr, 42, "Add caching"), 120, Some(&grid()));
+        let row = plain(&mr.rendered);
+        assert!(row.contains("!42"), "grid row uses ! for MRs: {row:?}");
+        assert!(
+            !row.contains("#42"),
+            "grid row must not use # for MRs: {row:?}"
+        );
+        assert!(mr.preview_text.contains("!42"), "preview uses ! for MRs");
+
+        let mr_freeform = PrSkimItem::new(entry(RefKind::Mr, 42, "Add caching"), 120, None);
+        assert!(
+            plain(&mr_freeform.rendered).contains("!42"),
+            "freeform row uses !"
+        );
+
+        // GitHub PRs keep `#N`.
+        let pr = PrSkimItem::new(entry(RefKind::Pr, 42, "Add caching"), 120, Some(&grid()));
+        assert!(
+            plain(&pr.rendered).contains("#42"),
+            "grid row uses # for PRs"
+        );
+    }
+
+    #[test]
     fn grid_row_without_summary_falls_back_to_message_then_after_branch() {
         // Layout that dropped Summary: the title claims Message and the
         // author trails the title instead of getting its own column.
@@ -699,6 +865,65 @@ mod tests {
         // counts as 2 — the row must pass it too or skim repaints the last
         // two columns as `..`.
         assert!(text.width_cjk() <= 60);
+    }
+
+    #[test]
+    fn grid_row_places_the_number_in_the_ci_column() {
+        let pr = PrSkimItem::new(
+            entry(RefKind::Pr, 123, "Fix the flaky test"),
+            120,
+            Some(&grid_with_ci()),
+        );
+        let text = plain(&pr.rendered);
+        // The number sits in the CI column (start 34), aligned with worktree
+        // rows — not prefixing the title.
+        assert_eq!(display_col(&text, "#123"), 34, "number in CI column");
+        // The title starts in the after-branch region with no `#N` prefix.
+        assert_eq!(display_col(&text, "Fix"), 24, "title after branch");
+        assert!(!text.contains("#123 Fix"), "no #N prefix on the title");
+    }
+
+    #[test]
+    fn grid_row_with_ci_dims_drafts_instead_of_flagging_them() {
+        // With a CI column, draft shows as the dimmed number there (review
+        // state Draft), so the title drops the inline "draft" flag.
+        let mut e = entry(RefKind::Pr, 9, "WIP");
+        e.is_draft = true;
+        if let Some(status) = e.status.as_mut() {
+            status.review_state = Some(ReviewState::Draft);
+        }
+        let pr = PrSkimItem::new(e, 120, Some(&grid_with_ci()));
+        let text = plain(&pr.rendered);
+        assert!(!text.contains("draft"), "no draft flag in title: {text:?}");
+        assert_eq!(display_col(&text, "#9"), 34, "number still in CI column");
+    }
+
+    #[test]
+    fn parse_github_builds_ci_and_review_status() {
+        // statusCheckRollup → CI status; reviewDecision → review state; both
+        // ride the single `gh pr list` call.
+        let json = br#"[
+          {"number":10,"title":"t","headRefName":"b","statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}],"reviewDecision":"APPROVED"}
+        ]"#;
+        let entries = parse_github_prs(json).unwrap();
+        let status = entries[0].status.as_ref().expect("status built");
+        assert_eq!(status.ci_status, CiStatus::Passed);
+        assert_eq!(status.review_state, Some(ReviewState::Approved));
+        assert_eq!(status.number.map(|r| r.to_string()).as_deref(), Some("#10"));
+    }
+
+    #[test]
+    fn parse_gitlab_builds_coarse_status_from_the_list_call() {
+        // The single `glab mr list` call carries draft + detailed_merge_status,
+        // not pipeline detail: draft dims, conflict reports Conflicts.
+        let json = br#"[
+          {"iid":3,"title":"t","source_branch":"b","draft":true,"detailed_merge_status":"conflict"}
+        ]"#;
+        let entries = parse_gitlab_mrs(json).unwrap();
+        let status = entries[0].status.as_ref().expect("status built");
+        assert_eq!(status.ci_status, CiStatus::Conflicts);
+        assert_eq!(status.review_state, Some(ReviewState::Draft));
+        assert_eq!(status.number.map(|r| r.to_string()).as_deref(), Some("!3"));
     }
 
     #[test]

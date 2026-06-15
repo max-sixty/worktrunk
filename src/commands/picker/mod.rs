@@ -525,13 +525,15 @@ pub fn handle_picker(
         orchestrator.spawn_preview(Arc::new(item), PreviewMode::WorkingTree, dims);
     }
 
-    // Skip expensive operations — BranchDiff walks history per item,
-    // CiStatus hits the network. Both are slow enough that waiting for
-    // them adds perceptible cost for a modest column-population win.
+    // Skip BranchDiff — it walks history per item for a column the picker
+    // doesn't surface. CiStatus is kept: the picker isn't a fast path (it's
+    // interactive and renders progressively, so the CI fetch never blocks the
+    // frame), and the CI column carries the PR/MR number and review state that
+    // make a switch target legible — including the `--prs` rows, which render
+    // their own number there. The fetch is cached (30–60s, HEAD-keyed), so
+    // repeated opens stay local.
     let skip_tasks: std::collections::HashSet<collect::TaskKind> =
-        [collect::TaskKind::BranchDiff, collect::TaskKind::CiStatus]
-            .into_iter()
-            .collect();
+        [collect::TaskKind::BranchDiff].into_iter().collect();
 
     // Per-task command timeout (bounds any single git invocation) from
     // shared `[list]` config. Still applies in progressive mode.

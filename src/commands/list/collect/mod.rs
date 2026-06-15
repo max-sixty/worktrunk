@@ -758,9 +758,10 @@ pub fn collect(
             collect_deadline,
             list_width,
             progressive_handler,
-            // Picker is the only `Resolved` caller and runs the same fast
-            // bucket as default `wt list` (skips BranchDiff/CiStatus), so
-            // it also opts out of the untracked-inclusive working diff.
+            // Picker is the only `Resolved` caller. Like default `wt list` it
+            // opts out of the untracked-inclusive working diff; unlike it, the
+            // picker keeps the CiStatus task (see `handle_picker`'s skip set),
+            // so this is not the same bucket.
             false,
         ),
         ShowConfig::DeferredToParallel {

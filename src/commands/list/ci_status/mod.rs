@@ -83,6 +83,7 @@ impl CiBranchName {
 
 // Re-export public types
 pub(crate) use cache::{CachedCiStatus, MaxPrNumber};
+pub(crate) use github::GitHubPrInfo;
 
 /// Maximum number of PRs/MRs to fetch when filtering by source repository.
 ///
