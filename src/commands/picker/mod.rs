@@ -680,25 +680,57 @@ pub fn handle_picker(
         ))
         .cmd_collector(Rc::new(RefCell::new(collector)) as Rc<RefCell<dyn CommandCollector>>)
         .bind(vec![
-            // Mode switching (1/2/3/4/5 keys change preview content)
+            // Preview-tab switching. Bare digits 1-5 are intentionally NOT
+            // bound — they flow to the query input so a number can be typed
+            // (a PR number, or digits within a branch name). Two ways to
+            // switch tabs remain:
+            //   * alt-1..alt-5 jump straight to a tab. `from_keyname` only
+            //     learns the alt-<digit> tokens via the vendor patch in
+            //     vendor/skim-tuikit/src/key.rs; without it these silently
+            //     no-op (Input::bind drops unparsable keys).
+            //   * tab / shift-tab cycle forward / backward (below).
             format!(
-                "1:execute-silent(echo 1 > {0})+refresh-preview",
+                "alt-1:execute-silent(echo 1 > {0})+refresh-preview",
                 state_path_str
             ),
             format!(
-                "2:execute-silent(echo 2 > {0})+refresh-preview",
+                "alt-2:execute-silent(echo 2 > {0})+refresh-preview",
                 state_path_str
             ),
             format!(
-                "3:execute-silent(echo 3 > {0})+refresh-preview",
+                "alt-3:execute-silent(echo 3 > {0})+refresh-preview",
                 state_path_str
             ),
             format!(
-                "4:execute-silent(echo 4 > {0})+refresh-preview",
+                "alt-4:execute-silent(echo 4 > {0})+refresh-preview",
                 state_path_str
             ),
             format!(
-                "5:execute-silent(echo 5 > {0})+refresh-preview",
+                "alt-5:execute-silent(echo 5 > {0})+refresh-preview",
+                state_path_str
+            ),
+            // Cycle tabs with tab / shift-tab. The state file holds the current
+            // digit; `tr` rotates it (1→2→3→4→5→1 forward, the reverse for
+            // btab) with wraparound, via a temp file + rename so the read and
+            // write don't race on one path. Two hard constraints shape this:
+            //   * Paren-free — skim parses the execute-silent argument up to
+            //     the first `)` (a naive `\([^\)]*?\)` regex), so `$(...)` /
+            //     `$(( ))` would truncate the command. The embedded `{0}` temp
+            //     path must stay `)`-free too (it does: `std::env::temp_dir()`
+            //     paths don't contain parens) — the alt-r/alt-N bindings share
+            //     this assumption.
+            //   * Shell-agnostic — skim runs it under the user's $SHELL
+            //     (fish/zsh/sh), so no shell-specific syntax: `tr` + `mv` are
+            //     external and behave identically everywhere.
+            // This overrides skim's default Tab (toggle-select + cursor down)
+            // and Shift-Tab (toggle-select + cursor up); `bind` replaces the
+            // chain wholesale, and both are inert in this single-select picker.
+            format!(
+                "tab:execute-silent(tr 12345 23451 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
+                state_path_str
+            ),
+            format!(
+                "btab:execute-silent(tr 12345 51234 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
                 state_path_str
             ),
             // Create new worktree with query as branch name (alt-c for "create")

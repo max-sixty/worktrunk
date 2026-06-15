@@ -1,6 +1,6 @@
 //! Integration tests for `wt step eval`
 
-use crate::common::{TestRepo, make_snapshot_cmd, repo};
+use crate::common::{TestRepo, make_snapshot_cmd, make_snapshot_cmd_with_global_flags, repo};
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 
@@ -58,12 +58,13 @@ fn test_eval_template_error(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_eval_dry_run(repo: TestRepo) {
-    assert_cmd_snapshot!(make_snapshot_cmd(
+fn test_eval_verbose(repo: TestRepo) {
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
         &repo,
         "step",
-        &["eval", "--dry-run", "{{ branch | hash_port }}"],
+        &["eval", "{{ branch | hash_port }}"],
         None,
+        &["--verbose"],
     ));
 }
 

@@ -3,9 +3,9 @@ source: tests/integration_tests/eval.rs
 info:
   program: wt
   args:
+    - "--verbose"
     - step
     - eval
-    - "--dry-run"
     - "{{ branch | hash_port }}"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
@@ -46,24 +46,28 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+12107
 
 ----- stderr -----
-branch=main
-commit=05a4a45d0b981dad5c27db59dca482836d59f89e
-cwd=_REPO_
-default_branch=main
-main_worktree=repo
-main_worktree_path=_REPO_
-primary_worktree_path=_REPO_
-remote=origin
-remote_url=../origin.git
-repo=repo
-repo_path=_REPO_
-repo_root=_REPO_
-short_commit=05a4a45
-upstream=origin/main
-worktree=_REPO_
-worktree_name=repo
-worktree_path=_REPO_
----
-Result: 12107
+[2m○[22m Available template variables
+[107m [0m [1mbranch[22m                = main
+[107m [0m [1mcommit[22m                = 05a4a45d0b981dad5c27db59dca482836d59f89e
+[107m [0m [1mcwd[22m                   = _REPO_
+[107m [0m [1mdefault_branch[22m        = main
+[107m [0m [1mmain_worktree[22m         = repo
+[107m [0m [1mmain_worktree_path[22m    = _REPO_
+[107m [0m [1mprimary_worktree_path[22m = _REPO_
+[107m [0m [1mremote[22m                = origin
+[107m [0m [1mremote_url[22m            = ../origin.git
+[107m [0m [1mrepo[22m                  = repo
+[107m [0m [1mrepo_path[22m             = _REPO_
+[107m [0m [1mrepo_root[22m             = _REPO_
+[107m [0m [1mshort_commit[22m          = 05a4a45
+[107m [0m [1mupstream[22m              = origin/main
+[107m [0m [1mworktree[22m              = _REPO_
+[107m [0m [1mworktree_name[22m         = repo
+[107m [0m [1mworktree_path[22m         = _REPO_
+[2m○[22m Expanding [1meval[22m
+[107m [0m [2m[0m[2m[32m{{[0m[2m[0m[2m branch [0m[2m[36m|[0m[2m [0m[2m[34mhash_port[0m[2m [0m[2m[32m}}[0m
+[107m [0m [2m→[22m
+[107m [0m [2m[0m[2m[34m12107[0m

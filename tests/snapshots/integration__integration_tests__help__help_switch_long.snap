@@ -182,11 +182,14 @@ The CI column shows cached PR/MR status when earlier runs ([2mwt list --full[0
  [2mEnter[0m         Switch to selected worktree               
  [2mAlt-c[0m         Create new worktree named as entered text 
  [2mEsc[0m           Cancel                                    
- [2m1[0m–[2m5[0m           Switch preview tab                        
+ [2mAlt-1[0m–[2mAlt-5[0m   Jump to a preview tab                     
+ [2mTab[0m/[2mShift-Tab[0m Cycle preview tabs forward/backward       
  [2mAlt-p[0m         Toggle preview panel                      
  [2mCtrl-u[0m/[2mCtrl-d[0m Scroll preview up/down                    
 
-[1mPreview tabs[0m — toggle with number keys:
+Plain digits go to the filter, so a branch name containing a number can be typed directly; the preview tabs move to [2mAlt[0m.
+
+[1mPreview tabs[0m — jump with [2mAlt-1[0m–[2mAlt-5[0m, or cycle with [2mTab[0m/[2mShift-Tab[0m:
 
 1. [1mHEAD±[0m — Diff of uncommitted changes
 2. [1mlog[0m — Recent commits; commits already on the default branch have dimmed hashes

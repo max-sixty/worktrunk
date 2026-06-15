@@ -167,11 +167,12 @@ mod tests {
 
         // Multi-line output, no {{ }} → cmd parameter
         assert_snapshot!(convert_dollar_console_to_terminal(
-            "```console\n$ wt step eval --dry-run 'test'\nbranch=feature/auth\nResult: feature/auth\n```"
+            "```console\n$ wt step eval -v 'test'\n○ Available template variables\n  branch = feature/auth\ntest\n```"
         ), @r#"
-        {% terminal(cmd="wt step eval --dry-run 'test'") %}
-        branch=feature/auth
-        Result: feature/auth
+        {% terminal(cmd="wt step eval -v 'test'") %}
+        ○ Available template variables
+          branch = feature/auth
+        test
         {% end %}
         "#);
 

@@ -363,7 +363,7 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
             force,
             format,
         } => step_copy_ignored(from.as_deref(), to.as_deref(), dry_run, force, format),
-        StepCommand::Eval { template, dry_run } => step_eval(&template, dry_run),
+        StepCommand::Eval { template } => step_eval(&template),
         StepCommand::ForEach { format, args } => step_for_each(args, format),
         StepCommand::Promote { branch } => {
             handle_promote(branch.as_deref()).map(|result| match result {

@@ -460,22 +460,22 @@ before dismissing:
   `add_filter` does **not** work on the `env:` block — it only substitutes on
   captured snapshot content; use a redaction.
 
-Empty-valued entries never appear: a dynamic `.env` redaction in
-`add_standard_env_redactions` (`drop_empty_env_entries`) drops them. insta-cmd
-records each `Command::env_remove` as `KEY: ""` (it serializes `get_envs()`,
-which includes removals), so a removal is indistinguishable from a deliberate
-set-to-empty — and `isolate_subprocess_env` scrubs whichever `GIT_*` /
-`WORKTRUNK_*` keys exist in the *parent* environment, so which markers would
-appear depends on the host (CI has `GIT_EDITOR`; a contributor's box might
-have `GIT_PAGER`, neither, or both). Dropping the whole class means
-regenerating on any machine produces the same block — you don't have to match
-CI's `GIT_*` environment.
+Removed vars never appear: insta-cmd (≥0.7, hence the `insta-cmd = "0.7"` dep
+floor) drops every `Command::env_remove` from the recorded block. `get_envs()`
+yields `None` for a removal and `Some("")` for a deliberate set-to-empty, and
+insta-cmd keeps only the latter — so a removed var leaves no trace, while a var
+a test sets to `""` is recorded faithfully as `KEY: ""`. This matters because
+`isolate_subprocess_env` removes whichever `GIT_*` / `WORKTRUNK_*` keys exist
+in the *parent* environment (plus `NO_COLOR` / `SHELL` / `PSModulePath`), so
+which removals happen depends on the host (CI has `GIT_EDITOR`; a contributor's
+box might have `GIT_PAGER`, neither, or both). Dropping removals at the source
+means regenerating on any machine produces the same block — you don't have to
+match CI's `GIT_*` environment.
 
-The predicate keys on the empty *value*, so a test that affirmatively sets a
-var to `""` as its subject (`test_list_config_env_override_validation_failure`
-sets `WORKTRUNK_WORKTREE_PATH=""` to trigger the validation warning) loses
-that header line too — harmless, since the test body still asserts the
-behavior and insta never compares the `env:` block.
+A var a test affirmatively sets to `""` as its subject does show up:
+`test_list_config_env_override_validation_failure` sets
+`WORKTRUNK_WORKTREE_PATH=""` to trigger the validation warning, and the block
+records it as `WORKTRUNK_WORKTREE_PATH: ""`.
 
 The `args:` block has the same property: a repo path passed as a CLI argument
 (`wt -C <root>`) is covered by the `.args[]` redaction in
