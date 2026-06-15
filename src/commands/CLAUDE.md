@@ -116,6 +116,14 @@ Keep the first line of flag and argument descriptions brief—aim for 3-6 words.
 
 The help text should be scannable. Users reading `wt switch --help` need to quickly understand what each flag does without parsing long sentences.
 
+## `--dry-run` and `-v`
+
+`--dry-run` previews the mutation a command would perform without performing it. A command that changes nothing has nothing to preview, so it carries no `--dry-run`; its inspection output belongs to `-v` instead. `wt step eval` expands a template and prints the result, so it lists the available variables under `-v`, not behind a `--dry-run`.
+
+The flags answer different questions: `--dry-run` is "what would this change?", `-v` is "what is this doing?" (template variables, expansion, echoed `$ git …` subprocesses).
+
+Both render in the gutter house style: `format_heading` for sections, `format_with_gutter` / `format_bash_with_gutter` for quoted blocks, `info_message` / `hint_message` for status lines. The `/writing-user-outputs` skill covers the helpers, the stdout/stderr split, and when to page.
+
 ## CLI Help Text Placement
 
 Help text has three levels:

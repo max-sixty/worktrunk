@@ -10,9 +10,11 @@ Landed:
 
 1. **`Output::flush` uses `write_all`** (`src/output.rs`) — fixes dropped bytes on partial writes under PTY pressure. Upstream PR: [skim-rs/skim#1056](https://github.com/skim-rs/skim/pull/1056). Drop this patch once #1056 ships in a tagged release.
 
+2. **`from_keyname` parses `alt-<digit>`** (`src/key.rs`) — adds the missing `alt-0`..`alt-9` arms (it had `alt-a`..`alt-z`), so `alt-1:…` keymaps bind. The input reader already decodes ESC-digit to `Alt(ch)`; this was a pure config-parser gap. The `wt switch` picker uses it for alt-1..alt-5 direct preview-tab jumps while leaving bare digits for the query. Matches fzf's alt-1..alt-9; clean upstream PR candidate to skim-rs/skim.
+
 In flight (dispatched 2026-04-14):
 
-2. **Symmetric smcup/rmcup in partial-height mode** — currently worked around with `SkimOptionsBuilder::no_clear_start(true)` in `src/commands/picker/mod.rs:454-457`. See [skim-rs/skim#880](https://github.com/skim-rs/skim/issues/880). Branch: `tuikit-clear-start-fix`.
+3. **Symmetric smcup/rmcup in partial-height mode** — currently worked around with `SkimOptionsBuilder::no_clear_start(true)` in `src/commands/picker/mod.rs:454-457`. See [skim-rs/skim#880](https://github.com/skim-rs/skim/issues/880). Branch: `tuikit-clear-start-fix`.
 
 ## Candidate future patches
 
