@@ -3,6 +3,43 @@ members = ["tests/helpers/wt-perf", "tests/helpers/mock-stub"]
 # Include mock-stub and wt-perf so `cargo test` builds their binaries
 default-members = [".", "tests/helpers/mock-stub", "tests/helpers/wt-perf"]
 
+# cargo-affected input→test rules. cargo-affected selects tests by Rust-line
+# coverage overlap, so a file a test reads at *runtime* (never recorded in
+# coverage) maps to no test and would slip through `cargo affected run`. Each
+# rule force-selects the owning tests when a matching path changes. `[*.metadata]`
+# is excluded from cargo-affected's fingerprint, so editing a rule is
+# cache-neutral. See https://github.com/max-sixty/cargo-affected#input-rules.
+
+# insta `.snap` snapshots are read at test time and never appear in coverage, so
+# a snapshot edit maps to no test. Route each snapshot to the binary that owns
+# it — the finest granularity available without a snapshot→test map. Integration
+# snapshots live under tests/; unit-test snapshots under src/, split across the
+# lib (`worktrunk`) and the `wt` binary (`worktrunk::bin/wt`).
+[[workspace.metadata.affected.rule]]
+globs = ["tests/**/*.snap"]
+filterset = "binary_id(=worktrunk::integration)"
+
+[[workspace.metadata.affected.rule]]
+globs = ["src/**/*.snap"]
+filterset = "binary_id(=worktrunk) | binary_id(=worktrunk::bin/wt)"
+
+# tests/integration_tests/readme_sync.rs reads these inputs at runtime (via
+# fs::read_to_string) and asserts the committed copies stay in sync: README.md,
+# docs/content markdown, the dev/*.example.toml files generated from src/llm.rs
+# and src/cli/mod.rs, the skill references, and Taskfile.yaml. A change to any of
+# them must rerun that module, which coverage cannot link to the changed file.
+[[workspace.metadata.affected.rule]]
+globs = [
+    "README.md",
+    "docs/**/*.md",
+    "dev/*.toml",
+    "src/cli/mod.rs",
+    "src/llm.rs",
+    "Taskfile.yaml",
+    "skills/**/*.md",
+]
+filterset = "test(/readme_sync/)"
+
 [package]
 name = "worktrunk"
 version = "0.58.0"
