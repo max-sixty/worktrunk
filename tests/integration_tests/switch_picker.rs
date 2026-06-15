@@ -146,9 +146,9 @@ fn exec_in_pty_with_input(
 /// - `expected_content`: a substring that must appear on screen before the input is considered
 ///   processed. Required for async preview content that lands later than the prompt update.
 ///
-/// Example: `[("\x1b[B", None), ("3", Some("diff --git"))]`
+/// Example: `[("\x1b[B", None), ("\x1b3", Some("diff --git"))]`
 /// - After Down (move cursor to the next worktree): just wait for the screen to settle.
-/// - After pressing "3" (switch to diff panel): wait until "diff --git" appears.
+/// - After Alt-3 (switch to the main…± diff panel): wait until "diff --git" appears.
 fn exec_in_pty_with_input_expectations(
     command: &str,
     args: &[&str],
@@ -647,8 +647,9 @@ fn test_switch_picker_preview_panel_uncommitted(mut repo: TestRepo) {
     .unwrap();
 
     let env_vars = repo.test_env_vars();
-    // Type "feature" to filter to just the feature worktree, press 1 for HEAD± panel
-    // Wait for "diff --git" to appear after pressing 1 - the async preview can be slow under congestion
+    // Select `feature`, then Alt-1 for the HEAD± panel (bare digits filter; the
+    // preview tabs moved to Alt). Wait for "diff --git" — the async preview can
+    // be slow under congestion.
     let result = exec_in_pty_capture_before_abort(
         wt_bin().to_str().unwrap(),
         &["switch"],
@@ -663,8 +664,8 @@ fn test_switch_picker_preview_panel_uncommitted(mut repo: TestRepo) {
             // The list now shows both worktrees with the cursor on `feature`; the
             // panel-content gate below still fails loudly if the wrong row is
             // selected (the snapshot would not match `feature`'s preview).
-            ("\x1b[B", None),          // Down: move cursor to `feature`
-            ("1", Some("diff --git")), // Wait for diff to load
+            ("\x1b[B", None),              // Down: move cursor to `feature`
+            ("\x1b1", Some("diff --git")), // Alt-1: HEAD± panel; wait for diff
         ],
     );
 
@@ -713,8 +714,8 @@ fn test_switch_picker_preview_panel_log(mut repo: TestRepo) {
     }
 
     let env_vars = repo.test_env_vars();
-    // Type "feature" to filter, press 2 for log panel
-    // Wait for commit log format "* [hash]" to appear - the async preview can be slow under congestion
+    // Select `feature`, then Alt-2 for the log panel. Wait for commit log
+    // format "* [hash]" — the async preview can be slow under congestion.
     let result = exec_in_pty_capture_before_abort(
         wt_bin().to_str().unwrap(),
         &["switch"],
@@ -723,8 +724,8 @@ fn test_switch_picker_preview_panel_log(mut repo: TestRepo) {
         &[
             // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
             // for the matcher-lag rationale.
-            ("\x1b[B", None),  // Down: move cursor to `feature`
-            ("2", Some("* ")), // Wait for git log output
+            ("\x1b[B", None),      // Down: move cursor to `feature`
+            ("\x1b2", Some("* ")), // Alt-2: log panel; wait for git log output
         ],
     );
 
@@ -806,8 +807,8 @@ fn test_new_feature() {
     assert!(output.status.success(), "Failed to commit");
 
     let env_vars = repo.test_env_vars();
-    // Type "feature" to filter, press 3 for main…± panel
-    // Wait for "diff --git" to appear after pressing 3 - the async preview can be slow under congestion
+    // Select `feature`, then Alt-3 for the main…± panel. Wait for "diff --git"
+    // — the async preview can be slow under congestion.
     let result = exec_in_pty_capture_before_abort(
         wt_bin().to_str().unwrap(),
         &["switch"],
@@ -816,8 +817,8 @@ fn test_new_feature() {
         &[
             // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
             // for the matcher-lag rationale.
-            ("\x1b[B", None),          // Down: move cursor to `feature`
-            ("3", Some("diff --git")), // Wait for diff to load
+            ("\x1b[B", None),              // Down: move cursor to `feature`
+            ("\x1b3", Some("diff --git")), // Alt-3: main…± panel; wait for diff
         ],
     );
 
@@ -860,8 +861,8 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
     assert!(output.status.success(), "Failed to commit");
 
     let env_vars = repo.test_env_vars();
-    // Type "feature" to filter, press 5 for summary panel
-    // Wait for "commit.generation" hint since no LLM is configured
+    // Select `feature`, then Alt-5 for the summary panel. Wait for the
+    // "commit.generation" config hint since no LLM is configured.
     let result = exec_in_pty_capture_before_abort(
         wt_bin().to_str().unwrap(),
         &["switch"],
@@ -870,8 +871,8 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
         &[
             // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
             // for the matcher-lag rationale.
-            ("\x1b[B", None),         // Down: move cursor to `feature`
-            ("5", Some("Configure")), // Wait for config hint
+            ("\x1b[B", None),             // Down: move cursor to `feature`
+            ("\x1b5", Some("Configure")), // Alt-5: summary panel; wait for hint
         ],
     );
 
@@ -883,6 +884,169 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
         assert_snapshot!("switch_picker_preview_summary_list", list);
         assert_snapshot!("switch_picker_preview_summary_preview", preview);
     });
+}
+
+#[rstest]
+fn test_switch_picker_preview_cycle_tab_forward(mut repo: TestRepo) {
+    // Tab cycles the preview tab forward. From the default HEAD± tab (1), one
+    // Tab lands on the log tab (2), proving the `tr 12345 23451` rotation in the
+    // keybinding runs under the real shell. (alt-1..alt-5 jump directly; the
+    // panel tests above cover those — this covers the cycle path.)
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+    let feature_path = repo.add_worktree("feature");
+
+    // Commit a file so the log tab has content; the worktree stays clean, so the
+    // HEAD± tab shows no diff and the "* " log-graph marker is unambiguous.
+    std::fs::write(feature_path.join("file.txt"), "content\n").unwrap();
+    let add = repo
+        .git_command()
+        .args(["-C", feature_path.to_str().unwrap(), "add", "."])
+        .run()
+        .unwrap();
+    assert!(add.status.success(), "Failed to add file");
+    let commit = repo
+        .git_command()
+        .args([
+            "-C",
+            feature_path.to_str().unwrap(),
+            "commit",
+            "-m",
+            "Commit for tab cycle",
+        ])
+        .run()
+        .unwrap();
+    assert!(commit.status.success(), "Failed to commit");
+
+    let env_vars = repo.test_env_vars();
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
+            // for the matcher-lag rationale.
+            ("\x1b[B", None),   // Down: move cursor to `feature`
+            ("\t", Some("* ")), // Tab: HEAD± → log; wait for git log output
+        ],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+
+    let (_list, preview) = result.panels();
+    assert!(
+        preview.contains("* "),
+        "Tab should advance the preview to the log tab; preview was:\n{preview}"
+    );
+}
+
+#[rstest]
+fn test_switch_picker_preview_cycle_tab_forward_wraps(mut repo: TestRepo) {
+    // Forward cycling wraps 5 → 1: from the summary tab (reached via Alt-5),
+    // one Tab returns to the HEAD± tab. This covers the `5 → 1` end of the
+    // `tr 12345 23451` map, the half most easily typo'd away.
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+    let feature_path = repo.add_worktree("feature");
+
+    // Commit so the worktree is clean: the HEAD± tab then reads "no uncommitted
+    // changes", a message unique to tab 1 — so seeing it proves the wrap landed
+    // there and not on some other tab.
+    std::fs::write(feature_path.join("file.txt"), "content\n").unwrap();
+    let add = repo
+        .git_command()
+        .args(["-C", feature_path.to_str().unwrap(), "add", "."])
+        .run()
+        .unwrap();
+    assert!(add.status.success(), "Failed to add file");
+    let commit = repo
+        .git_command()
+        .args([
+            "-C",
+            feature_path.to_str().unwrap(),
+            "commit",
+            "-m",
+            "Commit for forward-wrap cycle",
+        ])
+        .run()
+        .unwrap();
+    assert!(commit.status.success(), "Failed to commit");
+
+    let env_vars = repo.test_env_vars();
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
+            // for the matcher-lag rationale.
+            ("\x1b[B", None),                       // Down: move cursor to `feature`
+            ("\x1b5", Some("Configure")),           // Alt-5: jump to summary (5)
+            ("\t", Some("no uncommitted changes")), // Tab: wrap 5 → HEAD± (1)
+        ],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+
+    let (_list, preview) = result.panels();
+    assert!(
+        preview.contains("no uncommitted changes"),
+        "Tab from the summary tab should wrap to the HEAD± tab; preview was:\n{preview}"
+    );
+}
+
+#[rstest]
+fn test_switch_picker_preview_cycle_shift_tab_wraps(mut repo: TestRepo) {
+    // Shift-Tab cycles backward and wraps: from the default HEAD± tab (1), one
+    // Shift-Tab lands on the summary tab (5), exercising the reverse rotation
+    // `tr 12345 51234` including the 1 → 5 wraparound.
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+    let feature_path = repo.add_worktree("feature");
+
+    std::fs::write(feature_path.join("new.txt"), "content\n").unwrap();
+    let add = repo
+        .git_command()
+        .args(["-C", feature_path.to_str().unwrap(), "add", "."])
+        .run()
+        .unwrap();
+    assert!(add.status.success(), "Failed to add file");
+    let commit = repo
+        .git_command()
+        .args([
+            "-C",
+            feature_path.to_str().unwrap(),
+            "commit",
+            "-m",
+            "Add new file",
+        ])
+        .run()
+        .unwrap();
+    assert!(commit.status.success(), "Failed to commit");
+
+    let env_vars = repo.test_env_vars();
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
+            // for the matcher-lag rationale.
+            ("\x1b[B", None),              // Down: move cursor to `feature`
+            ("\x1b[Z", Some("Configure")), // Shift-Tab: HEAD± → summary (wrap)
+        ],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+
+    let (_list, preview) = result.panels();
+    assert!(
+        preview.contains("Configure"),
+        "Shift-Tab should wrap to the summary tab; preview was:\n{preview}"
+    );
 }
 
 #[rstest]
