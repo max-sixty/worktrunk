@@ -182,6 +182,11 @@ fn test_complete_outside_git_repo() {
 
 #[rstest]
 fn test_complete_empty_repo() {
+    // Regression for #3094: in a fresh `git init`'d repo, the unborn
+    // default branch exists only as a `symbolic-ref` target, not under
+    // `refs/heads/`. `branches_for_completion()` falls back to
+    // `git worktree list --porcelain` so the primary worktree's branch
+    // still surfaces.
     let repo = TestRepo::empty();
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
@@ -190,12 +195,10 @@ fn test_complete_empty_repo() {
         let output = repo.completion_cmd(&["wt", "switch", ""]).output().unwrap();
         assert!(output.status.success());
         let stdout = String::from_utf8_lossy(&output.stdout);
+        let values = value_suggestions(&stdout);
         assert!(
-            stdout
-                .lines()
-                .filter(|line| !line.trim().is_empty())
-                .all(|line| line.starts_with('-')),
-            "expected only option suggestions in empty repo, got:\n{stdout}"
+            values.contains(&"main"),
+            "expected `main` to appear as a completion candidate in an empty repo, got:\n{stdout}"
         );
     });
 }
