@@ -70,12 +70,15 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 | `Enter` | Switch to selected worktree |
 | `Alt-c` | Create new worktree named as entered text |
 | `Esc` | Cancel |
-| `1`–`5` | Switch preview tab |
+| `Alt-1`–`Alt-5` | Jump to a preview tab |
+| `Tab`/`Shift-Tab` | Cycle preview tabs forward/backward |
 | `Alt-p` | Toggle preview panel |
 | `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
 <!-- Alt-r (remove worktree) works but is omitted: cursor resets after skim reload (#1695). Add once fixed. See #1881. -->
 
-**Preview tabs** — toggle with number keys:
+Plain digits go to the filter, so a branch name containing a number can be typed directly; the preview tabs move to `Alt`.
+
+**Preview tabs** — jump with `Alt-1`–`Alt-5`, or cycle with `Tab`/`Shift-Tab`:
 
 1. **HEAD±** — Diff of uncommitted changes
 2. **log** — Recent commits; commits already on the default branch have dimmed hashes

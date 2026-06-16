@@ -2,4 +2,4 @@
 source: src/commands/picker/items.rs
 expression: "WorktreeSkimItem::loading_placeholder(mode)"
 ---
-○ Generating summary. Press 5 again to refresh.
+○ Generating summary. Press alt-5 again to refresh.

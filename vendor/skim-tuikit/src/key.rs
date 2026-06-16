@@ -186,6 +186,21 @@ pub fn from_keyname(keyname: &str) -> Option<Key> {
         "alt-z" => Some(Alt('z')),
         "alt-/" => Some(Alt('/')),
 
+        // Alt-digit. The input reader already decodes ESC-<digit> to Alt(ch)
+        // via the generic `ch => Alt(ch)` arm in `parse_alt` (input.rs); these
+        // arms make the keymap-config parser accept the same tokens, matching
+        // fzf's alt-1..alt-9 bindings. (worktrunk vendor patch.)
+        "alt-0" => Some(Alt('0')),
+        "alt-1" => Some(Alt('1')),
+        "alt-2" => Some(Alt('2')),
+        "alt-3" => Some(Alt('3')),
+        "alt-4" => Some(Alt('4')),
+        "alt-5" => Some(Alt('5')),
+        "alt-6" => Some(Alt('6')),
+        "alt-7" => Some(Alt('7')),
+        "alt-8" => Some(Alt('8')),
+        "alt-9" => Some(Alt('9')),
+
         "shift-a" => Some(Char('A')),
         "shift-b" => Some(Char('B')),
         "shift-c" => Some(Char('C')),
@@ -279,5 +294,14 @@ mod test {
 
         // A correct way to refer to an uppercase char.
         assert_eq!(from_keyname("shift-a").unwrap(), Char('A'));
+    }
+
+    #[test]
+    fn bind_alt_digit() {
+        // Alt-digit tokens resolve to the same Alt(ch) the input reader emits
+        // for ESC-<digit>, so `alt-1:...` keymaps bind (worktrunk vendor patch).
+        assert_eq!(from_keyname("alt-0").unwrap(), Alt('0'));
+        assert_eq!(from_keyname("alt-5").unwrap(), Alt('5'));
+        assert_eq!(from_keyname("alt-9").unwrap(), Alt('9'));
     }
 }
