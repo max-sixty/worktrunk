@@ -162,7 +162,10 @@ impl UserConfig {
                 .generation
                 .get_or_insert_with(CommitGenerationConfig::default);
 
-            gen_config.command = Some(command.clone());
+            if gen_config.command.as_ref() == Some(&command) {
+                return false;
+            }
+            gen_config.command = Some(command);
             true
         })
     }

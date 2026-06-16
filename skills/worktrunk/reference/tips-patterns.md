@@ -108,6 +108,29 @@ The connection string is accessible anywhere — not just in hooks:
 DATABASE_URL=$(wt config state vars get db_url) npm start
 ```
 
+## Per-worktree env vars
+
+To scope environment variables to a worktree — a tool's package path, a profile, an API endpoint — use a directory environment manager like [direnv](https://direnv.net) or [mise](https://mise.jdx.dev). Both hook the shell prompt, so they activate on the `cd` that `wt switch` already performs — no worktrunk configuration needed. Commit the config at the repo root and every worktree gets its own copy, with paths resolving relative to that worktree.
+
+**direnv** — commit `.envrc` at the repo root:
+
+```sh
+export MY_PACKAGES_PATH="$PWD/.packages"
+```
+
+Run `direnv allow` once per worktree to trust the file ([getting started](https://direnv.net/#getting-started)). After that, switching into a worktree loads the env; switching out unloads it.
+
+**mise** — commit `mise.toml` at the repo root:
+
+```toml
+[env]
+MY_PACKAGES_PATH = "{{ config_root }}/.packages"
+```
+
+`{{ config_root }}` is the project root mise resolves relative paths against ([env directives](https://mise.jdx.dev/environments/)) — the worktree root, not the primary worktree. mise also covers Windows / PowerShell, which direnv doesn't natively.
+
+Both set real environment variables in the shell session, so every child process inherits them — hooks, build tools, subshells — without the `--execute` workaround. Each new worktree is a new path, so it needs its own one-time trust step (`direnv allow` / `mise trust`); worktrunk deliberately doesn't bypass that prompt, the same safety reasoning behind [disabling `--execute` in project alias and hook bodies](https://github.com/max-sixty/worktrunk/issues/2101).
+
 ## Eliminate cold starts
 
 Use [`wt step copy-ignored`](https://worktrunk.dev/step/#wt-step-copy-ignored) to copy gitignored files (caches, dependencies, `.env`) between worktrees:
