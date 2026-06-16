@@ -38,9 +38,9 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
 
 [1m[32mArguments:[0m
   [36m[BRANCH][0m
-          Branch name or shortcut[0m
+          Branch name, shortcut, or PR/MR URL[0m
           
-          Opens interactive picker if omitted. Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub PR), 'mr:{N}' (GitLab MR)[0m
+          Opens interactive picker if omitted. Shortcuts: [1m^[0m (default branch), [1m-[0m (previous), [1m@[0m (current), [1mpr:{N}[0m (GitHub PR), [1mmr:{N}[0m (GitLab MR)[0m
 
   [36m[EXECUTE_ARGS]...[0m
           Additional arguments for --execute command (after --)[0m
@@ -211,15 +211,11 @@ The [2mpr:<number>[0m / [2mmr:<number>[0m shortcut and the PR/MR's web URL b
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch mr:101                                  # GitLab MR !101[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch https://gitlab.com/owner/repo/-/merge_requests/101  # ...the same MR, by URL[0m
 
-Both work anywhere a branch is accepted, including [2m--base[0m.
+Both work anywhere a branch is accepted, including [2m--base[0m. The [2m--create[0m flag cannot be used with a PR/MR reference since the branch already exists.
 
-Requires [2mgh[0m (GitHub) or [2mglab[0m (GitLab) CLI to be installed and authenticated. The [2m--create[0m flag cannot be used with a PR/MR reference since the branch already exists.
+If the PR or MR is on a fork, the local branch uses its branch name directly, so [2mgit push[0m works normally. A pre-existing local branch with that name tracking something else requires renaming first.
 
-[1mForks:[0m The local branch uses the PR/MR's branch name directly (e.g., [2mfeature-fix[0m), so [2mgit push[0m works normally. If a local branch with that name already exists tracking something else, rename it first.
-
-[1mGitea (experimental):[0m [2mpr:[0m is also compatible with Gitea via the [2mtea[0m CLI. Set [2m[forge] platform = "gitea"[0m in [2m.config/wt.toml[0m to opt in; worktrunk also auto-detects Gitea when the remote host contains [2mgitea[0m or when [2mtea login add[0m has been run for the host.
-
-[1mAzure DevOps (experimental):[0m [2mpr:[0m is also compatible with Azure DevOps via the [2maz[0m CLI (with the [2mazure-devops[0m extension). Set [2m[forge] platform = "azure-devops"[0m in [2m.config/wt.toml[0m to opt in; worktrunk also auto-detects Azure DevOps from [2mdev.azure.com[0m and [2m*.visualstudio.com[0m remotes.
+Requires [2mgh[0m (GitHub), [2mglab[0m (GitLab), or an equivalent CLI installed and authenticated; see forge platform for Gitea, Azure DevOps, and other supported platforms.
 
 [1m[32mWhen wt switch fails[0m
 
