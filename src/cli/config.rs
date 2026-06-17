@@ -154,12 +154,11 @@ Detects various forms of the integration pattern regardless of:
     )]
     ShowTheme,
 
-    /// Generate static shell completions for package managers
+    /// Generate shell completions for package managers
     ///
-    /// Outputs static completion scripts for Homebrew and other package managers.
-    /// Only completes commands and flags, not branch names.
-    /// This is predominantly for package managers. Users should run
-    /// `wt config shell install` instead.
+    /// Outputs a completion registration that calls the binary at TAB time, so branch and
+    /// worktree names complete from a plain package install. For interactive setup, run
+    /// `wt config shell install` instead. It also enables directory changing on switch.
     #[command(hide = true)]
     Completions {
         /// Shell to generate completions for

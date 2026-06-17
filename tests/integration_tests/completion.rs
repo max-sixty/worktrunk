@@ -1438,13 +1438,15 @@ test = "cargo test"
     }
 }
 
-/// Test static shell completions command for package managers.
+/// Test shell completions command for package managers.
 ///
-/// The `wt config shell completions <shell>` command outputs static completion
-/// scripts suitable for package manager integration (e.g., Homebrew's
-/// `generate_completions_from_executable`).
+/// The `wt config shell completions <shell>` command outputs completion scripts
+/// suitable for package manager integration (e.g., Homebrew's
+/// `generate_completions_from_executable`). For bash and zsh the output is a
+/// *dynamic* registration that calls the binary at TAB time, so branch and
+/// worktree names complete on a plain package install.
 #[rstest]
-fn test_static_completions_for_all_shells() {
+fn test_completions_for_all_shells() {
     // Test each supported shell produces valid output
     for shell in ["bash", "fish", "nu", "zsh", "powershell"] {
         let output = wt_command()
@@ -1471,17 +1473,90 @@ fn test_static_completions_for_all_shells() {
                     stdout.contains("complete") || stdout.contains("_wt"),
                     "{shell}: should contain bash completion markers"
                 );
+                // Dynamic registration: clap's runtime completer function plus a
+                // `complete -F` binding that calls the binary at TAB time.
+                assert!(
+                    stdout.contains("_clap_complete_wt"),
+                    "{shell}: should contain clap's dynamic completer function, got:\n{stdout}"
+                );
+                assert!(
+                    stdout.contains("complete -") && stdout.contains("-F _clap_complete_wt wt"),
+                    "{shell}: should register the dynamic completer via complete -F, got:\n{stdout}"
+                );
+                // The old static output built `COMPREPLY` from a hardcoded word list via
+                // `compgen`. Dynamic output asks the binary for candidates instead.
+                assert!(
+                    !stdout.contains("compgen"),
+                    "{shell}: should not contain static compgen boilerplate, got:\n{stdout}"
+                );
             }
             "fish" => {
                 assert!(
                     stdout.contains("complete") && stdout.contains("wt"),
                     "{shell}: should contain fish completion markers"
                 );
+                // Dynamic registration: a single `complete --command wt` whose argument
+                // source calls the binary at TAB time. The static output instead listed
+                // subcommands via `-n`/`__fish_*` predicates.
+                assert!(
+                    stdout.contains("--command wt") && stdout.contains("COMPLETE=fish"),
+                    "{shell}: should call the binary at TAB time, got:\n{stdout}"
+                );
+                assert!(
+                    !stdout.contains("__fish_"),
+                    "{shell}: should not contain static __fish_ predicate boilerplate, got:\n{stdout}"
+                );
             }
             "zsh" => {
                 assert!(
                     stdout.contains("#compdef") || stdout.contains("_wt"),
                     "{shell}: should contain zsh completion markers"
+                );
+                // Dynamic registration: the `#compdef` autoload marker, clap's runtime
+                // completer that calls the binary at TAB time, and the autoload guard.
+                assert!(
+                    stdout.contains("#compdef wt"),
+                    "{shell}: should contain the #compdef autoload marker, got:\n{stdout}"
+                );
+                assert!(
+                    stdout.contains(r#"COMPLETE="zsh""#)
+                        && stdout.contains(r#"wt -- "${words[@]}""#),
+                    "{shell}: should call the binary at TAB time, got:\n{stdout}"
+                );
+                // Dual-mode guard: autoloaded from fpath -> complete directly; sourced -> compdef.
+                // `funcstack[1]` is the discriminating token (absent from clap's raw output);
+                // the `compdef` must sit *inside* the guard (after the funcstack check), not as
+                // clap's bare trailing line. That ordering is what proves the transform applied.
+                let funcstack_pos = stdout
+                    .find("funcstack[1]")
+                    .expect("dynamic zsh registration should contain the autoload guard");
+                let compdef_pos = stdout
+                    .find("compdef _clap_dynamic_completer_wt wt")
+                    .expect("guard should register via compdef when sourced");
+                assert!(
+                    funcstack_pos < compdef_pos,
+                    "{shell}: compdef must sit inside the guard, after the funcstack check, got:\n{stdout}"
+                );
+                // Single-column display zstyles, matched to `templates/zsh.zsh`.
+                assert!(
+                    stdout.contains("list-max 1") && stdout.contains("list-grouped false"),
+                    "{shell}: should append the single-column display zstyles, got:\n{stdout}"
+                );
+                // The zstyles must precede the guard. In autoload mode the whole file body
+                // runs as `_wt` on every completion, so setting the styles before the
+                // completer call is what makes single-column listing apply on the FIRST TAB.
+                // Regression guard for the bug where the zstyles followed the guard.
+                let zstyle_pos = stdout.find("list-max 1").unwrap();
+                let guard_pos = stdout.find("funcstack[1]").unwrap();
+                assert!(
+                    zstyle_pos < guard_pos,
+                    "{shell}: display zstyles must come before the autoload guard, got:\n{stdout}"
+                );
+                // The old static output drove completion from `_arguments`. Dynamic output
+                // builds the candidate list from the binary instead.
+                assert!(
+                    !stdout.contains("_arguments"),
+                    "{shell}: should not contain static _arguments boilerplate, got:\n{stdout}"
                 );
             }
             "nu" => {
@@ -1500,6 +1575,12 @@ fn test_static_completions_for_all_shells() {
                     stdout.contains("Register-ArgumentCompleter")
                         || stdout.contains("$scriptBlock"),
                     "{shell}: should contain PowerShell completion markers"
+                );
+                // Dynamic registration: the completer invokes the binary at TAB time
+                // (sets COMPLETE and calls `wt`), rather than embedding a static word list.
+                assert!(
+                    stdout.contains(r#"COMPLETE = "powershell""#) && stdout.contains("wt"),
+                    "{shell}: should call the binary at TAB time, got:\n{stdout}"
                 );
             }
             _ => {}
