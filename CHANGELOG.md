@@ -8,7 +8,7 @@
 
 - **Squash templates use `commit_details` instead of `commits`**: The squash commit-message template's `{{ commits }}` variable (commit subjects) is deprecated in favor of `{{ commit_details }}`, which renders as the bare subject when printed directly and also exposes `.subject` and `.body`. `wt config update` migrates `commits` to `commit_details` as a plain rename. ([#2985](https://github.com/max-sixty/worktrunk/pull/2985))
 
-- **`wt step eval -v` lists template variables**: `wt step eval -v` now prints the available template variables on stderr in the gutter style, above the `{{ template }} → result` expansion it already showed. The result still goes to stdout, so `$(wt step eval …)` is unchanged. Since `eval` mutates nothing and is experimental, its `--dry-run` flag (which dumped the raw variable context) is removed rather than deprecated. ([#3078](https://github.com/max-sixty/worktrunk/pull/3078))
+- **`wt step eval -v` lists template variables**: `wt step eval -v` now prints the available template variables on stderr in the gutter style, above the template-expansion view. That expansion (also shown by `wt switch -v`, hooks, aliases, and `wt -v list`) renders the template and its result as separate labeled `source` / `result` blocks rather than a shared gutter. The result still goes to stdout, so `$(wt step eval …)` is unchanged. Since `eval` mutates nothing and is experimental, its `--dry-run` flag (which dumped the raw variable context) is removed rather than deprecated. ([#3078](https://github.com/max-sixty/worktrunk/pull/3078), [#3099](https://github.com/max-sixty/worktrunk/pull/3099))
 
 ### Fixed
 
