@@ -452,6 +452,12 @@ Note: This command is experimental and may change in future versions.
     Eval {
         /// Template expression to evaluate
         template: String,
+
+        /// Output format
+        ///
+        /// JSON prints `{name, template, result}` to stdout instead of the bare result.
+        #[arg(long, default_value = "text", help_heading = "Automation")]
+        format: crate::cli::SwitchFormat,
     },
 
     /// \[experimental\] Run command in each worktree
