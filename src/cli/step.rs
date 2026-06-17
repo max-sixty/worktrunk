@@ -658,9 +658,17 @@ The main worktree can't be moved with `git worktree move`. Instead, relocate
 switches it to the default branch and creates a new linked worktree at the
 expected path. Untracked and gitignored files remain at the original location.
 
+## Dirty worktrees
+
+Linked worktrees with uncommitted changes are relocated as-is — `git worktree
+move` carries modified-tracked and untracked files along. The main worktree
+is the exception: its relocation runs `git checkout <default-branch>`, which
+refuses to switch over uncommitted changes, so a dirty main worktree is
+skipped unless `--commit` is passed.
+
 ## Skipped worktrees
 
-- **Dirty** (without `--commit`) — use `--commit` to auto-commit first
+- **Dirty main worktree** (without `--commit`) — use `--commit` to auto-commit first
 - **Locked** — unlock with `git worktree unlock`
 - **Target blocked** (without `--clobber`) — use `--clobber` to backup blocker
 - **Detached HEAD** — no branch to compute expected path

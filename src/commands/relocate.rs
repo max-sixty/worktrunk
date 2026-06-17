@@ -260,9 +260,19 @@ pub fn validate_candidates(
             continue;
         }
 
-        // Check dirty
+        let is_main = paths_match(&candidate.wt.path, repo_path);
+
+        // Check dirty.
+        //
+        // `git worktree move` carries modified-tracked and untracked files
+        // along with the worktree, so for linked worktrees we don't need to
+        // require a clean state. The main worktree is different: it can't be
+        // moved with `git worktree move`, and the fallback path runs
+        // `git checkout <default-branch>` which refuses to switch over
+        // uncommitted changes — so we still skip dirty main worktrees unless
+        // `--commit` was passed.
         let worktree = repo.worktree_at(&candidate.wt.path);
-        if worktree.is_dirty()? {
+        if worktree.is_dirty()? && (auto_commit || is_main) {
             if auto_commit {
                 eprintln!(
                     "{}",
@@ -282,9 +292,12 @@ pub fn validate_candidates(
                     StageMode::None, // already staged above
                 )?;
             } else {
+                // is_main without --commit
                 eprintln!(
                     "{}",
-                    warning_message(cformat!("Skipping <bold>{branch}</> (uncommitted changes)"))
+                    warning_message(cformat!(
+                        "Skipping <bold>{branch}</> (uncommitted changes in main worktree)"
+                    ))
                 );
                 eprintln!(
                     "{}",
@@ -300,7 +313,6 @@ pub fn validate_candidates(
             }
         }
 
-        let is_main = paths_match(&candidate.wt.path, repo_path);
         validated.push(ValidatedCandidate {
             wt: candidate.wt,
             expected_path: candidate.expected_path,
