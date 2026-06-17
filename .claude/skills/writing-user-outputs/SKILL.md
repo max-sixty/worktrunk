@@ -925,20 +925,26 @@ See `src/git/error.rs` for examples of this pattern in `GitError` Display impls.
 **`-v` (verbose):** User-facing diagnostic output. Must follow these guidelines.
 Shows template expansions and other details users might need for debugging config.
 
-Format for template expansion:
+Template expansion shows the source template and the rendered result as two
+labeled blocks. Each block is a bash gutter (dim + syntax highlighting via
+`format_bash_with_gutter`) under its own info header (`○` symbol, bold name,
+then `source` or `result`):
 ```
-○ Expanding name
- ┃ template (bash-highlighted)
- ┃ → (dim)
- ┃ result (bash-highlighted)
+○ name source
+ ┃ template
+○ name result
+ ┃ result
 ```
 
-- **Info message** for header (`○` symbol, "Expanding" + bold name)
-- **Bash gutter** for template and result (dim + syntax highlighting via
-  `format_bash_with_gutter`)
-- **Plain gutter** for dim `→` separator (bypasses syntax highlighter)
-- Template and result are always on separate gutter blocks from the arrow,
-  because the `→` can't go through the bash syntax highlighter
+The two headers carry the input/output distinction, so both blocks share the
+same gutter and the content always starts at the gutter's column 2 (no marker
+glyph or extra indent inside the gutter). Multi-line templates and results
+follow the same shape, one gutter line per source line.
+
+`expand_template` emits no trailing blank, so a standalone caller adds one to
+separate the block from what follows (`wt step eval` does this after the view).
+In a command pipeline the executor already separates the block from the next
+output, so the expansion adds nothing.
 
 **`-vv` (debug):** Developer-facing logging output. MAY violate these guidelines.
 Uses `log::debug!()` with structured format for deep debugging. Not intended for
