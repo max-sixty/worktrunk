@@ -31,7 +31,12 @@ metadata:
     ```bash
     git reset --soft HEAD~1 && git add -A && git commit -m "Release vX.Y.Z"
     ```
-11. **Merge to main**: `/gpk` — opens a PR, waits for CI, merges via PR (preserves worktree)
+11. **Re-check `main` for drift, then merge**: A long release session lets `main` advance after the changelog was written. `/gpk` squash-merges onto current `main`, so the *code* stays complete, but the changelog silently misses anything that landed in between (a closely-related change is the easy miss — e.g. a follow-up that reworks a feature this release already documents). Before merging, re-fetch and diff against the `main` tip you reviewed in step 4:
+    ```bash
+    git fetch origin
+    git log <step-4-main-tip>..origin/main --oneline   # commits that landed since the changelog was written
+    ```
+    Fold any user-facing commit into the CHANGELOG and amend the release commit before continuing. Then `/gpk` — opens a PR, waits for CI, merges via PR (preserves worktree).
 12. **Tag the merge commit and push**: After `/gpk` squash-merges, the local branch HEAD is not the commit on main. Tag the PR's merge commit explicitly so the tag is reachable from main:
     ```bash
     MERGE_SHA=$(gh pr view --json mergeCommit --jq '.mergeCommit.oid')
