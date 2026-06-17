@@ -93,13 +93,15 @@ format_heading("USER CONFIG", Some("@ ~/.config/wt.toml"))
 
 ## stdout vs stderr
 
-**Decision principle:** stdout carries the command's *answer*; stderr carries *narration* about producing it.
+**Decision principle:** stdout carries the command's *answer*; stderr carries *narration* about producing it. The discriminating question is answer-vs-narration, not audience — `wt list` is "for the user" yet belongs on stdout because it *is* the answer. "Is this a message to the user?" doesn't discriminate, because nearly all output is.
 
 - **stdout** → the answer, in whatever format the user selected. Data (tables, JSON, shell code, an expanded template) and `--dry-run` previews both qualify: a preview is the whole answer when nothing mutates. Human-formatted output belongs here too. Color strips automatically on a pipe (anstream), so `wt list | grep` stays safe.
 - **stderr** → narration about doing it: progress, success/warning/error messages, hints, interactive prompts, and `-v`/`-vv` diagnostics.
 - **directive file** → shell commands executed after wt exits (cd, exec).
 
-A `--dry-run` answers "what would this do?", so its preview goes to stdout. It pages like any long answer (`wt step commit --dry-run`) and shares the stream with the command's `--format=json` form: `wt step prune --dry-run` prints the same removal plan as human text or as json, both to stdout. One case stays on stderr: a preview shown *inside* an interactive prompt, such as the `?` re-preview during `wt config shell install`, is mid-prompt narration.
+The same line can flip streams between modes. `wt config shell uninstall` deletes the file, so `✓ Removed … @ ~/.zshrc` only narrates a side effect that already happened → stderr (the edited file is the answer; stdout is empty). `wt config shell uninstall --dry-run` mutates nothing, so `○ Will remove … @ ~/.zshrc` is the only answer there is → stdout. What flips isn't the wording, it's whether a side effect exists to be the answer.
+
+For a split preview, the `--format=json` payload is the arbiter: a line json would carry goes to stdout, narration json omits stays on stderr. `wt step prune --dry-run` puts the removal plan on stdout (the same plan json emits) but keeps "Skipped young-branch (younger than 1d)" and "nothing to remove" on stderr. One case ignores all this: a preview shown *inside* an interactive prompt, such as the `?` re-preview during `wt config shell install`, is mid-prompt narration → stderr.
 
 Examples:
 - `wt list`, `wt config show` → human table/dump or `--format=json`, both to stdout
