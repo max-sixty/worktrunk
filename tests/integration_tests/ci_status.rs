@@ -519,8 +519,11 @@ platform = "invalid_platform"
     repo.setup_mock_gh_with_ci_data(&pr_json, "[]");
 
     let mut settings = setup_snapshot_settings(&repo);
-    // Normalize worker thread ID prefix in log output (e.g., [n], [z], [A] -> [W])
-    settings.add_filter(r"\[[a-zA-Z]\]", "[W]");
+    // Normalize worker thread ID prefix in log output (e.g., [n], [z], [A] -> [W]).
+    // `label_for_thread_index` emits `0`, `a`-`z`, `A`-`Z`, and `?` (the latter
+    // for thread IDs above 52, which appear on high-core machines where the
+    // rayon pools span enough threads); the filter covers the whole alphabet.
+    settings.add_filter(r"\[[a-zA-Z0-9?]\]", "[W]");
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
         repo.configure_mock_commands(&mut cmd);
