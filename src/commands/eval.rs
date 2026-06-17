@@ -25,7 +25,7 @@ const EVAL_NAME: &str = "eval";
 ///
 /// `eval` mutates nothing, so it has no `--dry-run`. Variable discovery lives
 /// in the verbose lane instead: `-v` lists the available template variables on
-/// stderr, above the `{{ template }} → result` expansion view that
+/// stderr, above the labeled `source` / `result` expansion view that
 /// `expand_template` renders at `-v`. The `-v` lane writes to stderr, so it
 /// composes with either output format.
 pub fn step_eval(template: &str, format: SwitchFormat) -> anyhow::Result<()> {
@@ -61,6 +61,11 @@ pub fn step_eval(template: &str, format: SwitchFormat) -> anyhow::Result<()> {
         .collect();
 
     let result = expand_template(template, &vars, ShellEscapeMode::Literal, &repo, EVAL_NAME)?;
+    // `expand_template` emitted the `source` / `result` view to stderr under
+    // `-v`; a trailing blank separates it from the result printed below.
+    if verbosity() >= 1 {
+        eprintln!();
+    }
 
     match format {
         SwitchFormat::Text => println!("{result}"),

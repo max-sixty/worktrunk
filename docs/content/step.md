@@ -540,10 +540,11 @@ List the available template variables with `-v` (alongside the expansion, on std
 ○ Available template variables
   branch        = feature/auth-oauth2
   worktree_path = /home/user/projects/myapp-feature-auth-oauth2
-○ Expanding eval
+○ eval source
   {{ branch }}
-  →
+○ eval result
   feature/auth-oauth2
+
 feature/auth-oauth2
 {% end %}
 

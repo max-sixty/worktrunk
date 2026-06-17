@@ -1038,17 +1038,19 @@ pub fn expand_template(
         log::debug!("[template:{name}] result={:?}", redact_credentials(&result));
     }
 
-    // -v: Nice styled output showing template expansion
-    // Info message for header, gutter for quoted content (template → result)
+    // -v: Nice styled output showing template expansion. The source template
+    // and the rendered result each get a labeled info header above a bash gutter
+    // block, so the eye separates input from output. Callers that emit several
+    // expansions in a row (or a single standalone one, like `wt step eval`) add
+    // a trailing blank to separate them; in a command pipeline the executor
+    // already provides that separation.
     // Single atomic write to avoid interleaving in multi-threaded execution
     if verbose == 1 {
-        let header = info_message(cformat!("Expanding <bold>{name}</>"));
-        // Format template and result as bash (dim + syntax highlighting),
-        // with a dim → separator that bypasses the syntax highlighter
-        let template_gutter = format_bash_with_gutter(template);
-        let arrow = format_with_gutter(&cformat!("<dim>→</>"), None);
+        let source_header = info_message(cformat!("<bold>{name}</> source"));
+        let source_gutter = format_bash_with_gutter(template);
+        let result_header = info_message(cformat!("<bold>{name}</> result"));
         let result_gutter = format_bash_with_gutter(&result);
-        eprintln!("{header}\n{template_gutter}\n{arrow}\n{result_gutter}");
+        eprintln!("{source_header}\n{source_gutter}\n{result_header}\n{result_gutter}");
     }
     Ok(result)
 }
