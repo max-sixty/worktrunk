@@ -20,7 +20,7 @@ use crate::commands::command_executor::{CommandContext, build_hook_context};
 ///
 /// `eval` mutates nothing, so it has no `--dry-run`. Variable discovery lives
 /// in the verbose lane instead: `-v` lists the available template variables on
-/// stderr, above the `{{ template }} → result` expansion view that
+/// stderr, above the labeled `source` / `result` expansion view that
 /// `expand_template` renders at `-v`.
 pub fn step_eval(template: &str) -> anyhow::Result<()> {
     let repo = Repository::current()?;
@@ -55,6 +55,11 @@ pub fn step_eval(template: &str) -> anyhow::Result<()> {
         .collect();
 
     let result = expand_template(template, &vars, ShellEscapeMode::Literal, &repo, "eval")?;
+    // `expand_template` emitted the `source` / `result` view to stderr under
+    // `-v`; a trailing blank separates it from the result printed below.
+    if verbosity() >= 1 {
+        eprintln!();
+    }
     println!("{result}");
     Ok(())
 }

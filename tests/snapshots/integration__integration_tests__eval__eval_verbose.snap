@@ -67,7 +67,7 @@ exit_code: 0
 [107m [0m [1mworktree[22m              = _REPO_
 [107m [0m [1mworktree_name[22m         = repo
 [107m [0m [1mworktree_path[22m         = _REPO_
-[2m○[22m Expanding [1meval[22m
+[2m○[22m [1meval[22m source
 [107m [0m [2m[0m[2m[32m{{[0m[2m[0m[2m branch [0m[2m[36m|[0m[2m [0m[2m[34mhash_port[0m[2m [0m[2m[32m}}[0m
-[107m [0m [2m→[22m
+[2m○[22m [1meval[22m result
 [107m [0m [2m[0m[2m[34m12107[0m
