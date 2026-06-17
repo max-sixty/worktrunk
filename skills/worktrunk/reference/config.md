@@ -632,11 +632,8 @@ Output:
       --format <FORMAT>
           Output format (text, json)
 
-          Possible values:
-          - text: Human-readable text output
-          - json: JSON output
-
           [default: text]
+          [possible values: text, json]
 
 Global Options:
   -C <path>

@@ -179,9 +179,7 @@ pub(crate) fn version_str() -> &'static str {
 /// Output format for commands with text + JSON modes (e.g., `wt switch`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub(crate) enum SwitchFormat {
-    /// Human-readable text output
     Text,
-    /// JSON output
     Json,
 }
 
@@ -189,9 +187,7 @@ pub(crate) enum SwitchFormat {
 // unrelated codepaths to handle it. Consider a dedicated StatuslineFormat enum.
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub(crate) enum OutputFormat {
-    /// Human-readable table format
     Table,
-    /// JSON output
     Json,
     /// Claude Code statusline mode (reads context from stdin)
     #[value(name = "claude-code")]

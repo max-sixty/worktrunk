@@ -204,11 +204,8 @@ Automation:
           JSON prints structured result to stdout. Designed for tool integration (e.g., Claude Code
           WorktreeCreate hooks).
 
-          Possible values:
-          - text: Human-readable text output
-          - json: JSON output
-
           [default: text]
+          [possible values: text, json]
 
 Global Options:
   -C <path>
