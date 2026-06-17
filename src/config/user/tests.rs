@@ -3304,6 +3304,40 @@ fn test_set_project_worktree_path_noop_when_unchanged() {
 }
 
 #[test]
+fn test_set_commit_generation_command_noop_when_unchanged() {
+    // Covers the `return false` early-exit in set_commit_generation_command's
+    // mutator: when the command already matches, no save happens. We verify
+    // this by checking that the file content is byte-identical across a
+    // redundant call.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(&config_path, "# keep\n").unwrap();
+
+    let mut config = UserConfig::default();
+    config
+        .set_commit_generation_command("llm -m haiku".to_string(), &config_path)
+        .unwrap();
+
+    let after_first = std::fs::read_to_string(&config_path).unwrap();
+    // Sanity: first call actually wrote the value
+    assert!(after_first.contains("llm -m haiku"), "{after_first}");
+
+    // Second call with identical value should be a no-op — reload_from
+    // refreshes self from disk, the mutator compares equal and returns
+    // false, so save is skipped.
+    let mut config2 = UserConfig::default();
+    config2
+        .set_commit_generation_command("llm -m haiku".to_string(), &config_path)
+        .unwrap();
+
+    let after_second = std::fs::read_to_string(&config_path).unwrap();
+    assert_eq!(
+        after_first, after_second,
+        "unchanged command should not rewrite the file"
+    );
+}
+
+#[test]
 fn test_set_skip_shell_integration_prompt_noop_on_second_call() {
     // Covers the `return false` early-exit in set_skip_shell_integration_prompt's
     // mutator. reload_from refreshes all fields from disk — after the first

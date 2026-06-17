@@ -2,6 +2,9 @@
 
 Git worktree management CLI integration with activity tracking.
 
+Requires the `wt` CLI ([worktrunk.dev](https://worktrunk.dev)) and `jq` (used
+by the worktree-lifecycle hooks).
+
 ## Features
 
 1. **Configuration skill** — Guides LLM-powered commit message setup, project hooks (pre-start, pre-merge), and worktree path customization

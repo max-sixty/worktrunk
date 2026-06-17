@@ -8,13 +8,9 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
-    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
-    NO_COLOR: ""
-    PSModulePath: ""
-    SHELL: ""
     TERM: alacritty
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -364,8 +360,7 @@ Default template:
 
 Available variables (in addition to commit template variables):
 
-- [2m{{ commits }}[0m — list of commit subjects being squashed
-- [2m{{ commit_details }}[0m — [experimental] list of commits being squashed as [2m{ subject, body }[0m objects
+- [2m{{ commit_details }}[0m — list of commits being squashed; each renders as its subject and exposes [2m.subject[0m / [2m.body[0m
 - [2m{{ target_branch }}[0m — merge target branch
 
 Default template:
@@ -395,7 +390,7 @@ Default template:
 [107m [0m [2m[32m</project-guidance>[0m
 [107m [0m [2m[32m{% endif %}[0m
 [107m [0m [2m[32m<commits branch="[0m[2m{{ branch }}[0m[2m[32m" target="[0m[2m{{ target_branch }}[0m[2m[32m">[0m
-[107m [0m [2m[32m{% for commit in commits %}- {{ commit }}[0m
+[107m [0m [2m[32m{% for detail in commit_details %}- {{ detail.subject }}[0m
 [107m [0m [2m[32m{% endfor %}</commits>[0m
 [107m [0m 
 [107m [0m [2m[32m<diffstat>[0m

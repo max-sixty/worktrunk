@@ -282,6 +282,7 @@ mod types;
 use anyhow::Context;
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 use anstyle::Style;
 use color_print::cformat;
@@ -310,6 +311,44 @@ use execution::{work_items_for_branch, work_items_for_worktree};
 use results::drain_results;
 use types::DrainOutcome;
 use types::{MissingResult, TaskError, TaskResult};
+
+/// Dedicated rayon pool for git-heavy worktree collection and preview
+/// pre-compute, kept off the global pool.
+///
+/// The picker (skim) runs its per-keystroke fuzzy matcher and result sort on
+/// the **global** rayon pool. Worktrunk's collection floods that same pool with
+/// blocking git subprocess tasks (status, diff, rev-list, merge-base…), one
+/// batch per worktree, plus the preview orchestrator's per-mode `git diff` /
+/// `git log` tasks. With only `2× CPU` global workers, all blocked on
+/// subprocesses, skim's matcher queues behind the flood and the picker freezes
+/// for seconds on the first keystroke, scaling with worktree count.
+///
+/// Routing collection and preview work through this pool leaves the global pool
+/// free for skim. Same isolation pattern as `copy::COPY_POOL` and
+/// `remove_dir::REMOVE_POOL`, but sized like the global pool
+/// ([`collect_pool_num_threads`], i.e. `2× CPU`, honoring `RAYON_NUM_THREADS`)
+/// so collection throughput is unchanged. The goal is separation, not a
+/// smaller pool.
+pub(crate) static COLLECT_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
+    let num_threads = collect_pool_num_threads(std::env::var_os("RAYON_NUM_THREADS").is_some());
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build()
+        .expect("failed to build collect thread pool")
+});
+
+/// The `num_threads` argument for [`COLLECT_POOL`]. When `RAYON_NUM_THREADS`
+/// is set, return 0 so Rayon reads and validates the env var itself.
+/// Otherwise return [`crate::rayon_thread_count`] (`2× CPU`), since Rayon's
+/// own default is `1× CPU`. Takes the env presence as a parameter so both
+/// branches are unit-testable without mutating process-global environment.
+fn collect_pool_num_threads(rayon_num_threads_set: bool) -> usize {
+    if rayon_num_threads_set {
+        0
+    } else {
+        crate::rayon_thread_count()
+    }
+}
 
 struct TableRenderPlan {
     progressive_table: Option<ProgressiveTable>,
@@ -455,8 +494,8 @@ pub trait PickerProgressHandler: Send + Sync {
 
     /// Fired once before `collect` returns `Ok(Some(_))`. Lets the picker
     /// kick off the deferred tier of background work — secondary preview
-    /// modes for items 1..N, and LLM summaries for items 1..N. The
-    /// global rayon pool serves both pipelines; deferring this tier
+    /// modes for items 1..N, and LLM summaries for items 1..N.
+    /// `COLLECT_POOL` serves both pipelines. Deferring this tier
     /// until drain-end keeps low-priority preview submissions out of
     /// the injector while row tasks dominate worker deques.
     ///
@@ -1455,10 +1494,15 @@ pub fn collect(
     worktrunk::trace::instant("Spawning worker thread");
     std::thread::spawn(move || {
         worktrunk::trace::instant("Parallel execution started");
-        all_work_items.into_par_iter().for_each(|item| {
-            worktrunk::shell_exec::set_command_timeout(command_timeout);
-            let result = item.execute();
-            let _ = tx_worker.send(result);
+        // Run on the dedicated `COLLECT_POOL` so the blocking git subprocess
+        // tasks leave the global pool free for skim's per-keystroke matcher
+        // when the picker is open. See `COLLECT_POOL`.
+        COLLECT_POOL.install(|| {
+            all_work_items.into_par_iter().for_each(|item| {
+                worktrunk::shell_exec::set_command_timeout(command_timeout);
+                let result = item.execute();
+                let _ = tx_worker.send(result);
+            });
         });
     });
 
@@ -1950,11 +1994,15 @@ pub fn populate_item(
     // Sort: network tasks last
     work_items.sort_by_key(|w| w.kind.is_network());
 
-    // Spawn collection in background thread (executes only)
+    // Spawn collection in background thread (executes only). Route through
+    // `COLLECT_POOL` for consistency with the multi-item path, though a single
+    // item never floods the global pool.
     std::thread::spawn(move || {
-        work_items.into_par_iter().for_each(|w| {
-            let result = w.execute();
-            let _ = tx.send(result);
+        COLLECT_POOL.install(|| {
+            work_items.into_par_iter().for_each(|w| {
+                let result = w.execute();
+                let _ = tx.send(result);
+            });
         });
     });
 
@@ -2017,6 +2065,14 @@ pub fn populate_item(
 mod tests {
     use super::*;
     use ansi_str::AnsiStr;
+
+    #[test]
+    fn test_collect_pool_num_threads_honors_env() {
+        // Env var set: defer to Rayon (0 means "read RAYON_NUM_THREADS").
+        assert_eq!(collect_pool_num_threads(true), 0);
+        // Env var unset: explicit 2× CPU, since Rayon's own default is 1×.
+        assert_eq!(collect_pool_num_threads(false), crate::rayon_thread_count());
+    }
 
     #[test]
     fn test_format_stall_footer_single_pending() {

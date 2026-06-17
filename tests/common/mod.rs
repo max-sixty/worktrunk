@@ -786,16 +786,6 @@ fn add_placeholder_cleanup_filters(settings: &mut insta::Settings) {
         r"(\x1b\[1m)(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/[^\x1b]+\.toml)(\x1b\[m)",
         "$1--- a$2$3",
     );
-
-    // Normalize syntax highlighting around placeholders.
-    settings.add_filter(
-        r"\x1b\[2m \x1b\[0m\x1b\[2m(?:\x1b\[32m)?(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:\.[a-zA-Z0-9_-]+)?)(?:\x1b\[0m)?\x1b\[2m \x1b\[0m",
-        "\x1b[2m $1 \x1b[0m",
-    );
-    settings.add_filter(
-        r"(?:\x1b\[\d+m)*\x1b\[32m(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:/[^\x1b\s]+)?)(?:\x1b\[\d+m)*",
-        "$1",
-    );
 }
 
 /// Match the parent path of a `test-*` config under the test tempdir, in
@@ -1127,27 +1117,6 @@ fn setup_snapshot_settings_for_paths_with_home(
         "${1}[BINARY_PATH]$2$3",
     );
 
-    // Remove trailing ANSI reset codes at end of lines for cross-platform consistency
-    // Windows terminal strips these trailing resets that Unix includes.
-    //
-    // CAUTION: this means committed snapshots never show the line-final `[0m`
-    // the binary actually emits, so a styled line-end in a `.snap` looks like
-    // an unclosed SGR attribute when it isn't. Don't diagnose color/dim-bleed
-    // bugs from snapshot bytes — capture fresh output (`cat -v`) instead.
-    settings.add_filter(r"\x1b\[0m$", "");
-    settings.add_filter(r"\x1b\[0m\n", "\n");
-
-    // Normalize tree-sitter bash syntax highlighting differences between platforms.
-    // On Linux, tree-sitter-bash may parse paths as "string" tokens (green: [32m),
-    // while on macOS the same paths are just dimmed (no color). This causes snapshot
-    // mismatches when the same code produces different ANSI sequences.
-    // Strip green color from _REPO_ placeholders and normalize the surrounding sequences.
-    // Pattern: [2m [0m[2m[32m_REPO_...[0m[2m [0m[2m  ->  [2m _REPO_... [0m[2m
-    settings.add_filter(
-        r"\x1b\[2m \x1b\[0m\x1b\[2m\x1b\[32m(_REPO_[^\x1b]*)\x1b\[0m\x1b\[2m \x1b\[0m\x1b\[2m",
-        "\x1b[2m $1 \x1b[0m\x1b[2m",
-    );
-
     // Normalize commit hashes throughout output.
     // Git on Windows produces different tree hashes due to filemode handling, causing
     // commit hashes to differ between platforms. Redact to [HASH] for consistency.
@@ -1312,20 +1281,11 @@ fn add_remove_stats_byte_filter(settings: &mut insta::Settings) {
 
 /// Add filters for PTY-specific artifacts that vary between platforms.
 ///
-/// This handles:
-/// - macOS PTY control sequences (^D followed by backspaces)
-/// - Leading ANSI reset codes that vary between macOS and Linux
-///
 /// Note: CRLF normalization is done eagerly in PTY exec functions, not here.
 pub fn add_pty_filters(settings: &mut insta::Settings) {
     // macOS PTYs emit ^D (literal caret-D) followed by backspaces (0x08)
     // when EOF is signaled. Linux PTYs don't. Strip these for consistency.
     settings.add_filter(r"\^D\x08+", "");
-
-    // Remove redundant leading reset codes per line.
-    // macOS and Linux PTYs generate ANSI codes slightly differently.
-    // This handles lines that start with ESC[0m (reset).
-    settings.add_filter(r"(?m)^\x1b\[0m", "");
 }
 
 /// Add filters for binary paths (target/debug/wt) in PTY output.

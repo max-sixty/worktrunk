@@ -1,7 +1,7 @@
 name: nightly
 # Slower checks that aren't worth running on every PR but should run before a
 # release. Jobs:
-#   - feature-powerset: feature-flag unification (motivated by #2442)
+#   - feature-powerset: feature-flag unification, check + test suite (motivated by #2442)
 #   - release-target: PTY+shell suite on the release triples ci.yaml doesn't cover
 #   - benchmarks: full criterion suite + time-series gist append (cron only)
 #   - check-unused-dependencies: cargo-udeps on nightly toolchain
@@ -89,6 +89,17 @@ jobs:
     # Workspace members must use `default-features = false` when depending on
     # worktrunk, or feature unification will mask gating bugs by silently
     # enabling `cli` in the lib build (see tests/helpers/wt-perf/Cargo.toml).
+    #
+    # The test step runs the test suite per combination — the check step
+    # strips dev-deps, so `#[cfg(test)]` code is invisible to it, and a test
+    # importing a feature-gated symbol without its own gate, or a snapshot
+    # baking feature-dependent output, only surfaces when tests are built and
+    # run per combo. The integration suite declares
+    # `required-features = ["cli", "syntax-highlighting"]` (Cargo.toml) because
+    # it execs the `wt` binary and snapshots its highlighted output, so cargo
+    # runs it only on combinations that satisfy both and runs lib + doc tests
+    # everywhere. No target filter, so default-members builds the mock-stub
+    # helper bin the lib suite shells out to.
     needs: gate
     if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-24.04
@@ -100,12 +111,27 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: Install cargo-hack
-      uses: taiki-e/install-action@v2.81.10
+      uses: taiki-e/install-action@v2.81.11
       with:
         tool: cargo-hack
 
-    - name: cargo hack check --feature-powerset --no-dev-deps
-      run: cargo hack check --feature-powerset --no-dev-deps
+    # The `shell-integration-tests` combinations run PTY tests that spawn real
+    # zsh/fish and probe nushell; match the test matrix's shell setup
+    # (.github/actions/test-setup) so those combinations run, not just compile.
+    - name: Install shells (zsh, fish)
+      uses: awalsh128/cache-apt-pkgs-action@v1.6.1
+      with:
+        packages: zsh fish
+        version: 1.0
+
+    - name: Install nushell
+      uses: hustcer/setup-nu@v3
+      with:
+        version: '0.113.1'
+
+    - run: cargo hack check --feature-powerset --no-dev-deps
+
+    - run: cargo hack test --feature-powerset
 
   release-target:
     # Build and run the test suite on the release triples that ci.yaml's
@@ -171,7 +197,7 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: Install shells (zsh, fish)
-      uses: awalsh128/cache-apt-pkgs-action@v1.6.0
+      uses: awalsh128/cache-apt-pkgs-action@v1.6.1
       with:
         packages: zsh fish
         version: 1.0
@@ -179,7 +205,7 @@ jobs:
     - name: Install nushell
       uses: hustcer/setup-nu@v3
       with:
-        version: '0.113.0'
+        version: '0.113.1'
 
     - name: 💰 Rust repo cache
       uses: actions/cache@v5

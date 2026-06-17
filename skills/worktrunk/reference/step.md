@@ -550,14 +550,18 @@ $ wt step eval '{{ branch | sanitize_db }}'
 feature_auth_oauth2_a1b
 ```
 
-Show available template variables:
+List the available template variables with `-v` (alongside the expansion, on stderr):
 
 ```bash
-$ wt step eval --dry-run '{{ branch }}'
-branch=feature/auth-oauth2
-worktree_path=/home/user/projects/myapp-feature-auth-oauth2
----
-Result: feature/auth-oauth2
+$ wt step eval -v '{{ branch }}'
+○ Available template variables
+  branch        = feature/auth-oauth2
+  worktree_path = /home/user/projects/myapp-feature-auth-oauth2
+○ Expanding eval
+  {{ branch }}
+  →
+  feature/auth-oauth2
+feature/auth-oauth2
 ```
 
 Note: This command is experimental and may change in future versions.
@@ -576,9 +580,6 @@ Arguments:
           Template expression to evaluate
 
 Options:
-      --dry-run
-          Show template variables and expanded result
-
   -h, --help
           Print help (see a summary with '-h')
 

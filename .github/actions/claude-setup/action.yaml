@@ -17,14 +17,14 @@ runs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-insta
-        version: "=1.47.2"
+        version: "=1.48.0"
 
     - name: Install cargo-nextest
       if: inputs.install-cargo-tools == 'true'
       uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-nextest
-        version: "=0.9.136"
+        version: "=0.9.137"
 
     - name: "\U0001F4B0 Cache"
       uses: Swatinem/rust-cache@v2

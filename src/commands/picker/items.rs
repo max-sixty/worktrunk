@@ -190,9 +190,11 @@ impl WorktreeSkimItem {
         let tab4 = format_tab("4: remote⇅", mode == PreviewMode::UpstreamDiff);
         let tab5 = format_tab("5: summary", mode == PreviewMode::Summary);
 
-        // Controls use dim yellow to distinguish from dimmed (white) tabs
+        // Controls use dim yellow to distinguish from dimmed (white) tabs.
+        // The tab numbers above are the alt-N accelerators (bare digits type
+        // into the query); Tab/shift-tab cycle the same tabs.
         let controls = cformat!(
-            "<dim,yellow>Enter: switch | alt-c: create | Esc: cancel | ctrl-u/d: scroll | alt-p: toggle</>"
+            "<dim,yellow>Enter: switch | Tab/alt-1…5: preview | alt-c: create | Esc: cancel | ctrl-u/d: scroll | alt-p: toggle</>"
         );
 
         // End each tab and controls with full reset to prevent style bleeding
@@ -230,7 +232,9 @@ impl WorktreeSkimItem {
     /// preview for this mode. Skim has no API to re-query preview from
     /// outside user interaction (see `skim::previewer::on_item_change` bail
     /// at `previewer.rs:187`), so the hint tells the user to press the mode
-    /// key again to refresh once the background fill lands.
+    /// key again to refresh once the background fill lands. `alt-N`
+    /// re-runs the same `echo N + refresh-preview` chain, re-reading the
+    /// now-populated cache.
     pub(super) fn loading_placeholder(mode: PreviewMode) -> String {
         let (verb, label) = match mode {
             PreviewMode::WorkingTree => ("Loading", "working-tree diff"),
@@ -240,7 +244,7 @@ impl WorktreeSkimItem {
             PreviewMode::Summary => ("Generating", "summary"),
         };
         let key = mode as u8;
-        format!("○ {verb} {label}. Press {key} again to refresh.\n")
+        format!("○ {verb} {label}. Press alt-{key} again to refresh.\n")
     }
 
     /// Compute preview and apply pager for diff modes. Returns the

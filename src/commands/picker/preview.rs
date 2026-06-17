@@ -162,7 +162,11 @@ pub(super) struct PreviewStateData;
 
 impl PreviewStateData {
     pub(super) fn state_path() -> PathBuf {
-        // Use per-process temp file to avoid race conditions when running multiple instances
+        // Use per-process temp file to avoid race conditions when running multiple instances.
+        // The leaf stays dot-free (the pid is numeric), so the sibling files
+        // derived via `with_extension(...)` — `.remove` (alt-r signal) and
+        // `.tmp` (tab/btab rotate scratch) — append rather than replace an
+        // extension, matching the shell `{0}.tmp` the keybindings write.
         std::env::temp_dir().join(format!("wt-picker-state-{}", std::process::id()))
     }
 
@@ -204,6 +208,10 @@ impl Drop for PreviewState {
         let _ = fs::remove_file(&self.path);
         // Clean up the removal signal file used by alt-r (see PickerCollector)
         let _ = fs::remove_file(self.path.with_extension("remove"));
+        // Clean up the rotate scratch file used by tab/shift-tab cycling
+        // (`tr … > {path}.tmp; mv …` in the keybindings); normally already
+        // renamed away, but a failed `mv` could leave it behind.
+        let _ = fs::remove_file(self.path.with_extension("tmp"));
     }
 }
 

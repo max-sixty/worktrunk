@@ -534,13 +534,17 @@ Use conditionals and filters:
 feature_auth_oauth2_a1b
 {% end %}
 
-Show available template variables:
+List the available template variables with `-v` (alongside the expansion, on stderr):
 
-{% terminal(cmd="wt step eval --dry-run '__WT_OPEN__ branch __WT_CLOSE__'") %}
-branch=feature/auth-oauth2
-worktree_path=/home/user/projects/myapp-feature-auth-oauth2
----
-Result: feature/auth-oauth2
+{% terminal(cmd="wt step eval -v '__WT_OPEN__ branch __WT_CLOSE__'") %}
+○ Available template variables
+  branch        = feature/auth-oauth2
+  worktree_path = /home/user/projects/myapp-feature-auth-oauth2
+○ Expanding eval
+  {{ branch }}
+  →
+  feature/auth-oauth2
+feature/auth-oauth2
 {% end %}
 
 Note: This command is experimental and may change in future versions.
@@ -559,9 +563,6 @@ Usage: <b><span class=c>wt step eval</span></b> <span class=c>[OPTIONS]</span> <
           Template expression to evaluate
 
 <b><span class=g>Options:</span></b>
-      <b><span class=c>--dry-run</span></b>
-          Show template variables and expanded result
-
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
 

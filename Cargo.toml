@@ -3,11 +3,54 @@ members = ["tests/helpers/wt-perf", "tests/helpers/mock-stub"]
 # Include mock-stub and wt-perf so `cargo test` builds their binaries
 default-members = [".", "tests/helpers/mock-stub", "tests/helpers/wt-perf"]
 
+# cargo-affected input→test rules. cargo-affected selects tests by Rust-line
+# coverage overlap, so a file a test reads at *runtime* (never recorded in
+# coverage) maps to no test and would slip through `cargo affected run`. Each
+# rule force-selects the owning tests when a matching path changes. `[*.metadata]`
+# is excluded from cargo-affected's fingerprint, so editing a rule is
+# cache-neutral. See https://github.com/max-sixty/cargo-affected#input-rules.
+
+# insta `.snap` snapshots are read at test time and never appear in coverage, so
+# a snapshot edit maps to no test. Route each snapshot to the binary that owns
+# it — the finest granularity available without a snapshot→test map. Integration
+# snapshots live under tests/; unit-test snapshots under src/, split across the
+# lib (`worktrunk`) and the `wt` binary (`worktrunk::bin/wt`).
+[[workspace.metadata.affected.rule]]
+globs = ["tests/**/*.snap"]
+filterset = "binary_id(=worktrunk::integration)"
+
+[[workspace.metadata.affected.rule]]
+globs = ["src/**/*.snap"]
+filterset = "binary_id(=worktrunk) | binary_id(=worktrunk::bin/wt)"
+
+# tests/integration_tests/readme_sync.rs reads each of these at runtime (via
+# fs::read_to_string) and asserts the committed copies stay in sync — both the
+# sources (README.md, docs/content markdown, docs/config.toml's site title and
+# description, src/cli/mod.rs, src/llm.rs, the skill references, Taskfile.yaml)
+# and the generated artifacts it regenerates and compares against (the
+# dev/*.example.toml files, docs/static/llms.txt, the agent-skills index.json).
+# Editing any of them flips the test, but coverage can't link a runtime-read
+# file to it.
+[[workspace.metadata.affected.rule]]
+globs = [
+    "README.md",
+    "docs/**/*.md",
+    "docs/config.toml",
+    "docs/static/llms.txt",
+    "docs/static/.well-known/agent-skills/index.json",
+    "dev/*.toml",
+    "src/cli/mod.rs",
+    "src/llm.rs",
+    "Taskfile.yaml",
+    "skills/**/*.md",
+]
+filterset = "test(/readme_sync/)"
+
 [package]
 name = "worktrunk"
-version = "0.57.0"
+version = "0.58.0"
 edition = "2024"
-rust-version = "1.94"
+rust-version = "1.95"
 build = "build.rs"
 repository = "https://github.com/max-sixty/worktrunk"
 homepage = "https://worktrunk.dev"
@@ -71,6 +114,22 @@ required-features = ["cli"]
 name = "git-wt"
 path = "src/git_wt.rs"
 required-features = ["cli", "git-wt"]
+# `git_wt.rs` is `include!("main.rs")`, so its unit tests are byte-identical
+# duplicates of the `wt` binary's. Running them adds no coverage and breaks
+# under `cargo hack test --feature-powerset`: insta derives snapshot filenames
+# from the crate name, so the duplicates look for `git_wt__*.snap` files that
+# don't exist (only `wt__*`). The `check` powerset still compiles this target.
+test = false
+
+# The integration suite execs the `wt` binary (needs `cli`) and snapshots its
+# rendered output, which bakes in syntax highlighting (needs
+# `syntax-highlighting`). Declaring both lets `cargo hack test
+# --feature-powerset` skip this target on combinations that can't satisfy it
+# rather than fail; lib and doc tests still run on every combination.
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+required-features = ["cli", "syntax-highlighting"]
 
 [dependencies]
 anyhow = "1.0"
@@ -180,11 +239,11 @@ nix = { version = "0.31", default-features = false, features = ["process", "sign
 signal-hook = "0.4"
 
 [build-dependencies]
-vergen-gitcl = { version = "9.1.0", features = ["build"] }
+vergen-gitcl = { version = "10.0.0", features = ["build"] }
 
 [dev-dependencies]
 insta = { version = "1.47.2", features = ["yaml", "redactions", "filters"] }
-insta-cmd = "0.6"
+insta-cmd = "0.7"
 rstest = "0.26"
 tempfile = "3.27"
 toml = "1.0"
@@ -233,7 +292,7 @@ inherits = "release"
 lto = "thin"
 
 [patch.crates-io]
-# Local fork of skim-tuikit 0.6.6 carrying three small fixes. Run
+# Local fork of skim-tuikit 0.6.6 carrying four small fixes. Run
 # `task vendor-diff` to see the full diff against the upstream tarball.
 #
 # Upstream status: skim-tuikit is effectively abandoned. Upstream skim
@@ -269,4 +328,13 @@ lto = "thin"
 #    which clamps `cursor_row` to 0 — matching the full-screen fallback
 #    `ensure_height` already uses. See vendor/skim-tuikit/src/term.rs. No
 #    known upstream tracking issue; moot post-ratatui.
+#
+# 4. `from_keyname` did not parse `alt-<digit>` tokens — it had `alt-a`..
+#    `alt-z` but no `alt-0`..`alt-9`, so a keymap like `alt-1:...` silently
+#    failed to bind (Input::bind early-returns on an unparseable key). The
+#    input reader already decodes ESC-<digit> to `Alt(ch)`, so this was a
+#    pure config-parser gap. The picker binds alt-1..alt-5 to jump directly
+#    to preview tabs (bare digits are reserved for the query). Added the ten
+#    missing arms, matching fzf's alt-1..alt-9. See
+#    vendor/skim-tuikit/src/key.rs. Clean upstream PR candidate.
 skim-tuikit = { path = "vendor/skim-tuikit" }

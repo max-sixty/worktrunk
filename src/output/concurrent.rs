@@ -26,7 +26,8 @@
 //!
 //! The main thread drains the channel. A signal-listener thread blocks
 //! on `signal_hook::Signals::forever()` for SIGINT/SIGTERM and forwards
-//! with escalation to every live child's process group; closing the
+//! the user's signal to every live child's process group; a second user
+//! signal escalates every still-live pgroup to SIGKILL. Closing the
 //! signal-hook handle on shutdown unblocks the listener.
 //!
 //! All children always run to completion. Per-child exit status is returned
@@ -171,13 +172,12 @@ pub fn run_concurrent_commands(
     #[cfg(not(unix))]
     let originating_signal: Option<i32> = None;
 
-    // If wt's forwarder escalated SIGINT → SIGTERM → SIGKILL, a child may have
-    // died from SIGTERM (or SIGKILL) even though the user only sent SIGINT.
-    // From the user's outside view, the originating signal is what they sent;
-    // wt's internal escalation is an implementation detail that shouldn't
-    // surface as a different exit code (e.g., 143 instead of 130). Override
-    // each child's reported signal with the originating signal so wt's
-    // `exit_code()` and `interrupt_exit_code()` reflect the user's intent.
+    // If a child died from SIGKILL because the user pressed Ctrl-C twice, the
+    // user-visible exit code shouldn't be 137 — they only ever sent SIGINT, and
+    // wt's escalation to SIGKILL on the second press is an implementation
+    // detail. Override each child's reported signal with the originating signal
+    // so wt's `exit_code()` and `interrupt_exit_code()` reflect the user's
+    // intent (130 from SIGINT, not 137 from SIGKILL).
     if let Some(orig) = originating_signal {
         for outcome in &mut outcomes {
             override_with_originating_signal(outcome, orig);
@@ -189,8 +189,8 @@ pub fn run_concurrent_commands(
 
 /// Replace a child's signal-derived `ChildProcessExited` error with one whose
 /// `signal` / `code` / `message` reflect the originating signal wt received
-/// (rather than whichever signal the forwarder's escalation chain ultimately
-/// killed the child with). No-op if the outcome isn't a signal-derived error.
+/// (rather than the SIGKILL the forwarder may have escalated to on a second
+/// user press). No-op if the outcome isn't a signal-derived error.
 fn override_with_originating_signal(outcome: &mut anyhow::Result<()>, originating: i32) {
     let Err(err) = outcome else { return };
     let Some(WorktrunkError::ChildProcessExited {

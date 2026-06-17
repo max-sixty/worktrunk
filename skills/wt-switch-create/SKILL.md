@@ -1,6 +1,6 @@
 ---
 name: wt-switch-create
-description: Create a new worktrunk worktree (optionally in another repo) and switch this session's working directory into it. The branch name is optional — one is picked from the task when omitted. Use when launching a session that should work in its own worktree (e.g. `/wt-switch-create -- <task>`, `/wt-switch-create my-branch -- <task>`, or `/wt-switch-create my-branch ~/workspace/other-repo -- <task>`), or mid-session to move work into a fresh branch.
+description: Create a new worktrunk worktree (optionally in another repo) and switch this session's working directory into it. Use when launching a session that should work in its own worktree.
 argument-hint: "[<branch>] [<repo>] [-- <task>]"
 license: MIT OR Apache-2.0
 compatibility: Requires the `wt` CLI (https://worktrunk.dev)
@@ -38,9 +38,10 @@ Steps 1–3 come before any other work.
 <!-- Maintainers: the design choices here are backed by tested evidence in
 rationale.md (same directory) — read it before re-adding guards or routes. -->
 
-1. **Pick the branch name** if none was given: short kebab-case from the task
-   ("fix the parser bug" → `fix-parser-bug`) or, mid-session, from the work
-   being moved; with nothing to derive from, ask.
+1. **Pick the branch name** if none was given: short, from the task ("fix the
+   parser bug" → `fix-parser-bug`) and consistent with existing worktree
+   names, or, mid-session, from the work being moved; with nothing to derive
+   from, ask.
 
 2. **Create the worktree** with a `Bash` call (omit `-C <repo>` when no repo
    was given):

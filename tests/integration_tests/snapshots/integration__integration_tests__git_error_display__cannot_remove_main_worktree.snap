@@ -1,5 +1,5 @@
 ---
 source: tests/integration_tests/git_error_display.rs
-expression: err.to_string()
+expression: err.render()
 ---
 [31m✗[39m [31mThe main worktree cannot be removed[39m

@@ -3384,6 +3384,53 @@ pre-start = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
     );
 }
 
+/// `wt config update` migrates the deprecated `commits` squash-template
+/// variable to `commit_details` (see #2984). The rewrite is a plain identifier
+/// rename — the loop variable stays bare — because each `commit_details`
+/// element renders as its subject, so the migrated template renders identically
+/// to the original.
+#[rstest]
+fn test_config_update_migrates_commits_squash_var(repo: TestRepo) {
+    let config_path = repo.test_config_path();
+    fs::write(
+        config_path,
+        r#"[commit.generation]
+squash-template = """
+Combine {{ commits | length }} commits:
+{% for c in commits %}- {{ c }}
+{% endfor %}"""
+"#,
+    )
+    .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["config", "update", "--yes"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let updated = fs::read_to_string(config_path).unwrap();
+    assert!(
+        updated.contains("{{ commit_details | length }}"),
+        "filter use of commits should migrate: {updated}"
+    );
+    assert!(
+        updated.contains("for c in commit_details"),
+        "loop source should migrate: {updated}"
+    );
+    // The loop variable stays bare — no `.subject` is injected, since the
+    // element renders as its subject on its own.
+    assert!(
+        updated.contains("- {{ c }}"),
+        "loop body should be left untouched: {updated}"
+    );
+    assert!(
+        !updated.contains("{{ commits"),
+        "no deprecated commits reference should remain: {updated}"
+    );
+}
+
 /// `wt config show` displays deprecation details for `[select]` → `[switch.picker]`.
 /// Uses user config so the warning label reads "User config".
 #[rstest]
