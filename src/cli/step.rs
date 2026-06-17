@@ -177,7 +177,7 @@ $ wt step rebase develop    # Rebase onto develop
 
     /// Fast-forward target to current branch
     #[command(
-        after_long_help = r#"Updates the local target branch (e.g., `main`) to include current commits.
+        after_long_help = r#"Updates the local target branch to include current commits.
 
 ## Examples
 
