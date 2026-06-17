@@ -446,19 +446,6 @@ $ wt step eval -v '{{ branch }}'
 feature/auth-oauth2
 ```
 
-## JSON output
-
-`--format=json` prints the template and its rendered result to stdout, instead of the bare result:
-
-```console
-$ wt step eval --format=json '{{ branch | hash_port }}'
-{
-  "name": "eval",
-  "result": "16066",
-  "template": "{{ branch | hash_port }}"
-}
-```
-
 Note: This command is experimental and may change in future versions.
 "#
     )]

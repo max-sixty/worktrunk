@@ -548,18 +548,6 @@ List the available template variables with `-v` (alongside the expansion, on std
 feature/auth-oauth2
 {% end %}
 
-### JSON output
-
-`--format=json` prints the template and its rendered result to stdout, instead of the bare result:
-
-{% terminal(cmd="wt step eval --format=json '__WT_OPEN__ branch | hash_port __WT_CLOSE__'") %}
-{
-  "name": "eval",
-  "result": "16066",
-  "template": "{{ branch | hash_port }}"
-}
-{% end %}
-
 Note: This command is experimental and may change in future versions.
 
 ### Command reference
