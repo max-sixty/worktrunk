@@ -14,7 +14,7 @@ metadata:
    git fetch origin
    git merge --ff-only origin/main
    ```
-   `--ff-only` advances the branch when it's a strict ancestor of `origin/main` and **fails** (rather than creating a merge commit or discarding work) if it has diverged — reconcile manually before continuing. This is the release-branch equivalent of `wt up`, spelled out because the `up` alias rebases each branch onto its own upstream (`origin/release`), not `main`.
+   `--ff-only` advances the branch when it's a strict ancestor of `origin/main` and **fails** (rather than creating a merge commit or discarding work) if it has diverged — reconcile manually before continuing. This is the release-branch equivalent of `wt up`, spelled out because the `up` alias rebases each branch onto its own upstream (`origin/release`), not `main`. Note the resulting commit SHA: this is the tip the changelog covers, and step 12 checks that nothing else reaches `main` before the tag.
 2. **Run tests**: `cargo run -- hook pre-merge --yes`
 3. **Check current version**: Read `version` in `Cargo.toml`
 4. **Review commits**: Check commits since last release to understand scope of changes. Audit the cumulative diff for the data-loss surface (see [Data-Loss Surface Review](#data-loss-surface-review)) before proceeding.
@@ -31,13 +31,13 @@ metadata:
     ```bash
     git reset --soft HEAD~1 && git add -A && git commit -m "Release vX.Y.Z"
     ```
-11. **Re-check `main` for drift, then merge**: A long release session lets `main` advance after the changelog was written. `/gpk` squash-merges onto current `main`, so the *code* stays complete, but the changelog silently misses anything that landed in between (a closely-related change is the easy miss — e.g. a follow-up that reworks a feature this release already documents). Before merging, re-fetch and diff against the `main` tip you reviewed in step 4:
+11. **Merge to main**: `/gpk` — opens a PR, waits for CI, merges via PR (preserves worktree). `main` can advance during the CI wait; step 12 catches anything that lands before the tag.
+12. **Verify nothing drifted in, then tag and push**: `/gpk` squash-merges onto whatever `main` tip exists at merge time, so a commit that lands during the PR's CI wait ships in the release but goes undocumented (the easy miss is a follow-up that reworks a feature this release already documents). Confirm the only commit added to `main` since the cut-from tip (step 1) is the release commit:
     ```bash
     git fetch origin
-    git log <step-4-main-tip>..origin/main --oneline   # commits that landed since the changelog was written
+    git log --oneline <cut-from-commit>..origin/main
     ```
-    Fold any user-facing commit into the CHANGELOG and amend the release commit before continuing. Then `/gpk` — opens a PR, waits for CI, merges via PR (preserves worktree).
-12. **Tag the merge commit and push**: After `/gpk` squash-merges, the local branch HEAD is not the commit on main. Tag the PR's merge commit explicitly so the tag is reachable from main:
+    Expect a single line — the `Release vX.Y.Z (#NNNN)` squash commit. Any extra line drifted in during the window: review it, fold it into the changelog if user-facing (a quick follow-up squash PR), then re-run the check. Once clean, tag the squash commit (not the local branch HEAD, which `/gpk` reset) so the tag is reachable from `main`:
     ```bash
     MERGE_SHA=$(gh pr view --json mergeCommit --jq '.mergeCommit.oid')
     git tag vX.Y.Z "$MERGE_SHA" && git push origin vX.Y.Z
