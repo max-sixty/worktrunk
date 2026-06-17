@@ -69,6 +69,29 @@ fn test_eval_verbose(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_eval_format_json(repo: TestRepo) {
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["eval", "--format=json", "{{ branch | hash_port }}"],
+        None,
+    ));
+}
+
+/// `--format=json` and `-v` compose: JSON to stdout, the human expansion view
+/// to stderr.
+#[rstest]
+fn test_eval_format_json_verbose(repo: TestRepo) {
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
+        &repo,
+        "step",
+        &["eval", "--format=json", "{{ branch | hash_port }}"],
+        None,
+        &["--verbose"],
+    ));
+}
+
+#[rstest]
 fn test_eval_owner(repo: TestRepo) {
     repo.run_git(&[
         "remote",
