@@ -186,7 +186,11 @@ fn test_relocate_target_exists(repo: TestRepo) {
     );
 }
 
-/// Test that dirty worktrees are skipped without --commit
+/// Test that dirty linked worktrees relocate cleanly without --commit.
+///
+/// `git worktree move` carries modified-tracked and untracked files along
+/// with the worktree, so there's no reason to require a clean state. Issue
+/// #3103.
 #[rstest]
 fn test_relocate_dirty_without_commit(repo: TestRepo) {
     let parent = worktree_parent(&repo);
@@ -201,17 +205,83 @@ fn test_relocate_dirty_without_commit(repo: TestRepo) {
         wrong_path.to_str().unwrap(),
     ]);
 
-    // Make uncommitted changes
-    fs::write(wrong_path.join("dirty.txt"), "uncommitted changes").unwrap();
+    // Make uncommitted changes - both modified and untracked
+    fs::write(wrong_path.join("dirty.txt"), "untracked file").unwrap();
+    // Modify a tracked file too (initial test commit creates README.md or similar).
+    let tracked = wrong_path.join("modified-tracked.txt");
+    fs::write(&tracked, "first").unwrap();
+    repo.git_command()
+        .args([
+            "-C",
+            wrong_path.to_str().unwrap(),
+            "add",
+            "modified-tracked.txt",
+        ])
+        .run()
+        .unwrap();
+    repo.git_command()
+        .args([
+            "-C",
+            wrong_path.to_str().unwrap(),
+            "commit",
+            "-m",
+            "add tracked",
+        ])
+        .run()
+        .unwrap();
+    fs::write(&tracked, "second").unwrap();
 
-    // Relocate should skip dirty worktree
+    // Relocate should move the dirty worktree
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "step", &["relocate"], None));
 
-    // Verify the worktree was NOT moved
+    // Verify the worktree was moved to its expected location, carrying both
+    // the untracked and modified-tracked files with it.
+    let expected_path = parent.join("repo.feature");
     assert!(
-        wrong_path.exists(),
-        "Dirty worktree should not be moved: {}",
+        expected_path.exists(),
+        "Dirty worktree should be moved: {}",
+        expected_path.display()
+    );
+    assert!(
+        !wrong_path.exists(),
+        "Old worktree path should no longer exist: {}",
         wrong_path.display()
+    );
+    assert!(
+        expected_path.join("dirty.txt").exists(),
+        "Untracked file should travel with the worktree",
+    );
+    assert_eq!(
+        fs::read_to_string(expected_path.join("modified-tracked.txt")).unwrap(),
+        "second",
+        "Modified tracked file content should travel with the worktree",
+    );
+}
+
+/// Test that a dirty main worktree is still skipped — its relocation runs
+/// `git checkout <default-branch>` which refuses to switch over uncommitted
+/// changes.
+#[rstest]
+fn test_relocate_dirty_main_worktree_skipped(repo: TestRepo) {
+    let parent = worktree_parent(&repo);
+    let repo_path = repo.root_path().to_path_buf();
+
+    // Switch main worktree to a feature branch so it becomes a relocation
+    // candidate (expected path = repo.feature, not repo).
+    repo.run_git(&["checkout", "-b", "feature"]);
+
+    // Make uncommitted changes in main worktree
+    fs::write(repo_path.join("dirty.txt"), "uncommitted").unwrap();
+
+    // Relocate should skip the dirty main worktree
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "step", &["relocate"], None));
+
+    // Main worktree stays put
+    let expected_path = parent.join("repo.feature");
+    assert!(
+        !expected_path.exists(),
+        "Dirty main worktree should not be relocated: {}",
+        expected_path.display()
     );
 }
 
@@ -847,17 +917,12 @@ fn test_relocate_dry_run_json(repo: TestRepo) {
 /// distinguishes relocated vs skipped (with stable `reason` codes).
 #[rstest]
 fn test_relocate_json_with_skip(repo: TestRepo) {
-    let parent = worktree_parent(&repo);
-    let wrong_path = parent.join("wrong-location");
-    repo.run_git(&[
-        "worktree",
-        "add",
-        "-b",
-        "feature",
-        wrong_path.to_str().unwrap(),
-    ]);
-    // Make the worktree dirty so it's skipped during validation
-    fs::write(wrong_path.join("dirty.txt"), "uncommitted").unwrap();
+    let repo_path = repo.root_path().to_path_buf();
+    // Switch the main worktree to a feature branch so it becomes a relocation
+    // candidate, then dirty it. A dirty main worktree is skipped because its
+    // relocation runs `git checkout`, which won't switch over dirty state.
+    repo.run_git(&["checkout", "-b", "feature"]);
+    fs::write(repo_path.join("dirty.txt"), "uncommitted").unwrap();
 
     let output = repo
         .wt_command()

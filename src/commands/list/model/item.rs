@@ -100,7 +100,40 @@ impl WorktreeData {
 #[derive(Clone)]
 pub enum ItemKind {
     Worktree(Box<WorktreeData>),
-    Branch,
+    Branch(BranchScope),
+}
+
+/// Whether a branch-without-worktree row is a local branch
+/// (`refs/heads/…`, checked out nowhere) or a remote-tracking branch
+/// (`refs/remotes/<remote>/…`, not present locally until fetched).
+///
+/// Recorded structurally at construction (the `RemoteBranch` vs
+/// `LocalBranch` inventory is known then) rather than inferred from the
+/// branch name — a local branch may legitimately be named `origin/foo`,
+/// so a name-prefix heuristic would misclassify it.
+///
+/// Drives the gutter sigil: local branches render `/`, remote branches
+/// render `|` — the two branch rungs past the worktree glyphs (`@`/`^`/`+`)
+/// on the gutter's presence/location axis. See `ColumnKind::Gutter` in
+/// `render.rs`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BranchScope {
+    /// Local branch with no worktree.
+    Local,
+    /// Remote-tracking branch (needs a fetch to materialize locally).
+    Remote,
+}
+
+impl BranchScope {
+    /// The two-cell gutter sigil (`glyph` + trailing space) for a branch
+    /// row of this scope. ASCII single-width by design — the gutter must
+    /// dodge skim's `width_cjk` clipping (see `vendor/NOTES.md`).
+    pub const fn gutter_sigil(self) -> &'static str {
+        match self {
+            BranchScope::Local => "/ ",
+            BranchScope::Remote => "| ",
+        }
+    }
 }
 
 /// Unified item for displaying worktrees and branches in the same table.
@@ -204,8 +237,17 @@ pub struct ListData {
 }
 
 impl ListItem {
-    /// Create a ListItem for a branch (not a worktree)
+    /// Create a ListItem for a local branch without a worktree.
     pub(crate) fn new_branch(head: String, branch: String) -> Self {
+        Self::new_branch_with_scope(head, branch, BranchScope::Local)
+    }
+
+    /// Create a ListItem for a remote-tracking branch (no local worktree).
+    pub(crate) fn new_remote_branch(head: String, branch: String) -> Self {
+        Self::new_branch_with_scope(head, branch, BranchScope::Remote)
+    }
+
+    fn new_branch_with_scope(head: String, branch: String, scope: BranchScope) -> Self {
         Self {
             head,
             short_sha: String::new(),
@@ -229,7 +271,7 @@ impl ListItem {
             status_symbols: StatusSymbols::default(),
             statusline: None,
             custom_values: Vec::new(),
-            kind: ItemKind::Branch,
+            kind: ItemKind::Branch(scope),
         }
     }
 
@@ -260,14 +302,14 @@ impl ListItem {
     pub fn worktree_data(&self) -> Option<&WorktreeData> {
         match &self.kind {
             ItemKind::Worktree(data) => Some(data),
-            ItemKind::Branch => None,
+            ItemKind::Branch(_) => None,
         }
     }
 
     pub fn worktree_data_mut(&mut self) -> Option<&mut WorktreeData> {
         match &mut self.kind {
             ItemKind::Worktree(data) => Some(data),
-            ItemKind::Branch => None,
+            ItemKind::Branch(_) => None,
         }
     }
 
@@ -444,7 +486,7 @@ impl ListItem {
         // `worktree_state = Some(Prunable)` by the time this runs.)
         let metadata_state = match &self.kind {
             ItemKind::Worktree(data) => metadata_worktree_state(data),
-            ItemKind::Branch => WorktreeState::Branch,
+            ItemKind::Branch(_) => WorktreeState::Branch,
         };
         if self.status_symbols.worktree_state.is_none() {
             self.status_symbols.worktree_state = Some(metadata_state);
@@ -498,7 +540,7 @@ impl ListItem {
         match &self.kind {
             ItemKind::Worktree(data) => data.working_tree_status,
             // Branches have no working tree; treat as permanently clean.
-            ItemKind::Branch => Some(WorkingTreeStatus::default()),
+            ItemKind::Branch(_) => Some(WorkingTreeStatus::default()),
         }
     }
 
@@ -520,7 +562,7 @@ impl ListItem {
                 }
             }
             // Branches have no operation state; trivially resolved to None.
-            ItemKind::Branch => Some(OperationState::None),
+            ItemKind::Branch(_) => Some(OperationState::None),
         }
     }
 
@@ -552,7 +594,7 @@ impl ListItem {
         // but working tree is clean / N/A" sentinel).
         let has_working_tree_conflicts = match &self.kind {
             ItemKind::Worktree(data) => data.has_working_tree_conflicts,
-            ItemKind::Branch => Some(None),
+            ItemKind::Branch(_) => Some(None),
         };
         match tier_would_conflict(self.has_merge_tree_conflicts, has_working_tree_conflicts) {
             Tier::Fired(s) => return Some(s),
@@ -571,13 +613,13 @@ impl ListItem {
                 Some(diff.is_empty() && !status.untracked)
             }
             // Branches have no working tree; trivially clean.
-            ItemKind::Branch => Some(true),
+            ItemKind::Branch(_) => Some(true),
         };
         let integration = match &self.kind {
             ItemKind::Worktree(data) => {
                 self.check_integration_state(data.is_main, default_branch, is_clean?)
             }
-            ItemKind::Branch => self.check_integration_state(false, default_branch, true),
+            ItemKind::Branch(_) => self.check_integration_state(false, default_branch, true),
         };
 
         match tier_integration_or_counts(self.counts, is_clean, integration) {
@@ -695,9 +737,10 @@ mod tests {
 
     #[test]
     fn test_list_item_worktree_data() {
-        // Branch item has no worktree data
-        let item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
+        // Branch items have no worktree data, via either accessor.
+        let mut item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
         assert!(item.worktree_data().is_none());
+        assert!(item.worktree_data_mut().is_none());
         assert!(item.worktree_path().is_none());
     }
 

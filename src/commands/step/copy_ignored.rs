@@ -162,7 +162,9 @@ pub fn step_copy_ignored(
             })
             .collect();
         let entry_word = if items.len() == 1 { "entry" } else { "entries" };
-        eprintln!(
+        // The human preview mirrors the `--format=json` plan (the entries that
+        // would be copied), so it goes to stdout — see /writing-user-outputs.
+        println!(
             "{}",
             info_message(format!(
                 "Would copy {} {}:\n{}",

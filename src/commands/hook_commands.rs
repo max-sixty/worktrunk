@@ -18,7 +18,7 @@ use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
     INFO_SYMBOL, PROMPT_SYMBOL, eprintln, format_bash_with_gutter, format_heading, hint_message,
-    info_message, warning_message,
+    info_message, println, warning_message,
 };
 
 use super::command_approval::approve_hooks_filtered;
@@ -304,7 +304,9 @@ pub fn run_hook(
                 } else {
                     cformat!("{hook_type} <bold>{}</> hook would run:", cmd.label)
                 };
-                eprintln!(
+                // Dry-run preview is the command's answer (the hook that would
+                // run), so it goes to stdout — see /writing-user-outputs.
+                println!(
                     "{}",
                     info_message(cformat!("{label}\n{}", format_bash_with_gutter(&preview)))
                 );

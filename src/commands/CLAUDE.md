@@ -122,7 +122,7 @@ The help text should be scannable. Users reading `wt switch --help` need to quic
 
 The flags answer different questions: `--dry-run` is "what would this change?", `-v` is "what is this doing?" (template variables, expansion, echoed `$ git …` subprocesses).
 
-Both render in the gutter house style: `format_heading` for sections, `format_with_gutter` / `format_bash_with_gutter` for quoted blocks, `info_message` / `hint_message` for status lines. The `/writing-user-outputs` skill covers the helpers, the stdout/stderr split, and when to page.
+A `--dry-run` preview is the command's answer, so it prints to stdout (pageable when long), on the same stream as the command's `--format=json` form; progress and status stay on stderr. Both flags render in the gutter house style: `format_heading` for sections, `format_with_gutter` / `format_bash_with_gutter` for quoted blocks, `info_message` / `hint_message` for status lines. The `/writing-user-outputs` skill covers the helpers, the full stdout/stderr split, and when to page.
 
 ## CLI Help Text Placement
 

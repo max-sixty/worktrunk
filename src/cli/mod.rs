@@ -165,33 +165,48 @@ fn apply_help_template_recursive(mut cmd: Command, path: &str) -> Command {
 pub(crate) fn version_str() -> &'static str {
     static VERSION: OnceLock<String> = OnceLock::new();
     VERSION.get_or_init(|| {
-        let git_version = env!("VERGEN_GIT_DESCRIBE");
-        let cargo_version = env!("CARGO_PKG_VERSION");
-
-        if git_version.contains("IDEMPOTENT") {
-            cargo_version.to_string()
-        } else {
-            git_version.to_string()
-        }
+        // `option_env!`, not `env!`: when building from the crates.io package
+        // archive there is no git worktree, so the build script can't set
+        // `VERGEN_GIT_DESCRIBE` and the variable is undefined at compile time.
+        // `env!` fails to compile in that case (see #3123); `option_env!`
+        // yields `None` and we fall back to the cargo package version.
+        resolve_version(
+            option_env!("VERGEN_GIT_DESCRIBE"),
+            env!("CARGO_PKG_VERSION"),
+        )
     })
+}
+
+/// Choose between the git-describe version and the cargo package version.
+///
+/// Falls back to `cargo_version` when git describe is unavailable (`None`,
+/// from a non-git build) or idempotent (vergen's placeholder for a
+/// non-reproducible build).
+fn resolve_version(git_version: Option<&str>, cargo_version: &str) -> String {
+    match git_version {
+        Some(git_version) if !git_version.contains("IDEMPOTENT") => git_version.to_string(),
+        _ => cargo_version.to_string(),
+    }
 }
 
 /// Output format for commands with text + JSON modes (e.g., `wt switch`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub(crate) enum SwitchFormat {
-    /// Human-readable text output
     Text,
-    /// JSON output
     Json,
 }
 
-// TODO: ClaudeCode is statusline-specific but lives in this shared enum, forcing
-// unrelated codepaths to handle it. Consider a dedicated StatuslineFormat enum.
+/// Output format for `wt list` and `wt config state get` (table or JSON).
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub(crate) enum OutputFormat {
-    /// Human-readable table format
     Table,
-    /// JSON output
+    Json,
+}
+
+/// Output format for `wt list statusline`, including the Claude Code mode.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub(crate) enum StatuslineFormat {
+    Table,
     Json,
     /// Claude Code statusline mode (reads context from stdin)
     #[value(name = "claude-code")]
@@ -302,10 +317,10 @@ impl HookFlags {
 
 #[derive(Args)]
 pub(crate) struct SwitchArgs {
-    /// Branch name or shortcut
+    /// Branch name, shortcut, or PR/MR URL
     ///
     /// Opens interactive picker if omitted.
-    /// Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub PR), 'mr:{N}' (GitLab MR)
+    /// Shortcuts: `^` (default branch), `-` (previous), `@` (current), `pr:{N}` (GitHub PR), `mr:{N}` (GitLab MR)
     #[arg(add = crate::completion::worktree_branch_completer())]
     pub(crate) branch: Option<String>,
 
@@ -394,8 +409,8 @@ pub(crate) struct ListArgs {
     #[command(subcommand)]
     pub(crate) subcommand: Option<ListSubcommand>,
 
-    /// Output format (table, json)
-    #[arg(long, value_enum, default_value = "table", hide_possible_values = true)]
+    /// Output format
+    #[arg(long, value_enum, default_value = "table")]
     pub(crate) format: OutputFormat,
 
     /// Include branches without worktrees
@@ -658,15 +673,11 @@ $ wt switch mr:101                                  # GitLab MR !101
 $ wt switch https://gitlab.com/owner/repo/-/merge_requests/101  # ...the same MR, by URL
 ```
 
-Both work anywhere a branch is accepted, including `--base`.
+Both work anywhere a branch is accepted, including `--base`. The `--create` flag cannot be used with a PR/MR reference since the branch already exists.
 
-Requires `gh` (GitHub) or `glab` (GitLab) CLI to be installed and authenticated. The `--create` flag cannot be used with a PR/MR reference since the branch already exists.
+If the PR or MR is on a fork, the local branch uses its branch name directly, so `git push` works normally. A pre-existing local branch with that name tracking something else requires renaming first.
 
-**Forks:** The local branch uses the PR/MR's branch name directly (e.g., `feature-fix`), so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
-
-**Gitea (experimental):** `pr:` is also compatible with Gitea via the `tea` CLI. Set `[forge] platform = "gitea"` in `.config/wt.toml` to opt in; worktrunk also auto-detects Gitea when the remote host contains `gitea` or when `tea login add` has been run for the host.
-
-**Azure DevOps (experimental):** `pr:` is also compatible with Azure DevOps via the `az` CLI (with the `azure-devops` extension). Set `[forge] platform = "azure-devops"` in `.config/wt.toml` to opt in; worktrunk also auto-detects Azure DevOps from `dev.azure.com` and `*.visualstudio.com` remotes.
+Requires `gh` (GitHub), `glab` (GitLab), or an equivalent CLI installed and authenticated; see [forge platform](@/config.md#forge-platform) for Gitea, Azure DevOps, and other supported platforms.
 
 ## When wt switch fails
 
@@ -736,8 +747,8 @@ $ wt list --branches --full
 ^ main             ^⇅                                                                                           ⇡1  ⇣1  #     41ee0834
 + fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation           |     #408  b772e68b
 + fix-typos        _|                                                                                             |     #410  41ee0834
-  exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and resolvers                                  96379229
-  wip             /↕                 ↑1  ↓1   +33       Start API documentation                                               b40716dc
+/ exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and resolvers                                  96379229
+/ wip             /↕                 ↑1  ↓1   +33       Start API documentation                                               b40716dc
 
 ○ Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, 3 columns hidden
 ```
@@ -768,6 +779,18 @@ $ wt list --format=json
 | Message | Last commit message (truncated) |
 
 The `main` header label is used regardless of the default branch's actual name.
+
+### Gutter
+
+The leftmost column marks each row by physical presence, from most present to least:
+
+| Symbol | Meaning |
+|--------|---------|
+| `@` | Current worktree |
+| `^` | Primary worktree (the repo's home worktree) |
+| `+` | Other worktree |
+| `/` | Local branch without a worktree (`--branches`) |
+| `\|` | Remote branch, not present locally until fetched (`--remotes`) |
 
 ### CI status
 
@@ -895,6 +918,8 @@ $ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 | `is_current` | boolean | Is the current worktree |
 | `is_previous` | boolean | Previous worktree from wt switch |
 | `ci` | object | CI status (see below); absent when no CI |
+| `repo_url` | string | Repository web URL derived from the primary remote; absent when the remote URL cannot be parsed |
+| `repo` | object | Structured repository metadata (see below); includes `remote` |
 | `url` | string | Dev server URL from project config; absent when not configured |
 | `url_active` | boolean | Whether the URL's port is listening; absent when not configured |
 | `summary` | string | LLM-generated branch summary; absent when not configured or no summary |
@@ -958,7 +983,22 @@ $ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 | `stale` | boolean | Local HEAD differs from remote (unpushed changes) |
 | `url` | string | URL to the PR/MR page |
 | `repo_url` | string | Web URL of the repo the PR/MR targets (the upstream for fork PRs); absent when `url` is absent or unrecognized |
+| `repo` | object | Structured metadata for the repository the PR/MR targets; never includes `remote` |
 | `review_state` | string | Review state (see below); absent when the forge reports no review signal |
+
+### repo object
+
+Top-level `repo` describes the local checkout's repository as derived from the primary remote. `ci.repo` describes the repository targeted by the PR/MR URL in `ci.url` (for fork PRs, this is the upstream target). Existing `repo_url` and `ci.repo_url` fields remain available and carry the same URL as `repo.url` / `ci.repo.url`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `url` | string | Repository web URL |
+| `provider` | string | `"github"`, `"gitlab"`, `"gitea"`, `"azure-devops"`, or `"unknown"` |
+| `host` | string | Repository web host |
+| `owner` | string | Owner, organization, or namespace path |
+| `name` | string | Repository name |
+| `project` | string | Azure DevOps project name; absent for other providers |
+| `remote` | string | Local remote name used for top-level repo metadata; absent from `ci.repo` |
 
 ### main_state values
 
@@ -2205,4 +2245,33 @@ $ WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
     /// the rest are the arguments to pass through. See `commands::custom`.
     #[command(external_subcommand)]
     Custom(Vec<OsString>),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_version;
+
+    #[test]
+    fn resolve_version_uses_git_describe_when_available() {
+        assert_eq!(
+            resolve_version(Some("v0.8.5-3-gabcdef"), "0.8.5"),
+            "v0.8.5-3-gabcdef"
+        );
+    }
+
+    #[test]
+    fn resolve_version_falls_back_when_git_describe_idempotent() {
+        // vergen emits an IDEMPOTENT placeholder for non-reproducible builds.
+        assert_eq!(
+            resolve_version(Some("VERGEN_IDEMPOTENT_OUTPUT"), "0.8.5"),
+            "0.8.5"
+        );
+    }
+
+    #[test]
+    fn resolve_version_falls_back_when_git_describe_absent() {
+        // Building from the crates.io package archive: no git worktree, so the
+        // build script never sets VERGEN_GIT_DESCRIBE (#3123).
+        assert_eq!(resolve_version(None, "0.59.0"), "0.59.0");
+    }
 }

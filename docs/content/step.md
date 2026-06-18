@@ -161,11 +161,8 @@ Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
 
           JSON prints structured result to stdout after the commit completes.
 
-          Possible values:
-          - <b><span class=c>text</span></b>: Human-readable text output
-          - <b><span class=c>json</span></b>: JSON output
-
           [default: text]
+          [possible values: text, json]
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
@@ -256,11 +253,8 @@ Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span>
 
           JSON prints structured result to stdout after the squash completes.
 
-          Possible values:
-          - <b><span class=c>text</span></b>: Human-readable text output
-          - <b><span class=c>json</span></b>: JSON output
-
           [default: text]
+          [possible values: text, json]
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
@@ -481,11 +475,8 @@ Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]<
 
           JSON prints structured result to stdout after the copy completes.
 
-          Possible values:
-          - <b><span class=c>text</span></b>: Human-readable text output
-          - <b><span class=c>json</span></b>: JSON output
-
           [default: text]
+          [possible values: text, json]
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
@@ -567,6 +558,15 @@ Usage: <b><span class=c>wt step eval</span></b> <span class=c>[OPTIONS]</span> <
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
 
+<b><span class=g>Automation:</span></b>
+      <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
+          Output format
+
+          JSON prints <b>{name, template, result}</b> to stdout instead of the bare result.
+
+          [default: text]
+          [possible values: text, json]
+
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
           Working directory for this command
@@ -631,13 +631,10 @@ Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</spa
 
 <b><span class=g>Options:</span></b>
       <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
-          Output format (text, json)
-
-          Possible values:
-          - <b><span class=c>text</span></b>: Human-readable text output
-          - <b><span class=c>json</span></b>: JSON output
+          Output format
 
           [default: text]
+          [possible values: text, json]
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
@@ -782,13 +779,10 @@ Usage: <b><span class=c>wt step prune</span></b> <span class=c>[OPTIONS]</span>
           Run removal in foreground (block until complete)
 
       <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
-          Output format (text, json)
-
-          Possible values:
-          - <b><span class=c>text</span></b>: Human-readable text output
-          - <b><span class=c>json</span></b>: JSON output
+          Output format
 
           [default: text]
+          [possible values: text, json]
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
@@ -851,9 +845,15 @@ The main worktree can't be moved with `git worktree move`. Instead, relocate
 switches it to the default branch and creates a new linked worktree at the
 expected path. Untracked and gitignored files remain at the original location.
 
+### Dirty worktrees
+
+Linked worktrees relocate as-is — `git worktree move` carries uncommitted
+changes along. Only the main worktree skips when dirty (its `git checkout`
+refuses), unless `--commit` is passed.
+
 ### Skipped worktrees
 
-- **Dirty** (without `--commit`) — use `--commit` to auto-commit first
+- **Dirty main worktree** (without `--commit`) — use `--commit` to auto-commit first
 - **Locked** — unlock with `git worktree unlock`
 - **Target blocked** (without `--clobber`) — use `--clobber` to backup blocker
 - **Detached HEAD** — no branch to compute expected path
@@ -895,11 +895,8 @@ Usage: <b><span class=c>wt step relocate</span></b> <span class=c>[OPTIONS]</spa
 
           JSON prints structured result to stdout after the relocate completes.
 
-          Possible values:
-          - <b><span class=c>text</span></b>: Human-readable text output
-          - <b><span class=c>json</span></b>: JSON output
-
           [default: text]
+          [possible values: text, json]
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>

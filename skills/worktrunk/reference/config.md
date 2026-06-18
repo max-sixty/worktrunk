@@ -661,13 +661,10 @@ Options:
 
 Output:
       --format <FORMAT>
-          Output format (text, json)
-
-          Possible values:
-          - text: Human-readable text output
-          - json: JSON output
+          Output format
 
           [default: text]
+          [possible values: text, json]
 
 Global Options:
   -C <path>

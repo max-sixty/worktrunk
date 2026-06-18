@@ -775,9 +775,13 @@ pub fn handle_state_get(
                 .and_then(|ci_branch| PrStatus::detect(&repo, &ci_branch, &branch_ref.commit_sha));
 
             if format == SwitchFormat::Json {
-                let output = pr_status
-                    .as_ref()
-                    .map(super::super::list::json_output::JsonCi::from);
+                let ci_provider_override = repo.forge_platform_override();
+                let output = pr_status.as_ref().map(|pr| {
+                    super::super::list::json_output::JsonCi::from_pr_status(
+                        pr,
+                        ci_provider_override.as_deref(),
+                    )
+                });
                 println!("{}", serde_json::to_string_pretty(&output)?);
             } else {
                 let ci_status = pr_status
@@ -1178,7 +1182,7 @@ pub fn handle_state_show(format: OutputFormat) -> anyhow::Result<()> {
 
     match format {
         OutputFormat::Json => handle_state_show_json(&repo),
-        OutputFormat::Table | OutputFormat::ClaudeCode => handle_state_show_table(&repo),
+        OutputFormat::Table => handle_state_show_table(&repo),
     }
 }
 

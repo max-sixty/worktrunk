@@ -21,7 +21,7 @@ use worktrunk::styling::{
 };
 
 use super::list::{self, CollectOptions, StatuslineSegment, json_output};
-use crate::cli::OutputFormat;
+use crate::cli::StatuslineFormat;
 
 /// Claude Code context parsed from stdin JSON
 struct ClaudeCodeContext {
@@ -561,17 +561,17 @@ fn format_context_gauge(percentage: f64) -> String {
 ///
 /// Output uses `println!` for raw stdout (bypasses anstream color detection).
 /// Shell prompts (PS1) and Claude Code always expect ANSI codes.
-pub fn run(format: OutputFormat) -> Result<()> {
+pub fn run(format: StatuslineFormat) -> Result<()> {
     // Statusline runs on every prompt redraw — deprecation warnings on stderr
     // would appear above each prompt.
     worktrunk::config::suppress_warnings();
 
     // JSON format: output current worktree as JSON
-    if matches!(format, OutputFormat::Json) {
+    if matches!(format, StatuslineFormat::Json) {
         return run_json();
     }
 
-    let claude_code = matches!(format, OutputFormat::ClaudeCode);
+    let claude_code = matches!(format, StatuslineFormat::ClaudeCode);
 
     // Get context - either from stdin (claude-code mode) or current directory
     let (cwd, model_name, context_used_percentage, rate_limits) = if claude_code {
@@ -750,10 +750,13 @@ fn run_json() -> Result<()> {
     }
     // No custom columns: the statusline path never expands `[list.custom-columns]`
     // (prompt hot path; its compact format has no column grid).
+    let repo_metadata = repo.repo_info();
+    let ci_provider_override = repo.forge_platform_override();
     let json_item = json_output::JsonItem::from_list_item(
         &item,
         &mut all_vars,
-        repo.repo_web_url().as_deref(),
+        repo_metadata.as_ref(),
+        ci_provider_override.as_deref(),
         &[],
     );
 

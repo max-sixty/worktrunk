@@ -156,11 +156,8 @@ Automation:
 
           JSON prints structured result to stdout after the commit completes.
 
-          Possible values:
-          - text: Human-readable text output
-          - json: JSON output
-
           [default: text]
+          [possible values: text, json]
 
 Global Options:
   -C <path>
@@ -255,11 +252,8 @@ Automation:
 
           JSON prints structured result to stdout after the squash completes.
 
-          Possible values:
-          - text: Human-readable text output
-          - json: JSON output
-
           [default: text]
+          [possible values: text, json]
 
 Global Options:
   -C <path>
@@ -492,11 +486,8 @@ Automation:
 
           JSON prints structured result to stdout after the copy completes.
 
-          Possible values:
-          - text: Human-readable text output
-          - json: JSON output
-
           [default: text]
+          [possible values: text, json]
 
 Global Options:
   -C <path>
@@ -584,6 +575,15 @@ Options:
   -h, --help
           Print help (see a summary with '-h')
 
+Automation:
+      --format <FORMAT>
+          Output format
+
+          JSON prints {name, template, result} to stdout instead of the bare result.
+
+          [default: text]
+          [possible values: text, json]
+
 Global Options:
   -C <path>
           Working directory for this command
@@ -658,13 +658,10 @@ Arguments:
 
 Options:
       --format <FORMAT>
-          Output format (text, json)
-
-          Possible values:
-          - text: Human-readable text output
-          - json: JSON output
+          Output format
 
           [default: text]
+          [possible values: text, json]
 
   -h, --help
           Print help (see a summary with '-h')
@@ -819,13 +816,10 @@ Options:
           Run removal in foreground (block until complete)
 
       --format <FORMAT>
-          Output format (text, json)
-
-          Possible values:
-          - text: Human-readable text output
-          - json: JSON output
+          Output format
 
           [default: text]
+          [possible values: text, json]
 
   -h, --help
           Print help (see a summary with '-h')
@@ -896,9 +890,15 @@ The main worktree can't be moved with `git worktree move`. Instead, relocate
 switches it to the default branch and creates a new linked worktree at the
 expected path. Untracked and gitignored files remain at the original location.
 
+### Dirty worktrees
+
+Linked worktrees relocate as-is — `git worktree move` carries uncommitted
+changes along. Only the main worktree skips when dirty (its `git checkout`
+refuses), unless `--commit` is passed.
+
 ### Skipped worktrees
 
-- **Dirty** (without `--commit`) — use `--commit` to auto-commit first
+- **Dirty main worktree** (without `--commit`) — use `--commit` to auto-commit first
 - **Locked** — unlock with `git worktree unlock`
 - **Target blocked** (without `--clobber`) — use `--clobber` to backup blocker
 - **Detached HEAD** — no branch to compute expected path
@@ -940,11 +940,8 @@ Automation:
 
           JSON prints structured result to stdout after the relocate completes.
 
-          Possible values:
-          - text: Human-readable text output
-          - json: JSON output
-
           [default: text]
+          [possible values: text, json]
 
 Global Options:
   -C <path>

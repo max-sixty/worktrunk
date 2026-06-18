@@ -177,7 +177,7 @@ $ wt step rebase develop    # Rebase onto develop
 
     /// Fast-forward target to current branch
     #[command(
-        after_long_help = r#"Updates the local target branch (e.g., `main`) to include current commits.
+        after_long_help = r#"Updates the local target branch to include current commits.
 
 ## Examples
 
@@ -452,6 +452,12 @@ Note: This command is experimental and may change in future versions.
     Eval {
         /// Template expression to evaluate
         template: String,
+
+        /// Output format
+        ///
+        /// JSON prints `{name, template, result}` to stdout instead of the bare result.
+        #[arg(long, default_value = "text", help_heading = "Automation")]
+        format: crate::cli::SwitchFormat,
     },
 
     /// \[experimental\] Run command in each worktree
@@ -498,7 +504,7 @@ Note: This command is experimental and may change in future versions.
 "#
     )]
     ForEach {
-        /// Output format (text, json)
+        /// Output format
         #[arg(long, default_value = "text")]
         format: crate::cli::SwitchFormat,
 
@@ -605,7 +611,7 @@ $ wt step prune
         #[arg(long)]
         foreground: bool,
 
-        /// Output format (text, json)
+        /// Output format
         #[arg(long, default_value = "text")]
         format: crate::cli::SwitchFormat,
     },
@@ -658,9 +664,15 @@ The main worktree can't be moved with `git worktree move`. Instead, relocate
 switches it to the default branch and creates a new linked worktree at the
 expected path. Untracked and gitignored files remain at the original location.
 
+## Dirty worktrees
+
+Linked worktrees relocate as-is — `git worktree move` carries uncommitted
+changes along. Only the main worktree skips when dirty (its `git checkout`
+refuses), unless `--commit` is passed.
+
 ## Skipped worktrees
 
-- **Dirty** (without `--commit`) — use `--commit` to auto-commit first
+- **Dirty main worktree** (without `--commit`) — use `--commit` to auto-commit first
 - **Locked** — unlock with `git worktree unlock`
 - **Target blocked** (without `--clobber`) — use `--clobber` to backup blocker
 - **Detached HEAD** — no branch to compute expected path

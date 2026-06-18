@@ -7,7 +7,7 @@ use worktrunk::styling::{Stream, StyledLine, hyperlink_stdout, supports_hyperlin
 use super::collect::parse_port_from_url;
 use super::columns::{ColumnKind, DiffVariant};
 use super::layout::{ColumnFormat, ColumnLayout, DiffColumnConfig, LayoutConfig};
-use super::model::{ListItem, PositionMask};
+use super::model::{ItemKind, ListItem, PositionMask};
 
 /// Placeholder glyph for unresolved Status positions — both "still loading" and
 /// "drain deadline fired, won't arrive."
@@ -275,7 +275,6 @@ impl LayoutConfig {
     /// and a blank gutter placeholder. See [`Self::render_list_item_line`] for `placeholder` semantics.
     pub fn render_skeleton_row(&self, item: &ListItem, placeholder: &str) -> StyledLine {
         let branch = item.branch_name();
-        let wt_data = item.worktree_data();
         let shortened_path = item
             .worktree_path()
             .map(|p| shorten_path(p, &self.main_worktree_path))
@@ -289,16 +288,17 @@ impl LayoutConfig {
 
             match col.kind {
                 ColumnKind::Gutter => {
-                    // Skeleton shows placeholder gutter - actual symbols (including is_previous)
-                    // appear when WorktreeData is populated post-skeleton.
-                    // Uses the current placeholder so the 200ms blank-reveal flow
-                    // keeps the gutter in lockstep with the data columns.
-                    let symbol = if wt_data.is_some() {
-                        format!("{spinner} ") // Placeholder for worktrees
-                    } else {
-                        "  ".to_string() // Branch without worktree (two spaces to match width)
-                    };
-                    cell.push_styled(symbol, dim);
+                    // Worktree gutter symbols (@/^/+, including is_previous)
+                    // resolve when WorktreeData is populated post-skeleton, so
+                    // show the dimmed placeholder — it keeps the 200ms
+                    // blank-reveal flow in lockstep with the data columns.
+                    // Branch scope is known at construction, so its sigil
+                    // (`/`/`|`) renders immediately, dimmed to match the final
+                    // render (and its Status-column twin) — no flash or flicker.
+                    match &item.kind {
+                        ItemKind::Worktree(_) => cell.push_styled(format!("{spinner} "), dim),
+                        ItemKind::Branch(scope) => cell.push_styled(scope.gutter_sigil(), dim),
+                    }
                 }
                 ColumnKind::Branch => {
                     // Show actual branch name (no dim - start normal, gray out later if removable)
@@ -405,20 +405,38 @@ impl ColumnLayout {
 
         match self.kind {
             ColumnKind::Gutter => {
+                // The gutter is a 2-cell presence/location axis. Worktree rows
+                // (`@`/`^`/`+`) are materialized on disk and render bright;
+                // branch rows are refs with no working copy, split by scope
+                // (`/` local, `|` remote) and rendered dim to match those same
+                // glyphs in the Status column (WORKTREE_STATE `/`, upstream `|`
+                // are both dim) — bright worktree vs dim ref reinforces the
+                // presence gradient, glyph still primary. All single-width
+                // ASCII — the gutter must dodge skim's `width_cjk` clipping
+                // (see `vendor/NOTES.md`).
+                //
+                // TODO(pr-rows): PR rows (open PRs with no local branch) land
+                // on a separate branch; add a `#` arm here (and a matching `#`
+                // in the Status upstream column). Not done here — PR rows don't
+                // exist in this branch, and the picker skips CI/PR detection (a
+                // network call), so a `#` driven by PR status would never
+                // render in the picker.
                 let mut cell = StyledLine::new();
-                let symbol = if let Some(data) = worktree_data {
-                    // Priority: @ (current) > ^ (main) > + (regular, including previous)
-                    if data.is_current {
-                        "@ " // Current worktree
-                    } else if data.is_main {
-                        "^ " // Main worktree
-                    } else {
-                        "+ " // Regular worktree (including previous)
+                match &item.kind {
+                    ItemKind::Worktree(data) => {
+                        let symbol = if data.is_current {
+                            "@ " // Current worktree
+                        } else if data.is_main {
+                            "^ " // Main worktree
+                        } else {
+                            "+ " // Regular worktree (including previous)
+                        };
+                        cell.push_raw(symbol);
                     }
-                } else {
-                    "  " // Branch without worktree (two spaces to match width)
-                };
-                cell.push_raw(symbol.to_string());
+                    ItemKind::Branch(scope) => {
+                        cell.push_styled(scope.gutter_sigil(), Style::new().dimmed());
+                    }
+                }
                 cell
             }
             ColumnKind::Branch => {

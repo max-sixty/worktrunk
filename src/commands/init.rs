@@ -1,11 +1,10 @@
 use anyhow::Context;
-use clap::CommandFactory;
-use clap_complete::generate;
+use clap_complete::env::{
+    Bash as EnvBash, EnvCompleter, Fish as EnvFish, Powershell as EnvPowershell, Zsh as EnvZsh,
+};
 use std::io::{self, Write};
 use worktrunk::shell;
 use worktrunk::styling::println;
-
-use crate::cli::Cli;
 
 pub fn handle_init(shell: shell::Shell, cmd: String) -> Result<(), String> {
     let init = shell::ShellInit::with_prefix(shell, cmd);
@@ -20,46 +19,51 @@ pub fn handle_init(shell: shell::Shell, cmd: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Generate static shell completions to stdout.
+/// Generate shell completions to stdout for package manager integration.
 ///
 /// This is the handler for `wt config shell completions <shell>`. It outputs completion
 /// scripts suitable for package manager integration (e.g., Homebrew's
 /// `generate_completions_from_executable`).
 ///
+/// Bash, Zsh, Fish, and PowerShell all emit a *dynamic* registration: the same
+/// script `COMPLETE=<shell> wt` prints, which calls the binary at TAB time. This
+/// means a plain package install gets live branch and worktree name completion with
+/// no `wt config shell install`. Zsh additionally needs a thin transform so the
+/// script works when autoloaded from `fpath` (Homebrew installs it as
+/// `site-functions/_wt`). See `make_zsh_autoload_safe`. The other three need no
+/// transform: Homebrew sources bash files, autoloads fish completion files by
+/// command name, and PowerShell registrations are sourced into the profile.
+///
+/// Nushell uses template-based integration (the shell wrapper and completer in one
+/// file), which is already dynamic, so its output is the full `init` template.
+///
 /// Unlike `wt config shell init`, this does not:
 /// - Modify any files
 /// - Include shell integration (cd-on-switch functionality)
-/// - Register dynamic completions
-///
-/// TODO(completions): We output static completions because that's the package manager
-/// convention, but dynamic completions (one-liner that calls the binary at tab-time)
-/// might be better—users would get branch name completion. See the fish example in
-/// `~/.config/fish/completions/wt.fish` which calls `COMPLETE=fish wt` at runtime.
-/// Other tools like gh/kubectl also call their binaries at runtime.
 pub fn handle_completions(shell: shell::Shell) -> anyhow::Result<()> {
-    let mut cmd = Cli::command();
     let cmd_name = crate::binary_name();
     let mut stdout = io::stdout();
 
     match shell {
         shell::Shell::Bash => {
-            generate(
-                clap_complete::shells::Bash,
-                &mut cmd,
-                &cmd_name,
-                &mut stdout,
-            );
-        }
-        shell::Shell::Fish => {
-            generate(
-                clap_complete::shells::Fish,
-                &mut cmd,
-                &cmd_name,
-                &mut stdout,
-            );
+            EnvBash
+                .write_registration("COMPLETE", &cmd_name, &cmd_name, &cmd_name, &mut stdout)
+                .context("failed to write bash completion registration")?;
         }
         shell::Shell::Zsh => {
-            generate(clap_complete::shells::Zsh, &mut cmd, &cmd_name, &mut stdout);
+            let mut buf = Vec::new();
+            EnvZsh
+                .write_registration("COMPLETE", &cmd_name, &cmd_name, &cmd_name, &mut buf)
+                .context("failed to write zsh completion registration")?;
+            let script = String::from_utf8(buf)
+                .context("zsh completion registration was not valid UTF-8")?;
+            let script = make_zsh_autoload_safe(&script, &cmd_name);
+            write!(stdout, "{}", script).context("failed to write to stdout")?;
+        }
+        shell::Shell::Fish => {
+            EnvFish
+                .write_registration("COMPLETE", &cmd_name, &cmd_name, &cmd_name, &mut stdout)
+                .context("failed to write fish completion registration")?;
         }
         shell::Shell::Nushell => {
             // Nushell uses template-based integration (shell wrapper + completions in one)
@@ -71,14 +75,47 @@ pub fn handle_completions(shell: shell::Shell) -> anyhow::Result<()> {
             write!(stdout, "{}", code).context("failed to write to stdout")?;
         }
         shell::Shell::PowerShell => {
-            generate(
-                clap_complete::shells::PowerShell,
-                &mut cmd,
-                &cmd_name,
-                &mut stdout,
-            );
+            EnvPowershell
+                .write_registration("COMPLETE", &cmd_name, &cmd_name, &cmd_name, &mut stdout)
+                .context("failed to write powershell completion registration")?;
         }
     }
 
     Ok(())
+}
+
+/// Make clap's dynamic zsh registration safe to autoload from `fpath`.
+///
+/// clap's registration ends with `compdef <func> <cmd>`, which assumes the script is
+/// sourced or eval'd. Homebrew instead installs it as `site-functions/_<cmd>` and lets
+/// compinit autoload it on the first completion, where the file body runs as the `_<cmd>`
+/// completion function. In that mode a bare `compdef` is too late. zsh expects the file
+/// to *perform* the completion, not register a handler.
+///
+/// The replacement is a dual-mode guard: when `funcstack[1]` is `_<cmd>` (autoloaded),
+/// call clap's completer directly. Otherwise (sourced/eval'd) register it via `compdef`.
+/// The leading `#compdef <cmd>` line clap already emits stays first, which is what marks
+/// the file for compinit autoload.
+///
+/// The two display zstyles match `templates/zsh.zsh` so package-installed users get the
+/// same single-column branch listing as `install` users. They precede the guard because
+/// in autoload mode the whole file body runs as `_<cmd>` on every completion: setting the
+/// styles before the completer call means `_describe` sees them on the *first* TAB, not
+/// only on the second.
+fn make_zsh_autoload_safe(script: &str, cmd_name: &str) -> String {
+    let func = format!("_clap_dynamic_completer_{}", cmd_name.replace('-', "_"));
+    let trailing = format!("compdef {func} {cmd_name}");
+    let replacement = format!(
+        r#"# Single-column display keeps descriptions visually associated with each branch.
+zstyle ':completion:*:{cmd_name}:*' list-max 1
+# Prevent grouping branches with identical descriptions (same timestamp) on one line.
+zstyle ':completion:*:*:{cmd_name}:*' list-grouped false
+
+if [ "$funcstack[1]" = "_{cmd_name}" ]; then
+    {func} "$@"
+else
+    compdef {func} {cmd_name}
+fi"#
+    );
+    script.replace(&trailing, &replacement)
 }

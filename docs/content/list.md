@@ -60,8 +60,8 @@ Include branches that don't have worktrees:
 ^ main             <span class=d>^</span><span class=d>⇅</span>                                                                                           <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=g>#</span>     <span class=d>41ee0834</span>
 + fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+25</span>  <span class=r>-11</span>  Harden auth with constant-time token validation           <span class=d>|</span>     <span class=g>#408</span>  <span class=d>b772e68b</span>
 + <span class=d>fix-typos</span>        <span class=d>_</span><span class=d>|</span>                                                                                             <span class=d>|</span>     <span class=g>#410</span>  <span class=d>41ee0834</span>
-  exp             <span class=d>/</span><span class=d>↕</span>                 <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+137</span>       Explore GraphQL schema and resolvers                                  <span class=d>96379229</span>
-  wip             <span class=d>/</span><span class=d>↕</span>                 <span class=g>↑1</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+33</span>       Start API documentation                                               <span class=d>b40716dc</span>
+<span class=d>/ </span>exp             <span class=d>/</span><span class=d>↕</span>                 <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+137</span>       Explore GraphQL schema and resolvers                                  <span class=d>96379229</span>
+<span class=d>/ </span>wip             <span class=d>/</span><span class=d>↕</span>                 <span class=g>↑1</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+33</span>       Start API documentation                                               <span class=d>b40716dc</span>
 
 <span class=d>○</span> <span class=d>Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, 3 columns hidden</span>
 {% end %}
@@ -90,6 +90,18 @@ Output as JSON for scripting:
 | Message | Last commit message (truncated) |
 
 The `main` header label is used regardless of the default branch's actual name.
+
+### Gutter
+
+The leftmost column marks each row by physical presence, from most present to least:
+
+| Symbol | Meaning |
+|--------|---------|
+| `@` | Current worktree |
+| `^` | Primary worktree (the repo's home worktree) |
+| `+` | Other worktree |
+| `/` | Local branch without a worktree (`--branches`) |
+| `\|` | Remote branch, not present locally until fetched (`--remotes`) |
 
 ### CI status
 
@@ -197,6 +209,8 @@ Query structured data with `--format=json`:
 | `is_current` | boolean | Is the current worktree |
 | `is_previous` | boolean | Previous worktree from wt switch |
 | `ci` | object | CI status (see below); absent when no CI |
+| `repo_url` | string | Repository web URL derived from the primary remote; absent when the remote URL cannot be parsed |
+| `repo` | object | Structured repository metadata (see below); includes `remote` |
 | `url` | string | Dev server URL from project config; absent when not configured |
 | `url_active` | boolean | Whether the URL's port is listening; absent when not configured |
 | `summary` | string | LLM-generated branch summary; absent when not configured or no summary |
@@ -260,7 +274,22 @@ Query structured data with `--format=json`:
 | `stale` | boolean | Local HEAD differs from remote (unpushed changes) |
 | `url` | string | URL to the PR/MR page |
 | `repo_url` | string | Web URL of the repo the PR/MR targets (the upstream for fork PRs); absent when `url` is absent or unrecognized |
+| `repo` | object | Structured metadata for the repository the PR/MR targets; never includes `remote` |
 | `review_state` | string | Review state (see below); absent when the forge reports no review signal |
+
+### repo object
+
+Top-level `repo` describes the local checkout's repository as derived from the primary remote. `ci.repo` describes the repository targeted by the PR/MR URL in `ci.url` (for fork PRs, this is the upstream target). Existing `repo_url` and `ci.repo_url` fields remain available and carry the same URL as `repo.url` / `ci.repo.url`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `url` | string | Repository web URL |
+| `provider` | string | `"github"`, `"gitlab"`, `"gitea"`, `"azure-devops"`, or `"unknown"` |
+| `host` | string | Repository web host |
+| `owner` | string | Owner, organization, or namespace path |
+| `name` | string | Repository name |
+| `project` | string | Azure DevOps project name; absent for other providers |
+| `remote` | string | Local remote name used for top-level repo metadata; absent from `ci.repo` |
 
 ### main_state values
 
@@ -301,9 +330,10 @@ Usage: <b><span class=c>wt list</span></b> <span class=c>[OPTIONS]</span>
 
 <b><span class=g>Options:</span></b>
       <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
-          Output format (table, json)
+          Output format
 
           [default: table]
+          [possible values: table, json]
 
       <b><span class=c>--branches</span></b>
           Include branches without worktrees

@@ -48,7 +48,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 [2m○[22m Will remove shell extension for [1mfish[0m @ [1m~/.config/fish/functions/wt.fish[0m
 [2m○[22m Will remove completions for [1mfish[0m @ [1m~/.config/fish/completions/wt.fish[0m
+
+----- stderr -----

@@ -47,7 +47,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 [2m○[22m Will remove shell extension & completions for [1mbash[0m @ [1m~/.bashrc[0m
 [2m○[22m Will remove shell extension & completions for [1mzsh[0m @ [1m~/.zshrc[0m
+
+----- stderr -----

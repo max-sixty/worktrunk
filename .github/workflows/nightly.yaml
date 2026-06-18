@@ -7,6 +7,7 @@ name: nightly
 #   - check-unused-dependencies: cargo-udeps on nightly toolchain
 #   - minimal-versions: cargo check against minimum-version dep resolution
 #   - nix-flake: nix flake check (packaging-environment bugs, motivated by #2624)
+#   - crate-build: build the crates.io archive with no `.git` (faithful #3123 repro)
 #
 # Runs daily on cron, on demand via workflow_dispatch, on pushes to main that
 # touch dependency or toolchain files, and on PRs that either (a) touch the
@@ -111,7 +112,7 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: Install cargo-hack
-      uses: taiki-e/install-action@v2.81.11
+      uses: taiki-e/install-action@v2.82.0
       with:
         tool: cargo-hack
 
@@ -304,6 +305,29 @@ jobs:
     - name: cargo check
       run: cargo check --workspace --all-targets
 
+  crate-build:
+    # Faithful end-to-end guard for #3123: build the crates.io *source archive*
+    # in a directory with no ancestor `.git` and confirm `wt` both compiles and
+    # reports the cargo version (the `option_env!("VERGEN_GIT_DESCRIBE")`
+    # fallback). ci.yaml's fast `vergen_env_vars_are_read_optionally` guard
+    # catches the mechanism (`env!` vs `option_env!`) on every PR by scanning
+    # source; this reproduces the actual `cargo install` condition — a full
+    # from-scratch build (~minutes), which is why it's `#[ignore]`d and run here
+    # via `--ignored`. A regression that an in-tree build can't see (git
+    # describe ascends to the outer repo) surfaces only on this no-git build.
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v6
+
+    - name: 💰 Cache
+      uses: Swatinem/rust-cache@v2
+
+    - name: 🧪 Build crates.io archive without .git
+      run: cargo test --test integration crate_io_archive_builds_and_versions_without_git -- --ignored
+
   nix-flake:
     # Build and test under the nix sandbox so packaging-environment bugs
     # surface before a release / nixpkgs maintainer hits them. See #2624 for
@@ -341,6 +365,7 @@ jobs:
       - check-unused-dependencies
       - minimal-versions
       - nix-flake
+      - crate-build
     if: always() && contains(needs.*.result, 'failure') && github.repository_owner == 'max-sixty' && github.event_name == 'schedule'
     runs-on: ubuntu-24.04
     permissions:

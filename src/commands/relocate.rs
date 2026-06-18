@@ -29,8 +29,8 @@ use worktrunk::config::UserConfig;
 use worktrunk::git::{ErrorExt, Repository, WorktreeInfo};
 use worktrunk::path::{format_path_for_display, paths_match};
 use worktrunk::styling::{
-    eprintln, format_with_gutter, hint_message, info_message, progress_message, success_message,
-    warning_message,
+    eprintln, format_with_gutter, hint_message, info_message, println, progress_message,
+    success_message, warning_message,
 };
 
 use super::backup;
@@ -260,9 +260,19 @@ pub fn validate_candidates(
             continue;
         }
 
-        // Check dirty
+        let is_main = paths_match(&candidate.wt.path, repo_path);
+
+        // Check dirty.
+        //
+        // `git worktree move` carries modified-tracked and untracked files
+        // along with the worktree, so for linked worktrees we don't need to
+        // require a clean state. The main worktree is different: it can't be
+        // moved with `git worktree move`, and the fallback path runs
+        // `git checkout <default-branch>` which refuses to switch over
+        // uncommitted changes — so we still skip dirty main worktrees unless
+        // `--commit` was passed.
         let worktree = repo.worktree_at(&candidate.wt.path);
-        if worktree.is_dirty()? {
+        if worktree.is_dirty()? && (auto_commit || is_main) {
             if auto_commit {
                 eprintln!(
                     "{}",
@@ -282,9 +292,12 @@ pub fn validate_candidates(
                     StageMode::None, // already staged above
                 )?;
             } else {
+                // is_main without --commit
                 eprintln!(
                     "{}",
-                    warning_message(cformat!("Skipping <bold>{branch}</> (uncommitted changes)"))
+                    warning_message(cformat!(
+                        "Skipping <bold>{branch}</> (uncommitted changes in main worktree)"
+                    ))
                 );
                 eprintln!(
                     "{}",
@@ -300,7 +313,6 @@ pub fn validate_candidates(
             }
         }
 
-        let is_main = paths_match(&candidate.wt.path, repo_path);
         validated.push(ValidatedCandidate {
             wt: candidate.wt,
             expected_path: candidate.expected_path,
@@ -662,7 +674,9 @@ impl<'a> RelocationExecutor<'a> {
 
 /// Show dry-run preview of relocations.
 pub fn show_dry_run_preview(candidates: &[RelocationCandidate]) {
-    eprintln!(
+    // Dry-run preview is the command's answer (the relocations that would
+    // happen), so it goes to stdout — see /writing-user-outputs.
+    println!(
         "{}",
         info_message(format!(
             "{} worktree{} would be relocated:",
@@ -680,7 +694,7 @@ pub fn show_dry_run_preview(candidates: &[RelocationCandidate]) {
             cformat!("<bold>{branch}</>: {src_display} → {dest_display}")
         })
         .collect();
-    eprintln!("{}", format_with_gutter(&preview_lines.join("\n"), None));
+    println!("{}", format_with_gutter(&preview_lines.join("\n"), None));
 }
 
 /// Show summary of relocations performed.

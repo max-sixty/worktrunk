@@ -11,18 +11,24 @@ use worktrunk::git::Repository;
 use worktrunk::shell_exec::ShellEscapeMode;
 use worktrunk::styling::{eprintln, format_with_gutter, info_message, println, verbosity};
 
+use crate::cli::SwitchFormat;
 use crate::commands::command_executor::{CommandContext, build_hook_context};
+
+/// Template name reported in errors, the `-v` expansion view, and JSON output.
+const EVAL_NAME: &str = "eval";
 
 /// Evaluate a template expression in the current worktree context.
 ///
-/// Prints the expanded result to stdout with a trailing newline. All hook
-/// template variables and filters are available.
+/// In text mode, prints the expanded result to stdout with a trailing newline.
+/// In JSON mode (`--format=json`), prints `{name, template, result}` instead.
+/// All hook template variables and filters are available.
 ///
 /// `eval` mutates nothing, so it has no `--dry-run`. Variable discovery lives
 /// in the verbose lane instead: `-v` lists the available template variables on
 /// stderr, above the labeled `source` / `result` expansion view that
-/// `expand_template` renders at `-v`.
-pub fn step_eval(template: &str) -> anyhow::Result<()> {
+/// `expand_template` renders at `-v`. The `-v` lane writes to stderr, so it
+/// composes with either output format.
+pub fn step_eval(template: &str, format: SwitchFormat) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let config = UserConfig::load()?;
 
@@ -54,12 +60,23 @@ pub fn step_eval(template: &str) -> anyhow::Result<()> {
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
 
-    let result = expand_template(template, &vars, ShellEscapeMode::Literal, &repo, "eval")?;
+    let result = expand_template(template, &vars, ShellEscapeMode::Literal, &repo, EVAL_NAME)?;
     // `expand_template` emitted the `source` / `result` view to stderr under
     // `-v`; a trailing blank separates it from the result printed below.
     if verbosity() >= 1 {
         eprintln!();
     }
-    println!("{result}");
+
+    match format {
+        SwitchFormat::Text => println!("{result}"),
+        SwitchFormat::Json => {
+            let payload = serde_json::json!({
+                "name": EVAL_NAME,
+                "template": template,
+                "result": result,
+            });
+            println!("{}", serde_json::to_string_pretty(&payload)?);
+        }
+    }
     Ok(())
 }

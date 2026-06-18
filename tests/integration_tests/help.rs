@@ -214,9 +214,11 @@ fn test_help_md_subcommand() {
     });
 }
 
-/// Verifies that markdown tables remain intact (no mid-row breaks) even when
-/// table width exceeds terminal width. Tables should extend past 80 columns
-/// rather than wrap incorrectly.
+/// Verifies width handling when help is narrower than its content:
+/// - Markdown tables stay intact (no mid-row breaks), extending past 80 columns.
+/// - Captured `wt list` example tables (`<!-- wt list … -->` blocks) are chopped
+///   to width with an ellipsis — like real `wt list` — instead of word-wrapping,
+///   while hand-authored command sessions (the `jq` examples) still wrap.
 #[test]
 fn test_help_list_narrow_terminal() {
     help_settings().bind(|| {
