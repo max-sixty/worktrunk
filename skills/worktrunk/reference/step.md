@@ -581,11 +581,8 @@ Automation:
 
           JSON prints {name, template, result} to stdout instead of the bare result.
 
-          Possible values:
-          - text: Human-readable text output
-          - json: JSON output
-
           [default: text]
+          [possible values: text, json]
 
 Global Options:
   -C <path>
@@ -661,7 +658,7 @@ Arguments:
 
 Options:
       --format <FORMAT>
-          Output format (text, json)
+          Output format
 
           [default: text]
           [possible values: text, json]
@@ -819,7 +816,7 @@ Options:
           Run removal in foreground (block until complete)
 
       --format <FORMAT>
-          Output format (text, json)
+          Output format
 
           [default: text]
           [possible values: text, json]

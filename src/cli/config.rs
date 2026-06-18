@@ -489,7 +489,7 @@ This tests:
         #[arg(long)]
         full: bool,
 
-        /// Output format (text, json)
+        /// Output format
         #[arg(long, default_value = "text", help_heading = "Output")]
         format: SwitchFormat,
     },
@@ -1447,7 +1447,7 @@ $ wt config state vars list --branch=feature
         #[arg(long, add = crate::completion::branch_value_completer())]
         branch: Option<String>,
 
-        /// Output format (text, json)
+        /// Output format
         #[arg(long, default_value = "text", help_heading = "Output")]
         format: SwitchFormat,
     },

@@ -629,7 +629,7 @@ Usage: <b><span class=c>wt config show</span></b> <span class=c>[OPTIONS]</span>
 
 <b><span class=g>Output:</span></b>
       <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
-          Output format (text, json)
+          Output format
 
           [default: text]
           [possible values: text, json]
