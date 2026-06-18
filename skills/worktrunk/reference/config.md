@@ -630,7 +630,7 @@ Options:
 
 Output:
       --format <FORMAT>
-          Output format (text, json)
+          Output format
 
           [default: text]
           [possible values: text, json]

@@ -33,7 +33,7 @@ pub(crate) use invocation::{
     binary_name, invocation_path, is_git_subcommand, was_invoked_with_explicit_path,
 };
 
-pub(crate) use crate::cli::OutputFormat;
+pub(crate) use crate::cli::{OutputFormat, StatuslineFormat};
 
 use commands::commit::HookGate;
 #[cfg(unix)]
@@ -646,8 +646,8 @@ fn handle_list_command(args: ListArgs) -> anyhow::Result<()> {
             }
             // Hidden --claude-code flag only applies when format is default (Table)
             // Explicit --format=json takes precedence over --claude-code
-            let effective_format = if claude_code && matches!(format, OutputFormat::Table) {
-                OutputFormat::ClaudeCode
+            let effective_format = if claude_code && matches!(format, StatuslineFormat::Table) {
+                StatuslineFormat::ClaudeCode
             } else {
                 format
             };

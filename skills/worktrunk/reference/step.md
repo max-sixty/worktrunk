@@ -658,7 +658,7 @@ Arguments:
 
 Options:
       --format <FORMAT>
-          Output format (text, json)
+          Output format
 
           [default: text]
           [possible values: text, json]
@@ -816,7 +816,7 @@ Options:
           Run removal in foreground (block until complete)
 
       --format <FORMAT>
-          Output format (text, json)
+          Output format
 
           [default: text]
           [possible values: text, json]

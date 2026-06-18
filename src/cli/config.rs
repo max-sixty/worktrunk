@@ -489,7 +489,7 @@ This tests:
         #[arg(long)]
         full: bool,
 
-        /// Output format (text, json)
+        /// Output format
         #[arg(long, default_value = "text", help_heading = "Output")]
         format: SwitchFormat,
     },
@@ -696,8 +696,8 @@ Every category that `wt config state clear` sweeps is shown here.
 
 CI cache entries show status, age, and the commit SHA they were fetched for."#)]
     Get {
-        /// Output format (table, json)
-        #[arg(long, value_enum, default_value = "table", hide_possible_values = true)]
+        /// Output format
+        #[arg(long, value_enum, default_value = "table")]
         format: super::OutputFormat,
     },
 
@@ -1447,7 +1447,7 @@ $ wt config state vars list --branch=feature
         #[arg(long, add = crate::completion::branch_value_completer())]
         branch: Option<String>,
 
-        /// Output format (text, json)
+        /// Output format
         #[arg(long, default_value = "text", help_heading = "Output")]
         format: SwitchFormat,
     },
