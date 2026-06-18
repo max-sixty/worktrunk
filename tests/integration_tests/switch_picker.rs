@@ -503,13 +503,20 @@ fn switch_picker_settings(repo: &TestRepo) -> insta::Settings {
     // terminal width and preview content height, so normalize it to a fixed
     // placeholder.
     //
-    // The previewer right-aligns the indicator at `screen_width - len - 1` and
-    // can land flush against the truncated `summary` tab label (e.g.
-    // `summa1/28`) — width_cjk's treatment of ambiguous-width glyphs (±, …, ⇅)
-    // shifts how much of `5: summary` survives truncation. Strip leading
-    // whitespace too so the placeholder is stable across that variance.
-    settings.add_filter(r"(?m)summary?\w*\s*\d+/\d+[ \t]*$", "summary [N/M]");
-    settings.add_filter(r"(?m)\s+\d+/\d+[ \t]*$", " [N/M]");
+    // The previewer right-aligns the indicator at `screen_width - len - 1`, so
+    // it overwrites a variable few chars at the right edge of the tab bar — the
+    // last tab (`pr`) and/or its ` | ` divider — and width_cjk's treatment of
+    // ambiguous-width glyphs (±, …, ⇅) shifts how much survives (`pr 1/14`
+    // spaced, `pr1/28` flush, or `|1/12` with `pr` fully overwritten).
+    // Normalize the whole corrupted tail — the divider before the last tab
+    // through the indicator — to a stable `| pr [N/M]`. Anchored to the tab-bar
+    // line via its always-present, never-overwritten `HEAD±` (tab 1) so the
+    // line-end `\d+/\d+` match can't rewrite an unrelated content line that
+    // happens to end in ` | N/M`.
+    settings.add_filter(
+        r"(?m)^(.*HEAD±.*?) \|\s?(?:pr)?\s?\d+/\d+[ \t]*$",
+        "${1} | pr [N/M]",
+    );
 
     // Commit hashes (7-8 hex chars)
     settings.add_filter(r"\b[0-9a-f]{7,8}\b", "[HASH]");
@@ -889,8 +896,8 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
 #[rstest]
 fn test_switch_picker_preview_cycle_tab_forward(mut repo: TestRepo) {
     // Tab cycles the preview tab forward. From the default HEAD± tab (1), one
-    // Tab lands on the log tab (2), proving the `tr 12345 23451` rotation in the
-    // keybinding runs under the real shell. (alt-1..alt-5 jump directly; the
+    // Tab lands on the log tab (2), proving the `tr 123456 234561` rotation in
+    // the keybinding runs under the real shell. (alt-1..alt-6 jump directly; the
     // panel tests above cover those — this covers the cycle path.)
     repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
@@ -943,9 +950,9 @@ fn test_switch_picker_preview_cycle_tab_forward(mut repo: TestRepo) {
 
 #[rstest]
 fn test_switch_picker_preview_cycle_tab_forward_wraps(mut repo: TestRepo) {
-    // Forward cycling wraps 5 → 1: from the summary tab (reached via Alt-5),
-    // one Tab returns to the HEAD± tab. This covers the `5 → 1` end of the
-    // `tr 12345 23451` map, the half most easily typo'd away.
+    // Forward cycling wraps 6 → 1: from the pr tab (reached via Alt-6), one Tab
+    // returns to the HEAD± tab. This covers the `6 → 1` end of the
+    // `tr 123456 234561` map, the half most easily typo'd away.
     repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
     let feature_path = repo.add_worktree("feature");
@@ -983,8 +990,8 @@ fn test_switch_picker_preview_cycle_tab_forward_wraps(mut repo: TestRepo) {
             // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
             // for the matcher-lag rationale.
             ("\x1b[B", None),                       // Down: move cursor to `feature`
-            ("\x1b5", Some("Configure")),           // Alt-5: jump to summary (5)
-            ("\t", Some("no uncommitted changes")), // Tab: wrap 5 → HEAD± (1)
+            ("\x1b6", Some("PR previews")),         // Alt-6: jump to pr (6)
+            ("\t", Some("no uncommitted changes")), // Tab: wrap 6 → HEAD± (1)
         ],
     );
 
@@ -993,15 +1000,15 @@ fn test_switch_picker_preview_cycle_tab_forward_wraps(mut repo: TestRepo) {
     let (_list, preview) = result.panels();
     assert!(
         preview.contains("no uncommitted changes"),
-        "Tab from the summary tab should wrap to the HEAD± tab; preview was:\n{preview}"
+        "Tab from the pr tab should wrap to the HEAD± tab; preview was:\n{preview}"
     );
 }
 
 #[rstest]
 fn test_switch_picker_preview_cycle_shift_tab_wraps(mut repo: TestRepo) {
     // Shift-Tab cycles backward and wraps: from the default HEAD± tab (1), one
-    // Shift-Tab lands on the summary tab (5), exercising the reverse rotation
-    // `tr 12345 51234` including the 1 → 5 wraparound.
+    // Shift-Tab lands on the pr tab (6), exercising the reverse rotation
+    // `tr 123456 612345` including the 1 → 6 wraparound.
     repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
     let feature_path = repo.add_worktree("feature");
@@ -1035,8 +1042,8 @@ fn test_switch_picker_preview_cycle_shift_tab_wraps(mut repo: TestRepo) {
         &[
             // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
             // for the matcher-lag rationale.
-            ("\x1b[B", None),              // Down: move cursor to `feature`
-            ("\x1b[Z", Some("Configure")), // Shift-Tab: HEAD± → summary (wrap)
+            ("\x1b[B", None),                // Down: move cursor to `feature`
+            ("\x1b[Z", Some("PR previews")), // Shift-Tab: HEAD± → pr (wrap)
         ],
     );
 
@@ -1044,8 +1051,8 @@ fn test_switch_picker_preview_cycle_shift_tab_wraps(mut repo: TestRepo) {
 
     let (_list, preview) = result.panels();
     assert!(
-        preview.contains("Configure"),
-        "Shift-Tab should wrap to the summary tab; preview was:\n{preview}"
+        preview.contains("PR previews"),
+        "Shift-Tab should wrap to the pr tab; preview was:\n{preview}"
     );
 }
 

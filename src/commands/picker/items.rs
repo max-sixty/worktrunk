@@ -118,6 +118,15 @@ pub(super) struct WorktreeSkimItem {
     pub item: Arc<ListItem>,
     /// Shared cache for pre-computed previews (all modes)
     pub preview_cache: PreviewCache,
+    /// Whether this branch has an upstream tracking ref, for the tab-4
+    /// (remote⇅) empty state. A SYNCHRONOUS skeleton-time fact read from
+    /// `Repository::local_branches()` at construction — never from the async
+    /// `item.upstream`, which is `None` until the row pipeline lands and would
+    /// lock the tab bar into a stale state (see `TabAvailability`).
+    pub has_upstream: bool,
+    /// Whether `[commit.generation]` summaries are configured, for the tab-5
+    /// (summary) empty state. A process-wide static fact (`llm_command.is_some()`).
+    pub summaries_enabled: bool,
 }
 
 impl SkimItem for WorktreeSkimItem {
@@ -146,64 +155,150 @@ impl SkimItem for WorktreeSkimItem {
     fn preview(&self, context: PreviewContext<'_>) -> ItemPreview {
         let mode = PreviewStateData::read_mode();
 
-        // Build preview: tabs header + content
-        let mut result = Self::render_preview_tabs(mode);
+        // Build preview: tabs header + content. `has_upstream`/`summaries_enabled`
+        // are synchronous skeleton-time facts (see `TabAvailability`).
+        let avail = TabAvailability::worktree(self.has_upstream, self.summaries_enabled);
+        let mut result = render_preview_tabs(mode, avail);
         result.push_str(&self.preview_for_mode(mode, context.width, context.height));
 
         ItemPreview::AnsiText(result)
     }
 }
 
-impl WorktreeSkimItem {
-    /// Render the tab header for the preview window
-    ///
-    /// Shows all preview modes as tabs, with the current mode bolded
-    /// and unselected modes dimmed. Controls shown below in normal text
-    /// for visual distinction from inactive tabs.
-    pub(super) fn render_preview_tabs(mode: PreviewMode) -> String {
-        // Full SGR reset (\x1b[0m). color_print's `</>` emits \x1b[22m (intensity
-        // reset), which skim's ANSI parser silently ignores — see
-        // `skim-0.20.5/src/ansi.rs` `csi_dispatch`, which handles codes 0/1/2/4/5/7
-        // but not 22. Without explicit [0m, dim/bold bleeds across the rest of
-        // the line in the list and preview panels. Same reason the
-        // `compute_*_preview` helpers below scatter `{reset}` after each styled
-        // span.
-        //
-        // TODO(vendor-skim): a one-line fix in skim's ANSIParser removes this
-        // workaround everywhere. See `vendor/NOTES.md` → "SGR 22 (intensity
-        // reset) handling"; revisit if more users report preview formatting
-        // issues.
-        let reset = Reset;
+/// Which preview tabs have renderable content for the selected row.
+///
+/// Empty tabs are de-emphasized in the bar (dimmed, accelerator dropped).
+/// Emptiness MUST be a synchronous, skeleton-time fact: skim computes a
+/// preview once per selection and cannot re-query it (see
+/// `loading_placeholder`), so a bar built from an async field that is still
+/// loading would lock into the wrong state and never re-dim. Hence `upstream`
+/// reads `Repository::local_branches()` (the pre-skeleton `for-each-ref`
+/// scan), NOT the async `item.upstream`; `summary` reads the process-wide
+/// `[commit.generation]` flag, NOT the async `item.summary`; and `pr` is a
+/// per-row-type constant — worktree rows can't render PR content (their PR
+/// number rides the async CI fetch), `--prs` rows always can — never the
+/// async PR-status field.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct TabAvailability {
+    working_tree: bool,
+    log: bool,
+    branch_diff: bool,
+    upstream: bool,
+    summary: bool,
+    pr: bool,
+}
 
-        /// Format a tab label with bold (active) or dimmed (inactive) styling
-        fn format_tab(label: &str, is_active: bool) -> String {
-            if is_active {
-                cformat!("<bold>{}</>", label)
-            } else {
-                cformat!("<dim>{}</>", label)
-            }
+impl TabAvailability {
+    /// A worktree-backed row: working-tree/log/branch-diff always render; the
+    /// upstream and summary tabs depend on synchronous skeleton-time facts;
+    /// PR previews render only on `--prs` rows, so tab 6 is empty here.
+    pub(super) fn worktree(has_upstream: bool, summaries_enabled: bool) -> Self {
+        Self {
+            working_tree: true,
+            log: true,
+            branch_diff: true,
+            upstream: has_upstream,
+            summary: summaries_enabled,
+            pr: false,
         }
-
-        let tab1 = format_tab("1: HEAD±", mode == PreviewMode::WorkingTree);
-        let tab2 = format_tab("2: log", mode == PreviewMode::Log);
-        let tab3 = format_tab("3: main…±", mode == PreviewMode::BranchDiff);
-        let tab4 = format_tab("4: remote⇅", mode == PreviewMode::UpstreamDiff);
-        let tab5 = format_tab("5: summary", mode == PreviewMode::Summary);
-
-        // Controls use dim yellow to distinguish from dimmed (white) tabs.
-        // The tab numbers above are the alt-N accelerators (bare digits type
-        // into the query); Tab/shift-tab cycle the same tabs.
-        let controls = cformat!(
-            "<dim,yellow>Enter: switch | Tab/alt-1…5: preview | alt-c: create | Esc: cancel | ctrl-u/d: scroll | alt-p: toggle</>"
-        );
-
-        // End each tab and controls with full reset to prevent style bleeding
-        // into dividers and preview content
-        format!(
-            "{tab1}{reset} | {tab2}{reset} | {tab3}{reset} | {tab4}{reset} | {tab5}{reset}\n{controls}{reset}\n\n"
-        )
     }
 
+    /// A `--prs` row: it carries no local worktree, so only the PR tab has
+    /// content; tabs 1-5 are empty.
+    pub(super) fn pull_request() -> Self {
+        Self {
+            working_tree: false,
+            log: false,
+            branch_diff: false,
+            upstream: false,
+            summary: false,
+            pr: true,
+        }
+    }
+}
+
+/// Render the preview tab bar, shared by worktree rows and `--prs` rows.
+///
+/// Three visual states per tab: the active mode is bold; an inactive tab with
+/// content is dim; an inactive tab with no content for this row (see
+/// `TabAvailability`) is dim AND drops its `N:` accelerator, signalling there
+/// is nothing to switch to. The active mode always renders bold with its
+/// accelerator, even when empty, so the selected tab stays identifiable.
+pub(super) fn render_preview_tabs(mode: PreviewMode, avail: TabAvailability) -> String {
+    // Full SGR reset (\x1b[0m). color_print's `</>` emits \x1b[22m (intensity
+    // reset), which skim's ANSI parser silently ignores — see
+    // `skim-0.20.5/src/ansi.rs` `csi_dispatch`, which handles codes 0/1/2/4/5/7
+    // but not 22. Without explicit [0m, dim/bold bleeds across the rest of
+    // the line in the list and preview panels. Same reason the
+    // `compute_*_preview` helpers below scatter `{reset}` after each styled
+    // span.
+    //
+    // TODO(vendor-skim): a one-line fix in skim's ANSIParser removes this
+    // workaround everywhere. See `vendor/NOTES.md` → "SGR 22 (intensity
+    // reset) handling"; revisit if more users report preview formatting
+    // issues.
+    let reset = Reset;
+
+    /// Format one tab: bold when active, dim when inactive-with-content, and
+    /// dim without the `N:` accelerator when empty (no content for this row).
+    fn format_tab(number: u8, label: &str, is_active: bool, has_content: bool) -> String {
+        if is_active {
+            cformat!("<bold>{}: {}</>", number, label)
+        } else if has_content {
+            cformat!("<dim>{}: {}</>", number, label)
+        } else {
+            cformat!("<dim>{}</>", label)
+        }
+    }
+
+    let tab1 = format_tab(
+        1,
+        "HEAD±",
+        mode == PreviewMode::WorkingTree,
+        avail.working_tree,
+    );
+    let tab2 = format_tab(2, "log", mode == PreviewMode::Log, avail.log);
+    let tab3 = format_tab(
+        3,
+        "main…±",
+        mode == PreviewMode::BranchDiff,
+        avail.branch_diff,
+    );
+    let tab4 = format_tab(
+        4,
+        "remote⇅",
+        mode == PreviewMode::UpstreamDiff,
+        avail.upstream,
+    );
+    let tab5 = format_tab(5, "summary", mode == PreviewMode::Summary, avail.summary);
+    let tab6 = format_tab(6, "pr", mode == PreviewMode::Pr, avail.pr);
+
+    // Controls use dim yellow to distinguish from dimmed (white) tabs.
+    // The tab numbers above are the alt-N accelerators (bare digits type
+    // into the query); Tab/shift-tab cycle the same tabs.
+    let controls = cformat!(
+        "<dim,yellow>Enter: switch | Tab/alt-1…6: preview | alt-c: create | Esc: cancel | ctrl-u/d: scroll | alt-p: toggle</>"
+    );
+
+    // End each tab and controls with full reset to prevent style bleeding
+    // into dividers and preview content
+    format!(
+        "{tab1}{reset} | {tab2}{reset} | {tab3}{reset} | {tab4}{reset} | {tab5}{reset} | {tab6}{reset}\n{controls}{reset}\n\n"
+    )
+}
+
+/// The PR tab's pane on a worktree row. A worktree row can't render PR
+/// content synchronously (its PR number arrives via the async CI fetch), so
+/// the tab is empty in the bar and this points the user at the `--prs` rows,
+/// which render the PR/MR. Also the fallback for tab 6 in the compute path.
+fn pr_unavailable_placeholder() -> String {
+    let reset = Reset;
+    cformat!(
+        "{INFO_SYMBOL}{reset} PR previews appear on <bold>wt switch --prs</>{reset} rows — the CI column shows this branch's PR number\n"
+    )
+}
+
+impl WorktreeSkimItem {
     /// Render preview for the given mode with specified dimensions.
     ///
     /// Pure cache read: skim calls this synchronously on the UI thread
@@ -242,6 +337,9 @@ impl WorktreeSkimItem {
             PreviewMode::BranchDiff => ("Loading", "branch diff"),
             PreviewMode::UpstreamDiff => ("Loading", "upstream diff"),
             PreviewMode::Summary => ("Generating", "summary"),
+            // The PR tab has no background task to wait on; show the static
+            // pointer to `--prs` rows instead of a "Loading…" line.
+            PreviewMode::Pr => return pr_unavailable_placeholder(),
         };
         let key = mode as u8;
         format!("○ {verb} {label}. Press alt-{key} again to refresh.\n")
@@ -280,6 +378,9 @@ impl WorktreeSkimItem {
                 false,
             ),
             PreviewMode::Summary => (Self::loading_placeholder(PreviewMode::Summary), false),
+            // PR previews never precompute (no git/LLM work); this arm only
+            // keeps the match total. Worktree rows render the placeholder.
+            PreviewMode::Pr => (pr_unavailable_placeholder(), false),
         }
     }
 
@@ -676,16 +777,35 @@ mod tests {
 
     #[test]
     fn test_render_preview_tabs() {
-        // All PreviewMode variants: verify tab labels, active styling, and structure
+        // Each mode active, on a worktree row with upstream + summaries
+        // enabled (tabs 1-5 present; tab 6 empty — PR previews live on --prs
+        // rows). Verifies labels, active styling, and structure.
+        let wt = TabAvailability::worktree(true, true);
         for (name, mode) in [
             ("working_tree", PreviewMode::WorkingTree),
             ("log", PreviewMode::Log),
             ("branch_diff", PreviewMode::BranchDiff),
             ("upstream_diff", PreviewMode::UpstreamDiff),
             ("summary", PreviewMode::Summary),
+            ("pr", PreviewMode::Pr),
         ] {
-            assert_snapshot!(name, WorktreeSkimItem::render_preview_tabs(mode));
+            assert_snapshot!(name, render_preview_tabs(mode, wt));
         }
+
+        // Empty states: a worktree row with no upstream and summaries disabled
+        // de-emphasizes tabs 4 and 5 (dim, accelerator dropped); a --prs row
+        // de-emphasizes tabs 1-5.
+        assert_snapshot!(
+            "empty_upstream_and_summary",
+            render_preview_tabs(
+                PreviewMode::WorkingTree,
+                TabAvailability::worktree(false, false)
+            )
+        );
+        assert_snapshot!(
+            "pr_row",
+            render_preview_tabs(PreviewMode::Pr, TabAvailability::pull_request())
+        );
     }
 
     #[test]
@@ -725,6 +845,8 @@ mod tests {
                 branch_name: "feature".to_string(),
                 item: Arc::clone(&item),
                 preview_cache,
+                has_upstream: false,
+                summaries_enabled: false,
             }
         };
 
@@ -736,6 +858,8 @@ mod tests {
                 branch_name: "feature".to_string(),
                 item: Arc::clone(&item),
                 preview_cache,
+                has_upstream: false,
+                summaries_enabled: false,
             }
         };
 
@@ -1042,8 +1166,13 @@ mod tests {
 
     #[test]
     fn test_render_preview_tabs_ansi_codes() {
-        // Test that ANSI escape sequences properly reset to prevent style bleeding
-        let output = WorktreeSkimItem::render_preview_tabs(PreviewMode::WorkingTree);
+        // Test that ANSI escape sequences properly reset to prevent style bleeding.
+        // Empty tabs (here tab 6, pr) still emit a styled span + reset + divider,
+        // so the per-tab reset/divider counts are unaffected by emptiness.
+        let output = render_preview_tabs(
+            PreviewMode::WorkingTree,
+            TabAvailability::worktree(true, true),
+        );
 
         let first_line = output.lines().next().unwrap();
         let second_line = output.lines().nth(1).unwrap();
@@ -1052,13 +1181,13 @@ mod tests {
         // This prevents bold/dim from bleeding into the " | " dividers
         let full_reset = "\x1b[0m";
 
-        // Count resets - should have one after each of the 5 tabs
-        assert_eq!(first_line.matches(full_reset).count(), 5);
+        // Count resets - should have one after each of the 6 tabs
+        assert_eq!(first_line.matches(full_reset).count(), 6);
 
         // The sequence should be: style + text + [22m + [0m + divider
         // Check that dividers come after full resets
         let parts: Vec<&str> = first_line.split(" | ").collect();
-        assert_eq!(parts.len(), 5);
+        assert_eq!(parts.len(), 6);
         assert!(parts.iter().all(|part| part.ends_with(full_reset)));
 
         // Controls line should end with full reset to ensure clean state for preview content

@@ -17,6 +17,7 @@
 //!   of the global injector while row tasks are still landing on
 //!   workers' local deques during drain.
 
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use skim::prelude::*;
@@ -78,6 +79,25 @@ impl PickerProgressHandler for PickerHandler {
         let mut skim_items: Vec<Arc<dyn SkimItem>> = Vec::with_capacity(items.len() + 1);
         let mut list_items: Vec<Arc<ListItem>> = Vec::with_capacity(items.len());
 
+        // Synchronous skeleton-time tab-availability facts (see `TabAvailability`).
+        // Branches with an upstream tracking ref drive the tab-4 (remote⇅) empty
+        // state, read from the pre-skeleton `for-each-ref` inventory — never the
+        // async `item.upstream`. A `local_branches()` failure yields the empty set
+        // (every branch reads as no-upstream); preview rendering must not error.
+        let upstream_branches: HashSet<String> = self
+            .orchestrator
+            .repo()
+            .local_branches()
+            .map(|branches| {
+                branches
+                    .iter()
+                    .filter(|b| b.upstream_short.is_some())
+                    .map(|b| b.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let summaries_enabled = self.llm_command.is_some();
+
         // Header row — non-selectable via `header_lines(1)` on the options.
         skim_items.push(Arc::new(HeaderSkimItem {
             display_text: header.plain_text(),
@@ -86,6 +106,7 @@ impl PickerProgressHandler for PickerHandler {
 
         for (item, rendered_line) in items.into_iter().zip(rendered) {
             let branch_name = item.branch_name().to_string();
+            let has_upstream = upstream_branches.contains(&branch_name);
             let path_str = item
                 .worktree_path()
                 .map(|p| p.to_string_lossy().into_owned())
@@ -113,6 +134,8 @@ impl PickerProgressHandler for PickerHandler {
                 branch_name,
                 item: item_arc,
                 preview_cache: Arc::clone(&self.preview_cache),
+                has_upstream,
+                summaries_enabled,
             }) as Arc<dyn SkimItem>);
         }
 

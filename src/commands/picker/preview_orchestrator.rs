@@ -72,6 +72,13 @@ impl PreviewOrchestrator {
         }
     }
 
+    /// The repository this orchestrator computes previews against. Exposed so
+    /// `on_skeleton` can read the cached local-branch inventory
+    /// (`local_branches()`) for synchronous tab-availability facts.
+    pub(super) fn repo(&self) -> &Repository {
+        &self.repo
+    }
+
     /// Spawn a preview compute task. Returns immediately.
     ///
     /// Idempotent on the cache key: if another task already populated it,

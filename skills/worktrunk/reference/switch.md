@@ -70,7 +70,7 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 | `Enter` | Switch to selected worktree |
 | `Alt-c` | Create new worktree named as entered text |
 | `Esc` | Cancel |
-| `Alt-1`–`Alt-5` | Jump to a preview tab |
+| `Alt-1`–`Alt-6` | Jump to a preview tab |
 | `Tab`/`Shift-Tab` | Cycle preview tabs forward/backward |
 | `Alt-p` | Toggle preview panel |
 | `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
@@ -78,13 +78,14 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 
 Plain digits go to the filter, so a branch name containing a number can be typed directly; the preview tabs move to `Alt`.
 
-**Preview tabs** — jump with `Alt-1`–`Alt-5`, or cycle with `Tab`/`Shift-Tab`:
+**Preview tabs** — jump with `Alt-1`–`Alt-6`, or cycle with `Tab`/`Shift-Tab`. A tab with no content for the selected row (no upstream, or summaries off) is dimmed:
 
 1. **HEAD±** — Diff of uncommitted changes
 2. **log** — Recent commits; commits already on the default branch have dimmed hashes
 3. **main…±** — Diff of changes since the merge-base with the default branch
 4. **remote⇅** — Ahead/behind diff vs upstream tracking branch
 5. **summary** — LLM-generated branch summary; requires `[list] summary = true` and [`commit.generation`](https://worktrunk.dev/config/#commit)
+6. **pr** — The selected row's PR/MR, from already-fetched status; populated on `--prs` rows
 
 **Pager configuration:** The preview panel pipes diff output through git's pager. Override in user config:
 

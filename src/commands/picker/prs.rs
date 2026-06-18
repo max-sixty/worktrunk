@@ -37,14 +37,14 @@ use std::path::Path;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-use anstyle::{AnsiColor, Color, Style};
+use anstyle::{AnsiColor, Color, Reset, Style};
 use anyhow::Context;
 use color_print::cformat;
 use serde::Deserialize;
 use skim::prelude::*;
 use unicode_width::UnicodeWidthStr;
 use worktrunk::git::{CiPlatform, Repository};
-use worktrunk::styling::{StyledLine, warning_message};
+use worktrunk::styling::{INFO_SYMBOL, StyledLine, warning_message};
 
 use super::super::list::ci_status::{
     CiSource, CiStatus, GitHubPrInfo, PrRef, PrStatus, ReviewState, non_interactive_cmd,
@@ -52,6 +52,8 @@ use super::super::list::ci_status::{
 };
 use super::super::list::columns::ColumnKind;
 use super::super::list::layout::ColumnGrid;
+use super::items::{TabAvailability, render_preview_tabs};
+use super::preview::{PreviewMode, PreviewStateData};
 
 /// One-shot handoff of the picker's column geometry from the collect thread
 /// (which computes the layout at skeleton time) to the `--prs` thread (which
@@ -401,9 +403,10 @@ pub(super) struct PrSkimItem {
     /// Selection result — the `pr:{N}` / `mr:{N}` shortcut. Routed verbatim
     /// through `resolve_identifier` → `SwitchPipeline`.
     output_token: String,
-    /// Static info pane (the head branch isn't local yet, so there's no diff
-    /// to preview — show metadata and the web URL instead).
-    preview_text: String,
+    /// The tab-6 (`pr`) pane: PR/MR metadata and web URL, built once at
+    /// construction from already-fetched data. A `--prs` row has no local
+    /// worktree, so tabs 1-5 render an empty placeholder instead.
+    pr_pane: String,
 }
 
 impl PrSkimItem {
@@ -430,16 +433,16 @@ impl PrSkimItem {
             url,
             ..
         } = entry;
-        let mut preview_text = cformat!(
+        let mut pr_pane = cformat!(
             "<bold>{pr_ref}</>  {title}\n\n<dim>branch</>   {head_branch}\n<dim>author</>   @{author}\n"
         );
         if is_draft {
-            preview_text.push_str(&cformat!("<dim>state</>    <yellow>draft</>\n"));
+            pr_pane.push_str(&cformat!("<dim>state</>    <yellow>draft</>\n"));
         }
         if let Some(url) = url {
-            preview_text.push_str(&cformat!("<dim>url</>      {url}\n"));
+            pr_pane.push_str(&cformat!("<dim>url</>      {url}\n"));
         }
-        preview_text.push_str(&cformat!(
+        pr_pane.push_str(&cformat!(
             "\n<dim>Enter: fetch & switch to this branch ({output_token})</>\n"
         ));
 
@@ -447,9 +450,19 @@ impl PrSkimItem {
             search_text,
             rendered,
             output_token,
-            preview_text,
+            pr_pane,
         }
     }
+}
+
+/// The pane for tabs 1-5 on a `--prs` row. The head branch isn't checked out
+/// locally, so there's no working tree / log / diff to show — point the user
+/// at the `pr` tab, which holds the PR/MR metadata.
+fn pr_row_empty_placeholder() -> String {
+    let reset = Reset;
+    cformat!(
+        "{INFO_SYMBOL}{reset} Not checked out locally — press <bold>alt-6</>{reset} for PR details, Enter to fetch & switch\n"
+    )
 }
 
 /// Place the PR's cells on the worktree rows' grid: head branch in the
@@ -621,7 +634,18 @@ impl SkimItem for PrSkimItem {
     }
 
     fn preview(&self, _context: PreviewContext<'_>) -> ItemPreview {
-        ItemPreview::AnsiText(self.preview_text.clone())
+        // Share the worktree rows' tab bar. A `--prs` row has content only on
+        // the `pr` tab (tabs 1-5 empty → de-emphasized); the active tab is the
+        // same global digit, so an empty tab shows the placeholder until the
+        // user presses alt-6 / Tab.
+        let mode = PreviewStateData::read_mode();
+        let mut result = render_preview_tabs(mode, TabAvailability::pull_request());
+        if mode == PreviewMode::Pr {
+            result.push_str(&self.pr_pane);
+        } else {
+            result.push_str(&pr_row_empty_placeholder());
+        }
+        ItemPreview::AnsiText(result)
     }
 }
 
@@ -701,7 +725,7 @@ mod tests {
         e.is_draft = true;
         let pr = PrSkimItem::new(e, 120, None);
         assert!(pr.rendered.contains("draft"));
-        assert!(pr.preview_text.contains("draft"));
+        assert!(pr.pr_pane.contains("draft"));
     }
 
     use super::super::super::list::layout::GridColumn;
@@ -801,7 +825,7 @@ mod tests {
             !row.contains("#42"),
             "grid row must not use # for MRs: {row:?}"
         );
-        assert!(mr.preview_text.contains("!42"), "preview uses ! for MRs");
+        assert!(mr.pr_pane.contains("!42"), "preview uses ! for MRs");
 
         let mr_freeform = PrSkimItem::new(entry(RefKind::Mr, 42, "Add caching"), 120, None);
         assert!(
