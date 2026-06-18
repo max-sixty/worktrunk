@@ -22,7 +22,7 @@ pub mod statusline_segment;
 // via `crate::commands::list::model::...` paths. The allow is needed because
 // rustc doesn't track re-export usage across module boundaries.
 #[allow(unused_imports)]
-pub use item::{ItemKind, ListData, ListItem, WorktreeData};
+pub use item::{BranchScope, ItemKind, ListData, ListItem, WorktreeData};
 #[allow(unused_imports)]
 pub use state::{ActiveGitOperation, Divergence, MainState, OperationState, WorktreeState};
 #[allow(unused_imports)]
