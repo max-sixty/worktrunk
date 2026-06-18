@@ -2,7 +2,7 @@
 source: tests/integration_tests/bare_repository.rs
 expression: "&output"
 ---
-[33m▲[39m [33mBare repo at [1m[TEMP]/project/.git[22m — worktrees will be at [1m[TEMP]/project/feature[22m[39m
+[33m▲[39m [33mBare repo at [1m[TEMP]/project/.git[22m — worktrees will be at [1m[TEMP]/project/.git.feature[22m[39m
 
 [36m❯[39m Configure worktree-path to place worktrees at [1m[TEMP]/project/feature[22m? [1m[y/N/?][22m y
 [32m✓[39m [32mSet [1mworktree-path[22m for [1m[TEMP]/project[22m:[39m

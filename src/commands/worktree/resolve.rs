@@ -242,15 +242,23 @@ pub fn offer_bare_repo_worktree_path_fix(
     // the `sanitize` Jinja filter applies inside `BARE_REPO_WORKTREE_PATH`.
     let sanitized = worktrunk::config::sanitize_branch_name(branch);
 
-    // The correct path is repo_path/../<sanitized-branch>: one level up from
-    // the bare-repo directory so worktrees sit as siblings (e.g. project/main
-    // rather than project/.git.main). This is both shown in the warning and
-    // offered as the destination in the prompt.
+    // The fixed destination — repo_path/../<sanitized-branch>, one level up
+    // from the bare-repo dir so worktrees sit as siblings (project/feature
+    // rather than project/.git.feature). Offered in the hint and prompt.
     let good_path = repo_path
         .parent()
         .map(|p| p.join(&sanitized))
         .unwrap_or_else(|| repo_path.join(&sanitized));
     let example_good = format_path_for_display(&good_path).to_string();
+
+    // Where worktrees actually land *without* the fix, under the default
+    // `{{ repo }}.{{ branch }}` template — shown in the warning so it matches
+    // the "Created … @ …" line below instead of contradicting it.
+    let bad_path = repo_path
+        .parent()
+        .map(|p| p.join(format!("{repo_name}.{sanitized}")))
+        .unwrap_or_else(|| repo_path.join(format!("{repo_name}.{sanitized}")));
+    let example_bad = format_path_for_display(&bad_path).to_string();
 
     let config_path_display = worktrunk::config::config_path()
         .map(|p| format_path_for_display(&p).to_string())
@@ -261,7 +269,7 @@ pub fn offer_bare_repo_worktree_path_fix(
         eprintln!(
             "{}",
             warning_message(cformat!(
-                "Bare repo at <bold>{bare_repo_display}</> — worktrees will be at <bold>{example_good}</>"
+                "Bare repo at <bold>{bare_repo_display}</> — worktrees will be at <bold>{example_bad}</>"
             ))
         );
         eprintln!(
@@ -280,7 +288,7 @@ pub fn offer_bare_repo_worktree_path_fix(
     eprintln!(
         "{}",
         warning_message(cformat!(
-            "Bare repo at <bold>{bare_repo_display}</> — worktrees will be at <bold>{example_good}</>"
+            "Bare repo at <bold>{bare_repo_display}</> — worktrees will be at <bold>{example_bad}</>"
         ))
     );
 

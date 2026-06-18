@@ -41,7 +41,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-▲ Bare repo at [TEMP]/project/.git — worktrees will be at [TEMP]/project/feature
+▲ Bare repo at [TEMP]/project/.git — worktrees will be at [TEMP]/project/.git.feature
 ↳ To place worktrees at [TEMP]/project/feature, add to [TEMP]/test-config.toml:
   [projects."[TEMP]/project/.git"]
   worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"
