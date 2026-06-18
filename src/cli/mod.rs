@@ -165,15 +165,25 @@ fn apply_help_template_recursive(mut cmd: Command, path: &str) -> Command {
 pub(crate) fn version_str() -> &'static str {
     static VERSION: OnceLock<String> = OnceLock::new();
     VERSION.get_or_init(|| {
-        let git_version = env!("VERGEN_GIT_DESCRIBE");
-        let cargo_version = env!("CARGO_PKG_VERSION");
-
-        if git_version.contains("IDEMPOTENT") {
-            cargo_version.to_string()
-        } else {
-            git_version.to_string()
-        }
+        // `option_env!`, not `env!`: when building from the crates.io package
+        // archive there is no git worktree, so the build script can't set
+        // `VERGEN_GIT_DESCRIBE` and the variable is undefined at compile time.
+        // `env!` fails to compile in that case (see #3123); `option_env!`
+        // yields `None` and we fall back to the cargo package version.
+        resolve_version(option_env!("VERGEN_GIT_DESCRIBE"), env!("CARGO_PKG_VERSION"))
     })
+}
+
+/// Choose between the git-describe version and the cargo package version.
+///
+/// Falls back to `cargo_version` when git describe is unavailable (`None`,
+/// from a non-git build) or idempotent (vergen's placeholder for a
+/// non-reproducible build).
+fn resolve_version(git_version: Option<&str>, cargo_version: &str) -> String {
+    match git_version {
+        Some(git_version) if !git_version.contains("IDEMPOTENT") => git_version.to_string(),
+        _ => cargo_version.to_string(),
+    }
 }
 
 /// Output format for commands with text + JSON modes (e.g., `wt switch`).
@@ -2186,4 +2196,33 @@ $ WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
     /// the rest are the arguments to pass through. See `commands::custom`.
     #[command(external_subcommand)]
     Custom(Vec<OsString>),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_version;
+
+    #[test]
+    fn resolve_version_uses_git_describe_when_available() {
+        assert_eq!(
+            resolve_version(Some("v0.8.5-3-gabcdef"), "0.8.5"),
+            "v0.8.5-3-gabcdef"
+        );
+    }
+
+    #[test]
+    fn resolve_version_falls_back_when_git_describe_idempotent() {
+        // vergen emits an IDEMPOTENT placeholder for non-reproducible builds.
+        assert_eq!(
+            resolve_version(Some("VERGEN_IDEMPOTENT_OUTPUT"), "0.8.5"),
+            "0.8.5"
+        );
+    }
+
+    #[test]
+    fn resolve_version_falls_back_when_git_describe_absent() {
+        // Building from the crates.io package archive: no git worktree, so the
+        // build script never sets VERGEN_GIT_DESCRIBE (#3123).
+        assert_eq!(resolve_version(None, "0.59.0"), "0.59.0");
+    }
 }
