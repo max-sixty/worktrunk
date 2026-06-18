@@ -170,7 +170,10 @@ pub(crate) fn version_str() -> &'static str {
         // `VERGEN_GIT_DESCRIBE` and the variable is undefined at compile time.
         // `env!` fails to compile in that case (see #3123); `option_env!`
         // yields `None` and we fall back to the cargo package version.
-        resolve_version(option_env!("VERGEN_GIT_DESCRIBE"), env!("CARGO_PKG_VERSION"))
+        resolve_version(
+            option_env!("VERGEN_GIT_DESCRIBE"),
+            env!("CARGO_PKG_VERSION"),
+        )
     })
 }
 
