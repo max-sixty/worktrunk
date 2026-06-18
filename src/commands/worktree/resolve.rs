@@ -228,23 +228,29 @@ pub fn offer_bare_repo_worktree_path_fix(
         return Ok(false);
     }
 
-    // Display names for messages
+    // Display names for messages. `display_path` is the parent directory shown
+    // in the "Set worktree-path for …" success message. `bare_repo_display` is
+    // the repo itself, used in the warning ("Bare repo at …").
     let display_path = repo_path
         .parent()
         .map(|p| format_path_for_display(p).to_string())
         .unwrap_or_else(|| format_path_for_display(repo_path).to_string());
-    let parent_name = repo_path
-        .parent()
-        .and_then(|p| p.file_name())
-        .and_then(|n| n.to_str())
-        .unwrap_or("project");
+    let bare_repo_display = format!("{display_path}/{repo_name}");
 
     // Use the actual branch being switched to in example paths. Calling
     // `sanitize_branch_name` keeps the displayed example aligned with what
     // the `sanitize` Jinja filter applies inside `BARE_REPO_WORKTREE_PATH`.
     let sanitized = worktrunk::config::sanitize_branch_name(branch);
-    let example_bad = format!("{parent_name}/{repo_name}.{sanitized}");
-    let example_good = format!("{parent_name}/{sanitized}");
+
+    // The correct path is repo_path/../<sanitized-branch>: one level up from
+    // the bare-repo directory so worktrees sit as siblings (e.g. project/main
+    // rather than project/.git.main). This is both shown in the warning and
+    // offered as the destination in the prompt.
+    let good_path = repo_path
+        .parent()
+        .map(|p| p.join(&sanitized))
+        .unwrap_or_else(|| repo_path.join(&sanitized));
+    let example_good = format_path_for_display(&good_path).to_string();
 
     let config_path_display = worktrunk::config::config_path()
         .map(|p| format_path_for_display(&p).to_string())
@@ -255,7 +261,7 @@ pub fn offer_bare_repo_worktree_path_fix(
         eprintln!(
             "{}",
             warning_message(cformat!(
-                "Bare repo at <bold>{parent_name}/{repo_name}</> — worktrees will be at <bold>{example_bad}</>"
+                "Bare repo at <bold>{bare_repo_display}</> — worktrees will be at <bold>{example_good}</>"
             ))
         );
         eprintln!(
@@ -274,7 +280,7 @@ pub fn offer_bare_repo_worktree_path_fix(
     eprintln!(
         "{}",
         warning_message(cformat!(
-            "Bare repo at <bold>{parent_name}/{repo_name}</> — worktrees will be at <bold>{example_bad}</>"
+            "Bare repo at <bold>{bare_repo_display}</> — worktrees will be at <bold>{example_good}</>"
         ))
     );
 

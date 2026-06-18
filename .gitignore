@@ -1,4 +1,5 @@
 /target
+.idea/
 docs/static/assets/
 docs/demos/out/
 
