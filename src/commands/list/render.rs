@@ -388,12 +388,11 @@ impl ColumnLayout {
                 // ASCII — the gutter must dodge skim's `width_cjk` clipping
                 // (see `vendor/NOTES.md`).
                 //
-                // TODO(pr-rows): PR rows (open PRs with no local branch) land
-                // on a separate branch; add a `#` arm here (and a matching `#`
-                // in the Status upstream column). Not done here — PR rows don't
-                // exist in this branch, and the picker skips CI/PR detection (a
-                // network call), so a `#` driven by PR status would never
-                // render in the picker.
+                // PR rows (open PRs with no local branch, `wt switch --prs`)
+                // also carry a gutter sigil — a dim `#` — but they're a picker
+                // source (`PrSkimItem`), not a `ListItem`, so they render their
+                // gutter in `commands::picker::prs` (`PR_GUTTER_SIGIL`) rather
+                // than through this `ItemKind` match.
                 let mut cell = StyledLine::new();
                 match &item.kind {
                     ItemKind::Worktree(data) => {

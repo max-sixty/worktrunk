@@ -18,10 +18,11 @@
 //!
 //! # Alignment
 //!
-//! PR rows render on the same column grid as the worktree rows: the head
-//! branch in the Branch column, `#N title  @author` in the flexible text
-//! region (see [`render_grid_row`] for which column that is), blanks under
-//! the status/diff columns. The geometry
+//! PR rows render on the same column grid as the worktree rows: a dim `#`
+//! gutter sigil (see [`PR_GUTTER_SIGIL`]), the head branch in the Branch
+//! column, `#N title  @author` in the flexible text region (see
+//! [`render_grid_row`] for which column that is), blanks under the status/diff
+//! columns. The geometry
 //! ([`ColumnGrid`]) is computed by the collect thread at skeleton time and
 //! handed over through a [`GridSlot`]; the skeleton (~50ms) beats the forge
 //! call (~1s), so the wait is nominal. Without a grid (handoff timed out, or
@@ -44,7 +45,7 @@ use serde::Deserialize;
 use skim::prelude::*;
 use unicode_width::UnicodeWidthStr;
 use worktrunk::git::{CiPlatform, Repository};
-use worktrunk::styling::{INFO_SYMBOL, StyledLine, warning_message};
+use worktrunk::styling::{INFO_SYMBOL, StyledLine, format_with_gutter, warning_message};
 
 use super::super::list::ci_status::{
     CiSource, CiStatus, GitHubPrInfo, PrRef, PrStatus, ReviewState, non_interactive_cmd,
@@ -97,6 +98,14 @@ impl GridSlot {
 /// browses interactively without paginating.
 const MAX_PRS: u8 = 50;
 
+/// Gutter sigil for a `--prs` row — a PR/MR with no local branch or worktree.
+/// `#` completes the picker's gutter scheme alongside worktree rows
+/// (`@`/`^`/`+`) and branch rows (`/` local, `|` remote — see
+/// `BranchScope::gutter_sigil`), rendered dim and single-width ASCII to match
+/// them and dodge skim's `width_cjk` clipping. The trailing space pads the
+/// 2-cell gutter column.
+const PR_GUTTER_SIGIL: &str = "# ";
+
 /// Whether a listed ref is a GitHub PR or a GitLab MR. Drives the `output()`
 /// shortcut (`pr:`/`mr:`) and the row label.
 #[derive(Clone, Copy)]
@@ -124,6 +133,10 @@ struct PrEntry {
     is_draft: bool,
     url: Option<String>,
     kind: RefKind,
+    /// PR/MR description (GitHub `body`, GitLab `description`), shown in the
+    /// `pr` preview tab. Rides the one list call — empty when the forge
+    /// returns no body. Markdown is shown verbatim (no rendering).
+    body: String,
     /// CI + review status for the CI column, built from the same forge call.
     /// `None` when the forge can't supply it in one call (the row then keeps
     /// its `#N` in the title instead of the CI column).
@@ -217,6 +230,9 @@ struct GhPr {
     head_ref_name: String,
     #[serde(default)]
     author: GhAuthor,
+    /// PR description; shown in the `pr` preview tab. Rides the one list call.
+    #[serde(default)]
+    body: String,
     /// CI/review fields reused via the shared `gh pr list` mapping: number,
     /// `isDraft`, `url`, `statusCheckRollup`, `reviewDecision`,
     /// `mergeStateStatus`. Flattened so one parse feeds both display and the
@@ -245,8 +261,8 @@ fn fetch_github(repo_root: &Path) -> anyhow::Result<Vec<PrEntry>> {
             "--limit",
             &MAX_PRS.to_string(),
             "--json",
-            // CI/review fields ride the one call; no extra round-trip.
-            "number,title,headRefName,author,isDraft,url,statusCheckRollup,reviewDecision,mergeStateStatus",
+            // CI/review fields and the description ride the one call; no extra round-trip.
+            "number,title,headRefName,author,isDraft,url,body,statusCheckRollup,reviewDecision,mergeStateStatus",
         ])
         .current_dir(repo_root)
         .run()
@@ -275,6 +291,7 @@ fn parse_github_prs(stdout: &[u8]) -> anyhow::Result<Vec<PrEntry>> {
             is_draft: pr.info.is_draft == Some(true),
             url: pr.info.url.clone(),
             kind: RefKind::Pr,
+            body: pr.body,
             status: Some(pr.info.open_pr_status()),
         })
         .collect())
@@ -292,6 +309,9 @@ struct GlabMr {
     draft: bool,
     #[serde(default)]
     web_url: Option<String>,
+    /// MR description; shown in the `pr` preview tab. Rides the one list call.
+    #[serde(default)]
+    description: String,
     /// Coarse merge/CI signal the list call carries (full pipeline status
     /// needs a per-MR `glab mr view`, which `--prs` avoids).
     #[serde(default)]
@@ -352,6 +372,7 @@ fn parse_gitlab_mrs(stdout: &[u8]) -> anyhow::Result<Vec<PrEntry>> {
                 is_draft: mr.draft,
                 url: mr.web_url,
                 kind: RefKind::Mr,
+                body: mr.description,
                 status: Some(status),
             }
         })
@@ -431,19 +452,29 @@ impl PrSkimItem {
             author,
             is_draft,
             url,
+            body,
             ..
         } = entry;
+        // A full `{reset}` (\x1b[0m) closes every styled span: skim's ANSI
+        // parser drops color_print's `</>` (SGR 22/39), so without it the
+        // header's bold and each label's dim bleed across the values and on
+        // down the pane. Same workaround as `pr_row_empty_placeholder` and the
+        // `compute_*` preview helpers; see `render_preview_tabs` for the why.
+        let reset = Reset;
         let mut pr_pane = cformat!(
-            "<bold>{pr_ref}</>  {title}\n\n<dim>branch</>   {head_branch}\n<dim>author</>   @{author}\n"
+            "<bold>{pr_ref}</>{reset}  {title}\n\n<dim>branch</>{reset}   {head_branch}\n<dim>author</>{reset}   @{author}\n"
         );
         if is_draft {
-            pr_pane.push_str(&cformat!("<dim>state</>    <yellow>draft</>\n"));
+            pr_pane.push_str(&cformat!(
+                "<dim>state</>{reset}    <yellow>draft</>{reset}\n"
+            ));
         }
         if let Some(url) = url {
-            pr_pane.push_str(&cformat!("<dim>url</>      {url}\n"));
+            pr_pane.push_str(&cformat!("<dim>url</>{reset}      {url}\n"));
         }
+        pr_pane.push_str(&render_pr_description(&body, list_width));
         pr_pane.push_str(&cformat!(
-            "\n<dim>Enter: fetch & switch to this branch ({output_token})</>\n"
+            "\n<dim>Enter: fetch & switch to this branch ({output_token})</>{reset}\n"
         ));
 
         Self {
@@ -453,6 +484,46 @@ impl PrSkimItem {
             pr_pane,
         }
     }
+}
+
+/// The PR/MR description block for the `pr` preview pane: the body wrapped to
+/// the pane width and quoted in the house gutter ([`format_with_gutter`], a
+/// bg-color bar that closes each line with a full `\x1b[0m` — skim-safe, unlike
+/// the SGR-22 the bold/dim spans emit). Capped so a long body doesn't bury the
+/// footer; the full text is one Enter (or the `url`) away. Empty body → empty
+/// string, so the block is skipped. The leading `\x1b[0m` is a defensive
+/// boundary so the first gutter renders clean regardless of what precedes it
+/// (the metadata lines already reset their own spans).
+///
+/// `width` is the list width, a close proxy for the preview pane width in both
+/// layouts (Right splits ~50/50; Down gives list and preview the full width).
+fn render_pr_description(body: &str, width: usize) -> String {
+    let body = body.trim();
+    if body.is_empty() {
+        return String::new();
+    }
+    /// Wrapped-line cap: enough to convey the gist, short enough to keep the
+    /// pane scannable. Overflow collapses to a one-line "… N more" hint.
+    const MAX_LINES: usize = 30;
+
+    let reset = Reset;
+    let gutter = format_with_gutter(body, Some(width));
+    let lines: Vec<&str> = gutter.lines().collect();
+    let mut out = format!("\n{reset}");
+    if let Some(extra) = lines.len().checked_sub(MAX_LINES).filter(|&n| n > 0) {
+        for line in &lines[..MAX_LINES] {
+            out.push_str(line);
+            out.push('\n');
+        }
+        let plural = if extra == 1 { "" } else { "s" };
+        out.push_str(&cformat!(
+            "<dim>… {extra} more line{plural} — open the PR for the full description</>{reset}\n"
+        ));
+    } else {
+        out.push_str(&gutter);
+        out.push('\n');
+    }
+    out
 }
 
 /// The pane for tabs 1-5 on a `--prs` row. The head branch isn't checked out
@@ -465,10 +536,10 @@ fn pr_row_empty_placeholder() -> String {
     )
 }
 
-/// Place the PR's cells on the worktree rows' grid: head branch in the
-/// Branch column, the number in the CI column (colored by CI + review state,
-/// like worktree rows), the title in the flexible text region, author in the
-/// Message column. The gutter is blank like a branch-only row's.
+/// Place the PR's cells on the worktree rows' grid: a dim `#` gutter sigil
+/// (see `PR_GUTTER_SIGIL`), head branch in the Branch column, the number in
+/// the CI column (colored by CI + review state, like worktree rows), the title
+/// in the flexible text region, author in the Message column.
 ///
 /// The number lives in the CI column when the grid has one and a status was
 /// fetched — aligning with the worktree rows' PR numbers. Without a CI column
@@ -483,6 +554,7 @@ fn render_grid_row(entry: &PrEntry, grid: &ColumnGrid, list_width: usize) -> Str
     let yellow = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Yellow)));
     let dim = Style::new().dimmed();
 
+    let gutter_col = grid.column(ColumnKind::Gutter);
     let branch_col = grid.column(ColumnKind::Branch);
     let summary_col = grid.column(ColumnKind::Summary);
     let message_col = grid.column(ColumnKind::Message);
@@ -517,6 +589,12 @@ fn render_grid_row(entry: &PrEntry, grid: &ColumnGrid, list_width: usize) -> Str
     // without disturbing the fixed branch and CI-number cells.
     let assemble = |title_w: usize| -> StyledLine {
         let mut segments: Vec<(usize, StyledLine)> = Vec::new();
+
+        if let Some(col) = gutter_col {
+            let mut cell = StyledLine::new();
+            cell.push_styled(PR_GUTTER_SIGIL, dim);
+            segments.push((col.start, cell));
+        }
 
         if let Some(col) = branch_col {
             let mut cell = StyledLine::new();
@@ -620,6 +698,27 @@ fn render_freeform_row(entry: &PrEntry, list_width: usize) -> String {
     )
 }
 
+// TODO(pr-preview-log): give the `log` tab (and ideally `summary`) content on
+// `--prs` rows. The body/description rides the one `gh pr list` call cheaply,
+// but a commit log does not: for a checked-out branch it's a local `git log`,
+// but a `--prs` head branch isn't fetched, so the commits need either a fetch
+// or `gh pr view <n> --json commits` / `glab mr view`. That payload is too
+// heavy to fold into the row-list call (commits for ~50 PRs), so it must load
+// in the background per row — which `--prs` rows don't do yet: today the whole
+// row, `pr_pane` included, is built once when the list call returns. The
+// mechanism would mirror the worktree rows' `PreviewOrchestrator` cache: a
+// shared map the `preview()` callback reads, populated off-thread, with a
+// "loading…" placeholder on a miss (skim re-queries on selection/tab change).
+// Remote-branch rows (`--remotes`) are the cheap half — their commits are
+// already fetched, so their `log` tab is a plain local `git log`.
+//
+// TODO(pr-preview-comments): add a `7: comments` tab showing the PR/MR
+// discussion, rendered with the house gutter per comment (author + body, like
+// `render_pr_description`). Needs the same background per-row fetch as the log
+// (`gh pr view <n> --json comments`), and a 7th tab widens the preview tab bar
+// — already ~63 cols with six numbered tabs — so it clips sooner on narrow
+// (≤~125-col, Right-layout) previews. Weigh an abbreviated/scrolling tab bar
+// alongside it.
 impl SkimItem for PrSkimItem {
     fn text(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.search_text)
@@ -666,6 +765,7 @@ mod tests {
             is_draft: false,
             url: Some("https://github.com/owner/repo/pull/123".to_string()),
             kind,
+            body: String::new(),
             status: Some(PrStatus {
                 ci_status: CiStatus::Passed,
                 source: CiSource::PullRequest,
@@ -777,8 +877,8 @@ mod tests {
             "summary column"
         );
         assert_eq!(display_col(&text, "@alice"), 66, "message column");
-        // Gutter and status/diff columns stay blank.
-        assert!(text.starts_with("  feature/auth"));
+        // The dim `#` gutter sigil sits at column 0; status/diff columns stay blank.
+        assert!(text.starts_with("# feature/auth"));
     }
 
     #[test]
@@ -955,7 +1055,7 @@ mod tests {
         // Two PRs: one ready from a fork, one draft. Mirrors the
         // `gh pr list --json number,title,headRefName,author,isDraft,url` shape.
         let json = br#"[
-          {"number":2964,"title":"ci: freshen","headRefName":"fix/ci","author":{"login":"octocat"},"isDraft":false,"url":"https://github.com/o/r/pull/2964"},
+          {"number":2964,"title":"ci: freshen","headRefName":"fix/ci","author":{"login":"octocat"},"isDraft":false,"url":"https://github.com/o/r/pull/2964","body":"Bumps the CI image and re-pins actions."},
           {"number":2969,"title":"wip","headRefName":"wip-branch","author":{"login":"forkuser"},"isDraft":true,"url":"https://github.com/o/r/pull/2969"}
         ]"#;
         let entries = parse_github_prs(json).unwrap();
@@ -967,10 +1067,13 @@ mod tests {
         assert_eq!(entries[0].author, "octocat");
         assert!(!entries[0].is_draft);
         assert!(matches!(entries[0].kind, RefKind::Pr));
+        assert_eq!(entries[0].body, "Bumps the CI image and re-pins actions.");
 
         assert_eq!(entries[1].number, 2969);
         assert!(entries[1].is_draft);
         assert_eq!(entries[1].author, "forkuser");
+        // Absent `body` defaults to empty — the description block is skipped.
+        assert_eq!(entries[1].body, "");
     }
 
     #[test]
@@ -995,7 +1098,7 @@ mod tests {
         // `glab mr list --output json`: iid (not number), source_branch,
         // author.username, draft, web_url.
         let json = br#"[
-          {"iid":7,"title":"Add caching","source_branch":"feat/cache","author":{"username":"alice"},"draft":false,"web_url":"https://gitlab.com/o/r/-/merge_requests/7"},
+          {"iid":7,"title":"Add caching","source_branch":"feat/cache","author":{"username":"alice"},"draft":false,"web_url":"https://gitlab.com/o/r/-/merge_requests/7","description":"Caches the dependency graph between jobs."},
           {"iid":8,"title":"WIP","source_branch":"wip","author":{"username":"bob"},"draft":true,"web_url":"https://gitlab.com/o/r/-/merge_requests/8"}
         ]"#;
         let entries = parse_gitlab_mrs(json).unwrap();
@@ -1005,6 +1108,9 @@ mod tests {
         assert_eq!(entries[0].head_branch, "feat/cache");
         assert_eq!(entries[0].author, "alice");
         assert!(matches!(entries[0].kind, RefKind::Mr));
+        assert_eq!(entries[0].body, "Caches the dependency graph between jobs.");
+        // GitLab's `description` maps to the same `body` slot; absent → empty.
+        assert_eq!(entries[1].body, "");
         // The MR's `output()` shortcut uses the iid.
         assert_eq!(
             PrSkimItem::new(entries.into_iter().next().unwrap(), 120, None).output(),
@@ -1016,5 +1122,88 @@ mod tests {
     fn parse_invalid_json_errors() {
         assert!(parse_github_prs(b"not json").is_err());
         assert!(parse_gitlab_mrs(b"not json").is_err());
+    }
+
+    #[test]
+    fn description_empty_or_blank_renders_nothing() {
+        // No body, or whitespace-only — the block is skipped entirely so the
+        // pane doesn't show an empty gutter.
+        assert_eq!(render_pr_description("", 80), "");
+        assert_eq!(render_pr_description("   \n\t \n", 80), "");
+    }
+
+    #[test]
+    fn description_wraps_into_the_house_gutter() {
+        let out = render_pr_description("Fixes the flaky retry logic.", 80);
+        // Leading full reset clears inherited style; the house gutter sets a
+        // bg color and closes each line with a skim-safe `\x1b[0m`.
+        assert!(out.starts_with("\n\x1b[0m"), "leading reset: {out:?}");
+        assert!(out.contains("\x1b[107m"), "house gutter bg: {out:?}");
+        assert!(
+            out.contains("Fixes the flaky retry logic."),
+            "body: {out:?}"
+        );
+    }
+
+    #[test]
+    fn description_caps_long_bodies_with_a_hint() {
+        // One word per line so wrapping yields one gutter line each.
+        let body = (0..50)
+            .map(|i| format!("word{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let out = render_pr_description(&body, 80);
+        assert!(
+            out.contains("more lines — open the PR"),
+            "truncation hint: {out:?}"
+        );
+        // First lines survive; the tail is collapsed.
+        assert!(out.contains("word0"), "head kept: {out:?}");
+        assert!(!out.contains("word49"), "tail dropped: {out:?}");
+    }
+
+    #[test]
+    fn pr_pane_shows_description_only_when_present() {
+        let mut with_body = entry(RefKind::Pr, 1, "t");
+        with_body.body = "A short summary of the change.".to_string();
+        let pr = PrSkimItem::new(with_body, 120, Some(&grid()));
+        assert!(pr.pr_pane.contains("A short summary of the change."));
+        assert!(pr.pr_pane.contains("\x1b[107m"), "gutter present");
+
+        // The base fixture has an empty body — no gutter, no description.
+        let plain_pr = PrSkimItem::new(entry(RefKind::Pr, 2, "t"), 120, Some(&grid()));
+        assert!(
+            !plain_pr.pr_pane.contains("\x1b[107m"),
+            "no gutter when empty"
+        );
+    }
+
+    #[test]
+    fn preview_renders_tabs_and_placeholder_off_the_pr_tab() {
+        // With no per-process preview-state file, `read_mode()` returns the
+        // default (WorkingTree) — empty on a --prs row — so `preview()` renders
+        // the shared tab bar plus the "not checked out" placeholder. Drives the
+        // real `SkimItem::preview` (the `--prs` streaming path is too async to
+        // exercise it reliably under a PTY); `PreviewContext` is ignored by the
+        // impl, so a minimal one suffices.
+        let pr = PrSkimItem::new(entry(RefKind::Pr, 7, "Title"), 120, Some(&grid()));
+        let ctx = PreviewContext {
+            query: "",
+            cmd_query: "",
+            width: 80,
+            height: 24,
+            current_index: 0,
+            current_selection: "",
+            selected_indices: &[],
+            selections: &[],
+        };
+        let ItemPreview::AnsiText(text) = pr.preview(ctx) else {
+            panic!("expected AnsiText preview");
+        };
+        assert!(text.contains("6: pr"), "tab bar present: {text:?}");
+        assert!(
+            text.contains("Not checked out locally"),
+            "placeholder present: {text:?}"
+        );
     }
 }

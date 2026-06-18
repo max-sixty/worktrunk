@@ -219,11 +219,12 @@ impl TabAvailability {
 
 /// Render the preview tab bar, shared by worktree rows and `--prs` rows.
 ///
-/// Three visual states per tab: the active mode is bold; an inactive tab with
-/// content is dim; an inactive tab with no content for this row (see
-/// `TabAvailability`) is dim AND drops its `N:` accelerator, signalling there
-/// is nothing to switch to. The active mode always renders bold with its
-/// accelerator, even when empty, so the selected tab stays identifiable.
+/// Every tab always keeps its `N: label` text — only the formatting varies, so
+/// the accelerators stay discoverable. Three visual states: the active mode is
+/// bold; an inactive tab with content is plain (full brightness); an inactive
+/// tab with no content for this row (see `TabAvailability`) is dimmed, marking
+/// it as nothing to switch to. The active mode always renders bold, even when
+/// empty, so the selected tab stays identifiable.
 pub(super) fn render_preview_tabs(mode: PreviewMode, avail: TabAvailability) -> String {
     // Full SGR reset (\x1b[0m). color_print's `</>` emits \x1b[22m (intensity
     // reset), which skim's ANSI parser silently ignores — see
@@ -239,15 +240,16 @@ pub(super) fn render_preview_tabs(mode: PreviewMode, avail: TabAvailability) -> 
     // issues.
     let reset = Reset;
 
-    /// Format one tab: bold when active, dim when inactive-with-content, and
-    /// dim without the `N:` accelerator when empty (no content for this row).
+    /// Format one tab, keeping the `N: label` text in every state so the
+    /// accelerator never disappears: bold when active, plain when
+    /// inactive-with-content, and dim when empty (no content for this row).
     fn format_tab(number: u8, label: &str, is_active: bool, has_content: bool) -> String {
         if is_active {
             cformat!("<bold>{}: {}</>", number, label)
         } else if has_content {
-            cformat!("<dim>{}: {}</>", number, label)
+            format!("{number}: {label}")
         } else {
-            cformat!("<dim>{}</>", label)
+            cformat!("<dim>{}: {}</>", number, label)
         }
     }
 
@@ -793,8 +795,7 @@ mod tests {
         }
 
         // Empty states: a worktree row with no upstream and summaries disabled
-        // de-emphasizes tabs 4 and 5 (dim, accelerator dropped); a --prs row
-        // de-emphasizes tabs 1-5.
+        // dims tabs 4 and 5 (number kept); a --prs row dims tabs 1-5.
         assert_snapshot!(
             "empty_upstream_and_summary",
             render_preview_tabs(
@@ -1167,8 +1168,10 @@ mod tests {
     #[test]
     fn test_render_preview_tabs_ansi_codes() {
         // Test that ANSI escape sequences properly reset to prevent style bleeding.
-        // Empty tabs (here tab 6, pr) still emit a styled span + reset + divider,
-        // so the per-tab reset/divider counts are unaffected by emptiness.
+        // The per-tab `{reset}` is appended in the outer format regardless of a
+        // tab's internal styling, so the reset/divider counts hold whether a tab
+        // is bold (active), plain (inactive-with-content, no internal SGR), or
+        // dim (empty — here tab 6, pr).
         let output = render_preview_tabs(
             PreviewMode::WorkingTree,
             TabAvailability::worktree(true, true),

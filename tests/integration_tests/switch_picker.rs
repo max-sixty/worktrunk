@@ -500,22 +500,21 @@ fn switch_picker_settings(repo: &TestRepo) -> insta::Settings {
     // reverse video — see `skim::previewer::Previewer::draw`. We don't see the
     // reverse-video attribute (vt100's `rows()` strips it), so it lands on screen
     // as bare `N/M` overlapping the tab header text. content.len() varies with
-    // terminal width and preview content height, so normalize it to a fixed
-    // placeholder.
+    // terminal width and preview content height, so it must be normalized.
     //
     // The previewer right-aligns the indicator at `screen_width - len - 1`, so
-    // it overwrites a variable few chars at the right edge of the tab bar — the
-    // last tab (`pr`) and/or its ` | ` divider — and width_cjk's treatment of
-    // ambiguous-width glyphs (±, …, ⇅) shifts how much survives (`pr 1/14`
-    // spaced, `pr1/28` flush, or `|1/12` with `pr` fully overwritten).
-    // Normalize the whole corrupted tail — the divider before the last tab
-    // through the indicator — to a stable `| pr [N/M]`. Anchored to the tab-bar
-    // line via its always-present, never-overwritten `HEAD±` (tab 1) so the
-    // line-end `\d+/\d+` match can't rewrite an unrelated content line that
-    // happens to end in ` | N/M`.
+    // it overwrites a variable-width chunk at the right edge of the tab bar. With
+    // all six numbered tabs the bar fills the 60-col preview pane, so the chunk
+    // covers tab 6 (`6: pr`), its ` | ` divider, and a few trailing chars of tab
+    // 5 — how many depends on the indicator's digit count (`5: summary1/46` vs
+    // `5: summar1/286`). Anchor on the always-visible left portion (through
+    // `5: summ`, well inside the pane) and rewrite the corrupted tail to the
+    // canonical full bar. The exact per-tab styling (bold/plain/dim) is asserted
+    // by the `items.rs` unit snapshots; here we only need a stable marker that
+    // the bar rendered with tab 6 present.
     settings.add_filter(
-        r"(?m)^(.*HEAD±.*?) \|\s?(?:pr)?\s?\d+/\d+[ \t]*$",
-        "${1} | pr [N/M]",
+        r"(?m)^(1: HEAD± \| 2: log \| 3: main…± \| 4: remote⇅ \| 5: summ).*$",
+        "${1}ary | 6: pr [N/M]",
     );
 
     // Commit hashes (7-8 hex chars)
