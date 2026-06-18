@@ -23,6 +23,37 @@ success-output = "never"
 [profile.default.junit]
 path = "junit.xml"
 
+# Retry transient `wt`-binary spawn failures in the integration suite.
+#
+# Integration tests spawn the built `wt` binary by absolute path
+# (`target/debug/wt`, via `wt_bin()`). If the file is momentarily absent at
+# spawn time the test fails hard with
+# `Os { code: 2, kind: NotFound }` from inside insta-cmd's spawn — there is
+# no recourse and `terminate-after = 1` then fails the whole run.
+#
+# The known cause of that non-existence window is real `cargo` rebuilding
+# `wt`: cargo unlinks and re-links the output file on every invocation
+# (a ~4% non-existence window measured locally; see the
+# `test_source_flag_forwards_errors` comment in
+# tests/integration_tests/shell_wrapper.rs). Every in-suite path that could
+# run real cargo against `wt` is already shielded — the `--source`
+# (`cargo run --bin wt`) wrapper path stubs cargo, and the hook/alias tests
+# that configure `cargo …` mock it via `create_mock_cargo` — so this is not a
+# reproducible relink race in the suite itself. What remains is a rare,
+# environment-level transient (observed once on macOS CI:
+# `integration_tests::step_alias::test_config_alias_show_lists_all`, in a run
+# that also reported `1 leaky`).
+#
+# A bounded retry is the proportionate response: it does not weaken coverage
+# (a real assertion failure fails all attempts), and a spawn flake that
+# passes on retry is reported as `flaky` rather than silently swallowed.
+# Scoped to `binary(integration)` because only those tests spawn `wt` by
+# path; `--lib`/`--bin`/doctest tests call into the library in-process and
+# cannot hit this.
+[[profile.default.overrides]]
+filter = "binary(integration)"
+retries = 2
+
 # Build the helper binaries (`mock-stub`, `wt-perf`) before any test runs.
 #
 # These live in separate workspace packages so cargo-dist doesn't ship them
