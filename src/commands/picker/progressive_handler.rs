@@ -12,9 +12,9 @@
 //!   every row when summaries are disabled.
 //! - `on_collect_complete` fires the secondary modes (Log / BranchDiff /
 //!   UpstreamDiff) and summaries for items 1..N once the row pipeline
-//!   has torn down. Preview tasks share the global rayon pool with the
-//!   row pipeline; staging keeps low-priority preview submissions out
-//!   of the global injector while row tasks are still landing on
+//!   has torn down. Preview tasks share `COLLECT_POOL` with the row
+//!   pipeline. Staging keeps low-priority preview submissions out of
+//!   that pool's injector while row tasks are still landing on
 //!   workers' local deques during drain.
 
 use std::collections::HashSet;
@@ -153,7 +153,7 @@ impl PickerProgressHandler for PickerHandler {
         // other row's default tab. Tier 2 (secondary modes + summaries
         // for items 1..N) fires from `on_collect_complete` after the row
         // pipeline tears down — spawning that bulk now would queue ahead
-        // of row tasks in the global injector while workers are still
+        // of row tasks in `COLLECT_POOL`'s injector while workers are still
         // grinding through the row work.
         self.orchestrator.spawn_initial_precompute(
             &list_items,

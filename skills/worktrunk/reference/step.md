@@ -156,11 +156,8 @@ Automation:
 
           JSON prints structured result to stdout after the commit completes.
 
-          Possible values:
-          - text: Human-readable text output
-          - json: JSON output
-
           [default: text]
+          [possible values: text, json]
 
 Global Options:
   -C <path>
@@ -255,11 +252,8 @@ Automation:
 
           JSON prints structured result to stdout after the squash completes.
 
-          Possible values:
-          - text: Human-readable text output
-          - json: JSON output
-
           [default: text]
+          [possible values: text, json]
 
 Global Options:
   -C <path>
@@ -492,11 +486,8 @@ Automation:
 
           JSON prints structured result to stdout after the copy completes.
 
-          Possible values:
-          - text: Human-readable text output
-          - json: JSON output
-
           [default: text]
+          [possible values: text, json]
 
 Global Options:
   -C <path>
@@ -557,10 +548,11 @@ $ wt step eval -v '{{ branch }}'
 ○ Available template variables
   branch        = feature/auth-oauth2
   worktree_path = /home/user/projects/myapp-feature-auth-oauth2
-○ Expanding eval
+○ eval source
   {{ branch }}
-  →
+○ eval result
   feature/auth-oauth2
+
 feature/auth-oauth2
 ```
 
@@ -582,6 +574,15 @@ Arguments:
 Options:
   -h, --help
           Print help (see a summary with '-h')
+
+Automation:
+      --format <FORMAT>
+          Output format
+
+          JSON prints {name, template, result} to stdout instead of the bare result.
+
+          [default: text]
+          [possible values: text, json]
 
 Global Options:
   -C <path>
@@ -657,13 +658,10 @@ Arguments:
 
 Options:
       --format <FORMAT>
-          Output format (text, json)
-
-          Possible values:
-          - text: Human-readable text output
-          - json: JSON output
+          Output format
 
           [default: text]
+          [possible values: text, json]
 
   -h, --help
           Print help (see a summary with '-h')
@@ -818,13 +816,10 @@ Options:
           Run removal in foreground (block until complete)
 
       --format <FORMAT>
-          Output format (text, json)
-
-          Possible values:
-          - text: Human-readable text output
-          - json: JSON output
+          Output format
 
           [default: text]
+          [possible values: text, json]
 
   -h, --help
           Print help (see a summary with '-h')
@@ -939,11 +934,8 @@ Automation:
 
           JSON prints structured result to stdout after the relocate completes.
 
-          Possible values:
-          - text: Human-readable text output
-          - json: JSON output
-
           [default: text]
+          [possible values: text, json]
 
 Global Options:
   -C <path>

@@ -179,19 +179,21 @@ pub(crate) fn version_str() -> &'static str {
 /// Output format for commands with text + JSON modes (e.g., `wt switch`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub(crate) enum SwitchFormat {
-    /// Human-readable text output
     Text,
-    /// JSON output
     Json,
 }
 
-// TODO: ClaudeCode is statusline-specific but lives in this shared enum, forcing
-// unrelated codepaths to handle it. Consider a dedicated StatuslineFormat enum.
+/// Output format for `wt list` and `wt config state get` (table or JSON).
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub(crate) enum OutputFormat {
-    /// Human-readable table format
     Table,
-    /// JSON output
+    Json,
+}
+
+/// Output format for `wt list statusline`, including the Claude Code mode.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub(crate) enum StatuslineFormat {
+    Table,
     Json,
     /// Claude Code statusline mode (reads context from stdin)
     #[value(name = "claude-code")]
@@ -302,10 +304,10 @@ impl HookFlags {
 
 #[derive(Args)]
 pub(crate) struct SwitchArgs {
-    /// Branch name or shortcut
+    /// Branch name, shortcut, or PR/MR URL
     ///
     /// Opens interactive picker if omitted.
-    /// Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub PR), 'mr:{N}' (GitLab MR)
+    /// Shortcuts: `^` (default branch), `-` (previous), `@` (current), `pr:{N}` (GitHub PR), `mr:{N}` (GitLab MR)
     #[arg(add = crate::completion::worktree_branch_completer())]
     pub(crate) branch: Option<String>,
 
@@ -398,8 +400,8 @@ pub(crate) struct ListArgs {
     #[command(subcommand)]
     pub(crate) subcommand: Option<ListSubcommand>,
 
-    /// Output format (table, json)
-    #[arg(long, value_enum, default_value = "table", hide_possible_values = true)]
+    /// Output format
+    #[arg(long, value_enum, default_value = "table")]
     pub(crate) format: OutputFormat,
 
     /// Include branches without worktrees
@@ -662,17 +664,13 @@ $ wt switch https://gitlab.com/owner/repo/-/merge_requests/101  # ...the same MR
 $ wt switch --prs                                   # Browse open PRs/MRs in the picker
 ```
 
-Both work anywhere a branch is accepted, including `--base`.
+Both work anywhere a branch is accepted, including `--base`. The `--create` flag cannot be used with a PR/MR reference since the branch already exists.
 
-Requires `gh` (GitHub) or `glab` (GitLab) CLI to be installed and authenticated. The `--create` flag cannot be used with a PR/MR reference since the branch already exists.
+If the PR or MR is on a fork, the local branch uses its branch name directly, so `git push` works normally. A pre-existing local branch with that name tracking something else requires renaming first.
 
 The `--prs` flag adds the repository's open PRs (GitHub) or MRs (GitLab) to the interactive picker. Each row resolves to the same `pr:`/`mr:` shortcut, so selecting one fetches the ref and switches to its branch. The list is one forge call streamed in as it arrives — the picker paints immediately from local worktree data and PR rows appear once the call returns.
 
-**Forks:** The local branch uses the PR/MR's branch name directly (e.g., `feature-fix`), so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
-
-**Gitea (experimental):** `pr:` is also compatible with Gitea via the `tea` CLI. Set `[forge] platform = "gitea"` in `.config/wt.toml` to opt in; worktrunk also auto-detects Gitea when the remote host contains `gitea` or when `tea login add` has been run for the host.
-
-**Azure DevOps (experimental):** `pr:` is also compatible with Azure DevOps via the `az` CLI (with the `azure-devops` extension). Set `[forge] platform = "azure-devops"` in `.config/wt.toml` to opt in; worktrunk also auto-detects Azure DevOps from `dev.azure.com` and `*.visualstudio.com` remotes.
+Requires `gh` (GitHub), `glab` (GitLab), or an equivalent CLI installed and authenticated; see [forge platform](@/config.md#forge-platform) for Gitea, Azure DevOps, and other supported platforms.
 
 ## When wt switch fails
 
@@ -742,8 +740,8 @@ $ wt list --branches --full
 ^ main             ^⇅                                                                                           ⇡1  ⇣1  #     41ee0834
 + fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation           |     #408  b772e68b
 + fix-typos        _|                                                                                             |     #410  41ee0834
-  exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and resolvers                                  96379229
-  wip             /↕                 ↑1  ↓1   +33       Start API documentation                                               b40716dc
+/ exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and resolvers                                  96379229
+/ wip             /↕                 ↑1  ↓1   +33       Start API documentation                                               b40716dc
 
 ○ Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, 3 columns hidden
 ```
@@ -773,6 +771,18 @@ $ wt list --format=json
 | Message | Last commit message (truncated) |
 
 The `main` header label is used regardless of the default branch's actual name.
+
+### Gutter
+
+The leftmost column marks each row by physical presence, from most present to least:
+
+| Symbol | Meaning |
+|--------|---------|
+| `@` | Current worktree |
+| `^` | Primary worktree (the repo's home worktree) |
+| `+` | Other worktree |
+| `/` | Local branch without a worktree (`--branches`) |
+| `\|` | Remote branch, not present locally until fetched (`--remotes`) |
 
 ### CI status
 

@@ -1,10 +1,15 @@
 //! Background preview pre-compute orchestration.
 //!
-//! Routes preview tasks to the global rayon pool (shared with the row
-//! pipeline) and tracks the in-memory cache. A single pool lets workers
+//! Routes preview tasks to the dedicated [`COLLECT_POOL`] (shared with the
+//! row pipeline) and tracks the in-memory cache. A single pool lets workers
 //! prefer whichever workload has dominant pressure: row tasks land on
 //! workers' local deques and take priority during drain; preview tasks
-//! sit in the global injector and pick up workers as they free.
+//! sit in the pool's injector and pick up workers as they free.
+//!
+//! `COLLECT_POOL` is deliberately *not* the global pool: skim runs its
+//! per-keystroke fuzzy matcher on the global pool, so keeping these blocking
+//! git tasks off it is what prevents the picker from freezing on the first
+//! keystroke. See [`COLLECT_POOL`] for the full reasoning.
 //!
 //! Provides a pending-task counter for the dry-run path
 //! (`WORKTRUNK_PICKER_DRY_RUN`) and tests, both of which want to wait for
@@ -21,6 +26,7 @@ use worktrunk::git::Repository;
 use super::items::{PreviewCache, WorktreeSkimItem};
 use super::preview::PreviewMode;
 use super::summary;
+use crate::commands::list::collect::COLLECT_POOL;
 use crate::commands::list::model::ListItem;
 
 /// The picker's initial preview tab — `WorkingTree`, shown when the
@@ -89,8 +95,9 @@ impl PreviewOrchestrator {
     ///
     /// Log mode that hits the disk cache also enqueues a refresh task
     /// (via `rayon::spawn_fifo`, so it lands behind in-flight foreground
-    /// precompute submitted with `rayon::spawn`) to recompute the
-    /// embedded ref decorations before the next visit. See the
+    /// precompute) to recompute the embedded ref decorations before the
+    /// next visit. The `spawn_fifo` runs from inside a `COLLECT_POOL`
+    /// worker, so it inherits that pool rather than the global one. See the
     /// `LogCacheEntry` docstring for why the disk cache itself is
     /// SHA-keyed but decoration text drifts.
     pub(super) fn spawn_preview(
@@ -177,10 +184,10 @@ impl PreviewOrchestrator {
     /// Spawn the deferred pre-compute tier for items 1..N.
     ///
     /// Fires from the picker handler's `on_collect_complete` hook — i.e.
-    /// after `collect::collect`'s drain ends. The global rayon pool
-    /// serves both the row pipeline and the preview pipeline; deferring
-    /// this tier keeps these submissions out of the global injector
-    /// while row tasks are still landing on workers' local deques. The
+    /// after `collect::collect`'s drain ends. `COLLECT_POOL` serves
+    /// both the row pipeline and the preview pipeline. Deferring this
+    /// tier keeps these submissions out of that pool's injector while
+    /// row tasks are still landing on workers' local deques. The
     /// default tab for these rows already fired at skeleton time via
     /// [`Self::spawn_initial_precompute`]; what's left is
     /// [`SECONDARY_MODES`] plus summaries.
@@ -234,10 +241,10 @@ impl PreviewOrchestrator {
             task();
         };
         // The `pending` counter is independent of which pool the task
-        // lands on, so routing through `rayon::spawn` (global pool, shared
-        // with the row pipeline) doesn't change `wait_for_idle` semantics
-        // in tests or the dry-run path.
-        rayon::spawn(wrapped);
+        // lands on, so routing through `COLLECT_POOL` (shared with the row
+        // pipeline, off the global pool skim's matcher uses) doesn't change
+        // `wait_for_idle` semantics in tests or the dry-run path.
+        COLLECT_POOL.spawn(wrapped);
     }
 
     /// Block until all spawned tasks complete.

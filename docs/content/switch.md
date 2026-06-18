@@ -106,17 +106,13 @@ The `pr:<number>` / `mr:<number>` shortcut and the PR/MR's web URL both resolve 
 
 {{ terminal(cmd="wt switch pr:101                                  # GitHub PR #101|||wt switch https://github.com/owner/repo/pull/101  # ...the same PR, by URL|||wt switch mr:101                                  # GitLab MR !101|||wt switch https://gitlab.com/owner/repo/-/merge_requests/101  # ...the same MR, by URL|||wt switch --prs                                   # Browse open PRs/MRs in the picker") }}
 
-Both work anywhere a branch is accepted, including `--base`.
+Both work anywhere a branch is accepted, including `--base`. The `--create` flag cannot be used with a PR/MR reference since the branch already exists.
 
-Requires `gh` (GitHub) or `glab` (GitLab) CLI to be installed and authenticated. The `--create` flag cannot be used with a PR/MR reference since the branch already exists.
+If the PR or MR is on a fork, the local branch uses its branch name directly, so `git push` works normally. A pre-existing local branch with that name tracking something else requires renaming first.
 
 The `--prs` flag adds the repository's open PRs (GitHub) or MRs (GitLab) to the interactive picker. Each row resolves to the same `pr:`/`mr:` shortcut, so selecting one fetches the ref and switches to its branch. The list is one forge call streamed in as it arrives — the picker paints immediately from local worktree data and PR rows appear once the call returns.
 
-**Forks:** The local branch uses the PR/MR's branch name directly (e.g., `feature-fix`), so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
-
-**Gitea (experimental):** `pr:` is also compatible with Gitea via the `tea` CLI. Set `[forge] platform = "gitea"` in `.config/wt.toml` to opt in; worktrunk also auto-detects Gitea when the remote host contains `gitea` or when `tea login add` has been run for the host.
-
-**Azure DevOps (experimental):** `pr:` is also compatible with Azure DevOps via the `az` CLI (with the `azure-devops` extension). Set `[forge] platform = "azure-devops"` in `.config/wt.toml` to opt in; worktrunk also auto-detects Azure DevOps from `dev.azure.com` and `*.visualstudio.com` remotes.
+Requires `gh` (GitHub), `glab` (GitLab), or an equivalent CLI installed and authenticated; see [forge platform](@/config.md#forge-platform) for Gitea, Azure DevOps, and other supported platforms.
 
 ## When wt switch fails
 
@@ -141,10 +137,10 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
 
 <b><span class=g>Arguments:</span></b>
   <span class=c>[BRANCH]</span>
-          Branch name or shortcut
+          Branch name, shortcut, or PR/MR URL
 
-          Opens interactive picker if omitted. Shortcuts: &#39;^&#39; (default branch), &#39;-&#39; (previous), &#39;@&#39;
-          (current), &#39;pr:{N}&#39; (GitHub PR), &#39;mr:{N}&#39; (GitLab MR)
+          Opens interactive picker if omitted. Shortcuts: <b>^</b> (default branch), <b>-</b> (previous), <b>@</b>
+          (current), <b>pr:{N}</b> (GitHub PR), <b>mr:{N}</b> (GitLab MR)
 
   <span class=c>[EXECUTE_ARGS]...</span>
           Additional arguments for --execute command (after --)
@@ -215,11 +211,8 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           JSON prints structured result to stdout. Designed for tool integration (e.g., Claude Code
           WorktreeCreate hooks).
 
-          Possible values:
-          - <b><span class=c>text</span></b>: Human-readable text output
-          - <b><span class=c>json</span></b>: JSON output
-
           [default: text]
+          [possible values: text, json]
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>

@@ -438,10 +438,11 @@ $ wt step eval -v '{{ branch }}'
 ○ Available template variables
   branch        = feature/auth-oauth2
   worktree_path = /home/user/projects/myapp-feature-auth-oauth2
-○ Expanding eval
+○ eval source
   {{ branch }}
-  →
+○ eval result
   feature/auth-oauth2
+
 feature/auth-oauth2
 ```
 
@@ -451,6 +452,12 @@ Note: This command is experimental and may change in future versions.
     Eval {
         /// Template expression to evaluate
         template: String,
+
+        /// Output format
+        ///
+        /// JSON prints `{name, template, result}` to stdout instead of the bare result.
+        #[arg(long, default_value = "text", help_heading = "Automation")]
+        format: crate::cli::SwitchFormat,
     },
 
     /// \[experimental\] Run command in each worktree
@@ -497,7 +504,7 @@ Note: This command is experimental and may change in future versions.
 "#
     )]
     ForEach {
-        /// Output format (text, json)
+        /// Output format
         #[arg(long, default_value = "text")]
         format: crate::cli::SwitchFormat,
 
@@ -604,7 +611,7 @@ $ wt step prune
         #[arg(long)]
         foreground: bool,
 
-        /// Output format (text, json)
+        /// Output format
         #[arg(long, default_value = "text")]
         format: crate::cli::SwitchFormat,
     },

@@ -6,6 +6,7 @@ info:
     - "--verbose"
     - step
     - eval
+    - "--format=json"
     - "{{ branch | hash_port }}"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
@@ -46,7 +47,11 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-12107
+{
+  "name": "eval",
+  "result": "12107",
+  "template": "{{ branch | hash_port }}"
+}
 
 ----- stderr -----
 [2m○[22m Available template variables

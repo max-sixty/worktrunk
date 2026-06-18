@@ -263,7 +263,10 @@ impl JsonItem {
     ) -> Self {
         let (kind_str, worktree_data) = match &item.kind {
             ItemKind::Worktree(data) => ("worktree", Some(data.as_ref())),
-            ItemKind::Branch => ("branch", None),
+            // Local and remote branch rows both serialize as "branch" — the
+            // remote-qualified `branch` name (e.g. "origin/feature") already
+            // carries the local/remote distinction for JSON consumers.
+            ItemKind::Branch(_) => ("branch", None),
         };
 
         let is_main = worktree_data.is_some_and(|d| d.is_main);

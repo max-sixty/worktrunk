@@ -1,5 +1,4 @@
 bot_name: worktrunk-bot
-harness: claude-interactive
 setup:
 - uses: ./.github/actions/claude-setup
 secrets:

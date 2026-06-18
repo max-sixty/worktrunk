@@ -24,7 +24,7 @@ impl RenderTarget {
     pub fn detect(format: OutputFormat, progressive_flag: Option<bool>) -> Self {
         match format {
             OutputFormat::Json => RenderTarget::Json,
-            OutputFormat::Table | OutputFormat::ClaudeCode => {
+            OutputFormat::Table => {
                 let is_tty = std::io::stdout().is_terminal();
                 let progressive = match progressive_flag {
                     Some(p) => p && is_tty,

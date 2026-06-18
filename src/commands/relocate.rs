@@ -29,8 +29,8 @@ use worktrunk::config::UserConfig;
 use worktrunk::git::{ErrorExt, Repository, WorktreeInfo};
 use worktrunk::path::{format_path_for_display, paths_match};
 use worktrunk::styling::{
-    eprintln, format_with_gutter, hint_message, info_message, progress_message, success_message,
-    warning_message,
+    eprintln, format_with_gutter, hint_message, info_message, println, progress_message,
+    success_message, warning_message,
 };
 
 use super::backup;
@@ -662,7 +662,9 @@ impl<'a> RelocationExecutor<'a> {
 
 /// Show dry-run preview of relocations.
 pub fn show_dry_run_preview(candidates: &[RelocationCandidate]) {
-    eprintln!(
+    // Dry-run preview is the command's answer (the relocations that would
+    // happen), so it goes to stdout — see /writing-user-outputs.
+    println!(
         "{}",
         info_message(format!(
             "{} worktree{} would be relocated:",
@@ -680,7 +682,7 @@ pub fn show_dry_run_preview(candidates: &[RelocationCandidate]) {
             cformat!("<bold>{branch}</>: {src_display} → {dest_display}")
         })
         .collect();
-    eprintln!("{}", format_with_gutter(&preview_lines.join("\n"), None));
+    println!("{}", format_with_gutter(&preview_lines.join("\n"), None));
 }
 
 /// Show summary of relocations performed.
