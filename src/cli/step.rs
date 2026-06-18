@@ -504,7 +504,7 @@ Note: This command is experimental and may change in future versions.
 "#
     )]
     ForEach {
-        /// Output format (text, json)
+        /// Output format
         #[arg(long, default_value = "text")]
         format: crate::cli::SwitchFormat,
 
@@ -611,7 +611,7 @@ $ wt step prune
         #[arg(long)]
         foreground: bool,
 
-        /// Output format (text, json)
+        /// Output format
         #[arg(long, default_value = "text")]
         format: crate::cli::SwitchFormat,
     },

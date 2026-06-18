@@ -631,7 +631,7 @@ Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</spa
 
 <b><span class=g>Options:</span></b>
       <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
-          Output format (text, json)
+          Output format
 
           [default: text]
           [possible values: text, json]
@@ -779,7 +779,7 @@ Usage: <b><span class=c>wt step prune</span></b> <span class=c>[OPTIONS]</span>
           Run removal in foreground (block until complete)
 
       <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
-          Output format (text, json)
+          Output format
 
           [default: text]
           [possible values: text, json]

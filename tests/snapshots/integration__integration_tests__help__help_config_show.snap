@@ -46,7 +46,7 @@ Usage: [1m[36mwt config show[0m [36m[OPTIONS][0m
 
 [1m[32mOutput:[0m
       [1m[36m--format[0m[36m [0m[36m<FORMAT>[0m
-          Output format (text, json)
+          Output format
           
           [default: text]
           [possible values: text, json]
