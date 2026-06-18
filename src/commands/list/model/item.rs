@@ -726,9 +726,10 @@ mod tests {
 
     #[test]
     fn test_list_item_worktree_data() {
-        // Branch item has no worktree data
-        let item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
+        // Branch items have no worktree data, via either accessor.
+        let mut item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
         assert!(item.worktree_data().is_none());
+        assert!(item.worktree_data_mut().is_none());
         assert!(item.worktree_path().is_none());
     }
 
