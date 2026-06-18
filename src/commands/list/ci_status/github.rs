@@ -288,6 +288,9 @@ impl GitHubPrInfo {
     /// hold the open-PR list (the `--prs` picker) and want the same CI-column
     /// treatment [`detect_github`] produces per branch. PR rows have no local
     /// checkout to diff against, so the result is never marked stale.
+    ///
+    /// Only the `--prs` picker calls this, and the picker is unix-only.
+    #[cfg(unix)]
     pub(crate) fn open_pr_status(&self) -> PrStatus {
         let ci_status = if self.merge_state_status.as_deref() == Some("DIRTY") {
             CiStatus::Conflicts

@@ -520,11 +520,16 @@ pub struct LayoutConfig {
 /// threads, so renderers running outside `collect` — the picker's `--prs`
 /// thread — take this snapshot to place their cells on the same grid as the
 /// worktree rows.
+// The grid is built on every platform (`collect` hands it to `on_skeleton`),
+// but only the unix-only `--prs` picker reads its columns to align PR rows — so
+// the fields/accessor are dead on non-unix.
+#[cfg_attr(not(unix), allow(dead_code))]
 #[derive(Clone, Debug, Default)]
 pub struct ColumnGrid {
     pub columns: Vec<GridColumn>,
 }
 
+#[cfg_attr(not(unix), allow(dead_code))]
 #[derive(Clone, Copy, Debug)]
 pub struct GridColumn {
     pub kind: ColumnKind,
@@ -533,6 +538,7 @@ pub struct GridColumn {
 }
 
 impl ColumnGrid {
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub fn column(&self, kind: ColumnKind) -> Option<GridColumn> {
         self.columns.iter().copied().find(|col| col.kind == kind)
     }
