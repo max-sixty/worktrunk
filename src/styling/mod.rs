@@ -31,7 +31,10 @@ pub use anstyle::Style as AnstyleStyle;
 
 // Re-export our public types
 pub use constants::*;
-pub use format::{GUTTER_OVERHEAD, format_bash_with_gutter, format_with_gutter, wrap_styled_text};
+pub use format::{
+    GUTTER_OVERHEAD, format_bash_with_gutter, format_bash_with_gutter_chopped, format_with_gutter,
+    wrap_styled_text,
+};
 pub use highlighting::format_toml;
 pub use hyperlink::{Stream, hyperlink_stdout, strip_osc8_hyperlinks, supports_hyperlinks};
 pub use line::{StyledLine, StyledString, truncate_visible};
@@ -192,7 +195,7 @@ mod tests {
     use insta::assert_snapshot;
 
     #[cfg(feature = "syntax-highlighting")]
-    use super::format::format_bash_with_gutter_at_width;
+    use super::format::{LineFit, format_bash_with_gutter_at_width};
     use super::*;
     use anstyle::Style;
     use unicode_width::UnicodeWidthStr;
@@ -639,7 +642,7 @@ command = "npm install"
         let command = "cp -cR {{ repo_root }}/target/debug/.fingerprint {{ repo_root }}/target/debug/build {{ worktree }}/target/debug/";
 
         // Use explicit width for deterministic output (avoids env var mutation in parallel tests)
-        let result = format_bash_with_gutter_at_width(command, 80);
+        let result = format_bash_with_gutter_at_width(command, 80, LineFit::Wrap);
 
         // Snapshot the raw output to verify ANSI codes are consistent
         assert_snapshot!(result);
@@ -670,7 +673,7 @@ cp -cR {{ repo_root }}/target/debug/.fingerprint {{ repo_root }}/target/debug/bu
 }}/target/debug/"#;
 
         // Use explicit width for deterministic output (avoids env var mutation in parallel tests)
-        let result = format_bash_with_gutter_at_width(multiline_command, 80);
+        let result = format_bash_with_gutter_at_width(multiline_command, 80, LineFit::Wrap);
 
         // Snapshot the output - each line should have consistent dim styling
         assert_snapshot!(result);

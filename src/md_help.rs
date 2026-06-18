@@ -6,7 +6,8 @@ use termimad::{CompoundStyle, MadSkin, TableBorderChars};
 use unicode_width::UnicodeWidthStr;
 
 use worktrunk::styling::{
-    DEFAULT_HELP_WIDTH, format_bash_with_gutter, format_toml, format_with_gutter, wrap_styled_text,
+    DEFAULT_HELP_WIDTH, format_bash_with_gutter, format_bash_with_gutter_chopped, format_toml,
+    format_with_gutter, wrap_styled_text,
 };
 
 /// Table border style matching our help text format:
@@ -49,6 +50,10 @@ pub(crate) fn render_markdown_in_help_with_width(help: &str, width: Option<usize
     let mut code_block_lang = String::new();
     let mut code_block_lines: Vec<&str> = Vec::new();
     let mut table_lines: Vec<&str> = Vec::new();
+    // Set by a `<!-- wt list … -->` marker; consumed by the next code block.
+    // Tags captured `wt list` output (pre-formatted tables) so it is chopped to
+    // terminal width like real `wt list`, not word-wrapped (which shears columns).
+    let mut chop_next_block = false;
 
     let lines: Vec<&str> = help.lines().collect();
     let mut i = 0;
@@ -57,8 +62,17 @@ pub(crate) fn render_markdown_in_help_with_width(help: &str, width: Option<usize
         let line = lines[i];
         let trimmed = line.trim_start();
 
-        // Skip HTML comments (expansion markers for web docs, see readme_sync.rs)
+        // HTML comments are expansion markers for web docs (see readme_sync.rs) and
+        // don't render. A `<!-- wt list … -->` marker tags the captured `wt list`
+        // output that immediately follows, so the next code block is chopped (below).
         if trimmed.starts_with("<!--") && trimmed.ends_with("-->") {
+            let inner = trimmed
+                .trim_start_matches("<!--")
+                .trim_end_matches("-->")
+                .trim();
+            if inner.starts_with("wt list") {
+                chop_next_block = true;
+            }
             i += 1;
             continue;
         }
@@ -83,7 +97,13 @@ pub(crate) fn render_markdown_in_help_with_width(help: &str, width: Option<usize
                             .map(|l| l.strip_prefix("$ ").unwrap_or(l))
                             .collect::<Vec<_>>()
                             .join("\n");
-                        format_bash_with_gutter(&stripped)
+                        // Captured `wt list` tables (chop_next_block) are chopped to
+                        // width; hand-authored command sessions still word-wrap.
+                        if chop_next_block {
+                            format_bash_with_gutter_chopped(&stripped)
+                        } else {
+                            format_bash_with_gutter(&stripped)
+                        }
                     }
                     "bash" | "sh" => format_bash_with_gutter(&content),
                     _ => {
@@ -101,6 +121,8 @@ pub(crate) fn render_markdown_in_help_with_width(help: &str, width: Option<usize
                 result.push_str(&formatted);
                 result.push('\n');
                 in_code_block = false;
+                // A marker applies only to the block right after it.
+                chop_next_block = false;
             }
             i += 1;
             continue;
