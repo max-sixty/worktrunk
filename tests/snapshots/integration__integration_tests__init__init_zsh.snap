@@ -118,14 +118,7 @@ if command -v wt >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
             # Use `command` to bypass the shell function and call the binary directly.
             # Without this, `wt` would call the shell function which evals
             # the completion script internally but doesn't re-emit it.
-            #
-            # The -V flag creates an unsorted group, preserving our recency-based
-            # ordering instead of zsh's default alphabetical sort.
-            # Note: _describe's -V does NOT take an argument - it just sets a flag.
-            # The _describe function internally passes -o nosort to compadd.
-            # TODO(clap): Ideally clap_complete would preserve ordering natively.
-            # See: https://github.com/clap-rs/clap/issues/5752
-            eval "$(COMPLETE=zsh command "${WORKTRUNK_BIN:-wt}" 2>/dev/null | sed "s/_describe 'values'/_describe -V 'values'/")" || return
+            eval "$(COMPLETE=zsh command "${WORKTRUNK_BIN:-wt}" 2>/dev/null)" || return
         fi
         _clap_dynamic_completer_wt "$@"
     }

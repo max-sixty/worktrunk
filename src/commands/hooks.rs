@@ -366,7 +366,7 @@ impl Drop for HookAnnouncer<'_> {
 ///
 /// When `show_branch` is true, the announce includes the branch name for
 /// disambiguation in batch contexts (e.g., prune removing multiple worktrees):
-/// `Running post-remove for feature: user: docs`.
+/// `Running post-remove for feature: docs (user)`.
 fn run_hooks_background(
     repo: &Repository,
     pipelines: Vec<PendingPipeline>,

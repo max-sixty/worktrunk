@@ -39,6 +39,7 @@ use std::process::Command;
 use crate::config::sanitize_branch_name;
 use crate::git::Repository;
 use crate::shell_exec::{Cmd, INHERITED_GIT_PATH_VARS};
+use path_slash::PathExt;
 
 use self::mock_commands::{MockConfig, MockResponse};
 
@@ -160,22 +161,30 @@ fn copy_standard_fixture(dest: &Path) -> FixtureWorktrees {
     // Canonicalize dest for worktrees map (on macOS /var -> /private/var)
     let canonical_dest = canonicalize(dest).unwrap();
 
-    // Fix gitdir files - fixture uses _git which we rename to .git
-    // Paths are relative so no absolute path replacement needed
+    // Fix gitdir files: the fixture uses _git which we rename to .git, and
+    // each copied repo needs links that point at its own tempdir. Use absolute
+    // paths, matching `git worktree add`, so `git worktree list` does not
+    // interpret fixture-relative paths from the wrong base on some Git builds.
     for wt in ["feature-a", "feature-b", "feature-c"] {
+        let worktree_path = canonical_dest.join(format!("repo.{wt}"));
+        let worktree_gitdir = worktree_path.join(".git").to_slash_lossy().into_owned();
+        let main_worktree_gitdir = canonical_dest
+            .join("repo")
+            .join(".git")
+            .join("worktrees")
+            .join(format!("repo.{wt}"))
+            .to_slash_lossy()
+            .into_owned();
+
         let gitdir_path = dest.join(format!("repo.{wt}/.git"));
         if gitdir_path.exists() {
-            let content = std::fs::read_to_string(&gitdir_path).unwrap();
-            let fixed = content.replace("_git", ".git");
-            std::fs::write(&gitdir_path, fixed).unwrap();
+            std::fs::write(&gitdir_path, format!("gitdir: {main_worktree_gitdir}\n")).unwrap();
         }
 
         // Fix main repo's worktree gitdir reference
         let main_gitdir = dest.join(format!("repo/.git/worktrees/repo.{wt}/gitdir"));
         if main_gitdir.exists() {
-            let content = std::fs::read_to_string(&main_gitdir).unwrap();
-            let fixed = content.replace("_git", ".git");
-            std::fs::write(&main_gitdir, fixed).unwrap();
+            std::fs::write(&main_gitdir, format!("{worktree_gitdir}\n")).unwrap();
         }
     }
 

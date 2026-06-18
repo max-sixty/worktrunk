@@ -285,7 +285,25 @@ impl Repository {
             .collect();
         remote_only.sort_by_key(|b| std::cmp::Reverse(b.2));
 
-        let mut result = Vec::with_capacity(locals.len() + remote_only.len());
+        let mut result = Vec::with_capacity(locals.len() + remote_only.len() + worktrees.len());
+
+        // Unborn worktree branches first: a worktree whose branch isn't in
+        // `refs/heads/` yet (a fresh `git init`'d repo whose default branch
+        // exists only as a `symbolic-ref` target, or a `wt switch --create`
+        // off such a repo). Pinned to `i64::MAX` so they sort to the top of
+        // the Worktree category — there's no commit to pull a real timestamp
+        // from, and the user typically just created them.
+        for wt in worktrees {
+            if let Some(branch) = &wt.branch
+                && !local_names.contains(branch.as_str())
+            {
+                result.push(CompletionBranch {
+                    name: branch.clone(),
+                    timestamp: i64::MAX,
+                    category: BranchCategory::Worktree,
+                });
+            }
+        }
 
         // Worktree branches (already sorted by recency via locals order).
         for branch in locals {
@@ -402,6 +420,60 @@ mod tests {
         let repo = Repository::at(test.root_path()).unwrap();
         assert_eq!(repo.default_branch().as_deref(), Some("ghost"));
         assert_eq!(repo.default_branch_sha(), None);
+    }
+
+    #[test]
+    fn branches_for_completion_includes_unborn_default_branch() {
+        // Regression for #3094: on a fresh `git init -b main` with no
+        // commits, `refs/heads/` is empty (main exists only as a
+        // `symbolic-ref` target), so the local-branch scan returns nothing.
+        // The worktree fallback keeps tab-completion responsive by emitting
+        // a Worktree-category candidate for each worktree whose branch
+        // isn't yet a ref.
+        let test = TestRepo::new();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let branches = repo.branches_for_completion().unwrap();
+        let names: Vec<&str> = branches.iter().map(|b| b.name.as_str()).collect();
+        assert_eq!(names, vec!["main"], "completion candidates: {:?}", branches);
+        assert!(
+            matches!(branches[0].category, BranchCategory::Worktree),
+            "category: {:?}",
+            branches[0].category,
+        );
+    }
+
+    #[test]
+    fn branches_for_completion_includes_unborn_linked_worktree() {
+        // After `git worktree add -b feature ../path` on a still-unborn
+        // repo, both `main` and `feature` exist only in `worktree list
+        // --porcelain`, not under `refs/heads/`. Both must surface in
+        // completion.
+        let test = TestRepo::new();
+        let feature_path = test.root_path().parent().unwrap().join("feature");
+        test.run_git(&[
+            "worktree",
+            "add",
+            "-b",
+            "feature",
+            feature_path.to_str().unwrap(),
+        ]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let branches = repo.branches_for_completion().unwrap();
+        let names: Vec<&str> = branches.iter().map(|b| b.name.as_str()).collect();
+        assert!(
+            names.contains(&"main") && names.contains(&"feature"),
+            "completion candidates: {:?}",
+            branches,
+        );
+        for b in &branches {
+            assert!(
+                matches!(b.category, BranchCategory::Worktree),
+                "non-worktree category for {:?}",
+                b,
+            );
+        }
     }
 
     #[test]
