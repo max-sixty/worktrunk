@@ -660,11 +660,9 @@ expected path. Untracked and gitignored files remain at the original location.
 
 ## Dirty worktrees
 
-Linked worktrees with uncommitted changes are relocated as-is — `git worktree
-move` carries modified-tracked and untracked files along. The main worktree
-is the exception: its relocation runs `git checkout <default-branch>`, which
-refuses to switch over uncommitted changes, so a dirty main worktree is
-skipped unless `--commit` is passed.
+Linked worktrees relocate as-is — `git worktree move` carries uncommitted
+changes along. Only the main worktree skips when dirty (its `git checkout`
+refuses), unless `--commit` is passed.
 
 ## Skipped worktrees
 
