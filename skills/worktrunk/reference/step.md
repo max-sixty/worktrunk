@@ -581,11 +581,8 @@ Automation:
 
           JSON prints {name, template, result} to stdout instead of the bare result.
 
-          Possible values:
-          - text: Human-readable text output
-          - json: JSON output
-
           [default: text]
+          [possible values: text, json]
 
 Global Options:
   -C <path>
