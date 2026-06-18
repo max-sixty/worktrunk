@@ -749,11 +749,7 @@ fn run_json() -> Result<()> {
         }
     }
     let repo_metadata = repo.repo_info();
-    let ci_provider_override = repo
-        .project_config()
-        .ok()
-        .flatten()
-        .and_then(|config| config.forge_platform().map(str::to_string));
+    let ci_provider_override = repo.forge_platform_override();
     let json_item = json_output::JsonItem::from_list_item(
         &item,
         &mut all_vars,

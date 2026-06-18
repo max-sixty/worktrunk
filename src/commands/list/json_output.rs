@@ -464,14 +464,13 @@ fn worktree_state_to_json(
     (None, None)
 }
 
-impl From<&PrStatus> for JsonCi {
-    fn from(pr: &PrStatus) -> Self {
-        Self::from_pr_status(pr, None)
-    }
-}
-
 impl JsonCi {
-    fn from_pr_status(pr: &PrStatus, provider_override: Option<&str>) -> Self {
+    /// Build a `JsonCi` from a [`PrStatus`], deriving the target-repo metadata
+    /// from the PR/MR URL. `provider_override` is the configured
+    /// `[forge].platform` (see [`Repository::forge_platform_override`]); it lets
+    /// a self-hosted instance whose host can't be auto-detected still report the
+    /// right provider.
+    pub(crate) fn from_pr_status(pr: &PrStatus, provider_override: Option<&str>) -> Self {
         let repo = pr.url.as_deref().and_then(|url| {
             worktrunk::git::remote_ref::repo_info_from_ref_url_with_provider(url, provider_override)
         });
@@ -548,11 +547,7 @@ fn format_raw_symbols(symbols: &super::model::StatusSymbols) -> String {
 pub fn to_json_items(items: &[ListItem], repo: &Repository) -> Vec<JsonItem> {
     let mut all_vars = repo.all_vars_entries();
     let repo_metadata = repo.repo_info();
-    let ci_provider_override = repo
-        .project_config()
-        .ok()
-        .flatten()
-        .and_then(|config| config.forge_platform().map(str::to_string));
+    let ci_provider_override = repo.forge_platform_override();
     items
         .iter()
         .map(|item| {
@@ -600,20 +595,23 @@ mod tests {
     }
 
     // ============================================================================
-    // JsonCi::from Tests
+    // JsonCi::from_pr_status Tests
     // ============================================================================
 
     #[test]
     fn test_json_ci_from_pr_status() {
         // Full field mapping with URL
-        let passed = JsonCi::from(&PrStatus {
-            ci_status: CiStatus::Passed,
-            source: CiSource::PullRequest,
-            is_stale: false,
-            url: Some("https://github.com/org/repo/pull/123".to_string()),
-            number: Some(PrRef::pr(123)),
-            review_state: None,
-        });
+        let passed = JsonCi::from_pr_status(
+            &PrStatus {
+                ci_status: CiStatus::Passed,
+                source: CiSource::PullRequest,
+                is_stale: false,
+                url: Some("https://github.com/org/repo/pull/123".to_string()),
+                number: Some(PrRef::pr(123)),
+                review_state: None,
+            },
+            None,
+        );
         assert_eq!(passed.status, "passed");
         assert_eq!(passed.source, CiSource::PullRequest);
         assert!(!passed.stale);
@@ -640,14 +638,17 @@ mod tests {
         );
 
         // Stale branch with no URL
-        let failed = JsonCi::from(&PrStatus {
-            ci_status: CiStatus::Failed,
-            source: CiSource::Branch,
-            is_stale: true,
-            url: None,
-            number: None,
-            review_state: None,
-        });
+        let failed = JsonCi::from_pr_status(
+            &PrStatus {
+                ci_status: CiStatus::Failed,
+                source: CiSource::Branch,
+                is_stale: true,
+                url: None,
+                number: None,
+                review_state: None,
+            },
+            None,
+        );
         assert_eq!(failed.status, "failed");
         assert_eq!(failed.source, CiSource::Branch);
         assert!(failed.stale);
@@ -664,16 +665,46 @@ mod tests {
             (CiStatus::Error, "error"),
         ];
         for (ci_status, expected) in status_mappings {
-            let json = JsonCi::from(&PrStatus {
-                ci_status,
-                source: CiSource::Branch,
-                is_stale: false,
-                url: None,
-                number: None,
-                review_state: None,
-            });
+            let json = JsonCi::from_pr_status(
+                &PrStatus {
+                    ci_status,
+                    source: CiSource::Branch,
+                    is_stale: false,
+                    url: None,
+                    number: None,
+                    review_state: None,
+                },
+                None,
+            );
             assert_eq!(json.status, expected);
         }
+    }
+
+    /// The configured `[forge].platform` override decides the provider when the
+    /// PR URL's host can't be auto-detected. Without the override an opaque-host
+    /// `pull` URL is `Unknown`; with `github` it resolves to GitHub.
+    #[test]
+    fn test_json_ci_from_pr_status_provider_override() {
+        let pr = PrStatus {
+            ci_status: CiStatus::Passed,
+            source: CiSource::PullRequest,
+            is_stale: false,
+            url: Some("https://git.example.com/org/repo/pull/7".to_string()),
+            number: Some(PrRef::pr(7)),
+            review_state: None,
+        };
+
+        let without = JsonCi::from_pr_status(&pr, None);
+        assert_eq!(
+            without.repo.as_ref().map(|r| r.provider),
+            Some(GitRepoProvider::Unknown)
+        );
+
+        let with = JsonCi::from_pr_status(&pr, Some("github"));
+        assert_eq!(
+            with.repo.as_ref().map(|r| r.provider),
+            Some(GitRepoProvider::GitHub)
+        );
     }
 
     // ============================================================================

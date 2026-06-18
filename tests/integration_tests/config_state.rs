@@ -434,6 +434,42 @@ fn test_state_get_ci_status_returns_cached_status(repo: TestRepo) {
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "passed");
 }
 
+/// `--format=json` honors the configured `[forge].platform` when deriving the
+/// repo provider from the cached PR URL, matching `wt list --format=json`.
+/// Without the override an opaque-host `pull` URL resolves to `unknown`; with
+/// `[forge] platform = "github"` it resolves to `github`. Regression guard for
+/// the `state ci-status` JSON path that previously hard-coded no override.
+#[rstest]
+fn test_state_get_ci_status_json_honors_forge_platform(repo: TestRepo) {
+    let head = repo.head_sha();
+    write_ci_cache(
+        &repo,
+        "main",
+        &format!(
+            r#"{{"status":{{"ci_status":"passed","source":"pr","is_stale":false,"url":"https://git.example.com/org/repo/pull/7"}},"checked_at":{TEST_EPOCH},"head":"{head}","branch":"main"}}"#
+        ),
+    );
+    repo.write_project_config("[forge]\nplatform = \"github\"\n");
+
+    let output = wt_state_cmd(
+        &repo,
+        "ci-status",
+        "get",
+        &["--branch", "main", "--format=json"],
+    )
+    .output()
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "command should succeed: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["repo"]["provider"].as_str(), Some("github"));
+    assert_eq!(json["repo"]["host"].as_str(), Some("git.example.com"));
+}
+
 /// `wt config state ci-status --branch origin/foo` must resolve cleanly when a
 /// local branch literally named `origin/foo` shadows a remote-tracking ref of
 /// the same name. Smoke test: exercises the shadowing code path. The

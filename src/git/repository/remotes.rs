@@ -295,6 +295,21 @@ impl Repository {
             .and_then(GitRemoteUrl::parse)
     }
 
+    /// Configured `[forge].platform` override, if any.
+    ///
+    /// Local-only: reads (and may cache) project config. Every structured-output
+    /// path that derives a forge provider feeds this into the URL parser so a
+    /// self-hosted instance whose host can't be auto-detected reports the
+    /// configured provider instead of `unknown`. Centralized here so the three
+    /// call sites (`wt list`, `wt list statusline`, `wt config state ci-status`)
+    /// can't drift — see `repo_info` and `json_output::JsonCi`.
+    pub fn forge_platform_override(&self) -> Option<String> {
+        self.project_config()
+            .ok()
+            .flatten()
+            .and_then(|config| config.forge_platform().map(str::to_string))
+    }
+
     /// Repository metadata derived from the primary remote.
     ///
     /// Local-only: built from the cached primary remote URL and optional
@@ -306,11 +321,7 @@ impl Repository {
         let remote = self.primary_remote().ok()?;
         let url = self.remote_url(&remote)?;
         let parsed = GitRemoteUrl::parse(&url)?;
-        let provider_override = self
-            .project_config()
-            .ok()
-            .flatten()
-            .and_then(|config| config.forge_platform().map(str::to_string));
+        let provider_override = self.forge_platform_override();
         let mut info = parsed.repo_info(provider_override.as_deref())?;
         info.remote = Some(remote);
         Some(info)
