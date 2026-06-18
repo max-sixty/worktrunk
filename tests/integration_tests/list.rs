@@ -230,7 +230,7 @@ fn test_list_json_with_metadata(mut repo: TestRepo) {
 #[rstest]
 fn test_list_json_repo_url_from_ssh_remote(repo: TestRepo) {
     // A real forge SSH remote. The local-path remote the fixture configures
-    // doesn't parse as a forge, so `repo_url` would be absent for it.
+    // doesn't parse as a remote URL, so `repo_url` would be absent for it.
     repo.run_git(&[
         "remote",
         "set-url",
@@ -251,6 +251,57 @@ fn test_list_json_repo_url_from_ssh_remote(repo: TestRepo) {
         row["repo_url"].as_str(),
         Some("https://github.com/owner/repo"),
         "SSH remote should derive the HTTPS web URL"
+    );
+    assert_eq!(
+        row["repo"]["url"].as_str(),
+        Some("https://github.com/owner/repo")
+    );
+    assert_eq!(row["repo"]["provider"].as_str(), Some("github"));
+    assert_eq!(row["repo"]["host"].as_str(), Some("github.com"));
+    assert_eq!(row["repo"]["owner"].as_str(), Some("owner"));
+    assert_eq!(row["repo"]["name"].as_str(), Some("repo"));
+    assert_eq!(row["repo"]["remote"].as_str(), Some("origin"));
+    assert!(
+        row["repo"].get("project").is_none(),
+        "GitHub repo metadata should not include project"
+    );
+}
+
+#[rstest]
+fn test_list_json_configured_azure_generic_remote_is_unknown(repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://git.example.com/owner/repo.git",
+    ]);
+    repo.write_project_config("[forge]\nplatform = \"azure-devops\"\n");
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "wt list should succeed");
+
+    let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let row = json.first().expect("at least one row");
+    assert_eq!(
+        row["repo_url"].as_str(),
+        Some("https://git.example.com/owner/repo")
+    );
+    assert_eq!(
+        row["repo"]["url"].as_str(),
+        Some("https://git.example.com/owner/repo")
+    );
+    assert_eq!(row["repo"]["provider"].as_str(), Some("unknown"));
+    assert_eq!(row["repo"]["host"].as_str(), Some("git.example.com"));
+    assert_eq!(row["repo"]["owner"].as_str(), Some("owner"));
+    assert_eq!(row["repo"]["name"].as_str(), Some("repo"));
+    assert_eq!(row["repo"]["remote"].as_str(), Some("origin"));
+    assert!(
+        row["repo"].get("project").is_none(),
+        "generic repo metadata should not include an Azure project"
     );
 }
 
