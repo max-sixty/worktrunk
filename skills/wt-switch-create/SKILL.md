@@ -1,6 +1,6 @@
 ---
 name: wt-switch-create
-description: Create a new worktrunk worktree in this repo and switch this session's working directory into it. Use when launching a session that should work in its own worktree.
+description: Create a new worktrunk worktree (optionally in another repo) and switch this session's working directory into it. Use when launching a session that should work in its own worktree.
 argument-hint: "[<branch>] [<repo>] [-- <task>]"
 license: MIT OR Apache-2.0
 compatibility: Requires the `wt` CLI (https://worktrunk.dev)
@@ -10,9 +10,8 @@ Arguments: `$ARGUMENTS`. Grammar: `[<branch>] [<repo>] [-- <task>]`.
 
 - **branch** — optional; the branch name for the new worktree. When omitted,
   pick one (step 1 below).
-- **repo** — optional path naming a *different* repo the task belongs in. This
-  session can't re-root into another repo, so the skill hands the task to a
-  session rooted there rather than creating a worktree here (step 2).
+- **repo** — optional path; create the worktree in this repo instead of the
+  session's current one.
 - **task** — optional; what to do inside the new worktree. No task means enter
   the worktree and wait.
 
@@ -34,68 +33,48 @@ branch-shaped lead — all task).
 
 ## What to do
 
-Steps 1–4 come before any other work.
+Steps 1–3 come before any other work.
 
-<!-- Maintainers: the design choices here are backed by tested evidence in
-rationale.md (same directory) — read it before re-adding guards or routes. -->
+<!-- Maintainers: rationale.md (same directory) covers the harness rules and
+design choices behind this — read it before re-adding guards or routes. -->
 
-1. **Pick the branch name** if none was given: short, from the task ("fix the
-   parser bug" → `fix-parser-bug`) and consistent with existing worktree
-   names, or, mid-session, from the work being moved; with nothing to derive
-   from, ask.
+1. **Pick the branch name** if none was given: short, from the task and
+   consistent with existing worktree names, or, mid-session, from the work
+   being moved; with nothing to derive from, ask.
 
-2. **Confirm the task belongs in this repo.** This command re-roots *this*
-   session, and a session can only re-root within its own repo: the harness
-   rejects any worktree outside it. So a worktree created in another repo can
-   never become this session's cwd, and the task would limp along through
-   absolute paths with every `cd` reset back.
-
-   When the task belongs in another repo (a repo path was given, or the work is
-   plainly about a different repo), don't create a worktree here — this session
-   can't re-root into another repo. Match the response to the work:
-
-   - **Substantial work** wants a session *rooted* in that repo, which only a
-     session *started* there can be: launch one whose working directory is the
-     target repo and let it run this skill (now same-repo) as its first step;
-     name the repo, then stop.
-   - **Work in this conversation**: have the user run `/add-dir <repo>` (a
-     user-typed command — the agent can't run it), which makes `cd` into that
-     repo persist so commands run there cleanly without re-rooting. A quick read
-     needs even less: `git -C <repo>` / `gh` from here, no worktree.
-
-3. **Create the worktree** with a `Bash` call:
+2. **Create the worktree** with a `Bash` call (omit `-C <repo>` for this repo):
 
    ```
-   wt switch --create <branch> --no-cd --format=json
+   wt -C <repo> switch --create <branch> --no-cd --format=json
    ```
 
    Stdout is JSON whose `path` field is the worktree's absolute path (status
-   lines go to stderr). On `Branch <branch> already exists`:
+   lines go to stderr). On `Branch <branch> already exists`: if the user named
+   the branch, rerun without `--create` (it enters the branch, creating its
+   worktree if missing); if step 1 picked the name, pick another and rerun. Any
+   other failure (not a git repo, invalid name): report it and stop.
 
-   - the user named the branch → rerun the same command without `--create`;
-     it enters the existing branch, creating its worktree if missing.
-   - the name was picked in step 1 → the user never chose that branch; pick
-     another name and rerun.
+   Mid-session, carry uncommitted work across: `git stash push -u` before
+   creating the worktree, then `git -C <path> stash pop` after (the stash is
+   shared across worktrees).
 
-   Any other failure (not a git repo, invalid name): report it and stop — do
-   not do the task in the original directory.
+3. **Enter the worktree, then do the task.** Call
+   `EnterWorktree({path: "<path from the JSON>"})`.
 
-   Mid-session, when the work to move is uncommitted in the current worktree,
-   carry it across: `git stash push -u` before creating the worktree, then
-   `git -C <path> stash pop` after (the stash is shared across worktrees).
-
-4. **Re-root the session** with `EnterWorktree({path: "<path from the JSON>"})`.
-
-   A same-repo worktree is accepted on first entry, sibling layout included. A
-   rejection is the unexpected case: the session already entered a worktree via
-   `EnterWorktree`, or it's a pinned agent restricted to `.claude/worktrees/`.
-   The rejection is graceful and creates nothing; then work in the worktree
-   through absolute paths and name its path when reporting back. Don't try to
-   `cd` there: the harness resets `cd` that leaves the session's working
-   directories, and `EnterWorktree` is the supported way to move a session.
-
-5. **Do the task** in the worktree. If there was no task text, confirm the
-   worktree is ready and wait for the next instruction.
+   - **Accepted** → the session is re-rooted in the worktree. Do the task (or,
+     with no task text, confirm it's ready and wait).
+   - **Rejected** → the worktree is in another repo (`EnterWorktree` re-roots
+     only within the repo your cwd is in; the rejection is graceful and creates
+     nothing). You can still `cd` into the worktree and work there if it's
+     inside an allowed directory — an entry in `permissions.additionalDirectories`,
+     such as `~/workspace`. So `cd <path>` and read the result:
+     - no `Shell cwd was reset` notice → it stuck; the worktree is reachable.
+       Work there and do the task.
+     - `Shell cwd was reset` → not reachable. Stop and ask the user to make it
+       reachable: add the repo, or a parent like `~/workspace`, to
+       `permissions.additionalDirectories` (durable, every session), or run
+       `/add-dir <path>` (this session). Then continue. Don't grind through
+       absolute paths with `cd` resetting on every command.
 
 ## Cleanup
 
@@ -108,6 +87,6 @@ entered by `path`, so removal is always `wt remove <branch>`.
 
 ## Scope
 
-This command authorizes creating/entering ONE worktree in this repo and doing
-the requested task. Commits, pushes, and merges still each require explicit user
-permission.
+This command authorizes creating/entering ONE worktree (in the named repo, if
+one was given) and doing the requested task. Commits, pushes, and merges still
+each require explicit user permission.

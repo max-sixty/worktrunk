@@ -1,31 +1,40 @@
 # wt-switch-create design rationale
 
-Why the skill is one same-repo route (`wt` in Bash → `EnterWorktree({path})`)
-with a single up-front split for cross-repo tasks and an error-driven fallback,
-and not the guard-heavy multi-route flow it replaced.
+Why the skill is create-then-reach: create the worktree with `wt`, enter it with
+`EnterWorktree`, and when entry is rejected (the worktree is in another repo),
+work in it if it's reachable or escalate to the user to make it reachable. Not
+the guard-heavy multi-route flow it replaced, and not the silent absolute-paths
+fallback that read as a failure.
+
 Every claim here was verified against primary sources (2026-06-11 to
-2026-06-14): Claude Code 2.1.173, the path-entry logic re-confirmed against the
-2.1.177 binary (`EnterWorktree`'s `LI6` validator and its call sites) plus live
-tool calls and official docs at code.claude.com/docs; and wt
-v0.57.0-16-g371d28662 (live runs in a scratch repo). Re-verify against current
-versions before relying on a specific behavior; the *shape* of the argument
-should outlive the details.
+2026-06-17): Claude Code 2.1.173, with the path-entry and working-directory
+logic re-confirmed live and against the 2.1.177 binary, plus official docs at
+code.claude.com/docs; and wt v0.57.0-16-g371d28662 (live runs in a scratch
+repo). Re-verify against current versions before relying on a specific behavior;
+the *shape* of the argument should outlive the details. Binary symbol names are
+deliberately omitted — they re-minify every build.
 
 ## The design
 
-1. Settle the repo before creating anything. A session re-roots only within
-   its own repo, so a task in another repo can't be entered from here; hand it
-   to a session rooted in that repo. The rest assumes a same-repo task.
-2. Create the worktree with `wt switch --create <branch> --no-cd --format=json`
-   in Bash. `wt` already solves existing-branch handling (rerun without
-   `--create`) and machine-readable output (`.path` on stdout, status on
-   stderr).
-3. Re-root the session with `EnterWorktree({path})` — the only supported way
-   to move a Claude Code session's root.
-4. If (3) is rejected (a same-repo edge case: already in a worktree session, or
-   a pinned agent), work in the worktree via absolute paths. The rejection is
-   graceful and side-effect-free, so attempt-then-fallback covers it without
-   prediction.
+1. Create the worktree with `wt -C <repo> switch --create <branch> --no-cd
+   --format=json` in Bash (omit `-C` for this repo). `wt` solves repo targeting
+   (`-C` works from anywhere), existing-branch handling (rerun without
+   `--create`), and machine-readable output (`.path` on stdout, status on
+   stderr). Creating in another repo is fine; only *entering* the result is
+   constrained.
+2. Enter it with `EnterWorktree({path})` — the only way to re-root a Claude Code
+   session, and it accepts only a worktree of the session's own repo.
+3. On rejection (the worktree is in another repo), the session can still work
+   there iff the path sits inside a directory it's allowed in (an
+   `additionalDirectories` entry). A single `cd <path>` discovers which: it
+   sticks when reachable, resets when not. Reachable → work in place.
+   Unreachable → escalate, because the agent can't enlarge that set itself: ask
+   the user to add the repo or a parent (e.g. `~/workspace`) to
+   `additionalDirectories`, or `/add-dir <path>`. A one-line, set-once handback,
+   not a silent degrade.
+
+Two independent harness facts underlie this — re-root is repo-scoped, and `cd`
+persistence is working-directory-membership-scoped — detailed below.
 
 ## wt CLI and git behavior (all live-tested)
 
@@ -44,85 +53,84 @@ should outlive the details.
   `wt remove -D`; clean and merged → removes worktree and branch.
 - The git stash is per-repo, shared across worktrees: `git stash push -u` in
   one worktree pops cleanly in another via `git -C <path> stash pop`,
-  untracked files included — the mid-session carry-across in step 3.
+  untracked files included — the mid-session carry-across in step 2.
 
 ## Claude Code behavior
 
-### `EnterWorktree({path})` accepts worktrunk's sibling layout (load-bearing)
+A session works wherever its cwd is. Two mechanisms move it, and they *compose*:
+`cd` moves the cwd (and so which repo `EnterWorktree` sees); `EnterWorktree`
+re-roots within the repo the cwd is in. All verified live and against the
+2.1.177 binary.
 
-The path validator (`LI6` in the 2.1.177 binary) derives the repo from the cwd
-(`T = h$(u_())`; no repo argument), and applies a `requireManagedLocation` flag
-the *caller* sets from session state: `requireManagedLocation: q != null`, where
-`q` is the active worktree session (`z$()`). Pinned agents force it `true`. That
-one flag picks which check runs, which is the whole reason the two cross-repo
-rejections read differently:
+### M1 — `cd` (shell cwd)
 
-- **`false`** (plain session, no active worktree session): the target must be in
-  `git worktree list` of the cwd's repo, else *"is not a registered worktree of
-  <repo>"*. Sibling layout passes — a fresh session enters its sibling worktree
-  by path.
-- **`true`** (already in a worktree session, or a pinned agent): the target must
-  be under `<repo>/.claude/worktrees/` (`_F_ = join(repo, ".claude",
-  "worktrees")`), else *"not under …/.claude/worktrees … managed by Claude
-  Code"*. Sibling layout fails — a worktree session can't re-enter a worktrunk
-  sibling worktree.
+Moves the shell cwd; the statusline and tool-path relativization
+(`Write(foo/bar.py)`) follow it.
 
-worktrunk's `WorktreeCreate` hook writes the sibling layout but never meets this
-check: the hook runs only on create (`{name}`), the validator only on entry
-(`{path}`). Both branches reject cross-repo regardless — no cwd has a worktree
-of another repo in its `git worktree list`, and `.claude/worktrees/` is
-per-repo. All four cells (plain / worktree-session × sibling / cross-repo), plus
-the no-repo refusal, reproduced live against 2.1.177.
+- **Gate:** the path must sit inside a configured working directory — the
+  session's base cwd plus every entry in `permissions.additionalDirectories`
+  (settings.json), `--add-dir` (launch), or `/add-dir` (mid-session).
+- Inside → `cd` persists across Bash calls. Outside → the harness snaps it back
+  and appends `Shell cwd was reset to <original>` to the result.
+- **Repo-blind:** it checks only the path's location against that set, never
+  which git repo owns the path. A different repo's worktree under `/tmp` is
+  reachable when `/tmp` is configured.
+- Within a *single* Bash call, `cd X && cmd` always works; the reset happens
+  only *between* calls. (Subagent threads reset between every call.)
 
-### Every rejection is graceful and side-effect-free
+### M2 — `EnterWorktree({path})` (re-root)
 
-This is what lets the skill replace predictive guards with try-then-fallback.
-Observed live, verbatim:
+Formally re-roots: sets the session's worktree home (tracked for exit) and its
+cwd.
 
-- Cross-repo: `Cannot enter worktree: <path> is not a registered worktree of
-  <repo>. Run 'git -C <repo> worktree list' to see registered worktrees.`
-- Nesting by name: ``Already in a worktree session. Pass `path` to switch
-  into another existing worktree, or use ExitWorktree to leave this one
-  before creating a new worktree.``
-- Not in a repo: `Cannot enter an existing worktree: the current directory is
-  not in a git repository.`
-- Removing a path-entered worktree: `This session entered an existing worktree
-  (<path>); it was not created by EnterWorktree, so this tool will not remove
-  it. Use action: "keep" to return to <original cwd>…`
+- **Gate:** a worktree of **the repo the current cwd resolves to**, by session
+  state:
+  - **Plain / first-entry session** → any worktree *registered to that repo*
+    (`git worktree list`), anywhere on disk.
+  - **Already in a worktree-session, or a pinned agent** → only under that
+    repo's `.claude/worktrees/`; rejects even same-repo siblings.
+  - **cwd outside any git repo** → refuses entirely.
+- Rejections are graceful and side-effect-free (nothing is created), verbatim:
+  - registered-check: `Cannot enter worktree: <path> is not a registered
+    worktree of <repo>. Run 'git -C <repo> worktree list' …`
+  - managed-location: `Cannot enter worktree: <path> is not under
+    <repo>/.claude/worktrees. Switching from this session is limited to
+    worktrees managed by Claude Code …`
+  - no repo: `Cannot enter an existing worktree: the current directory is not in
+    a git repository.`
 
-Binary-confirmed (not live-run): pinned agents (subagent `isolation:
-"worktree"` or explicit cwd) can't create by `name` at all and require `path`;
-their `path` entry is restricted to `.claude/worktrees/`, so sibling-layout
-worktrees are rejected there too — same fallback applies.
+The repo is read from the cwd, so `EnterWorktree` never moves you to a different
+repo on its own — it re-roots within whatever repo you're already standing in.
+To re-root into *another* repo, `cd` into it first, then `EnterWorktree`.
+Verified: from a worktrunk session, `cd` into a prql worktree under `/tmp`, then
+`EnterWorktree` re-rooted within prql.
 
-### `cd` is a separate axis from re-root, gated by working-directory membership
+### How they compose
 
-Re-root (`EnterWorktree`) is scoped by repo, above. `cd` persistence is a
-different gate: the session carries its primary cwd plus an
-`additionalWorkingDirectories` set, and the harness resets any `cd` that lands
-outside it, appending `Shell cwd was reset to <original>` to the result.
-Reproduced both ways against 2.1.177: `cd /tmp` persisted (a working directory),
-while `cd` into a sibling worktree or another repo reset.
+Whether you can work in — or re-root into — a repo reduces to whether your cwd
+can be there, which is `cd`'s gate:
 
-So `cd` succeeds anywhere inside the working-directory set and never re-roots;
-it only resets when stepping outside. `/add-dir <path>` (or the
-`additionalDirectories` setting) enlarges the set, which makes `cd` into another
-repo's worktree persist — the fix for *working* cross-repo in place, distinct
-from re-rooting (the session's repo identity is unchanged either way). `/add-dir`
-is a user-typed command, not an agent tool, so the agent can't enlarge the set
-itself.
+| Target | cwd reachable? | Result |
+|---|---|---|
+| Same repo (incl. its sibling worktrees) | always | `EnterWorktree` re-roots directly |
+| Another repo under a configured dir (`~/workspace`, `/tmp`) | yes | `cd` in → working there; from a plain session, `EnterWorktree` re-roots within it too |
+| Another repo outside every configured dir | no | unreachable — add it (or a parent) to `additionalDirectories`, or `/add-dir` |
+| Outside any repo | n/a | no re-root possible |
 
-`EnterWorktree` reads the moved cwd: after `cd /tmp`, `EnterWorktree({path})`
-failed with "the current directory is not in a git repository" (the no-repo
-branch above). The earlier revision's "some sessions pin the cwd" was a
-misdiagnosis of this reset; subagent threads additionally reset cwd between every
-Bash call (binary: "Agent threads always have their cwd reset between bash
-calls").
+`additionalDirectories` is the one master gate: once a repo, or a parent like
+`~/workspace`, is in it, the session can `cd` into that repo's worktrees and both
+work there and re-root within them. This is load-bearing for the same-repo path
+too: a sibling worktree is registered to the repo, so `EnterWorktree` from a
+plain session re-roots into the sibling `wt` creates. The agent **cannot**
+enlarge that set itself (`/add-dir` is user-typed; the only automatic add is a
+narrow symlink-resolving-to-the-same-cwd fixup), so a repo reachable by neither
+the cwd nor config is a genuine handback to the user.
 
 ### Why not `EnterWorktree({name})` + the WorktreeCreate hook
 
-The previous revision's primary route. Rejected for the skill — the hook
-itself stays; it is how `isolation: "worktree"` agents get worktrunk
+A worktree could also be created by `EnterWorktree({name})`, which the worktrunk
+plugin routes through its `WorktreeCreate` hook. Rejected for the skill — the
+hook itself stays; it is how `isolation: "worktree"` agents get worktrunk
 worktrees:
 
 1. **Hard-fails on existing branches.** The hook runs `wt switch --create`,
@@ -130,7 +138,10 @@ worktrees:
    git fallback (binary: "Other exit codes - worktree creation failed";
    docs: "the hook replaces the default git behavior"). That forced a
    second route for existing branches; `path` entry needs no second route.
-2. **Wrong exit-time semantics for durable worktrees.** Worktrees created by
+2. **No repo targeting.** `EnterWorktree({name})` creates the worktree wherever
+   the session is rooted; it can't make one in another repo, which `wt -C` does
+   trivially in step 1.
+3. **Wrong exit-time semantics for durable worktrees.** Worktrees created by
    `name` are tracked for session-exit cleanup: when the session has no
    user-set title, a clean worktree (no changed files, no new commits) is
    *silently auto-removed* at exit (binary: auto-remove iff zero changes,
@@ -138,31 +149,26 @@ worktrees:
    changes)"). A worktrunk worktree the user asked for should outlive the
    session (`wt list`, later `wt merge`). Path-entered worktrees get exactly
    that: left in place, no prompt ("worktree at <path> left in place").
-3. **Hook contract details leak into the skill.** stdout's last non-empty
+4. **Hook contract details leak into the skill.** stdout's last non-empty
    line must be an existing directory, etc. — irrelevant when the skill reads
    `.path` from `wt --format=json` directly.
 
-### One guard (cross-repo), and no others
+### Why escalate instead of grinding through absolute paths
 
-Guard a case when the check is cheap and deterministic *and* the fallback is
-worse, not merely different. Try-then-fallback when the state is opaque *and*
-the fallback is fine. The removed guards and the kept one split exactly on
-this.
+The original incident worked a cross-repo task via absolute paths from a session
+rooted elsewhere: every `cd` into the worktree reset, so each command needed an
+absolute prefix, and the session never gained the worktree cwd. It produced
+correct output but read as a failure. File tools (absolute paths) and `git -C`
+are cwd-independent, so the work is *possible* that way — but it is friction the
+user shouldn't absorb when the fix is one line of config.
 
-The old flow opened with "if already inside a worktree, reuse it", a
-`cd`-then-`pwd` check, and a pinned-cwd branch — each a workaround for a
-hypothesis about opaque harness state, one of which (pinned cwd) was simply
-wrong, and each landing in the same place a failed `EnterWorktree` lands
-anyway. Both tests fail: the state is unknowable without trying, and the
-fallback is fine. So they go, and step 4 just attempts entry and falls back.
-
-The cross-repo split (step 2) passes both tests. The check is a path
-comparison the agent already has the inputs for, with no harness state to
-predict. And the fallback is genuinely worse: a substantial task run through
-absolute paths breaks the skill's one promise and pays per-command friction,
-and the right answer isn't a fallback at all but a different tool (a session
-rooted in the target repo) that only an up-front decision can reach. Trying
-first can't discover that — it just creates a worktree no one can enter.
+So when the worktree is unreachable, the skill escalates with the concrete fix
+rather than degrading silently. This is not a predictive guard: the skill
+doesn't refuse to create cross-repo and doesn't guess reachability. It creates,
+attempts entry, and lets a single `cd` reveal reachability — the escalation
+fires only on an actual reset. Cheap to attempt, and the handback is actionable
+and durable (a `~/workspace` entry, set once, covers every future cross-repo
+task).
 
 ## The hooks.json pipefail wrapper (agent-isolation path, not this skill)
 
@@ -181,19 +187,16 @@ exits 1 with empty stdout.
 
 ## Known limits (deliberate)
 
-- A session can't re-root across repos (Claude Code restriction, not a skill
-  gap). The skill routes this before creating anything (step 2): substantial
-  work to a session *started* in that repo (the only re-root), and work wanted
-  in this conversation to `/add-dir <repo>` so `cd` there persists. Both beat
-  the silent absolute-paths mode — every `cd` reset, an absolute prefix per
-  command, no worktree cwd — which is what's left when neither lever is used.
-  A non-interactive session has only that mode (re-root is impossible and
-  `/add-dir` is user-typed), so a cross-repo task is best provisioned at launch:
-  start the session in the target repo.
-- Pinned and already-in-worktree sessions can't re-root into a sibling-layout
-  worktree either; that surfaces as the step-4 rejection. There's no cross-repo
-  handoff to make here: the worktree is already in the session's own repo, so
-  absolute paths in place lose only the cwd convenience, not the right repo. (A
-  pinned agent couldn't spawn a fresh rooted session anyway.)
+- `EnterWorktree` re-roots only within the repo the cwd is in, and the cwd can't
+  `cd` outside the session's `additionalDirectories` (Claude Code restrictions,
+  not skill gaps). So another repo is reachable only when it, or a parent like
+  `~/workspace`, is in `additionalDirectories` — then the session `cd`s in and
+  works there (and, from a plain session, can re-root within it). Otherwise the
+  skill escalates for a one-line config add rather than degrading to
+  absolute-paths mode. The agent can't enlarge the set itself (`/add-dir` is
+  user-typed), so this handback is irreducible — but set once, it is permanent.
+- A pinned or already-in-worktree session can't even re-enter a *same-repo*
+  sibling worktree (the stricter `.claude/worktrees/` check); it lands in the
+  same reachability test and the same escalation.
 - `wt switch --create` is not idempotent. If that ever changes upstream
-  (enter-if-exists), step 3's existing-branch retry collapses to nothing.
+  (enter-if-exists), step 2's existing-branch retry collapses to nothing.
