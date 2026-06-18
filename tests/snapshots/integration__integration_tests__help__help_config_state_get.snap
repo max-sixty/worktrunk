@@ -40,9 +40,10 @@ Usage: [1m[36mwt config state get[0m [36m[OPTIONS][0m
 
 [1m[32mOptions:[0m
       [1m[36m--format[0m[36m [0m[36m<FORMAT>[0m
-          Output format (table, json)
+          Output format
           
           [default: table]
+          [possible values: table, json]
 
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')

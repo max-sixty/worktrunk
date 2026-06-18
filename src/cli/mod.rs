@@ -183,10 +183,16 @@ pub(crate) enum SwitchFormat {
     Json,
 }
 
-// TODO: ClaudeCode is statusline-specific but lives in this shared enum, forcing
-// unrelated codepaths to handle it. Consider a dedicated StatuslineFormat enum.
+/// Output format for `wt list` and `wt config state get` (table or JSON).
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub(crate) enum OutputFormat {
+    Table,
+    Json,
+}
+
+/// Output format for `wt list statusline`, including the Claude Code mode.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub(crate) enum StatuslineFormat {
     Table,
     Json,
     /// Claude Code statusline mode (reads context from stdin)
@@ -390,8 +396,8 @@ pub(crate) struct ListArgs {
     #[command(subcommand)]
     pub(crate) subcommand: Option<ListSubcommand>,
 
-    /// Output format (table, json)
-    #[arg(long, value_enum, default_value = "table", hide_possible_values = true)]
+    /// Output format
+    #[arg(long, value_enum, default_value = "table")]
     pub(crate) format: OutputFormat,
 
     /// Include branches without worktrees

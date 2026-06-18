@@ -1,6 +1,6 @@
 use clap::Subcommand;
 
-use super::OutputFormat;
+use super::StatuslineFormat;
 
 /// Subcommands for `wt list`
 #[derive(Subcommand)]
@@ -27,7 +27,7 @@ The pace segment appears only when usage is likely to hit a rate limit before it
     Statusline {
         /// Output format
         #[arg(long, value_enum, default_value = "table")]
-        format: OutputFormat,
+        format: StatuslineFormat,
 
         /// Deprecated: use --format=claude-code
         #[arg(long, hide = true)]

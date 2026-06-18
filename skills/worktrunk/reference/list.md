@@ -293,9 +293,10 @@ Commands:
 
 Options:
       --format <FORMAT>
-          Output format (table, json)
+          Output format
 
           [default: table]
+          [possible values: table, json]
 
       --branches
           Include branches without worktrees

@@ -41,7 +41,7 @@ Usage: [1m[36mwt list[0m [36m[OPTIONS][0m
   [1m[36mstatusline[0m  Single-line status for shell prompts
 
 [1m[32mOptions:[0m
-      [1m[36m--format[0m[36m [0m[36m<FORMAT>[0m  Output format (table, json) [default: table]
+      [1m[36m--format[0m[36m [0m[36m<FORMAT>[0m  Output format [default: table] [possible values: table, json]
       [1m[36m--branches[0m         Include branches without worktrees
       [1m[36m--remotes[0m          Include remote branches
       [1m[36m--full[0m             Show CI, diff analysis, and LLM summaries

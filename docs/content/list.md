@@ -286,9 +286,10 @@ Usage: <b><span class=c>wt list</span></b> <span class=c>[OPTIONS]</span>
 
 <b><span class=g>Options:</span></b>
       <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
-          Output format (table, json)
+          Output format
 
           [default: table]
+          [possible values: table, json]
 
       <b><span class=c>--branches</span></b>
           Include branches without worktrees
