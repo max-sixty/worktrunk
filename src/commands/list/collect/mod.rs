@@ -1075,7 +1075,7 @@ pub fn collect(
     all_items.extend(
         remote_branches
             .iter()
-            .map(|(name, sha)| ListItem::new_branch(sha.clone(), name.clone())),
+            .map(|(name, sha)| ListItem::new_remote_branch(sha.clone(), name.clone())),
     );
 
     // If no URL template configured, add UrlStatus to skip_tasks

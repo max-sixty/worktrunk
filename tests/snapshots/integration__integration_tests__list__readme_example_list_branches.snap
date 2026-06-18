@@ -50,8 +50,8 @@ exit_code: 0
 ^ main             [2m^[22m[2m⇅[22m                                                                                           [32m⇡1[0m  [2m[31m⇣1[0m  [32m#[0m     [2m41ee0834[0m
 + fix-auth         [2m↕[22m[2m|[22m                [32m↑2[0m  [2m[31m↓1[0m   [32m+25[0m  [31m-11[0m  Harden auth with constant-time token validation           [2m|[0m     [32m#408[0m  [2mb772e68b[0m
 + [2mfix-typos[0m        [2m_[22m[2m|[22m                                                                                             [2m|[0m     [32m#410[0m  [2m41ee0834[0m
-  exp             [2m/[22m[2m↕[22m                 [32m↑2[0m  [2m[31m↓1[0m  [32m+137[0m       Explore GraphQL schema and resolvers                                  [2m96379229[0m
-  wip             [2m/[22m[2m↕[22m                 [32m↑1[0m  [2m[31m↓1[0m   [32m+33[0m       Start API documentation                                               [2mb40716dc[0m
+[2m/ [0mexp             [2m/[22m[2m↕[22m                 [32m↑2[0m  [2m[31m↓1[0m  [32m+137[0m       Explore GraphQL schema and resolvers                                  [2m96379229[0m
+[2m/ [0mwip             [2m/[22m[2m↕[22m                 [32m↑1[0m  [2m[31m↓1[0m   [32m+33[0m       Start API documentation                                               [2mb40716dc[0m
 
 [2m○[22m [2mShowing 4 worktrees, 2 branches, 1 with changes, 4 ahead, 3 columns hidden[0m
 

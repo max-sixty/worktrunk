@@ -183,10 +183,16 @@ pub(crate) enum SwitchFormat {
     Json,
 }
 
-// TODO: ClaudeCode is statusline-specific but lives in this shared enum, forcing
-// unrelated codepaths to handle it. Consider a dedicated StatuslineFormat enum.
+/// Output format for `wt list` and `wt config state get` (table or JSON).
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub(crate) enum OutputFormat {
+    Table,
+    Json,
+}
+
+/// Output format for `wt list statusline`, including the Claude Code mode.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub(crate) enum StatuslineFormat {
     Table,
     Json,
     /// Claude Code statusline mode (reads context from stdin)
@@ -390,8 +396,8 @@ pub(crate) struct ListArgs {
     #[command(subcommand)]
     pub(crate) subcommand: Option<ListSubcommand>,
 
-    /// Output format (table, json)
-    #[arg(long, value_enum, default_value = "table", hide_possible_values = true)]
+    /// Output format
+    #[arg(long, value_enum, default_value = "table")]
     pub(crate) format: OutputFormat,
 
     /// Include branches without worktrees
@@ -726,8 +732,8 @@ $ wt list --branches --full
 ^ main             ^⇅                                                                                           ⇡1  ⇣1  #     41ee0834
 + fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation           |     #408  b772e68b
 + fix-typos        _|                                                                                             |     #410  41ee0834
-  exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and resolvers                                  96379229
-  wip             /↕                 ↑1  ↓1   +33       Start API documentation                                               b40716dc
+/ exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and resolvers                                  96379229
+/ wip             /↕                 ↑1  ↓1   +33       Start API documentation                                               b40716dc
 
 ○ Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, 3 columns hidden
 ```
@@ -757,6 +763,18 @@ $ wt list --format=json
 | Message | Last commit message (truncated) |
 
 The `main` header label is used regardless of the default branch's actual name.
+
+### Gutter
+
+The leftmost column marks each row by physical presence, from most present to least:
+
+| Symbol | Meaning |
+|--------|---------|
+| `@` | Current worktree |
+| `^` | Primary worktree (the repo's home worktree) |
+| `+` | Other worktree |
+| `/` | Local branch without a worktree (`--branches`) |
+| `\|` | Remote branch, not present locally until fetched (`--remotes`) |
 
 ### CI status
 

@@ -696,8 +696,8 @@ Every category that `wt config state clear` sweeps is shown here.
 
 CI cache entries show status, age, and the commit SHA they were fetched for."#)]
     Get {
-        /// Output format (table, json)
-        #[arg(long, value_enum, default_value = "table", hide_possible_values = true)]
+        /// Output format
+        #[arg(long, value_enum, default_value = "table")]
         format: super::OutputFormat,
     },
 

@@ -6,4 +6,4 @@ expression: list
     Branch           Status        HEAD±    main↕  Remote⇅
 > @ main                 ^
   + active-worktree      _
-    orphan-branch       /_
+  / orphan-branch       /_
