@@ -2275,6 +2275,103 @@ fn set_github_remote_url(repo: &TestRepo) {
     ]);
 }
 
+/// Install a mock forge CLI (`gh`/`glab`) answering the `--prs` list call
+/// (`pr list` / `mr list`) from a canned JSON file. Returns the mock bin dir.
+#[cfg(unix)]
+fn setup_mock_forge_list(
+    repo: &TestRepo,
+    cli: &str,
+    list_cmd: &str,
+    list_json: &str,
+) -> std::path::PathBuf {
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    fs::write(mock_bin.join("list.json"), list_json).unwrap();
+    MockConfig::new(cli)
+        .version(&format!("{cli} version 1.0.0 (mock)"))
+        .command(list_cmd, MockResponse::file("list.json"))
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+    mock_bin
+}
+
+/// `wt switch --prs` in the headless dry-run (`WORKTRUNK_PICKER_DRY_RUN`)
+/// exercises the full forge fetch + row-render path — `stream_open_prs`,
+/// `fetch_github`, `parse_github_prs`, `PrSkimItem::new`, `render_grid_row`,
+/// `render_pr_description` — as a normal-exit subprocess, so its coverage is
+/// captured. (The interactive picker exits via skim's abort, which never
+/// flushes a profile, so its `--prs` code is otherwise unmeasurable.) The mock
+/// `gh pr list` keeps it off the network.
+#[cfg(unix)]
+#[rstest]
+fn test_switch_prs_dry_run_github(repo: TestRepo) {
+    // Pin the forge explicitly so detection needs no remote/network.
+    repo.write_project_config("[forge]\nplatform = \"github\"\n");
+    let pr_json = r#"[{"number":42,"title":"Retry the flaky test","headRefName":"fix/flaky","author":{"login":"octocat"},"isDraft":false,"url":"https://github.com/owner/test-repo/pull/42","body":"Wraps the request in a retry so the suite stops flaking."}]"#;
+    let mock_bin = setup_mock_forge_list(&repo, "gh", "pr list", pr_json);
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "--prs"]);
+    cmd.env("WORKTRUNK_PICKER_DRY_RUN", "1");
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "dry-run --prs (github) failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    // The forge call ran (no "could not determine the forge" warning).
+    assert!(
+        !String::from_utf8_lossy(&output.stderr).contains("could not determine the forge"),
+        "forge not detected:\n{}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+/// GitLab counterpart of [`test_switch_prs_dry_run_github`], covering the
+/// `fetch_gitlab` / `parse_gitlab_mrs` / `gitlab_mr_status` path via a mocked
+/// `glab mr list`.
+#[cfg(unix)]
+#[rstest]
+fn test_switch_prs_dry_run_gitlab(repo: TestRepo) {
+    repo.write_project_config("[forge]\nplatform = \"gitlab\"\n");
+    let mr_json = r#"[{"iid":7,"title":"Cache the dependency graph","source_branch":"feat/cache","author":{"username":"alice"},"draft":false,"web_url":"https://gitlab.com/owner/test-repo/-/merge_requests/7","detailed_merge_status":"ci_still_running","description":"Speeds up CI by caching deps between jobs."}]"#;
+    let mock_bin = setup_mock_forge_list(&repo, "glab", "mr list", mr_json);
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "--prs"]);
+    cmd.env("WORKTRUNK_PICKER_DRY_RUN", "1");
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "dry-run --prs (gitlab) failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+/// An empty forge list still runs `stream_open_prs` to completion, exercising
+/// the empty-list branch and `forge_noun`.
+#[cfg(unix)]
+#[rstest]
+fn test_switch_prs_dry_run_empty(repo: TestRepo) {
+    repo.write_project_config("[forge]\nplatform = \"github\"\n");
+    let mock_bin = setup_mock_forge_list(&repo, "gh", "pr list", "[]");
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "--prs"]);
+    cmd.env("WORKTRUNK_PICKER_DRY_RUN", "1");
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "dry-run --prs (empty) failed:\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
 /// Helper to set up mock gh for PR tests with custom PR response.
 ///
 /// The response should be in `gh api repos/{owner}/{repo}/pulls/{number}` format:

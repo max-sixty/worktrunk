@@ -821,10 +821,12 @@ pub fn handle_picker(
     // another `tx` clone, so the picker frame paints from local worktree data
     // immediately and PR rows stream in (~1s) when the call returns. The
     // clone extends the heartbeat: skim idles only once both this thread and
-    // the collect thread drop their senders. Skipped in the headless dry-run /
-    // preview-bench paths, which exist to benchmark previews, not reach the
-    // network.
-    let prs_handle = if show_prs && !skip_tui {
+    // the collect thread drop their senders. The dry-run runs it (joined below)
+    // so the fetch/render path is exercised headlessly — the only way it gets
+    // coverage, since the interactive picker's skim-abort exit never flushes a
+    // profile. Only the preview-bench skips it: that path measures the preview
+    // workload and must not reach the network.
+    let prs_handle = if show_prs && !is_preview_bench {
         let prs_tx = tx.clone();
         let prs_repo = repo.clone();
         let prs_warnings = Arc::clone(&stashed_warnings);
@@ -862,6 +864,14 @@ pub fn handle_picker(
     if skip_tui {
         drop(rx);
         let _ = bg_handle.join();
+        // Join the `--prs` thread (present only for the dry-run, not the bench)
+        // so its forge fetch and row render run to completion before we dump
+        // and exit — this normal-exit path is what gives the streaming code its
+        // coverage. The PR rows it built went nowhere (`rx` is dropped); the
+        // dump is the worktree-preview cache, unchanged.
+        if let Some(handle) = prs_handle {
+            let _ = handle.join();
+        }
         orchestrator.wait_for_idle();
         if is_dry_run {
             drain_stashed_warnings(&stashed_warnings);

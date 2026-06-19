@@ -24,6 +24,7 @@
 //! - **Stabilization detection** waits for screen to stop changing
 //! - **Content expectations** wait for async preview content to load (e.g., "diff --git")
 
+use crate::common::mock_commands::{MockConfig, MockResponse};
 use crate::common::{TestRepo, repo, wt_bin};
 use insta::assert_snapshot;
 use portable_pty::CommandBuilder;
@@ -890,6 +891,109 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
         assert_snapshot!("switch_picker_preview_summary_list", list);
         assert_snapshot!("switch_picker_preview_summary_preview", preview);
     });
+}
+
+/// Install a mock forge CLI (`gh`/`glab`) that answers the `--prs` list call
+/// from a canned JSON file, and return env vars (mock on PATH + MOCK_CONFIG_DIR)
+/// for a `wt switch --prs` PTY run. No network is touched.
+fn mock_forge_env(
+    repo: &TestRepo,
+    cli: &str,
+    list_cmd: &str,
+    list_json: &str,
+) -> Vec<(String, String)> {
+    let mock_bin = repo.root_path().join("mock-bin");
+    std::fs::create_dir_all(&mock_bin).unwrap();
+    std::fs::write(mock_bin.join("list.json"), list_json).unwrap();
+    MockConfig::new(cli)
+        .version(&format!("{cli} version 1.0.0 (mock)"))
+        .command(list_cmd, MockResponse::file("list.json"))
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let mut env_vars = repo.test_env_vars();
+    env_vars.push((
+        "MOCK_CONFIG_DIR".to_string(),
+        mock_bin.display().to_string(),
+    ));
+    let base_path = std::env::var("PATH").unwrap_or_default();
+    env_vars.push((
+        "PATH".to_string(),
+        format!("{}:{base_path}", mock_bin.display()),
+    ));
+    env_vars
+}
+
+/// `wt switch --prs` on a GitHub repo: the open-PR list streams into the picker
+/// via a mocked `gh pr list`. Asserts the PR row reaches the list (a stable
+/// substring), which deterministically exercises the whole fetch → stream →
+/// render path (`fetch_open_prs`, `fetch_github`, `parse_github_prs`,
+/// `stream_open_prs`, `PrSkimItem::new`, `render_grid_row`,
+/// `render_pr_description`). The full list isn't snapshotted because the
+/// worktree rows' CI cells fill asynchronously.
+#[rstest]
+fn test_switch_picker_prs_github_list(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    let pr_json = r#"[{"number":42,"title":"Retry the flaky network test","headRefName":"fix/flaky","author":{"login":"octocat"},"isDraft":false,"url":"https://github.com/owner/test-repo/pull/42","body":"Wraps the request in a retry so the suite stops flaking."}]"#;
+    let env_vars = mock_forge_env(&repo, "gh", "pr list", pr_json);
+
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--prs"],
+        repo.root_path(),
+        &env_vars,
+        // Wait for the PR row to stream into the list — deterministic, unlike
+        // selecting it (skim 0.20 doesn't reliably select an async-arrived row).
+        &[("", Some("Retry the flaky network test"))],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+    let (list, _preview) = result.panels();
+    assert!(
+        list.contains("Retry the flaky network test"),
+        "PR title in list:\n{list}"
+    );
+    // `#42` in the CI column; the head branch is truncated in the narrow list.
+    assert!(list.contains("#42"), "PR number in list:\n{list}");
+}
+
+/// `wt switch --prs` on a GitLab repo: the open-MR list streams in via a mocked
+/// `glab mr list`. Covers the GitLab fetch path (`fetch_gitlab`,
+/// `parse_gitlab_mrs`, `gitlab_mr_status`).
+#[rstest]
+fn test_switch_picker_prs_gitlab_list(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+    let mr_json = r#"[{"iid":7,"title":"Cache the dependency graph","source_branch":"feat/cache","author":{"username":"alice"},"draft":false,"web_url":"https://gitlab.com/owner/test-repo/-/merge_requests/7","detailed_merge_status":"ci_still_running","description":"Speeds up CI by caching deps between jobs."}]"#;
+    let env_vars = mock_forge_env(&repo, "glab", "mr list", mr_json);
+
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--prs"],
+        repo.root_path(),
+        &env_vars,
+        &[("", Some("Cache the dependency graph"))],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+    let (list, _preview) = result.panels();
+    assert!(
+        list.contains("Cache the dependency graph"),
+        "MR title in list:\n{list}"
+    );
+    // `!7` (GitLab MR ref) in the CI column; source branch truncates.
+    assert!(list.contains("!7"), "MR number in list:\n{list}");
 }
 
 #[rstest]
