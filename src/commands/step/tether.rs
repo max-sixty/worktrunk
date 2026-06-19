@@ -146,3 +146,22 @@ fn kill_process_tree(pid: u32) {
         .stderr(std::process::Stdio::null())
         .status();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn step_tether_spawn_failure_resolves_trace() {
+        // A non-existent program fails at spawn, before the reaper thread is
+        // started — exercising the `trace.fail` arm. (The success path, where
+        // the child runs and is reaped, is covered by the `step_tether`
+        // integration tests.)
+        let err = step_tether(&["worktrunk-nonexistent-binary-7f3a9b2c".to_string()])
+            .expect_err("spawning a missing binary should fail");
+        assert!(
+            err.to_string().contains("spawn tethered command"),
+            "expected spawn-failure context, got: {err}"
+        );
+    }
+}

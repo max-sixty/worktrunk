@@ -1194,13 +1194,13 @@ impl Cmd {
 
             match cmd.spawn() {
                 Ok(mut child) => {
-                    // Write stdin data, then DROP the handle to close the pipe
-                    // before waiting — otherwise a child that reads stdin to EOF
-                    // (e.g. `git … --stdin`) blocks forever in `wait_with_output`.
-                    // (ignore BrokenPipe - some commands exit early)
-                    let write_result = match child.stdin.take() {
-                        Some(mut stdin) => stdin.write_all(&stdin_data),
-                        None => Ok(()),
+                    // Write stdin data in an inner scope so the handle DROPS
+                    // (closing the pipe) before `wait_with_output` — otherwise a
+                    // child that reads stdin to EOF (e.g. `git … --stdin`) blocks
+                    // forever. (ignore BrokenPipe - some commands exit early)
+                    let write_result = {
+                        let mut stdin = child.stdin.take().expect("stdin was configured as piped");
+                        stdin.write_all(&stdin_data)
                     };
                     match write_result {
                         Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => Err(e),
@@ -2288,6 +2288,97 @@ mod tests {
             msg.contains("Failed to execute command"),
             "expected spawn-failure message, got: {msg}"
         );
+    }
+
+    // Fault-injection coverage for the `CommandTrace` resolution arms across
+    // `Cmd`'s execution modes. A non-existent *relative* program slips past
+    // `check_spawn_preconditions` (which only stats absolute paths) and fails at
+    // `spawn()`, exercising the `trace.fail` spawn-error arms; a non-existent
+    // *absolute* program is caught by preconditions, exercising the
+    // `record_failed` arms. None set `.context()`, so the no-context logging
+    // branches are covered too.
+    const MISSING_CMD: &str = "worktrunk-nonexistent-binary-7f3a9b2c";
+
+    #[test]
+    fn test_cmd_run_spawn_failure_resolves_trace() {
+        let err = Cmd::new(MISSING_CMD).run().unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::NotFound);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_run_with_stdin_closes_pipe() {
+        // `cat` reads stdin to EOF; it can only exit once the pipe is closed,
+        // so this pins the "drop stdin before wait" behavior (a regression here
+        // hangs forever rather than failing).
+        let output = Cmd::new("cat").stdin_bytes("piped body").run().unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "piped body");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_delayed_stream_quiet_success() {
+        // A fast command under a generous threshold exits during phase 1
+        // (wait_timeout returns Some) and stays buffered/quiet.
+        Cmd::new("true").delayed_stream(5_000, None).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_delayed_stream_streams_then_reports_failure() {
+        // delay_ms=0 streams immediately (phase-1 threshold crossed → progress
+        // message + buffer drain), and a non-zero exit surfaces as a
+        // StreamCommandError carrying the buffered output.
+        let err = Cmd::new("sh")
+            .args(["-c", "echo to-stderr 1>&2; exit 3"])
+            .delayed_stream(0, Some("working…".to_string()))
+            .unwrap_err();
+        let stream_err = err
+            .downcast_ref::<StreamCommandError>()
+            .expect("non-zero delayed_stream exit should be a StreamCommandError");
+        assert_eq!(stream_err.exit_info, "exit code 3");
+    }
+
+    #[test]
+    fn test_cmd_delayed_stream_spawn_failure_resolves_trace() {
+        // delay_ms=-1 disables phase 1; the spawn failure resolves the trace
+        // via `fail` rather than dropping it unresolved.
+        let err = Cmd::new(MISSING_CMD)
+            .delayed_stream(-1, None)
+            .unwrap_err();
+        assert!(err.to_string().contains("Failed to spawn"), "{err}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_pipe_into_succeeds() {
+        let (source, sink) = Cmd::new("printf")
+            .arg("hello")
+            .pipe_into(Cmd::new("cat"))
+            .unwrap();
+        assert!(source.status.success() && sink.status.success());
+        assert_eq!(String::from_utf8_lossy(&sink.stdout), "hello");
+    }
+
+    #[test]
+    fn test_cmd_pipe_into_source_spawn_failure_resolves_trace() {
+        let err = Cmd::new(MISSING_CMD)
+            .pipe_into(Cmd::new("cat"))
+            .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::NotFound);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_pipe_into_sink_spawn_failure_resolves_both_traces() {
+        // The sink fails to spawn after the source is already running: the sink
+        // trace fails and the source is torn down with complete(false).
+        let err = Cmd::new("printf")
+            .arg("hello")
+            .pipe_into(Cmd::new(MISSING_CMD))
+            .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::NotFound);
     }
 
     #[test]
