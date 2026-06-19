@@ -23,8 +23,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use skim::prelude::*;
 use worktrunk::styling::{StyledLine, strip_osc8_hyperlinks};
 
-use super::items::{HeaderSkimItem, PreviewCache, WorktreeSkimItem};
+use super::items::{HeaderSkimItem, PrStatusMap, PreviewCache, WorktreeSkimItem};
 use super::preview_orchestrator::PreviewOrchestrator;
+use crate::commands::list::ci_status::PrStatus;
 use crate::commands::list::collect::PickerProgressHandler;
 use crate::commands::list::model::ListItem;
 
@@ -44,6 +45,9 @@ pub(super) struct PickerHandler {
     /// holds. Set once in `on_skeleton`, read lock-free thereafter.
     pub(super) rendered_slots: OnceLock<Box<[Arc<Mutex<String>>]>>,
     pub(super) preview_cache: PreviewCache,
+    /// Live branch→PR-status map shared with every `WorktreeSkimItem` so the
+    /// `pr` preview tab reflects the async CI fetch. Written by `on_pr_status`.
+    pub(super) pr_status: PrStatusMap,
     pub(super) orchestrator: Arc<PreviewOrchestrator>,
     pub(super) preview_dims: (usize, usize),
     pub(super) llm_command: Option<String>,
@@ -136,6 +140,7 @@ impl PickerProgressHandler for PickerHandler {
                 preview_cache: Arc::clone(&self.preview_cache),
                 has_upstream,
                 summaries_enabled,
+                pr_status: Arc::clone(&self.pr_status),
             }) as Arc<dyn SkimItem>);
         }
 
@@ -177,6 +182,13 @@ impl PickerProgressHandler for PickerHandler {
         {
             *slot.lock().unwrap() = strip_osc8_hyperlinks(&rendered);
         }
+    }
+
+    fn on_pr_status(&self, branch: &str, status: Option<PrStatus>) {
+        // Keyed by branch name to match `WorktreeSkimItem::branch_name`. A
+        // present entry (even `None`) means "the CI fetch reported", which is
+        // how the `pr` tab distinguishes "no PR" from "still loading".
+        self.pr_status.insert(branch.to_string(), status);
     }
 
     fn on_reveal(&self, rendered: Vec<String>) {
@@ -228,6 +240,7 @@ mod tests {
             shared_items,
             rendered_slots: OnceLock::new(),
             preview_cache,
+            pr_status: Arc::new(dashmap::DashMap::new()),
             orchestrator,
             preview_dims: (80, 24),
             llm_command: None,

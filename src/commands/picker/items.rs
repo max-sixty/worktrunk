@@ -13,6 +13,7 @@ use skim::prelude::*;
 use worktrunk::git::Repository;
 use worktrunk::styling::INFO_SYMBOL;
 
+use super::super::list::ci_status::{PrRef, PrStatus};
 use super::super::list::model::ListItem;
 use super::log_formatter::{
     FIELD_DELIM, batch_fetch_stats, format_log_output, process_log_with_dimming, strip_hash_markers,
@@ -27,6 +28,15 @@ pub(super) type PreviewCacheKey = (String, PreviewMode);
 /// Cache for pre-computed previews, keyed by (branch_name, mode).
 /// Shared across all WorktreeSkimItems for background pre-computation.
 pub(super) type PreviewCache = Arc<DashMap<PreviewCacheKey, String>>;
+
+/// Live PR status for worktree rows, keyed by branch name. Written by the
+/// collect thread's CI fetch (via `PickerHandler::on_pr_status`) and read by
+/// `WorktreeSkimItem::preview` to render the `pr` tab. A missing key means the
+/// fetch hasn't reported for that branch yet (the tab shows "Loading PR…"); a
+/// present `None` means the fetch ran and found no CI/PR; `Some(status)` with a
+/// `number` is a real PR. This is the picker's one live read-back of an async
+/// field — the `ListItem` snapshot stays frozen (see `WorktreeSkimItem::item`).
+pub(super) type PrStatusMap = Arc<DashMap<String, Option<PrStatus>>>;
 
 /// Prefix on a worktree-backed item's `output()` token. Detached worktrees
 /// all share the `(detached)` branch label, so `output()` returns the
@@ -127,6 +137,12 @@ pub(super) struct WorktreeSkimItem {
     /// Whether `[commit.generation]` summaries are configured, for the tab-5
     /// (summary) empty state. A process-wide static fact (`llm_command.is_some()`).
     pub summaries_enabled: bool,
+    /// Live branch→PR-status map for the tab-6 (`pr`) pane. Read fresh on every
+    /// `preview()` (keyed by `branch_name`), so a worktree row picks up its PR
+    /// as soon as the async CI fetch lands — the one async field the picker
+    /// reads back live rather than from the frozen `item` snapshot. See
+    /// `PrStatusMap` and [`Self::pr_preview`].
+    pub pr_status: PrStatusMap,
 }
 
 impl SkimItem for WorktreeSkimItem {
@@ -156,28 +172,56 @@ impl SkimItem for WorktreeSkimItem {
         let mode = PreviewStateData::read_mode();
 
         // Build preview: tabs header + content. `has_upstream`/`summaries_enabled`
-        // are synchronous skeleton-time facts (see `TabAvailability`).
-        let avail = TabAvailability::worktree(self.has_upstream, self.summaries_enabled);
+        // are synchronous skeleton-time facts; `pr` is re-derived live from the
+        // CI fetch each selection (see `TabAvailability`). The `pr` tab dims
+        // only once the fetch has reported no PR — never while it's still in
+        // flight.
+        let pr = self.pr_preview();
+        let avail = TabAvailability::worktree(
+            self.has_upstream,
+            self.summaries_enabled,
+            !matches!(pr, PrPreview::NoPr),
+        );
         let mut result = render_preview_tabs(mode, avail);
-        result.push_str(&self.preview_for_mode(mode, context.width, context.height));
+        result.push_str(&match mode {
+            PreviewMode::Pr => self.render_pr_pane(pr),
+            _ => self.preview_for_mode(mode, context.width, context.height),
+        });
 
         ItemPreview::AnsiText(result)
     }
 }
 
+/// The `pr` tab's state for a worktree row, derived live from the CI fetch.
+enum PrPreview {
+    /// The CI fetch hasn't reported for this branch yet — show "Loading PR…".
+    Loading,
+    /// The fetch ran and found no PR (no CI, or a branch workflow with no
+    /// PR/MR number) — the tab dims and shows "… has no PR".
+    NoPr,
+    /// The branch has a PR/MR. The `PrRef` rides alongside the status so the
+    /// reference is structurally guaranteed (a status with no `number` is
+    /// `NoPr`, not `HasPr`) — `render_worktree_pr` needs no fallback.
+    HasPr(PrRef, PrStatus),
+}
+
 /// Which preview tabs have renderable content for the selected row.
 ///
-/// Empty tabs are de-emphasized in the bar (dimmed, accelerator dropped).
-/// Emptiness MUST be a synchronous, skeleton-time fact: skim computes a
-/// preview once per selection and cannot re-query it (see
-/// `loading_placeholder`), so a bar built from an async field that is still
-/// loading would lock into the wrong state and never re-dim. Hence `upstream`
-/// reads `Repository::local_branches()` (the pre-skeleton `for-each-ref`
-/// scan), NOT the async `item.upstream`; `summary` reads the process-wide
-/// `[commit.generation]` flag, NOT the async `item.summary`; and `pr` is a
-/// per-row-type constant — worktree rows can't render PR content (their PR
-/// number rides the async CI fetch), `--prs` rows always can — never the
-/// async PR-status field.
+/// Empty tabs are de-emphasized in the bar (number dimmed). Skim computes a
+/// preview once per selection and cannot re-query it mid-selection (see
+/// `loading_placeholder`), so most of these are synchronous skeleton-time
+/// facts to avoid locking the bar into a stale state: `upstream` reads
+/// `Repository::local_branches()` (the pre-skeleton `for-each-ref` scan), NOT
+/// the async `item.upstream`; `summary` reads the process-wide
+/// `[commit.generation]` flag, NOT the async `item.summary`.
+///
+/// `pr` is the exception: a worktree row's PR is discovered by the async CI
+/// fetch, so it can't be a skeleton-time fact. It is re-derived per selection
+/// from the live `pr_status` map (skim re-runs `preview()` each time the
+/// selection changes), and dims only once that fetch has *definitively*
+/// reported no PR — while the fetch is still in flight the tab stays available
+/// and shows a "Loading PR…" pane, so a branch with a PR never flickers as
+/// "no PR" before its fetch lands. `--prs` rows always render their PR.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct TabAvailability {
     working_tree: bool,
@@ -191,15 +235,16 @@ pub(super) struct TabAvailability {
 impl TabAvailability {
     /// A worktree-backed row: working-tree/log/branch-diff always render; the
     /// upstream and summary tabs depend on synchronous skeleton-time facts;
-    /// PR previews render only on `--prs` rows, so tab 6 is empty here.
-    pub(super) fn worktree(has_upstream: bool, summaries_enabled: bool) -> Self {
+    /// `pr` is available unless the async CI fetch has reported no PR for this
+    /// branch (see [`WorktreeSkimItem::pr_preview`]).
+    pub(super) fn worktree(has_upstream: bool, summaries_enabled: bool, pr: bool) -> Self {
         Self {
             working_tree: true,
             log: true,
             branch_diff: true,
             upstream: has_upstream,
             summary: summaries_enabled,
-            pr: false,
+            pr,
         }
     }
 
@@ -220,11 +265,16 @@ impl TabAvailability {
 /// Render the preview tab bar, shared by worktree rows and `--prs` rows.
 ///
 /// Every tab always keeps its `N: label` text — only the formatting varies, so
-/// the accelerators stay discoverable. Three visual states: the active mode is
-/// bold; an inactive tab with content is plain (full brightness); an inactive
-/// tab with no content for this row (see `TabAvailability`) is dimmed, marking
-/// it as nothing to switch to. The active mode always renders bold, even when
-/// empty, so the selected tab stays identifiable.
+/// the accelerators stay discoverable. Two **orthogonal** signals carry through
+/// the styling: the **number's** brightness says whether the tab is selectable
+/// (normal = has content, dim = empty for this row — see `TabAvailability`),
+/// and the **label's** weight says whether it's the active mode (bold = active,
+/// dim = inactive). The two compose independently: an empty tab dims its number
+/// whether or not it's selected, but the active tab's label still bolds — so an
+/// active-but-empty tab (dim number, bold label) stays distinct from an
+/// inactive-empty one (dim number, dim label), and the selected tab is always
+/// identifiable even when it has nothing to show (its pane, e.g. "… has no PR",
+/// says the rest).
 pub(super) fn render_preview_tabs(mode: PreviewMode, avail: TabAvailability) -> String {
     // Full SGR reset (\x1b[0m). color_print's `</>` emits \x1b[22m (intensity
     // reset), which skim's ANSI parser silently ignores — see
@@ -241,16 +291,23 @@ pub(super) fn render_preview_tabs(mode: PreviewMode, avail: TabAvailability) -> 
     let reset = Reset;
 
     /// Format one tab, keeping the `N: label` text in every state so the
-    /// accelerator never disappears: bold when active, plain when
-    /// inactive-with-content, and dim when empty (no content for this row).
+    /// accelerator never disappears. The number and label carry the two
+    /// orthogonal signals independently: the number dims when the tab is empty
+    /// (not selectable), and the label bolds on the active tab. They compose,
+    /// so an active-but-empty tab is dim-number + bold-label — distinct from an
+    /// inactive-empty one (dim-number + dim-label).
     fn format_tab(number: u8, label: &str, is_active: bool, has_content: bool) -> String {
-        if is_active {
-            cformat!("<bold>{}: {}</>", number, label)
-        } else if has_content {
-            format!("{number}: {label}")
+        let number = if has_content {
+            format!("{number}:")
         } else {
-            cformat!("<dim>{}: {}</>", number, label)
-        }
+            cformat!("<dim>{number}:</>")
+        };
+        let label = if is_active {
+            cformat!("<bold>{label}</>")
+        } else {
+            cformat!("<dim>{label}</>")
+        };
+        format!("{number} {label}")
     }
 
     let tab1 = format_tab(
@@ -289,18 +346,63 @@ pub(super) fn render_preview_tabs(mode: PreviewMode, avail: TabAvailability) -> 
     )
 }
 
-/// The PR tab's pane on a worktree row. A worktree row can't render PR
-/// content synchronously (its PR number arrives via the async CI fetch), so
-/// the tab is empty in the bar and this points the user at the `--prs` rows,
-/// which render the PR/MR. Also the fallback for tab 6 in the compute path.
-fn pr_unavailable_placeholder() -> String {
+/// The `pr` pane for a worktree row whose branch has a PR/MR. Renders the
+/// reference and URL from the async CI fetch. The `url` label pads to the same
+/// width as the `--prs` rows' pane (`PrSkimItem::pr_pane`) so the two read
+/// alike.
+///
+/// TODO(pr-preview-worktree-body): the CI-column fetch doesn't pull the PR
+/// title or description (just number/status/url), so this pane can't show them
+/// the way the `--prs` rows' pane does. Widen that fetch's `--json` (or add a
+/// per-row PR fetch) to fold them in.
+fn render_worktree_pr(branch: &str, pr_ref: PrRef, status: &PrStatus) -> String {
     let reset = Reset;
-    cformat!(
-        "{INFO_SYMBOL}{reset} PR previews appear on <bold>wt switch --prs</>{reset} rows — the CI column shows this branch's PR number\n"
-    )
+    let mut out = cformat!("<bold>{pr_ref}</>{reset}  {branch}\n\n");
+    if let Some(url) = &status.url {
+        out.push_str(&cformat!("<dim>url</>{reset}      {url}\n"));
+    }
+    out.push_str(&cformat!(
+        "\n<dim>Open the PR for its title & discussion; Enter switches to this branch</>{reset}\n"
+    ));
+    out
 }
 
 impl WorktreeSkimItem {
+    /// Derive the `pr` tab's state from the live `pr_status` map (keyed by
+    /// branch name). A missing entry means the CI fetch hasn't reported for
+    /// this branch yet (Loading); a present `None`, or a status carrying no
+    /// PR/MR `number` (a bare branch workflow), means no PR; a status with a
+    /// `number` is a real PR.
+    fn pr_preview(&self) -> PrPreview {
+        match self
+            .pr_status
+            .get(&self.branch_name)
+            .map(|v| v.value().clone())
+        {
+            None => PrPreview::Loading,
+            Some(Some(status)) => match status.number {
+                Some(pr_ref) => PrPreview::HasPr(pr_ref, status),
+                None => PrPreview::NoPr,
+            },
+            Some(None) => PrPreview::NoPr,
+        }
+    }
+
+    /// Render the `pr` tab's pane from the derived [`PrPreview`] state.
+    fn render_pr_pane(&self, pr: PrPreview) -> String {
+        match pr {
+            PrPreview::Loading => Self::loading_placeholder(PreviewMode::Pr),
+            PrPreview::NoPr => {
+                let reset = Reset;
+                let branch = self.item.branch_name();
+                cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no PR\n")
+            }
+            PrPreview::HasPr(pr_ref, status) => {
+                render_worktree_pr(self.item.branch_name(), pr_ref, &status)
+            }
+        }
+    }
+
     /// Render preview for the given mode with specified dimensions.
     ///
     /// Pure cache read: skim calls this synchronously on the UI thread
@@ -339,9 +441,9 @@ impl WorktreeSkimItem {
             PreviewMode::BranchDiff => ("Loading", "branch diff"),
             PreviewMode::UpstreamDiff => ("Loading", "upstream diff"),
             PreviewMode::Summary => ("Generating", "summary"),
-            // The PR tab has no background task to wait on; show the static
-            // pointer to `--prs` rows instead of a "Loading…" line.
-            PreviewMode::Pr => return pr_unavailable_placeholder(),
+            // Shown on a worktree row while the async CI fetch hasn't yet
+            // reported whether this branch has a PR (see `pr_preview`).
+            PreviewMode::Pr => ("Loading", "PR"),
         };
         let key = mode as u8;
         format!("○ {verb} {label}. Press alt-{key} again to refresh.\n")
@@ -380,9 +482,11 @@ impl WorktreeSkimItem {
                 false,
             ),
             PreviewMode::Summary => (Self::loading_placeholder(PreviewMode::Summary), false),
-            // PR previews never precompute (no git/LLM work); this arm only
-            // keeps the match total. Worktree rows render the placeholder.
-            PreviewMode::Pr => (pr_unavailable_placeholder(), false),
+            // PR previews never precompute (no git/LLM work) and `preview()`
+            // renders the `pr` pane directly from the live `pr_status` map, so
+            // this arm is unreachable in the real flow — it only keeps the
+            // match total.
+            PreviewMode::Pr => (Self::loading_placeholder(PreviewMode::Pr), false),
         }
     }
 
@@ -780,9 +884,11 @@ mod tests {
     #[test]
     fn test_render_preview_tabs() {
         // Each mode active, on a worktree row with upstream + summaries
-        // enabled (tabs 1-5 present; tab 6 empty — PR previews live on --prs
-        // rows). Verifies labels, active styling, and structure.
-        let wt = TabAvailability::worktree(true, true);
+        // enabled but no PR (tabs 1-5 available; tab 6 dim). The active
+        // mode's label is bold, inactive available labels dim, and on the
+        // `pr` iteration tab 6 is active-but-empty — exercising the rule that
+        // emptiness dims even the active tab. Verifies labels and structure.
+        let wt = TabAvailability::worktree(true, true, false);
         for (name, mode) in [
             ("working_tree", PreviewMode::WorkingTree),
             ("log", PreviewMode::Log),
@@ -795,12 +901,12 @@ mod tests {
         }
 
         // Empty states: a worktree row with no upstream and summaries disabled
-        // dims tabs 4 and 5 (number kept); a --prs row dims tabs 1-5.
+        // dims tabs 4 and 5 (number dim too); a --prs row dims tabs 1-5.
         assert_snapshot!(
             "empty_upstream_and_summary",
             render_preview_tabs(
                 PreviewMode::WorkingTree,
-                TabAvailability::worktree(false, false)
+                TabAvailability::worktree(false, false, false)
             )
         );
         assert_snapshot!(
@@ -818,8 +924,8 @@ mod tests {
             ("branch_diff", PreviewMode::BranchDiff),
             ("upstream_diff", PreviewMode::UpstreamDiff),
             ("summary", PreviewMode::Summary),
-            // On a worktree row the `pr` tab has no content, so this returns
-            // the "appears on --prs rows" placeholder (`pr_unavailable_placeholder`).
+            // The `pr` tab's "still fetching" line, shown on a worktree row
+            // until the async CI fetch reports whether the branch has a PR.
             ("pr", PreviewMode::Pr),
         ] {
             assert_snapshot!(
@@ -851,6 +957,7 @@ mod tests {
                 preview_cache,
                 has_upstream: false,
                 summaries_enabled: false,
+                pr_status: Arc::new(DashMap::new()),
             }
         };
 
@@ -864,6 +971,7 @@ mod tests {
                 preview_cache,
                 has_upstream: false,
                 summaries_enabled: false,
+                pr_status: Arc::new(DashMap::new()),
             }
         };
 
@@ -875,6 +983,62 @@ mod tests {
             "cache_miss",
             cache_miss.preview_for_mode(PreviewMode::Summary, 80, 40)
         );
+    }
+
+    #[test]
+    fn worktree_pr_tab_reflects_live_status() {
+        use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef, ReviewState};
+
+        let item = Arc::new(ListItem::new_branch("abc".into(), "feature".into()));
+        let pr_status: PrStatusMap = Arc::new(DashMap::new());
+        let it = WorktreeSkimItem {
+            search_text: String::new(),
+            rendered: Arc::new(Mutex::new(String::new())),
+            branch_name: "feature".into(),
+            item: Arc::clone(&item),
+            preview_cache: Arc::new(DashMap::new()),
+            has_upstream: false,
+            summaries_enabled: false,
+            pr_status: Arc::clone(&pr_status),
+        };
+        let status = |number: Option<PrRef>, url: Option<&str>| PrStatus {
+            ci_status: CiStatus::Passed,
+            source: CiSource::PullRequest,
+            is_stale: false,
+            url: url.map(String::from),
+            number,
+            review_state: Some(ReviewState::Approved),
+        };
+
+        // No entry yet → the fetch hasn't reported, so the tab stays available
+        // and shows "Loading PR…" rather than flickering as "no PR".
+        assert!(matches!(it.pr_preview(), PrPreview::Loading));
+        assert!(it.render_pr_pane(it.pr_preview()).contains("Loading PR"));
+
+        // Fetch ran, no PR/CI → the tab dims and the pane says "has no PR".
+        pr_status.insert("feature".into(), None);
+        assert!(matches!(it.pr_preview(), PrPreview::NoPr));
+        assert!(it.render_pr_pane(it.pr_preview()).contains("has no PR"));
+
+        // A real PR carries a `number` → the pane shows the reference and URL.
+        pr_status.insert(
+            "feature".into(),
+            Some(status(
+                Some(PrRef::pr(42)),
+                Some("https://github.com/o/r/pull/42"),
+            )),
+        );
+        assert!(matches!(it.pr_preview(), PrPreview::HasPr(..)));
+        let pane = it.render_pr_pane(it.pr_preview());
+        assert!(pane.contains("#42"), "reference: {pane:?}");
+        assert!(
+            pane.contains("https://github.com/o/r/pull/42"),
+            "url: {pane:?}"
+        );
+
+        // Branch CI with no PR `number` → still "no PR".
+        pr_status.insert("feature".into(), Some(status(None, None)));
+        assert!(matches!(it.pr_preview(), PrPreview::NoPr));
     }
 
     /// Helper: build a test repo with `main` at the initial commit, then a
@@ -1173,11 +1337,11 @@ mod tests {
         // Test that ANSI escape sequences properly reset to prevent style bleeding.
         // The per-tab `{reset}` is appended in the outer format regardless of a
         // tab's internal styling, so the reset/divider counts hold whether a tab
-        // is bold (active), plain (inactive-with-content, no internal SGR), or
-        // dim (empty — here tab 6, pr).
+        // is active (bold label), inactive-available (dim label), or empty (dim
+        // number + label — here tab 6, pr).
         let output = render_preview_tabs(
             PreviewMode::WorkingTree,
-            TabAvailability::worktree(true, true),
+            TabAvailability::worktree(true, true, false),
         );
 
         let first_line = output.lines().next().unwrap();

@@ -18,11 +18,12 @@
 //!
 //! # Alignment
 //!
-//! PR rows render on the same column grid as the worktree rows: a dim `#`
-//! gutter sigil (see [`PR_GUTTER_SIGIL`]), the head branch in the Branch
-//! column, `#N title  @author` in the flexible text region (see
-//! [`render_grid_row`] for which column that is), blanks under the status/diff
-//! columns. The geometry
+//! PR rows render on the same column grid as the worktree rows, and only in
+//! columns that have a worktree-row meaning: a dim `#` gutter sigil (see
+//! [`PR_GUTTER_SIGIL`]), the head branch in the Branch column, and the number
+//! in the CI column. The PR title and author have no worktree-column
+//! equivalent, so they stay off the row (in the `pr` preview tab) rather than
+//! misaligning the grid — see [`render_grid_row`]. The geometry
 //! ([`ColumnGrid`]) is computed by the collect thread at skeleton time and
 //! handed over through a [`GridSlot`]; the skeleton (~50ms) beats the forge
 //! call (~1s), so the wait is nominal. Without a grid (handoff timed out, or
@@ -38,7 +39,7 @@ use std::path::Path;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-use anstyle::{AnsiColor, Color, Reset, Style};
+use anstyle::{Reset, Style};
 use anyhow::Context;
 use color_print::cformat;
 use serde::Deserialize;
@@ -441,7 +442,7 @@ impl PrSkimItem {
         );
 
         let rendered = match grid {
-            Some(grid) => render_grid_row(&entry, grid, list_width),
+            Some(grid) => render_grid_row(&entry, grid),
             None => render_freeform_row(&entry, list_width),
         };
 
@@ -536,168 +537,76 @@ fn pr_row_empty_placeholder() -> String {
     )
 }
 
-/// Place the PR's cells on the worktree rows' grid: a dim `#` gutter sigil
-/// (see `PR_GUTTER_SIGIL`), head branch in the Branch column, the number in
-/// the CI column (colored by CI + review state, like worktree rows), the title
-/// in the flexible text region, author in the Message column.
+/// Place the PR's cells on the worktree rows' grid so every column lines up:
+/// a dim `#` gutter sigil (see `PR_GUTTER_SIGIL`), the head branch in the
+/// Branch column, and the number in the CI column (colored by CI + review
+/// state, like worktree rows' PR numbers).
 ///
-/// The number lives in the CI column when the grid has one and a status was
-/// fetched — aligning with the worktree rows' PR numbers. Without a CI column
-/// (narrow layouts) it falls back to a dim `#N` prefix on the title.
+/// The PR title and author are NOT on the row — they have no worktree-column
+/// equivalent, so showing them would either misalign PR rows against worktree
+/// rows or overrun the status columns. They live in the `pr` preview tab
+/// instead (see `PrSkimItem::pr_pane`); the title still feeds `search_text`, so
+/// fuzzy matching on it works even though it isn't displayed.
 ///
-/// The Summary column only exists when `[list] summary` is enabled, and
-/// Message only on wide layouts — without either there is no flexible text
-/// column, so the title runs from the first column after Branch up to the CI
-/// column (or the pane edge). The worktree-data columns it underlaps (status,
-/// diffs, URL, age) are blank on PR rows, so nothing collides.
-fn render_grid_row(entry: &PrEntry, grid: &ColumnGrid, list_width: usize) -> String {
-    let yellow = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Yellow)));
+/// The number shows only when the layout has a CI column (the picker keeps
+/// one); without it the number appears solely in the preview, matching how
+/// worktree rows hide CI on narrow layouts. The other worktree-data columns PR
+/// rows leave blank (status, diffs, URL, age) are a follow-up — see
+/// TODO(pr-row-columns).
+fn render_grid_row(entry: &PrEntry, grid: &ColumnGrid) -> String {
     let dim = Style::new().dimmed();
+    let mut segments: Vec<(usize, StyledLine)> = Vec::new();
 
-    let gutter_col = grid.column(ColumnKind::Gutter);
-    let branch_col = grid.column(ColumnKind::Branch);
-    let summary_col = grid.column(ColumnKind::Summary);
-    let message_col = grid.column(ColumnKind::Message);
-
-    // The number rides in the CI column — the same cell worktree rows show
-    // their PR number in. Falls back to a `#N` title prefix without one.
-    let number_cell = grid.column(ColumnKind::CiStatus).zip(entry.status.as_ref());
-
-    let (title_start, title_width) = match (summary_col, message_col) {
-        // Confined to Summary so the columns after it stay on grid.
-        (Some(col), _) => (col.start, col.width),
-        // Message is the last column; running to the pane edge is safe.
-        (None, Some(col)) => (col.start, list_width.saturating_sub(col.start)),
-        (None, None) => {
-            let start = branch_col.map_or(0, |col| col.start + col.width + 2);
-            // Stop before the CI column so the title never overruns the number.
-            let end = number_cell
-                .map(|(col, _)| col.start.saturating_sub(1))
-                .unwrap_or(list_width);
-            (start, end.saturating_sub(start))
-        }
-    };
-
-    // The author rides in the Message column when a Summary column already
-    // claimed the title; otherwise it trails the title.
-    let author_col = summary_col.and(message_col);
-
-    // Assemble the row for a given title width. Cells are emitted left-to-right
-    // by column start (`pad_to` only moves forward, and the CI column can sit
-    // either side of the title). Built as a closure so the title — the one
-    // flexible cell — can be re-truncated to satisfy skim's overflow check
-    // without disturbing the fixed branch and CI-number cells.
-    let assemble = |title_w: usize| -> StyledLine {
-        let mut segments: Vec<(usize, StyledLine)> = Vec::new();
-
-        if let Some(col) = gutter_col {
-            let mut cell = StyledLine::new();
-            cell.push_styled(PR_GUTTER_SIGIL, dim);
-            segments.push((col.start, cell));
-        }
-
-        if let Some(col) = branch_col {
-            let mut cell = StyledLine::new();
-            cell.push_raw(entry.head_branch.clone());
-            segments.push((col.start, cell.truncate_to_width(col.width)));
-        }
-
-        let mut title = StyledLine::new();
-        if number_cell.is_none() {
-            title.push_styled(entry.pr_ref().to_string(), dim);
-            title.push_raw(" ");
-            if entry.is_draft {
-                title.push_styled("draft ", yellow);
-            }
-        }
-        title.push_raw(entry.title.clone());
-        if author_col.is_none() && !entry.author.is_empty() {
-            title.push_styled(format!("  @{}", entry.author), dim);
-        }
-        segments.push((title_start, title.truncate_to_width(title_w)));
-
-        if let Some((col, status)) = number_cell {
-            let mut cell = StyledLine::new();
-            cell.push_raw(status.format_cell(col.width, false));
-            segments.push((col.start, cell));
-        }
-
-        if let Some(col) = author_col
-            && !entry.author.is_empty()
-        {
-            let mut cell = StyledLine::new();
-            cell.push_styled(format!("@{}", entry.author), dim);
-            segments.push((col.start, cell.truncate_to_width(col.width)));
-        }
-
-        segments.sort_by_key(|(start, _)| *start);
-        let mut line = StyledLine::new();
-        for (start, cell) in segments {
-            line.pad_to(start);
-            line.extend(cell);
-        }
-        line
-    };
-
-    let mut line = assemble(title_width);
-
-    // Skim's overflow check measures the line with `width_cjk`, counting
-    // ambiguous-width characters (the `…` our truncation adds, or the status
-    // arrows) as 2 columns, while terminals — and the column math above —
-    // render them as 1. A row that overflows there gets its last two columns
-    // repainted as `..`.
-    //
-    // Only one case is fixable here. When the title is the rightmost cell (no
-    // CI column), shrink it until the row passes — each pass removes at least
-    // one column. When the number is in the CI column it anchors the right
-    // edge: trimming the title only opens blank space upstream and can't shrink
-    // the line, and the number itself can't be trimmed without mangling it, so
-    // at narrow widths such a row may still lose its last two columns to skim's
-    // spurious `..` — the same width_cjk bug worktree rows hit, accepted as a
-    // known limitation.
-    //
-    // TODO(vendor-skim): a one-word fix in skim's `draw_item` removes the check
-    // entirely (and with it the CI-column clip). See `vendor/NOTES.md` →
-    // "width_cjk vs width mismatch".
-    if number_cell.is_none() {
-        let mut title_w = title_width;
-        while title_w > 0 && line.width_cjk() > list_width {
-            let excess = line.width_cjk() - list_width;
-            title_w = title_w.saturating_sub(excess.max(1));
-            line = assemble(title_w);
-        }
+    if let Some(col) = grid.column(ColumnKind::Gutter) {
+        let mut cell = StyledLine::new();
+        cell.push_styled(PR_GUTTER_SIGIL, dim);
+        segments.push((col.start, cell));
     }
 
+    if let Some(col) = grid.column(ColumnKind::Branch) {
+        let mut cell = StyledLine::new();
+        cell.push_raw(entry.head_branch.clone());
+        segments.push((col.start, cell.truncate_to_width(col.width)));
+    }
+
+    // The number rides the CI column — the same cell worktree rows show their
+    // PR number in. `format_cell` colors it by CI + review state (a draft MR
+    // renders dimmed), so the row needs no separate draft flag.
+    if let Some((col, status)) = grid.column(ColumnKind::CiStatus).zip(entry.status.as_ref()) {
+        let mut cell = StyledLine::new();
+        cell.push_raw(status.format_cell(col.width, false));
+        segments.push((col.start, cell));
+    }
+
+    // All cells sit in fixed columns within the pane (branch truncates to its
+    // column, the number is fixed-width), so the row can't overflow.
+    segments.sort_by_key(|(start, _)| *start);
+    let mut line = StyledLine::new();
+    for (start, cell) in segments {
+        line.pad_to(start);
+        line.extend(cell);
+    }
     line.render()
 }
 
-/// Freeform row for when no grid is available:
-/// `pr #N  title  branch  @author`.
+/// Freeform row for when no grid is available: `#N  branch`. Like the grid row,
+/// the title and author live only in the preview; the `pr_ref` already carries
+/// the `#`/`!` sigil, so no separate gutter marker is needed.
 fn render_freeform_row(entry: &PrEntry, list_width: usize) -> String {
-    let label = entry.kind.shortcut();
     let pr_ref = entry.pr_ref();
-    let head_branch = &entry.head_branch;
-    let author = &entry.author;
-
-    // Truncate the title so the branch and author stay visible. Measure
-    // the fixed pieces (plain text) and give the rest to the title.
-    let draft_plain = if entry.is_draft { "draft " } else { "" };
-    let prefix_plain = format!("{label} {pr_ref}  ");
-    let suffix_plain = format!("  {head_branch}  @{author}");
-    let fixed = prefix_plain.width() + draft_plain.width() + suffix_plain.width();
-    let title_budget = list_width.saturating_sub(fixed).max(8);
-    let title = crate::display::truncate_to_width(&entry.title, title_budget);
-
-    let draft = if entry.is_draft {
-        cformat!("<yellow>draft</> ")
-    } else {
-        String::new()
-    };
-    cformat!(
-        "<dim>{label}</> <bold>{pr_ref}</>  {draft}{title}  <cyan>{head_branch}</>  <dim>@{author}</>"
-    )
+    let prefix_plain = format!("{pr_ref}  ");
+    let branch_budget = list_width.saturating_sub(prefix_plain.width()).max(8);
+    let head_branch = crate::display::truncate_to_width(&entry.head_branch, branch_budget);
+    cformat!("<bold>{pr_ref}</>  <cyan>{head_branch}</>")
 }
 
+// TODO(pr-row-columns): fill the worktree-data columns PR rows leave blank.
+// The status, branch-diff, and age columns have no PR equivalent in the
+// `gh pr list` / `glab mr list` payload today, but some map cleanly: the PR's
+// CI conclusion could drive a status glyph, and the PR's age its own column.
+// Each needs a field added to the row-list `--json` (cheap, one call) or a
+// derived value — keep them off the flexible region so the grid stays aligned.
+//
 // TODO(pr-preview-log): give the `log` tab (and ideally `summary`) content on
 // `--prs` rows. The body/description rides the one `gh pr list` call cheaply,
 // but a commit log does not: for a checked-out branch it's a local `git log`,
@@ -810,21 +719,46 @@ mod tests {
     }
 
     #[test]
-    fn long_title_is_truncated_to_fit_narrow_lists() {
-        let long = "A very long pull request title that would otherwise overflow the list pane and push the branch and author columns off the screen entirely";
-        let pr = PrSkimItem::new(entry(RefKind::Pr, 1, long), 60, None);
-        // Branch and author survive truncation; the title is shortened.
-        assert!(pr.rendered.contains("feature/auth"));
-        assert!(pr.rendered.contains("@alice"));
-        assert!(pr.rendered.contains('…'));
+    fn freeform_row_shows_reference_and_branch_only() {
+        // No grid: the freeform fallback shows reference and branch. The title
+        // and author have no column, so they stay off the row — but the title
+        // still feeds `search_text`.
+        let pr = PrSkimItem::new(entry(RefKind::Pr, 1, "Retry the flaky test"), 80, None);
+        let row = plain(&pr.rendered);
+        assert!(row.contains("feature/auth"), "branch on the row: {row:?}");
+        assert!(row.contains("#1"), "reference on the row: {row:?}");
+        assert!(
+            !row.contains("Retry the flaky test"),
+            "title stays off the row: {row:?}"
+        );
+        assert!(!row.contains("@alice"), "author stays off the row: {row:?}");
+        assert!(
+            pr.text().contains("Retry the flaky test"),
+            "title searchable"
+        );
     }
 
     #[test]
-    fn draft_prs_are_flagged() {
+    fn freeform_row_truncates_a_long_branch_to_the_pane() {
+        // The branch absorbs the remaining width after the reference and
+        // truncates so the row stays inside the pane.
+        let mut e = entry(RefKind::Pr, 1, "Title");
+        e.head_branch = "a-very-long-branch-name-that-would-otherwise-overflow".to_string();
+        let pr = PrSkimItem::new(e, 40, None);
+        let row = plain(&pr.rendered);
+        assert!(row.contains("#1"), "reference survives: {row:?}");
+        assert!(row.contains('…'), "branch truncated: {row:?}");
+        assert!(row.width() <= 40, "row within pane: {row:?}");
+    }
+
+    #[test]
+    fn draft_prs_are_flagged_in_the_preview() {
+        // The row carries no title or inline flag, so a draft shows in the pr
+        // pane (and, with a CI column, as the dimmed number — see
+        // `grid_row_with_ci_dims_drafts_instead_of_flagging_them`).
         let mut e = entry(RefKind::Pr, 9, "WIP refactor");
         e.is_draft = true;
         let pr = PrSkimItem::new(e, 120, None);
-        assert!(pr.rendered.contains("draft"));
         assert!(pr.pr_pane.contains("draft"));
     }
 
@@ -864,61 +798,50 @@ mod tests {
 
     #[test]
     fn grid_row_places_cells_on_layout_columns() {
+        // Only the gutter and branch carry content here; the title and author
+        // are off the row, and grid() has no CI column so the number isn't on
+        // it either.
         let pr = PrSkimItem::new(
             entry(RefKind::Pr, 123, "Fix the flaky test"),
             120,
             Some(&grid()),
         );
         let text = plain(&pr.rendered);
-        assert_eq!(display_col(&text, "feature/auth"), 2, "branch column");
-        assert_eq!(
-            display_col(&text, "#123 Fix the flaky test"),
-            34,
-            "summary column"
-        );
-        assert_eq!(display_col(&text, "@alice"), 66, "message column");
-        // The dim `#` gutter sigil sits at column 0; status/diff columns stay blank.
+        // The dim `#` gutter sigil sits at column 0; branch in the Branch column.
         assert!(text.starts_with("# feature/auth"));
+        assert_eq!(display_col(&text, "feature/auth"), 2, "branch column");
+        assert!(
+            !text.contains("Fix the flaky test"),
+            "no title on the row: {text:?}"
+        );
+        assert!(!text.contains("@alice"), "no author on the row: {text:?}");
+        assert!(
+            !text.contains("#123"),
+            "no number without a CI column: {text:?}"
+        );
     }
 
     #[test]
     fn grid_row_truncates_long_branch_to_its_column() {
         let mut e = entry(RefKind::Pr, 5, "Title");
         e.head_branch = "a-very-long-branch-name-overflowing".to_string();
-        let pr = PrSkimItem::new(e, 120, Some(&grid()));
+        let pr = PrSkimItem::new(e, 120, Some(&grid_with_ci()));
         let text = plain(&pr.rendered);
-        // The branch is shortened so the title still lands on its column.
+        // The branch is shortened to its column; the number still lands in CI.
         assert!(text.contains('…'));
-        assert_eq!(display_col(&text, "#5 Title"), 34);
-    }
-
-    #[test]
-    fn grid_row_truncates_long_title_to_summary_column() {
-        let long = "A very long pull request title that overflows the summary column";
-        let pr = PrSkimItem::new(entry(RefKind::Pr, 2, long), 120, Some(&grid()));
-        let text = plain(&pr.rendered);
-        assert!(text.contains('…'));
-        // The author still lands on the Message column.
-        assert_eq!(display_col(&text, "@alice"), 66);
-    }
-
-    #[test]
-    fn grid_row_flags_drafts_before_the_title() {
-        let mut e = entry(RefKind::Pr, 9, "WIP refactor");
-        e.is_draft = true;
-        let pr = PrSkimItem::new(e, 120, Some(&grid()));
-        assert_eq!(
-            display_col(&plain(&pr.rendered), "#9 draft WIP refactor"),
-            34
-        );
+        assert_eq!(display_col(&text, "#5"), 34, "number in CI column");
     }
 
     #[test]
     fn rows_use_the_forge_sigil_for_the_reference() {
         // GitLab MRs render `!N`, not `#N` — matching `PrRef` everywhere else
-        // (the CI column, `wt list`). The grid row, freeform row, and preview
-        // all derive the sigil from `PrEntry::pr_ref`.
-        let mr = PrSkimItem::new(entry(RefKind::Mr, 42, "Add caching"), 120, Some(&grid()));
+        // (the CI column, `wt list`). The CI-column number, freeform row, and
+        // preview all derive the sigil from `PrEntry::pr_ref`.
+        let mr = PrSkimItem::new(
+            entry(RefKind::Mr, 42, "Add caching"),
+            120,
+            Some(&grid_with_ci()),
+        );
         let row = plain(&mr.rendered);
         assert!(row.contains("!42"), "grid row uses ! for MRs: {row:?}");
         assert!(
@@ -934,7 +857,11 @@ mod tests {
         );
 
         // GitHub PRs keep `#N`.
-        let pr = PrSkimItem::new(entry(RefKind::Pr, 42, "Add caching"), 120, Some(&grid()));
+        let pr = PrSkimItem::new(
+            entry(RefKind::Pr, 42, "Add caching"),
+            120,
+            Some(&grid_with_ci()),
+        );
         assert!(
             plain(&pr.rendered).contains("#42"),
             "grid row uses # for PRs"
@@ -942,47 +869,18 @@ mod tests {
     }
 
     #[test]
-    fn grid_row_without_summary_falls_back_to_message_then_after_branch() {
-        // Layout that dropped Summary: the title claims Message and the
-        // author trails the title instead of getting its own column.
-        let message_only = ColumnGrid {
-            columns: vec![
-                grid_col(ColumnKind::Gutter, 0, 2),
-                grid_col(ColumnKind::Branch, 2, 20),
-                grid_col(ColumnKind::Message, 24, 30),
-            ],
-        };
-        let pr = PrSkimItem::new(entry(RefKind::Pr, 1, "Title"), 120, Some(&message_only));
-        let text = plain(&pr.rendered);
-        assert_eq!(display_col(&text, "#1 Title  @alice"), 24);
-
-        // No flexible text column at all (summaries disabled — the default
-        // picker layout): the title runs from the column after Branch, not
-        // from past the last column (off-pane).
-        let no_flexible = ColumnGrid {
-            columns: vec![
-                grid_col(ColumnKind::Gutter, 0, 2),
-                grid_col(ColumnKind::Branch, 2, 20),
-                grid_col(ColumnKind::Status, 24, 8),
-                grid_col(ColumnKind::Time, 90, 4),
-            ],
-        };
-        let pr = PrSkimItem::new(entry(RefKind::Pr, 1, "Title"), 120, Some(&no_flexible));
-        assert_eq!(display_col(&plain(&pr.rendered), "#1 Title  @alice"), 24);
-    }
-
-    #[test]
     fn grid_row_stays_within_the_list_pane() {
-        // The freeform off-grid run (no Summary/Message) must truncate at
-        // the pane edge rather than spill into skim's `..` overflow.
+        // Even with a long branch the row stays inside the pane: the branch
+        // truncates to its column and nothing flexible follows.
         let no_flexible = ColumnGrid {
             columns: vec![
                 grid_col(ColumnKind::Gutter, 0, 2),
                 grid_col(ColumnKind::Branch, 2, 20),
             ],
         };
-        let long = "A very long pull request title that runs past the edge of a narrow pane";
-        let pr = PrSkimItem::new(entry(RefKind::Pr, 1, long), 60, Some(&no_flexible));
+        let mut e = entry(RefKind::Pr, 1, "Title");
+        e.head_branch = "a-very-long-branch-name-that-runs-past-the-edge".to_string();
+        let pr = PrSkimItem::new(e, 60, Some(&no_flexible));
         let text = plain(&pr.rendered);
         assert!(text.width() <= 60);
         // Skim's overflow check uses CJK widths, where the truncation `…`
@@ -1000,17 +898,42 @@ mod tests {
         );
         let text = plain(&pr.rendered);
         // The number sits in the CI column (start 34), aligned with worktree
-        // rows — not prefixing the title.
+        // rows; the title is not on the row at all.
         assert_eq!(display_col(&text, "#123"), 34, "number in CI column");
-        // The title starts in the after-branch region with no `#N` prefix.
-        assert_eq!(display_col(&text, "Fix"), 24, "title after branch");
-        assert!(!text.contains("#123 Fix"), "no #N prefix on the title");
+        assert!(!text.contains("Fix"), "title stays off the row: {text:?}");
     }
 
     #[test]
-    fn grid_row_with_ci_dims_drafts_instead_of_flagging_them() {
-        // With a CI column, draft shows as the dimmed number there (review
-        // state Draft), so the title drops the inline "draft" flag.
+    fn grid_row_omits_the_title_even_with_a_message_column() {
+        // The title stays off the row regardless of layout — even when a
+        // Message column (where worktree rows show their commit subject) is
+        // present, only the gutter, branch, and CI number land.
+        let grid = ColumnGrid {
+            columns: vec![
+                grid_col(ColumnKind::Gutter, 0, 2),
+                grid_col(ColumnKind::Branch, 2, 20),
+                grid_col(ColumnKind::CiStatus, 24, 6),
+                grid_col(ColumnKind::Message, 32, 40),
+            ],
+        };
+        let pr = PrSkimItem::new(
+            entry(RefKind::Pr, 42, "Retry the flaky test"),
+            120,
+            Some(&grid),
+        );
+        let text = plain(&pr.rendered);
+        assert_eq!(display_col(&text, "feature/auth"), 2, "branch");
+        assert_eq!(display_col(&text, "#42"), 24, "number in CI column");
+        assert!(
+            !text.contains("Retry the flaky test"),
+            "title stays off the row: {text:?}"
+        );
+    }
+
+    #[test]
+    fn grid_row_dims_drafts_via_the_ci_number() {
+        // A draft shows only as the dimmed number in the CI column (review
+        // state Draft) — never as a "draft" word on the row.
         let mut e = entry(RefKind::Pr, 9, "WIP");
         e.is_draft = true;
         if let Some(status) = e.status.as_mut() {
@@ -1018,7 +941,10 @@ mod tests {
         }
         let pr = PrSkimItem::new(e, 120, Some(&grid_with_ci()));
         let text = plain(&pr.rendered);
-        assert!(!text.contains("draft"), "no draft flag in title: {text:?}");
+        assert!(
+            !text.contains("draft"),
+            "no draft flag on the row: {text:?}"
+        );
         assert_eq!(display_col(&text, "#9"), 34, "number still in CI column");
     }
 

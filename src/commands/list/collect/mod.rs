@@ -482,6 +482,14 @@ pub trait PickerProgressHandler: Send + Sync {
     /// up on the next heartbeat.
     fn on_update(&self, idx: usize, rendered: String);
 
+    /// Fired once the CI fetch has reported a branch's PR status (the inner
+    /// `Option` of `item.pr_status`: `Some` carries the PR/MR, `None` means no
+    /// PR). The picker stores it keyed by branch so the `pr` preview tab can
+    /// render the PR live, distinguishing "no PR" from "still loading" by key
+    /// presence. Default: no-op (`wt list` ignores it). Keyed by branch
+    /// rather than `idx` because the picker's preview cache is branch-keyed.
+    fn on_pr_status(&self, _branch: &str, _status: Option<super::ci_status::PrStatus>) {}
+
     /// Fired at the 200ms reveal deadline. One pre-rendered line per row,
     /// with the placeholder promoted from blank to `·`: rows that have
     /// received real data use `format_list_item_line`, rows still at
@@ -1617,6 +1625,13 @@ pub fn collect(
 
                     if let Some(handler) = progressive_handler.as_ref() {
                         handler.on_update(item_idx, rendered);
+                        // Once the CI fetch has reported (outer `Some`), hand
+                        // the picker this branch's PR status so the `pr`
+                        // preview tab can render it live. Other results re-send
+                        // the same value harmlessly (idempotent insert).
+                        if let Some(pr_status) = &item.pr_status {
+                            handler.on_pr_status(item.branch_name(), pr_status.clone());
+                        }
                     }
                 }
                 results::DrainEvent::Reveal { items } => {

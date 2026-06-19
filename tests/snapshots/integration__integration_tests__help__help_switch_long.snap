@@ -187,14 +187,14 @@ When called without arguments, [2mwt switch[0m opens an interactive picker to 
 
 Plain digits go to the filter, so a branch name containing a number can be typed directly; the preview tabs move to [2mAlt[0m.
 
-[1mPreview tabs[0m — jump with [2mAlt-1[0m–[2mAlt-6[0m, or cycle with [2mTab[0m/[2mShift-Tab[0m. A tab with no content for the selected row (no upstream, or summaries off) is dimmed:
+[1mPreview tabs[0m — jump with [2mAlt-1[0m–[2mAlt-6[0m, or cycle with [2mTab[0m/[2mShift-Tab[0m. Each tab keeps its [2mN: label[0m; the number dims when the tab has nothing to show for the selected row (no upstream, summaries off, or no PR), and the label is bold on the active tab:
 
 1. [1mHEAD±[0m — Diff of uncommitted changes
 2. [1mlog[0m — Recent commits; commits already on the default branch have dimmed hashes
 3. [1mmain…±[0m — Diff of changes since the merge-base with the default branch
 4. [1mremote⇅[0m — Ahead/behind diff vs upstream tracking branch
 5. [1msummary[0m — LLM-generated branch summary; requires [2m[list] summary = true[0m and [2mcommit.generation[0m
-6. [1mpr[0m — The selected row's PR/MR, from already-fetched status; populated on [2m--prs[0m rows
+6. [1mpr[0m — The selected row's PR/MR, from the already-fetched CI status; shown for any branch with a PR and for [2m--prs[0m rows
 
 [1mPager configuration:[0m The preview panel pipes diff output through git's pager. Override in user config:
 

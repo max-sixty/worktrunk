@@ -2,5 +2,5 @@
 source: src/commands/picker/items.rs
 expression: "render_preview_tabs(PreviewMode::Pr, TabAvailability::pull_request())"
 ---
-[2m1: HEAD±[22m[0m | [2m2: log[22m[0m | [2m3: main…±[22m[0m | [2m4: remote⇅[22m[0m | [2m5: summary[22m[0m | [1m6: pr[22m[0m
+[2m1:[22m [2mHEAD±[22m[0m | [2m2:[22m [2mlog[22m[0m | [2m3:[22m [2mmain…±[22m[0m | [2m4:[22m [2mremote⇅[22m[0m | [2m5:[22m [2msummary[22m[0m | 6: [1mpr[22m[0m
 [33m[2mEnter: switch | Tab/alt-1…6: preview | alt-c: create | Esc: cancel | ctrl-u/d: scroll | alt-p: toggle[39m[22m[0m

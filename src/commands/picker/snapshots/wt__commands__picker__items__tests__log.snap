@@ -2,5 +2,5 @@
 source: src/commands/picker/items.rs
 expression: "render_preview_tabs(mode, wt)"
 ---
-1: HEAD±[0m | [1m2: log[22m[0m | 3: main…±[0m | 4: remote⇅[0m | 5: summary[0m | [2m6: pr[22m[0m
+1: [2mHEAD±[22m[0m | 2: [1mlog[22m[0m | 3: [2mmain…±[22m[0m | 4: [2mremote⇅[22m[0m | 5: [2msummary[22m[0m | [2m6:[22m [2mpr[22m[0m
 [33m[2mEnter: switch | Tab/alt-1…6: preview | alt-c: create | Esc: cancel | ctrl-u/d: scroll | alt-p: toggle[39m[22m[0m

@@ -780,6 +780,7 @@ pub fn handle_picker(
             shared_items: Arc::clone(&shared_items),
             rendered_slots: std::sync::OnceLock::new(),
             preview_cache: Arc::clone(&preview_cache),
+            pr_status: Arc::new(dashmap::DashMap::new()),
             orchestrator: Arc::clone(&orchestrator),
             preview_dims,
             llm_command,
@@ -1385,6 +1386,7 @@ pub mod tests {
             preview_cache: Arc::new(dashmap::DashMap::new()),
             has_upstream: false,
             summaries_enabled: false,
+            pr_status: Arc::new(dashmap::DashMap::new()),
         }) as Arc<dyn SkimItem>
     }
 

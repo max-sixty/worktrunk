@@ -925,12 +925,14 @@ fn mock_forge_env(
 }
 
 /// `wt switch --prs` on a GitHub repo: the open-PR list streams into the picker
-/// via a mocked `gh pr list`. Asserts the PR row reaches the list (a stable
-/// substring), which deterministically exercises the whole fetch → stream →
-/// render path (`fetch_open_prs`, `fetch_github`, `parse_github_prs`,
-/// `stream_open_prs`, `PrSkimItem::new`, `render_grid_row`,
-/// `render_pr_description`). The full list isn't snapshotted because the
-/// worktree rows' CI cells fill asynchronously.
+/// via a mocked `gh pr list`. Asserts the PR row reaches the list (the `#42`
+/// reference in the CI column), which deterministically exercises the whole
+/// fetch → stream → render path (`fetch_open_prs`, `fetch_github`,
+/// `parse_github_prs`, `stream_open_prs`, `PrSkimItem::new`, `render_grid_row`,
+/// `render_pr_description`). The title isn't on the row — it lives in the `pr`
+/// preview tab so the columns align — so the row's stable substring is `#42`.
+/// The full list isn't snapshotted because the worktree rows' CI cells fill
+/// asynchronously.
 #[rstest]
 fn test_switch_picker_prs_github_list(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
@@ -950,17 +952,18 @@ fn test_switch_picker_prs_github_list(mut repo: TestRepo) {
         &env_vars,
         // Wait for the PR row to stream into the list — deterministic, unlike
         // selecting it (skim 0.20 doesn't reliably select an async-arrived row).
-        &[("", Some("Retry the flaky network test"))],
+        &[("", Some("#42"))],
     );
 
     assert_valid_abort_exit_code(result.exit_code);
     let (list, _preview) = result.panels();
-    assert!(
-        list.contains("Retry the flaky network test"),
-        "PR title in list:\n{list}"
-    );
     // `#42` in the CI column; the head branch is truncated in the narrow list.
     assert!(list.contains("#42"), "PR number in list:\n{list}");
+    // The title is NOT on the row — it lives in the preview so columns align.
+    assert!(
+        !list.contains("Retry the flaky network test"),
+        "PR title should stay off the row:\n{list}"
+    );
 }
 
 /// `wt switch --prs` on a GitLab repo: the open-MR list streams in via a mocked
@@ -983,17 +986,19 @@ fn test_switch_picker_prs_gitlab_list(mut repo: TestRepo) {
         &["switch", "--prs"],
         repo.root_path(),
         &env_vars,
-        &[("", Some("Cache the dependency graph"))],
+        // `!7` (GitLab MR ref) is the row's stable substring; the title lives in
+        // the preview, not the row.
+        &[("", Some("!7"))],
     );
 
     assert_valid_abort_exit_code(result.exit_code);
     let (list, _preview) = result.panels();
-    assert!(
-        list.contains("Cache the dependency graph"),
-        "MR title in list:\n{list}"
-    );
     // `!7` (GitLab MR ref) in the CI column; source branch truncates.
     assert!(list.contains("!7"), "MR number in list:\n{list}");
+    assert!(
+        !list.contains("Cache the dependency graph"),
+        "MR title should stay off the row:\n{list}"
+    );
 }
 
 #[rstest]
@@ -1093,7 +1098,7 @@ fn test_switch_picker_preview_cycle_tab_forward_wraps(mut repo: TestRepo) {
             // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
             // for the matcher-lag rationale.
             ("\x1b[B", None),                       // Down: move cursor to `feature`
-            ("\x1b6", Some("PR previews")),         // Alt-6: jump to pr (6)
+            ("\x1b6", Some("PR")), // Alt-6: jump to pr (6); "Loading PR"/"has no PR"
             ("\t", Some("no uncommitted changes")), // Tab: wrap 6 → HEAD± (1)
         ],
     );
@@ -1145,16 +1150,19 @@ fn test_switch_picker_preview_cycle_shift_tab_wraps(mut repo: TestRepo) {
         &[
             // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
             // for the matcher-lag rationale.
-            ("\x1b[B", None),                // Down: move cursor to `feature`
-            ("\x1b[Z", Some("PR previews")), // Shift-Tab: HEAD± → pr (wrap)
+            ("\x1b[B", None),       // Down: move cursor to `feature`
+            ("\x1b[Z", Some("PR")), // Shift-Tab: HEAD± → pr (wrap); "Loading PR"/"has no PR"
         ],
     );
 
     assert_valid_abort_exit_code(result.exit_code);
 
     let (_list, preview) = result.panels();
+    // The worktree row has no remote, so its `pr` pane is either "Loading PR…"
+    // (CI fetch still in flight) or "feature has no PR" (fetch reported none) —
+    // both confirm Shift-Tab wrapped to the pr tab.
     assert!(
-        preview.contains("PR previews"),
+        preview.contains("has no PR") || preview.contains("Loading PR"),
         "Shift-Tab should wrap to the pr tab; preview was:\n{preview}"
     );
 }
