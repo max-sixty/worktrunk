@@ -52,6 +52,7 @@ use worktrunk::shell_exec::{
 #[cfg(unix)]
 use worktrunk::signal_forwarder::ForegroundSignals;
 use worktrunk::styling::stderr;
+use worktrunk::trace::CommandTrace;
 
 use super::handlers::DirectivePassthrough;
 
@@ -109,6 +110,9 @@ pub fn run_concurrent_commands(
                 for mut prior in children {
                     let _ = prior.child.kill();
                     let _ = prior.child.wait();
+                    // Spawned but torn down because a sibling failed to spawn —
+                    // record it rather than leaving the trace guard unresolved.
+                    prior.trace.complete(false);
                 }
                 return Err(e);
             }
@@ -270,6 +274,10 @@ struct SpawnedChild {
     cmd_str: String,
     log_label: Option<String>,
     started_at: Instant,
+    /// `[wt-trace]` record for this child, captured at spawn time and resolved
+    /// in `collect_outcome`. Held across the output-draining window so the
+    /// recorded duration is the full spawn → wait span, not just the wait.
+    trace: CommandTrace,
 }
 
 fn spawn_child(
@@ -308,9 +316,17 @@ fn spawn_child(
         shell.name
     );
 
-    let mut child = command
-        .spawn()
-        .with_context(|| format!("failed to spawn concurrent command '{}'", cmd.label))?;
+    // Start the trace just before spawning so its duration brackets the real
+    // spawn → wait span (the child keeps running while we drain its output).
+    let mut trace = CommandTrace::new(None, cmd.expanded);
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            trace.fail(&e);
+            return Err(e)
+                .with_context(|| format!("failed to spawn concurrent command '{}'", cmd.label));
+        }
+    };
 
     if let Some(mut stdin) = child.stdin.take() {
         // Ignore BrokenPipe — child may exit or close stdin early.
@@ -322,6 +338,7 @@ fn spawn_child(
         cmd_str: cmd.expanded.to_string(),
         log_label: cmd.log_label.map(str::to_string),
         started_at: Instant::now(),
+        trace,
     })
 }
 
@@ -378,11 +395,18 @@ fn collect_outcome(spawned: SpawnedChild, cmd: &ConcurrentCommand<'_>) -> anyhow
         cmd_str,
         log_label,
         started_at,
+        mut trace,
     } = spawned;
 
-    let status = child
-        .wait()
-        .with_context(|| format!("failed to wait for concurrent command '{}'", cmd.label))?;
+    let status = match child.wait() {
+        Ok(status) => status,
+        Err(e) => {
+            trace.fail(&e);
+            return Err(e)
+                .with_context(|| format!("failed to wait for concurrent command '{}'", cmd.label));
+        }
+    };
+    trace.complete(status.success());
 
     let duration = started_at.elapsed();
     let exit_code = status.code();

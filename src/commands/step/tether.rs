@@ -30,6 +30,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use worktrunk::trace::CommandTrace;
 
 /// How often the reaper re-checks whether the worktree still exists. Teardown
 /// of an already-orphaned server within this bound is imperceptible next to a
@@ -52,9 +53,14 @@ pub(crate) fn step_tether(command: &[String]) -> Result<()> {
     // shell's cd/exec directive files.
     worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
     set_new_process_group(&mut cmd);
-    let mut child = cmd
-        .spawn()
-        .with_context(|| format!("spawn tethered command: {}", command[0]))?;
+    let mut trace = CommandTrace::new(None, &command.join(" "));
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            trace.fail(&e);
+            return Err(e).with_context(|| format!("spawn tethered command: {}", command[0]));
+        }
+    };
     let id = child.id();
 
     // Reaper: polls until the worktree is gone, then kills the tree so the
@@ -71,7 +77,10 @@ pub(crate) fn step_tether(command: &[String]) -> Result<()> {
     }
 
     // Block until the child exits — killed by the reaper, or on its own.
-    let _ = child.wait();
+    match child.wait() {
+        Ok(status) => trace.complete(status.success()),
+        Err(e) => trace.fail(&e),
+    }
 
     // Final sweep: on a self-exit, descendants may still be running (Unix:
     // reparented but in this pgid; Windows: while the tree is intact). On a

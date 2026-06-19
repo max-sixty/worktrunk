@@ -30,6 +30,7 @@ use std::process::Command;
 
 use anyhow::{Context, Result};
 use worktrunk::git::WorktrunkError;
+use worktrunk::trace::CommandTrace;
 
 use crate::cli::build_command;
 use crate::commands::{
@@ -133,9 +134,17 @@ fn run_custom(path: &Path, args: &[OsString], working_dir: Option<&Path>) -> Res
         cmd.current_dir(dir);
     }
 
-    let status = cmd
-        .status()
-        .with_context(|| format!("failed to execute {}", path.display()))?;
+    let mut trace = CommandTrace::new(None, &path.display().to_string());
+    let status = match cmd.status() {
+        Ok(status) => {
+            trace.complete(status.success());
+            status
+        }
+        Err(e) => {
+            trace.fail(&e);
+            return Err(e).with_context(|| format!("failed to execute {}", path.display()));
+        }
+    };
 
     if status.success() {
         return Ok(());
