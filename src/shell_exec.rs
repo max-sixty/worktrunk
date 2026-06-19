@@ -2344,9 +2344,7 @@ mod tests {
     fn test_cmd_delayed_stream_spawn_failure_resolves_trace() {
         // delay_ms=-1 disables phase 1; the spawn failure resolves the trace
         // via `fail` rather than dropping it unresolved.
-        let err = Cmd::new(MISSING_CMD)
-            .delayed_stream(-1, None)
-            .unwrap_err();
+        let err = Cmd::new(MISSING_CMD).delayed_stream(-1, None).unwrap_err();
         assert!(err.to_string().contains("Failed to spawn"), "{err}");
     }
 

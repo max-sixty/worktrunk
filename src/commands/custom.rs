@@ -269,12 +269,8 @@ mod tests {
     fn run_custom_spawn_failure_resolves_trace() {
         // A non-existent binary fails at spawn, exercising the `trace.fail` arm
         // (the success path is covered by the signal test above).
-        let err = run_custom(
-            Path::new("/no/such/wt-custom-7f3a9b2c"),
-            &[],
-            None,
-        )
-        .expect_err("spawning a missing binary should fail");
+        let err = run_custom(Path::new("/no/such/wt-custom-7f3a9b2c"), &[], None)
+            .expect_err("spawning a missing binary should fail");
         assert!(
             err.to_string().contains("failed to execute"),
             "expected spawn-failure context, got: {err}"
