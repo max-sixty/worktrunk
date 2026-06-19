@@ -1533,13 +1533,20 @@ The `worktree_path_of_branch` function returns the filesystem path of a worktree
 setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path }}"
 ```
 
-## JSON context
+## Interactive hooks and JSON context
 
-Hooks receive all template variables as JSON on stdin, enabling complex logic that templates can't express:
+Foreground (`pre-*`) hooks run connected to your terminal, so a hook can prompt before continuing — for example, confirming an action before running it:
 
 ```toml
 [pre-start]
-setup = "python3 scripts/pre-start-setup.py"
+trust = "gum confirm 'trust this worktree?' && mise trust"
+```
+
+Background (`post-*`) hooks run detached, with no terminal. They receive all template variables as JSON on stdin, enabling complex logic that templates can't express:
+
+```toml
+[post-start]
+setup = "python3 scripts/post-start-setup.py"
 ```
 
 ```python
@@ -1548,6 +1555,8 @@ ctx = json.load(sys.stdin)
 if ctx['branch'].startswith('feature/') and 'backend' in ctx['repo']:
     subprocess.run(['make', 'seed-db'])
 ```
+
+Every hook also receives its template variables through `{{ }}` substitution, regardless of form.
 
 ## Copying untracked files
 
