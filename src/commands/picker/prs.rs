@@ -1051,6 +1051,25 @@ mod tests {
     }
 
     #[test]
+    fn parse_gitlab_running_pipeline_and_pending_review() {
+        // `ci_still_running` → Running CI; a non-draft `not_approved` MR maps to
+        // a pending review (draft would outrank it).
+        let json = br#"[
+          {"iid":4,"title":"t","source_branch":"b","draft":false,"detailed_merge_status":"ci_still_running"},
+          {"iid":5,"title":"t","source_branch":"b","draft":false,"detailed_merge_status":"not_approved"}
+        ]"#;
+        let entries = parse_gitlab_mrs(json).unwrap();
+        assert_eq!(
+            entries[0].status.as_ref().unwrap().ci_status,
+            CiStatus::Running
+        );
+        assert_eq!(
+            entries[1].status.as_ref().unwrap().review_state,
+            Some(ReviewState::Pending)
+        );
+    }
+
+    #[test]
     fn parse_github_maps_fields_including_fork_author_and_draft() {
         // Two PRs: one ready from a fork, one draft. Mirrors the
         // `gh pr list --json number,title,headRefName,author,isDraft,url` shape.

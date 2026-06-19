@@ -373,6 +373,24 @@ pub(super) fn aggregate_github_checks(checks: &[GitHubCheck]) -> CiStatus {
 mod tests {
     use super::*;
 
+    /// A `DIRTY` merge state (merge conflicts) reports `Conflicts` regardless of
+    /// the check rollup — the `--prs` picker's CI column treatment.
+    #[cfg(unix)]
+    #[test]
+    fn open_pr_status_dirty_merge_state_reports_conflicts() {
+        let pr = GitHubPrInfo {
+            number: Some(7),
+            head_ref_oid: None,
+            merge_state_status: Some("DIRTY".to_string()),
+            status_check_rollup: None,
+            url: None,
+            head_repository_owner: None,
+            review_decision: None,
+            is_draft: None,
+        };
+        assert_eq!(pr.open_pr_status().ci_status, CiStatus::Conflicts);
+    }
+
     #[test]
     fn test_github_pr_info_ci_status() {
         // No checks = NoCI

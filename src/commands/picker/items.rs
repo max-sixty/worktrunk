@@ -818,6 +818,9 @@ mod tests {
             ("branch_diff", PreviewMode::BranchDiff),
             ("upstream_diff", PreviewMode::UpstreamDiff),
             ("summary", PreviewMode::Summary),
+            // On a worktree row the `pr` tab has no content, so this returns
+            // the "appears on --prs rows" placeholder (`pr_unavailable_placeholder`).
+            ("pr", PreviewMode::Pr),
         ] {
             assert_snapshot!(
                 format!("loading_placeholder_{name}"),

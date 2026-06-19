@@ -2353,7 +2353,7 @@ fn test_switch_prs_dry_run_gitlab(repo: TestRepo) {
 }
 
 /// An empty forge list still runs `stream_open_prs` to completion, exercising
-/// the empty-list branch and `forge_noun`.
+/// the empty-list branch and `forge_noun` (`_ => "PRs"` on GitHub).
 #[cfg(unix)]
 #[rstest]
 fn test_switch_prs_dry_run_empty(repo: TestRepo) {
@@ -2368,6 +2368,25 @@ fn test_switch_prs_dry_run_empty(repo: TestRepo) {
     assert!(
         output.status.success(),
         "dry-run --prs (empty) failed:\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+/// GitLab empty list — exercises `forge_noun`'s `GitLab => "MRs"` arm.
+#[cfg(unix)]
+#[rstest]
+fn test_switch_prs_dry_run_empty_gitlab(repo: TestRepo) {
+    repo.write_project_config("[forge]\nplatform = \"gitlab\"\n");
+    let mock_bin = setup_mock_forge_list(&repo, "glab", "mr list", "[]");
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "--prs"]);
+    cmd.env("WORKTRUNK_PICKER_DRY_RUN", "1");
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "dry-run --prs (empty gitlab) failed:\nstderr: {}",
         String::from_utf8_lossy(&output.stderr),
     );
 }

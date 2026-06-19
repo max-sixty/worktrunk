@@ -1,0 +1,5 @@
+---
+source: src/commands/picker/items.rs
+expression: "WorktreeSkimItem::loading_placeholder(mode)"
+---
+[2m○[22m[0m PR previews appear on [1mwt switch --prs[22m[0m rows — the CI column shows this branch's PR number
