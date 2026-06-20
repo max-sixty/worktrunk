@@ -2460,11 +2460,11 @@ fn test_load_error_display_cli_override() {
 }
 
 // =========================================================================
-// apply_cli_overrides() — CLI `-c` config layer
+// apply_cli_overrides() — CLI `--config-set` config layer
 // =========================================================================
 
-/// Apply `-c` overrides to a base table the way `load_with_warnings` does,
-/// returning the merged table plus any warnings.
+/// Apply `--config-set` overrides to a base table the way `load_with_warnings`
+/// does, returning the merged table plus any warnings.
 fn apply_overrides(base: toml::Table, overrides: &[&str]) -> (toml::Table, Vec<LoadError>) {
     let overrides: Vec<String> = overrides.iter().map(|s| s.to_string()).collect();
     let mut table = base;
@@ -2495,7 +2495,7 @@ fn test_cli_override_deep_merges_preserving_siblings() {
 
 #[test]
 fn test_cli_override_repeated_key_last_wins() {
-    // Repeated `-c` of the same key replaces (does not accumulate).
+    // Repeated `--config-set` of the same key replaces (does not accumulate).
     let (table, warnings) = apply_overrides(
         toml::Table::new(),
         &["list.full = false", "list.full = true"],
@@ -2520,7 +2520,7 @@ fn test_cli_override_array_replaces_not_appends() {
 #[test]
 fn test_cli_override_malformed_fragment_drops_layer() {
     // A non-TOML fragment warns and leaves lower layers untouched — the whole
-    // `-c` layer rolls back, including the valid earlier fragment.
+    // `--config-set` layer rolls back, including the valid earlier fragment.
     let base: toml::Table = "[list]\nbranches = true\n".parse().unwrap();
     let (table, warnings) = apply_overrides(base, &["list.full = true", "garbage"]);
     assert_eq!(warnings.len(), 1);
