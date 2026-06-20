@@ -2379,6 +2379,41 @@ mod tests {
         assert_eq!(err.kind(), ErrorKind::NotFound);
     }
 
+    // An *absolute* non-existent program is rejected by
+    // `check_spawn_preconditions` (which stats absolute paths) before any spawn,
+    // exercising the `record_failed` precondition arms rather than the
+    // spawn-error arms above.
+    #[test]
+    fn test_cmd_pipe_into_source_precondition_failure_resolves_trace() {
+        let err = Cmd::new("/no/such/abs-source-7f3a9b2c")
+            .pipe_into(Cmd::new("cat"))
+            .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::NotFound);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_pipe_into_sink_precondition_failure_resolves_trace() {
+        // Source preconditions pass (relative program); the sink's fail.
+        let err = Cmd::new("printf")
+            .arg("x")
+            .pipe_into(Cmd::new("/no/such/abs-sink-7f3a9b2c"))
+            .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn test_stream_command_error_display_is_the_output() {
+        // The Display impl exists only for the Error bound; callers read fields
+        // via Repository::extract_failed_command, so nothing else exercises it.
+        let err = StreamCommandError {
+            output: "fatal: ref exists".to_string(),
+            command: "git worktree add /x".to_string(),
+            exit_info: "exit code 128".to_string(),
+        };
+        assert_eq!(err.to_string(), "fatal: ref exists");
+    }
+
     #[test]
     #[cfg(unix)]
     fn test_cmd_shell_stream_with_stdin() {
