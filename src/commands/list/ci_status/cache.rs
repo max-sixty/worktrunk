@@ -123,6 +123,12 @@ impl CachedCiStatus {
         cache::cache_dir(repo, KIND)
     }
 
+    /// Whether any CI status has ever been cached in this repo (the
+    /// directory is created on first write and never removed by reads).
+    pub(super) fn cache_dir_exists(repo: &Repository) -> bool {
+        Self::cache_dir(repo).is_dir()
+    }
+
     /// Get the cache file path for a branch.
     fn cache_file(repo: &Repository, branch: &str) -> PathBuf {
         let safe_branch = sanitize_for_filename(branch);

@@ -213,6 +213,33 @@ Persistent flag values for [2mwt list[0m. Override on command line as needed.
 [107m [0m [2mtask-timeout-ms = [0m[2m[33m0[0m[2m   [0m[2m# Kill individual git commands after N ms; 0 disables[0m
 [107m [0m [2mtimeout-ms = [0m[2m[33m0[0m[2m        [0m[2m# Wall-clock budget for the entire collect phase; 0 disables[0m
 
+[1mCustom columns [experimental][0m
+
+Custom columns add per-branch context to the [2mwt list[0m table. Each
+[2m[list.custom-columns][0m entry is a column: the key is the header, the template
+renders each row's cell.
+
+[107m [0m [2m[36m[list.custom-columns.Ticket][0m
+[107m [0m [2mtemplate = [0m[2m[32m"{{ vars.ticket }}"[0m[2m   [0m[2m# Required; the result is the cell text[0m
+[107m [0m [2mwidth = [0m[2m[33m20[0m[2m                       [0m[2m# Optional max display width (default: 40)[0m
+[107m [0m [2mpriority = [0m[2m[33m9[0m[2m                     [0m[2m# Optional drop order when the terminal narrows;[0m
+[107m [0m [2m                                 [0m[2m# lower = kept longer (default: 9, the URL band)[0m
+
+Templates may reference [2m{{ branch }}[0m, [2m{{ worktree_path }}[0m,
+[2m{{ worktree_name }}[0m (empty for branch-only rows), and [2m{{ vars.* }}[0m —
+per-branch values stored with
+[2mwt config state vars set[0m.
+All standard filters work ([2msanitize[0m, [2mhash_port[0m, [2mcodename[0m, …). A row
+where the template renders empty (e.g. a branch without the vars key) shows an
+empty cell; a column that is empty for every row is dropped from the table.
+[2mwt list --format json[0m includes the rendered values under [2mcolumns[0m.
+
+A [2mNote[0m column showing free-form descriptions, set per branch with
+[2mwt config state vars set note "Bug fix for production fire"[0m:
+
+[107m [0m [2m[36m[list.custom-columns.Note][0m
+[107m [0m [2mtemplate = [0m[2m[32m"{{ vars.note }}"[0m
+
 [32mCommit[0m
 
 Shared by [2mwt step commit[0m, [2mwt step squash[0m, and [2mwt merge[0m.

@@ -190,6 +190,39 @@ task-timeout-ms = 0   # Kill individual git commands after N ms; 0 disables
 timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disables
 ```
 
+#### Custom columns
+
+<span class="badge-experimental"></span>
+
+Custom columns add per-branch context to the `wt list` table. Each
+`[list.custom-columns]` entry is a column: the key is the header, the template
+renders each row's cell.
+
+```toml
+[list.custom-columns.Ticket]
+template = "{{ vars.ticket }}"   # Required; the result is the cell text
+width = 20                       # Optional max display width (default: 40)
+priority = 9                     # Optional drop order when the terminal narrows;
+                                 # lower = kept longer (default: 9, the URL band)
+```
+
+Templates may reference `{{ branch }}`, `{{ worktree_path }}`,
+`{{ worktree_name }}` (empty for branch-only rows), and `{{ vars.* }}` —
+per-branch values stored with
+[`wt config state vars set`](@/config.md#wt-config-state-vars).
+All standard filters work (`sanitize`, `hash_port`, `codename`, …). A row
+where the template renders empty (e.g. a branch without the vars key) shows an
+empty cell; a column that is empty for every row is dropped from the table.
+`wt list --format json` includes the rendered values under `columns`.
+
+A `Note` column showing free-form descriptions, set per branch with
+`wt config state vars set note "Bug fix for production fire"`:
+
+```toml
+[list.custom-columns.Note]
+template = "{{ vars.note }}"
+```
+
 ### Commit
 
 Shared by `wt step commit`, `wt step squash`, and `wt merge`.

@@ -734,6 +734,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn nix_signaller_escalates_to_sigkill_when_sigterm_ignored() {
+        use std::os::unix::process::CommandExt;
         use std::process::Command;
         use std::time::Duration;
 
@@ -741,6 +742,12 @@ mod tests {
         // child touches `ready` *after* the trap is installed; the test waits
         // for that file so the first SIGTERM can't race trap installation
         // (which would let the child die on SIGTERM and report signal 15).
+        //
+        // The trap also forces the shell to fork a separate `sleep` child
+        // rather than exec it, so the tree is sh → sleep. `process_group(0)`
+        // makes sh a group leader (the `sleep` inherits its group) so the
+        // orphaned grandchild can be reaped after sh is killed — see the group
+        // SIGKILL below.
         let tmp = tempfile::tempdir().unwrap();
         let ready = tmp.path().join("ready");
         let mut child = Command::new("sh")
@@ -749,6 +756,7 @@ mod tests {
                 "trap '' TERM; : > {}; sleep 30",
                 ready.to_str().unwrap()
             ))
+            .process_group(0)
             .spawn()
             .unwrap();
         let pid = child.id();
@@ -766,6 +774,17 @@ mod tests {
         // tests already cover that the production `REAP_KILL_DEADLINE` value
         // flows through unchanged.
         escalate_terminate(&NixSignaller, &[pid], Duration::from_millis(200));
+
+        // `escalate_terminate` SIGKILLs only sh's pid, orphaning the forked
+        // `sleep` grandchild — reparented to init, it would linger ~30s holding
+        // this test's inherited stdout/stderr, which nextest reports as a leak.
+        // sh leads its own process group, so SIGKILL the whole group (negative
+        // pid) to reap the grandchild before the test returns. sh is already a
+        // zombie here, so this only reaches the `sleep`.
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(-(pid as i32)),
+            nix::sys::signal::Signal::SIGKILL,
+        );
 
         // Must have been SIGKILLed despite ignoring SIGTERM.
         use std::os::unix::process::ExitStatusExt;

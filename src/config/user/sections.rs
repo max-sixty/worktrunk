@@ -127,6 +127,37 @@ impl Merge for CommitGenerationConfig {
     }
 }
 
+/// A custom column in the `wt list` table, keyed by its header text.
+///
+/// The value is a minijinja template rendered per row with `{{ branch }}`,
+/// `{{ worktree_path }}`, `{{ worktree_name }}` (empty for branch-only rows),
+/// and `{{ vars.* }}` (per-branch state from `wt config state vars set`).
+/// Rows where the template renders empty show an empty cell; a column that is
+/// empty for every row is dropped from the table.
+///
+/// *(Experimental — fields may change in future releases.)*
+///
+/// ```toml
+/// [list.custom-columns.Ticket]
+/// template = "{{ vars.ticket }}"
+/// ```
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+pub struct ListColumnConfig {
+    /// Template rendered per row; the result is the cell text
+    pub template: String,
+
+    /// Maximum display width; longer values truncate (default: 40).
+    /// Values below the header's width are raised to it — a column is never
+    /// narrower than its header.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<usize>,
+
+    /// Drop order when the terminal narrows; lower = kept longer (default: 9,
+    /// alongside the URL column; built-in columns range 0-13)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<u8>,
+}
+
 /// Configuration for the `wt list` command
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
 pub struct ListConfig {
@@ -160,6 +191,16 @@ pub struct ListConfig {
     /// Disabled when --full is used. Default: no budget (wait for all results).
     #[serde(rename = "timeout-ms", skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
+
+    /// Custom columns, keyed by header text. See [`ListColumnConfig`].
+    ///
+    /// *(Experimental — fields may change in future releases.)*
+    #[serde(
+        default,
+        rename = "custom-columns",
+        skip_serializing_if = "BTreeMap::is_empty"
+    )]
+    pub custom_columns: BTreeMap<String, ListColumnConfig>,
 }
 
 impl ListConfig {
@@ -202,6 +243,15 @@ impl ListConfig {
 
 impl Merge for ListConfig {
     fn merge_with(&self, other: &Self) -> Self {
+        // Custom columns merge per key: a more specific layer overrides or
+        // adds individual columns without clearing the rest.
+        let mut custom_columns = self.custom_columns.clone();
+        custom_columns.extend(
+            other
+                .custom_columns
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone())),
+        );
         Self {
             full: other.full.or(self.full),
             branches: other.branches.or(self.branches),
@@ -209,6 +259,7 @@ impl Merge for ListConfig {
             summary: other.summary.or(self.summary),
             task_timeout_ms: other.task_timeout_ms.or(self.task_timeout_ms),
             timeout_ms: other.timeout_ms.or(self.timeout_ms),
+            custom_columns,
         }
     }
 }
