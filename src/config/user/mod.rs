@@ -14,10 +14,32 @@ mod sections;
 mod tests;
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use super::ConfigError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+/// Inline config overrides from the CLI `--config-set <toml>` flag, in
+/// invocation order.
+///
+/// Set once from `main` after arg parsing (mirroring [`set_config_path`]) and
+/// applied by [`UserConfig::load_with_warnings`] as the highest-priority layer,
+/// above config files and `WORKTRUNK_*` env vars. Each entry is an independent
+/// TOML fragment (e.g. `list.full = true`); later entries replace earlier ones
+/// for the same key.
+static CONFIG_OVERRIDES: OnceLock<Vec<String>> = OnceLock::new();
+
+/// Record the CLI `--config-set` overrides (called once from the
+/// `--config-set` flag in `main`).
+pub fn set_config_overrides(overrides: Vec<String>) {
+    CONFIG_OVERRIDES.set(overrides).ok();
+}
+
+/// The CLI `--config-set` overrides, empty when the flag was not used.
+fn cli_config_overrides() -> &'static [String] {
+    CONFIG_OVERRIDES.get().map_or(&[], Vec::as_slice)
+}
 
 // Re-export public types
 pub use merge::Merge;
@@ -28,8 +50,9 @@ pub use path::{
 pub use resolved::ResolvedConfig;
 pub use schema::valid_user_config_keys;
 pub use sections::{
-    CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListConfig, MergeConfig, RemoveConfig,
-    StageMode, StepConfig, SwitchConfig, SwitchPickerConfig, UserProjectOverrides,
+    CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListColumnConfig, ListConfig,
+    MergeConfig, RemoveConfig, StageMode, StepConfig, SwitchConfig, SwitchPickerConfig,
+    UserProjectOverrides,
 };
 
 /// Describes a problem encountered during config loading. Each variant
@@ -55,6 +78,10 @@ pub enum LoadError {
         err: String,
         vars: Vec<(String, String)>,
     },
+    /// Lower layers loaded cleanly; applying CLI `--config-set` overrides
+    /// failed — either a fragment was not valid TOML or the merged result no
+    /// longer deserializes. `overrides` lists the raw values for attribution.
+    CliOverride { err: String, overrides: Vec<String> },
     /// Validation errors (e.g. empty worktree-path).
     Validation(String),
 }
@@ -70,6 +97,7 @@ impl std::fmt::Display for LoadError {
                 )
             }
             LoadError::Env { err, .. } => write!(f, "{err}"),
+            LoadError::CliOverride { err, .. } => write!(f, "{err}"),
             LoadError::Validation(err) => write!(f, "{err}"),
         }
     }
@@ -459,30 +487,21 @@ impl UserConfig {
             );
         }
 
-        // 3. Env-var overrides (highest priority)
+        // 3. Env-var overrides (override config files)
         let env_vars = parse_worktrunk_env_vars();
+        if !env_vars.is_empty() {
+            // Resolve each env var's type independently: probe typed form against
+            // the file table, fall back to string if typed doesn't fit the target
+            // field. This handles mixed cases (e.g., WORKTRUNK__LIST__TIMEOUT_MS=100
+            // needs Integer for u64, WORKTRUNK_WORKTREE_PATH=42 needs String).
+            let file_table = merged_table.clone();
+            let env_overlay = resolve_env_overlay(&file_table, &env_vars);
+            deep_merge_table(&mut merged_table, env_overlay);
 
-        if env_vars.is_empty() {
-            return Self::finalize(merged_table, warnings);
-        }
-
-        // Resolve each env var's type independently: probe typed form against
-        // the file table, fall back to string if typed doesn't fit the target
-        // field. This handles mixed cases (e.g., WORKTRUNK__LIST__TIMEOUT_MS=100
-        // needs Integer for u64, WORKTRUNK_WORKTREE_PATH=42 needs String).
-        let file_table = merged_table.clone();
-        let env_overlay = resolve_env_overlay(&file_table, &env_vars);
-        deep_merge_table(&mut merged_table, env_overlay);
-
-        match toml::Value::Table(merged_table).try_into::<Self>() {
-            Ok(config) => match config.validate() {
-                Ok(()) => (config, warnings),
-                Err(e) => {
-                    warnings.push(LoadError::Validation(e.0));
-                    (Self::default(), warnings)
-                }
-            },
-            Err(err) => {
+            // Env overlay broke deserialization — fall back to file-only config.
+            // Each file was individually validated by load_config_file(), so the
+            // merged table should deserialize cleanly.
+            if let Err(err) = toml::Value::Table(merged_table.clone()).try_into::<Self>() {
                 warnings.push(LoadError::Env {
                     err: err.to_string(),
                     vars: env_vars
@@ -490,12 +509,66 @@ impl UserConfig {
                         .map(|v| (v.name.clone(), v.raw_value.clone()))
                         .collect(),
                 });
-                // Env overlay broke deserialization — fall back to file-only config.
-                // Each file was individually validated by load_config_file(), so the
-                // merged table should deserialize cleanly. If it doesn't, finalize()
-                // falls back to defaults.
-                Self::finalize(file_table, warnings)
+                merged_table = file_table;
             }
+        }
+
+        // 4. CLI `--config-set` overrides (override env vars and config files)
+        Self::apply_cli_overrides(cli_config_overrides(), &mut merged_table, &mut warnings);
+
+        Self::finalize(merged_table, warnings)
+    }
+
+    /// Apply CLI `--config-set <toml>` overrides as the highest-priority layer.
+    ///
+    /// Each override is an independent TOML fragment merged in order, so a
+    /// later override replaces an earlier one for the same key. Scalars and
+    /// arrays replace the lower-layer value, while nested tables deep-merge
+    /// (via [`deep_merge_table`]) so sibling keys survive —
+    /// `--config-set list.full=true` leaves `list.branches` untouched.
+    ///
+    /// The whole layer degrades as a unit: if any fragment fails to parse, or
+    /// the merged result fails to deserialize or validate, every override is
+    /// dropped and a [`LoadError::CliOverride`] is recorded, so a bad override
+    /// never silently corrupts (or wipes) the lower layers.
+    fn apply_cli_overrides(
+        overrides: &[String],
+        merged_table: &mut toml::Table,
+        warnings: &mut Vec<LoadError>,
+    ) {
+        if overrides.is_empty() {
+            return;
+        }
+
+        let base = merged_table.clone();
+        for raw in overrides {
+            match raw.parse::<toml::Table>() {
+                Ok(fragment) => deep_merge_table(merged_table, fragment),
+                Err(err) => {
+                    warnings.push(LoadError::CliOverride {
+                        err: err.to_string(),
+                        overrides: overrides.to_vec(),
+                    });
+                    *merged_table = base;
+                    return;
+                }
+            }
+        }
+
+        // Probe deserialize *and* validate, so a semantically-invalid override
+        // (e.g. an empty worktree-path) drops just this layer rather than
+        // falling through to finalize(), which would wipe the lower layers to
+        // defaults.
+        let probe = match toml::Value::Table(merged_table.clone()).try_into::<Self>() {
+            Ok(config) => config.validate().map_err(|e| e.0),
+            Err(err) => Err(err.to_string()),
+        };
+        if let Err(err) = probe {
+            warnings.push(LoadError::CliOverride {
+                err,
+                overrides: overrides.to_vec(),
+            });
+            *merged_table = base;
         }
     }
 

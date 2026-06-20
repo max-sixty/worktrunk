@@ -194,10 +194,10 @@ pub struct FailedCommand {
 ///
 /// `Display` is intentionally a single-line summary — `format_with_gutter`
 /// in `print_command_error` renders [`Self::combined_output`] separately for
-/// the multi-line body. The streaming path (`run_command_delayed_stream`)
-/// uses a sibling crate-private `StreamCommandError` for the same role,
-/// where stdout/stderr are interleaved and a string body is the most we can
-/// recover.
+/// the multi-line body. The delayed-stream path (`Cmd::delayed_stream`) uses
+/// [`StreamCommandError`](crate::shell_exec::StreamCommandError) for the same
+/// role, where stdout/stderr are interleaved and a string body is the most we
+/// can recover.
 #[derive(Debug, Clone)]
 pub struct CommandError {
     /// Program name, e.g., `"git"`.

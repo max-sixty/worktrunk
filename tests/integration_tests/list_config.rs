@@ -49,7 +49,7 @@ branches = true
 }
 
 #[rstest]
-fn test_list_config_cli_override(repo: TestRepo) {
+fn test_list_config_branches_flag_overrides_file(repo: TestRepo) {
     // Create a branch without a worktree
     repo.run_git(&["branch", "feature"]);
 
@@ -522,6 +522,63 @@ fn test_list_config_env_override_validation_failure(repo: TestRepo) {
     });
 }
 
+/// A `--config-set` override is the highest-priority layer: it wins over the
+/// config file. A file that disables branch listing is overridden back on,
+/// surfacing the branch without a worktree.
+#[rstest]
+fn test_list_config_cli_override_beats_file(repo: TestRepo) {
+    fs::write(repo.test_config_path(), "[list]\nbranches = false\n").unwrap();
+    repo.run_git(&["branch", "feature"]);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["--config-set", "list.branches = true", "list"])
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// A malformed `--config-set` fragment warns (attributed to `--config-set`,
+/// listing the bad value) and leaves the file config intact — the branch is
+/// still listed.
+#[rstest]
+fn test_list_config_cli_override_malformed_warns_on_stderr(repo: TestRepo) {
+    fs::write(repo.test_config_path(), "[list]\nbranches = true\n").unwrap();
+    repo.run_git(&["branch", "feature"]);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["--config-set", "garbage", "list"])
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// `--config-set` is a `global` arg, so it applies in any position — including
+/// after the subcommand. Pins that `wt list --config-set …` is accepted (and
+/// takes effect: branch listing toggles on).
+#[rstest]
+fn test_list_config_cli_override_after_subcommand(repo: TestRepo) {
+    fs::write(repo.test_config_path(), "[list]\nbranches = false\n").unwrap();
+    repo.run_git(&["branch", "feature"]);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["list", "--config-set", "list.branches = true"])
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 /// Bad values in non-section fields (projects, skip-*-prompt) must still be
 /// attributed to the file, not to env vars.
 #[rstest]
@@ -630,5 +687,164 @@ task-timeout-ms = 1
         !stderr.contains("timed out"),
         "Expected no timeout message with --full flag, but got: {}",
         stderr
+    );
+}
+
+#[rstest]
+fn test_list_custom_columns(repo: TestRepo) {
+    // A vars-backed column (only feature-a has the key; other rows render
+    // empty cells) and a filter-driven column with a value on every row.
+    fs::write(
+        repo.test_config_path(),
+        r#"[list.custom-columns.Ticket]
+template = "{{ vars.ticket }}"
+
+[list.custom-columns.Codename]
+template = "{{ branch | codename }}"
+priority = 12
+"#,
+    )
+    .unwrap();
+    repo.run_git(&[
+        "config",
+        "worktrunk.state.feature-a.vars.ticket",
+        "JIRA-1234",
+    ]);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_list_custom_column_empty_everywhere_dropped(repo: TestRepo) {
+    // No branch has the vars key, so the column drops from the table
+    // entirely (no header, no reserved width).
+    fs::write(
+        repo.test_config_path(),
+        r#"[list.custom-columns.Ticket]
+template = "{{ vars.ticket }}"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_list_custom_columns_json(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        r#"[list.custom-columns.Ticket]
+template = "{{ vars.ticket }}"
+"#,
+    )
+    .unwrap();
+    repo.run_git(&[
+        "config",
+        "worktrunk.state.feature-a.vars.ticket",
+        "JIRA-1234",
+    ]);
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["list", "--format=json"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let items = json.as_array().unwrap();
+
+    let by_branch = |branch: &str| {
+        items
+            .iter()
+            .find(|item| item["branch"] == branch)
+            .unwrap_or_else(|| panic!("no item for branch {branch}"))
+    };
+
+    // Rendered value keyed by header; rows with an empty cell omit the key
+    assert_eq!(by_branch("feature-a")["columns"]["Ticket"], "JIRA-1234");
+    assert!(by_branch("feature-b")["columns"].is_null());
+}
+
+#[rstest]
+fn test_list_custom_column_invalid_template(repo: TestRepo) {
+    // An unknown top-level variable aborts wt list with the available set
+    fs::write(
+        repo.test_config_path(),
+        r#"[list.custom-columns.Ticket]
+template = "{{ branhc }}"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_list_custom_column_worktree_identity(repo: TestRepo) {
+    // A template referencing worktree identity sets `needs_worktree`, so the
+    // per-row worktree-data lookup runs: a worktree-attached row resolves the
+    // directory name, a branch with no worktree falls back to an empty cell.
+    fs::write(
+        repo.test_config_path(),
+        r#"[list.custom-columns.Dir]
+template = "{{ worktree_name }}"
+"#,
+    )
+    .unwrap();
+    // A branch with no worktree — only visible with --branches.
+    repo.run_git(&["branch", "lonely"]);
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["list", "--branches", "--format=json"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let items = json.as_array().unwrap();
+
+    let by_branch = |branch: &str| {
+        items
+            .iter()
+            .find(|item| item["branch"] == branch)
+            .unwrap_or_else(|| panic!("no item for branch {branch}"))
+    };
+
+    // Worktree-attached row: the Dir column is the worktree directory name.
+    let feature_dir = by_branch("feature-a")["columns"]["Dir"]
+        .as_str()
+        .expect("feature-a has a Dir value");
+    assert!(
+        feature_dir.contains("feature-a"),
+        "worktree row shows its directory name, got: {feature_dir}"
+    );
+
+    // Branch with no worktree: worktree_name is empty, so the cell is omitted.
+    assert!(
+        by_branch("lonely")["columns"].is_null(),
+        "branch-only row has no worktree name, so the Dir cell is empty"
     );
 }

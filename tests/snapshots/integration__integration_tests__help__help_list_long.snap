@@ -71,6 +71,9 @@ Usage: [1m[36mwt list[0m [36m[OPTIONS][0m
       [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
+      [1m[36m--config-set[0m[36m [0m[36m<toml>[0m
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/)
 
@@ -128,21 +131,22 @@ Output as JSON for scripting:
 
 [1m[32mColumns[0m
 
- Column                                                 Shows                                                
- ─────── ─────────────────────────────────────────────────────────────────────────────────────────────────── 
- Branch  Branch name                                                                                         
- Status  Compact symbols (see below)                                                                         
- HEAD±   Uncommitted changes: +added -deleted lines                                                          
- main↕   Commits ahead/behind default branch                                                                 
- main…±  Line diffs since the merge-base (three-dot) with the default branch; [2m--full[0m only                    
- Summary LLM-generated branch summary; requires [2m--full[0m, [2msummary = true[0m, and [2mcommit.generation[0m [experimental] 
- Remote⇅ Commits ahead/behind tracking branch                                                                
- CI      PR/MR number colored by pipeline status; [2m--full[0m only                                                
- Path    Worktree directory                                                                                  
- URL     Dev server URL from project config; dimmed if port is not listening                                 
- Commit  Short hash (8 chars)                                                                                
- Age     Time since last commit                                                                              
- Message Last commit message (truncated)                                                                     
+  Column                                                 Shows                                                
+ ──────── ─────────────────────────────────────────────────────────────────────────────────────────────────── 
+ Branch   Branch name                                                                                         
+ Status   Compact symbols (see below)                                                                         
+ HEAD±    Uncommitted changes: +added -deleted lines                                                          
+ main↕    Commits ahead/behind default branch                                                                 
+ main…±   Line diffs since the merge-base (three-dot) with the default branch; [2m--full[0m only                    
+ Summary  LLM-generated branch summary; requires [2m--full[0m, [2msummary = true[0m, and [2mcommit.generation[0m [experimental] 
+ Remote⇅  Commits ahead/behind tracking branch                                                                
+ CI       PR/MR number colored by pipeline status; [2m--full[0m only                                                
+ Path     Worktree directory                                                                                  
+ URL      Dev server URL from project config; dimmed if port is not listening                                 
+ (custom) User-defined custom columns from [2m[list.custom-columns][0m user config [experimental]                   
+ Commit   Short hash (8 chars)                                                                                
+ Age      Time since last commit                                                                              
+ Message  Last commit message (truncated)                                                                     
 
 The [2mmain[0m header label is used regardless of the default branch's actual name.
 
@@ -184,6 +188,15 @@ CI cells are clickable links to the PR or pipeline page, and appear dimmed for a
 [32mLLM summaries [experimental][0m
 
 Reuses the [2mcommit.generation[0m command — the same LLM that generates commit messages. Enable with [2msummary = true[0m in [2m[list][0m config; requires [2m--full[0m. Results are cached until the branch's diff changes.
+
+[32mCustom columns [experimental][0m
+
+Each [2m[list.custom-columns][0m entry in user config adds a column: the key is the header, the template renders each row's cell. Templates can reference per-branch [2m{{ vars.* }}[0m stored with [2mwt config state vars set[0m — useful for tracking what each of many (often agent-driven) branches is for:
+
+[107m [0m [2m[36m[list.custom-columns.Ticket][0m
+[107m [0m [2mtemplate = [0m[2m[32m"{{ vars.ticket }}"[0m
+
+A column that renders empty for every row is dropped from the table. Templates, widths, and drop priority: custom columns config.
 
 [1m[32mStatus symbols[0m
 
@@ -284,31 +297,32 @@ Query structured data with [2m--format=json[0m:
 
 [1mFields:[0m
 
-       Field           Type                                               Description                                           
- ────────────────── ─────────── ─────────────────────────────────────────────────────────────────────────────────────────────── 
- [2mbranch[0m             string/null Branch name (null for detached HEAD)                                                            
- [2mpath[0m               string      Worktree path (absent for branches without worktrees)                                           
- [2mkind[0m               string      [2m"worktree"[0m or [2m"branch"[0m                                                                          
- [2mcommit[0m             object      Commit info (see below)                                                                         
- [2mworking_tree[0m       object      Working tree state (see below)                                                                  
- [2mmain_state[0m         string      Relation to the default branch (see below)                                                      
- [2mintegration_reason[0m string      Why branch is integrated (see below)                                                            
- [2moperation_state[0m    string      [2m"conflicts"[0m, [2m"rebase"[0m, or [2m"merge"[0m (see Worktree); absent when clean                             
- [2mmain[0m               object      Relationship to the default branch (see below); absent when is_main                             
- [2mremote[0m             object      Tracking branch info (see below); absent when no tracking                                       
- [2mworktree[0m           object      Worktree metadata (see below)                                                                   
- [2mis_main[0m            boolean     Is the main worktree                                                                            
- [2mis_current[0m         boolean     Is the current worktree                                                                         
- [2mis_previous[0m        boolean     Previous worktree from wt switch                                                                
- [2mci[0m                 object      CI status (see below); absent when no CI                                                        
- [2mrepo_url[0m           string      Repository web URL derived from the primary remote; absent when the remote URL cannot be parsed 
- [2mrepo[0m               object      Structured repository metadata (see below); includes [2mremote[0m                                     
- [2murl[0m                string      Dev server URL from project config; absent when not configured                                  
- [2murl_active[0m         boolean     Whether the URL's port is listening; absent when not configured                                 
- [2msummary[0m            string      LLM-generated branch summary; absent when not configured or no summary                          
- [2mstatusline[0m         string      Pre-formatted status with ANSI colors                                                           
- [2msymbols[0m            string      Raw status symbols without colors (e.g., [2m"!?↓"[0m)                                                 
- [2mvars[0m               object      Per-branch variables from [2mwt config state vars[0m (absent when empty)                              
+       Field           Type                                               Description                                            
+ ────────────────── ─────────── ──────────────────────────────────────────────────────────────────────────────────────────────── 
+ [2mbranch[0m             string/null Branch name (null for detached HEAD)                                                             
+ [2mpath[0m               string      Worktree path (absent for branches without worktrees)                                            
+ [2mkind[0m               string      [2m"worktree"[0m or [2m"branch"[0m                                                                           
+ [2mcommit[0m             object      Commit info (see below)                                                                          
+ [2mworking_tree[0m       object      Working tree state (see below)                                                                   
+ [2mmain_state[0m         string      Relation to the default branch (see below)                                                       
+ [2mintegration_reason[0m string      Why branch is integrated (see below)                                                             
+ [2moperation_state[0m    string      [2m"conflicts"[0m, [2m"rebase"[0m, or [2m"merge"[0m (see Worktree); absent when clean                              
+ [2mmain[0m               object      Relationship to the default branch (see below); absent when is_main                              
+ [2mremote[0m             object      Tracking branch info (see below); absent when no tracking                                        
+ [2mworktree[0m           object      Worktree metadata (see below)                                                                    
+ [2mis_main[0m            boolean     Is the main worktree                                                                             
+ [2mis_current[0m         boolean     Is the current worktree                                                                          
+ [2mis_previous[0m        boolean     Previous worktree from wt switch                                                                 
+ [2mci[0m                 object      CI status (see below); absent when no CI                                                         
+ [2mrepo_url[0m           string      Repository web URL derived from the primary remote; absent when the remote URL cannot be parsed  
+ [2mrepo[0m               object      Structured repository metadata (see below); includes [2mremote[0m                                      
+ [2murl[0m                string      Dev server URL from project config; absent when not configured                                   
+ [2murl_active[0m         boolean     Whether the URL's port is listening; absent when not configured                                  
+ [2msummary[0m            string      LLM-generated branch summary; absent when not configured or no summary                           
+ [2mstatusline[0m         string      Pre-formatted status with ANSI colors                                                            
+ [2msymbols[0m            string      Raw status symbols without colors (e.g., [2m"!?↓"[0m)                                                  
+ [2mvars[0m               object      Per-branch variables from [2mwt config state vars[0m (absent when empty)                               
+ [2mcolumns[0m            object      Rendered custom column values keyed by header; empty cells omitted (absent when none configured) 
 
 [32mCommit object[0m
 

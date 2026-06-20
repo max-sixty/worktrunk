@@ -51,6 +51,9 @@ Usage: [1m[36mwt config create[0m [36m[OPTIONS][0m
       [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
+      [1m[36m--config-set[0m[36m [0m[36m<toml>[0m
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/)
 
@@ -164,6 +167,33 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# task-timeout-ms = 0   # Kill individual git commands after N ms; 0 disables[0m
 [107m [0m [2m# timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disables[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# #### Custom columns [experimental][0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Custom columns add per-branch context to the `wt list` table. Each[0m
+[107m [0m [2m# `[list.custom-columns]` entry is a column: the key is the header, the template[0m
+[107m [0m [2m# renders each row's cell.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# [list.custom-columns.Ticket][0m
+[107m [0m [2m# template = "{{ vars.ticket }}"   # Required; the result is the cell text[0m
+[107m [0m [2m# width = 20                       # Optional max display width (default: 40)[0m
+[107m [0m [2m# priority = 9                     # Optional drop order when the terminal narrows;[0m
+[107m [0m [2m#                                  # lower = kept longer (default: 9, the URL band)[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Templates may reference `{{ branch }}`, `{{ worktree_path }}`,[0m
+[107m [0m [2m# `{{ worktree_name }}` (empty for branch-only rows), and `{{ vars.* }}` —[0m
+[107m [0m [2m# per-branch values stored with[0m
+[107m [0m [2m# `wt config state vars set` (https://worktrunk.dev/config/#wt-config-state-vars).[0m
+[107m [0m [2m# All standard filters work (`sanitize`, `hash_port`, `codename`, …). A row[0m
+[107m [0m [2m# where the template renders empty (e.g. a branch without the vars key) shows an[0m
+[107m [0m [2m# empty cell; a column that is empty for every row is dropped from the table.[0m
+[107m [0m [2m# `wt list --format json` includes the rendered values under `columns`.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# A `Note` column showing free-form descriptions, set per branch with[0m
+[107m [0m [2m# `wt config state vars set note "Bug fix for production fire"`:[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# [list.custom-columns.Note][0m
+[107m [0m [2m# template = "{{ vars.note }}"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Commit[0m
 [107m [0m [2m#[0m

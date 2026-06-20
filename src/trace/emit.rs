@@ -30,6 +30,25 @@
 //! at the layer — means the wire format lives in one place
 //! (`logging.rs`) and emit sites carry no string-formatting noise.
 //!
+//! # The subprocess chokepoint: [`CommandTrace`]
+//!
+//! Every subprocess command record (`cmd=…`) is emitted by exactly one type:
+//! [`CommandTrace`]. The underlying `command_completed` / `command_errored`
+//! writers are private to this module, so the *only* way to produce a command
+//! record is to construct a `CommandTrace` and resolve it with `complete` /
+//! `fail`. This is deliberate: subprocesses are spawned from many places
+//! (`shell_exec::Cmd::{run, stream, delayed_stream, pipe_into}`, the
+//! concurrent-command runner, pipeline steps, `wt step tether`, the fsmonitor
+//! daemon launch), and before this chokepoint each path emitted — or, more
+//! often, silently *forgot* to emit — its own record. Routing them all through
+//! one guard means a path either traces or doesn't compile a record at all,
+//! rather than skipping tracing by omission.
+//!
+//! `CommandTrace` is `#[must_use]` and asserts on drop that it was resolved
+//! (debug builds only), so a future spawn site that constructs a guard but
+//! forgets to call `complete`/`fail` trips in tests rather than leaving an
+//! unattributed gap in the timeline.
+//!
 //! # Timing
 //!
 //! In-process spans (everything that isn't a subprocess) use [`Span`], an
@@ -38,9 +57,12 @@
 //! in code paths subprocess records can't see (config load, repo open,
 //! template render).
 //!
-//! Subprocess emission lives in `shell_exec::WtTraceLog`, which captures
-//! `Instant::now()` at `Cmd::run` entry — `tracing` spans can't carry this
-//! across the sync subprocess wait, so the timing stays manual.
+//! Subprocess timing lives in [`CommandTrace`], which captures
+//! `Instant::now()` just before the spawn — `tracing` spans can't carry this
+//! across the sync subprocess wait, so the timing stays manual. The duration
+//! is snapshotted at the moment `complete`/`fail` is called (the command's
+//! resolution point), so a streamed command whose duration isn't known until
+//! the stream finishes still records the correct spawn → wait span.
 //!
 //! # Routing
 //!
@@ -87,14 +109,11 @@ pub fn thread_id() -> u64 {
 }
 
 /// Emit a completed-command record (`ok=true`/`ok=false`).
-pub fn command_completed(
-    context: Option<&str>,
-    cmd: &str,
-    ts: u64,
-    tid: u64,
-    dur_us: u64,
-    ok: bool,
-) {
+///
+/// Private: the sole caller is [`CommandTrace::complete`]. Keeping the writer
+/// module-private makes [`CommandTrace`] the only way to emit a command
+/// record — see the module-level "subprocess chokepoint" note.
+fn command_completed(context: Option<&str>, cmd: &str, ts: u64, tid: u64, dur_us: u64, ok: bool) {
     match context {
         Some(ctx) => tracing::debug!(
             target: WT_TRACE_TARGET,
@@ -119,7 +138,9 @@ pub fn command_completed(
 }
 
 /// Emit a failed-command record (the command didn't run to completion).
-pub fn command_errored(
+///
+/// Private: the sole caller is [`CommandTrace::fail`]. See [`command_completed`].
+fn command_errored(
     context: Option<&str>,
     cmd: &str,
     ts: u64,
@@ -148,6 +169,111 @@ pub fn command_errored(
             dur_us,
             err = %err,
         ),
+    }
+}
+
+/// The single emitter for subprocess command records — every `[wt-trace]`
+/// `cmd=…` line comes from here.
+///
+/// Construct one immediately before spawning a child, then call
+/// [`complete`](Self::complete) (the child exited — `ok=` reflects its status)
+/// or [`fail`](Self::fail) (the command never ran to completion — spawn error,
+/// wait error) exactly once. The record is emitted at that call; the duration
+/// is the elapsed time from construction to resolution, so it brackets the
+/// real spawn → wait span even for streamed commands whose duration isn't
+/// known until the stream finishes.
+///
+/// # Why a guard rather than a free function
+///
+/// Subprocesses are spawned from many code paths with incompatible I/O shapes
+/// (capture, inherit, buffer-then-stream, two-stage pipe, N concurrent
+/// children). They can't share one spawn primitive, but they can share one
+/// *trace* primitive. Centralizing emission here — with the writers private to
+/// this module — means a path either resolves a `CommandTrace` or emits no
+/// record at all, instead of each path re-deriving (and routinely forgetting)
+/// the emit logic.
+///
+/// The `#[must_use]` and the debug-build drop assertion catch the remaining
+/// failure mode: a guard that is constructed but never resolved (a spawn site
+/// that forgot to wire up `complete`/`fail`) trips a test-time assertion rather
+/// than silently producing an unattributed gap in the timeline. The assertion
+/// is suppressed while the thread is panicking so an unrelated panic between
+/// construction and resolution unwinds cleanly instead of aborting.
+#[must_use = "a CommandTrace must be resolved with complete() or fail() to emit its record"]
+pub struct CommandTrace {
+    context: Option<String>,
+    cmd: String,
+    start_ts_us: u64,
+    start: Instant,
+    tid: u64,
+    resolved: bool,
+}
+
+impl CommandTrace {
+    /// Begin tracing a command. Call immediately before spawning the child so
+    /// the captured start time brackets the subprocess.
+    pub fn new(context: Option<&str>, cmd: &str) -> Self {
+        Self {
+            context: context.map(ToOwned::to_owned),
+            cmd: cmd.to_owned(),
+            start_ts_us: now_us(),
+            start: Instant::now(),
+            tid: thread_id(),
+            resolved: false,
+        }
+    }
+
+    /// The child ran to completion; `success` is its exit status. Emits an
+    /// `ok=true`/`ok=false` record with the elapsed duration.
+    pub fn complete(&mut self, success: bool) {
+        let dur_us = self.start.elapsed().as_micros() as u64;
+        command_completed(
+            self.context.as_deref(),
+            &self.cmd,
+            self.start_ts_us,
+            self.tid,
+            dur_us,
+            success,
+        );
+        self.resolved = true;
+    }
+
+    /// Emit a failed record for a command that never produced a child to hold
+    /// a guard against — a precondition failure before spawn, where there is
+    /// nothing to time. Equivalent to `new` immediately followed by `fail`.
+    pub fn record_failed(context: Option<&str>, cmd: &str, err: impl Display) {
+        let mut trace = Self::new(context, cmd);
+        trace.fail(err);
+    }
+
+    /// The command never ran to completion (spawn failure, wait failure).
+    /// Emits an `err=…` record with the elapsed duration.
+    pub fn fail(&mut self, err: impl Display) {
+        let dur_us = self.start.elapsed().as_micros() as u64;
+        command_errored(
+            self.context.as_deref(),
+            &self.cmd,
+            self.start_ts_us,
+            self.tid,
+            dur_us,
+            err,
+        );
+        self.resolved = true;
+    }
+}
+
+impl Drop for CommandTrace {
+    fn drop(&mut self) {
+        // A guard reaching drop unresolved means a spawn path forgot to call
+        // complete()/fail() — catch it in tests. Suppress while panicking so an
+        // unrelated panic between construction and resolution doesn't abort by
+        // double-panicking during unwind.
+        debug_assert!(
+            self.resolved || std::thread::panicking(),
+            "CommandTrace for `{}` dropped without complete()/fail(); \
+             every spawn must resolve its trace (see src/trace/emit.rs)",
+            self.cmd
+        );
     }
 }
 
@@ -220,5 +346,39 @@ impl Drop for Span {
         }
         let dur_us = self.start.elapsed().as_micros() as u64;
         span_completed(&self.name, self.start_ts_us, thread_id(), dur_us);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Resolution (complete/fail) marks the guard so its drop is a no-op. No
+    // tracing subscriber is installed, so the records themselves are dropped —
+    // the point is that the drop-time tripwire does not fire on a resolved
+    // guard. (The wire grammar is locked separately by
+    // `logging::tests::format_wt_trace_renders_each_kind`.)
+    #[test]
+    fn resolved_trace_drops_cleanly() {
+        let mut completed = CommandTrace::new(Some("ctx"), "git status");
+        completed.complete(true);
+        drop(completed);
+
+        let mut failed = CommandTrace::new(None, "git nope");
+        failed.fail(std::io::Error::other("boom"));
+        drop(failed);
+
+        CommandTrace::record_failed(None, "git nope", "precondition");
+    }
+
+    // A guard that reaches drop without complete()/fail() is a spawn site that
+    // forgot to resolve its trace — the debug-build tripwire turns that into a
+    // test failure rather than a silent unattributed gap.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "dropped without complete()/fail()")]
+    fn unresolved_trace_panics_on_drop() {
+        let _trace = CommandTrace::new(None, "git unresolved");
+        // No complete()/fail() — drop here trips the assertion.
     }
 }

@@ -58,6 +58,8 @@ Shortcuts also apply to `--base`. For a fork PR/MR, the head commit is fetched a
 
 When called without arguments, `wt switch` opens an interactive picker to browse and select worktrees with live preview.
 
+The CI column shows cached PR/MR status when earlier runs (`wt list --full`, the statusline) have fetched it — the picker never fetches CI status itself. An entry whose branch has moved or whose TTL has passed keeps its PR/MR number, dimmed.
+
 <figure class="demo">
 <picture>
   <source srcset="/assets/docs/dark/wt-switch-picker.gif" media="(prefers-color-scheme: dark)">
@@ -214,6 +216,9 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
 
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
+
+      <b><span class=c>--config-set</span></b><span class=c> &lt;toml&gt;</span>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug

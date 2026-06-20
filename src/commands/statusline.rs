@@ -748,6 +748,8 @@ fn run_json() -> Result<()> {
             all_vars.insert(branch.clone(), entries);
         }
     }
+    // No custom columns: the statusline path never expands `[list.custom-columns]`
+    // (prompt hot path; its compact format has no column grid).
     let repo_metadata = repo.repo_info();
     let ci_provider_override = repo.forge_platform_override();
     let json_item = json_output::JsonItem::from_list_item(
@@ -755,6 +757,7 @@ fn run_json() -> Result<()> {
         &mut all_vars,
         repo_metadata.as_ref(),
         ci_provider_override.as_deref(),
+        &[],
     );
 
     // Output as JSON array (consistent with wt list --format=json)

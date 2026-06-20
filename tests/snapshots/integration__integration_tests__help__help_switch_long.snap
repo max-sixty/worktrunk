@@ -109,6 +109,9 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
       [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
+      [1m[36m--config-set[0m[36m [0m[36m<toml>[0m
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/)
 
@@ -167,6 +170,8 @@ Shortcuts also apply to [2m--base[0m. For a fork PR/MR, the head commit is fet
 [1m[32mInteractive picker[0m
 
 When called without arguments, [2mwt switch[0m opens an interactive picker to browse and select worktrees with live preview.
+
+The CI column shows cached PR/MR status when earlier runs ([2mwt list --full[0m, the statusline) have fetched it — the picker never fetches CI status itself. An entry whose branch has moved or whose TTL has passed keeps its PR/MR number, dimmed.
 
 [1mKeybindings:[0m
 

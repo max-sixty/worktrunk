@@ -103,6 +103,7 @@ use std::rc::Rc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
 
+use ansi_str::AnsiStr;
 use anyhow::Context;
 // bounded/unbounded/Sender are re-exported by skim::prelude
 use skim::prelude::*;
@@ -523,6 +524,10 @@ pub fn handle_picker(
     // Skip expensive operations — BranchDiff walks history per item,
     // CiStatus hits the network. Both are slow enough that waiting for
     // them adds perceptible cost for a modest column-population win.
+    // Cached CI statuses still appear: when the CiStatus task is skipped
+    // under a progressive handler, collect fills rows from the CI cache
+    // (one local file read per branch, no fetch), so PR/MR numbers from
+    // recent `wt list --full` or statusline runs show in the picker.
     let skip_tasks: std::collections::HashSet<collect::TaskKind> =
         [collect::TaskKind::BranchDiff, collect::TaskKind::CiStatus]
             .into_iter()
@@ -756,7 +761,7 @@ pub fn handle_picker(
     // `Skim::run_with` returns and stderr is safe again).
     let stashed_warnings: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
 
-    let handler: Arc<dyn collect::PickerProgressHandler> =
+    let handler: Arc<progressive_handler::PickerHandler> =
         Arc::new(progressive_handler::PickerHandler {
             tx: tx.clone(),
             shared_items: Arc::clone(&shared_items),
@@ -773,7 +778,7 @@ pub fn handle_picker(
     // Spawn collect on a background thread. The handler holds the only
     // remaining `tx` clone; when the bg thread exits, `tx` drops, and skim's
     // heartbeat stops. Contract: background work done → picker idle.
-    let bg_handler = Arc::clone(&handler);
+    let bg_handler: Arc<dyn collect::PickerProgressHandler> = handler.clone();
     let bg_repo = repo.clone();
     let bg_skip_tasks = skip_tasks.clone();
     let bg_handle = std::thread::Builder::new()
@@ -799,9 +804,11 @@ pub fn handle_picker(
     worktrunk::trace::instant("Picker collect spawned");
 
     // Drop main-thread copies so the bg thread's `tx` clone is the last
-    // sender (its drop is what stops skim's heartbeat).
+    // sender (its drop is what stops skim's heartbeat). The dry run keeps
+    // the handler — skim never runs there, so the heartbeat contract
+    // doesn't apply, and the dump below reads its rendered rows.
     drop(tx);
-    drop(handler);
+    let dry_run_handler = is_dry_run.then_some(handler);
 
     // Dry-run / preview-bench: skim is bypassed. Wait for collect (which
     // spawns previews via the handler) to finish, then for the orchestrator's
@@ -816,7 +823,23 @@ pub fn handle_picker(
         orchestrator.wait_for_idle();
         if is_dry_run {
             drain_stashed_warnings(&stashed_warnings);
-            println!("{}", orchestrator.dump_cache_json());
+            // Final rendered rows (ANSI stripped) — lets tests assert on
+            // picker row content without a PTY.
+            let rows: Vec<String> = dry_run_handler
+                .as_ref()
+                .and_then(|h| h.rendered_slots.get())
+                .map(|slots| {
+                    slots
+                        .iter()
+                        .map(|slot| slot.lock().unwrap().ansi_strip().trim_end().to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let dump = serde_json::json!({
+                "rows": rows,
+                "entries": orchestrator.cache_entries_json(),
+            });
+            println!("{}", serde_json::to_string_pretty(&dump)?);
         }
         return Ok(());
     }
