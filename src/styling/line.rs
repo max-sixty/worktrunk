@@ -210,6 +210,22 @@ mod tests {
         assert_eq!(UnicodeWidthStr::width(s.ansi_strip().as_ref()), 1,);
     }
 
+    /// `width_cjk` counts ambiguous-width characters (like the ellipsis `…`) as
+    /// two columns where `width` counts them as one — the measure skim uses when
+    /// deciding whether to repaint trailing columns.
+    #[test]
+    fn test_width_cjk_counts_ambiguous_as_two() {
+        let s = StyledString::raw("a…b");
+        assert_eq!(s.width(), 3);
+        assert_eq!(s.width_cjk(), 4);
+
+        let mut line = StyledLine::new();
+        line.push_raw("a…");
+        line.push_styled("b…", Style::new().bold());
+        assert_eq!(line.width(), 4);
+        assert_eq!(line.width_cjk(), 6);
+    }
+
     /// truncate_visible respects visual width, handles emoji, and appends reset codes.
     #[test]
     fn test_truncate_visible() {

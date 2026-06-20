@@ -1053,6 +1053,37 @@ mod tests {
     }
 
     #[test]
+    fn fetch_open_prs_bails_without_a_forge_remote() {
+        // A repo with no remote can't be classified as GitHub or GitLab, so
+        // `--prs` reports that instead of shelling out to gh/glab.
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let err = match fetch_open_prs(&test.repo) {
+            Ok(_) => panic!("expected --prs to bail without a forge remote"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("could not determine the forge"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn fetch_open_prs_bails_on_an_unsupported_forge() {
+        // A recognized-but-unsupported forge (here Gitea, by its host) reports
+        // the GitHub/GitLab limitation rather than shelling out.
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        test.run_git(&["remote", "add", "origin", "https://gitea.com/o/r.git"]);
+        let err = match fetch_open_prs(&test.repo) {
+            Ok(_) => panic!("expected --prs to bail on an unsupported forge"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("supports GitHub and GitLab"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
     fn parse_gitlab_maps_iid_source_branch_and_username() {
         // `glab mr list --output json`: iid (not number), source_branch,
         // author.username, draft, web_url.
