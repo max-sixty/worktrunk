@@ -135,13 +135,16 @@ path = "tests/integration.rs"
 required-features = ["cli", "syntax-highlighting"]
 
 [dependencies]
-anyhow = "1.0"
+anyhow = "1.0.102"
 anstream = "1.0"
-anstyle = "1.0"
+anstyle = "1.0.13"
 ansi-str = "0.9"
 color-print = "0.3.7"
 askama = { version = "0.16", default-features = false, features = ["derive", "std"] }
-chrono = "0.4"
+# Floor is 0.4.31, not 0.4: `DateTime::from_timestamp` (utils.rs, statusline.rs,
+# backup.rs) landed in chrono 0.4.31. `-Z minimal-versions` otherwise resolves
+# 0.4.0 and our own lib fails to compile.
+chrono = "0.4.31"
 # `unstable-markdown` renders our `///` doc-comments as styled help (bold inline
 # code, literal `[experimental]`). skim 0.20 pulled it in transitively; skim 4
 # (default-features = false) does not, so depend on it explicitly to keep help
@@ -154,11 +157,11 @@ indexmap = { version = "2.14", features = ["serde"] }
 etcetera = "0.11"
 # `log` is still used pervasively for application logging; events flow into
 # `tracing` via `tracing-log::LogTracer` (CLI binary only).
-log = "0.4"
+log = "0.4.31"
 # 0.1.30 added the `enabled!` macro `src/trace/emit.rs::Span::drop` uses to
 # elide span emission when the subscriber doesn't care. Older versions only
 # expose the per-level macros and dispatcher checks.
-tracing = "0.1.30"
+tracing = "0.1.35"
 # Compatibility shim: forward `log::*` macros into `tracing`. ~100 call sites
 # across the codebase keep using `log::debug!` etc.; only the routing layer
 # moved.
@@ -172,14 +175,14 @@ tracing-subscriber = { version = "0.3.17", default-features = false, features = 
 # Only enable needed features - saves ~200KB by excluding debug, macros, multi_template
 minijinja = { version = "2.20", default-features = false, features = ["builtins", "serde", "std_collections"] }
 rayon = "1.12"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
 shell-escape = "0.1"
 shellexpand = "3.1"
-strsim = "0.11"
+strsim = "0.11.1"
 strum = { version = "0.28", features = ["derive"] }
 synoptic = "2"
-terminal_size = "0.4"
+terminal_size = "0.4.3"
 toml = { version = "1.0", features = ["preserve_order"] }
 toml_edit = { version = "0.25", features = ["serde"] }
 # tree-sitter and tree-sitter-highlight should use matching versions.
@@ -189,24 +192,24 @@ toml_edit = { version = "0.25", features = ["serde"] }
 tree-sitter = { version = "0.26", optional = true }
 tree-sitter-bash = { version = "0.25.1", optional = true }
 tree-sitter-highlight = { version = "0.26", optional = true }
-unicode-width = "0.2"
+unicode-width = "0.2.1"
 wrap-ansi = "0.1"
 osc8 = "0.1.0"
 supports-hyperlinks = "3"
 home = "0.5.12"
 humantime = { version = "2.2", optional = true }
-once_cell = "1.21"
+once_cell = "1.21.4"
 dirs = "6.0"
 normalize-path = "0.2.1"
 path-slash = "0.2"
 pathdiff = "0.2"
-which = "8.0"
+which = "8.0.2"
 # Cross-platform path canonicalization that avoids Windows verbatim paths (\\?\)
 # which external tools like git cannot handle. On Unix, it's a no-op wrapper.
 dunce = "1.0"
 termimad = { version = "0.34.1", optional = true }
 urlencoding = "2.1"
-regex = "1.12"
+regex = "1.12.3"
 ignore = "0.4"
 reflink-copy = "0.1"
 # Atomic, no-overwrite rename (renameat2 / renamex_np / MoveFileExW) for
@@ -242,19 +245,25 @@ wait-timeout = "0.2"
 # `default-features = false` drops skim's own CLI (`clap` / `clap_mangen` / …):
 # worktrunk embeds the picker as a library and never shells out to the `sk`
 # binary. `frizbee` keeps skim's default fuzzy matcher.
-skim = { version = "4", optional = true, default-features = false, features = ["frizbee"] }
+# Floor is 4.8, not 4: the picker is written against 4.8's `ratatui 0.30.1`
+# API, and earlier 4.x compile against an incompatible ratatui (`-Z
+# minimal-versions` otherwise resolves skim 4.6 against ratatui 0.30.1 and fails
+# to build).
+skim = { version = "4.8", optional = true, default-features = false, features = ["frizbee"] }
 # Pinned to skim's ratatui line so the `Line` type `display()` returns is the
 # same one skim consumes. `ansi-to-tui` parses ANSI SGR codes into ratatui spans.
-ratatui = { version = "0.30", optional = true }
-ansi-to-tui = { version = "8", optional = true }
+# Floor is 0.30.1: 0.30.0 is a broken release (its `#[instability::unstable]`
+# attribute fails to compile).
+ratatui = { version = "0.30.1", optional = true }
+ansi-to-tui = { version = "8.0.1", optional = true }
 # Already in the tree via skim (its event loop is tokio-based). The picker drives
 # skim through the public `Skim::init`/`run` API rather than the all-in-one
 # `Skim::run_with` so it can grab `event_sender()` and push `Event::Render` while
 # collect mutates rows in place — skim 4.x renders on demand, not on a heartbeat.
 # `Runtime::new()` needs `rt-multi-thread`; `event_sender()` is a `sync::mpsc`.
-tokio = { version = "1", optional = true, default-features = false, features = ["rt-multi-thread", "sync"] }
-nix = { version = "0.31", default-features = false, features = ["process", "signal"] }
-signal-hook = "0.4"
+tokio = { version = "1.52.3", optional = true, default-features = false, features = ["rt-multi-thread", "sync"] }
+nix = { version = "0.31.3", default-features = false, features = ["process", "signal"] }
+signal-hook = "0.4.1"
 
 [build-dependencies]
 vergen-gitcl = { version = "10.0.0", features = ["build"] }
@@ -267,8 +276,8 @@ tempfile = "3.27"
 toml = "1.0"
 criterion = "0.8"
 portable-pty = "0.9"
-regex = "1.12"
-vt100 = "0.16"
+regex = "1.12.3"
+vt100 = "0.16.2"
 ansi-to-html = "0.2.3"
 wt-perf = { path = "tests/helpers/wt-perf" }
 similar = "3.1.1"
