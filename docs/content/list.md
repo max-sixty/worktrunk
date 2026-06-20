@@ -84,6 +84,7 @@ Output as JSON for scripting:
 | CI | PR/MR number colored by pipeline status; `--full` only |
 | Path | Worktree directory |
 | URL | Dev server URL from project config; dimmed if port is not listening |
+| *(custom)* | User-defined [custom columns](#custom-columns) from `[list.custom-columns]` user config <span class="badge-experimental"></span> |
 | Commit | Short hash (8 chars) |
 | Age | Time since last commit |
 | Message | Last commit message (truncated) |
@@ -127,6 +128,19 @@ CI cells are clickable links to the PR or pipeline page, and appear dimmed when 
 <span class="badge-experimental"></span>
 
 Reuses the [`commit.generation`](@/config.md#commit) command — the same LLM that generates commit messages. Enable with `summary = true` in `[list]` config; requires `--full`. Results are cached until the branch's diff changes.
+
+### Custom columns
+
+<span class="badge-experimental"></span>
+
+Each `[list.custom-columns]` entry in user config adds a column: the key is the header, the template renders each row's cell. Templates can reference per-branch `{{ vars.* }}` stored with [`wt config state vars set`](@/config.md#wt-config-state-vars) — useful for tracking what each of many (often agent-driven) branches is for:
+
+```toml
+[list.custom-columns.Ticket]
+template = "{{ vars.ticket }}"
+```
+
+A column that renders empty for every row is dropped from the table. Templates, widths, and drop priority: [custom columns config](@/config.md#custom-columns).
 
 ## Status symbols
 
@@ -203,6 +217,7 @@ Query structured data with `--format=json`:
 | `statusline` | string | Pre-formatted status with ANSI colors |
 | `symbols` | string | Raw status symbols without colors (e.g., `"!?↓"`) |
 | `vars` | object | Per-branch variables from [`wt config state vars`](@/config.md#wt-config-state-vars) (absent when empty) |
+| `columns` | object | Rendered [custom column](#custom-columns) values keyed by header; empty cells omitted (absent when none configured) |
 
 ### Commit object
 

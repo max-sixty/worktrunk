@@ -121,6 +121,7 @@
 pub mod ci_status;
 pub(crate) mod collect;
 pub(crate) mod columns;
+pub(crate) mod custom_columns;
 pub mod json_output;
 pub(crate) mod layout;
 pub mod model;
@@ -160,12 +161,16 @@ pub fn handle_list(
         render_target,
     )?;
 
-    let Some(ListData { items, .. }) = list_data else {
+    let Some(ListData {
+        items,
+        custom_columns,
+    }) = list_data
+    else {
         return Ok(());
     };
 
     if matches!(render_target, RenderTarget::Json) {
-        let json_items = json_output::to_json_items(&items, &repo);
+        let json_items = json_output::to_json_items(&items, &custom_columns, &repo);
         let json =
             serde_json::to_string_pretty(&json_items).context("Failed to serialize to JSON")?;
         println!("{}", json);

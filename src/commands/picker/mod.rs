@@ -104,6 +104,7 @@ use std::rc::Rc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
 
+use ansi_str::AnsiStr;
 use anyhow::Context;
 // bounded/unbounded/Sender are re-exported by skim::prelude
 use skim::prelude::*;
@@ -526,14 +527,17 @@ pub fn handle_picker(
     }
 
     // Skip BranchDiff — it walks history per item for a column the picker
-    // doesn't surface. CiStatus is kept: the picker isn't a fast path (it's
-    // interactive and renders progressively, so the CI fetch never blocks the
-    // frame), and the CI column carries the PR/MR number and review state that
-    // make a switch target legible — including the `--prs` rows, which render
-    // their own number there. The fetch is cached (30–60s, HEAD-keyed), so
-    // repeated opens stay local.
+    // doesn't surface. Skip the networked CiStatus task too: the picker is
+    // local-first, so collect fills the CI column from the cache when the task
+    // is skipped (one local file read per branch from `.git/wt/cache/ci-status/`,
+    // populated by recent `wt list --full` or statusline runs — see
+    // `populate_from_cache`). The `--prs` rows carry their own number, fetched
+    // by the explicit `--prs` forge call, and the `pr` preview tab reads the
+    // same cached status.
     let skip_tasks: std::collections::HashSet<collect::TaskKind> =
-        [collect::TaskKind::BranchDiff].into_iter().collect();
+        [collect::TaskKind::BranchDiff, collect::TaskKind::CiStatus]
+            .into_iter()
+            .collect();
 
     // Per-task command timeout (bounds any single git invocation) from
     // shared `[list]` config. Still applies in progressive mode.
@@ -774,13 +778,12 @@ pub fn handle_picker(
     // the `--prs` thread reads it to align PR rows with the worktree rows.
     let grid_slot = Arc::new(prs::GridSlot::new());
 
-    let handler: Arc<dyn collect::PickerProgressHandler> =
+    let handler: Arc<progressive_handler::PickerHandler> =
         Arc::new(progressive_handler::PickerHandler {
             tx: tx.clone(),
             shared_items: Arc::clone(&shared_items),
             rendered_slots: std::sync::OnceLock::new(),
             preview_cache: Arc::clone(&preview_cache),
-            pr_status: Arc::new(dashmap::DashMap::new()),
             orchestrator: Arc::clone(&orchestrator),
             preview_dims,
             llm_command,
@@ -793,7 +796,7 @@ pub fn handle_picker(
     // Spawn collect on a background thread. The handler holds the only
     // remaining `tx` clone; when the bg thread exits, `tx` drops, and skim's
     // heartbeat stops. Contract: background work done → picker idle.
-    let bg_handler = Arc::clone(&handler);
+    let bg_handler: Arc<dyn collect::PickerProgressHandler> = handler.clone();
     let bg_repo = repo.clone();
     let bg_skip_tasks = skip_tasks.clone();
     let bg_handle = std::thread::Builder::new()
@@ -851,9 +854,11 @@ pub fn handle_picker(
     };
 
     // Drop main-thread copies so the bg threads' `tx` clones are the last
-    // senders (their drop is what stops skim's heartbeat).
+    // senders (their drop is what stops skim's heartbeat). The dry run keeps
+    // the handler — skim never runs there, so the heartbeat contract doesn't
+    // apply, and the dump below reads its rendered rows.
     drop(tx);
-    drop(handler);
+    let dry_run_handler = is_dry_run.then_some(handler);
 
     // Dry-run / preview-bench: skim is bypassed. Wait for collect (which
     // spawns previews via the handler) to finish, then for the orchestrator's
@@ -876,7 +881,23 @@ pub fn handle_picker(
         orchestrator.wait_for_idle();
         if is_dry_run {
             drain_stashed_warnings(&stashed_warnings);
-            println!("{}", orchestrator.dump_cache_json());
+            // Final rendered rows (ANSI stripped) — lets tests assert on
+            // picker row content without a PTY.
+            let rows: Vec<String> = dry_run_handler
+                .as_ref()
+                .and_then(|h| h.rendered_slots.get())
+                .map(|slots| {
+                    slots
+                        .iter()
+                        .map(|slot| slot.lock().unwrap().ansi_strip().trim_end().to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let dump = serde_json::json!({
+                "rows": rows,
+                "entries": orchestrator.cache_entries_json(),
+            });
+            println!("{}", serde_json::to_string_pretty(&dump)?);
         }
         return Ok(());
     }
@@ -1386,7 +1407,6 @@ pub mod tests {
             preview_cache: Arc::new(dashmap::DashMap::new()),
             has_upstream: false,
             summaries_enabled: false,
-            pr_status: Arc::new(dashmap::DashMap::new()),
         }) as Arc<dyn SkimItem>
     }
 

@@ -841,9 +841,10 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // FALSE NEGATIVE: Path prefixes to binary
-    // The detection checks for specific preceding characters (' ', '\t', '$', etc.)
-    // but '/' is not included, so paths like /usr/local/bin/wt don't match
+    // Path prefixes to binary
+    // Paths like /usr/local/bin/wt are detected because '/' is in the allowed
+    // set of preceding characters (alongside ' ', '\t', '$', etc.) checked by
+    // is_valid_command_position.
     // ------------------------------------------------------------------------
 
     #[test]

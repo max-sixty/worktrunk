@@ -1098,7 +1098,7 @@ fn test_switch_picker_preview_cycle_tab_forward_wraps(mut repo: TestRepo) {
             // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
             // for the matcher-lag rationale.
             ("\x1b[B", None),                       // Down: move cursor to `feature`
-            ("\x1b6", Some("PR")), // Alt-6: jump to pr (6); "Loading PR"/"has no PR"
+            ("\x1b6", Some("PR")), // Alt-6: jump to pr (6); "No PR status cached"/"has no PR"
             ("\t", Some("no uncommitted changes")), // Tab: wrap 6 → HEAD± (1)
         ],
     );
@@ -1151,18 +1151,18 @@ fn test_switch_picker_preview_cycle_shift_tab_wraps(mut repo: TestRepo) {
             // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
             // for the matcher-lag rationale.
             ("\x1b[B", None),       // Down: move cursor to `feature`
-            ("\x1b[Z", Some("PR")), // Shift-Tab: HEAD± → pr (wrap); "Loading PR"/"has no PR"
+            ("\x1b[Z", Some("PR")), // Shift-Tab: HEAD± → pr (wrap); "No PR status cached"/"has no PR"
         ],
     );
 
     assert_valid_abort_exit_code(result.exit_code);
 
     let (_list, preview) = result.panels();
-    // The worktree row has no remote, so its `pr` pane is either "Loading PR…"
-    // (CI fetch still in flight) or "feature has no PR" (fetch reported none) —
+    // The worktree row has no remote and no CI cache, so its `pr` pane says
+    // "No PR status cached" (or "feature has no PR" if a cache somehow exists) —
     // both confirm Shift-Tab wrapped to the pr tab.
     assert!(
-        preview.contains("has no PR") || preview.contains("Loading PR"),
+        preview.contains("No PR status cached") || preview.contains("has no PR"),
         "Shift-Tab should wrap to the pr tab; preview was:\n{preview}"
     );
 }

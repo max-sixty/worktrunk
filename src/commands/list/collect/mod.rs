@@ -482,14 +482,6 @@ pub trait PickerProgressHandler: Send + Sync {
     /// up on the next heartbeat.
     fn on_update(&self, idx: usize, rendered: String);
 
-    /// Fired once the CI fetch has reported a branch's PR status (the inner
-    /// `Option` of `item.pr_status`: `Some` carries the PR/MR, `None` means no
-    /// PR). The picker stores it keyed by branch so the `pr` preview tab can
-    /// render the PR live, distinguishing "no PR" from "still loading" by key
-    /// presence. Default: no-op (`wt list` ignores it). Keyed by branch
-    /// rather than `idx` because the picker's preview cache is branch-keyed.
-    fn on_pr_status(&self, _branch: &str, _status: Option<super::ci_status::PrStatus>) {}
-
     /// Fired at the 200ms reveal deadline. One pre-rendered line per row,
     /// with the placeholder promoted from blank to `·`: rows that have
     /// received real data use `format_list_item_line`, rows still at
@@ -1070,6 +1062,7 @@ pub fn collect(
                 user_marker: None,
                 status_symbols: StatusSymbols::default(),
                 statusline: None,
+                custom_values: Vec::new(),
                 kind: ItemKind::Worktree(Box::new(worktree_data)),
             }
         })
@@ -1103,10 +1096,55 @@ pub fn collect(
         effective_skip_tasks.insert(TaskKind::SummaryGenerate);
     }
 
+    // Custom [list.custom-columns] values expand before layout: their inputs
+    // (branch, worktree identity, vars from the bulk config snapshot) are
+    // already in memory, so cells paint with the skeleton and column widths
+    // are measured from content like Branch/Path. Pure CPU — no subprocess.
+    //
+    // A broken column definition aborts `wt list` with the error. The picker
+    // shares this path but runs collect on a background thread while skim
+    // owns the terminal, so it can't surface an abort — it stashes a warning
+    // (drained after the picker closes) and renders without custom columns.
+    let custom_columns =
+        match super::custom_columns::resolve_custom_columns(&config.list.custom_columns, repo) {
+            Ok(columns) => columns,
+            Err(e) if progressive_handler.is_some() => {
+                emit_warning(warning_message(format!("Custom columns disabled: {e}")).to_string());
+                Vec::new()
+            }
+            Err(e) => return Err(e),
+        };
+    if !custom_columns.is_empty() {
+        let all_vars = repo.all_vars_from_snapshot()?;
+        super::custom_columns::expand_custom_columns(
+            &custom_columns,
+            &mut all_items,
+            &all_vars,
+            repo,
+        );
+    }
+
+    // The picker skips the networked CiStatus task, but cached statuses are
+    // local data: fill rows from `.git/wt/cache/ci-status/` so PR/MR numbers
+    // appear in the picker without touching the wire. The CI column is
+    // allocated only when some row actually had a usable cache entry —
+    // `layout_skip_tasks` diverges from `effective_skip_tasks` exactly then
+    // (the skip set still governs task spawning; this copy only tells layout
+    // which columns will have data).
+    let mut layout_skip_tasks = effective_skip_tasks.clone();
+    if progressive_handler.is_some()
+        && effective_skip_tasks.contains(&TaskKind::CiStatus)
+        && super::ci_status::populate_from_cache(repo, &mut all_items)
+    {
+        layout_skip_tasks.remove(&TaskKind::CiStatus);
+    }
+
     // CI column width hint: the largest PR/MR number any previous fetch saw
     // (one small file read — cheap enough for the pre-skeleton budget, and
-    // the skeleton can't size the column without it).
-    let max_pr_number = (!effective_skip_tasks.contains(&TaskKind::CiStatus))
+    // the skeleton can't size the column without it). Also covers the
+    // cache-populated picker rows: `detect` re-ratchets on every cache hit,
+    // so the stored maximum is at least as wide as any cached number.
+    let max_pr_number = (!layout_skip_tasks.contains(&TaskKind::CiStatus))
         .then(|| super::ci_status::MaxPrNumber::read(repo))
         .flatten();
 
@@ -1115,13 +1153,14 @@ pub fn collect(
     // terminal — the rest belongs to the preview pane.
     let layout = super::layout::calculate_layout_with_width(
         &all_items,
-        &effective_skip_tasks,
+        &layout_skip_tasks,
         list_width
             .or_else(crate::display::terminal_width)
             .unwrap_or(usize::MAX),
         &main_worktree.path,
         url_template.as_deref(),
         max_pr_number,
+        &custom_columns,
     );
 
     // Single-line invariant: with no detectable width, an unlimited width
@@ -1625,13 +1664,6 @@ pub fn collect(
 
                     if let Some(handler) = progressive_handler.as_ref() {
                         handler.on_update(item_idx, rendered);
-                        // Once the CI fetch has reported (outer `Some`), hand
-                        // the picker this branch's PR status so the `pr`
-                        // preview tab can render it live. Other results re-send
-                        // the same value harmlessly (idempotent insert).
-                        if let Some(pr_status) = &item.pr_status {
-                            handler.on_pr_status(item.branch_name(), pr_status.clone());
-                        }
                     }
                 }
                 results::DrainEvent::Reveal { items } => {
@@ -1809,7 +1841,10 @@ pub fn collect(
         handler.on_collect_complete();
     }
 
-    Ok(Some(super::model::ListData { items }))
+    Ok(Some(super::model::ListData {
+        items,
+        custom_columns,
+    }))
 }
 
 // ============================================================================
@@ -1906,6 +1941,7 @@ pub fn build_worktree_item(
         user_marker: None,
         status_symbols: StatusSymbols::default(),
         statusline: None,
+        custom_values: Vec::new(),
         kind: ItemKind::Worktree(Box::new(WorktreeData::from_worktree(
             wt,
             is_main,
@@ -2261,8 +2297,15 @@ mod tests {
             ListItem::new_branch("bbb".into(), "row-one".into()),
         ];
         let skip_tasks: HashSet<TaskKind> = HashSet::new();
-        let layout =
-            calculate_layout_with_width(&items, &skip_tasks, 80, Path::new("/tmp"), None, None);
+        let layout = calculate_layout_with_width(
+            &items,
+            &skip_tasks,
+            80,
+            Path::new("/tmp"),
+            None,
+            None,
+            &[],
+        );
         let placeholder = super::super::render::PLACEHOLDER;
 
         // Row 0 has data → format_list_item_line; row 1 doesn't → skeleton.

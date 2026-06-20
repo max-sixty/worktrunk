@@ -1,5 +1,0 @@
----
-source: src/commands/picker/items.rs
-expression: "WorktreeSkimItem::loading_placeholder(mode)"
----
-○ Loading PR. Press alt-6 again to refresh.

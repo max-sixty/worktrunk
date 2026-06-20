@@ -18,12 +18,12 @@
 //!
 //! # Alignment
 //!
-//! PR rows render on the same column grid as the worktree rows, and only in
-//! columns that have a worktree-row meaning: a dim `#` gutter sigil (see
-//! [`PR_GUTTER_SIGIL`]), the head branch in the Branch column, and the number
-//! in the CI column. The PR title and author have no worktree-column
-//! equivalent, so they stay off the row (in the `pr` preview tab) rather than
-//! misaligning the grid — see [`render_grid_row`]. The geometry
+//! PR rows render on the same column grid as the worktree rows: a dim `#`
+//! gutter sigil (see [`PR_GUTTER_SIGIL`]), the head branch in the Branch
+//! column, and the number — in the CI column when the layout has one, else
+//! just after the branch so it never hides. The PR title and author have no
+//! worktree-column equivalent, so they stay off the row (in the `pr` preview
+//! tab) rather than misaligning the grid — see [`render_grid_row`]. The geometry
 //! ([`ColumnGrid`]) is computed by the collect thread at skeleton time and
 //! handed over through a [`GridSlot`]; the skeleton (~50ms) beats the forge
 //! call (~1s), so the wait is nominal. Without a grid (handoff timed out, or
@@ -442,7 +442,7 @@ impl PrSkimItem {
         );
 
         let rendered = match grid {
-            Some(grid) => render_grid_row(&entry, grid),
+            Some(grid) => render_grid_row(&entry, grid, list_width),
             None => render_freeform_row(&entry, list_width),
         };
 
@@ -539,21 +539,23 @@ fn pr_row_empty_placeholder() -> String {
 
 /// Place the PR's cells on the worktree rows' grid so every column lines up:
 /// a dim `#` gutter sigil (see `PR_GUTTER_SIGIL`), the head branch in the
-/// Branch column, and the number in the CI column (colored by CI + review
-/// state, like worktree rows' PR numbers).
+/// Branch column, and the number.
+///
+/// The number is the row's identity, so it always shows. With a CI column it
+/// rides there, colored by CI + review state like worktree rows' PR numbers
+/// (`format_cell`). The picker only allocates a CI column when some worktree
+/// row had a cached status, so without one — a repo with no CI cache — the
+/// number falls back to a dim reference just after the Branch column rather
+/// than hiding.
 ///
 /// The PR title and author are NOT on the row — they have no worktree-column
 /// equivalent, so showing them would either misalign PR rows against worktree
 /// rows or overrun the status columns. They live in the `pr` preview tab
 /// instead (see `PrSkimItem::pr_pane`); the title still feeds `search_text`, so
-/// fuzzy matching on it works even though it isn't displayed.
-///
-/// The number shows only when the layout has a CI column (the picker keeps
-/// one); without it the number appears solely in the preview, matching how
-/// worktree rows hide CI on narrow layouts. The other worktree-data columns PR
-/// rows leave blank (status, diffs, URL, age) are a follow-up — see
-/// TODO(pr-row-columns).
-fn render_grid_row(entry: &PrEntry, grid: &ColumnGrid) -> String {
+/// fuzzy matching on it works even though it isn't displayed. The other
+/// worktree-data columns PR rows leave blank (status, diffs, URL, age) are a
+/// follow-up — see TODO(pr-row-columns).
+fn render_grid_row(entry: &PrEntry, grid: &ColumnGrid, list_width: usize) -> String {
     let dim = Style::new().dimmed();
     let mut segments: Vec<(usize, StyledLine)> = Vec::new();
 
@@ -563,19 +565,30 @@ fn render_grid_row(entry: &PrEntry, grid: &ColumnGrid) -> String {
         segments.push((col.start, cell));
     }
 
-    if let Some(col) = grid.column(ColumnKind::Branch) {
+    let branch_col = grid.column(ColumnKind::Branch);
+    if let Some(col) = branch_col {
         let mut cell = StyledLine::new();
         cell.push_raw(entry.head_branch.clone());
         segments.push((col.start, cell.truncate_to_width(col.width)));
     }
 
-    // The number rides the CI column — the same cell worktree rows show their
-    // PR number in. `format_cell` colors it by CI + review state (a draft MR
-    // renders dimmed), so the row needs no separate draft flag.
-    if let Some((col, status)) = grid.column(ColumnKind::CiStatus).zip(entry.status.as_ref()) {
-        let mut cell = StyledLine::new();
-        cell.push_raw(status.format_cell(col.width, false));
-        segments.push((col.start, cell));
+    match grid.column(ColumnKind::CiStatus).zip(entry.status.as_ref()) {
+        Some((col, status)) => {
+            let mut cell = StyledLine::new();
+            cell.push_raw(status.format_cell(col.width, false));
+            segments.push((col.start, cell));
+        }
+        None => {
+            // No CI column — show the dim reference after the branch so the
+            // number never hides.
+            let start = branch_col.map_or(0, |col| col.start + col.width + 2);
+            let mut cell = StyledLine::new();
+            cell.push_styled(entry.pr_ref().to_string(), dim);
+            segments.push((
+                start,
+                cell.truncate_to_width(list_width.saturating_sub(start)),
+            ));
+        }
     }
 
     // All cells sit in fixed columns within the pane (branch truncates to its
@@ -798,9 +811,9 @@ mod tests {
 
     #[test]
     fn grid_row_places_cells_on_layout_columns() {
-        // Only the gutter and branch carry content here; the title and author
-        // are off the row, and grid() has no CI column so the number isn't on
-        // it either.
+        // grid() has no CI column, so the number falls back to just after the
+        // Branch column (which ends at 22, so the reference lands at 24). The
+        // title and author stay off the row.
         let pr = PrSkimItem::new(
             entry(RefKind::Pr, 123, "Fix the flaky test"),
             120,
@@ -810,15 +823,16 @@ mod tests {
         // The dim `#` gutter sigil sits at column 0; branch in the Branch column.
         assert!(text.starts_with("# feature/auth"));
         assert_eq!(display_col(&text, "feature/auth"), 2, "branch column");
+        assert_eq!(
+            display_col(&text, "#123"),
+            24,
+            "number falls back to after the branch"
+        );
         assert!(
             !text.contains("Fix the flaky test"),
             "no title on the row: {text:?}"
         );
         assert!(!text.contains("@alice"), "no author on the row: {text:?}");
-        assert!(
-            !text.contains("#123"),
-            "no number without a CI column: {text:?}"
-        );
     }
 
     #[test]

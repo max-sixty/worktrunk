@@ -17,6 +17,11 @@ pub enum ColumnKind {
     Commit,
     Time,
     Message,
+    /// User-defined column from `[list.custom-columns]`; the index points into the
+    /// resolved column list for this invocation. Values are expanded before
+    /// layout, so widths are measured from content and headers come from the
+    /// resolved name (not [`ColumnKind::header`]).
+    Custom(u8),
 }
 
 impl ColumnKind {
@@ -36,6 +41,9 @@ impl ColumnKind {
             ColumnKind::Commit => "Commit",
             ColumnKind::Summary => "Summary",
             ColumnKind::Message => "Message",
+            // Header is the resolved column name; layout substitutes it when
+            // building `ColumnLayout`.
+            ColumnKind::Custom(_) => "",
         }
     }
 
@@ -111,11 +119,23 @@ pub const COLUMN_SPECS: &[ColumnSpec] = &[
     ColumnSpec::new(ColumnKind::Message, 13, None),
 ];
 
-pub fn column_display_index(kind: ColumnKind) -> usize {
-    COLUMN_SPECS
+/// Sort key for display order: (slot in `COLUMN_SPECS`, sub-order).
+///
+/// Custom columns share the Url slot with a non-zero sub-order, so they
+/// render after Url and before Commit, in their resolution order.
+pub fn column_display_index(kind: ColumnKind) -> (usize, usize) {
+    if let ColumnKind::Custom(i) = kind {
+        let url_slot = COLUMN_SPECS
+            .iter()
+            .position(|spec| spec.kind == ColumnKind::Url)
+            .unwrap_or(usize::MAX);
+        return (url_slot, i as usize + 1);
+    }
+    let slot = COLUMN_SPECS
         .iter()
         .position(|spec| spec.kind == kind)
-        .unwrap_or(usize::MAX)
+        .unwrap_or(usize::MAX);
+    (slot, 0)
 }
 
 #[cfg(test)]
@@ -242,5 +262,16 @@ mod tests {
                 kind
             );
         }
+    }
+
+    #[test]
+    fn test_custom_columns_display_between_url_and_commit() {
+        let url = column_display_index(ColumnKind::Url);
+        let commit = column_display_index(ColumnKind::Commit);
+        let first = column_display_index(ColumnKind::Custom(0));
+        let second = column_display_index(ColumnKind::Custom(1));
+        assert!(url < first, "custom columns render after Url");
+        assert!(first < second, "custom columns keep resolution order");
+        assert!(second < commit, "custom columns render before Commit");
     }
 }

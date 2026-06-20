@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.60.0
+
+### Improved
+
+- **Package installs complete branch and worktree names**: A plain `brew install worktrunk` (or other package install) now tab-completes branch and worktree names, not just subcommands and flags. `wt config shell completions <shell>` emits a dynamic registration that calls the binary at completion time (the maintained `clap_complete::env` path), matching what `gh`, `rustup`, and `kubectl` ship. ([#3105](https://github.com/max-sixty/worktrunk/pull/3105), thanks @bendrucker)
+
+- **`wt step relocate` moves dirty linked worktrees**: Relocating a linked worktree with uncommitted or untracked changes no longer skips it. `git worktree move` carries those files along, so the dirty-skip was a worktrunk policy rather than a git limitation. The main worktree still skips when dirty (without `--commit`), since its relocation falls back to `git checkout`, which refuses to switch over a dirty tree. ([#3104](https://github.com/max-sixty/worktrunk/pull/3104), thanks @lunaynx for reporting)
+
+- **`--dry-run` previews print to stdout**: `wt hook <type>`, `wt step relocate`, `wt step prune`, `wt step copy-ignored`, and `wt config shell install`/`uninstall` now send their `--dry-run` preview to stdout (the command's answer) while narration stays on stderr. This matches `wt list`, `git clean -n`, and `terraform plan`, and keeps previews pageable and pipeable. (Breaking: scripts reading these previews from stderr should now read stdout) ([#3085](https://github.com/max-sixty/worktrunk/pull/3085))
+
+- **Picker gutter distinguishes local and remote branches**: With `--branches` and `--remotes`, the `wt switch` picker marks each row's kind in the gutter: `/` for a local branch without a worktree and `|` for a remote branch, alongside the existing `@`/`^`/`+` worktree glyphs. ([#3115](https://github.com/max-sixty/worktrunk/pull/3115))
+
+- **`wt list --format=json` gains structured `repo` metadata**: JSON output adds `repo` (the local checkout's primary remote) and `ci.repo` (the repository `ci.url` targets, which differs for fork PRs) objects carrying `host`/`owner`/`name`/`provider`; the existing `repo_url` and `ci.repo_url` strings remain. The provider honors the configured `[forge].platform` on hosts that can't be auto-detected. ([#3021](https://github.com/max-sixty/worktrunk/pull/3021), thanks @jeremy0dell)
+
+- **`wt step eval --format=json`**: `wt step eval` gains a structured `{name, template, result}` JSON lane on stdout, the machine-readable analog of its `-v` view. Text mode is unchanged. ([#3106](https://github.com/max-sixty/worktrunk/pull/3106))
+
+- **`--format=claude-code` rejected where it never applied**: `wt list` and `wt config state get` accepted `--format=claude-code` silently and treated it as `table`; the value only ever meant anything on `wt list statusline`. Both now fail fast with `invalid value 'claude-code'`. (Breaking: `wt list --format=claude-code` and `wt config state get --format=claude-code` now error) ([#3116](https://github.com/max-sixty/worktrunk/pull/3116))
+
+### Fixed
+
+- **`cargo install worktrunk` builds from crates.io**: Installing from crates.io failed to compile with `environment variable VERGEN_GIT_DESCRIBE not defined at compile time`, because the package archive has no `.git` for the build script to read. The version lookup now falls back to the cargo package version when git-describe is unavailable. ([#3124](https://github.com/max-sixty/worktrunk/pull/3124), fixes [#3123](https://github.com/max-sixty/worktrunk/issues/3123), thanks @kerrickstaley for reporting)
+
+- **Tab-completion works in repos with no commits**: `wt switch <TAB>` and `wt remove <TAB>` returned nothing on a fresh `git init` repo, because the unborn default branch has no entry under `refs/heads/`. Completion now also draws on worktree branches, so the unborn `main` (and any `wt switch --create` branch on an empty repo) completes. ([#3097](https://github.com/max-sixty/worktrunk/pull/3097), closes [#3094](https://github.com/max-sixty/worktrunk/issues/3094))
+
+- **`wt config state get ci-status --format=json` honors `[forge].platform`**: On a self-hosted host the parser can't recognize (Gitea, Azure DevOps, GitHub Enterprise on a generic domain), this path reported `provider: "unknown"` while `wt list --format=json` reported the configured provider. All structured-output paths now route the `[forge].platform` override through one accessor, so they stay consistent. ([#3120](https://github.com/max-sixty/worktrunk/pull/3120))
+
+### Documentation
+
+- **`wt list --help` example tables fit the terminal**: The captured `wt list` example tables in `--help` chop to terminal width with a dimmed ellipsis (matching real `wt list`) instead of word-wrapping and shearing their columns; hand-authored command examples still wrap. ([#3125](https://github.com/max-sixty/worktrunk/pull/3125))
+
+- **`/wt-switch-create` cross-repo handling reworked**: The Claude Code plugin command's skill reworks how it creates and enters a worktree in another repo, built around what the harness actually does (`EnterWorktree` re-roots within the current repo; a `cd` reaches another repo when it's in `additionalDirectories`). The procedure dropped from five steps to three. ([#3118](https://github.com/max-sixty/worktrunk/pull/3118))
+
+- **Help-text and docs refinements**: `--format` help renders its values inline (`[possible values: table, json]`) instead of an expanded block; `wt switch` and `wt step push` help got smaller clarifications; and web-doc terminal blocks no longer wrap command-only lines. ([#3096](https://github.com/max-sixty/worktrunk/pull/3096), [#3108](https://github.com/max-sixty/worktrunk/pull/3108), [#3110](https://github.com/max-sixty/worktrunk/pull/3110), [#3112](https://github.com/max-sixty/worktrunk/pull/3112), [#3126](https://github.com/max-sixty/worktrunk/pull/3126))
+
 ## 0.59.0
 
 ### Improved
