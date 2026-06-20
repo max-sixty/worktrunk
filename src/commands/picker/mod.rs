@@ -952,18 +952,6 @@ pub fn handle_picker(
     Ok(())
 }
 
-/// Run skim to completion, exposing its event sender for progressive repaints.
-///
-/// This inlines what `Skim::run_with` does, with one addition: after the TUI is
-/// initialized we publish `Skim::event_sender()` into `render_tx`. skim 4.x
-/// renders on demand, so the background collect thread's in-place row mutations
-/// stay invisible until something wakes the event loop — the handler pushes
-/// `Event::Render` through that sender (see `progressive_handler`).
-///
-/// `wt` runs no outer tokio runtime, so skim's event loop runs on a fresh
-/// multi-thread `Runtime` — the same one `run_with` builds in that case. A user
-/// cancel is `Ok(SkimOutput)` with `is_abort` set; only a genuine init /
-/// event-loop failure is an `Err`.
 /// Background poller that nudges skim to re-run its preview when the
 /// preview-mode state file changes. See [`run_skim`] for why; it lives only for
 /// one picker session and stops when [`ModeWatcher::stop`] is called.
