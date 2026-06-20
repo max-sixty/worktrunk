@@ -171,7 +171,7 @@ Shortcuts also apply to [2m--base[0m. For a fork PR/MR, the head commit is fet
 
 When called without arguments, [2mwt switch[0m opens an interactive picker to browse and select worktrees with live preview. The candidate set widens with [2m--branches[0m (local branches without worktrees), [2m--remotes[0m (remote branches), and [2m--prs[0m (open PRs/MRs — see below).
 
-The CI column shows cached PR/MR status when earlier runs ([2mwt list --full[0m, the statusline) have fetched it — the picker never fetches CI status itself. An entry whose branch has moved or whose TTL has passed keeps its PR/MR number, dimmed.
+The CI column shows each row's PR/MR status, primed from the cache that earlier runs ([2mwt list --full[0m, the statusline) wrote for an instant first paint, then refreshed by a live fetch streamed in behind it. An entry whose branch has moved or whose TTL has passed keeps its PR/MR number, dimmed, until the fetch updates it.
 
 [1mKeybindings:[0m
 
@@ -196,7 +196,7 @@ Plain digits go to the filter, so a branch name containing a number can be typed
 3. [1mmain…±[0m — Diff of changes since the merge-base with the default branch
 4. [1mremote⇅[0m — Ahead/behind diff vs upstream tracking branch
 5. [1msummary[0m — LLM-generated branch summary; requires [2m[list] summary = true[0m and [2mcommit.generation[0m
-6. [1mpr[0m — The selected row's PR/MR, from the cached CI status (the same data the CI column shows); shown for any branch with a cached PR and for [2m--prs[0m rows
+6. [1mpr[0m — The selected row's PR/MR, from the same CI fetch the CI column shows (primed from cache, refreshed live); shown for any branch with a PR and for [2m--prs[0m rows
 
 [1mPager configuration:[0m The preview panel pipes diff output through git's pager. Override in user config:
 

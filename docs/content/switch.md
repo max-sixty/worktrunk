@@ -58,7 +58,7 @@ Shortcuts also apply to `--base`. For a fork PR/MR, the head commit is fetched a
 
 When called without arguments, `wt switch` opens an interactive picker to browse and select worktrees with live preview. The candidate set widens with `--branches` (local branches without worktrees), `--remotes` (remote branches), and `--prs` (open PRs/MRs — see below).
 
-The CI column shows cached PR/MR status when earlier runs (`wt list --full`, the statusline) have fetched it — the picker never fetches CI status itself. An entry whose branch has moved or whose TTL has passed keeps its PR/MR number, dimmed.
+The CI column shows each row's PR/MR status, primed from the cache that earlier runs (`wt list --full`, the statusline) wrote for an instant first paint, then refreshed by a live fetch streamed in behind it. An entry whose branch has moved or whose TTL has passed keeps its PR/MR number, dimmed, until the fetch updates it.
 
 <figure class="demo">
 <picture>
@@ -91,7 +91,7 @@ Plain digits go to the filter, so a branch name containing a number can be typed
 3. **main…±** — Diff of changes since the merge-base with the default branch
 4. **remote⇅** — Ahead/behind diff vs upstream tracking branch
 5. **summary** — LLM-generated branch summary; requires `[list] summary = true` and [`commit.generation`](@/config.md#commit)
-6. **pr** — The selected row's PR/MR, from the cached CI status (the same data the CI column shows); shown for any branch with a cached PR and for `--prs` rows
+6. **pr** — The selected row's PR/MR, from the same CI fetch the CI column shows (primed from cache, refreshed live); shown for any branch with a PR and for `--prs` rows
 
 **Pager configuration:** The preview panel pipes diff output through git's pager. Override in user config:
 

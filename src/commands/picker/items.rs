@@ -29,6 +29,13 @@ pub(super) type PreviewCacheKey = (String, PreviewMode);
 /// Shared across all WorktreeSkimItems for background pre-computation.
 pub(super) type PreviewCache = Arc<DashMap<PreviewCacheKey, String>>;
 
+/// Per-row live `pr_status` for the `pr` tab, shared with the collect handler.
+/// Primed from the CI cache at skeleton time, then overwritten as the live
+/// `CiStatus` task reports (`progressive_handler::PickerHandler::on_update`).
+/// `None` = the fetch hasn't reported yet (Loading); `Some(None)` = no PR;
+/// `Some(Some(status))` = a PR/MR with status.
+pub(super) type PrStatusSlot = Arc<Mutex<Option<Option<PrStatus>>>>;
+
 /// Prefix on a worktree-backed item's `output()` token. Detached worktrees
 /// all share the `(detached)` branch label, so `output()` returns the
 /// worktree path (which is unique) behind this prefix instead.
@@ -128,6 +135,11 @@ pub(super) struct WorktreeSkimItem {
     /// Whether `[commit.generation]` summaries are configured, for the tab-5
     /// (summary) empty state. A process-wide static fact (`llm_command.is_some()`).
     pub summaries_enabled: bool,
+    /// Live CI status for the `pr` tab, shared with the collect handler. Unlike
+    /// the frozen `item` snapshot (whose `pr_status` never updates after
+    /// skeleton), this slot is primed from the cache and then overwritten as the
+    /// `CiStatus` task streams in — so the `pr` tab reflects the live fetch.
+    pub pr_status: PrStatusSlot,
 }
 
 impl SkimItem for WorktreeSkimItem {
@@ -156,12 +168,12 @@ impl SkimItem for WorktreeSkimItem {
     fn preview(&self, context: PreviewContext<'_>) -> ItemPreview {
         let mode = PreviewStateData::read_mode();
 
-        // Build preview: tabs header + content. `has_upstream`/`summaries_enabled`
-        // and `pr` are all synchronous skeleton-time facts (see
-        // `TabAvailability`): the picker reads CI status from the cache, so the
-        // row's `pr_status` is final by the time it exists. The `pr` tab dims
-        // only when the cache reports no PR (HasPr and NotCached stay available
-        // — the latter shows how to populate the cache).
+        // Build preview: tabs header + content. `has_upstream` and
+        // `summaries_enabled` are synchronous skeleton-time facts (see
+        // `TabAvailability`); `pr` reads the row's live status slot, refreshed as
+        // the `CiStatus` task streams in, so it can change between selections.
+        // The `pr` tab dims only once the fetch reports no PR — while loading or
+        // with a PR it stays available.
         let pr = self.pr_preview();
         let avail = TabAvailability::worktree(
             self.has_upstream,
@@ -178,14 +190,14 @@ impl SkimItem for WorktreeSkimItem {
     }
 }
 
-/// The `pr` tab's state for a worktree row, derived from the row's cached CI
-/// status (`item.pr_status`).
+/// The `pr` tab's state for a worktree row, derived from the row's live CI
+/// status slot ([`WorktreeSkimItem::pr_status`]).
 enum PrPreview {
-    /// No CI status is cached for this branch yet (`wt list --full` /
-    /// statusline never ran here) — the tab points the user at how to populate
-    /// it rather than claiming the branch has no PR.
-    NotCached,
-    /// The cache reports no PR (no CI, or a branch workflow with no PR/MR
+    /// The live CI fetch hasn't reported for this branch yet, and no cache
+    /// primed it — the tab shows a "fetching" hint rather than claiming the
+    /// branch has no PR.
+    Loading,
+    /// The fetch reported no PR (no CI, or a branch workflow with no PR/MR
     /// number) — the tab dims and shows "… has no PR".
     NoPr,
     /// The branch has a PR/MR. The `PrRef` rides alongside the status so the
@@ -198,16 +210,15 @@ enum PrPreview {
 ///
 /// Empty tabs are de-emphasized in the bar (number dimmed). Skim computes a
 /// preview once per selection and cannot re-query it mid-selection (see
-/// `loading_placeholder`), so all of these are synchronous skeleton-time facts
-/// to avoid locking the bar into a stale state: `upstream` reads
-/// `Repository::local_branches()` (the pre-skeleton `for-each-ref` scan), NOT
-/// the async `item.upstream`; `summary` reads the process-wide
-/// `[commit.generation]` flag, NOT the async `item.summary`; `pr` reads the
-/// row's `item.pr_status`, which the picker fills from the CI cache *before*
-/// the skeleton snapshot (the networked CiStatus task is skipped — see
-/// `handle_picker`), so it's final by render time. `pr` dims only when the
-/// cache reports no PR; a cached PR or an empty cache (NotCached) stays
-/// available. `--prs` rows always render their PR.
+/// `loading_placeholder`). `upstream` and `summary` are synchronous
+/// skeleton-time facts, read to avoid locking the bar into a stale state:
+/// `upstream` reads `Repository::local_branches()` (the pre-skeleton
+/// `for-each-ref` scan), NOT the async `item.upstream`; `summary` reads the
+/// process-wide `[commit.generation]` flag, NOT the async `item.summary`. `pr`
+/// reads the row's live status slot (primed from the CI cache, then refreshed
+/// by the `CiStatus` task — see [`WorktreeSkimItem::pr_status`]), so it can
+/// change between selections: it dims once the fetch reports no PR, and stays
+/// available while loading or with a PR. `--prs` rows always render their PR.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct TabAvailability {
     working_tree: bool,
@@ -220,9 +231,9 @@ pub(super) struct TabAvailability {
 
 impl TabAvailability {
     /// A worktree-backed row: working-tree/log/branch-diff always render; the
-    /// upstream, summary, and `pr` tabs depend on synchronous skeleton-time
-    /// facts; `pr` is available unless the cache reports no PR for this branch
-    /// (see [`WorktreeSkimItem::pr_preview`]).
+    /// upstream and summary tabs depend on synchronous skeleton-time facts; the
+    /// `pr` tab is available unless the live fetch has reported no PR for this
+    /// branch (see [`WorktreeSkimItem::pr_preview`]).
     pub(super) fn worktree(has_upstream: bool, summaries_enabled: bool, pr: bool) -> Self {
         Self {
             working_tree: true,
@@ -354,19 +365,14 @@ fn render_worktree_pr(branch: &str, pr_ref: PrRef, status: &PrStatus) -> String 
 }
 
 impl WorktreeSkimItem {
-    /// Derive the `pr` tab's state from the live `pr_status` map (keyed by
-    /// branch name). A missing entry means the CI fetch hasn't reported for
-    /// this branch yet (Loading); a present `None`, or a status carrying no
-    /// PR/MR `number` (a bare branch workflow), means no PR; a status with a
-    /// `number` is a real PR.
+    /// Derive the `pr` tab's state from the row's live `pr_status` slot. The
+    /// slot is primed from the CI cache at skeleton time and overwritten as the
+    /// `CiStatus` task reports: `None` = no result yet (Loading); `Some(None)`,
+    /// or a status carrying no PR/MR `number` (a bare branch workflow), = no PR;
+    /// a status with a `number` = a real PR.
     fn pr_preview(&self) -> PrPreview {
-        // Read the row's own (frozen) CI status: the picker skips the networked
-        // CiStatus task and `collect` fills `pr_status` from the cache before
-        // the skeleton snapshot, so it's final by the time this row exists.
-        // Outer `None` = the cache had nothing; `Some(None)` = cache says no PR;
-        // `Some(Some(status))` with a `number` = a cached PR.
-        match &self.item.pr_status {
-            None => PrPreview::NotCached,
+        match &*self.pr_status.lock().unwrap() {
+            None => PrPreview::Loading,
             Some(None) => PrPreview::NoPr,
             Some(Some(status)) => match status.number {
                 Some(pr_ref) => PrPreview::HasPr(pr_ref, status.clone()),
@@ -380,8 +386,8 @@ impl WorktreeSkimItem {
         let reset = Reset;
         let branch = self.item.branch_name();
         match pr {
-            PrPreview::NotCached => cformat!(
-                "{INFO_SYMBOL}{reset} No PR status cached for <bold>{branch}</>{reset}; run <bold>wt list --full</>{reset} to fetch it\n"
+            PrPreview::Loading => cformat!(
+                "○ Fetching PR status for <bold>{branch}</>{reset}… press <bold>alt-6</>{reset} to refresh\n"
             ),
             PrPreview::NoPr => {
                 cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no PR\n")
@@ -910,8 +916,9 @@ mod tests {
             ("branch_diff", PreviewMode::BranchDiff),
             ("upstream_diff", PreviewMode::UpstreamDiff),
             ("summary", PreviewMode::Summary),
-            // `Pr` has no loading state — it renders from the row's cached
-            // `pr_status` via `render_pr_pane`, so it isn't exercised here.
+            // `Pr` isn't backed by the preview cache — it renders from the
+            // row's live `pr_status` slot via `render_pr_pane`, so the
+            // `loading_placeholder` path never covers it.
         ] {
             assert_snapshot!(
                 format!("loading_placeholder_{name}"),
@@ -942,6 +949,7 @@ mod tests {
                 preview_cache,
                 has_upstream: false,
                 summaries_enabled: false,
+                pr_status: Arc::new(Mutex::new(None)),
             }
         };
 
@@ -955,6 +963,7 @@ mod tests {
                 preview_cache,
                 has_upstream: false,
                 summaries_enabled: false,
+                pr_status: Arc::new(Mutex::new(None)),
             }
         };
 
@@ -969,7 +978,7 @@ mod tests {
     }
 
     #[test]
-    fn worktree_pr_tab_reflects_cached_status() {
+    fn worktree_pr_tab_reflects_live_status() {
         use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef, ReviewState};
 
         let status = |number: Option<PrRef>, url: Option<&str>| PrStatus {
@@ -980,10 +989,10 @@ mod tests {
             number,
             review_state: Some(ReviewState::Approved),
         };
-        // Build a row whose frozen `item.pr_status` carries a given cached state.
+        // Build a row whose live `pr_status` slot carries a given state — what
+        // the picker primes from the cache and then overwrites as the fetch lands.
         let row = |pr_status: Option<Option<PrStatus>>| {
-            let mut item = ListItem::new_branch("abc".into(), "feature".into());
-            item.pr_status = pr_status;
+            let item = ListItem::new_branch("abc".into(), "feature".into());
             WorktreeSkimItem {
                 search_text: String::new(),
                 rendered: Arc::new(Mutex::new(String::new())),
@@ -992,16 +1001,17 @@ mod tests {
                 preview_cache: Arc::new(DashMap::new()),
                 has_upstream: false,
                 summaries_enabled: false,
+                pr_status: Arc::new(Mutex::new(pr_status)),
             }
         };
 
-        // No cache entry (outer `None`) → NotCached; the pane points at `--full`.
-        let not_cached = row(None);
-        assert!(matches!(not_cached.pr_preview(), PrPreview::NotCached));
+        // No result yet (outer `None`) → Loading; the pane shows a fetching hint.
+        let loading = row(None);
+        assert!(matches!(loading.pr_preview(), PrPreview::Loading));
         assert!(
-            not_cached
-                .render_pr_pane(not_cached.pr_preview())
-                .contains("wt list --full")
+            loading
+                .render_pr_pane(loading.pr_preview())
+                .contains("Fetching PR status")
         );
 
         // Cache reports no PR (`Some(None)`) → NoPr.

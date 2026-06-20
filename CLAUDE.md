@@ -100,6 +100,7 @@ Before adding an accessor that could reach the wire (`gh`, `glab`, `git fetch`, 
 What currently reaches the wire:
 
 - `wt list --full`, `wt list statusline` — CI status
+- `wt switch` (interactive picker, no target) — per-row CI status, primed from the local cache then fetched live and streamed into the rows
 - generating a branch summary with a `commit.generation` command
 - generating a commit message with a `commit.generation` command
 - `wt switch pr:<n>`, `wt switch mr:<n>` — host API to resolve the PR/MR, then `git fetch` of its branch

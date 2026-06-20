@@ -329,10 +329,10 @@ impl LayoutConfig {
                     return col.render_text_cell(text, None);
                 }
                 ColumnKind::CiStatus if item.pr_status.is_some() => {
-                    // Resolved before the skeleton only by the picker's
-                    // cache-only fill, where no task will repaint the cell;
-                    // `wt list` never sets pr_status this early and keeps
-                    // the placeholder arm below.
+                    // Set before the skeleton only by the picker's cache prime —
+                    // render it now for an instant first paint; the live CiStatus
+                    // task repaints the cell as it lands. `wt list` never sets
+                    // pr_status this early and keeps the placeholder arm below.
                     return match &item.pr_status {
                         Some(Some(pr_status)) => {
                             let mut ci = StyledLine::new();

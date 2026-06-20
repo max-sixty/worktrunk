@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use skim::prelude::*;
 use worktrunk::styling::{StyledLine, strip_osc8_hyperlinks};
 
-use super::items::{HeaderSkimItem, PreviewCache, WorktreeSkimItem};
+use super::items::{HeaderSkimItem, PrStatusSlot, PreviewCache, WorktreeSkimItem};
 use super::preview_orchestrator::PreviewOrchestrator;
 use crate::commands::list::collect::PickerProgressHandler;
 use crate::commands::list::model::ListItem;
@@ -43,6 +43,11 @@ pub(super) struct PickerHandler {
     /// One `Arc<Mutex<String>>` per data row — same Arcs `WorktreeSkimItem`
     /// holds. Set once in `on_skeleton`, read lock-free thereafter.
     pub(super) rendered_slots: OnceLock<Box<[Arc<Mutex<String>>]>>,
+    /// One live `pr_status` slot per data row — same `PrStatusSlot` Arcs the
+    /// `WorktreeSkimItem`s hold. Set once in `on_skeleton` (primed from the
+    /// cache-filled snapshot), then written by `on_update` as the `CiStatus`
+    /// task reports, so the `pr` tab reflects the live fetch.
+    pub(super) pr_status_slots: OnceLock<Box<[PrStatusSlot]>>,
     pub(super) preview_cache: PreviewCache,
     pub(super) orchestrator: Arc<PreviewOrchestrator>,
     pub(super) preview_dims: (usize, usize),
@@ -76,6 +81,7 @@ impl PickerProgressHandler for PickerHandler {
         self.grid_slot.set(grid);
 
         let mut slots: Vec<Arc<Mutex<String>>> = Vec::with_capacity(items.len());
+        let mut pr_slots: Vec<PrStatusSlot> = Vec::with_capacity(items.len());
         let mut skim_items: Vec<Arc<dyn SkimItem>> = Vec::with_capacity(items.len() + 1);
         let mut list_items: Vec<Arc<ListItem>> = Vec::with_capacity(items.len());
 
@@ -128,6 +134,12 @@ impl PickerProgressHandler for PickerHandler {
             let item_arc = Arc::new(item);
             list_items.push(Arc::clone(&item_arc));
 
+            // Prime the live slot from the (cache-filled) snapshot so the `pr`
+            // tab paints instantly; `on_update` overwrites it as the CiStatus
+            // task reports.
+            let pr_status_arc: PrStatusSlot = Arc::new(Mutex::new(item_arc.pr_status.clone()));
+            pr_slots.push(Arc::clone(&pr_status_arc));
+
             skim_items.push(Arc::new(WorktreeSkimItem {
                 search_text,
                 rendered: rendered_arc,
@@ -136,6 +148,7 @@ impl PickerProgressHandler for PickerHandler {
                 preview_cache: Arc::clone(&self.preview_cache),
                 has_upstream,
                 summaries_enabled,
+                pr_status: pr_status_arc,
             }) as Arc<dyn SkimItem>);
         }
 
@@ -143,6 +156,7 @@ impl PickerProgressHandler for PickerHandler {
         // (which reads `shared_items`) sees a populated list the moment
         // skim calls `CommandCollector::invoke`.
         let _ = self.rendered_slots.set(slots.into_boxed_slice());
+        let _ = self.pr_status_slots.set(pr_slots.into_boxed_slice());
         *self.shared_items.lock().unwrap() = skim_items.clone();
 
         for skim_item in &skim_items {
@@ -171,11 +185,19 @@ impl PickerProgressHandler for PickerHandler {
         let _ = self.deferred_items.set(list_items);
     }
 
-    fn on_update(&self, idx: usize, rendered: String) {
+    fn on_update(&self, idx: usize, rendered: String, item: &ListItem) {
         if let Some(slots) = self.rendered_slots.get()
             && let Some(slot) = slots.get(idx)
         {
             *slot.lock().unwrap() = strip_osc8_hyperlinks(&rendered);
+        }
+        // Mirror the row's current CI status into its live slot so the `pr`
+        // tab reflects the fetch as it lands. Cheap clone; `pr_status` is
+        // `None` until the CiStatus task reports, then `Some(..)`.
+        if let Some(slots) = self.pr_status_slots.get()
+            && let Some(slot) = slots.get(idx)
+        {
+            *slot.lock().unwrap() = item.pr_status.clone();
         }
     }
 
@@ -227,6 +249,7 @@ mod tests {
             tx,
             shared_items,
             rendered_slots: OnceLock::new(),
+            pr_status_slots: OnceLock::new(),
             preview_cache,
             orchestrator,
             preview_dims: (80, 24),
@@ -273,10 +296,26 @@ mod tests {
         assert_eq!(*slots[0].lock().unwrap(), "skel-one");
         assert_eq!(*slots[1].lock().unwrap(), "skel-two");
 
-        // on_update rewrites a single slot (the second item here).
-        handler.on_update(1, "updated-two".into());
+        // pr_status slots start primed from the (empty) snapshots.
+        let pr_slots = handler.pr_status_slots.get().unwrap();
+        assert!(pr_slots[0].lock().unwrap().is_none());
+        assert!(pr_slots[1].lock().unwrap().is_none());
+
+        // on_update rewrites a single render slot (the second item here) and
+        // mirrors that item's CI status into its pr_status slot.
+        let mut updated = ListItem::new_branch("bbb".into(), "two".into());
+        updated.pr_status = Some(None);
+        handler.on_update(1, "updated-two".into(), &updated);
         assert_eq!(*slots[0].lock().unwrap(), "skel-one", "row 0 untouched");
         assert_eq!(*slots[1].lock().unwrap(), "updated-two");
+        assert!(
+            matches!(&*pr_slots[1].lock().unwrap(), Some(None)),
+            "row 1 pr status mirrored from the updated item"
+        );
+        assert!(
+            pr_slots[0].lock().unwrap().is_none(),
+            "row 0 pr status untouched"
+        );
 
         // on_reveal rewrites every slot — slot writes are idempotent
         // through `Mutex<String>`, so unconditional updates are safe.

@@ -527,17 +527,15 @@ pub fn handle_picker(
     }
 
     // Skip BranchDiff — it walks history per item for a column the picker
-    // doesn't surface. Skip the networked CiStatus task too: the picker is
-    // local-first, so collect fills the CI column from the cache when the task
-    // is skipped (one local file read per branch from `.git/wt/cache/ci-status/`,
-    // populated by recent `wt list --full` or statusline runs — see
-    // `populate_from_cache`). The `--prs` rows carry their own number, fetched
-    // by the explicit `--prs` forge call, and the `pr` preview tab reads the
-    // same cached status.
+    // doesn't surface. Keep the CiStatus task: the picker primes its CI cells
+    // from the local cache for an instant first paint (see `populate_from_cache`),
+    // then this task fetches live and streams each row's status in behind the
+    // frame — the picker's lifetime is bounded by the user, so a slow forge call
+    // never blocks anything (see the "Network Access" notes in CLAUDE.md). The
+    // `pr` preview tab reads the same live status. `--prs` rows carry their own
+    // number from the explicit `--prs` forge call.
     let skip_tasks: std::collections::HashSet<collect::TaskKind> =
-        [collect::TaskKind::BranchDiff, collect::TaskKind::CiStatus]
-            .into_iter()
-            .collect();
+        [collect::TaskKind::BranchDiff].into_iter().collect();
 
     // Per-task command timeout (bounds any single git invocation) from
     // shared `[list]` config. Still applies in progressive mode.
@@ -783,6 +781,7 @@ pub fn handle_picker(
             tx: tx.clone(),
             shared_items: Arc::clone(&shared_items),
             rendered_slots: std::sync::OnceLock::new(),
+            pr_status_slots: std::sync::OnceLock::new(),
             preview_cache: Arc::clone(&preview_cache),
             orchestrator: Arc::clone(&orchestrator),
             preview_dims,
@@ -1399,6 +1398,7 @@ pub mod tests {
 
     /// Build a `WorktreeSkimItem` from a snapshot `ListItem`.
     fn picker_item(branch_name: &str, item: ListItem) -> Arc<dyn SkimItem> {
+        let pr_status = Arc::new(Mutex::new(item.pr_status.clone()));
         Arc::new(WorktreeSkimItem {
             search_text: branch_name.to_string(),
             rendered: Arc::new(Mutex::new(String::new())),
@@ -1407,6 +1407,7 @@ pub mod tests {
             preview_cache: Arc::new(dashmap::DashMap::new()),
             has_upstream: false,
             summaries_enabled: false,
+            pr_status,
         }) as Arc<dyn SkimItem>
     }
 
