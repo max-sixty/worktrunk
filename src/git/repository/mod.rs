@@ -82,20 +82,15 @@
 //! The picker also maintains a `PreviewCache` (`Arc<DashMap>` in `commands/picker/items.rs`)
 //! for rendered preview output, scoped to a single picker session.
 
-use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, OnceLock};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::sync::{Arc, LazyLock, OnceLock};
 
 use crate::shell_exec::Cmd;
 
 use color_print::cformat;
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
-use wait_timeout::ChildExt;
 
 use anyhow::{Context, bail};
 use dunce::canonicalize;
@@ -130,52 +125,6 @@ pub use integration::IntegrationTargets;
 pub use ref_snapshot::RefSnapshot;
 pub(super) use working_tree::path_to_logging_context;
 pub use working_tree::{TempIndex, WorkingTree};
-
-/// Structured error from [`Repository::run_command_delayed_stream`].
-///
-/// Separates command output from command identity so callers can format
-/// each part with appropriate styling (e.g., bold command, gray exit code).
-#[derive(Debug)]
-pub(crate) struct StreamCommandError {
-    /// Lines of output from the command (may be empty)
-    pub output: String,
-    /// The command string, e.g., "git worktree add /path -b fix main"
-    pub command: String,
-    /// Exit information, e.g., "exit code 255" or "killed by signal"
-    pub exit_info: String,
-}
-
-impl std::fmt::Display for StreamCommandError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Callers use Repository::extract_failed_command() to access fields directly.
-        // This Display impl exists only to satisfy the Error trait bound.
-        write!(f, "{}", self.output)
-    }
-}
-
-impl std::error::Error for StreamCommandError {}
-
-/// Convert a child exit status into `Ok(())` or a [`StreamCommandError`].
-fn stream_exit_result(
-    status: std::process::ExitStatus,
-    buffer: &Arc<Mutex<Vec<String>>>,
-    cmd_str: &str,
-) -> anyhow::Result<()> {
-    if status.success() {
-        return Ok(());
-    }
-    let lines = buffer.lock().unwrap();
-    let exit_info = status
-        .code()
-        .map(|c| format!("exit code {c}"))
-        .unwrap_or_else(|| "killed by signal".to_string());
-    Err(StreamCommandError {
-        output: lines.join("\n"),
-        command: cmd_str.to_string(),
-        exit_info,
-    }
-    .into())
-}
 
 // ============================================================================
 // Repository Cache
@@ -1230,7 +1179,9 @@ impl Repository {
     /// indefinitely. `read_to_end()` in `Command::output()` then blocks forever
     /// waiting for EOF that never comes.
     pub fn start_fsmonitor_daemon_at(&self, path: &Path) {
-        log::debug!("$ git fsmonitor--daemon start [{}]", path.display());
+        let context = path_to_logging_context(path);
+        let cmd_str = "git fsmonitor--daemon start";
+        log::debug!("$ {cmd_str} [{context}]");
         let mut cmd = std::process::Command::new("git");
         cmd.args(["fsmonitor--daemon", "start"])
             .current_dir(path)
@@ -1238,15 +1189,22 @@ impl Repository {
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         crate::shell_exec::scrub_directive_env_vars(&mut cmd);
+        // Trace the daemon launch so it's attributed in the timeline rather than
+        // appearing as a gap on the switch hot path. Uses `status()` (not
+        // `Cmd::run`) deliberately — see the doc comment.
+        let mut trace = crate::trace::CommandTrace::new(Some(&context), cmd_str);
         let result = cmd.status();
         match result {
-            Ok(status) if !status.success() => {
-                log::debug!("fsmonitor daemon start exited {status} (usually fine)");
+            Ok(status) => {
+                trace.complete(status.success());
+                if !status.success() {
+                    log::debug!("fsmonitor daemon start exited {status} (usually fine)");
+                }
             }
             Err(e) => {
+                trace.fail(&e);
                 log::debug!("fsmonitor daemon start failed (usually fine): {e}");
             }
-            _ => {}
         }
     }
 
@@ -1394,122 +1352,23 @@ impl Repository {
 
     /// Run a git command with delayed output streaming.
     ///
-    /// Buffers output initially, then streams if the command takes longer than
-    /// `delay_ms`. This provides a quiet experience for fast operations while
-    /// still showing progress for slow ones (like `worktree add` on large repos).
-    /// Pass `-1` to never switch to streaming (always buffer).
-    ///
-    /// If `progress_message` is provided, it will be printed to stderr when
-    /// streaming starts (i.e., when the delay threshold is exceeded).
-    ///
-    /// All output (both stdout and stderr from the child) is sent to stderr
-    /// to keep stdout clean for commands like `wt switch`.
+    /// Thin wrapper over [`Cmd::delayed_stream`](crate::shell_exec::Cmd::delayed_stream):
+    /// buffers output initially, then streams to stderr if the command takes
+    /// longer than `delay_ms` (quiet for fast operations, progress for slow
+    /// ones like `worktree add` on large repos). Routing through `Cmd` is what
+    /// gives the command its `[wt-trace]` record and directive scrubbing — see
+    /// that method for the full contract.
     pub fn run_command_delayed_stream(
         &self,
         args: &[&str],
         delay_ms: i64,
         progress_message: Option<String>,
     ) -> anyhow::Result<()> {
-        // Allow tests to override delay threshold (-1 to disable, 0 for immediate)
-        let delay_ms = std::env::var("WORKTRUNK_TEST_DELAYED_STREAM_MS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(delay_ms);
-
-        let cmd_str = format!("git {}", args.join(" "));
-        log::debug!(
-            "$ {} [{}] (delayed stream, {}ms)",
-            cmd_str,
-            self.logging_context(),
-            delay_ms
-        );
-
-        let mut cmd = std::process::Command::new("git");
-        cmd.args(args)
+        Cmd::new("git")
+            .args(args.iter().copied())
             .current_dir(&self.discovery_path)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        crate::shell_exec::scrub_directive_env_vars(&mut cmd);
-        let mut child = cmd
-            .spawn()
-            .with_context(|| format!("Failed to spawn: {}", cmd_str))?;
-
-        let stdout = child.stdout.take().expect("stdout was piped");
-        let stderr = child.stderr.take().expect("stderr was piped");
-
-        // Shared state: when true, output streams directly; when false, buffers
-        let streaming = Arc::new(AtomicBool::new(false));
-        let buffer = Arc::new(Mutex::new(Vec::new()));
-
-        // Reader threads for stdout and stderr (both go to stderr)
-        let stdout_handle = {
-            let streaming = streaming.clone();
-            let buffer = buffer.clone();
-            thread::spawn(move || {
-                let reader = BufReader::new(stdout);
-                for line in reader.lines().map_while(Result::ok) {
-                    if streaming.load(Ordering::Relaxed) {
-                        let _ = writeln!(std::io::stderr(), "{}", line);
-                        let _ = std::io::stderr().flush();
-                    } else {
-                        buffer.lock().unwrap().push(line);
-                    }
-                }
-            })
-        };
-
-        let stderr_handle = {
-            let streaming = streaming.clone();
-            let buffer = buffer.clone();
-            thread::spawn(move || {
-                let reader = BufReader::new(stderr);
-                for line in reader.lines().map_while(Result::ok) {
-                    if streaming.load(Ordering::Relaxed) {
-                        let _ = writeln!(std::io::stderr(), "{}", line);
-                        let _ = std::io::stderr().flush();
-                    } else {
-                        buffer.lock().unwrap().push(line);
-                    }
-                }
-            })
-        };
-
-        let start = Instant::now();
-
-        // Phase 1: If delay threshold is enabled, wait that long for the child to
-        // exit. If it finishes before the threshold, output stays buffered (quiet).
-        if delay_ms >= 0 {
-            let delay = Duration::from_millis(delay_ms as u64);
-            let remaining = delay.saturating_sub(start.elapsed());
-
-            // Zero delay means "stream immediately", not "try a zero-timeout reap".
-            if !remaining.is_zero()
-                && let Some(status) = child
-                    .wait_timeout(remaining)
-                    .context("Failed to wait for command")?
-            {
-                let _ = stdout_handle.join();
-                let _ = stderr_handle.join();
-                return stream_exit_result(status, &buffer, &cmd_str);
-            }
-
-            // Delay threshold exceeded — switch to streaming
-            streaming.store(true, Ordering::Relaxed);
-            if let Some(ref msg) = progress_message {
-                let _ = writeln!(std::io::stderr(), "{}", msg);
-            }
-            for line in buffer.lock().unwrap().drain(..) {
-                let _ = writeln!(std::io::stderr(), "{}", line);
-            }
-            let _ = std::io::stderr().flush();
-        }
-
-        // Phase 2: Block until the child exits (no polling).
-        let status = child.wait().context("Failed to wait for command")?;
-        let _ = stdout_handle.join();
-        let _ = stderr_handle.join();
-        stream_exit_result(status, &buffer, &cmd_str)
+            .context(self.logging_context())
+            .delayed_stream(delay_ms, progress_message)
     }
 
     /// Run a git command and return the raw Output (for inspecting exit codes).
@@ -1528,14 +1387,14 @@ impl Repository {
     /// Extract structured failure info from a command-runner error.
     ///
     /// Returns `(output, Some(FailedCommand))` when the chain carries
-    /// either a `StreamCommandError` (from `run_command_delayed_stream`)
-    /// or a [`super::error::CommandError`] (from `run_command` /
-    /// `WorkingTree::run_command`). Falls back to `(error_string, None)`
-    /// for other error types (e.g., spawn failures).
+    /// either a [`StreamCommandError`](crate::shell_exec::StreamCommandError)
+    /// (from `run_command_delayed_stream`) or a [`super::error::CommandError`]
+    /// (from `run_command` / `WorkingTree::run_command`). Falls back to
+    /// `(error_string, None)` for other error types (e.g., spawn failures).
     pub fn extract_failed_command(
         err: &anyhow::Error,
     ) -> (String, Option<super::error::FailedCommand>) {
-        if let Some(e) = err.downcast_ref::<StreamCommandError>() {
+        if let Some(e) = err.downcast_ref::<crate::shell_exec::StreamCommandError>() {
             return (
                 e.output.clone(),
                 Some(super::error::FailedCommand {

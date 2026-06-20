@@ -65,12 +65,14 @@ Full inventory: FAQ [What files does Worktrunk create?](docs/content/faq.md#what
 
 ### All Commands Through `shell_exec::Cmd`
 
-Every external command goes through `shell_exec::Cmd` for consistent debug logging (`$ git status [worktree-name]`) and `[wt-trace]` timing. Never call `cmd.output()` directly. For git, prefer `Repository::run_command()` (wraps `Cmd` with worktree context). Pipe stdin via `.stdin_bytes(...)`. The `[wt-trace]` grammar is owned by `src/trace/emit.rs` — emit new trace records through that module, not ad-hoc `log::debug!("[wt-trace] …")` strings.
+Every external command goes through `shell_exec::Cmd` for consistent debug logging (`$ git status [worktree-name]`) and `[wt-trace]` timing. Never call `cmd.output()` directly. For git, prefer `Repository::run_command()` (wraps `Cmd` with worktree context). `Cmd` has four execution modes — `run` (capture), `stream` (inherit stdio), `delayed_stream` (buffer then stream to stderr, for slow ops like `git worktree add`), and `pipe_into` (two-stage pipe). Pipe stdin via `.stdin_bytes(...)`.
 
 ```rust
 Cmd::new("git").args(["status", "--porcelain"]).current_dir(&wt).context("worktree-name").run()?;
 Cmd::new("gh").args(["pr", "list"]).run()?;  // no context for standalone tools
 ```
+
+**The `[wt-trace]` command record has one emitter: `CommandTrace` in `src/trace/emit.rs`.** The grammar lives there too (don't hand-write `log::debug!("[wt-trace] …")`). `CommandTrace::{complete,fail}` are the only callers of the private `command_completed`/`command_errored` writers, so a subprocess is either traced through the guard or produces no command record. Most spawns get this for free via `Cmd`. A few spawn sites have I/O shapes `Cmd` can't model and construct a `CommandTrace` directly: the concurrent-command runner (`output/concurrent.rs`), pipeline steps (`commands/run_pipeline.rs`), `wt step tether`, and the fsmonitor daemon launch. **Any new spawn site that runs an in-process command must construct a `CommandTrace` (start it just before spawn; `complete(success)` after wait, `fail(err)` on spawn/wait error)** — otherwise the command shows up as an unattributed gap in `wt-perf timeline`. The guard is `#[must_use]` and trips a debug-build assertion if dropped unresolved, so a forgotten `complete`/`fail` fails tests rather than silently going untraced. Detached background children (`commands/process.rs`) and interactive helpers (pagers, shell probes) are intentionally untraced — they outlive the invocation or aren't part of its timeline.
 
 ### Real-time Output Streaming
 
