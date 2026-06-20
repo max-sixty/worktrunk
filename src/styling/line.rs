@@ -79,13 +79,6 @@ impl StyledString {
         self.text.ansi_strip().width()
     }
 
-    /// Visual width under CJK semantics, where ambiguous-width characters
-    /// (such as `…`) count as 2 columns. Skim measures lines this way when
-    /// deciding whether to repaint the trailing columns as `..`.
-    pub fn width_cjk(&self) -> usize {
-        self.text.ansi_strip().width_cjk()
-    }
-
     /// Renders to a string with ANSI escape codes
     pub fn render(&self) -> String {
         if let Some(style) = &self.style {
@@ -138,11 +131,6 @@ impl StyledLine {
     /// Returns the total visual width
     pub fn width(&self) -> usize {
         self.segments.iter().map(|s| s.width()).sum()
-    }
-
-    /// Total visual width under CJK semantics — see [`StyledString::width_cjk`].
-    pub fn width_cjk(&self) -> usize {
-        self.segments.iter().map(|s| s.width_cjk()).sum()
     }
 
     /// Renders the entire line with ANSI escape codes
@@ -208,22 +196,6 @@ mod tests {
         // OSC-8 via raw escape sequences
         let s = "\u{1b}]8;;https://example.com\u{1b}\\A\u{1b}]8;;\u{1b}\\";
         assert_eq!(UnicodeWidthStr::width(s.ansi_strip().as_ref()), 1,);
-    }
-
-    /// `width_cjk` counts ambiguous-width characters (like the ellipsis `…`) as
-    /// two columns where `width` counts them as one — the measure skim uses when
-    /// deciding whether to repaint trailing columns.
-    #[test]
-    fn test_width_cjk_counts_ambiguous_as_two() {
-        let s = StyledString::raw("a…b");
-        assert_eq!(s.width(), 3);
-        assert_eq!(s.width_cjk(), 4);
-
-        let mut line = StyledLine::new();
-        line.push_raw("a…");
-        line.push_styled("b…", Style::new().bold());
-        assert_eq!(line.width(), 4);
-        assert_eq!(line.width_cjk(), 6);
     }
 
     /// truncate_visible respects visual width, handles emoji, and appends reset codes.
