@@ -185,9 +185,22 @@ full = false       # Show CI, main…± diffstat, and LLM summaries (--full)
 branches = false   # Include branches without worktrees (--branches)
 remotes = false    # Include remote-only branches (--remotes)
 
+columns = ["branch", "status", "ci", "path"]   # Built-in columns to show, in order (omit for the default set)
+
 task-timeout-ms = 0   # Kill individual git commands after N ms; 0 disables
 timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disables
 ```
+
+`columns` selects and orders the built-in columns; omit it for the default set.
+Valid names are `branch`, `status`, `working-diff`, `ahead-behind`,
+`branch-diff`, `summary`, `upstream`, `ci`, `path`, `url`, `commit`, `age`, and
+`message`. The gutter type indicator always shows, and custom columns (below)
+still append. `WORKTRUNK__LIST__COLUMNS` accepts the same list as a
+comma-separated string. A name gated off elsewhere stays hidden — `ci` needs
+`--full`, `summary` needs `[commit.generation]` — so `columns` narrows the
+candidate set rather than forcing a column on. It affects the rendered table and
+the `wt switch` picker; `wt list --format json` always emits every built-in
+field.
 
 #### Custom columns [experimental]
 

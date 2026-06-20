@@ -527,6 +527,18 @@ pub struct LayoutConfig {
     pub status_position_mask: super::model::PositionMask,
 }
 
+/// The user's column configuration for one render: which built-ins to show and
+/// the resolved custom columns to append.
+///
+/// `selected` is `None` for the default column set, or `Some(order)` to render
+/// only those built-ins in that order (`[list] columns`). `custom` carries the
+/// resolved `[list.custom-columns]`, which append regardless of `selected`.
+#[derive(Clone, Copy)]
+pub struct ColumnSelection<'a> {
+    pub selected: Option<&'a [ColumnKind]>,
+    pub custom: &'a [ResolvedCustomColumn],
+}
+
 #[derive(Clone, Copy)]
 struct ColumnCandidate<'a> {
     spec: &'a ColumnSpec,
@@ -669,6 +681,32 @@ fn build_estimated_widths(
     }
 }
 
+/// Final visual ordering key for a column.
+///
+/// Without a `[list] columns` selection this defers to the static registry
+/// order ([`column_display_index`]). With a selection, the configured order
+/// wins for built-ins: Gutter pins first, selected built-ins follow in their
+/// listed order, and custom columns trail in resolution order (they aren't
+/// addressable in the selection list yet).
+fn display_sort_key(kind: ColumnKind, selected: Option<&[ColumnKind]>) -> (usize, usize) {
+    let Some(order) = selected else {
+        return column_display_index(kind);
+    };
+    match kind {
+        ColumnKind::Gutter => (0, 0),
+        ColumnKind::Custom(i) => (order.len() + 1, i as usize + 1),
+        // Selected built-ins sort by their position in `order` (always Some —
+        // the candidate filter dropped any built-in not in the selection). The
+        // `usize::MAX` sentinel matches `column_display_index` and only applies
+        // to that unreachable case; `+ 1` runs only on a real position, so it
+        // can't overflow.
+        kind => order
+            .iter()
+            .position(|&k| k == kind)
+            .map_or((usize::MAX, 0), |position| (position + 1, 0)),
+    }
+}
+
 /// Allocate columns using priority-based allocation logic.
 ///
 /// This is the core allocation algorithm used by `calculate_layout_with_width()`
@@ -680,8 +718,12 @@ fn allocate_columns_with_priority(
     commit_width: usize,
     terminal_width: usize,
     main_worktree_path: PathBuf,
-    custom_columns: &[ResolvedCustomColumn],
+    columns: ColumnSelection,
 ) -> LayoutConfig {
+    let ColumnSelection {
+        custom: custom_columns,
+        selected,
+    } = columns;
     let spacing = 2;
     let mut remaining = terminal_width;
 
@@ -695,13 +737,23 @@ fn allocate_columns_with_priority(
         .map(|(i, column)| ColumnSpec::new(ColumnKind::Custom(i as u8), column.priority, None))
         .collect();
 
-    // Build candidates with priorities
-    // Filter out columns whose required task is being skipped
+    // Build candidates with priorities.
+    // - Filter out columns whose required task is being skipped.
+    // - When `[list] columns` selects a subset, keep only the chosen built-ins
+    //   (Gutter is structural — always kept). This filters WITHOUT renumbering
+    //   base_priority, so the Summary drop loop and EMPTY_PENALTY tiers below
+    //   stay correct: the allocator sorts by priority and never indexes by it,
+    //   so a sparse retained set just works. Custom columns are an independent
+    //   axis and always join (selection names only address built-ins).
     let mut candidates: Vec<ColumnCandidate> = COLUMN_SPECS
         .iter()
         .filter(|spec| {
             spec.requires_task
                 .is_none_or(|task| !skip_tasks.contains(&task))
+        })
+        .filter(|spec| match selected {
+            Some(order) => spec.kind == ColumnKind::Gutter || order.contains(&spec.kind),
+            None => true,
         })
         .chain(custom_specs.iter())
         .map(|spec| ColumnCandidate {
@@ -864,8 +916,10 @@ fn allocate_columns_with_priority(
         max_message_len = message_col.width;
     }
 
-    // Sort by display order to maintain correct visual order
-    pending.sort_by_key(|col| column_display_index(col.spec.kind));
+    // Sort by display order to maintain correct visual order. With an explicit
+    // `[list] columns` selection the configured order wins (Gutter stays first);
+    // otherwise the static registry order applies.
+    pending.sort_by_key(|col| display_sort_key(col.spec.kind, selected));
 
     // Build final column layouts with positions
     let gap = 2;
@@ -954,8 +1008,9 @@ pub fn calculate_layout_with_width(
     main_worktree_path: &Path,
     url_template: Option<&str>,
     max_pr_number: Option<u64>,
-    custom_columns: &[ResolvedCustomColumn],
+    columns: ColumnSelection,
 ) -> LayoutConfig {
+    let custom_columns = columns.custom;
     // Calculate actual widths for things we know
     // Include branch names from both worktrees and standalone branches
     let longest_branch = items
@@ -1023,7 +1078,7 @@ pub fn calculate_layout_with_width(
         commit_width,
         terminal_width,
         main_worktree_path.to_path_buf(),
-        custom_columns,
+        columns,
     )
 }
 
@@ -1435,7 +1490,10 @@ mod tests {
             &main_worktree_path,
             None,
             None,
-            &[],
+            ColumnSelection {
+                custom: &[],
+                selected: None,
+            },
         );
 
         assert!(
@@ -1549,7 +1607,10 @@ mod tests {
             &main_worktree_path,
             None,
             None,
-            &[],
+            ColumnSelection {
+                custom: &[],
+                selected: None,
+            },
         );
 
         assert!(
@@ -1676,7 +1737,10 @@ mod tests {
             Path::new("/test"),
             None,
             None,
-            &[],
+            ColumnSelection {
+                custom: &[],
+                selected: None,
+            },
         )
     }
 
@@ -1698,6 +1762,158 @@ mod tests {
 
     fn find_column(layout: &LayoutConfig, kind: ColumnKind) -> Option<&ColumnLayout> {
         layout.columns.iter().find(|c| c.kind == kind)
+    }
+
+    #[test]
+    fn test_selected_columns_filter_and_reorder() {
+        // Select a subset in a non-default order. At a wide width nothing drops,
+        // so the visible set is exactly Gutter (always) + the selection, in the
+        // configured order (Gutter pinned first) — not the static registry order.
+        let items = vec![make_test_item("feature-branch")];
+        let selected = [ColumnKind::Time, ColumnKind::Branch, ColumnKind::Commit];
+        let layout = calculate_layout_with_width(
+            &items,
+            &full_skip_tasks(),
+            300,
+            Path::new("/test"),
+            None,
+            None,
+            ColumnSelection {
+                custom: &[],
+                selected: Some(&selected),
+            },
+        );
+
+        let kinds: Vec<ColumnKind> = layout.columns.iter().map(|c| c.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                ColumnKind::Gutter,
+                ColumnKind::Time,
+                ColumnKind::Branch,
+                ColumnKind::Commit
+            ],
+            "only Gutter + selected columns appear, in the configured order"
+        );
+        // Deselected built-ins are absent and don't inflate the hidden count
+        // (they were never candidates).
+        assert!(find_column(&layout, ColumnKind::Status).is_none());
+        assert!(find_column(&layout, ColumnKind::Message).is_none());
+        assert_eq!(layout.hidden_column_count, 0);
+    }
+
+    #[test]
+    fn test_selected_columns_custom_columns_append() {
+        // Custom columns aren't addressable in the selection list; they append
+        // after the selected built-ins, keeping their resolution order.
+        let mut item = make_test_item("feature-branch");
+        item.custom_values = vec!["TICKET-1".to_string()];
+        let items = vec![item];
+        let custom = [ResolvedCustomColumn {
+            name: "Ticket".to_string(),
+            template: "{{ vars.ticket }}".to_string(),
+            max_width: 40,
+            priority: 9,
+        }];
+        let selected = [ColumnKind::Branch];
+        let layout = calculate_layout_with_width(
+            &items,
+            &full_skip_tasks(),
+            300,
+            Path::new("/test"),
+            None,
+            None,
+            ColumnSelection {
+                custom: &custom,
+                selected: Some(&selected),
+            },
+        );
+
+        let kinds: Vec<ColumnKind> = layout.columns.iter().map(|c| c.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                ColumnKind::Gutter,
+                ColumnKind::Branch,
+                ColumnKind::Custom(0)
+            ],
+            "custom columns trail the selected built-ins"
+        );
+    }
+
+    #[test]
+    fn test_selected_columns_cannot_force_a_gated_column() {
+        // Selection narrows the candidate set; it can't force on a column gated
+        // off by skip_tasks. `ci` needs --full: with CiStatus skipped, selecting
+        // it leaves a gutter-only table (the skip_tasks filter runs first).
+        let items = vec![make_test_item("feature-branch")];
+        let selected = [ColumnKind::CiStatus];
+        let gated = calculate_layout_with_width(
+            &items,
+            &non_full_skip_tasks(),
+            200,
+            Path::new("/test"),
+            None,
+            None,
+            ColumnSelection {
+                custom: &[],
+                selected: Some(&selected),
+            },
+        );
+        assert!(
+            find_column(&gated, ColumnKind::CiStatus).is_none(),
+            "a gated column stays hidden even when selected"
+        );
+        let kinds: Vec<ColumnKind> = gated.columns.iter().map(|c| c.kind).collect();
+        assert_eq!(kinds, vec![ColumnKind::Gutter], "only the gutter survives");
+
+        // Once the gate opens (full mode, nothing skipped), the same selection
+        // renders CI.
+        let full = calculate_layout_with_width(
+            &items,
+            &full_skip_tasks(),
+            200,
+            Path::new("/test"),
+            None,
+            None,
+            ColumnSelection {
+                custom: &[],
+                selected: Some(&selected),
+            },
+        );
+        assert!(
+            find_column(&full, ColumnKind::CiStatus).is_some(),
+            "the selected column renders once its task is no longer skipped"
+        );
+    }
+
+    #[test]
+    fn test_selected_columns_drop_by_base_priority() {
+        // Selection controls membership/order, not drop priority: on a narrow
+        // terminal the least important *selected* column drops by base_priority
+        // (Message=13 > Branch=1), independent of configured order.
+        let items = vec![make_test_item("a-fairly-long-feature-branch-name")];
+        let selected = [ColumnKind::Message, ColumnKind::Branch];
+        let layout = calculate_layout_with_width(
+            &items,
+            &full_skip_tasks(),
+            24,
+            Path::new("/test"),
+            None,
+            None,
+            ColumnSelection {
+                custom: &[],
+                selected: Some(&selected),
+            },
+        );
+        assert!(
+            find_column(&layout, ColumnKind::Branch).is_some(),
+            "Branch (priority 1) survives a narrow width"
+        );
+        assert!(
+            find_column(&layout, ColumnKind::Message).is_none(),
+            "Message (priority 13) drops first despite being listed first"
+        );
     }
 
     #[test]
@@ -1951,8 +2167,18 @@ mod tests {
         let skip = full_skip_tasks();
 
         // At very wide terminals: both Path and Summary coexist
-        let layout_wide =
-            calculate_layout_with_width(&items, &skip, 300, main_path, None, None, &[]);
+        let layout_wide = calculate_layout_with_width(
+            &items,
+            &skip,
+            300,
+            main_path,
+            None,
+            None,
+            ColumnSelection {
+                custom: &[],
+                selected: None,
+            },
+        );
         assert!(
             find_column(&layout_wide, ColumnKind::Summary).is_some(),
             "Summary should be present at 300"
@@ -1965,8 +2191,18 @@ mod tests {
         // At moderate widths (170): Summary should reach at least 50 chars.
         // Currently Path eats ~30 chars from Summary's expansion budget,
         // leaving Summary at ~48 and dropping Message entirely.
-        let layout_170 =
-            calculate_layout_with_width(&items, &skip, 170, main_path, None, None, &[]);
+        let layout_170 = calculate_layout_with_width(
+            &items,
+            &skip,
+            170,
+            main_path,
+            None,
+            None,
+            ColumnSelection {
+                custom: &[],
+                selected: None,
+            },
+        );
         let summary_170 = find_column(&layout_170, ColumnKind::Summary)
             .expect("Summary should be present at 170")
             .width;
@@ -2105,7 +2341,18 @@ mod tests {
         let main_path = Path::new("/test/worktrunk");
         let skip = full_skip_tasks();
 
-        let layout = calculate_layout_with_width(&items, &skip, 170, main_path, None, None, &[]);
+        let layout = calculate_layout_with_width(
+            &items,
+            &skip,
+            170,
+            main_path,
+            None,
+            None,
+            ColumnSelection {
+                custom: &[],
+                selected: None,
+            },
+        );
 
         let mut lines = Vec::new();
         lines.push(layout.render_header_line().plain_text());
@@ -2132,7 +2379,18 @@ mod tests {
 
         // At 30 cols, ideal branch width (~57) can't fit, but Branch should still
         // be allocated at a reduced width rather than dropped.
-        let layout = calculate_layout_with_width(&items, &skip, 30, main_path, None, None, &[]);
+        let layout = calculate_layout_with_width(
+            &items,
+            &skip,
+            30,
+            main_path,
+            None,
+            None,
+            ColumnSelection {
+                custom: &[],
+                selected: None,
+            },
+        );
         let branch = find_column(&layout, ColumnKind::Branch);
         assert!(
             branch.is_some(),
@@ -2145,7 +2403,18 @@ mod tests {
         );
 
         // At 80 cols, Branch should fit comfortably
-        let layout = calculate_layout_with_width(&items, &skip, 80, main_path, None, None, &[]);
+        let layout = calculate_layout_with_width(
+            &items,
+            &skip,
+            80,
+            main_path,
+            None,
+            None,
+            ColumnSelection {
+                custom: &[],
+                selected: None,
+            },
+        );
         let branch = find_column(&layout, ColumnKind::Branch).unwrap();
         assert!(
             branch.width > 6,
@@ -2205,7 +2474,10 @@ mod tests {
             Path::new("/test"),
             None,
             None,
-            &columns,
+            ColumnSelection {
+                custom: &columns,
+                selected: None,
+            },
         );
 
         // Value wider than max_width clamps to it
@@ -2244,7 +2516,10 @@ mod tests {
             Path::new("/test"),
             None,
             None,
-            &columns,
+            ColumnSelection {
+                custom: &columns,
+                selected: None,
+            },
         );
 
         // Values are final before layout, so an all-empty column is excluded
@@ -2267,7 +2542,10 @@ mod tests {
             Path::new("/test"),
             None,
             None,
-            &columns,
+            ColumnSelection {
+                custom: &columns,
+                selected: None,
+            },
         );
 
         // Priority 9 loses to the core columns when space runs out, and the

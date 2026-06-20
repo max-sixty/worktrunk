@@ -58,6 +58,78 @@ impl ColumnKind {
             .map(|spec| spec.base_priority)
             .unwrap_or(u8::MAX)
     }
+
+    /// Canonical kebab identifier for the `[list] columns` selection list.
+    ///
+    /// `None` for [`ColumnKind::Gutter`] (the worktree-type indicator, always
+    /// shown and not user-selectable) and [`ColumnKind::Custom`] (addressed by
+    /// its `[list.custom-columns]` header, not a static name). The exhaustive
+    /// match forces every new variant to declare a name or opt out, and
+    /// `test_config_name_round_trips` guards that the names stay unique and
+    /// parseable.
+    pub fn config_name(self) -> Option<&'static str> {
+        Some(match self {
+            ColumnKind::Gutter => return None,
+            ColumnKind::Branch => "branch",
+            ColumnKind::Status => "status",
+            ColumnKind::WorkingDiff => "working-diff",
+            ColumnKind::AheadBehind => "ahead-behind",
+            ColumnKind::BranchDiff => "branch-diff",
+            ColumnKind::Summary => "summary",
+            ColumnKind::Upstream => "upstream",
+            ColumnKind::CiStatus => "ci",
+            ColumnKind::Path => "path",
+            ColumnKind::Url => "url",
+            ColumnKind::Commit => "commit",
+            ColumnKind::Time => "age",
+            ColumnKind::Message => "message",
+            ColumnKind::Custom(_) => return None,
+        })
+    }
+
+    /// Resolve a kebab name from `[list] columns` to its built-in column.
+    ///
+    /// Only built-ins registered in [`COLUMN_SPECS`] are selectable; Gutter
+    /// (no name) and custom columns are unreachable here.
+    pub fn from_config_name(name: &str) -> Option<ColumnKind> {
+        COLUMN_SPECS
+            .iter()
+            .map(|spec| spec.kind)
+            .find(|kind| kind.config_name() == Some(name))
+    }
+
+    /// All selectable column names in display order, for error messages and docs.
+    pub fn selectable_names() -> Vec<&'static str> {
+        COLUMN_SPECS
+            .iter()
+            .filter_map(|spec| spec.kind.config_name())
+            .collect()
+    }
+}
+
+/// Parse the `[list] columns` selection into an ordered list of built-in columns.
+///
+/// An empty input yields an empty selection (the caller treats that as "use the
+/// default column set"). Unknown names and duplicates are hard errors so a typo
+/// can't silently render a different table; the error lists every valid name.
+/// Like `[list.custom-columns]`, this is validated at the `wt list` edge rather
+/// than at config load — `ColumnKind` lives in the command layer, out of reach
+/// of the config crate.
+pub fn parse_selected_columns(names: &[String]) -> anyhow::Result<Vec<ColumnKind>> {
+    let mut selected = Vec::with_capacity(names.len());
+    for name in names {
+        let kind = ColumnKind::from_config_name(name).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Unknown column {name:?} in [list] columns. Valid columns: {}",
+                ColumnKind::selectable_names().join(", ")
+            )
+        })?;
+        if selected.contains(&kind) {
+            anyhow::bail!("Duplicate column {name:?} in [list] columns");
+        }
+        selected.push(kind);
+    }
+    Ok(selected)
 }
 
 /// Differentiates between diff-style columns with plus/minus symbols and those with arrows.
@@ -273,5 +345,63 @@ mod tests {
         assert!(url < first, "custom columns render after Url");
         assert!(first < second, "custom columns keep resolution order");
         assert!(second < commit, "custom columns render before Commit");
+    }
+
+    #[test]
+    fn test_config_name_round_trips() {
+        // Drives off COLUMN_SPECS (single source of truth): every registered
+        // built-in either has a unique, parseable name or is Gutter. A new
+        // variant added to COLUMN_SPECS without a config_name arm fails the
+        // exhaustive match in config_name() at compile time; one set to None
+        // (other than Gutter) or colliding with another name fails here.
+        for spec in COLUMN_SPECS {
+            let kind = spec.kind;
+            match kind.config_name() {
+                Some(name) => assert_eq!(
+                    ColumnKind::from_config_name(name),
+                    Some(kind),
+                    "{kind:?} name {name:?} must round-trip (unique + parseable)"
+                ),
+                None => assert_eq!(
+                    kind,
+                    ColumnKind::Gutter,
+                    "only Gutter may lack a config_name; {kind:?} is missing one"
+                ),
+            }
+        }
+        // Custom columns are addressed by header, never by a static name.
+        assert_eq!(ColumnKind::Custom(0).config_name(), None);
+        assert_eq!(ColumnKind::from_config_name("gutter"), None);
+        assert_eq!(ColumnKind::from_config_name("nonsense"), None);
+    }
+
+    #[test]
+    fn test_parse_selected_columns() {
+        let selected =
+            parse_selected_columns(&["ci".into(), "branch".into(), "path".into()]).unwrap();
+        assert_eq!(
+            selected,
+            vec![ColumnKind::CiStatus, ColumnKind::Branch, ColumnKind::Path],
+            "selection preserves the configured order"
+        );
+
+        assert!(parse_selected_columns(&[]).unwrap().is_empty());
+
+        let unknown = parse_selected_columns(&["branch".into(), "bogus".into()]).unwrap_err();
+        assert!(unknown.to_string().contains("Unknown column"), "{unknown}");
+        assert!(unknown.to_string().contains("bogus"), "{unknown}");
+        // The error lists valid names so a typo is self-correcting.
+        assert!(unknown.to_string().contains("ci"), "{unknown}");
+
+        let dup = parse_selected_columns(&["branch".into(), "branch".into()]).unwrap_err();
+        assert!(dup.to_string().contains("Duplicate column"), "{dup}");
+
+        // Gutter is structural and not user-selectable.
+        let gutter = parse_selected_columns(&["gutter".into()]).unwrap_err();
+        assert!(gutter.to_string().contains("Unknown column"), "{gutter}");
+
+        // Matching is exact: the rendered header "Branch" is not the kebab name.
+        let cased = parse_selected_columns(&["Branch".into()]).unwrap_err();
+        assert!(cased.to_string().contains("Unknown column"), "{cased}");
     }
 }

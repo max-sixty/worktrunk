@@ -848,3 +848,158 @@ template = "{{ worktree_name }}"
         "branch-only row has no worktree name, so the Dir cell is empty"
     );
 }
+
+/// `[list] columns` selects and reorders the built-in columns end-to-end:
+/// only the listed columns appear (Commit, normally shown at this width, is
+/// gone), in the configured order (Age before Branch), with the gutter always
+/// present.
+#[rstest]
+fn test_list_config_columns_select_and_reorder(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        r#"[list]
+columns = ["age", "branch"]
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        // Wide enough that the default set (incl. Commit) would all fit, so an
+        // absent Commit proves selection filtered it rather than width dropping.
+        cmd.env("COLUMNS", "200");
+        cmd.arg("list").current_dir(repo.root_path());
+
+        let output = cmd.output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "exit code should be 0: {stderr}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        let header = stdout
+            .lines()
+            .find(|line| line.contains("Branch"))
+            .unwrap_or_else(|| panic!("no header row in:\n{stdout}"));
+        assert!(header.contains("Age"), "Age selected, got header: {header}");
+        assert!(
+            !header.contains("Commit"),
+            "Commit not selected, should be absent: {header}"
+        );
+        assert!(
+            !header.contains("Message"),
+            "Message not selected, should be absent: {header}"
+        );
+        let age_at = header.find("Age").unwrap();
+        let branch_at = header.find("Branch").unwrap();
+        assert!(
+            age_at < branch_at,
+            "configured order puts Age before Branch: {header}"
+        );
+    });
+}
+
+/// The env overlay can only deliver scalars, so `WORKTRUNK__LIST__COLUMNS`
+/// arrives as a comma-separated string; `string_or_seq` splits it into the
+/// column list. The override changes which columns render (Commit drops).
+#[rstest]
+fn test_list_config_columns_env_override(repo: TestRepo) {
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.env("COLUMNS", "200");
+        cmd.env("WORKTRUNK__LIST__COLUMNS", "branch,age");
+        cmd.arg("list").current_dir(repo.root_path());
+
+        let output = cmd.output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !stderr.contains("Failed"),
+            "a comma-separated column list should parse, not fail: {stderr}"
+        );
+        assert!(output.status.success(), "exit code should be 0: {stderr}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        let header = stdout
+            .lines()
+            .find(|line| line.contains("Branch"))
+            .unwrap_or_else(|| panic!("no header row in:\n{stdout}"));
+        assert!(header.contains("Age"), "Age selected via env: {header}");
+        assert!(
+            !header.contains("Commit"),
+            "Commit not selected, should be absent: {header}"
+        );
+    });
+}
+
+/// An unknown column name aborts `wt list` with a message that lists the valid
+/// names, so a typo is self-correcting rather than silently rendering a
+/// different table.
+#[rstest]
+fn test_list_config_columns_unknown_name_errors(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        r#"[list]
+columns = ["branch", "bogus"]
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(repo.root_path());
+
+        let output = cmd.output().unwrap();
+        assert!(
+            !output.status.success(),
+            "an unknown column name should abort wt list"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("Unknown column"), "stderr: {stderr}");
+        assert!(
+            stderr.contains("bogus"),
+            "stderr names the bad column: {stderr}"
+        );
+        assert!(
+            stderr.contains("branch"),
+            "stderr lists valid names: {stderr}"
+        );
+    });
+}
+
+/// The headline use case: `wt --config-set 'list.columns=[…]' list` renders a
+/// reduced view for a single invocation. The TOML array parses natively in the
+/// override fragment (no string splitting needed), winning over any config file.
+#[rstest]
+fn test_list_config_columns_cli_override(repo: TestRepo) {
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.env("COLUMNS", "200");
+        cmd.args([
+            "--config-set",
+            r#"list.columns = ["branch", "age"]"#,
+            "list",
+        ])
+        .current_dir(repo.root_path());
+
+        let output = cmd.output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "exit code should be 0: {stderr}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        let header = stdout
+            .lines()
+            .find(|line| line.contains("Branch"))
+            .unwrap_or_else(|| panic!("no header row in:\n{stdout}"));
+        assert!(header.contains("Age"), "Age selected: {header}");
+        assert!(
+            !header.contains("Commit"),
+            "Commit not selected, should be absent: {header}"
+        );
+    });
+}

@@ -192,6 +192,21 @@ pub struct ListConfig {
     #[serde(rename = "timeout-ms", skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
 
+    /// Built-in columns to render, in order. When non-empty, only these
+    /// columns appear (a subset and/or reorder of the defaults); empty means
+    /// the default set. Names are kebab identifiers (`branch`, `status`,
+    /// `working-diff`, `ahead-behind`, `branch-diff`, `summary`, `upstream`,
+    /// `ci`, `path`, `url`, `commit`, `age`, `message`); the gutter type
+    /// indicator always shows. Custom columns (below) still append. Accepts a
+    /// TOML array in config files or a comma-separated string from
+    /// `WORKTRUNK__LIST__COLUMNS`.
+    #[serde(
+        default,
+        deserialize_with = "string_or_seq",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub columns: Vec<String>,
+
     /// Custom columns, keyed by header text. See [`ListColumnConfig`].
     ///
     /// *(Experimental — fields may change in future releases.)*
@@ -201,6 +216,55 @@ pub struct ListConfig {
         skip_serializing_if = "BTreeMap::is_empty"
     )]
     pub custom_columns: BTreeMap<String, ListColumnConfig>,
+}
+
+/// Deserialize a column list from either a TOML array (`["branch", "ci"]`, the
+/// config-file form) or a comma-separated string (`"branch,ci"`).
+///
+/// The string form exists for the env overlay: `WORKTRUNK__*` can only deliver
+/// scalars, so a plain `Vec<String>` field would reject `WORKTRUNK__LIST__COLUMNS`
+/// outright. Only the string form is split: items are trimmed and empties dropped,
+/// so `"branch, ci"`, a trailing comma, and an all-blank value behave sensibly.
+/// Array entries are taken verbatim (a stray-space entry fails loudly at the
+/// edge rather than being silently dropped). Names are validated later at the
+/// `wt list` edge (`parse_selected_columns`), not at config load, since
+/// `ColumnKind` lives in the command layer out of reach of this crate.
+fn string_or_seq<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use std::fmt;
+
+    use serde::de::{self, SeqAccess, Visitor};
+
+    struct StringOrSeq;
+
+    impl<'de> Visitor<'de> for StringOrSeq {
+        type Value = Vec<String>;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("a list of column names or a comma-separated string")
+        }
+
+        fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
+            Ok(value
+                .split(',')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(str::to_string)
+                .collect())
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            let mut columns = Vec::new();
+            while let Some(item) = seq.next_element::<String>()? {
+                columns.push(item);
+            }
+            Ok(columns)
+        }
+    }
+
+    deserializer.deserialize_any(StringOrSeq)
 }
 
 impl ListConfig {
@@ -252,6 +316,16 @@ impl Merge for ListConfig {
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone())),
         );
+        // Column selection replaces wholesale (a more specific layer's order is
+        // the order it wants); an empty list means "unset", so it falls back to
+        // the base layer rather than blanking the selection. Unlike
+        // custom_columns, merging entries would be meaningless — a column list
+        // is an ordering, not a keyed set.
+        let columns = if other.columns.is_empty() {
+            self.columns.clone()
+        } else {
+            other.columns.clone()
+        };
         Self {
             full: other.full.or(self.full),
             branches: other.branches.or(self.branches),
@@ -259,6 +333,7 @@ impl Merge for ListConfig {
             summary: other.summary.or(self.summary),
             task_timeout_ms: other.task_timeout_ms.or(self.task_timeout_ms),
             timeout_ms: other.timeout_ms.or(self.timeout_ms),
+            columns,
             custom_columns,
         }
     }

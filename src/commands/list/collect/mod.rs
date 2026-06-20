@@ -1120,6 +1120,19 @@ pub fn collect(
         );
     }
 
+    // `[list] columns` selects/reorders the built-in columns. Like custom
+    // columns, a bad name aborts `wt list` but only degrades the picker (which
+    // can't surface an abort mid-render), so the same `progressive_handler`
+    // fork applies. An empty selection means "use the default column set".
+    let selected_columns = match super::columns::parse_selected_columns(&config.list.columns) {
+        Ok(columns) => columns,
+        Err(e) if progressive_handler.is_some() => {
+            emit_warning(warning_message(format!("Column selection ignored: {e}")).to_string());
+            Vec::new()
+        }
+        Err(e) => return Err(e),
+    };
+
     // The picker skips the networked CiStatus task, but cached statuses are
     // local data: fill rows from `.git/wt/cache/ci-status/` so PR/MR numbers
     // appear in the picker without touching the wire. The CI column is
@@ -1156,7 +1169,10 @@ pub fn collect(
         &main_worktree.path,
         url_template.as_deref(),
         max_pr_number,
-        &custom_columns,
+        super::layout::ColumnSelection {
+            custom: &custom_columns,
+            selected: (!selected_columns.is_empty()).then_some(selected_columns.as_slice()),
+        },
     );
 
     // Single-line invariant: with no detectable width, an unlimited width
@@ -2295,7 +2311,10 @@ mod tests {
             Path::new("/tmp"),
             None,
             None,
-            &[],
+            super::super::layout::ColumnSelection {
+                custom: &[],
+                selected: None,
+            },
         );
         let placeholder = super::super::render::PLACEHOLDER;
 

@@ -278,6 +278,7 @@ fn test_list_config_serde() {
         summary: None,
         task_timeout_ms: Some(500),
         timeout_ms: None,
+        columns: vec!["branch".into(), "ci".into(), "path".into()],
         custom_columns: Default::default(),
     };
     let json = serde_json::to_string(&config).unwrap();
@@ -288,6 +289,37 @@ fn test_list_config_serde() {
     assert_eq!(parsed.summary, None);
     assert_eq!(parsed.task_timeout_ms, Some(500));
     assert_eq!(parsed.timeout_ms, None);
+    assert_eq!(parsed.columns, vec!["branch", "ci", "path"]);
+}
+
+#[test]
+fn test_list_config_columns_from_toml_array_or_string() {
+    // Config files use a TOML array.
+    let from_array: ListConfig = toml::from_str(r#"columns = ["branch", "ci"]"#).unwrap();
+    assert_eq!(from_array.columns, vec!["branch", "ci"]);
+
+    // The env overlay can only deliver a scalar string; `string_or_seq` splits
+    // it (trimming whitespace and dropping empties) so WORKTRUNK__LIST__COLUMNS
+    // works. This is the form a typed-probe fallback feeds back through serde.
+    let from_string: ListConfig = toml::from_str(r#"columns = "branch, ci ,path,""#).unwrap();
+    assert_eq!(from_string.columns, vec!["branch", "ci", "path"]);
+
+    // An all-blank string trims to empty → the default set, never an error
+    // (so `WORKTRUNK__LIST__COLUMNS=` is a no-op rather than a failure).
+    let blank: ListConfig = toml::from_str(r#"columns = "  ,  ""#).unwrap();
+    assert!(blank.columns.is_empty());
+    let empty_str: ListConfig = toml::from_str(r#"columns = """#).unwrap();
+    assert!(empty_str.columns.is_empty());
+
+    // Array entries are NOT trimmed (only the scalar string form splits/trims),
+    // so a stray-space entry survives to fail loudly at the wt list edge rather
+    // than being silently dropped.
+    let untrimmed: ListConfig = toml::from_str(r#"columns = [" branch "]"#).unwrap();
+    assert_eq!(untrimmed.columns, vec![" branch "]);
+
+    // Absent → empty (the default column set), not an error.
+    let absent: ListConfig = toml::from_str("full = true").unwrap();
+    assert!(absent.columns.is_empty());
 }
 
 #[test]
@@ -607,6 +639,7 @@ fn test_merge_list_config() {
         summary: Some(true),
         task_timeout_ms: Some(1000),
         timeout_ms: Some(2000),
+        columns: vec!["branch".into(), "ci".into()],
         custom_columns: Default::default(),
     };
     let override_config = ListConfig {
@@ -616,6 +649,7 @@ fn test_merge_list_config() {
         summary: None,         // Should fall back to base
         task_timeout_ms: None, // Should fall back to base
         timeout_ms: None,      // Should fall back to base
+        columns: Vec::new(),   // Empty → fall back to base
         custom_columns: Default::default(),
     };
 
@@ -626,6 +660,24 @@ fn test_merge_list_config() {
     assert_eq!(merged.summary, Some(true)); // From base
     assert_eq!(merged.task_timeout_ms, Some(1000)); // From base
     assert_eq!(merged.timeout_ms, Some(2000)); // From base
+    assert_eq!(merged.columns, vec!["branch", "ci"]); // From base (override empty)
+}
+
+#[test]
+fn test_merge_list_config_columns_replace() {
+    // A non-empty override replaces the whole list (it's an ordering, not a
+    // keyed set), unlike the per-key union used for custom_columns.
+    let base = ListConfig {
+        columns: vec!["branch".into(), "ci".into(), "path".into()],
+        ..Default::default()
+    };
+    let override_config = ListConfig {
+        columns: vec!["status".into(), "branch".into()],
+        ..Default::default()
+    };
+
+    let merged = base.merge_with(&override_config);
+    assert_eq!(merged.columns, vec!["status", "branch"]);
 }
 
 #[test]
@@ -1059,6 +1111,7 @@ fn test_list_config_accessor_methods_with_values() {
         summary: Some(true),
         task_timeout_ms: Some(5000),
         timeout_ms: Some(3000),
+        columns: Vec::new(),
         custom_columns: Default::default(),
     };
     assert!(config.full());
