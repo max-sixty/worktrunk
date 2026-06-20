@@ -189,6 +189,8 @@ The CI column shows cached PR/MR status when earlier runs ([2mwt list --full[0
 
 Plain digits go to the filter, so a branch name containing a number can be typed directly; the preview tabs move to [2mAlt[0m.
 
+Typing a gutter sigil filters by row kind: [36m+[0m narrows to linked worktrees, [2m@[0m to the current worktree, and [2m#[0m to [2m--prs[0m rows. The other sigils don't filter cleanly — [2m^[0m and [2m|[0m are the picker's prefix-anchor and OR query operators, and [2m/[0m matches most rows because every path contains it.
+
 [1mPreview tabs[0m — jump with [2mAlt-1[0m–[2mAlt-6[0m, or cycle with [2mTab[0m/[2mShift-Tab[0m. Each tab keeps its [2mN: label[0m; the number dims when the tab has nothing to show for the selected row (no upstream, summaries off, or no PR), and the label is bold on the active tab:
 
 1. [1mHEAD±[0m — Diff of uncommitted changes

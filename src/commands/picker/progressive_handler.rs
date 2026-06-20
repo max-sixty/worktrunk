@@ -112,12 +112,20 @@ impl PickerProgressHandler for PickerHandler {
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_default();
             // `search_text` is what the matcher sees — fuzzy ranks stay
-            // stable across progressive updates because this field only
-            // depends on fast data (branch + path).
+            // stable across progressive updates because every field is a
+            // skeleton-time fact: branch, path, and the gutter glyph
+            // (`@`/`^`/`+`/`/`/`|`, from `ItemKind::gutter_glyph`). Folding the
+            // glyph in lets the user filter by row kind — typing `+` narrows to
+            // linked worktrees, `@` to the current one. It's appended last so
+            // it doesn't perturb the rank of an ordinary branch/path query.
+            // (`^` and `|` are skim query operators — prefix-anchor and OR — so
+            // they sit in the haystack but aren't typeable as filters; see the
+            // `wt switch` picker docs.)
+            let gutter = item.kind.gutter_glyph();
             let search_text = if path_str.is_empty() {
-                branch_name.clone()
+                format!("{branch_name} {gutter}")
             } else {
-                format!("{branch_name} {path_str}")
+                format!("{branch_name} {path_str} {gutter}")
             };
 
             // Strip OSC 8 hyperlinks — skim's pipeline mangles them into
@@ -468,5 +476,124 @@ mod tests {
             before,
             "on_collect_complete must not spawn additional work for a single-item skeleton"
         );
+    }
+
+    /// Build a worktree-backed `ListItem` at `path`, marked main/current as
+    /// asked. `is_previous` is held false — it never changes the gutter glyph.
+    fn worktree_item(branch: &str, path: &str, is_main: bool, is_current: bool) -> ListItem {
+        use crate::commands::list::collect::build_worktree_item;
+        use worktrunk::git::WorktreeInfo;
+        let wt = WorktreeInfo {
+            path: std::path::PathBuf::from(path),
+            head: "abc123".into(),
+            branch: Some(branch.into()),
+            bare: false,
+            detached: false,
+            locked: None,
+            prunable: None,
+        };
+        build_worktree_item(&wt, is_main, is_current, false)
+    }
+
+    /// The gutter glyph is folded into each row's `search_text` so the user can
+    /// filter by row kind. One row per kind; the glyph lands last (after branch
+    /// and path), and the existing branch/path search keys are preserved.
+    #[test]
+    fn search_text_includes_the_gutter_glyph() {
+        let (handler, _test, rx) = make_handler();
+        let items = vec![
+            worktree_item("cur", "/tmp/cur", false, true),
+            worktree_item("primary", "/tmp/primary", true, false),
+            worktree_item("linked", "/tmp/linked", false, false),
+            ListItem::new_branch("abc".into(), "localbr".into()),
+            ListItem::new_remote_branch("abc".into(), "origin/remotebr".into()),
+        ];
+        let rendered = items.iter().map(|_| "skel".to_string()).collect();
+        handler.on_skeleton(items, rendered, header("hdr"), grid());
+
+        // received[0] is the header row; data rows follow in order.
+        let received: Vec<Arc<dyn SkimItem>> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        let text = |i: usize| received[i].text().into_owned();
+
+        assert!(text(1).ends_with('@'), "current worktree: {:?}", text(1));
+        assert!(text(2).ends_with('^'), "primary worktree: {:?}", text(2));
+        assert!(text(3).ends_with('+'), "linked worktree: {:?}", text(3));
+        assert!(text(4).ends_with('/'), "local branch: {:?}", text(4));
+        assert!(text(5).ends_with('|'), "remote branch: {:?}", text(5));
+
+        // Branch name and path stay searchable alongside the glyph.
+        assert!(text(1).contains("cur") && text(1).contains("/tmp/cur"));
+        assert!(text(4).contains("localbr"));
+        assert!(text(5).contains("origin/remotebr"));
+    }
+
+    /// Pins the skim query-operator semantics the gutter search depends on,
+    /// using the same default engine `skim::model` builds when neither `exact`
+    /// nor `regex` is set (the picker's configuration): an `AndOrEngineFactory`
+    /// wrapping an `ExactOrFuzzyEngineFactory`. This mirrors skim 0.20.5
+    /// `src/model/mod.rs:128` by hand (no public "engine from options" API), so
+    /// a skim bump should re-check that construction against this test. `+`, `@`, and `#` are ordinary
+    /// characters, so they filter to their row kind. `^` and `|` are query
+    /// operators and collide — differently: `^` is a prefix anchor whose empty
+    /// pattern matches every row (typing it shows everything), while a bare `|`
+    /// parses to an empty query that matches nothing (typing it filters
+    /// everything out). Neither selects the primary-worktree / remote-branch
+    /// rows. (`/` is a literal too, but branch names routinely contain it, so
+    /// it isn't a clean filter — left untested, noted in the picker help.)
+    #[test]
+    fn gutter_glyphs_filter_under_skims_default_engine() {
+        struct TextItem(String);
+        impl SkimItem for TextItem {
+            fn text(&self) -> std::borrow::Cow<'_, str> {
+                std::borrow::Cow::Borrowed(&self.0)
+            }
+        }
+
+        // One representative `search_text` per gutter kind (trailing glyph).
+        let current = "cur /tmp/cur @";
+        let primary = "primary /tmp/primary ^";
+        let linked = "linked /tmp/linked +";
+        let local = "localbr /";
+        let remote = "origin/remotebr |";
+        let pr = "pr 7 Title branch author #";
+
+        let matches = |query: &str, haystack: &str| -> bool {
+            let factory = AndOrEngineFactory::new(ExactOrFuzzyEngineFactory::builder().build());
+            let item: Arc<dyn SkimItem> = Arc::new(TextItem(haystack.to_string()));
+            factory.create_engine(query).match_item(item).is_some()
+        };
+
+        // `+`/`@`/`#` are literals — each filters to exactly its row kind.
+        assert!(matches("+", linked), "+ selects the linked worktree");
+        for other in [current, primary, local, remote, pr] {
+            assert!(!matches("+", other), "+ must not match {other:?}");
+        }
+        assert!(matches("@", current), "@ selects the current worktree");
+        for other in [primary, linked, local, remote, pr] {
+            assert!(!matches("@", other), "@ must not match {other:?}");
+        }
+        assert!(matches("#", pr), "# selects the PR/MR row");
+        for other in [current, primary, linked, local, remote] {
+            assert!(!matches("#", other), "# must not match {other:?}");
+        }
+
+        // `^` is skim's prefix anchor — an empty pattern matches every row, so
+        // typing `^` shows everything instead of filtering to the primary
+        // worktree. Proven by matching rows that lack `^` entirely.
+        for row in [primary, current, linked, pr] {
+            assert!(
+                matches("^", row),
+                "^ (prefix anchor) matches all rows — not a filter: {row:?}"
+            );
+        }
+        // A bare `|` is skim's OR separator trimmed to an empty query, which
+        // matches nothing — so typing `|` filters everything out instead of
+        // selecting remote-branch rows.
+        for row in [remote, current, linked, pr] {
+            assert!(
+                !matches("|", row),
+                "| (OR operator) matches nothing — not a filter: {row:?}"
+            );
+        }
     }
 }

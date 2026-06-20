@@ -288,16 +288,20 @@ impl LayoutConfig {
 
             match col.kind {
                 ColumnKind::Gutter => {
-                    // Worktree gutter symbols (@/^/+, including is_previous)
-                    // resolve when WorktreeData is populated post-skeleton, so
-                    // show the dimmed placeholder — it keeps the 200ms
-                    // blank-reveal flow in lockstep with the data columns.
-                    // Branch scope is known at construction, so its sigil
-                    // (`/`/`|`) renders immediately, dimmed to match the final
-                    // render (and its Status-column twin) — no flash or flicker.
+                    // Worktree gutter symbols (@/^/+) are known at construction
+                    // (`is_current`/`is_main` are set then; `is_previous` lands
+                    // post-skeleton but never changes the glyph — previous
+                    // worktrees share `+`), yet the skeleton shows the dimmed
+                    // placeholder anyway so the gutter joins the 200ms
+                    // blank-reveal lockstep with the data columns. Branch scope
+                    // is structural too, but its sigil (`/`/`|`) renders
+                    // immediately, dimmed to match the final render (and its
+                    // Status-column twin) — no flash or flicker.
                     match &item.kind {
                         ItemKind::Worktree(_) => cell.push_styled(format!("{spinner} "), dim),
-                        ItemKind::Branch(scope) => cell.push_styled(scope.gutter_sigil(), dim),
+                        ItemKind::Branch(scope) => {
+                            cell.push_styled(format!("{} ", scope.gutter_glyph()), dim)
+                        }
                     }
                 }
                 ColumnKind::Branch => {
@@ -420,21 +424,15 @@ impl ColumnLayout {
                 // source (`PrSkimItem`), not a `ListItem`, so they render their
                 // gutter in `commands::picker::prs` (`PR_GUTTER_SIGIL`) rather
                 // than through this `ItemKind` match.
+                // The glyph comes from `ItemKind::gutter_glyph` (shared with
+                // the picker's fuzzy-search text); the trailing space fills the
+                // 2-cell column. Worktree rows render bright (raw), branch rows
+                // dim.
                 let mut cell = StyledLine::new();
+                let sigil = format!("{} ", item.kind.gutter_glyph());
                 match &item.kind {
-                    ItemKind::Worktree(data) => {
-                        let symbol = if data.is_current {
-                            "@ " // Current worktree
-                        } else if data.is_main {
-                            "^ " // Main worktree
-                        } else {
-                            "+ " // Regular worktree (including previous)
-                        };
-                        cell.push_raw(symbol);
-                    }
-                    ItemKind::Branch(scope) => {
-                        cell.push_styled(scope.gutter_sigil(), Style::new().dimmed());
-                    }
+                    ItemKind::Worktree(_) => cell.push_raw(sigil),
+                    ItemKind::Branch(_) => cell.push_styled(sigil, Style::new().dimmed()),
                 }
                 cell
             }

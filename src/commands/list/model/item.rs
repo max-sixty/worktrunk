@@ -103,6 +103,42 @@ pub enum ItemKind {
     Branch(BranchScope),
 }
 
+impl ItemKind {
+    /// The single-character gutter sigil for this row — the leftmost
+    /// presence/location marker: `@` current worktree, `^` primary worktree,
+    /// `+` other worktree (including the previous one), `/` local branch,
+    /// `|` remote branch. (PR/MR rows in the `--prs` picker carry `#`, but
+    /// they're a separate picker source — `commands::picker::prs` — not a
+    /// `ListItem`.)
+    ///
+    /// One source of truth for both the rendered Gutter column (see
+    /// `ColumnKind::Gutter` in `render.rs`) and the picker's fuzzy-search
+    /// text (see `commands::picker::progressive_handler`), so the sigils are
+    /// matchable there — typing `@`/`+`/`#` filters to that row kind, while
+    /// `^`/`|` (skim query operators) and `/` (in every path) don't filter
+    /// cleanly; the `wt switch` picker help spells this out. Every input is a
+    /// skeleton-time
+    /// fact — `is_current`/`is_main` are set at item construction and
+    /// `BranchScope` is structural (`is_previous`, set post-skeleton, never
+    /// changes the glyph: previous worktrees share `+`) — so folding it into
+    /// the search text keeps fuzzy ranks stable across the picker's
+    /// progressive updates.
+    pub fn gutter_glyph(&self) -> char {
+        match self {
+            ItemKind::Worktree(data) => {
+                if data.is_current {
+                    '@'
+                } else if data.is_main {
+                    '^'
+                } else {
+                    '+'
+                }
+            }
+            ItemKind::Branch(scope) => scope.gutter_glyph(),
+        }
+    }
+}
+
 /// Whether a branch-without-worktree row is a local branch
 /// (`refs/heads/…`, checked out nowhere) or a remote-tracking branch
 /// (`refs/remotes/<remote>/…`, not present locally until fetched).
@@ -125,13 +161,15 @@ pub enum BranchScope {
 }
 
 impl BranchScope {
-    /// The two-cell gutter sigil (`glyph` + trailing space) for a branch
-    /// row of this scope. ASCII single-width by design — the gutter must
-    /// dodge skim's `width_cjk` clipping (see `vendor/NOTES.md`).
-    pub const fn gutter_sigil(self) -> &'static str {
+    /// The single-character gutter sigil for a branch row of this scope:
+    /// `/` local, `|` remote. ASCII single-width by design — the gutter must
+    /// dodge skim's `width_cjk` clipping (see `vendor/NOTES.md`). Rendered as
+    /// `glyph` + a trailing space to fill the 2-cell gutter column; folded
+    /// into the picker's fuzzy-search text via [`ItemKind::gutter_glyph`].
+    pub const fn gutter_glyph(self) -> char {
         match self {
-            BranchScope::Local => "/ ",
-            BranchScope::Remote => "| ",
+            BranchScope::Local => '/',
+            BranchScope::Remote => '|',
         }
     }
 }
@@ -709,6 +747,51 @@ mod tests {
     fn test_list_item_head() {
         let item = ListItem::new_branch("abc123def".to_string(), "feature".to_string());
         assert_eq!(item.head(), "abc123def");
+    }
+
+    #[test]
+    fn gutter_glyph_marks_each_row_kind() {
+        use crate::commands::list::collect::build_worktree_item;
+        use worktrunk::git::WorktreeInfo;
+
+        // `is_previous` is irrelevant to the glyph (previous worktrees share
+        // `+`), so it's held false here.
+        let worktree = |is_main, is_current| {
+            let wt = WorktreeInfo {
+                path: std::path::PathBuf::from("/tmp/wt"),
+                head: "abc123".into(),
+                branch: Some("feat".into()),
+                bare: false,
+                detached: false,
+                locked: None,
+                prunable: None,
+            };
+            build_worktree_item(&wt, is_main, is_current, false)
+                .kind
+                .gutter_glyph()
+        };
+
+        // Worktree rows, from most present to least. Current outranks main.
+        assert_eq!(worktree(false, true), '@', "current worktree");
+        assert_eq!(worktree(true, true), '@', "current outranks main");
+        assert_eq!(worktree(true, false), '^', "primary worktree");
+        assert_eq!(worktree(false, false), '+', "other/linked worktree");
+
+        // Branch rows, by scope.
+        assert_eq!(
+            ListItem::new_branch("abc".into(), "feat".into())
+                .kind
+                .gutter_glyph(),
+            '/',
+            "local branch"
+        );
+        assert_eq!(
+            ListItem::new_remote_branch("abc".into(), "origin/feat".into())
+                .kind
+                .gutter_glyph(),
+            '|',
+            "remote branch"
+        );
     }
 
     #[test]

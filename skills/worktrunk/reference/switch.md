@@ -80,6 +80,8 @@ The CI column shows cached PR/MR status when earlier runs (`wt list --full`, the
 
 Plain digits go to the filter, so a branch name containing a number can be typed directly; the preview tabs move to `Alt`.
 
+Typing a gutter sigil filters by row kind: `+` narrows to linked worktrees, `@` to the current worktree, and `#` to `--prs` rows. The other sigils don't filter cleanly — `^` and `|` are the picker's prefix-anchor and OR query operators, and `/` matches most rows because every path contains it.
+
 **Preview tabs** — jump with `Alt-1`–`Alt-6`, or cycle with `Tab`/`Shift-Tab`. Each tab keeps its `N: label`; the number dims when the tab has nothing to show for the selected row (no upstream, summaries off, or no PR), and the label is bold on the active tab:
 
 1. **HEAD±** — Diff of uncommitted changes

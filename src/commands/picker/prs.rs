@@ -102,9 +102,10 @@ const MAX_PRS: u8 = 50;
 /// Gutter sigil for a `--prs` row — a PR/MR with no local branch or worktree.
 /// `#` completes the picker's gutter scheme alongside worktree rows
 /// (`@`/`^`/`+`) and branch rows (`/` local, `|` remote — see
-/// `BranchScope::gutter_sigil`), rendered dim and single-width ASCII to match
+/// `ItemKind::gutter_glyph`), rendered dim and single-width ASCII to match
 /// them and dodge skim's `width_cjk` clipping. The trailing space pads the
-/// 2-cell gutter column.
+/// 2-cell gutter column; `trim_end()` recovers the bare glyph for the
+/// fuzzy-search text.
 const PR_GUTTER_SIGIL: &str = "# ";
 
 /// Whether a listed ref is a GitHub PR or a GitLab MR. Drives the `output()`
@@ -436,9 +437,17 @@ impl PrSkimItem {
         let label = entry.kind.shortcut();
         let output_token = format!("{label}:{}", entry.number);
 
+        // The trailing gutter glyph (`#`, trimmed from `PR_GUTTER_SIGIL`) lets
+        // typing `#` filter the picker to PR/MR rows, matching the worktree
+        // rows' gutter search (see `ItemKind::gutter_glyph`). Appended last so
+        // it doesn't perturb the rank of a number/title/branch/author query.
         let search_text = format!(
-            "{label} {} {} {} {}",
-            entry.number, entry.title, entry.head_branch, entry.author
+            "{label} {} {} {} {} {}",
+            entry.number,
+            entry.title,
+            entry.head_branch,
+            entry.author,
+            PR_GUTTER_SIGIL.trim_end(),
         );
 
         let rendered = match grid {
@@ -722,13 +731,26 @@ mod tests {
     }
 
     #[test]
-    fn search_text_covers_number_title_branch_author() {
+    fn search_text_covers_number_title_branch_author_and_gutter() {
         let pr = PrSkimItem::new(entry(RefKind::Pr, 42, "Speed up startup"), 120, None);
         let text = pr.text();
         assert!(text.contains("42"));
         assert!(text.contains("Speed up startup"));
         assert!(text.contains("feature/auth"));
         assert!(text.contains("alice"));
+        // The `#` gutter glyph is folded in so typing `#` filters to PR/MR
+        // rows. It's appended last (after the author), so the search text ends
+        // with it — assert that rather than a bare `contains`, which a future
+        // `#`-bearing title/author could satisfy spuriously. It's `#` for MRs
+        // too — the gutter is `#` for every `--prs` row, distinct from the
+        // `!N` reference that renders in the row.
+        assert!(text.ends_with('#'), "PR gutter glyph searchable: {text}");
+        let mr = PrSkimItem::new(entry(RefKind::Mr, 7, "Add caching"), 120, None);
+        assert!(
+            mr.text().ends_with('#'),
+            "MR gutter glyph is also `#`: {}",
+            mr.text()
+        );
     }
 
     #[test]
