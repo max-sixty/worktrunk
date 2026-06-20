@@ -164,8 +164,8 @@ pub use user::{
     CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListColumnConfig, ListConfig,
     MergeConfig, RemoveConfig, ResolvedConfig, StageMode, StepConfig, SwitchConfig,
     SwitchPickerConfig, UserConfig, UserProjectOverrides, config_path, default_config_path,
-    default_system_config_path, require_config_path, set_config_path, system_config_path,
-    valid_user_config_keys,
+    default_system_config_path, require_config_path, set_config_overrides, set_config_path,
+    system_config_path, valid_user_config_keys,
 };
 
 #[cfg(test)]

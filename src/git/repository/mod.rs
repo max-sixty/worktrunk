@@ -1541,6 +1541,19 @@ fn emit_user_config_warnings(warnings: &[LoadError]) {
                     crate::styling::format_with_gutter(err.trim(), None)
                 );
             }
+            LoadError::CliOverride { err, overrides } => {
+                crate::styling::eprintln!(
+                    "{}",
+                    crate::styling::warning_message(format!(
+                        "Ignoring --config-set overrides: {}",
+                        overrides.join(", ")
+                    ))
+                );
+                crate::styling::eprintln!(
+                    "{}",
+                    crate::styling::format_with_gutter(err.trim(), None)
+                );
+            }
             LoadError::Validation(err) => {
                 crate::styling::eprintln!(
                     "{}",

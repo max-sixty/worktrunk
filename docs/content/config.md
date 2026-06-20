@@ -586,6 +586,14 @@ Override the LLM command in CI to use a mock:
 | `NO_COLOR` | Disable colored output ([standard](https://no-color.org/)) |
 | `CLICOLOR_FORCE` | Force colored output even when not a TTY |
 
+## Inline config overrides (`--config-set`)
+
+`--config-set <toml>` overrides any user config key for a single invocation, with higher priority than both config files and `WORKTRUNK_` env vars. The value is a TOML fragment, so arrays and tables work directly; the flag is global (works before or after the subcommand), repeatable, and a later `--config-set` replaces an earlier one for the same key.
+
+{{ terminal(cmd="wt --config-set list.full=true list|||wt step copy-ignored --config-set 'step.copy-ignored.exclude=[__WT_QUOT__target__WT_QUOT__, __WT_QUOT__dist__WT_QUOT__]'") }}
+
+This composes with aliases — an alias body can invoke `wt --config-set … <command>` to render a named view without changing the saved config.
+
 ## Command reference
 
 {% terminal() %}
@@ -615,6 +623,9 @@ Usage: <b><span class=c>wt config</span></b> <span class=c>[OPTIONS]</span> <spa
 
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
+
+      <b><span class=c>--config-set</span></b><span class=c> &lt;toml&gt;</span>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
@@ -674,6 +685,9 @@ Usage: <b><span class=c>wt config show</span></b> <span class=c>[OPTIONS]</span>
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
+      <b><span class=c>--config-set</span></b><span class=c> &lt;toml&gt;</span>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
           logs and raw subprocess output written to .git/wt/logs/)
@@ -725,6 +739,9 @@ Usage: <b><span class=c>wt config approvals</span></b> <span class=c>[OPTIONS]</
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
+      <b><span class=c>--config-set</span></b><span class=c> &lt;toml&gt;</span>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
           logs and raw subprocess output written to .git/wt/logs/)
@@ -771,6 +788,9 @@ Usage: <b><span class=c>wt config alias</span></b> <span class=c>[OPTIONS]</span
 
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
+
+      <b><span class=c>--config-set</span></b><span class=c> &lt;toml&gt;</span>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
@@ -844,6 +864,9 @@ Usage: <b><span class=c>wt config state</span></b> <span class=c>[OPTIONS]</span
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
+      <b><span class=c>--config-set</span></b><span class=c> &lt;toml&gt;</span>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
           logs and raw subprocess output written to .git/wt/logs/)
@@ -903,6 +926,9 @@ Usage: <b><span class=c>wt config state cache</span></b> <span class=c>[OPTIONS]
 
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
+
+      <b><span class=c>--config-set</span></b><span class=c> &lt;toml&gt;</span>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
@@ -967,6 +993,9 @@ Usage: <b><span class=c>wt config state default-branch</span></b> <span class=c>
 
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
+
+      <b><span class=c>--config-set</span></b><span class=c> &lt;toml&gt;</span>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
@@ -1073,6 +1102,9 @@ Usage: <b><span class=c>wt config state logs</span></b> <span class=c>[OPTIONS]<
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
+      <b><span class=c>--config-set</span></b><span class=c> &lt;toml&gt;</span>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
           logs and raw subprocess output written to .git/wt/logs/)
@@ -1135,6 +1167,9 @@ Usage: <b><span class=c>wt config state ci-status</span></b> <span class=c>[OPTI
 
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
+
+      <b><span class=c>--config-set</span></b><span class=c> &lt;toml&gt;</span>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
@@ -1204,6 +1239,9 @@ Usage: <b><span class=c>wt config state marker</span></b> <span class=c>[OPTIONS
 
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
+
+      <b><span class=c>--config-set</span></b><span class=c> &lt;toml&gt;</span>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
@@ -1279,6 +1317,9 @@ Usage: <b><span class=c>wt config state vars</span></b> <span class=c>[OPTIONS]<
 
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
+
+      <b><span class=c>--config-set</span></b><span class=c> &lt;toml&gt;</span>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug

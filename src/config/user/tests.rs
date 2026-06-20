@@ -2451,6 +2451,119 @@ fn test_load_error_display_validation() {
 }
 
 #[test]
+fn test_load_error_display_cli_override() {
+    let err = LoadError::CliOverride {
+        err: "invalid type".into(),
+        overrides: vec!["list.full = \"x\"".into()],
+    };
+    assert_eq!(err.to_string(), "invalid type");
+}
+
+// =========================================================================
+// apply_cli_overrides() — CLI `--config-set` config layer
+// =========================================================================
+
+/// Apply `--config-set` overrides to a base table the way `load_with_warnings`
+/// does, returning the merged table plus any warnings.
+fn apply_overrides(base: toml::Table, overrides: &[&str]) -> (toml::Table, Vec<LoadError>) {
+    let overrides: Vec<String> = overrides.iter().map(|s| s.to_string()).collect();
+    let mut table = base;
+    let mut warnings = Vec::new();
+    UserConfig::apply_cli_overrides(&overrides, &mut table, &mut warnings);
+    (table, warnings)
+}
+
+#[test]
+fn test_cli_override_sets_value() {
+    let (table, warnings) = apply_overrides(toml::Table::new(), &["list.full = true"]);
+    assert!(warnings.is_empty());
+    let config: UserConfig = toml::Value::Table(table).try_into().unwrap();
+    assert_eq!(config.list.full, Some(true));
+}
+
+#[test]
+fn test_cli_override_deep_merges_preserving_siblings() {
+    // Overriding one key in a section must not wipe sibling keys from a
+    // lower layer.
+    let base: toml::Table = "[list]\nbranches = true\n".parse().unwrap();
+    let (table, warnings) = apply_overrides(base, &["list.full = true"]);
+    assert!(warnings.is_empty());
+    let config: UserConfig = toml::Value::Table(table).try_into().unwrap();
+    assert_eq!(config.list.full, Some(true));
+    assert_eq!(config.list.branches, Some(true)); // preserved
+}
+
+#[test]
+fn test_cli_override_repeated_key_last_wins() {
+    // Repeated `--config-set` of the same key replaces (does not accumulate).
+    let (table, warnings) = apply_overrides(
+        toml::Table::new(),
+        &["list.full = false", "list.full = true"],
+    );
+    assert!(warnings.is_empty());
+    let config: UserConfig = toml::Value::Table(table).try_into().unwrap();
+    assert_eq!(config.list.full, Some(true));
+}
+
+#[test]
+fn test_cli_override_array_replaces_not_appends() {
+    // An array override replaces the lower-layer array wholesale.
+    let base: toml::Table = "[step.copy-ignored]\nexclude = [\"a\", \"b\"]\n"
+        .parse()
+        .unwrap();
+    let (table, warnings) = apply_overrides(base, &["step.copy-ignored.exclude = [\"x\"]"]);
+    assert!(warnings.is_empty());
+    let config: UserConfig = toml::Value::Table(table).try_into().unwrap();
+    assert_eq!(config.step.copy_ignored().exclude, vec!["x".to_string()]);
+}
+
+#[test]
+fn test_cli_override_malformed_fragment_drops_layer() {
+    // A non-TOML fragment warns and leaves lower layers untouched — the whole
+    // `--config-set` layer rolls back, including the valid earlier fragment.
+    let base: toml::Table = "[list]\nbranches = true\n".parse().unwrap();
+    let (table, warnings) = apply_overrides(base, &["list.full = true", "garbage"]);
+    assert_eq!(warnings.len(), 1);
+    assert!(matches!(&warnings[0], LoadError::CliOverride { .. }));
+    let config: UserConfig = toml::Value::Table(table).try_into().unwrap();
+    assert_eq!(config.list.full, None);
+    assert_eq!(config.list.branches, Some(true)); // base preserved
+}
+
+#[test]
+fn test_cli_override_type_mismatch_drops_layer() {
+    // A fragment that parses as TOML but is the wrong type warns and rolls back.
+    let base: toml::Table = "[list]\nbranches = true\n".parse().unwrap();
+    let (table, warnings) = apply_overrides(base, &["list.full = \"notabool\""]);
+    assert_eq!(warnings.len(), 1);
+    assert!(matches!(&warnings[0], LoadError::CliOverride { .. }));
+    let config: UserConfig = toml::Value::Table(table).try_into().unwrap();
+    assert_eq!(config.list.branches, Some(true)); // base preserved
+}
+
+#[test]
+fn test_cli_override_validation_failure_drops_layer() {
+    // A fragment that deserializes but fails validation (empty worktree-path)
+    // rolls back to the lower layers instead of wiping them — without the
+    // validate() probe this would fall through to finalize() and reset to
+    // defaults.
+    let base: toml::Table = "[list]\nbranches = true\n".parse().unwrap();
+    let (table, warnings) = apply_overrides(base, &["worktree-path = \"\""]);
+    assert_eq!(warnings.len(), 1);
+    assert!(matches!(&warnings[0], LoadError::CliOverride { .. }));
+    let config: UserConfig = toml::Value::Table(table).try_into().unwrap();
+    assert_eq!(config.worktree_path, None); // override rolled back
+    assert_eq!(config.list.branches, Some(true)); // base preserved
+}
+
+#[test]
+fn test_cli_override_empty_is_noop() {
+    let (table, warnings) = apply_overrides(toml::Table::new(), &[]);
+    assert!(warnings.is_empty());
+    assert!(table.is_empty());
+}
+
+#[test]
 fn test_try_parse_value() {
     use super::try_parse_value;
 

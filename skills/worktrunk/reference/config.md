@@ -583,6 +583,17 @@ $ WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
 | `NO_COLOR` | Disable colored output ([standard](https://no-color.org/)) |
 | `CLICOLOR_FORCE` | Force colored output even when not a TTY |
 
+## Inline config overrides (`--config-set`)
+
+`--config-set <toml>` overrides any user config key for a single invocation, with higher priority than both config files and `WORKTRUNK_` env vars. The value is a TOML fragment, so arrays and tables work directly; the flag is global (works before or after the subcommand), repeatable, and a later `--config-set` replaces an earlier one for the same key.
+
+```bash
+$ wt --config-set list.full=true list
+$ wt step copy-ignored --config-set 'step.copy-ignored.exclude=["target", "dist"]'
+```
+
+This composes with aliases — an alias body can invoke `wt --config-set … <command>` to render a named view without changing the saved config.
+
 ## Command reference
 
 ```
@@ -612,6 +623,9 @@ Global Options:
 
       --config <path>
           User config file path
+
+      --config-set <toml>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
 
   -v, --verbose...
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
@@ -673,6 +687,9 @@ Global Options:
       --config <path>
           User config file path
 
+      --config-set <toml>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   -v, --verbose...
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
           logs and raw subprocess output written to .git/wt/logs/)
@@ -730,6 +747,9 @@ Global Options:
       --config <path>
           User config file path
 
+      --config-set <toml>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   -v, --verbose...
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
           logs and raw subprocess output written to .git/wt/logs/)
@@ -783,6 +803,9 @@ Global Options:
 
       --config <path>
           User config file path
+
+      --config-set <toml>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
 
   -v, --verbose...
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
@@ -870,6 +893,9 @@ Global Options:
       --config <path>
           User config file path
 
+      --config-set <toml>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   -v, --verbose...
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
           logs and raw subprocess output written to .git/wt/logs/)
@@ -933,6 +959,9 @@ Global Options:
 
       --config <path>
           User config file path
+
+      --config-set <toml>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
 
   -v, --verbose...
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
@@ -999,6 +1028,9 @@ Global Options:
 
       --config <path>
           User config file path
+
+      --config-set <toml>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
 
   -v, --verbose...
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
@@ -1115,6 +1147,9 @@ Global Options:
       --config <path>
           User config file path
 
+      --config-set <toml>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   -v, --verbose...
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
           logs and raw subprocess output written to .git/wt/logs/)
@@ -1177,6 +1212,9 @@ Global Options:
 
       --config <path>
           User config file path
+
+      --config-set <toml>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
 
   -v, --verbose...
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
@@ -1249,6 +1287,9 @@ Global Options:
 
       --config <path>
           User config file path
+
+      --config-set <toml>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
 
   -v, --verbose...
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
@@ -1335,6 +1376,9 @@ Global Options:
 
       --config <path>
           User config file path
+
+      --config-set <toml>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
 
   -v, --verbose...
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug

@@ -137,6 +137,9 @@ Usage: <b><span class=c>wt remove</span></b> <span class=c>[OPTIONS]</span> <spa
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
+      <b><span class=c>--config-set</span></b><span class=c> &lt;toml&gt;</span>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
           logs and raw subprocess output written to .git/wt/logs/)
