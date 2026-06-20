@@ -475,8 +475,8 @@ pub trait PickerProgressHandler: Send + Sync {
     );
 
     /// Fired after a single task result updates row `idx`. `rendered` is the
-    /// new line — write it through the item's shared state so skim picks it
-    /// up on the next heartbeat.
+    /// new line — write it through the item's shared state and wake the picker
+    /// to repaint (skim 4.x renders on demand, not on a timer).
     fn on_update(&self, idx: usize, rendered: String);
 
     /// Fired at the 200ms reveal deadline. One pre-rendered line per row,
@@ -1653,7 +1653,8 @@ pub fn collect(
                             log::debug!("Progressive table flush failed: {}", e);
                         }
                     }
-                    // Picker has no stall UI; heartbeat keeps it responsive.
+                    // Picker has no stall UI; per-update repaints keep it
+                    // responsive without a stall message.
                 }
             }
         },

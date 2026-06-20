@@ -83,6 +83,9 @@ cli = [
     "dep:crossterm",
     "dep:humantime",
     "dep:skim",
+    "dep:ratatui",
+    "dep:ansi-to-tui",
+    "dep:tokio",
     "dep:termimad",
     "dep:tracing-log",
     "dep:tracing-subscriber",
@@ -139,7 +142,11 @@ ansi-str = "0.9"
 color-print = "0.3.7"
 askama = { version = "0.16", default-features = false, features = ["derive", "std"] }
 chrono = "0.4"
-clap = { version = "4.6", features = ["derive", "unstable-ext", "wrap_help"], optional = true }
+# `unstable-markdown` renders our `///` doc-comments as styled help (bold inline
+# code, literal `[experimental]`). skim 0.20 pulled it in transitively; skim 4
+# (default-features = false) does not, so depend on it explicitly to keep help
+# output stable rather than reverting to raw text.
+clap = { version = "4.6", features = ["derive", "unstable-ext", "wrap_help", "unstable-markdown"], optional = true }
 clap_complete = { version = "4.6", features = ["unstable-dynamic"], optional = true }
 crossbeam-channel = "0.5"
 crossterm = { version = "0.29", optional = true }
@@ -226,15 +233,26 @@ tempfile = "3.27"
 wait-timeout = "0.2"
 
 [target.'cfg(unix)'.dependencies]
-# Pinned to the 0.20.x line. Newer skim releases (the 3.x / 4.x rewrite)
-# pin many of their direct dependencies with exact versions — e.g.,
-# `color-eyre = "=0.6.5"`, `derive_builder = "=0.20.2"`, `kanal = "=0.1.1"`,
-# `tokio-util = "=0.7.18"`, `unicode-normalization = "=0.1.25"`, and ~12
-# others. Depending on skim would lock worktrunk onto each of those exact
-# versions, so an upgrade blocks on upstream relaxing those pins.
-# Windows picker support (worktrunk#2223) landed in skim v4.3.0 but is
-# gated by the same constraint.
-skim = { version = "0.20", optional = true }
+# skim 4.x is the ratatui-based rewrite; the 0.20 line used the now-abandoned
+# tuikit backend (we previously vendored a patched skim-tuikit fork). The
+# picker feeds rows as a custom `SkimItem` whose `display()` returns a ratatui
+# `Line`, so `ratatui` + `ansi-to-tui` below convert the picker's pre-rendered
+# ANSI rows into styled lines.
+#
+# `default-features = false` drops skim's own CLI (`clap` / `clap_mangen` / …):
+# worktrunk embeds the picker as a library and never shells out to the `sk`
+# binary. `frizbee` keeps skim's default fuzzy matcher.
+skim = { version = "4", optional = true, default-features = false, features = ["frizbee"] }
+# Pinned to skim's ratatui line so the `Line` type `display()` returns is the
+# same one skim consumes. `ansi-to-tui` parses ANSI SGR codes into ratatui spans.
+ratatui = { version = "0.30", optional = true }
+ansi-to-tui = { version = "8", optional = true }
+# Already in the tree via skim (its event loop is tokio-based). The picker drives
+# skim through the public `Skim::init`/`run` API rather than the all-in-one
+# `Skim::run_with` so it can grab `event_sender()` and push `Event::Render` while
+# collect mutates rows in place — skim 4.x renders on demand, not on a heartbeat.
+# `Runtime::new()` needs `rt-multi-thread`; `event_sender()` is a `sync::mpsc`.
+tokio = { version = "1", optional = true, default-features = false, features = ["rt-multi-thread", "sync"] }
 nix = { version = "0.31", default-features = false, features = ["process", "signal"] }
 signal-hook = "0.4"
 
@@ -290,51 +308,3 @@ unsafe_code = "forbid"
 [profile.dist]
 inherits = "release"
 lto = "thin"
-
-[patch.crates-io]
-# Local fork of skim-tuikit 0.6.6 carrying four small fixes. Run
-# `task vendor-diff` to see the full diff against the upstream tarball.
-#
-# Upstream status: skim-tuikit is effectively abandoned. Upstream skim
-# migrated to ratatui in skim-rs/skim#864 (merged 2026-01-12) and has
-# shipped several releases on the new backend; crates.io skim-tuikit is
-# frozen at 0.6.6 (Aug 2025) and will not receive another release. The
-# bugs below are resolved (or moot) in ratatui-era skim but not in the
-# vendored tuikit. These patches are permanent until we either migrate
-# our picker to a post-ratatui skim (breaking API change in
-# `src/commands/picker/`) or drop skim entirely.
-#
-# 1. Dropped-bytes bug in `Output::flush` — it used `write()` instead of
-#    `write_all()`, so when the kernel accepted a partial write (common
-#    under load or in tmux PTYs with small pipe buffers) the remainder of
-#    the buffer was dropped by the subsequent `buffer.clear()`, leaving
-#    the picker's first render missing whichever rows didn't fit in the
-#    first chunk. See vendor/skim-tuikit/src/output.rs.
-#
-# 2. Asymmetric alternate-screen enter/exit in partial-height mode — in
-#    full-height mode tuikit emits smcup on enter and rmcup on exit, but
-#    in partial-height mode (e.g. `height("90%")`) it skips smcup yet
-#    still emits rmcup on shutdown, leaving terminal artifacts. Fixed by
-#    tracking whether smcup was actually emitted and gating rmcup on that
-#    flag. See vendor/skim-tuikit/src/term.rs. Upstream bug was
-#    skim-rs/skim#880, resolved via the ratatui migration rather than a
-#    tuikit patch.
-#
-# 3. `usize` underflow panic in `Term::on_resize` — when the terminal is
-#    smaller than the picker's preferred height, `screen_height - height`
-#    underflowed and panicked with "attempt to subtract with overflow".
-#    Reachable by running `wt switch` under `script(1)` with stdin closed,
-#    or in any sufficiently small tmux pane. Fixed with `saturating_sub`,
-#    which clamps `cursor_row` to 0 — matching the full-screen fallback
-#    `ensure_height` already uses. See vendor/skim-tuikit/src/term.rs. No
-#    known upstream tracking issue; moot post-ratatui.
-#
-# 4. `from_keyname` did not parse `alt-<digit>` tokens — it had `alt-a`..
-#    `alt-z` but no `alt-0`..`alt-9`, so a keymap like `alt-1:...` silently
-#    failed to bind (Input::bind early-returns on an unparseable key). The
-#    input reader already decodes ESC-<digit> to `Alt(ch)`, so this was a
-#    pure config-parser gap. The picker binds alt-1..alt-5 to jump directly
-#    to preview tabs (bare digits are reserved for the query). Added the ten
-#    missing arms, matching fzf's alt-1..alt-9. See
-#    vendor/skim-tuikit/src/key.rs. Clean upstream PR candidate.
-skim-tuikit = { path = "vendor/skim-tuikit" }

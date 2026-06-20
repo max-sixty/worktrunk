@@ -1,9 +1,24 @@
 //! Progressive-rendering glue between `collect::collect` and the skim picker.
 //!
 //! Each event funnels into three places: skim's item stream (`tx`, alive
-//! while updates may arrive so the 100ms heartbeat keeps firing), each
-//! item's shared `rendered` mutex (in-place redraws picked up by the
-//! heartbeat), and `shared_items` used by `PickerCollector` for alt-r.
+//! while updates may arrive so the picker stays non-idle), each item's
+//! shared `rendered` mutex (in-place redraws), and `shared_items` used by
+//! `PickerCollector` for alt-r.
+//!
+//! # Why updates poke a render
+//!
+//! skim 4.x's ratatui backend renders **on demand** — it repaints on a key
+//! press, when new items land on the channel, or when its matcher flags
+//! `needs_render`. It does *not* unconditionally repaint on a timer (the
+//! periodic `Heartbeat` only renders when `needs_render` is already set).
+//! The old skim 0.20 tuikit backend *did* repaint every 100ms, which is what
+//! made in-place `rendered`-mutex mutations surface for free.
+//!
+//! So after the one-shot skeleton batch, every later mutation is invisible to
+//! skim unless we wake it. `request_render` pushes an `Event::Render` through
+//! the sender skim hands us at startup (`render_tx`, filled once the TUI is
+//! initialized). Intermediate updates coalesce to [`RENDER_THROTTLE`]; the
+//! terminal `on_collect_complete` forces one final unthrottled frame.
 //!
 //! Preview pre-compute is staged in two tiers:
 //! - `on_skeleton` fires the first item's 4 modes + first-item summary,
@@ -18,9 +33,16 @@
 //!   workers' local deques during drain.
 
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use skim::prelude::*;
 use worktrunk::styling::{StyledLine, strip_osc8_hyperlinks};
+
+/// Minimum gap between repaint pokes during collection. Holds the redraw rate
+/// at ~60fps so a burst of task results can't flood skim's (effectively
+/// unbounded) event channel ahead of the user's key presses. A directly-sent
+/// `Event::Render` bypasses skim's own frame-rate cap, so we cap it here.
+const RENDER_THROTTLE: Duration = Duration::from_millis(16);
 
 use super::items::{HeaderSkimItem, PreviewCache, WorktreeSkimItem};
 use super::preview_orchestrator::PreviewOrchestrator;
@@ -31,11 +53,20 @@ use crate::commands::list::model::ListItem;
 /// `PickerProgressHandler` trait that `collect` drives.
 ///
 /// The `tx` clone lives as long as this handler is referenced — dropping the
-/// handler (when the collect thread exits) drops the last sender, which
-/// stops skim's heartbeat. That's the explicit contract: once background
-/// work is done, the picker can go idle.
+/// handler (when the collect thread exits) drops the last sender, which signals
+/// EOF to skim's reader. That's the explicit contract: once background work is
+/// done, the picker can go idle.
 pub(super) struct PickerHandler {
     pub(super) tx: SkimItemSender,
+    /// skim's event sender, published by the picker once `Skim::init_tui` has
+    /// run. `None` until then — early skeleton sends drive the first paint via
+    /// the item channel, so a missed poke before the TUI exists is harmless.
+    /// Used to push `Event::Render` when a row mutates in place; see the module
+    /// docstring.
+    pub(super) render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
+    /// Last time `request_render` actually poked, for the [`RENDER_THROTTLE`]
+    /// coalescing gate.
+    pub(super) last_render_poke: Mutex<Instant>,
     /// Mirror of the skim item vec visible to `PickerCollector`. Populated
     /// atomically in `on_skeleton`.
     pub(super) shared_items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>>,
@@ -58,6 +89,28 @@ pub(super) struct PickerHandler {
     /// to fan out the bulk preview pre-compute for items 1..N. Set once
     /// (`OnceLock`) because skeletons fire exactly once per collect.
     pub(super) deferred_items: OnceLock<Vec<Arc<ListItem>>>,
+}
+
+impl PickerHandler {
+    /// Wake skim to repaint after an in-place row mutation. No-op until the
+    /// picker has published `render_tx` (TUI initialized). `force` skips the
+    /// throttle for the final post-collection frame; otherwise pokes are
+    /// coalesced to [`RENDER_THROTTLE`]. Best-effort: a full or closed channel
+    /// just drops the poke (the next update, or `on_collect_complete`, catches
+    /// the row up).
+    fn request_render(&self, force: bool) {
+        let Some(tx) = self.render_tx.get() else {
+            return;
+        };
+        if !force {
+            let mut last = self.last_render_poke.lock().unwrap();
+            if last.elapsed() < RENDER_THROTTLE {
+                return;
+            }
+            *last = Instant::now();
+        }
+        let _ = tx.try_send(Event::Render);
+    }
 }
 
 impl PickerProgressHandler for PickerHandler {
@@ -112,9 +165,13 @@ impl PickerProgressHandler for PickerHandler {
         let _ = self.rendered_slots.set(slots.into_boxed_slice());
         *self.shared_items.lock().unwrap() = skim_items.clone();
 
-        for skim_item in &skim_items {
-            let _ = self.tx.send(Arc::clone(skim_item));
-        }
+        // skim 4.x's item channel carries Vec batches; the skeleton is a single
+        // batch. This append wakes skim's reader (`items_available`) and drives
+        // the first paint. Later field updates happen in place through each
+        // item's shared `rendered` mutex and are *not* resent — they surface via
+        // `request_render` (see module docstring), since skim won't repaint a
+        // silent in-place mutation on its own.
+        let _ = self.tx.send(skim_items);
 
         // Tier 1: warm the user's landing row (all modes) and every
         // other row's default tab. Tier 2 (secondary modes + summaries
@@ -144,6 +201,7 @@ impl PickerProgressHandler for PickerHandler {
         {
             *slot.lock().unwrap() = strip_osc8_hyperlinks(&rendered);
         }
+        self.request_render(false);
     }
 
     fn on_reveal(&self, rendered: Vec<String>) {
@@ -153,6 +211,7 @@ impl PickerProgressHandler for PickerHandler {
         for (slot, line) in slots.iter().zip(rendered) {
             *slot.lock().unwrap() = strip_osc8_hyperlinks(&line);
         }
+        self.request_render(false);
     }
 
     fn stash_warning(&self, line: String) {
@@ -160,6 +219,10 @@ impl PickerProgressHandler for PickerHandler {
     }
 
     fn on_collect_complete(&self) {
+        // Collection is done — `on_update` may have throttled away the last
+        // row's repaint, so force one final frame that reflects every slot.
+        self.request_render(true);
+
         let Some(items) = self.deferred_items.get() else {
             return;
         };
@@ -180,18 +243,16 @@ mod tests {
     use crate::commands::list::model::ListItem;
     use worktrunk::testing::TestRepo;
 
-    fn make_handler() -> (
-        PickerHandler,
-        TestRepo,
-        crossbeam_channel::Receiver<Arc<dyn SkimItem>>,
-    ) {
+    fn make_handler() -> (PickerHandler, TestRepo, SkimItemReceiver) {
         let test = TestRepo::with_initial_commit();
-        let (tx, rx) = crossbeam_channel::unbounded::<Arc<dyn SkimItem>>();
+        let (tx, rx): (SkimItemSender, SkimItemReceiver) = unbounded();
         let shared_items = Arc::new(Mutex::new(Vec::new()));
         let orchestrator = Arc::new(PreviewOrchestrator::new(test.repo.clone()));
         let preview_cache: PreviewCache = Arc::clone(&orchestrator.cache);
         let handler = PickerHandler {
             tx,
+            render_tx: Arc::new(OnceLock::new()),
+            last_render_poke: Mutex::new(Instant::now()),
             shared_items,
             rendered_slots: OnceLock::new(),
             preview_cache,
@@ -213,8 +274,8 @@ mod tests {
 
     /// Skeleton → update → reveal: verifies that each event writes through
     /// to the shared `rendered` string the `WorktreeSkimItem` holds. Skim
-    /// reads these strings on its heartbeat; the matcher-stable search
-    /// text (branch + path) never changes.
+    /// reads these strings each time it repaints (which `request_render`
+    /// triggers); the matcher-stable search text (branch + path) never changes.
     #[test]
     fn handler_updates_render_strings_in_place() {
         let (handler, _test, rx) = make_handler();
@@ -226,8 +287,8 @@ mod tests {
 
         handler.on_skeleton(items, rendered, header("hdr"));
 
-        // Header + 2 items sent to skim.
-        let received: Vec<Arc<dyn SkimItem>> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        // Header + 2 items sent to skim as one batch.
+        let received = rx.recv().expect("skeleton batch");
         assert_eq!(received.len(), 3, "expected header + 2 items");
 
         let slots = handler.rendered_slots.get().unwrap();
@@ -264,7 +325,7 @@ mod tests {
             header("Branch Status"),
         );
 
-        let received: Vec<Arc<dyn SkimItem>> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        let received = rx.recv().expect("skeleton batch");
         assert_eq!(received.len(), 3);
         // Header emits empty output (not selectable).
         assert_eq!(received[0].output().as_ref(), "");

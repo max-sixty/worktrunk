@@ -127,7 +127,7 @@ pub enum BranchScope {
 impl BranchScope {
     /// The two-cell gutter sigil (`glyph` + trailing space) for a branch
     /// row of this scope. ASCII single-width by design — the gutter must
-    /// dodge skim's `width_cjk` clipping (see `vendor/NOTES.md`).
+    /// dodge skim's `width_cjk` clipping.
     pub const fn gutter_sigil(self) -> &'static str {
         match self {
             BranchScope::Local => "/ ",

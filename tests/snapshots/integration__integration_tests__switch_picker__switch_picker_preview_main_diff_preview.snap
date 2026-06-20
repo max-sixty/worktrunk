@@ -2,7 +2,7 @@
 source: tests/integration_tests/switch_picker.rs
 expression: preview
 ---
-1: HEAD± | 2: log | 3: main…± | 4: remote⇅ | 5: summary [N/M]
+1: HEAD± | 2: log | 3: main…± | 4: remote⇅ | 5: summary
 Enter: switch | Tab/alt-1…5: preview | alt-c: create | Esc:
 
  feature_code.rs | 6 ++++++
