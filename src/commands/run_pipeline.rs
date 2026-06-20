@@ -63,6 +63,7 @@ use anyhow::Context;
 
 use worktrunk::git::{Repository, WorktrunkError};
 use worktrunk::shell_exec::ShellConfig;
+use worktrunk::trace::CommandTrace;
 
 use super::command_executor::{expand_shell_template, wait_first_error};
 use super::pipeline_spec::{PipelineSpec, PipelineStepSpec};
@@ -107,9 +108,9 @@ pub fn run_pipeline() -> anyhow::Result<()> {
                 let expanded = expand_shell_template(template, &step_ctx, &repo, template_name)?;
                 let step_json = serde_json::to_string(&*step_ctx)
                     .context("failed to serialize step context")?;
-                let mut child =
+                let (mut child, mut trace) =
                     spawn_shell_command(&expanded, &spec.worktree_path, &step_json, log_file)?;
-                let status = child.wait().context("failed to wait for child process")?;
+                let status = wait_resolving(&mut child, &mut trace, &expanded)?;
                 if !status.success() {
                     return Err(failure_error(&status, name.as_deref().unwrap_or(&expanded)));
                 }
@@ -153,19 +154,28 @@ fn spawn_shell_command(
     worktree_path: &Path,
     context_json: &str,
     log_file: fs::File,
-) -> anyhow::Result<Child> {
+) -> anyhow::Result<(Child, CommandTrace)> {
     let shell = ShellConfig::get()?;
     let log_err = log_file
         .try_clone()
         .context("failed to clone log file handle")?;
-    let mut child = shell
+    // Start the trace just before spawning; the caller resolves it once the
+    // child is waited on (see `wait_resolving`).
+    let mut trace = CommandTrace::new(None, expanded);
+    let mut child = match shell
         .command(expanded)
         .current_dir(worktree_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::from(log_file))
         .stderr(Stdio::from(log_err))
         .spawn()
-        .with_context(|| format!("failed to spawn: {expanded}"))?;
+    {
+        Ok(child) => child,
+        Err(e) => {
+            trace.fail(&e);
+            return Err(e).with_context(|| format!("failed to spawn: {expanded}"));
+        }
+    };
 
     // Write context JSON to stdin, then drop to close the pipe.
     if let Some(mut stdin) = child.stdin.take() {
@@ -174,7 +184,27 @@ fn spawn_shell_command(
         let _ = stdin.write_all(context_json.as_bytes());
     }
 
-    Ok(child)
+    Ok((child, trace))
+}
+
+/// Wait for a pipeline child, resolving its [`CommandTrace`], and surface a
+/// wait-IO failure with context. Returns the child's exit status; the caller
+/// decides whether a non-zero status is a pipeline failure.
+fn wait_resolving(
+    child: &mut Child,
+    trace: &mut CommandTrace,
+    expanded: &str,
+) -> anyhow::Result<ExitStatus> {
+    match child.wait() {
+        Ok(status) => {
+            trace.complete(status.success());
+            Ok(status)
+        }
+        Err(e) => {
+            trace.fail(&e);
+            Err(e).with_context(|| format!("failed to wait for: {expanded}"))
+        }
+    }
 }
 
 /// Spawn all commands in a concurrent group, then wait for all.
@@ -195,38 +225,53 @@ fn run_concurrent_group(
     cmd_index: &mut usize,
 ) -> anyhow::Result<()> {
     let serial = super::force_serial_concurrent();
-    let mut children = Vec::with_capacity(if serial { 0 } else { commands.len() });
+    let mut children: Vec<(Option<String>, String, Child, CommandTrace)> =
+        Vec::with_capacity(if serial { 0 } else { commands.len() });
 
-    for cmd in commands {
-        let log_name = command_log_name(cmd.name.as_deref(), *cmd_index);
-        let log_file = create_command_log(spec, &log_name)?;
-        let cmd_ctx = step_context(&spec.context, cmd.name.as_deref());
-        let expanded = expand_shell_template(&cmd.template, &cmd_ctx, repo, &cmd.template_name)?;
-        let cmd_json =
-            serde_json::to_string(&*cmd_ctx).context("failed to serialize step context")?;
-        let mut child = spawn_shell_command(&expanded, &spec.worktree_path, &cmd_json, log_file)?;
-        *cmd_index += 1;
+    // Spawn (and, in serial mode, run) each command. Wrapped so that a mid-loop
+    // error — a setup `?` or a spawn failure for a later command — tears down
+    // the children already spawned this group rather than dropping them with
+    // unresolved trace guards (and as unreaped orphans).
+    let spawn_result = (|| -> anyhow::Result<()> {
+        for cmd in commands {
+            let log_name = command_log_name(cmd.name.as_deref(), *cmd_index);
+            let log_file = create_command_log(spec, &log_name)?;
+            let cmd_ctx = step_context(&spec.context, cmd.name.as_deref());
+            let expanded =
+                expand_shell_template(&cmd.template, &cmd_ctx, repo, &cmd.template_name)?;
+            let cmd_json =
+                serde_json::to_string(&*cmd_ctx).context("failed to serialize step context")?;
+            let (mut child, mut trace) =
+                spawn_shell_command(&expanded, &spec.worktree_path, &cmd_json, log_file)?;
+            *cmd_index += 1;
 
-        if serial {
-            let status = child
-                .wait()
-                .with_context(|| format!("failed to wait for: {expanded}"))?;
-            if !status.success() {
-                return Err(failure_error(
-                    &status,
-                    cmd.name.as_deref().unwrap_or(&expanded),
-                ));
+            if serial {
+                let status = wait_resolving(&mut child, &mut trace, &expanded)?;
+                if !status.success() {
+                    return Err(failure_error(
+                        &status,
+                        cmd.name.as_deref().unwrap_or(&expanded),
+                    ));
+                }
+            } else {
+                children.push((cmd.name.clone(), expanded, child, trace));
             }
-        } else {
-            children.push((cmd.name.clone(), expanded, child));
         }
+        Ok(())
+    })();
+
+    if let Err(e) = spawn_result {
+        for (_, _, mut child, mut trace) in children {
+            let _ = child.kill();
+            let _ = child.wait();
+            trace.complete(false);
+        }
+        return Err(e);
     }
 
     wait_first_error(children.into_iter().map(
-        |(name, expanded, mut child)| -> anyhow::Result<()> {
-            let status = child
-                .wait()
-                .with_context(|| format!("failed to wait for: {expanded}"))?;
+        |(name, expanded, mut child, mut trace)| -> anyhow::Result<()> {
+            let status = wait_resolving(&mut child, &mut trace, &expanded)?;
             if !status.success() {
                 return Err(failure_error(&status, name.as_deref().unwrap_or(&expanded)));
             }

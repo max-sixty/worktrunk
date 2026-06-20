@@ -581,7 +581,7 @@ fn worktree_config_enabled_detects_extension() {
 
 #[test]
 fn extract_failed_command_from_stream_error() {
-    use super::StreamCommandError;
+    use crate::shell_exec::StreamCommandError;
 
     let err: anyhow::Error = StreamCommandError {
         output: "fatal: ref exists".into(),

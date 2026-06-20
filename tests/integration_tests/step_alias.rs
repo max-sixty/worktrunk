@@ -1288,6 +1288,13 @@ trapped = "trap 'echo got-term >> trap.log; exit 143' TERM; echo started >> star
 
     let status = child.wait().expect("failed to wait for wt");
 
+    // wt forwarded SIGTERM to the wrapper sh by PID (the contract this test
+    // pins), so the trap's `exit` orphaned the backgrounded `sleep 30` in wt's
+    // process group. wt led that group (`process_group(0)` above) and is now
+    // reaped, so SIGKILL the whole group (negative pgid) to reap the sleep
+    // before returning — otherwise it lingers ~30s as a stray process.
+    let _ = kill(Pid::from_raw(-wt_pid.as_raw()), Signal::SIGKILL);
+
     // The trap marker proves the alias shell received SIGTERM. Without the
     // PID-targeted forwarding, this file would never appear and wt would
     // block on the 30s sleep.
@@ -1351,6 +1358,13 @@ trapped = "trap 'echo got-int >> trap.log; exit 130' INT; echo started >> start.
     kill(wt_pid, Signal::SIGINT).expect("failed to send SIGINT to wt");
 
     let status = child.wait().expect("failed to wait for wt");
+
+    // wt forwarded SIGINT to the wrapper sh by PID (the contract this test
+    // pins), so the trap's `exit` orphaned the backgrounded `sleep 30` in wt's
+    // process group. wt led that group (`process_group(0)` above) and is now
+    // reaped, so SIGKILL the whole group (negative pgid) to reap the sleep
+    // before returning — otherwise it lingers ~30s as a stray process.
+    let _ = kill(Pid::from_raw(-wt_pid.as_raw()), Signal::SIGKILL);
 
     let trap_marker = repo.root_path().join("trap.log");
     let recorded = std::fs::read_to_string(&trap_marker).unwrap_or_else(|e| {

@@ -70,9 +70,10 @@ Run [2mwt config alias show[0m for the full definitions.
   [1m[36m-h[0m, [1m[36m--help[0m  Print help (see more with '--help')
 
 [1m[32mGlobal Options:[0m
-  [1m[36m-C[0m[36m [0m[36m<path>[0m            Working directory for this command
-      [1m[36m--config[0m[36m [0m[36m<path>[0m  User config file path
-  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m     Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/)
-  [1m[36m-y[0m, [1m[36m--yes[0m            Skip approval prompts
+  [1m[36m-C[0m[36m [0m[36m<path>[0m                Working directory for this command
+      [1m[36m--config[0m[36m [0m[36m<path>[0m      User config file path
+      [1m[36m--config-set[0m[36m [0m[36m<toml>[0m  Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m         Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/)
+  [1m[36m-y[0m, [1m[36m--yes[0m                Skip approval prompts
 
 ----- stderr -----

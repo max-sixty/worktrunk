@@ -76,6 +76,47 @@ fn test_switch_create_shows_progress_when_forced(repo: TestRepo) {
     });
 }
 
+/// `git worktree add` runs through the delayed-stream path (`Cmd::delayed_stream`),
+/// which historically spawned a raw child and emitted no `[wt-trace]` record — it
+/// surfaced only as an unattributed gap in the `wt-perf` timeline. Assert the
+/// streamed command is now traced, pinning the `CommandTrace` chokepoint
+/// (`src/trace/emit.rs`) against regression. The record is emitted whether the
+/// command buffers or streams, so no delay threshold is forced.
+#[rstest]
+fn test_switch_create_traces_worktree_add(repo: TestRepo) {
+    use worktrunk::trace::{TraceEntryKind, parse_lines};
+
+    // RUST_LOG=debug routes `[wt-trace]` records to stderr (the same channel
+    // `wt-perf timeline` reads).
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "feature-traced", "--no-cd"])
+        .env("RUST_LOG", "debug")
+        .output()
+        .expect("wt switch should run");
+    assert!(
+        output.status.success(),
+        "switch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let commands: Vec<String> = parse_lines(&stderr)
+        .into_iter()
+        .filter_map(|e| match e.kind {
+            TraceEntryKind::Command { command, .. } => Some(command),
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        commands.iter().any(|c| c.contains("worktree add")),
+        "expected a [wt-trace] command record for `git worktree add`; \
+         got command records:\n{}",
+        commands.join("\n")
+    );
+}
+
 #[rstest]
 fn test_switch_create_existing_branch_error(mut repo: TestRepo) {
     // Create a branch first
