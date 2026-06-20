@@ -2,6 +2,9 @@
 docs/static/assets/
 docs/demos/out/
 
+# Claude Code per-developer local settings (never share these)
+.claude/settings.local.json
+
 # Lychee link checker cache
 .lycheecache
 test-concurrent.sh
