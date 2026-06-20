@@ -2,7 +2,7 @@ use clap::FromArgMatches;
 use clap::error::ErrorKind as ClapErrorKind;
 use color_print::{ceprintln, cformat};
 use std::process;
-use worktrunk::config::set_config_path;
+use worktrunk::config::{set_config_overrides, set_config_path};
 use worktrunk::git::{
     ErrorExt, Repository, WorktrunkError, current_or_recover, cwd_removed_hint, set_base_path,
 };
@@ -726,8 +726,8 @@ fn parse_cli() -> Option<Cli> {
     // The same early parse also tells us whether this is help for the top
     // level or `wt step`, so the splice path in `augment_help` has no
     // separate arg scanner.
-    let (directory, config, alias_help_context) = parse_early_globals();
-    apply_global_options(directory, config);
+    let (directory, config, config_overrides, alias_help_context) = parse_early_globals();
+    apply_global_options(directory, config, config_overrides);
 
     // Handle --help with pager before clap processes it.
     // Exits the process on a help/version/doc request; otherwise returns.
@@ -747,7 +747,11 @@ fn parse_cli() -> Option<Cli> {
     Some(Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit()))
 }
 
-fn apply_global_options(directory: Option<std::path::PathBuf>, config: Option<std::path::PathBuf>) {
+fn apply_global_options(
+    directory: Option<std::path::PathBuf>,
+    config: Option<std::path::PathBuf>,
+    config_overrides: Vec<String>,
+) {
     // Initialize base path from -C flag if provided
     if let Some(path) = directory {
         set_base_path(path);
@@ -757,11 +761,16 @@ fn apply_global_options(directory: Option<std::path::PathBuf>, config: Option<st
     if let Some(path) = config {
         set_config_path(path);
     }
+
+    // Record any --config-set overrides for the config loader.
+    if !config_overrides.is_empty() {
+        set_config_overrides(config_overrides);
+    }
 }
 
-/// Parse global options (`-C`, `--config`) and detect whether this invocation
-/// renders help that should include the configured aliases — in a single pass
-/// against the real `Cli` definition.
+/// Parse global options (`-C`, `--config`, `--config-set`) and detect whether this
+/// invocation renders help that should include the configured aliases — in a
+/// single pass against the real `Cli` definition.
 ///
 /// Uses `ignore_errors(true)` so unknown args, missing values, and `--help`
 /// don't abort parsing — we just read what matched. This lets `wt -C other
@@ -774,16 +783,21 @@ fn apply_global_options(directory: Option<std::path::PathBuf>, config: Option<st
 fn parse_early_globals() -> (
     Option<std::path::PathBuf>,
     Option<std::path::PathBuf>,
+    Vec<String>,
     Option<commands::HelpContext>,
 ) {
     let cmd = cli::build_command()
         .ignore_errors(true)
         .disable_help_flag(true);
     let Ok(matches) = cmd.try_get_matches_from(std::env::args_os()) else {
-        return (None, None, None);
+        return (None, None, Vec::new(), None);
     };
     let directory = matches.get_one::<std::path::PathBuf>("directory").cloned();
     let config = matches.get_one::<std::path::PathBuf>("config").cloned();
+    let config_overrides = matches
+        .get_many::<String>("config_override")
+        .map(|values| values.cloned().collect())
+        .unwrap_or_default();
     // Top-level help: `wt --help` (or `-h`, or bare `wt` via `arg_required_else_help`)
     // lands here with no subcommand matched. Step help: `wt step --help` (or
     // `-h`, or bare `wt step`) matches `step` with nothing past it. Other
@@ -793,7 +807,7 @@ fn parse_early_globals() -> (
         Some(("step", sub)) if sub.subcommand_name().is_none() => Some(commands::HelpContext::Step),
         _ => None,
     };
-    (directory, config, alias_help_context)
+    (directory, config, config_overrides, alias_help_context)
 }
 
 fn init_command_log(command_line: &str) {
@@ -1043,6 +1057,7 @@ fn main() {
     let Cli {
         directory,
         config,
+        config_override,
         verbose,
         yes,
         command,
@@ -1050,7 +1065,7 @@ fn main() {
     // Globals were already applied in `parse_cli` before help rendering;
     // OnceLock makes this call a no-op, but keeping it avoids touching the
     // existing destructure pattern.
-    apply_global_options(directory.clone(), config);
+    apply_global_options(directory.clone(), config, config_override);
 
     // Latch warning suppression for commands whose UX is broken by stderr
     // noise — TUI pickers (`switch` without a branch, `select`) and

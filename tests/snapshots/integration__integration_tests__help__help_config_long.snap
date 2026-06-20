@@ -59,6 +59,9 @@ Usage: [1m[36mwt config[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
       [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
+      [1m[36m--config-set[0m[36m [0m[36m<toml>[0m
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/)
 
@@ -557,5 +560,14 @@ Override the LLM command in CI to use a mock:
  [2mWORKTRUNK_MAX_CONCURRENT_COMMANDS[0m Max parallel git commands (default: 32). Lower if hitting file descriptor limits.       
  [2mNO_COLOR[0m                          Disable colored output (standard)                                                       
  [2mCLICOLOR_FORCE[0m                    Force colored output even when not a TTY                                                
+
+[1m[32mInline config overrides (--config-set)[0m
+
+[2m--config-set <toml>[0m overrides any user config key for a single invocation, with higher priority than both config files and [2mWORKTRUNK_[0m env vars. The value is a TOML fragment, so arrays and tables work directly; the flag is global (works before or after the subcommand), repeatable, and a later [2m--config-set[0m replaces an earlier one for the same key.
+
+[107m [0m [2m[0m[2m[34mwt[0m[2m [0m[2m[36m--config-set[0m[2m list.full=true list[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m step copy-ignored [0m[2m[36m--config-set[0m[2m [0m[2m[32m'step.copy-ignored.exclude=["target", "dist"]'[0m
+
+This composes with aliases — an alias body can invoke [2mwt --config-set … <command>[0m to render a named view without changing the saved config.
 
 ----- stderr -----

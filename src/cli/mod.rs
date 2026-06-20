@@ -257,13 +257,23 @@ pub(crate) struct Cli {
     )]
     pub config: Option<std::path::PathBuf>,
 
+    /// Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+    #[arg(
+        long = "config-set",
+        global = true,
+        value_name = "toml",
+        display_order = 102,
+        help_heading = "Global Options"
+    )]
+    pub config_override: Vec<String>,
+
     /// Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/)
     #[arg(
         long,
         short = 'v',
         global = true,
         action = clap::ArgAction::Count,
-        display_order = 102,
+        display_order = 103,
         help_heading = "Global Options"
     )]
     pub verbose: u8,
@@ -273,7 +283,7 @@ pub(crate) struct Cli {
         long,
         short = 'y',
         global = true,
-        display_order = 103,
+        display_order = 104,
         help_heading = "Global Options"
     )]
     pub yes: bool,
@@ -2229,6 +2239,17 @@ $ WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
 | `WORKTRUNK_MAX_CONCURRENT_COMMANDS` | Max parallel git commands (default: 32). Lower if hitting file descriptor limits. |
 | `NO_COLOR` | Disable colored output ([standard](https://no-color.org/)) |
 | `CLICOLOR_FORCE` | Force colored output even when not a TTY |
+
+## Inline config overrides (`--config-set`)
+
+`--config-set <toml>` overrides any user config key for a single invocation, with higher priority than both config files and `WORKTRUNK_` env vars. The value is a TOML fragment, so arrays and tables work directly; the flag is global (works before or after the subcommand), repeatable, and a later `--config-set` replaces an earlier one for the same key.
+
+```console
+$ wt --config-set list.full=true list
+$ wt step copy-ignored --config-set 'step.copy-ignored.exclude=["target", "dist"]'
+```
+
+This composes with aliases — an alias body can invoke `wt --config-set … <command>` to render a named view without changing the saved config.
 <!-- subdoc: show -->
 <!-- subdoc: approvals -->
 <!-- subdoc: alias -->

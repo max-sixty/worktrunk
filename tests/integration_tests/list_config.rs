@@ -49,7 +49,7 @@ branches = true
 }
 
 #[rstest]
-fn test_list_config_cli_override(repo: TestRepo) {
+fn test_list_config_branches_flag_overrides_file(repo: TestRepo) {
     // Create a branch without a worktree
     repo.run_git(&["branch", "feature"]);
 
@@ -517,6 +517,63 @@ fn test_list_config_env_override_validation_failure(repo: TestRepo) {
         // Empty worktree-path deserializes as Some("") but fails validation
         cmd.env("WORKTRUNK_WORKTREE_PATH", "");
         cmd.arg("list").current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// A `--config-set` override is the highest-priority layer: it wins over the
+/// config file. A file that disables branch listing is overridden back on,
+/// surfacing the branch without a worktree.
+#[rstest]
+fn test_list_config_cli_override_beats_file(repo: TestRepo) {
+    fs::write(repo.test_config_path(), "[list]\nbranches = false\n").unwrap();
+    repo.run_git(&["branch", "feature"]);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["--config-set", "list.branches = true", "list"])
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// A malformed `--config-set` fragment warns (attributed to `--config-set`,
+/// listing the bad value) and leaves the file config intact — the branch is
+/// still listed.
+#[rstest]
+fn test_list_config_cli_override_malformed_warns_on_stderr(repo: TestRepo) {
+    fs::write(repo.test_config_path(), "[list]\nbranches = true\n").unwrap();
+    repo.run_git(&["branch", "feature"]);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["--config-set", "garbage", "list"])
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// `--config-set` is a `global` arg, so it applies in any position — including
+/// after the subcommand. Pins that `wt list --config-set …` is accepted (and
+/// takes effect: branch listing toggles on).
+#[rstest]
+fn test_list_config_cli_override_after_subcommand(repo: TestRepo) {
+    fs::write(repo.test_config_path(), "[list]\nbranches = false\n").unwrap();
+    repo.run_git(&["branch", "feature"]);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["list", "--config-set", "list.branches = true"])
+            .current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd);
     });
