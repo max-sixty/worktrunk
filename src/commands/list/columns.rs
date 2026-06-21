@@ -107,7 +107,16 @@ impl ColumnKind {
     }
 }
 
-/// Parse the `[list] columns` selection into an ordered list of built-in columns.
+/// Parse the `[list] columns` selection into an ordered list of columns.
+///
+/// Each name resolves to a built-in column (by its kebab
+/// [`ColumnKind::config_name`]) or, failing that, to a custom column by its
+/// `[list.custom-columns]` header. `custom_names` lists the resolved custom
+/// headers in display order, so the matched position becomes
+/// [`ColumnKind::Custom`]`(i)` — callers must pass the same order the resolved
+/// custom columns use, since that index addresses them downstream. Built-ins
+/// win on a name collision: a custom column whose header equals a built-in name
+/// (e.g. `branch`) is shadowed and unreachable here.
 ///
 /// An empty input yields an empty selection (the caller treats that as "use the
 /// default column set"). Unknown names and duplicates are hard errors so a typo
@@ -115,14 +124,19 @@ impl ColumnKind {
 /// Like `[list.custom-columns]`, this is validated at the `wt list` edge rather
 /// than at config load — `ColumnKind` lives in the command layer, out of reach
 /// of the config crate.
-pub fn parse_selected_columns(names: &[String]) -> anyhow::Result<Vec<ColumnKind>> {
+pub fn parse_selected_columns(
+    names: &[String],
+    custom_names: &[&str],
+) -> anyhow::Result<Vec<ColumnKind>> {
     let mut selected = Vec::with_capacity(names.len());
     for name in names {
-        let kind = ColumnKind::from_config_name(name).ok_or_else(|| {
-            anyhow::anyhow!(
-                "Unknown column {name:?} in [list] columns. Valid columns: {}",
-                ColumnKind::selectable_names().join(", ")
-            )
+        let kind = resolve_column_name(name, custom_names).ok_or_else(|| {
+            let mut valid = ColumnKind::selectable_names().join(", ");
+            if !custom_names.is_empty() {
+                valid.push_str("; custom columns: ");
+                valid.push_str(&custom_names.join(", "));
+            }
+            anyhow::anyhow!("Unknown column {name:?} in [list] columns. Valid columns: {valid}")
         })?;
         if selected.contains(&kind) {
             anyhow::bail!("Duplicate column {name:?} in [list] columns");
@@ -130,6 +144,21 @@ pub fn parse_selected_columns(names: &[String]) -> anyhow::Result<Vec<ColumnKind
         selected.push(kind);
     }
     Ok(selected)
+}
+
+/// Resolve one `[list] columns` name to a built-in or custom column.
+///
+/// Built-ins take precedence, so a custom header colliding with a built-in name
+/// is shadowed. The custom index is the name's position in `custom_names`, which
+/// mirrors the resolved custom-column order.
+fn resolve_column_name(name: &str, custom_names: &[&str]) -> Option<ColumnKind> {
+    if let Some(kind) = ColumnKind::from_config_name(name) {
+        return Some(kind);
+    }
+    custom_names
+        .iter()
+        .position(|custom| *custom == name)
+        .map(|i| ColumnKind::Custom(i as u8))
 }
 
 /// Differentiates between diff-style columns with plus/minus symbols and those with arrows.
@@ -378,30 +407,74 @@ mod tests {
     #[test]
     fn test_parse_selected_columns() {
         let selected =
-            parse_selected_columns(&["ci".into(), "branch".into(), "path".into()]).unwrap();
+            parse_selected_columns(&["ci".into(), "branch".into(), "path".into()], &[]).unwrap();
         assert_eq!(
             selected,
             vec![ColumnKind::CiStatus, ColumnKind::Branch, ColumnKind::Path],
             "selection preserves the configured order"
         );
 
-        assert!(parse_selected_columns(&[]).unwrap().is_empty());
+        assert!(parse_selected_columns(&[], &[]).unwrap().is_empty());
 
-        let unknown = parse_selected_columns(&["branch".into(), "bogus".into()]).unwrap_err();
+        let unknown = parse_selected_columns(&["branch".into(), "bogus".into()], &[]).unwrap_err();
         assert!(unknown.to_string().contains("Unknown column"), "{unknown}");
         assert!(unknown.to_string().contains("bogus"), "{unknown}");
         // The error lists valid names so a typo is self-correcting.
         assert!(unknown.to_string().contains("ci"), "{unknown}");
 
-        let dup = parse_selected_columns(&["branch".into(), "branch".into()]).unwrap_err();
+        let dup = parse_selected_columns(&["branch".into(), "branch".into()], &[]).unwrap_err();
         assert!(dup.to_string().contains("Duplicate column"), "{dup}");
 
         // Gutter is structural and not user-selectable.
-        let gutter = parse_selected_columns(&["gutter".into()]).unwrap_err();
+        let gutter = parse_selected_columns(&["gutter".into()], &[]).unwrap_err();
         assert!(gutter.to_string().contains("Unknown column"), "{gutter}");
 
         // Matching is exact: the rendered header "Branch" is not the kebab name.
-        let cased = parse_selected_columns(&["Branch".into()]).unwrap_err();
+        let cased = parse_selected_columns(&["Branch".into()], &[]).unwrap_err();
         assert!(cased.to_string().contains("Unknown column"), "{cased}");
+    }
+
+    #[test]
+    fn test_parse_selected_columns_with_custom() {
+        // Custom columns are selectable by header, mixed freely with built-ins,
+        // and resolve to Custom(index) in the resolved custom order.
+        let selected = parse_selected_columns(
+            &[
+                "branch".into(),
+                "Ticket".into(),
+                "ci".into(),
+                "Owner".into(),
+            ],
+            &["Ticket", "Owner"],
+        )
+        .unwrap();
+        assert_eq!(
+            selected,
+            vec![
+                ColumnKind::Branch,
+                ColumnKind::Custom(0),
+                ColumnKind::CiStatus,
+                ColumnKind::Custom(1),
+            ],
+            "custom headers resolve to Custom(index) in resolved order"
+        );
+
+        // A custom header colliding with a built-in name is shadowed by the built-in.
+        let shadowed = parse_selected_columns(&["branch".into()], &["branch"]).unwrap();
+        assert_eq!(
+            shadowed,
+            vec![ColumnKind::Branch],
+            "built-in wins over a same-named custom column"
+        );
+
+        // Selecting the same custom twice errors like any duplicate.
+        let dup =
+            parse_selected_columns(&["Ticket".into(), "Ticket".into()], &["Ticket"]).unwrap_err();
+        assert!(dup.to_string().contains("Duplicate column"), "{dup}");
+
+        // An unknown name lists the configured custom headers so the typo is fixable.
+        let unknown = parse_selected_columns(&["Tickte".into()], &["Ticket"]).unwrap_err();
+        assert!(unknown.to_string().contains("Unknown column"), "{unknown}");
+        assert!(unknown.to_string().contains("Ticket"), "{unknown}");
     }
 }

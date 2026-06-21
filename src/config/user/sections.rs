@@ -192,14 +192,17 @@ pub struct ListConfig {
     #[serde(rename = "timeout-ms", skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
 
-    /// Built-in columns to render, in order. When non-empty, only these
-    /// columns appear (a subset and/or reorder of the defaults); empty means
-    /// the default set. Names are kebab identifiers (`branch`, `status`,
-    /// `working-diff`, `ahead-behind`, `branch-diff`, `summary`, `upstream`,
-    /// `ci`, `path`, `url`, `commit`, `age`, `message`); the gutter type
-    /// indicator always shows. Custom columns (below) still append. Accepts a
-    /// TOML array in config files or a comma-separated string from
-    /// `WORKTRUNK__LIST__COLUMNS`.
+    /// Columns to render, in order. When non-empty this is exhaustive — only
+    /// these columns appear (a subset and/or reorder); empty means the default
+    /// set. Built-ins are kebab identifiers (`branch`, `status`, `working-diff`,
+    /// `ahead-behind`, `branch-diff`, `summary`, `upstream`, `ci`, `path`,
+    /// `url`, `commit`, `age`, `message`); custom columns are named by their
+    /// `[list.custom-columns]` header, so a selection mixes both in one list. A
+    /// built-in wins over a custom header that collides with its name. The
+    /// gutter type indicator always shows. A custom column omitted from a
+    /// non-empty selection is hidden; with no selection, custom columns append
+    /// to the default set. Accepts a TOML array in config files or a
+    /// comma-separated string from `WORKTRUNK__LIST__COLUMNS`.
     #[serde(
         default,
         deserialize_with = "string_or_seq",

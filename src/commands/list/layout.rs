@@ -527,12 +527,15 @@ pub struct LayoutConfig {
     pub status_position_mask: super::model::PositionMask,
 }
 
-/// The user's column configuration for one render: which built-ins to show and
-/// the resolved custom columns to append.
+/// The user's column configuration for one render: which columns to show and
+/// the resolved custom columns available to render.
 ///
-/// `selected` is `None` for the default column set, or `Some(order)` to render
-/// only those built-ins in that order (`[list] columns`). `custom` carries the
-/// resolved `[list.custom-columns]`, which append regardless of `selected`.
+/// `selected` is `None` for the default column set (every built-in, with custom
+/// columns appended in resolution order). `Some(order)` renders exactly those
+/// columns in that order — `order` may name built-ins *and* custom columns
+/// (`ColumnKind::Custom(i)`, indexing `custom`), and anything not listed is
+/// hidden. `custom` always carries the resolved `[list.custom-columns]` so their
+/// widths and headers are available; `selected` decides which of them render.
 #[derive(Clone, Copy)]
 pub struct ColumnSelection<'a> {
     pub selected: Option<&'a [ColumnKind]>,
@@ -685,26 +688,21 @@ fn build_estimated_widths(
 ///
 /// Without a `[list] columns` selection this defers to the static registry
 /// order ([`column_display_index`]). With a selection, the configured order
-/// wins for built-ins: Gutter pins first, selected built-ins follow in their
-/// listed order, and custom columns trail in resolution order (they aren't
-/// addressable in the selection list yet).
+/// wins for every column: Gutter pins first, then each selected column — built-in
+/// or custom — follows its position in `order`. The candidate filter drops any
+/// column not in the selection, so the `usize::MAX` sentinel only covers that
+/// unreachable case; `+ 1` runs only on a real position, so it can't overflow.
 fn display_sort_key(kind: ColumnKind, selected: Option<&[ColumnKind]>) -> (usize, usize) {
     let Some(order) = selected else {
         return column_display_index(kind);
     };
-    match kind {
-        ColumnKind::Gutter => (0, 0),
-        ColumnKind::Custom(i) => (order.len() + 1, i as usize + 1),
-        // Selected built-ins sort by their position in `order` (always Some —
-        // the candidate filter dropped any built-in not in the selection). The
-        // `usize::MAX` sentinel matches `column_display_index` and only applies
-        // to that unreachable case; `+ 1` runs only on a real position, so it
-        // can't overflow.
-        kind => order
-            .iter()
-            .position(|&k| k == kind)
-            .map_or((usize::MAX, 0), |position| (position + 1, 0)),
+    if kind == ColumnKind::Gutter {
+        return (0, 0);
     }
+    order
+        .iter()
+        .position(|&k| k == kind)
+        .map_or((usize::MAX, 0), |position| (position + 1, 0))
 }
 
 /// Allocate columns using priority-based allocation logic.
@@ -729,11 +727,17 @@ fn allocate_columns_with_priority(
 
     // Custom columns join the candidate pool with their configured priority.
     // Width 0 means empty for every row — excluded entirely (values are
-    // final, so unlike still-loading built-ins nothing can arrive later).
+    // final, so unlike still-loading built-ins nothing can arrive later). When
+    // `[list] columns` selects a subset, a custom column shows only if it was
+    // named (by header → `Custom(i)`); without a selection every custom joins.
     let custom_specs: Vec<ColumnSpec> = custom_columns
         .iter()
         .enumerate()
         .filter(|&(i, _)| metadata.widths.custom.get(i).copied().unwrap_or(0) > 0)
+        .filter(|&(i, _)| match selected {
+            Some(order) => order.contains(&ColumnKind::Custom(i as u8)),
+            None => true,
+        })
         .map(|(i, column)| ColumnSpec::new(ColumnKind::Custom(i as u8), column.priority, None))
         .collect();
 
@@ -743,8 +747,9 @@ fn allocate_columns_with_priority(
     //   (Gutter is structural — always kept). This filters WITHOUT renumbering
     //   base_priority, so the Summary drop loop and EMPTY_PENALTY tiers below
     //   stay correct: the allocator sorts by priority and never indexes by it,
-    //   so a sparse retained set just works. Custom columns are an independent
-    //   axis and always join (selection names only address built-ins).
+    //   so a sparse retained set just works. Custom columns honor the same
+    //   selection (filtered into `custom_specs` above), so a selection lists
+    //   built-ins and customs in one ordered set.
     let mut candidates: Vec<ColumnCandidate> = COLUMN_SPECS
         .iter()
         .filter(|spec| {
@@ -1803,19 +1808,33 @@ mod tests {
     }
 
     #[test]
-    fn test_selected_columns_custom_columns_append() {
-        // Custom columns aren't addressable in the selection list; they append
-        // after the selected built-ins, keeping their resolution order.
+    fn test_selected_columns_include_and_hide_custom() {
+        // A selection lists built-ins and custom columns in one ordered set: a
+        // named custom renders interleaved at its configured position, while a
+        // custom omitted from a non-empty selection is hidden.
         let mut item = make_test_item("feature-branch");
-        item.custom_values = vec!["TICKET-1".to_string()];
+        item.custom_values = vec!["TICKET-1".to_string(), "max".to_string()];
         let items = vec![item];
-        let custom = [ResolvedCustomColumn {
-            name: "Ticket".to_string(),
-            template: "{{ vars.ticket }}".to_string(),
-            max_width: 40,
-            priority: 9,
-        }];
-        let selected = [ColumnKind::Branch];
+        let custom = [
+            ResolvedCustomColumn {
+                name: "Ticket".to_string(),
+                template: "{{ vars.ticket }}".to_string(),
+                max_width: 40,
+                priority: 9,
+            },
+            ResolvedCustomColumn {
+                name: "Owner".to_string(),
+                template: "{{ vars.owner }}".to_string(),
+                max_width: 40,
+                priority: 9,
+            },
+        ];
+        // Place Ticket (custom 0) between two built-ins; omit Owner (custom 1).
+        let selected = [
+            ColumnKind::Branch,
+            ColumnKind::Custom(0),
+            ColumnKind::Commit,
+        ];
         let layout = calculate_layout_with_width(
             &items,
             &full_skip_tasks(),
@@ -1835,9 +1854,45 @@ mod tests {
             vec![
                 ColumnKind::Gutter,
                 ColumnKind::Branch,
-                ColumnKind::Custom(0)
+                ColumnKind::Custom(0),
+                ColumnKind::Commit,
             ],
-            "custom columns trail the selected built-ins"
+            "a named custom renders interleaved at its configured position"
+        );
+        assert!(
+            find_column(&layout, ColumnKind::Custom(1)).is_none(),
+            "a custom omitted from a non-empty selection is hidden"
+        );
+    }
+
+    #[test]
+    fn test_default_columns_append_custom() {
+        // Without a selection (the default set), every custom column appends in
+        // resolution order — the selection filter only applies when present.
+        let mut item = make_test_item("feature-branch");
+        item.custom_values = vec!["TICKET-1".to_string()];
+        let items = vec![item];
+        let custom = [ResolvedCustomColumn {
+            name: "Ticket".to_string(),
+            template: "{{ vars.ticket }}".to_string(),
+            max_width: 40,
+            priority: 9,
+        }];
+        let layout = calculate_layout_with_width(
+            &items,
+            &full_skip_tasks(),
+            300,
+            Path::new("/test"),
+            None,
+            None,
+            ColumnSelection {
+                custom: &custom,
+                selected: None,
+            },
+        );
+        assert!(
+            find_column(&layout, ColumnKind::Custom(0)).is_some(),
+            "custom columns append in the default (no-selection) set"
         );
     }
 

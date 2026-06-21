@@ -899,6 +899,60 @@ columns = ["age", "branch"]
     });
 }
 
+/// Custom columns are addressable in `[list] columns` by their header. A named
+/// custom renders interleaved with built-ins at its configured position, while a
+/// custom omitted from a non-empty selection is hidden. Both use the `codename`
+/// filter so every row has a value (an all-empty custom drops regardless).
+#[rstest]
+fn test_list_config_columns_select_custom(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        r#"[list]
+columns = ["branch", "Codename", "age"]
+
+[list.custom-columns.Codename]
+template = "{{ branch | codename }}"
+
+[list.custom-columns.Owner]
+template = "{{ branch | codename }}"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.env("COLUMNS", "200");
+        cmd.arg("list").current_dir(repo.root_path());
+
+        let output = cmd.output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "exit code should be 0: {stderr}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        let header = stdout
+            .lines()
+            .find(|line| line.contains("Branch"))
+            .unwrap_or_else(|| panic!("no header row in:\n{stdout}"));
+        assert!(
+            header.contains("Codename"),
+            "a selected custom column renders: {header}"
+        );
+        assert!(
+            !header.contains("Owner"),
+            "a custom omitted from a non-empty selection is hidden: {header}"
+        );
+        let branch_at = header.find("Branch").unwrap();
+        let codename_at = header.find("Codename").unwrap();
+        let age_at = header.find("Age").unwrap();
+        assert!(
+            branch_at < codename_at && codename_at < age_at,
+            "the custom sorts at its configured position between built-ins: {header}"
+        );
+    });
+}
+
 /// The env overlay can only deliver scalars, so `WORKTRUNK__LIST__COLUMNS`
 /// arrives as a comma-separated string; `string_or_seq` splits it into the
 /// column list. The override changes which columns render (Commit drops).
