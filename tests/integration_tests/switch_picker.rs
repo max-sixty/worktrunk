@@ -941,8 +941,9 @@ fn test_switch_picker_prs_github_list(mut repo: TestRepo) {
         &["switch", "--prs"],
         repo.root_path(),
         &env_vars,
-        // Wait for the PR row to stream into the list — deterministic, unlike
-        // selecting it (skim 0.20 doesn't reliably select an async-arrived row).
+        // Wait for the PR row to stream into the list (the `#42` content gate),
+        // then assert on the row itself — deterministic, with no dependency on
+        // selecting an async-arrived row.
         &[("", Some("#42"))],
     );
 
