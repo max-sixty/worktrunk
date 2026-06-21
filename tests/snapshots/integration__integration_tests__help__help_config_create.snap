@@ -171,6 +171,13 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disables[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# `columns` selects and orders the built-in columns; omit it for the default set.[0m
+[107m [0m [2m# It is designed to be driven by an alias (https://worktrunk.dev/extending/#aliases) that sets it[0m
+[107m [0m [2m# per invocation — a body like `wt --config-set 'list.columns=[…]' list` gives a[0m
+[107m [0m [2m# named view (run as `wt <alias>`) without disturbing the default `wt list`.[0m
+[107m [0m [2m# Setting it statically in the config file uses the same key and works, but is not[0m
+[107m [0m [2m# the intended use: it pins one layout over a table that otherwise adapts to[0m
+[107m [0m [2m# `--full` and terminal width.[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# Valid names are `branch`, `status`, `working-diff`, `ahead-behind`,[0m
 [107m [0m [2m# `branch-diff`, `summary`, `upstream`, `ci`, `path`, `url`, `commit`, `age`, and[0m
 [107m [0m [2m# `message`. The gutter type indicator always shows, and custom columns (below)[0m

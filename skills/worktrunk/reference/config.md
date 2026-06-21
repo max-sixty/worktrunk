@@ -192,6 +192,13 @@ timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disabl
 ```
 
 `columns` selects and orders the built-in columns; omit it for the default set.
+It is designed to be driven by an [alias](https://worktrunk.dev/extending/#aliases) that sets it
+per invocation — a body like `wt --config-set 'list.columns=[…]' list` gives a
+named view (run as `wt <alias>`) without disturbing the default `wt list`.
+Setting it statically in the config file uses the same key and works, but is not
+the intended use: it pins one layout over a table that otherwise adapts to
+`--full` and terminal width.
+
 Valid names are `branch`, `status`, `working-diff`, `ahead-behind`,
 `branch-diff`, `summary`, `upstream`, `ci`, `path`, `url`, `commit`, `age`, and
 `message`. The gutter type indicator always shows, and custom columns (below)
