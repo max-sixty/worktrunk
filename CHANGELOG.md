@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.61.0
+
+### Improved
+
+- **`wt list` custom columns**: Each `[list.custom-columns.<Header>]` entry in user config adds a column to `wt list` (and the `wt switch` picker), rendered per row as a minijinja template over `branch`, `worktree_path`, `worktree_name`, and `vars.*`, with optional `width` and drop priority. Values expand from in-memory data only — no subprocess runs per cell — and a column that is empty on every row is dropped. `wt list --format=json` gains a `columns` map per item. The feature is experimental, so the config shape may still change. ([#3073](https://github.com/max-sixty/worktrunk/pull/3073))
+
+- **`--config-set` for inline config overrides**: A global, repeatable `--config-set <toml>` flag overrides any user-config key for a single invocation, layered above config files and `WORKTRUNK_*` env vars. The value is a real TOML fragment, so arrays and tables work natively (`wt --config-set list.full=true list`); nested tables deep-merge, and a malformed or invalid override drops the whole `--config-set` layer with an attributed warning rather than failing the command. ([#3138](https://github.com/max-sixty/worktrunk/pull/3138))
+
+- **Picker shows cached PR/MR numbers**: The `wt switch` picker skips the networked CI-status fetch, so it previously had no CI column. It now fills PR/MR numbers from the local `.git/wt/cache/ci-status/` cache populated by earlier `wt list --full` or statusline runs, with zero network access. A stale entry (TTL passed or branch head moved) keeps its number dimmed; expired entries without a number are dropped. ([#3073](https://github.com/max-sixty/worktrunk/pull/3073))
+
+- **Faster file copies on macOS**: After a reflink (`clonefile` on APFS, which already preserves mode bits), worktrunk now skips the redundant follow-up `chmod` on macOS, saving one syscall per file in `wt step copy-ignored` and every other copy path. Linux (btrfs/XFS) still sets permissions, since `FICLONE` clones data extents only and drops the execute bit. ([#3149](https://github.com/max-sixty/worktrunk/pull/3149))
+
+### Internal
+
+- **Picker migrated to skim 4.8 (ratatui/crossterm)**: The `wt switch` picker moved off skim 0.20.5 (tuikit) to skim 4.8.0, dropping the vendored `vendor/skim-tuikit/` patch tree (both patches it carried are now native or upstream). Two cosmetic picker changes come with it: the match counter no longer overlaps the preview-tab header, and the HEAD column shows the full short-SHA. ([#3137](https://github.com/max-sixty/worktrunk/pull/3137))
+
+- **All command spawns route through one trace chokepoint**: `CommandTrace` is now the sole emitter of `[wt-trace]` command records, so a spawn path can't silently skip tracing — `git worktree add`, previously an unattributed gap, now shows up as a labeled slice in `wt-perf timeline`. ([#3134](https://github.com/max-sixty/worktrunk/pull/3134))
+
+### Documentation
+
+- **Hook-approval skill guidance**: The bundled worktrunk skill now frames hook approvals as user consent and no longer advocates `--yes` to bypass prompts. ([#3146](https://github.com/max-sixty/worktrunk/pull/3146))
+
 ## 0.60.0
 
 ### Improved
