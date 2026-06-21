@@ -58,7 +58,7 @@ Shortcuts also apply to `--base`. For a fork PR/MR, the head commit is fetched a
 
 When called without arguments, `wt switch` opens an interactive picker to browse and select worktrees with live preview. The candidate set widens with `--branches` (local branches without worktrees), `--remotes` (remote branches), and `--prs` (open PRs/MRs — see below).
 
-The CI column shows each row's PR/MR status, primed from the cache that earlier runs (`wt list --full`, the statusline) wrote for an instant first paint, then refreshed by a live fetch streamed in behind it. An entry whose branch has moved or whose TTL has passed keeps its PR/MR number, dimmed, until the fetch updates it.
+The CI column shows each row's PR/MR CI and review status, the same as [`wt list --full`](@/list.md).
 
 <figure class="demo">
 <picture>
@@ -84,14 +84,14 @@ The CI column shows each row's PR/MR status, primed from the cache that earlier 
 
 Plain digits go to the filter, so a branch name containing a number can be typed directly; the preview tabs move to `Alt`.
 
-**Preview tabs** — jump with `Alt-1`–`Alt-6`, or cycle with `Tab`/`Shift-Tab`. Each tab keeps its `N: label`; the number dims when the tab has nothing to show for the selected row (no upstream, summaries off, or no PR), and the label is bold on the active tab:
+**Preview tabs:**
 
 1. **HEAD±** — Diff of uncommitted changes
 2. **log** — Recent commits; commits already on the default branch have dimmed hashes
 3. **main…±** — Diff of changes since the merge-base with the default branch
 4. **remote⇅** — Ahead/behind diff vs upstream tracking branch
 5. **summary** — LLM-generated branch summary; requires `[list] summary = true` and [`commit.generation`](@/config.md#commit)
-6. **pr** — The selected row's PR/MR, from the same CI fetch the CI column shows (primed from cache, refreshed live); shown for any branch with a PR and for `--prs` rows
+6. **pr** — The selected row's PR/MR, for any row whose branch has one
 
 **Pager configuration:** The preview panel pipes diff output through git's pager. Override in user config:
 
@@ -112,7 +112,7 @@ Both work anywhere a branch is accepted, including `--base`. The `--create` flag
 
 If the PR or MR is on a fork, the local branch uses its branch name directly, so `git push` works normally. A pre-existing local branch with that name tracking something else requires renaming first.
 
-The `--prs` flag adds the repository's open PRs (GitHub) or MRs (GitLab) to the interactive picker. Each row resolves to the same `pr:`/`mr:` shortcut, so selecting one fetches the ref and switches to its branch. The list is one forge call streamed in as it arrives — the picker paints immediately from local worktree data and PR rows appear once the call returns.
+The `--prs` flag adds the repository's open PRs (GitHub) or MRs (GitLab) to the interactive picker. Each row resolves to the same `pr:`/`mr:` shortcut, so selecting one fetches the ref and switches to its branch.
 
 Requires `gh` (GitHub), `glab` (GitLab), or an equivalent CLI installed and authenticated; see [forge platform](@/config.md#forge-platform) for Gitea, Azure DevOps, and other supported platforms.
 
