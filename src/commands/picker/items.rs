@@ -6,9 +6,11 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
+use ansi_to_tui::IntoText;
 use anstyle::Reset;
 use color_print::cformat;
 use dashmap::DashMap;
+use ratatui::text::{Line, Span};
 use skim::prelude::*;
 use worktrunk::git::Repository;
 use worktrunk::styling::INFO_SYMBOL;
@@ -21,6 +23,33 @@ use super::log_formatter::{
 use super::pager::{diff_pager, pipe_through_pager};
 use super::preview::{PreviewMode, PreviewStateData};
 use super::preview_cache;
+
+/// Parse a pre-rendered ANSI string into a single ratatui `Line` for skim's
+/// item list. skim's `DisplayContext::to_line` only applies match-highlight
+/// styling to plain text, so the picker — whose rows already carry SGR color
+/// codes — converts them itself. Rows are single lines; spans from any parsed
+/// lines are flattened into one. A parse failure falls back to the raw text.
+///
+/// Each span's background is cleared to `None`. The rows are foreground-only,
+/// but an `\x1b[0m` reset in the source ANSI parses to an explicit
+/// `bg = Reset`, which would override skim's `highlight_line` fill and leave the
+/// selected row's gray highlight (`current_bg`) full of holes. Leaving `bg`
+/// unset lets the line-level current-row background show through uniformly.
+pub(super) fn ansi_to_line(s: &str) -> Line<'static> {
+    match s.into_text() {
+        Ok(text) => Line::from(
+            text.lines
+                .into_iter()
+                .flat_map(|line| line.spans)
+                .map(|mut span| {
+                    span.style.bg = None;
+                    span
+                })
+                .collect::<Vec<Span<'static>>>(),
+        ),
+        Err(_) => Line::from(s.to_string()),
+    }
+}
 
 /// Cache key for pre-computed previews: (branch_name, mode).
 pub(super) type PreviewCacheKey = (String, PreviewMode);
@@ -52,8 +81,8 @@ impl SkimItem for HeaderSkimItem {
         Cow::Borrowed(&self.display_text)
     }
 
-    fn display<'a>(&'a self, _context: skim::DisplayContext<'a>) -> skim::AnsiString<'a> {
-        skim::AnsiString::parse(&self.display_text_with_ansi)
+    fn display(&self, _context: DisplayContext) -> Line<'_> {
+        ansi_to_line(&self.display_text_with_ansi)
     }
 
     fn output(&self) -> Cow<'_, str> {
@@ -100,9 +129,10 @@ fn compute_diff_preview(
 /// Wrapper to implement SkimItem for ListItem.
 ///
 /// Progressive updates live inside `rendered` — the picker handler rewrites
-/// the ANSI-colored display string in place as task results arrive. Skim
-/// redraws from `display()` on its 100ms heartbeat, so new values surface
-/// without any explicit re-send through the item channel.
+/// the ANSI-colored display string in place as task results arrive. skim 4.x
+/// renders on demand, so the handler pokes an `Event::Render` after each
+/// mutation (see `progressive_handler`); skim then re-reads `display()` and the
+/// new value surfaces — no re-send through the item channel.
 ///
 /// `search_text` (what the matcher sees) stays based on fast-only fields
 /// so cached ranks don't need to re-compute when a slow field lands.
@@ -147,12 +177,11 @@ impl SkimItem for WorktreeSkimItem {
         Cow::Borrowed(&self.search_text)
     }
 
-    fn display<'a>(&'a self, _context: skim::DisplayContext<'a>) -> skim::AnsiString<'a> {
-        // Clone-under-lock so AnsiString's input outlives the guard.
-        // `AnsiString::parse` returns `AnsiString<'static>`, so the borrow
-        // ends with this function.
+    fn display(&self, _context: DisplayContext) -> Line<'_> {
+        // Clone-under-lock so the parser's input outlives the guard;
+        // `ansi_to_line` returns an owned `Line<'static>`.
         let snapshot = self.rendered.lock().unwrap().clone();
-        skim::AnsiString::parse(&snapshot)
+        ansi_to_line(&snapshot)
     }
 
     fn output(&self) -> Cow<'_, str> {
@@ -273,18 +302,11 @@ impl TabAvailability {
 /// identifiable even when it has nothing to show (its pane, e.g. "… has no PR",
 /// says the rest).
 pub(super) fn render_preview_tabs(mode: PreviewMode, avail: TabAvailability) -> String {
-    // Full SGR reset (\x1b[0m). color_print's `</>` emits \x1b[22m (intensity
-    // reset), which skim's ANSI parser silently ignores — see
-    // `skim-0.20.5/src/ansi.rs` `csi_dispatch`, which handles codes 0/1/2/4/5/7
-    // but not 22. Without explicit [0m, dim/bold bleeds across the rest of
-    // the line in the list and preview panels. Same reason the
-    // `compute_*_preview` helpers below scatter `{reset}` after each styled
-    // span.
-    //
-    // TODO(vendor-skim): a one-line fix in skim's ANSIParser removes this
-    // workaround everywhere. See `vendor/NOTES.md` → "SGR 22 (intensity
-    // reset) handling"; revisit if more users report preview formatting
-    // issues.
+    // Full SGR reset (\x1b[0m) after each styled span. color_print's `</>`
+    // emits only \x1b[22m (intensity reset); pairing it with an explicit [0m
+    // keeps dim/bold from bleeding across the dividers and into the rest of the
+    // line in the list and preview panels. Same reason the `compute_*_preview`
+    // helpers below scatter `{reset}` after each styled span.
     let reset = Reset;
 
     /// Format one tab, keeping the `N: label` text in every state so the
@@ -398,11 +420,10 @@ impl WorktreeSkimItem {
 
     /// Render preview for the given mode with specified dimensions.
     ///
-    /// Pure cache read: skim calls this synchronously on the UI thread
-    /// (see `skim::model::draw_preview`), so any blocking here gates the
-    /// entire first render — list included. Background tasks populate the
-    /// cache out-of-band; a miss returns a placeholder, and skim will
-    /// re-query on the next selection/query change.
+    /// Pure cache read: skim invokes `preview()` synchronously while drawing
+    /// the preview pane, so any blocking here gates the render. Background
+    /// tasks populate the cache out-of-band; a miss returns a placeholder, and
+    /// skim re-queries on the next selection/query change.
     fn preview_for_mode(&self, mode: PreviewMode, width: usize, _height: usize) -> String {
         let cache_key = (self.branch_name.clone(), mode);
         let content = self
@@ -421,9 +442,8 @@ impl WorktreeSkimItem {
     }
 
     /// Placeholder shown while a background task is still computing the
-    /// preview for this mode. Skim has no API to re-query preview from
-    /// outside user interaction (see `skim::previewer::on_item_change` bail
-    /// at `previewer.rs:187`), so the hint tells the user to press the mode
+    /// preview for this mode. Skim has no API to re-query the preview from
+    /// outside user interaction, so the hint tells the user to press the mode
     /// key again to refresh once the background fill lands. `alt-N`
     /// re-runs the same `echo N + refresh-preview` chain, re-reading the
     /// now-populated cache.

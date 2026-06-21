@@ -14,7 +14,8 @@
 //! dedicated thread that holds a clone of skim's item channel. The picker
 //! frame paints instantly from local worktree data; PR rows appear when the
 //! call returns (~1s). The thread's sender drop is part of the picker's
-//! heartbeat contract — see [`super::handle_picker`].
+//! EOF contract — skim's reader sees end-of-stream only once every sender
+//! drops — see [`super::handle_picker`].
 //!
 //! # Alignment
 //!
@@ -42,6 +43,7 @@ use std::time::Duration;
 use anstyle::{Reset, Style};
 use anyhow::Context;
 use color_print::cformat;
+use ratatui::text::Line;
 use serde::Deserialize;
 use skim::prelude::*;
 use unicode_width::UnicodeWidthStr;
@@ -54,7 +56,7 @@ use super::super::list::ci_status::{
 };
 use super::super::list::columns::ColumnKind;
 use super::super::list::layout::ColumnGrid;
-use super::items::{TabAvailability, render_preview_tabs};
+use super::items::{TabAvailability, ansi_to_line, render_preview_tabs};
 use super::preview::{PreviewMode, PreviewStateData};
 
 /// One-shot handoff of the picker's column geometry from the collect thread
@@ -192,9 +194,15 @@ pub(super) fn stream_open_prs(
     // CLI winning the race.
     let grid = grid_slot.wait(Duration::from_secs(5));
 
-    for entry in entries {
-        let _ = tx.send(Arc::new(PrSkimItem::new(entry, list_width, grid.as_ref())));
-    }
+    // skim 4.x takes a batch per send; the forge call already returned every
+    // row, so stream them in one shot.
+    let items: Vec<Arc<dyn SkimItem>> = entries
+        .into_iter()
+        .map(|entry| {
+            Arc::new(PrSkimItem::new(entry, list_width, grid.as_ref())) as Arc<dyn SkimItem>
+        })
+        .collect();
+    let _ = tx.send(items);
 }
 
 /// Plural noun for the forge's change-request — "PRs" on GitHub, "MRs" on
@@ -646,8 +654,8 @@ impl SkimItem for PrSkimItem {
         Cow::Borrowed(&self.search_text)
     }
 
-    fn display<'a>(&'a self, _context: skim::DisplayContext<'a>) -> skim::AnsiString<'a> {
-        skim::AnsiString::parse(&self.rendered)
+    fn display(&self, _context: DisplayContext) -> Line<'_> {
+        ansi_to_line(&self.rendered)
     }
 
     fn output(&self) -> Cow<'_, str> {

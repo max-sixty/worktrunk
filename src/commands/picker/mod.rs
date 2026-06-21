@@ -4,7 +4,7 @@
 //! shares `super::list::collect::collect` with `wt list` — see
 //! `commands/list/collect/mod.rs` for the rendering-pipeline spec — but inverts
 //! the ordering because skim's `preview_window` height is baked into
-//! `SkimOptions` before `Skim::run_with` takes over the terminal, so we have
+//! `SkimOptions` before skim takes over the terminal, so we have
 //! to estimate the visible row count up front rather than learn it from
 //! collect's skeleton pass.
 //!
@@ -31,9 +31,10 @@
 //! 5. Builds `SkimOptions` (immutable after this — which is why steps 1-4 have
 //!    to run first).
 //! 6. Spawns the `picker-collect` bg thread, which calls `collect::collect`.
-//! 7. Calls `Skim::run_with(rx)`; skim paints the empty frame and then ingests
-//!    skeleton rows from the channel as the bg thread streams them via
-//!    `on_skeleton`.
+//! 7. Calls `run_skim(rx)` (a thin wrapper over skim's `init`/`run` that also
+//!    hands the collect handler skim's event sender for progressive repaints);
+//!    skim paints the empty frame and then ingests skeleton rows from the
+//!    channel as the bg thread streams them via `on_skeleton`.
 //!
 //! Time-to-skeleton = steps 1-6 on the main thread *plus* collect's
 //! pre-skeleton phase on the bg thread. See `commands/list/collect/mod.rs`
@@ -101,8 +102,9 @@ use std::cell::RefCell;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::atomic::AtomicUsize;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use ansi_str::AnsiStr;
 use anyhow::Context;
@@ -182,7 +184,7 @@ impl PickerRemovalTarget {
 /// branch name is the only handle.
 ///
 /// Decoding `output()` rather than `downcast_ref::<WorktreeSkimItem>()` also
-/// sidesteps skim 0.20's cross-thread `TypeId` mismatch, which makes the
+/// sidesteps skim's cross-thread `TypeId` mismatch, which can make the
 /// downcast fail when the item originates on the reader thread.
 fn picker_item_identifier(item: &dyn SkimItem) -> String {
     let output = item.output().to_string();
@@ -194,20 +196,25 @@ fn picker_item_identifier(item: &dyn SkimItem) -> String {
 
 /// Custom command collector for skim's `reload` action.
 ///
-/// When alt-r is pressed, skim runs `execute-silent` to write the selected branch
-/// name to a signal file, then `reload` invokes this collector. The collector reads
-/// the signal file, removes the item from the list, and streams the remaining items
-/// back to skim — all without leaving the picker.
+/// When alt-r is pressed, skim's `reload(remove {})` action expands `{}` to the
+/// selected row's output() token and invokes this collector with it. The
+/// collector parses the token, removes that item from the list, and streams the
+/// remaining items back to skim — all without leaving the picker.
+///
+/// The token rides the reload command itself rather than a side-channel file:
+/// skim 4.x's `execute-silent` is fire-and-forget, so the old
+/// `execute-silent(echo {} > file)+reload` chain raced — the reader read the
+/// file before the echo landed and removed nothing (or, on a repeat press, the
+/// wrong worktree).
 ///
 /// Git operations (worktree removal, branch deletion) are deferred to a background
-/// thread because skim 0.20 calls `invoke()` on the main event loop thread.
+/// thread because skim calls `invoke()` on the main event loop thread.
 /// Blocking it freezes the TUI.
 ///
-/// Cursor position resets to the first item after reload (skim 0.20 limitation,
+/// Cursor position resets to the first item after reload (skim limitation,
 /// tracked in #1695).
 struct PickerCollector {
     items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>>,
-    signal_path: PathBuf,
     repo: Repository,
     /// Approvals snapshot, loaded once at picker startup. A queued removal runs
     /// its `pre-remove` / `post-remove` / `post-switch` hooks only when every
@@ -328,15 +335,31 @@ impl PickerCollector {
     }
 }
 
+/// Pull the selected row's `output()` token out of the `remove <token>` reload
+/// command skim builds for alt-r. skim expands `{}` to `output()` and shell-
+/// quotes it via single quotes (`'…'`, with any embedded `'` written as
+/// `'\''`); this reverses exactly that. An empty selection yields `''` →
+/// empty string, which `from_signal` treats as "nothing to remove".
+fn parse_reload_remove_token(cmd: &str) -> String {
+    let arg = cmd.strip_prefix("remove ").unwrap_or("").trim();
+    let unquoted = arg
+        .strip_prefix('\'')
+        .and_then(|inner| inner.strip_suffix('\''))
+        .unwrap_or(arg);
+    unquoted.replace("'\\''", "'")
+}
+
 impl CommandCollector for PickerCollector {
     fn invoke(
         &mut self,
-        _cmd: &str,
+        cmd: &str,
         components_to_stop: Arc<AtomicUsize>,
     ) -> (SkimItemReceiver, Sender<i32>) {
-        // Read the removal signal (item output token written by execute-silent)
-        if let Ok(signal) = std::fs::read_to_string(&self.signal_path) {
-            let selected_output = signal.trim().to_string();
+        // skim's `reload(remove {})` expands `{}` to the selected row's
+        // shell-quoted output() token; pull it back out (see
+        // `parse_reload_remove_token`). No signal file — that raced the reader.
+        {
+            let selected_output = parse_reload_remove_token(cmd);
             if let Some(removal_target) = PickerRemovalTarget::from_signal(&selected_output) {
                 let preparation = self.prepare_removal(&removal_target);
 
@@ -348,9 +371,9 @@ impl CommandCollector for PickerCollector {
                         // drops exactly the selected row even when several
                         // detached rows share the `(detached)` branch label.
                         //
-                        // Note: skim's `as_any().downcast_ref::<WorktreeSkimItem>()` fails
-                        // at runtime (TypeId mismatch between reader thread and main thread
-                        // compilation units in skim 0.20). All item lookups use output()
+                        // Note: skim's `as_any().downcast_ref::<WorktreeSkimItem>()` can
+                        // fail at runtime (TypeId mismatch between reader thread and main
+                        // thread compilation units). All item lookups use output()
                         // matching instead.
                         {
                             let mut items = self.items.lock().unwrap();
@@ -391,19 +414,16 @@ impl CommandCollector for PickerCollector {
                         log::info!("picker: cannot remove '{selected_output}': {e:#}");
                     }
                 }
-
-                // Clear signal for next removal
-                let _ = std::fs::write(&self.signal_path, "");
             }
         }
 
-        // Stream remaining items through a channel for skim to consume.
-        // Uses unbounded channel so all items are sent immediately without blocking.
+        // Stream remaining items through a channel for skim to consume. skim
+        // 4.x's item channel carries Vec batches, so send the whole list as a
+        // single batch; unbounded means the send never blocks.
         let items = self.items.lock().unwrap();
         let (tx, rx) = unbounded();
-        for item in items.iter() {
-            let _ = tx.send(Arc::clone(item));
-        }
+        let batch: Vec<Arc<dyn SkimItem>> = items.iter().map(Arc::clone).collect();
+        let _ = tx.send(batch);
         drop(tx);
 
         // Dummy interrupt channel — no subprocess to kill.
@@ -614,24 +634,15 @@ pub fn handle_picker(
     // the handler has already published them.
     let shared_items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>> = Arc::new(Mutex::new(Vec::new()));
 
-    // Signal file for alt-r removal communication. execute-silent writes
-    // the branch name here; the PickerCollector reads it on reload.
-    // Cleaned up in PreviewState::Drop.
-    let signal_path = state.path.with_extension("remove");
-
     // Approvals snapshot for the session: alt-r removals consult it read-only
     // to filter the hook plan; see `approved_removal_plan`.
     let approvals = Arc::new(Approvals::load().context("Failed to load approvals")?);
 
     let collector = PickerCollector {
         items: Arc::clone(&shared_items),
-        signal_path: signal_path.clone(),
         repo: repo.clone(),
         approvals,
     };
-
-    let signal_path_escaped =
-        shell_escape::unix::escape(signal_path.display().to_string().into()).into_owned();
 
     // Get state path for key bindings (shell-escaped for safety)
     let state_path_display = state.path.display().to_string();
@@ -645,29 +656,18 @@ pub fn handle_picker(
     // Configure skim options with Rust-based preview and mode switching keybindings
     let options = SkimOptionsBuilder::default()
         .height("90%".to_string())
-        .layout("reverse".to_string())
-        .header_lines(1) // Make first line (header) non-selectable
+        .reverse(true)
+        // Fill the whole selected row with the `current` background (set via
+        // `current_bg` in `.color(...)` below). skim 4.x applies the current-row
+        // style at the line level only when this is on; without it the selection
+        // shows just the `>` pointer (the row's own `display()` ANSI spans carry
+        // no background). skim 0.20's tuikit backend highlighted the row for free.
+        .highlight_line(true)
+        .header_lines(1usize) // Make first line (header) non-selectable
         .multi(false)
         .no_info(true) // Hide info line (matched/total counter)
-        .preview(Some("".to_string())) // Enable preview (empty string means use SkimItem::preview())
-        .preview_window(preview_window_spec)
-        // Force the inline-mode clearing path on exit.
-        //
-        // tuikit only enters the alternate screen when the picker is full
-        // height; at `height: "90%"` we're inline, so `smcup` is never
-        // sent. But its `pause()` still emits `rmcup` whenever the option
-        // `disable_alternate_screen` is false — and unmatched `rmcup`
-        // varies by terminal: a no-op on most macOS terminals, but on some
-        // Linux setups it leaves the picker frame on screen because no
-        // explicit erase ran.
-        //
-        // skim plumbs `disable_alternate_screen = no_clear_start` (see
-        // `skim/src/lib.rs` `Skim::run_with`), so setting `no_clear_start`
-        // here forces pause() down the `cursor_goto + erase_down` branch,
-        // which actually erases the rows skim drew on. The other side
-        // effect, `clear_on_start = false`, is harmless for us — skim
-        // immediately overdraws the rows it allocates.
-        .no_clear_start(true)
+        .preview("") // Enable preview (empty string means use SkimItem::preview())
+        .preview_window(preview_window_spec.as_str())
         // Color scheme using fzf's --color=light values: dark text (237) on light gray bg (251)
         //
         // Terminal color compatibility is tricky:
@@ -681,20 +681,16 @@ pub fn handle_picker(
         // - On dark terminals: light gray highlight stands out clearly
         // - On light terminals: light gray is subtle but visible
         // - Dark text (237) ensures readability regardless of terminal theme
-        .color(Some(
-            "fg:-1,bg:-1,header:-1,matched:108,current:237,current_bg:251,current_match:108"
-                .to_string(),
-        ))
+        .color("fg:-1,bg:-1,header:-1,matched:108,current:237,current_bg:251,current_match:108")
         .cmd_collector(Rc::new(RefCell::new(collector)) as Rc<RefCell<dyn CommandCollector>>)
         .bind(vec![
             // Preview-tab switching. Bare digits 1-6 are intentionally NOT
             // bound — they flow to the query input so a number can be typed
             // (a PR number, or digits within a branch name). Two ways to
             // switch tabs remain:
-            //   * alt-1..alt-6 jump straight to a tab. `from_keyname` only
-            //     learns the alt-<digit> tokens via the vendor patch in
-            //     vendor/skim-tuikit/src/key.rs; without it these silently
-            //     no-op (Input::bind drops unparsable keys).
+            //   * alt-1..alt-6 jump straight to a tab. skim 4.x parses
+            //     `alt-<digit>` natively via crossterm; an unparsable bind is
+            //     just logged and dropped.
             //   * tab / shift-tab cycle forward / backward (below).
             format!(
                 "alt-1:execute-silent(echo 1 > {0})+refresh-preview",
@@ -724,18 +720,29 @@ pub fn handle_picker(
             // digit; `tr` rotates it (1→2→3→4→5→6→1 forward, the reverse for
             // btab) with wraparound, via a temp file + rename so the read and
             // write don't race on one path. Two hard constraints shape this:
-            //   * Paren-free — skim parses the execute-silent argument up to
-            //     the first `)` (a naive `\([^\)]*?\)` regex), so `$(...)` /
-            //     `$(( ))` would truncate the command. The embedded `{0}` temp
-            //     path must stay `)`-free too (it does: `std::env::temp_dir()`
-            //     paths don't contain parens) — the alt-r/alt-N bindings share
-            //     this assumption.
+            //   * Paren-free — skim 4.x parses an `execute-silent(…)` body by
+            //     splitting at the first `(` and trimming the trailing `)`, and
+            //     splits the action chain on `+`. So the body must contain no
+            //     `+` and must not end in `)`; `$(...)` / `$(( ))` would do both.
+            //     Keeping it paren-free entirely (the embedded `{0}` temp path
+            //     is — `std::env::temp_dir()` paths have none) satisfies this,
+            //     which the alt-r/alt-N bindings share.
             //   * Shell-agnostic — skim runs it under the user's $SHELL
             //     (fish/zsh/sh), so no shell-specific syntax: `tr` + `mv` are
             //     external and behave identically everywhere.
             // This overrides skim's default Tab (toggle-select + cursor down)
             // and Shift-Tab (toggle-select + cursor up); `bind` replaces the
             // chain wholesale, and both are inert in this single-select picker.
+            //
+            // Shift-Tab needs three bindings, not one. skim parses `btab` to
+            // `KeyEvent{BackTab, NONE}`, but crossterm delivers Shift-Tab with
+            // the SHIFT modifier set, so that lone bind never matches and skim's
+            // built-in Shift-Tab (cursor up) wins — a back-cycle that silently
+            // moved the selection instead. skim's own default keymap hedges the
+            // same ambiguity across `BackTab+SHIFT`, `Tab+SHIFT`, and
+            // `BackTab+all()`; we bind every representation crossterm might
+            // report (`btab` / `shift-btab` / `shift-tab`) so the override holds
+            // regardless of terminal. (Plain Tab is unambiguous — `Tab+NONE`.)
             format!(
                 "tab:execute-silent(tr 123456 234561 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
                 state_path_str
@@ -744,15 +751,23 @@ pub fn handle_picker(
                 "btab:execute-silent(tr 123456 612345 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
                 state_path_str
             ),
+            format!(
+                "shift-btab:execute-silent(tr 123456 612345 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
+                state_path_str
+            ),
+            format!(
+                "shift-tab:execute-silent(tr 123456 612345 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
+                state_path_str
+            ),
             // Create new worktree with query as branch name (alt-c for "create")
             "alt-c:accept(create)".to_string(),
-            // Remove selected worktree: write branch name to signal file, then
-            // reload triggers PickerCollector which performs the removal and
-            // streams updated items back — all without leaving the picker.
-            format!(
-                "alt-r:execute-silent(echo {{}} > {0})+reload(remove)",
-                signal_path_escaped
-            ),
+            // Remove selected worktree: `reload(remove {})` hands the selected
+            // row's output() token to PickerCollector, which performs the removal
+            // and streams updated items back — all without leaving the picker.
+            // Passing the token through the reload cmd (not an execute-silent +
+            // file write) sidesteps skim 4.x's fire-and-forget execute-silent,
+            // which raced the reader and removed nothing.
+            "alt-r:reload(remove {})".to_string(),
             // Preview toggle (alt-p shows/hides preview)
             // Note: skim doesn't support change-preview-window like fzf, only toggle
             "alt-p:toggle-preview".to_string(),
@@ -776,9 +791,18 @@ pub fn handle_picker(
     // the `--prs` thread reads it to align PR rows with the worktree rows.
     let grid_slot = Arc::new(prs::GridSlot::new());
 
+    // skim 4.x repaints on demand, so the collect handler needs a handle to
+    // skim's event loop to surface in-place row updates. The picker fills this
+    // once `Skim::init_tui` has run (inside `run_skim`); until then the handler
+    // simply skips its render pokes. See `progressive_handler` module docstring.
+    let render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>> = Arc::new(OnceLock::new());
+
+    // Concrete type so the dry-run dump can read the handler's rendered rows.
     let handler: Arc<progressive_handler::PickerHandler> =
         Arc::new(progressive_handler::PickerHandler {
             tx: tx.clone(),
+            render_tx: Arc::clone(&render_tx),
+            last_render_poke: Mutex::new(Instant::now()),
             shared_items: Arc::clone(&shared_items),
             rendered_slots: std::sync::OnceLock::new(),
             pr_status_slots: std::sync::OnceLock::new(),
@@ -793,8 +817,9 @@ pub fn handle_picker(
         });
 
     // Spawn collect on a background thread. The handler holds the only
-    // remaining `tx` clone; when the bg thread exits, `tx` drops, and skim's
-    // heartbeat stops. Contract: background work done → picker idle.
+    // remaining `tx` clone; when the bg thread exits, `tx` drops, skim's reader
+    // sees EOF, and the picker goes idle. Contract: background work done →
+    // picker idle.
     let bg_handler: Arc<dyn collect::PickerProgressHandler> = handler.clone();
     let bg_repo = repo.clone();
     let bg_skip_tasks = skip_tasks.clone();
@@ -823,12 +848,12 @@ pub fn handle_picker(
     // PR/MR streaming (`--prs`). One forge call on its own thread that holds
     // another `tx` clone, so the picker frame paints from local worktree data
     // immediately and PR rows stream in (~1s) when the call returns. The
-    // clone extends the heartbeat: skim idles only once both this thread and
-    // the collect thread drop their senders. The dry-run runs it (joined below)
-    // so the fetch/render path is exercised headlessly — the only way it gets
-    // coverage, since the interactive picker's skim-abort exit never flushes a
-    // profile. Only the preview-bench skips it: that path measures the preview
-    // workload and must not reach the network.
+    // clone defers EOF: skim's reader sees end-of-stream only once both this
+    // thread and the collect thread drop their senders. The dry-run runs it
+    // (joined below) so the fetch/render path is exercised headlessly — the only
+    // way it gets coverage, since the interactive picker's skim-abort exit never
+    // flushes a profile. Only the preview-bench skips it: that path measures the
+    // preview workload and must not reach the network.
     let prs_handle = if show_prs && !is_preview_bench {
         let prs_tx = tx.clone();
         let prs_repo = repo.clone();
@@ -853,8 +878,8 @@ pub fn handle_picker(
     };
 
     // Drop main-thread copies so the bg threads' `tx` clones are the last
-    // senders (their drop is what stops skim's heartbeat). The dry run keeps
-    // the handler — skim never runs there, so the heartbeat contract doesn't
+    // senders (their drop is what signals EOF to skim's reader). The dry run
+    // keeps the handler: skim never runs there, so the EOF contract doesn't
     // apply, and the dump below reads its rendered rows.
     drop(tx);
     let dry_run_handler = is_dry_run.then_some(handler);
@@ -902,13 +927,15 @@ pub fn handle_picker(
     }
 
     // Run skim (single invocation — alt-r uses reload, not re-launch).
-    // Skim receives items as the bg thread's handler sends them.
+    // Skim receives items as the bg thread's handler sends them, and the
+    // handler pushes repaints through `render_tx` (filled inside `run_skim`)
+    // as it mutates rows in place.
     //
     // Don't join `bg_handle` after skim exits: drain may still be running
     // network tasks, and joining would block exit for up to DRAIN_TIMEOUT
     // (120s). Process exit terminates the bg thread; its git subprocesses
     // are read-only.
-    let output = Skim::run_with(&options, Some(rx));
+    let output = run_skim(options, rx, &render_tx, &state.path);
     drop(bg_handle);
     // Same rationale as `bg_handle`: don't join — the forge call may still be
     // in flight, and process exit terminates the thread (its `gh`/`glab`
@@ -921,14 +948,16 @@ pub fn handle_picker(
     // the rest fall on the floor with the bg thread.
     drain_stashed_warnings(&stashed_warnings);
 
+    // `run_skim` returns Err only on a genuine TUI init / event-loop failure;
+    // a user cancel is `Ok` with `is_abort` set. Surface a real failure.
+    let out = output?;
+
     // Handle selection (signal file cleaned up by PreviewState::Drop)
-    if let Some(out) = output
-        && !out.is_abort
-    {
+    if !out.is_abort {
         // Determine action: create (alt-c) or switch (enter)
         // Remove is handled inline via reload — it never reaches accept.
         let action = match &out.final_event {
-            Event::EvActAccept(Some(label)) if label == "create" => PickerAction::Create,
+            Event::Action(Action::Accept(Some(label))) if label == "create" => PickerAction::Create,
             _ => PickerAction::Switch,
         };
 
@@ -939,7 +968,7 @@ pub fn handle_picker(
         // any worktree-backed row and the branch name for a branch-only row
         // (same as `wt switch` from CLI) — never the raw `worktree-path:` token.
         let selected = out.selected_items.first();
-        let selected_name = selected.map(|item| picker_item_identifier(item.as_ref()));
+        let selected_name = selected.map(|item| picker_item_identifier(item.item.as_ref()));
         let query = out.query.trim().to_string();
         let identifier = resolve_identifier(&action, query, selected_name)?;
 
@@ -984,6 +1013,110 @@ pub fn handle_picker(
     Ok(())
 }
 
+/// Background poller that nudges skim to re-run its preview when the
+/// preview-mode state file changes. See [`run_skim`] for why; it lives only for
+/// one picker session and stops when [`ModeWatcher::stop`] is called.
+struct ModeWatcher {
+    stop: Arc<AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl ModeWatcher {
+    fn spawn(event_tx: tokio::sync::mpsc::Sender<Event>, path: PathBuf) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_thread = Arc::clone(&stop);
+        let handle = std::thread::Builder::new()
+            .name("picker-mode-watcher".into())
+            .spawn(move || {
+                // Seed with the current contents so the initial mode isn't
+                // treated as a change.
+                let mut last = std::fs::read(&path).ok();
+                while !stop_thread.load(Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_millis(20));
+                    let current = std::fs::read(&path).ok();
+                    if current != last {
+                        last = current;
+                        // Channel closed (skim exited) just makes this a no-op;
+                        // the loop then ends on the next `stop` check.
+                        let _ = event_tx.try_send(Event::RunPreview);
+                    }
+                }
+            })
+            .ok();
+        Self { stop, handle }
+    }
+
+    fn stop(mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+/// Run skim to completion, exposing its event sender for progressive repaints.
+///
+/// This inlines what `Skim::run_with` does, with two additions: after the TUI is
+/// initialized we publish `Skim::event_sender()` into `render_tx`, and we start
+/// a [`ModeWatcher`]. skim 4.x renders on demand, so the background collect
+/// thread's in-place row mutations stay invisible until something wakes the
+/// event loop — the handler pushes `Event::Render` through that sender (see
+/// `progressive_handler`).
+///
+/// `preview_mode_path` is the file the alt-1…5 / tab keybinds rewrite to switch
+/// preview tabs; `ModeWatcher` re-runs the preview once the write lands, fixing
+/// the one-step tab lag skim 0.20's heartbeat used to mask.
+///
+/// `wt` runs no outer tokio runtime, so skim's event loop runs on a fresh
+/// multi-thread `Runtime` — the same one `run_with` builds in that case. A user
+/// cancel is `Ok(SkimOutput)` with `is_abort` set; only a genuine init /
+/// event-loop failure is an `Err`.
+///
+/// Injecting `Event::Render` / `Event::RunPreview` from the handler and the
+/// watcher is safe against clobbering the recorded selection: skim's `Accept` /
+/// `Abort` set `should_quit` in the same `tick` that records them as
+/// `final_event`, and `run()` breaks before the next `tick`, so a trailing
+/// injected event is never processed after the terminal action.
+fn run_skim(
+    options: SkimOptions,
+    rx: SkimItemReceiver,
+    render_tx: &Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
+    preview_mode_path: &Path,
+) -> anyhow::Result<SkimOutput> {
+    let mut skim: Skim = Skim::init(options, Some(rx))
+        .map_err(|e| anyhow::anyhow!("failed to initialize picker: {e}"))?;
+    skim.start();
+
+    // `should_enter` is false only for skim's filter / select-1 / exit-0 / sync
+    // modes — none of which the picker enables — so the TUI is always entered.
+    // The guard just keeps the fallback safe (an aborted output) rather than
+    // panicking on `event_sender()` if that ever changes.
+    if skim.should_enter() {
+        skim.init_tui()
+            .map_err(|e| anyhow::anyhow!("failed to initialize picker TUI: {e}"))?;
+        // event_sender() requires init_tui(); publish it before entering the
+        // loop so the handler's in-place updates can request repaints.
+        let event_tx = skim.event_sender();
+        let _ = render_tx.set(event_tx.clone());
+
+        // Build the runtime before spawning the watcher: it's the only fallible
+        // step here, and ordering it first keeps the infallible spawn paired
+        // with the unconditional `watcher.stop()` below (no early return can
+        // leak the watcher thread).
+        let runtime =
+            tokio::runtime::Runtime::new().context("failed to start picker event-loop runtime")?;
+        let watcher = ModeWatcher::spawn(event_tx, preview_mode_path.to_path_buf());
+        let result = runtime.block_on(async {
+            skim.enter().await?;
+            skim.run().await
+        });
+        watcher.stop();
+        result.map_err(|e| anyhow::anyhow!("interactive picker failed: {e}"))?;
+    }
+
+    Ok(skim.output())
+}
+
 /// Resolve the branch identifier from picker output.
 ///
 /// Extracted from the picker's accept handler for testability.
@@ -1020,7 +1153,7 @@ pub mod tests {
     use super::preview::{PreviewLayout, PreviewMode, PreviewStateData};
     use super::{
         PickerAction, PickerCollector, PickerRemovalTarget, drain_stashed_warnings,
-        picker_item_identifier, resolve_identifier,
+        parse_reload_remove_token, picker_item_identifier, resolve_identifier,
     };
     use crate::commands::list::model::{ItemKind, ListItem, WorktreeData};
     use crate::commands::worktree::RemoveResult;
@@ -1119,6 +1252,23 @@ pub mod tests {
         // Create with empty query is an error
         let result = resolve_identifier(&PickerAction::Create, String::new(), None);
         assert!(result.unwrap_err().to_string().contains("no branch name"));
+    }
+
+    /// `parse_reload_remove_token` reverses skim's `remove {}` expansion: it
+    /// strips the `remove ` verb and the single-quote wrapping skim adds, and
+    /// undoes the `'\''` escaping. An empty selection (`''`) yields "".
+    #[test]
+    fn test_parse_reload_remove_token() {
+        assert_eq!(
+            parse_reload_remove_token("remove 'worktree-path:/tmp/wt foo'"),
+            "worktree-path:/tmp/wt foo"
+        );
+        assert_eq!(parse_reload_remove_token("remove 'feature/x'"), "feature/x");
+        assert_eq!(parse_reload_remove_token("remove ''"), "");
+        // embedded single quote: skim writes ' as '\''
+        assert_eq!(parse_reload_remove_token("remove 'it'\\''s'"), "it's");
+        // missing verb / unquoted fall back to the trimmed remainder
+        assert_eq!(parse_reload_remove_token("remove plain"), "plain");
     }
 
     /// `from_signal` rejects tokens that carry no usable target: a blank or
@@ -1301,10 +1451,8 @@ pub mod tests {
         repo.run_command(&["branch", "branch-only-feature"])
             .unwrap();
 
-        let state_dir = tempfile::tempdir().unwrap();
         let collector = PickerCollector {
             items: Arc::new(Mutex::new(Vec::new())),
-            signal_path: state_dir.path().join("remove"),
             repo,
             approvals: Arc::new(Approvals::default()),
         };
@@ -1325,10 +1473,8 @@ pub mod tests {
         let test = worktrunk::testing::TestRepo::with_initial_commit();
         let repo = worktrunk::git::Repository::at(test.path()).unwrap();
 
-        let state_dir = tempfile::tempdir().unwrap();
         let collector = PickerCollector {
             items: Arc::new(Mutex::new(Vec::new())),
-            signal_path: state_dir.path().join("remove"),
             repo,
             approvals: Arc::new(Approvals::default()),
         };
@@ -1492,22 +1638,19 @@ pub mod tests {
             second_reported.to_string_lossy()
         );
 
-        let signal_dir = tempfile::tempdir().unwrap();
-        let signal_path = signal_dir.path().join("remove-signal");
-        fs::write(&signal_path, &second_output).unwrap();
-
         let items = Arc::new(Mutex::new(vec![
             Arc::clone(&first_item),
             Arc::clone(&second_item),
         ]));
         let mut collector = PickerCollector {
             items: Arc::clone(&items),
-            signal_path,
             repo: repo.clone(),
             approvals: Arc::new(Approvals::default()),
         };
 
-        let (_rx, _interrupt) = collector.invoke("remove", Arc::new(AtomicUsize::new(0)));
+        // skim's `reload(remove {})` hands invoke `remove <single-quoted token>`.
+        let cmd = format!("remove '{second_output}'");
+        let (_rx, _interrupt) = collector.invoke(&cmd, Arc::new(AtomicUsize::new(0)));
 
         let remaining: Vec<_> = items
             .lock()
@@ -1528,9 +1671,30 @@ pub mod tests {
         );
     }
 
-    // Note: skim's `as_any().downcast_ref::<WorktreeSkimItem>()` fails at
-    // runtime due to TypeId mismatch between skim's reader thread and the main
-    // compilation unit (skim 0.20 bug). The invoke() code path uses output()
-    // matching instead. Full TUI tests require interactive skim — verified
-    // via tmux-cli during development.
+    /// alt-r with nothing selectable under the cursor expands to `remove ''`;
+    /// `invoke` must treat the empty token as a no-op and leave the list intact.
+    #[test]
+    fn test_invoke_empty_selection_is_noop() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        let item = branch_only_picker_item("some-branch");
+        let items = Arc::new(Mutex::new(vec![Arc::clone(&item)]));
+        let mut collector = PickerCollector {
+            items: Arc::clone(&items),
+            repo,
+            approvals: Arc::new(Approvals::default()),
+        };
+        let (_rx, _interrupt) = collector.invoke("remove ''", Arc::new(AtomicUsize::new(0)));
+        assert_eq!(
+            items.lock().unwrap().len(),
+            1,
+            "empty selection must not remove anything"
+        );
+    }
+
+    // Note: skim's `as_any().downcast_ref::<WorktreeSkimItem>()` can fail at
+    // runtime due to a TypeId mismatch between skim's reader thread and the main
+    // compilation unit. The invoke() code path uses output() matching instead.
+    // Full TUI tests require interactive skim — verified via tmux-cli during
+    // development.
 }

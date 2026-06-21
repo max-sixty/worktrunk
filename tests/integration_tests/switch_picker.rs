@@ -29,9 +29,10 @@ use crate::common::{TestRepo, repo, wt_bin};
 use insta::assert_snapshot;
 use portable_pty::CommandBuilder;
 use rstest::rstest;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Terminal dimensions for TUI tests
@@ -59,9 +60,13 @@ const STABLE_DURATION: Duration = Duration::from_millis(500);
 /// Fast polling ensures tests complete quickly when ready.
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
-/// Column where skim renders the │ border between list and preview panels.
-/// TERM_COLS=120, preview window spec `right:60` → list gets 60 cols, separator at 60.
-const SEPARATOR_COL: u16 = 60;
+/// Columns that split the list and preview panels in the 120-col test terminal.
+/// skim 4.x draws the │ separator at col 59, with the list to its left (cols
+/// 0..59) and the preview interior to its right (cols 60..120). Slicing around
+/// col 59 drops the separator from both panels — the border glyph renders
+/// inconsistently across platforms.
+const LIST_WIDTH: u16 = 59;
+const PREVIEW_START_COL: u16 = 60;
 
 /// Result of executing a command in a PTY, holding the parsed terminal state.
 struct PtyResult {
@@ -92,14 +97,14 @@ impl PtyResult {
     fn panels(&self) -> (String, String) {
         let screen = self.parser.screen();
         let list = screen
-            .rows(0, SEPARATOR_COL)
+            .rows(0, LIST_WIDTH)
             .map(|row| row.trim_end().to_string())
             .collect::<Vec<_>>()
             .join("\n")
             .trim_end()
             .to_string();
         let preview = screen
-            .rows(SEPARATOR_COL + 1, TERM_COLS - SEPARATOR_COL - 1)
+            .rows(PREVIEW_START_COL, TERM_COLS - PREVIEW_START_COL)
             .map(|row| row.trim_end().to_string())
             .collect::<Vec<_>>()
             .join("\n")
@@ -178,25 +183,13 @@ fn exec_in_pty_with_input_expectations(
     let mut child = pair.slave.spawn_command(cmd).unwrap();
     drop(pair.slave);
 
-    let mut reader = pair.master.try_clone_reader().unwrap();
-    let mut writer = pair.master.take_writer().unwrap();
+    let reader = pair.master.try_clone_reader().unwrap();
+    let writer: crate::common::pty::SharedPtyWriter =
+        Arc::new(Mutex::new(pair.master.take_writer().unwrap()));
 
-    // Spawn a thread to continuously read PTY output and send chunks via channel
-    let (tx, rx) = mpsc::channel::<Vec<u8>>();
-    std::thread::spawn(move || {
-        let mut temp_buf = [0u8; 4096];
-        loop {
-            match reader.read(&mut temp_buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    if tx.send(temp_buf[..n].to_vec()).is_err() {
-                        break;
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-    });
+    // Drain PTY output into a channel; the reader thread also answers skim's
+    // startup cursor-position query (see `spawn_pty_reader_answering_queries`).
+    let rx = crate::common::pty::spawn_pty_reader_answering_queries(reader, Arc::clone(&writer));
 
     let mut parser = vt100::Parser::new(TERM_ROWS, TERM_COLS, 0);
 
@@ -233,14 +226,19 @@ fn exec_in_pty_with_input_expectations(
 
     // Send each input and wait for screen to stabilize after each
     for (input, expected_content) in inputs {
-        writer.write_all(input.as_bytes()).unwrap();
-        writer.flush().unwrap();
+        {
+            let mut w = writer.lock().unwrap();
+            w.write_all(input.as_bytes()).unwrap();
+            w.flush().unwrap();
+        }
 
         // Wait for screen to stabilize after this input, optionally requiring specific content
         wait_for_stable_with_content(&rx, &mut parser, *expected_content);
     }
 
-    // Drop writer to signal EOF on stdin
+    // Release the main thread's writer handle. The reader thread holds the
+    // other Arc clone until the PTY drains, so this no longer drives stdin EOF.
+    // The picker exits on Accept/Escape, or the kill below.
     drop(writer);
 
     // Poll for process exit (fast polling, long timeout for CI)
@@ -300,24 +298,11 @@ fn exec_in_pty_capture_before_abort(
     let mut child = pair.slave.spawn_command(cmd).unwrap();
     drop(pair.slave);
 
-    let mut reader = pair.master.try_clone_reader().unwrap();
-    let mut writer = pair.master.take_writer().unwrap();
+    let reader = pair.master.try_clone_reader().unwrap();
+    let writer: crate::common::pty::SharedPtyWriter =
+        Arc::new(Mutex::new(pair.master.take_writer().unwrap()));
 
-    let (tx, rx) = mpsc::channel::<Vec<u8>>();
-    std::thread::spawn(move || {
-        let mut temp_buf = [0u8; 4096];
-        loop {
-            match reader.read(&mut temp_buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    if tx.send(temp_buf[..n].to_vec()).is_err() {
-                        break;
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-    });
+    let rx = crate::common::pty::spawn_pty_reader_answering_queries(reader, Arc::clone(&writer));
 
     let mut parser = vt100::Parser::new(TERM_ROWS, TERM_COLS, 0);
 
@@ -353,8 +338,11 @@ fn exec_in_pty_capture_before_abort(
 
     // Send pre-abort inputs (filter text, panel switches, etc.)
     for (input, expected_content) in pre_abort_inputs {
-        writer.write_all(input.as_bytes()).unwrap();
-        writer.flush().unwrap();
+        {
+            let mut w = writer.lock().unwrap();
+            w.write_all(input.as_bytes()).unwrap();
+            w.flush().unwrap();
+        }
         wait_for_stable_with_content(&rx, &mut parser, *expected_content);
     }
 
@@ -362,8 +350,11 @@ fn exec_in_pty_capture_before_abort(
     // The parser retains this state because we stop feeding output to it.
 
     // Send Escape to abort
-    writer.write_all(b"\x1b").unwrap();
-    writer.flush().unwrap();
+    {
+        let mut w = writer.lock().unwrap();
+        w.write_all(b"\x1b").unwrap();
+        w.flush().unwrap();
+    }
     drop(writer);
 
     // Drain remaining output WITHOUT feeding to parser — preserves pre-abort screen
