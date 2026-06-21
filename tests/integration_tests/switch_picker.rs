@@ -886,19 +886,25 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
 
 /// Install a mock forge CLI (`gh`/`glab`) that answers the `--prs` list call
 /// from a canned JSON file, and return env vars (mock on PATH + MOCK_CONFIG_DIR)
-/// for a `wt switch --prs` PTY run. No network is touched.
+/// for a `wt switch --prs` PTY run. No network is touched. `list_delay_ms`
+/// sleeps the list call (0 = instant) so a test can observe the picker's
+/// in-flight loading marker before the rows land.
 fn mock_forge_env(
     repo: &TestRepo,
     cli: &str,
     list_cmd: &str,
     list_json: &str,
+    list_delay_ms: u64,
 ) -> Vec<(String, String)> {
     let mock_bin = repo.root_path().join("mock-bin");
     std::fs::create_dir_all(&mock_bin).unwrap();
     std::fs::write(mock_bin.join("list.json"), list_json).unwrap();
     MockConfig::new(cli)
         .version(&format!("{cli} version 1.0.0 (mock)"))
-        .command(list_cmd, MockResponse::file("list.json"))
+        .command(
+            list_cmd,
+            MockResponse::file("list.json").with_delay_ms(list_delay_ms),
+        )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
 
@@ -934,7 +940,7 @@ fn test_switch_picker_prs_github_list(mut repo: TestRepo) {
         "https://github.com/owner/test-repo.git",
     ]);
     let pr_json = r#"[{"number":42,"title":"Retry the flaky network test","headRefName":"fix/flaky","author":{"login":"octocat"},"isDraft":false,"url":"https://github.com/owner/test-repo/pull/42","body":"Wraps the request in a retry so the suite stops flaking."}]"#;
-    let env_vars = mock_forge_env(&repo, "gh", "pr list", pr_json);
+    let env_vars = mock_forge_env(&repo, "gh", "pr list", pr_json, 0);
 
     let result = exec_in_pty_capture_before_abort(
         wt_bin().to_str().unwrap(),
@@ -956,6 +962,11 @@ fn test_switch_picker_prs_github_list(mut repo: TestRepo) {
         !list.contains("Retry the flaky network test"),
         "PR title should stay off the row:\n{list}"
     );
+    // The header's loading marker is gone once the rows have streamed in.
+    assert!(
+        !list.contains("loading open PRs"),
+        "loading marker cleared once rows arrived:\n{list}"
+    );
 }
 
 /// `wt switch --prs` on a GitLab repo: the open-MR list streams in via a mocked
@@ -971,7 +982,7 @@ fn test_switch_picker_prs_gitlab_list(mut repo: TestRepo) {
         "https://gitlab.com/owner/test-repo.git",
     ]);
     let mr_json = r#"[{"iid":7,"title":"Cache the dependency graph","source_branch":"feat/cache","author":{"username":"alice"},"draft":false,"web_url":"https://gitlab.com/owner/test-repo/-/merge_requests/7","detailed_merge_status":"ci_still_running","description":"Speeds up CI by caching deps between jobs."}]"#;
-    let env_vars = mock_forge_env(&repo, "glab", "mr list", mr_json);
+    let env_vars = mock_forge_env(&repo, "glab", "mr list", mr_json, 0);
 
     let result = exec_in_pty_capture_before_abort(
         wt_bin().to_str().unwrap(),
@@ -991,6 +1002,48 @@ fn test_switch_picker_prs_gitlab_list(mut repo: TestRepo) {
         !list.contains("Cache the dependency graph"),
         "MR title should stay off the row:\n{list}"
     );
+}
+
+/// `wt switch --prs` shows a dim "loading open PRs…" marker on the header row
+/// while the forge call is in flight. A delayed mock holds the PR list long
+/// enough to observe the marker on the real screen before the rows land. The
+/// picker captures and aborts at stabilize time — well before the delay
+/// elapses — and the `--prs` thread is detached on exit (not joined), so the
+/// test never pays the full delay. The marker's *clearing* once rows arrive is
+/// covered by the `header_loading_marker_shows_until_cleared` unit test and the
+/// negative assertion in `test_switch_picker_prs_github_list`.
+#[rstest]
+fn test_switch_picker_prs_shows_loading_marker(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    let pr_json = r#"[{"number":42,"title":"Retry the flaky network test","headRefName":"fix/flaky","author":{"login":"octocat"},"isDraft":false,"url":"https://github.com/owner/test-repo/pull/42","body":""}]"#;
+    // 3s delay >> the ~1s capture, so the marker is still on screen when the
+    // helper snapshots and aborts.
+    let env_vars = mock_forge_env(&repo, "gh", "pr list", pr_json, 3000);
+
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--prs"],
+        repo.root_path(),
+        &env_vars,
+        // The loading line paints at skeleton, before the (slow) forge call
+        // returns its rows.
+        &[("", Some("loading open PRs"))],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+    let (list, _preview) = result.panels();
+    assert!(
+        list.contains("loading open PRs"),
+        "loading line on the header while --prs fetches:\n{list}"
+    );
+    // The PR row hasn't streamed in yet — still inside the delayed forge call.
+    assert!(!list.contains("#42"), "rows not yet streamed in:\n{list}");
 }
 
 #[rstest]

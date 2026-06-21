@@ -71,14 +71,15 @@ pub(super) type PrStatusSlot = Arc<Mutex<Option<Option<PrStatus>>>>;
 /// worktree path (which is unique) behind this prefix instead.
 pub(super) const WORKTREE_OUTPUT_PREFIX: &str = "worktree-path:";
 
-/// A `--prs` picker's header carries a dim "loading…" marker while the forge
-/// call is still in flight, since its rows arrive (~1s) after the local rows.
-/// The `--prs` thread clears `pending` and repaints once the fetch resolves
-/// (rows sent, no PRs, or error). Absent (`None`) on non-`--prs` pickers, where
-/// every row is present at skeleton.
+/// A `--prs` picker's header shows a dim "loading…" line while the forge call
+/// is still in flight, since its rows arrive (~1s) after the local rows. The
+/// `--prs` thread clears `pending` and repaints once the fetch resolves (rows
+/// sent, no PRs, or error). Absent (`None`) on non-`--prs` pickers, where every
+/// row is present at skeleton.
 pub(super) struct HeaderLoading {
     pub pending: Arc<AtomicBool>,
-    /// Pre-rendered dim marker (ANSI), appended after the column header.
+    /// Pre-rendered dim "loading…" line (ANSI). Shown *in place of* the column
+    /// labels, not appended — a full-width header would clip the suffix.
     pub marker_ansi: String,
 }
 
@@ -95,13 +96,13 @@ impl SkimItem for HeaderSkimItem {
     }
 
     fn display(&self, _context: DisplayContext) -> Line<'_> {
+        // While the --prs fetch is in flight, show the loading line in place of
+        // the column labels — appending would clip off the right edge of a
+        // full-width header. The labels return when the rows land.
         if let Some(loading) = &self.loading
             && loading.pending.load(Ordering::Relaxed)
         {
-            return ansi_to_line(&format!(
-                "{}{}",
-                self.display_text_with_ansi, loading.marker_ansi
-            ));
+            return ansi_to_line(&loading.marker_ansi);
         }
         ansi_to_line(&self.display_text_with_ansi)
     }

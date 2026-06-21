@@ -164,8 +164,9 @@ impl PickerProgressHandler for PickerHandler {
         let summaries_enabled = self.llm_command.is_some();
 
         // Header row — non-selectable via `header_lines(1)` on the options.
-        // In `--prs` mode it carries a dim "loading open PRs…" marker until the
-        // forge call's rows land (mirrors the empty-list "No open PRs found").
+        // In `--prs` mode it shows a dim "loading open PRs…" line (in place of
+        // the column labels) until the forge call's rows land — wording mirrors
+        // the empty-list "No open PRs found".
         let loading = self.prs_loading.as_ref().map(|pending| {
             let noun = super::prs::forge_noun(self.orchestrator.repo());
             HeaderLoading {
