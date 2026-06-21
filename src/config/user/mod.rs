@@ -527,6 +527,18 @@ impl UserConfig {
     /// (via [`deep_merge_table`]) so sibling keys survive —
     /// `--config-set list.full=true` leaves `list.branches` untouched.
     ///
+    /// Each fragment first runs through the same deprecation migration as a
+    /// config file ([`super::deprecation::migrate_content`] — structural and
+    /// silent rewrites, no `UpdateOnly`), so a deprecated key such as
+    /// `merge.no-ff` is canonicalized to `merge.ff` *before* the fragment is
+    /// parsed and merged, instead of falling through as an unknown field.
+    /// Migrating the fragment
+    /// (not the merged document) keeps layer precedence intact: the
+    /// canonicalized override wins over a lower layer's canonical key, rather
+    /// than colliding with it. The rewrite is silent — there is no file to
+    /// materialize, so the file-scoped "run `wt config update`" warning would
+    /// have nothing to act on.
+    ///
     /// The whole layer degrades as a unit: if any fragment fails to parse, or
     /// the merged result fails to deserialize or validate, every override is
     /// dropped and a [`LoadError::CliOverride`] is recorded, so a bad override
@@ -542,7 +554,11 @@ impl UserConfig {
 
         let base = merged_table.clone();
         for raw in overrides {
-            match raw.parse::<toml::Table>() {
+            // `migrate_content` returns the fragment unchanged when it is not
+            // valid TOML, so the parse below still catches a malformed fragment
+            // and drops the whole layer with an attributed warning.
+            let migrated = super::deprecation::migrate_content(raw);
+            match migrated.parse::<toml::Table>() {
                 Ok(fragment) => deep_merge_table(merged_table, fragment),
                 Err(err) => {
                     warnings.push(LoadError::CliOverride {

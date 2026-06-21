@@ -2557,6 +2557,41 @@ fn test_cli_override_validation_failure_drops_layer() {
 }
 
 #[test]
+fn test_cli_override_migrates_deprecated_keys() {
+    // A deprecated key passed via `--config-set` runs through the same
+    // deprecation migration as a config file, so it is canonicalized and takes
+    // effect instead of falling through as an unknown field (which serde
+    // silently drops). The rewrite is silent — there is no file to materialize,
+    // so no deprecation warning is recorded.
+
+    // merge.no-ff = true → merge.ff = false
+    let (table, warnings) = apply_overrides(toml::Table::new(), &["merge.no-ff = true"]);
+    assert!(warnings.is_empty(), "merge.no-ff: {warnings:?}");
+    let config: UserConfig = toml::Value::Table(table).try_into().unwrap();
+    assert_eq!(config.merge.ff, Some(false));
+
+    // switch.no-cd = true → switch.cd = false
+    let (table, warnings) = apply_overrides(toml::Table::new(), &["switch.no-cd = true"]);
+    assert!(warnings.is_empty(), "switch.no-cd: {warnings:?}");
+    let config: UserConfig = toml::Value::Table(table).try_into().unwrap();
+    assert_eq!(config.switch.cd, Some(false));
+}
+
+#[test]
+fn test_cli_override_deprecated_key_wins_over_lower_canonical() {
+    // Each fragment is migrated *before* it is merged, so the canonicalized
+    // override replaces a lower layer's canonical key rather than colliding
+    // with it. (Migrating the merged document instead would leave both
+    // `merge.ff` and `merge.no-ff` present, and the migration would keep the
+    // lower layer's `ff`, silently dropping the override.)
+    let base: toml::Table = "[merge]\nff = true\n".parse().unwrap();
+    let (table, warnings) = apply_overrides(base, &["merge.no-ff = true"]);
+    assert!(warnings.is_empty());
+    let config: UserConfig = toml::Value::Table(table).try_into().unwrap();
+    assert_eq!(config.merge.ff, Some(false)); // override (no-ff=true → ff=false) wins
+}
+
+#[test]
 fn test_cli_override_empty_is_noop() {
     let (table, warnings) = apply_overrides(toml::Table::new(), &[]);
     assert!(warnings.is_empty());
