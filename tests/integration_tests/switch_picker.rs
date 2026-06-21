@@ -609,6 +609,56 @@ fn test_switch_picker_with_branches(mut repo: TestRepo) {
     });
 }
 
+/// Typing a gutter glyph filters the picker by row kind. `+` is the linked-
+/// worktree glyph, so it narrows to linked worktrees — excluding the current
+/// worktree (`@`) and branch rows (`/`). This is the end-to-end answer to "why
+/// doesn't `+` select *all* the worktrees?": the current worktree is a
+/// different gutter kind. The `active-worktree` row has no literal `+` in its
+/// name or path, so the match succeeds *only* via the glyph folded into the
+/// search text (`progressive_handler::on_skeleton`) — if the fold regressed,
+/// the list would empty out and the `active-worktree` wait below would time out.
+#[rstest]
+fn test_switch_picker_gutter_glyph_filters_by_kind(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    // Remove origin so a remote-tracking row doesn't join the list.
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.add_worktree("active-worktree");
+    // Create a branch without a worktree (a `/` gutter row).
+    let output = repo
+        .git_command()
+        .args(["branch", "orphan-branch"])
+        .run()
+        .unwrap();
+    assert!(output.status.success(), "Failed to create branch");
+
+    let env_vars = repo.test_env_vars();
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--branches"],
+        repo.root_path(),
+        &env_vars,
+        // Type the linked-worktree glyph, then wait for the filtered list to
+        // settle on the one linked worktree before capturing.
+        &[("+", Some("active-worktree"))],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+
+    let (list, _preview) = result.panels();
+    assert!(
+        list.contains("active-worktree"),
+        "`+` keeps the linked worktree:\n{list}"
+    );
+    assert!(
+        !list.contains("@ main"),
+        "`+` filters out the current worktree (`@`):\n{list}"
+    );
+    assert!(
+        !list.contains("orphan-branch"),
+        "`+` filters out branch rows (`/`):\n{list}"
+    );
+}
+
 #[rstest]
 fn test_switch_picker_preview_panel_uncommitted(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();

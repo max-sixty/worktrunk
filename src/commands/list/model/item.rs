@@ -103,6 +103,34 @@ pub enum ItemKind {
     Branch(BranchScope),
 }
 
+impl ItemKind {
+    /// The single-character gutter glyph identifying this row's kind:
+    /// worktrees by location (`@` current, `^` primary/main, `+` other
+    /// linked), branches by scope (`/` local, `|` remote). Single-width
+    /// ASCII by design — the gutter must dodge skim's `width_cjk` clipping.
+    ///
+    /// Canonical source shared by the rendered Gutter column (which appends
+    /// a trailing space for the two-cell sigil) and the picker's fuzzy-search
+    /// text, so the glyph a user sees is the glyph they can type to filter.
+    /// A skeleton-time fact — `is_current`/`is_main` are set at construction
+    /// and `BranchScope` is structural — so folding it into the search text
+    /// keeps fuzzy ranks stable across the picker's progressive column updates.
+    pub fn gutter_glyph(&self) -> char {
+        match self {
+            ItemKind::Worktree(data) => {
+                if data.is_current {
+                    '@'
+                } else if data.is_main {
+                    '^'
+                } else {
+                    '+'
+                }
+            }
+            ItemKind::Branch(scope) => scope.gutter_glyph(),
+        }
+    }
+}
+
 /// Whether a branch-without-worktree row is a local branch
 /// (`refs/heads/…`, checked out nowhere) or a remote-tracking branch
 /// (`refs/remotes/<remote>/…`, not present locally until fetched).
@@ -125,13 +153,13 @@ pub enum BranchScope {
 }
 
 impl BranchScope {
-    /// The two-cell gutter sigil (`glyph` + trailing space) for a branch
-    /// row of this scope. ASCII single-width by design — the gutter must
-    /// dodge skim's `width_cjk` clipping.
-    pub const fn gutter_sigil(self) -> &'static str {
+    /// The gutter glyph for a branch row of this scope: `/` local, `|`
+    /// remote. See [`ItemKind::gutter_glyph`] for the row-kind axis this
+    /// feeds and how the rendered sigil and picker search text share it.
+    pub const fn gutter_glyph(self) -> char {
         match self {
-            BranchScope::Local => "/ ",
-            BranchScope::Remote => "| ",
+            BranchScope::Local => '/',
+            BranchScope::Remote => '|',
         }
     }
 }
@@ -739,6 +767,24 @@ mod tests {
         assert!(item.worktree_data().is_none());
         assert!(item.worktree_data_mut().is_none());
         assert!(item.worktree_path().is_none());
+    }
+
+    #[test]
+    fn gutter_glyph_marks_each_row_kind() {
+        let worktree = |is_main, is_current| {
+            ItemKind::Worktree(Box::new(WorktreeData {
+                is_main,
+                is_current,
+                ..Default::default()
+            }))
+        };
+        // Worktrees by location (`is_current` wins when a row is both).
+        assert_eq!(worktree(false, true).gutter_glyph(), '@');
+        assert_eq!(worktree(true, false).gutter_glyph(), '^');
+        assert_eq!(worktree(false, false).gutter_glyph(), '+');
+        // Branches by scope.
+        assert_eq!(ItemKind::Branch(BranchScope::Local).gutter_glyph(), '/');
+        assert_eq!(ItemKind::Branch(BranchScope::Remote).gutter_glyph(), '|');
     }
 
     #[test]

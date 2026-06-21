@@ -189,11 +189,16 @@ impl PickerProgressHandler for PickerHandler {
                 .unwrap_or_default();
             // `search_text` is what the matcher sees — fuzzy ranks stay
             // stable across progressive updates because this field only
-            // depends on fast data (branch + path).
+            // depends on fast data (branch + path + gutter glyph). The
+            // trailing gutter glyph lets typing a sigil filter by row kind:
+            // `+` to linked worktrees, `@` to the current one, `/`/`|` to
+            // local/remote branches (`gutter_glyph` is the same skeleton-time
+            // fact the rendered Gutter column uses).
+            let gutter = item.kind.gutter_glyph();
             let search_text = if path_str.is_empty() {
-                branch_name.clone()
+                format!("{branch_name} {gutter}")
             } else {
-                format!("{branch_name} {path_str}")
+                format!("{branch_name} {path_str} {gutter}")
             };
 
             // Strip OSC 8 hyperlinks — skim's pipeline mangles them into
@@ -434,6 +439,93 @@ mod tests {
         assert_eq!(shared.len(), 3);
         assert_eq!(shared[1].output().as_ref(), "feat-a");
         assert_eq!(shared[2].output().as_ref(), "feat-b");
+    }
+
+    /// `on_skeleton` folds each row's gutter glyph onto the end of the
+    /// matcher's `search_text`, so typing a sigil filters by row kind. The
+    /// glyph comes from `ItemKind::gutter_glyph` (which handles every kind and
+    /// is unit-tested in `item.rs`), so branch rows here prove the wiring.
+    #[test]
+    fn search_text_folds_in_gutter_glyph() {
+        let (handler, _test, rx) = make_handler();
+        let items = vec![
+            ListItem::new_branch("abc".into(), "localbr".into()),
+            ListItem::new_remote_branch("abc".into(), "origin/remotebr".into()),
+        ];
+        handler.on_skeleton(
+            items,
+            vec!["skel-local".into(), "skel-remote".into()],
+            header("hdr"),
+            grid(),
+        );
+
+        let received = rx.recv().expect("skeleton batch");
+        // received[0] is the non-selectable header; data rows follow in order.
+        let text = |i: usize| received[i].text().into_owned();
+        assert!(text(1).ends_with('/'), "local branch: {:?}", text(1));
+        assert!(text(2).ends_with('|'), "remote branch: {:?}", text(2));
+        // Branch name stays searchable alongside the folded-in glyph.
+        assert!(text(1).contains("localbr"));
+        assert!(text(2).contains("origin/remotebr"));
+    }
+
+    /// Locks the gutter-sigil filtering contract against skim's default engine —
+    /// an `AndOrEngineFactory` wrapping an `ExactOrFuzzyEngineFactory`, the
+    /// factory `Matcher::create_engine_factory` builds when the picker sets
+    /// neither `--exact` nor `--regex` (skim 4.8 `src/matcher.rs`). `+`/`@` are
+    /// literals that filter to their row kind; `^` and `|` collide with skim's
+    /// prefix-anchor and OR operators and don't.
+    #[test]
+    fn gutter_glyphs_filter_under_skims_default_engine() {
+        struct TextItem(String);
+        impl SkimItem for TextItem {
+            fn text(&self) -> std::borrow::Cow<'_, str> {
+                std::borrow::Cow::Borrowed(&self.0)
+            }
+        }
+
+        // One representative folded `search_text` per gutter kind.
+        let current = "cur /tmp/cur @";
+        let primary = "primary /tmp/primary ^";
+        let linked = "linked /tmp/linked +";
+        let local = "localbr /";
+        let remote = "origin/remotebr |";
+
+        let matches = |query: &str, haystack: &str| -> bool {
+            let factory = AndOrEngineFactory::new(ExactOrFuzzyEngineFactory::builder().build());
+            factory
+                .create_engine(query)
+                .match_item(&TextItem(haystack.to_string()))
+                .is_some()
+        };
+
+        // `+`/`@` are literals — each filters to exactly its row kind.
+        assert!(matches("+", linked), "+ selects the linked worktree");
+        for other in [current, primary, local, remote] {
+            assert!(!matches("+", other), "+ must not match {other:?}");
+        }
+        assert!(matches("@", current), "@ selects the current worktree");
+        for other in [primary, linked, local, remote] {
+            assert!(!matches("@", other), "@ must not match {other:?}");
+        }
+
+        // `^` is skim's prefix anchor: a bare `^` is an empty prefix pattern
+        // that matches every row, so it can't isolate the primary worktree.
+        // Proven by matching rows that contain no literal `^`.
+        for row in [current, linked, local, remote] {
+            assert!(
+                matches("^", row),
+                "^ (prefix anchor) matches all rows — not a filter: {row:?}"
+            );
+        }
+        // A bare `|` is skim's OR separator with empty operands, which matches
+        // nothing — so it can't isolate remote-branch rows (which carry `|`).
+        for row in [remote, current, linked, local] {
+            assert!(
+                !matches("|", row),
+                "| (OR operator) matches nothing — not a filter: {row:?}"
+            );
+        }
     }
 
     /// `stash_warning` accumulates lines in arrival order so the picker can

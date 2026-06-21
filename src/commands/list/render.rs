@@ -297,7 +297,9 @@ impl LayoutConfig {
                     // render (and its Status-column twin) — no flash or flicker.
                     match &item.kind {
                         ItemKind::Worktree(_) => cell.push_styled(format!("{spinner} "), dim),
-                        ItemKind::Branch(scope) => cell.push_styled(scope.gutter_sigil(), dim),
+                        ItemKind::Branch(scope) => {
+                            cell.push_styled(format!("{} ", scope.gutter_glyph()), dim)
+                        }
                     }
                 }
                 ColumnKind::Branch => {
@@ -420,20 +422,14 @@ impl ColumnLayout {
                 // gutter in `commands::picker::prs` (`PR_GUTTER_SIGIL`) rather
                 // than through this `ItemKind` match.
                 let mut cell = StyledLine::new();
+                // `glyph` + trailing space = the two-cell sigil; the bare glyph
+                // also feeds the picker's fuzzy-search text (`gutter_glyph`).
+                let sigil = format!("{} ", item.kind.gutter_glyph());
                 match &item.kind {
-                    ItemKind::Worktree(data) => {
-                        let symbol = if data.is_current {
-                            "@ " // Current worktree
-                        } else if data.is_main {
-                            "^ " // Main worktree
-                        } else {
-                            "+ " // Regular worktree (including previous)
-                        };
-                        cell.push_raw(symbol);
-                    }
-                    ItemKind::Branch(scope) => {
-                        cell.push_styled(scope.gutter_sigil(), Style::new().dimmed());
-                    }
+                    // Worktree rows are materialized on disk — render bright.
+                    ItemKind::Worktree(_) => cell.push_raw(sigil),
+                    // Branch rows are refs with no working copy — render dim.
+                    ItemKind::Branch(_) => cell.push_styled(sigil, Style::new().dimmed()),
                 }
                 cell
             }

@@ -84,6 +84,8 @@ The CI column shows each row's PR/MR CI and review status, the same as [`wt list
 
 Plain digits go to the filter, so a branch name containing a number can be typed directly; the preview tabs move to `Alt`.
 
+Typing a gutter sigil filters by row kind: `+` narrows to linked worktrees and `@` to the current worktree. The other sigils don't filter cleanly — `^` and `|` are skim's prefix-anchor and OR query operators (so `^` matches every row and `|` none), and `/` matches most rows because every worktree path contains it.
+
 **Preview tabs:**
 
 1. **HEAD±** — Diff of uncommitted changes
