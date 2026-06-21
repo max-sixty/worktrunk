@@ -33,9 +33,11 @@
 //!   workers' local deques during drain.
 
 use std::collections::HashSet;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use color_print::cformat;
 use skim::prelude::*;
 use worktrunk::styling::{StyledLine, strip_osc8_hyperlinks};
 
@@ -45,7 +47,7 @@ use worktrunk::styling::{StyledLine, strip_osc8_hyperlinks};
 /// `Event::Render` bypasses skim's own frame-rate cap, so we cap it here.
 const RENDER_THROTTLE: Duration = Duration::from_millis(16);
 
-use super::items::{HeaderSkimItem, PrStatusSlot, PreviewCache, WorktreeSkimItem};
+use super::items::{HeaderLoading, HeaderSkimItem, PrStatusSlot, PreviewCache, WorktreeSkimItem};
 use super::preview_orchestrator::PreviewOrchestrator;
 use crate::commands::list::collect::PickerProgressHandler;
 use crate::commands::list::model::ListItem;
@@ -98,6 +100,10 @@ pub(super) struct PickerHandler {
     /// Handoff of the layout's column geometry to the `--prs` thread, which
     /// renders PR rows on the same grid as the worktree rows.
     pub(super) grid_slot: Arc<super::prs::GridSlot>,
+    /// Shared with the header: `Some(true)` while the `--prs` forge call is in
+    /// flight, so the header shows a "loading…" marker. The `--prs` thread
+    /// clears it when the fetch resolves. `None` on non-`--prs` pickers.
+    pub(super) prs_loading: Option<Arc<AtomicBool>>,
 }
 
 impl PickerHandler {
@@ -158,9 +164,19 @@ impl PickerProgressHandler for PickerHandler {
         let summaries_enabled = self.llm_command.is_some();
 
         // Header row — non-selectable via `header_lines(1)` on the options.
+        // In `--prs` mode it carries a dim "loading open PRs…" marker until the
+        // forge call's rows land (mirrors the empty-list "No open PRs found").
+        let loading = self.prs_loading.as_ref().map(|pending| {
+            let noun = super::prs::forge_noun(self.orchestrator.repo());
+            HeaderLoading {
+                pending: Arc::clone(pending),
+                marker_ansi: cformat!("  <dim>loading open {noun}…</>"),
+            }
+        });
         skim_items.push(Arc::new(HeaderSkimItem {
             display_text: header.plain_text(),
             display_text_with_ansi: header.render(),
+            loading,
         }) as Arc<dyn SkimItem>);
 
         for (item, rendered_line) in items.into_iter().zip(rendered) {
@@ -319,6 +335,7 @@ mod tests {
             stashed_warnings: Arc::new(Mutex::new(Vec::new())),
             deferred_items: OnceLock::new(),
             grid_slot: Arc::new(super::super::prs::GridSlot::new()),
+            prs_loading: None,
         };
         (handler, test, rx)
     }

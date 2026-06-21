@@ -4,6 +4,7 @@
 
 use std::borrow::Cow;
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use ansi_to_tui::IntoText;
@@ -70,10 +71,22 @@ pub(super) type PrStatusSlot = Arc<Mutex<Option<Option<PrStatus>>>>;
 /// worktree path (which is unique) behind this prefix instead.
 pub(super) const WORKTREE_OUTPUT_PREFIX: &str = "worktree-path:";
 
+/// A `--prs` picker's header carries a dim "loading…" marker while the forge
+/// call is still in flight, since its rows arrive (~1s) after the local rows.
+/// The `--prs` thread clears `pending` and repaints once the fetch resolves
+/// (rows sent, no PRs, or error). Absent (`None`) on non-`--prs` pickers, where
+/// every row is present at skeleton.
+pub(super) struct HeaderLoading {
+    pub pending: Arc<AtomicBool>,
+    /// Pre-rendered dim marker (ANSI), appended after the column header.
+    pub marker_ansi: String,
+}
+
 /// Header item for column names (non-selectable)
 pub(super) struct HeaderSkimItem {
     pub display_text: String,
     pub display_text_with_ansi: String,
+    pub loading: Option<HeaderLoading>,
 }
 
 impl SkimItem for HeaderSkimItem {
@@ -82,6 +95,14 @@ impl SkimItem for HeaderSkimItem {
     }
 
     fn display(&self, _context: DisplayContext) -> Line<'_> {
+        if let Some(loading) = &self.loading
+            && loading.pending.load(Ordering::Relaxed)
+        {
+            return ansi_to_line(&format!(
+                "{}{}",
+                self.display_text_with_ansi, loading.marker_ansi
+            ));
+        }
         ansi_to_line(&self.display_text_with_ansi)
     }
 
@@ -924,6 +945,45 @@ mod tests {
         assert_snapshot!(
             "pr_row",
             render_preview_tabs(PreviewMode::Pr, TabAvailability::pull_request())
+        );
+    }
+
+    #[test]
+    fn header_loading_marker_shows_until_cleared() {
+        // `--prs` mode: the header carries a dim "loading…" marker while the
+        // forge call is in flight, dropped once the `--prs` thread clears the
+        // shared flag.
+        let pending = Arc::new(AtomicBool::new(true));
+        let header = HeaderSkimItem {
+            display_text: "Branch  CI".to_string(),
+            display_text_with_ansi: "Branch  CI".to_string(),
+            loading: Some(HeaderLoading {
+                pending: Arc::clone(&pending),
+                marker_ansi: "  loading open PRs…".to_string(),
+            }),
+        };
+        let text = |h: &HeaderSkimItem| {
+            h.display(DisplayContext::default())
+                .spans
+                .iter()
+                .map(|s| s.content.as_ref().to_string())
+                .collect::<String>()
+        };
+
+        assert!(
+            text(&header).contains("loading open PRs"),
+            "marker shows while pending"
+        );
+
+        pending.store(false, Ordering::Relaxed);
+        let cleared = text(&header);
+        assert!(
+            !cleared.contains("loading"),
+            "marker gone once cleared: {cleared:?}"
+        );
+        assert!(
+            cleared.contains("Branch"),
+            "column header remains: {cleared:?}"
         );
     }
 

@@ -797,6 +797,13 @@ pub fn handle_picker(
     // simply skips its render pokes. See `progressive_handler` module docstring.
     let render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>> = Arc::new(OnceLock::new());
 
+    // `--prs` loading flag, shared between the header (shows a "loading…"
+    // marker while true) and the `--prs` thread (clears it when the forge call
+    // resolves). `Some` exactly when that thread spawns below, so the marker
+    // tracks its lifetime.
+    let prs_loading: Option<Arc<AtomicBool>> =
+        (show_prs && !is_preview_bench).then(|| Arc::new(AtomicBool::new(true)));
+
     // Concrete type so the dry-run dump can read the handler's rendered rows.
     let handler: Arc<progressive_handler::PickerHandler> =
         Arc::new(progressive_handler::PickerHandler {
@@ -814,6 +821,7 @@ pub fn handle_picker(
             stashed_warnings: Arc::clone(&stashed_warnings),
             deferred_items: std::sync::OnceLock::new(),
             grid_slot: Arc::clone(&grid_slot),
+            prs_loading: prs_loading.clone(),
         });
 
     // Spawn collect on a background thread. The handler holds the only
@@ -854,11 +862,12 @@ pub fn handle_picker(
     // way it gets coverage, since the interactive picker's skim-abort exit never
     // flushes a profile. Only the preview-bench skips it: that path measures the
     // preview workload and must not reach the network.
-    let prs_handle = if show_prs && !is_preview_bench {
+    let prs_handle = if let Some(prs_loading) = prs_loading.clone() {
         let prs_tx = tx.clone();
         let prs_repo = repo.clone();
         let prs_warnings = Arc::clone(&stashed_warnings);
         let prs_grid = Arc::clone(&grid_slot);
+        let prs_render_tx = Arc::clone(&render_tx);
         Some(
             std::thread::Builder::new()
                 .name("picker-prs".into())
@@ -869,6 +878,8 @@ pub fn handle_picker(
                         &prs_tx,
                         &prs_warnings,
                         &prs_grid,
+                        &prs_loading,
+                        &prs_render_tx,
                     );
                 })
                 .context("Failed to spawn picker-prs thread")?,

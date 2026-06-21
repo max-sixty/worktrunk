@@ -37,7 +37,8 @@
 
 use std::borrow::Cow;
 use std::path::Path;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
 use anstyle::{Reset, Style};
@@ -157,12 +158,37 @@ impl PrEntry {
     }
 }
 
+/// Stream the open PRs/MRs into the picker, then clear the header's "loading…"
+/// marker — whatever the outcome.
+///
+/// The forge call drives [`fetch_and_stream`]; this wrapper owns the marker so
+/// every exit (rows sent, no PRs, or error) drops it and repaints. The
+/// success path's row send already wakes skim, but the empty/error paths send
+/// nothing, so without the poke the marker would linger until the next
+/// keystroke.
+pub(super) fn stream_open_prs(
+    repo: &Repository,
+    list_width: usize,
+    tx: &SkimItemSender,
+    stashed_warnings: &Mutex<Vec<String>>,
+    grid_slot: &GridSlot,
+    prs_loading: &AtomicBool,
+    render_tx: &OnceLock<tokio::sync::mpsc::Sender<Event>>,
+) {
+    fetch_and_stream(repo, list_width, tx, stashed_warnings, grid_slot);
+
+    prs_loading.store(false, Ordering::Relaxed);
+    if let Some(tx) = render_tx.get() {
+        let _ = tx.try_send(Event::Render);
+    }
+}
+
 /// Fetch open PRs/MRs, build picker rows, and stream them into skim.
 ///
 /// On failure (forge unsupported, CLI missing/unauthenticated, network error)
 /// the reason is stashed for display after skim releases the terminal — the
 /// picker stays usable with its worktree rows.
-pub(super) fn stream_open_prs(
+fn fetch_and_stream(
     repo: &Repository,
     list_width: usize,
     tx: &SkimItemSender,
@@ -206,9 +232,9 @@ pub(super) fn stream_open_prs(
 }
 
 /// Plural noun for the forge's change-request — "PRs" on GitHub, "MRs" on
-/// GitLab. Used for the empty-list message, where there's no entry to read
-/// the kind from.
-fn forge_noun(repo: &Repository) -> &'static str {
+/// GitLab. Used for the empty-list message and the header "loading…" marker,
+/// where there's no entry to read the kind from.
+pub(super) fn forge_noun(repo: &Repository) -> &'static str {
     match repo.ci_platform(None) {
         Some(CiPlatform::GitLab) => "MRs",
         _ => "PRs",
@@ -482,9 +508,6 @@ impl PrSkimItem {
             pr_pane.push_str(&cformat!("<dim>url</>{reset}      {url}\n"));
         }
         pr_pane.push_str(&render_pr_description(&body, list_width));
-        pr_pane.push_str(&cformat!(
-            "\n<dim>Enter: fetch & switch to this branch ({output_token})</>{reset}\n"
-        ));
 
         Self {
             search_text,
@@ -498,8 +521,8 @@ impl PrSkimItem {
 /// The PR/MR description block for the `pr` preview pane: the body wrapped to
 /// the pane width and quoted in the house gutter ([`format_with_gutter`], a
 /// bg-color bar that closes each line with a full `\x1b[0m` — skim-safe, unlike
-/// the SGR-22 the bold/dim spans emit). Capped so a long body doesn't bury the
-/// footer; the full text is one Enter (or the `url`) away. Empty body → empty
+/// the SGR-22 the bold/dim spans emit). Capped so a long body stays scannable;
+/// the full PR is one Enter (or the `url`) away. Empty body → empty
 /// string, so the block is skipped. The leading `\x1b[0m` is a defensive
 /// boundary so the first gutter renders clean regardless of what precedes it
 /// (the metadata lines already reset their own spans).
@@ -1089,6 +1112,26 @@ mod tests {
             err.to_string().contains("supports GitHub and GitLab"),
             "unexpected error: {err:#}"
         );
+    }
+
+    #[test]
+    fn stream_open_prs_clears_loading_and_pokes_render_on_bail() {
+        // No forge remote → the fetch bails, but the wrapper still drops the
+        // header's loading marker and wakes skim. Without the poke the marker
+        // would linger past the (failed) fetch until the next keystroke.
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let (tx, _rx): (SkimItemSender, SkimItemReceiver) = unbounded();
+        let warnings = Mutex::new(Vec::new());
+        let grid = GridSlot::new();
+        let loading = AtomicBool::new(true);
+        let (rtx, mut rrx) = tokio::sync::mpsc::channel(8);
+        let render_tx = OnceLock::new();
+        render_tx.set(rtx).unwrap();
+
+        stream_open_prs(&test.repo, 80, &tx, &warnings, &grid, &loading, &render_tx);
+
+        assert!(!loading.load(Ordering::Relaxed), "loading flag cleared");
+        assert!(matches!(rrx.try_recv(), Ok(Event::Render)), "render poked");
     }
 
     #[test]
