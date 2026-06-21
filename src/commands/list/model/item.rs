@@ -127,7 +127,7 @@ pub enum BranchScope {
 impl BranchScope {
     /// The two-cell gutter sigil (`glyph` + trailing space) for a branch
     /// row of this scope. ASCII single-width by design — the gutter must
-    /// dodge skim's `width_cjk` clipping (see `vendor/NOTES.md`).
+    /// dodge skim's `width_cjk` clipping.
     pub const fn gutter_sigil(self) -> &'static str {
         match self {
             BranchScope::Local => "/ ",
@@ -320,21 +320,18 @@ impl ListItem {
     /// Determine if the item contains no unique work and can likely be removed.
     ///
     /// Returns:
-    /// - `Some(true)` - confirmed removable (branch integrated into integration target)
+    /// - `Some(true)` - confirmed removable (no unique work vs the integration target)
     /// - `Some(false)` - confirmed not removable (has unique work)
     /// - `None` - data still loading, cannot determine yet
     ///
-    /// Checks (in order):
-    /// 1. **Same commit** - ahead/behind vs default branch is 0.
-    ///    The branch is already part of the default branch's history.
-    /// 2. **No file changes** - three-dot diff (`<integration-target>...branch`) is empty.
-    ///    Catches squash-merged branches where commits exist but add no files.
-    /// 3. **Tree matches integration target** - tree SHA equals the target's tree SHA.
-    ///    Catches rebased/squash-merged branches with identical content.
-    /// 4. **Merge simulation** - merging branch into the integration target wouldn't change the
-    ///    target's tree. Catches squash-merged branches where the integration target advanced.
-    /// 5. **Working tree matches default branch** (worktrees only) - uncommitted changes
-    ///    don't diverge from the default branch.
+    /// The verdict is read directly from the already-resolved gate-3
+    /// [`MainState`] (`None` until its inputs land). `Empty` (same commit as
+    /// the default branch with a clean tree) and `Integrated` (content reached
+    /// the default branch via different history) are removable; everything
+    /// else — including `SameCommit`, where uncommitted work would be lost — is
+    /// not. The integration tiers themselves (ancestor, matching trees, no
+    /// added changes, merge-adds-nothing) live on `MainState` /
+    /// [`IntegrationReason`]; see the `MainState` spec in `model/state.rs`.
     pub(crate) fn is_potentially_removable(&self) -> Option<bool> {
         // Gate 3 (`main_state`) is `None` until its inputs land. Until
         // then, we don't know whether the item is removable.

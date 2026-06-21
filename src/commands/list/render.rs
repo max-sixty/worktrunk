@@ -412,8 +412,7 @@ impl ColumnLayout {
                 // glyphs in the Status column (WORKTREE_STATE `/`, upstream `|`
                 // are both dim) — bright worktree vs dim ref reinforces the
                 // presence gradient, glyph still primary. All single-width
-                // ASCII — the gutter must dodge skim's `width_cjk` clipping
-                // (see `vendor/NOTES.md`).
+                // ASCII — the gutter must dodge skim's `width_cjk` clipping.
                 //
                 // TODO(pr-rows): PR rows (open PRs with no local branch) land
                 // on a separate branch; add a `#` arm here (and a matching `#`

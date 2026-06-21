@@ -292,15 +292,15 @@ jobs:
         key: minimal-versions
 
     - name: Resolve to minimum versions
-      run: |
-        cargo update -Z minimal-versions
-        # filedescriptor 0.8.3 declares `thiserror = "^1.0"` but uses `#[from]`,
-        # which is unsupported in thiserror 1.0.0/1.0.1 (it was added in 1.0.2).
-        # Under -Z minimal-versions the resolver picks 1.0.0, which fails to
-        # compile. Bump the floor to a known-good version that has `#[from]`.
-        # (Upstream filedescriptor hasn't been touched since 2025-02-11; we
-        # can't fix this at the source.)
-        cargo update -p thiserror@1 --precise 1.0.7
+      # `direct`, not full `-Z minimal-versions`: minimize only worktrunk's own
+      # direct deps and let transitive crates resolve normally. Full minimization
+      # also walks skim 4.8's TUI/image stack (ansi-to-tui, ratatui's
+      # `instability` macro, color-eyre, ratatui-image -> image/avif -> num-* and
+      # bitvec), whose crates under-declare their floors and don't compile at the
+      # picked versions — upstream brokenness, not ours, that we'd have to pin
+      # around. Direct minimization confines the check to floors we actually own;
+      # they're raised in the manifests to the minimums the tree builds against.
+      run: cargo update -Z direct-minimal-versions
 
     - name: cargo check
       run: cargo check --workspace --all-targets

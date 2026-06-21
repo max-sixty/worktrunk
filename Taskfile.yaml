@@ -13,29 +13,6 @@ tasks:
     desc: Run tests with coverage report
     cmd: cargo llvm-cov --html --features shell-integration-tests {{.CLI_ARGS}}
 
-  vendor-diff:
-    desc: Show the patch we carry in vendor/ vs the pristine upstream crate source
-    cmds:
-      - |
-        set -e
-        VENDORED=vendor/skim-tuikit
-        if [ ! -d "$VENDORED" ]; then
-          echo "no vendored source at $VENDORED"
-          exit 0
-        fi
-        VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$VENDORED/Cargo.toml" | head -1)
-        # Fetch the pristine tarball directly from crates.io rather than relying
-        # on ~/.cargo/registry — `[patch.crates-io]` suppresses the download, so
-        # that cache is never populated on a fresh checkout.
-        TMP=$(mktemp -d)
-        trap 'rm -rf "$TMP"' EXIT
-        URL="https://static.crates.io/crates/skim-tuikit/skim-tuikit-${VERSION}.crate"
-        if ! curl -sSfL "$URL" | tar -xz -C "$TMP"; then
-          echo "failed to fetch pristine skim-tuikit-${VERSION} from $URL"
-          exit 1
-        fi
-        diff -ruN "$TMP/skim-tuikit-${VERSION}" "$VENDORED" || true
-
   setup-web:
     desc: Setup Claude Code web environment for development
     platforms: [linux]
