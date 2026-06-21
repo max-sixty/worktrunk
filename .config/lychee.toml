@@ -55,6 +55,10 @@ exclude = [
     "incident\\.io",
     "git-scm\\.com",
     "api\\.star-history\\.com",
+    # no-color.org: the canonical NO_COLOR standard link (immutable content),
+    # but the host intermittently times out / refuses connections from GitHub
+    # Actions runners. Failed across consecutive CI runs while main stayed green.
+    "no-color\\.org",
 
     # Package registries and badges (frequently return 429 or block CI)
     "crates\\.io",
