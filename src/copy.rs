@@ -80,15 +80,20 @@ pub fn copy_leaf(
     } else {
         match reflink_copy::reflink_or_copy(src, dest) {
             Ok(_) => {
-                // Preserve file permissions (especially the execute bit).
+                // Preserve file permissions (especially the execute bit) —
+                // needed on Linux, skipped on macOS.
                 //
                 // On btrfs/XFS, reflink (FICLONE ioctl) clones data extents
                 // only — the destination gets umask-based permissions, losing
                 // execute bits. std::fs::copy's fallback preserves permissions
                 // via fchmod, creating an asymmetry in reflink_or_copy.
                 //
+                // On macOS/APFS, clonefile() already preserves the source's
+                // mode bits, so this chmod is redundant — skip it to save a
+                // syscall per file.
+                //
                 // Refs: ioctl_ficlonerange(2), LWN Articles/331808
-                #[cfg(unix)]
+                #[cfg(all(unix, not(target_os = "macos")))]
                 {
                     fs::set_permissions(dest, src_meta.permissions())
                         .context("setting destination file permissions")?;
