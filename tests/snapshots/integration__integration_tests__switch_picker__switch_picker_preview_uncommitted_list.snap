@@ -5,4 +5,4 @@ expression: list
 >
     Branch   Status        HEAD±    main↕  Remote⇅  Commit
   @ main         ^                                  [HASH]
-> + feature   !  ↑       +3   -1   ↑1               [HASH]..
+> + feature   !  ↑       +3   -1   ↑1               [HASH]

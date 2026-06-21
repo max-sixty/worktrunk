@@ -16,10 +16,10 @@ tempfile = "3.27"
 dunce = "1"
 
 # For CLI
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4.6", features = ["derive"] }
 
 # For JSON output
-serde_json = "1"
+serde_json = "1.0.145"
 
 # For column-aligned timeline tables (elastic tabstops)
 tabwriter = "1"
@@ -32,7 +32,7 @@ tabwriter = "1"
 worktrunk = { path = "../../..", default-features = false }
 
 [dev-dependencies]
-insta = "1.47"
+insta = "1.47.2"
 
 [lib]
 name = "wt_perf"

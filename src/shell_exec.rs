@@ -1501,7 +1501,7 @@ impl Cmd {
             //
             // Skipped when the caller used `.inherit_stdin()`: a child that
             // reads the parent's controlling terminal must share the
-            // foreground pgroup, otherwise calls like skim/tuikit's
+            // foreground pgroup, otherwise calls like skim's (crossterm)
             // `tcsetattr` on `/dev/tty` raise SIGTTOU and stop the child
             // mid-render. The kernel already delivers tty-initiated signals
             // (Ctrl-C, Ctrl-Z, hangup) to every process in the shared

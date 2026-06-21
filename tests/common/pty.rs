@@ -16,6 +16,8 @@
 use portable_pty::{CommandBuilder, MasterPty};
 use std::io::{Read, Write};
 use std::path::Path;
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 
 /// Read output from PTY and wait for child exit.
 ///
@@ -166,12 +168,60 @@ pub fn read_pty_output(
 
 /// Find cursor position request (ESC[6n) in a byte slice.
 /// Returns the position if found.
-#[cfg(windows)]
 fn find_cursor_request(data: &[u8]) -> Option<usize> {
     // Look for ESC [ 6 n sequence (0x1b 0x5b 0x36 0x6e)
     let pattern = b"\x1b[6n";
     data.windows(pattern.len())
         .position(|window| window == pattern)
+}
+
+/// A PTY master writer shared between the reader thread (which answers terminal
+/// queries) and the caller (which sends keystrokes). Both need to write to the
+/// single master, and `portable_pty` hands out only one writer.
+pub type SharedPtyWriter = Arc<Mutex<Box<dyn Write + Send>>>;
+
+/// Spawn a thread that drains the PTY master `reader` into the returned channel
+/// and answers the cursor-position report query (`ESC[6n`) skim emits while
+/// initializing the picker.
+///
+/// skim 4.x runs the picker in partial-height mode, whose setup calls skim's
+/// `cursor_pos_from_tty()`: it writes `ESC[6n` to `/dev/tty` and blocks in
+/// `select()` for up to 3s waiting for the `ESC[row;colR` reply. A real terminal
+/// answers automatically; `portable_pty` is a bare PTY with no emulation, so
+/// without this reply skim fails init with "Cursor position detection timed out"
+/// and the picker never renders. The reply (`1;1`) is a safe constant — skim only
+/// uses it to place its inline viewport, which the TUI snapshot tests don't assert
+/// on. Sharing `writer` with the caller lets keystrokes and query replies both
+/// reach the master. The query is matched within a single read chunk; skim emits
+/// the 4-byte DSR as one small write, so it never spans chunks.
+pub fn spawn_pty_reader_answering_queries(
+    reader: Box<dyn Read + Send>,
+    writer: SharedPtyWriter,
+) -> mpsc::Receiver<Vec<u8>> {
+    let (tx, rx) = mpsc::channel::<Vec<u8>>();
+    std::thread::spawn(move || {
+        let mut reader = reader;
+        let mut temp_buf = [0u8; 4096];
+        loop {
+            match reader.read(&mut temp_buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    let chunk = &temp_buf[..n];
+                    if find_cursor_request(chunk).is_some()
+                        && let Ok(mut w) = writer.lock()
+                    {
+                        let _ = w.write_all(b"\x1b[1;1R");
+                        let _ = w.flush();
+                    }
+                    if tx.send(chunk.to_vec()).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    rx
 }
 
 /// Build a CommandBuilder with standard PTY isolation and env vars.
