@@ -30,7 +30,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
 use worktrunk::shell_exec::SUBPROCESS_FULL_TARGET;
-use worktrunk::styling::{eprintln, info_message};
+use worktrunk::styling::{eprintln, format_with_gutter, info_message};
 use worktrunk::trace::WT_TRACE_TARGET;
 use worktrunk::utils::escape_controls;
 
@@ -500,10 +500,12 @@ where
     Some(layer)
 }
 
-/// Print a one-line stderr pointer at `-vv` so users know where the noisy
-/// log pipeline output went. Silent if `trace.log` couldn't be opened
-/// (outside a git repo, permission error) — there's nothing meaningful to
-/// point at.
+/// Print a stderr pointer at `-vv` so users know where the noisy log
+/// pipeline output went — an info header over a gutter that lists each
+/// file's full path on its own line, so any one can be copied without
+/// joining a shared root to a filename. Silent if `trace.log` couldn't be
+/// opened (outside a git repo, permission error) — there's nothing
+/// meaningful to point at.
 fn announce_trace_destination() {
     // TRACE and SUBPROCESS open independently — `LogSink::init` succeeds per
     // file. The (Some, None) case (trace.log open, subprocess.log failed) is
@@ -518,16 +520,28 @@ fn announce_trace_destination() {
     // trace.log is always at `<git>/wt/logs/trace.log` (see `log_files::try_create`),
     // so the parent is structurally guaranteed.
     let dir = trace_path.parent().expect("trace.log path has a parent");
-    let dir_display = worktrunk::path::format_path_for_display(dir);
-    let msg = match log_files::SUBPROCESS.path() {
-        Some(_) => cformat!(
-            "Writing to <underline>{dir_display}/</> — trace.log, subprocess.log, diagnostic.md"
-        ),
-        None => cformat!(
-            "Writing to <underline>{dir_display}/</> — trace.log, diagnostic.md (subprocess.log unavailable)"
-        ),
+
+    // subprocess.log opening or not decides two things at once: whether it
+    // joins the gutter list, and whether the header flags it as unavailable.
+    // Keeping the "unavailable" note in the header leaves the gutter a clean
+    // list of live, copy-pasteable paths.
+    let mut paths = vec![dir.join("trace.log")];
+    let header = match log_files::SUBPROCESS.path() {
+        Some(_) => {
+            paths.push(dir.join("subprocess.log"));
+            "Writing to:"
+        }
+        None => "Writing to (subprocess.log unavailable):",
     };
-    eprintln!("{}", info_message(msg));
+    paths.push(dir.join("diagnostic.md"));
+
+    let gutter = paths
+        .iter()
+        .map(|p| worktrunk::path::format_path_for_display(p))
+        .collect::<Vec<_>>()
+        .join("\n");
+    eprintln!("{}", info_message(header));
+    eprintln!("{}", format_with_gutter(&gutter, None));
 }
 
 #[cfg(test)]
