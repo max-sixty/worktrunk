@@ -419,6 +419,20 @@ fn exec_in_pty_interactive(
             cmd.arg(script);
         }
         "bash" => {
+            // Isolate from user startup files, mirroring the zsh arm above and
+            // the hermetic `bash --norc --noprofile -i` in
+            // `exec_bash_truly_interactive`. An interactive bash (`-i`, with job
+            // control) that sources the host's rc/profile can touch /dev/tty
+            // during startup and take SIGTTIN/TTOU/TSTP, which *suspends* the
+            // shell: it never exits, so the PTY read and `child.wait()` both
+            // block until nextest's 180s slow-timeout (terminate-after=1, no
+            // retries — a hard, unrecoverable failure). This matches the
+            // macOS CI flake in `test_source_flag_forwards_errors::case_1`:
+            // bash is the only one of these shells both interactive and
+            // un-isolated (zsh is isolated above; fish runs non-interactively),
+            // and case_1 (bash) is the case that timed out.
+            cmd.arg("--norc");
+            cmd.arg("--noprofile");
             cmd.arg("-i");
             cmd.arg("-c");
             cmd.arg(script);
