@@ -54,6 +54,63 @@ fn test_complete_switch_shows_branches(repo: TestRepo) {
     });
 }
 
+/// `WORKTRUNK_VERBOSE` reaches the completion subprocess, which exits before
+/// `main`'s `logging::init` and is otherwise silent. It is the env-var
+/// equivalent of `-v`/`-vv`, so at level 2 completion writes the same
+/// `[wt-trace]` timing and `$ git …` records to `.git/wt/logs/trace.log` that
+/// `-vv` produces — the only way to profile a slow tab-completion, since the
+/// shell invokes completion with nowhere to pass `-vv`. Unset, completion
+/// writes nothing and keeps the candidate output clean.
+#[rstest]
+fn test_completion_honors_worktrunk_verbose(repo: TestRepo) {
+    repo.commit("initial");
+    repo.run_git(&["branch", "feature/new"]);
+
+    let logs_dir = repo.root_path().join(".git").join("wt/logs");
+    let trace_log = logs_dir.join("trace.log");
+
+    // Control: a normal completion logs nothing and still emits candidates.
+    let _ = std::fs::remove_dir_all(&logs_dir);
+    let output = repo
+        .completion_cmd(&["wt", "switch", ""])
+        .env_remove("WORKTRUNK_VERBOSE")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("feature/new"),
+        "completion should produce candidates"
+    );
+    assert!(
+        !trace_log.exists(),
+        "completion must not log without WORKTRUNK_VERBOSE"
+    );
+
+    // WORKTRUNK_VERBOSE=2 == -vv: completion writes the trace files, without
+    // disturbing the candidate list.
+    let _ = std::fs::remove_dir_all(&logs_dir);
+    let output = repo
+        .completion_cmd(&["wt", "switch", ""])
+        .env("WORKTRUNK_VERBOSE", "2")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("feature/new"),
+        "logging must not disturb the candidate list"
+    );
+    let trace = std::fs::read_to_string(&trace_log)
+        .expect("WORKTRUNK_VERBOSE=2 should write trace.log during completion");
+    assert!(
+        trace.contains("[wt-trace]"),
+        "completion trace should capture [wt-trace] timing: {trace}"
+    );
+    assert!(
+        trace.contains("$ git"),
+        "completion trace should capture the git subprocesses it runs: {trace}"
+    );
+}
+
 #[rstest]
 fn test_complete_switch_shows_all_branches_including_worktrees(mut repo: TestRepo) {
     repo.commit("initial");
