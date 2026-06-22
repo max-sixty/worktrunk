@@ -640,8 +640,11 @@ fn exec_bash_truly_interactive(
         buf
     });
 
-    // Wait for bash to exit
-    let status = child.wait().unwrap();
+    // Wait for bash to exit, bounded so a job-control-wedged shell can't hang
+    // the run (see wait_for_child_or_kill / read_pty_output). Once the child is
+    // gone the tty is revoked and the reader thread EOFs, so the join below
+    // completes without blocking.
+    let exit_code = crate::common::pty::wait_for_child_or_kill(&mut child, Duration::from_secs(60));
 
     // Get the captured output
     let buf = reader_thread.join().unwrap();
@@ -649,7 +652,7 @@ fn exec_bash_truly_interactive(
     // Normalize CRLF to LF (same as exec_in_pty_interactive)
     let normalized = buf.replace("\r\n", "\n");
 
-    (normalized, status.exit_code() as i32)
+    (normalized, exit_code)
 }
 
 /// Execute a command through a shell wrapper

@@ -197,9 +197,9 @@ pub fn read_pty_output(
 /// is returned, mirroring coreutils `timeout`. A read error yields `-1`.
 ///
 /// Shared by both PTY readers ([`read_pty_output`] via [`drain_pty_until_child_exit`]
-/// and [`prompted_pty_interaction`]) so neither can block on a non-terminating
-/// child.
-fn wait_for_child_or_kill(
+/// and [`prompted_pty_interaction`]) and by interactive helpers that drive the
+/// shell directly, so none can block on a non-terminating child.
+pub fn wait_for_child_or_kill(
     child: &mut Box<dyn portable_pty::Child + Send + Sync>,
     wedge_timeout: std::time::Duration,
 ) -> i32 {
