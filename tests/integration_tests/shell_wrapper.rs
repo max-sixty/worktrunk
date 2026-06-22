@@ -332,6 +332,16 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
 /// );
 /// // The output will show: "Allow? [y/N] y"
 /// ```
+///
+/// Retries on a startup wedge: a `bash -i`/`zsh -i` interactive shell can lose a
+/// job-control race at startup under heavy parallel load and never run the
+/// script — it wedges (stopped `T`) producing no output and never exiting, which
+/// `read_pty_output` bounds with a kill and reports as exit `124`. That was the
+/// flake behind `test_source_flag_forwards_errors` (it timed out at 180s before
+/// the read was bounded, and would still fail on empty output after). Because
+/// nothing ran, re-running is safe; a fresh attempt almost always starts
+/// cleanly. This is the feedback path the harness was missing — detect the wedge
+/// (the bounded kill) and recover (re-run), rather than hang or fail.
 #[cfg(test)]
 fn exec_in_pty_interactive(
     shell: &str,
@@ -340,8 +350,52 @@ fn exec_in_pty_interactive(
     env_vars: &[(&str, &str)],
     inputs: &[&str],
 ) -> (String, i32) {
+    // A wedge is rare; 3 attempts make a run that wedges every time astronomically
+    // unlikely, and each attempt is bounded (the 30s in `_once`), so the worst
+    // case stays well under the harness's 180s slow-timeout.
+    retry_pty_on_wedge(3, || {
+        exec_in_pty_interactive_once(shell, script, working_dir, env_vars, inputs)
+    })
+}
+
+/// Re-run a PTY interaction while it reports a startup wedge — exit code
+/// `PTY_WEDGE_EXIT_CODE`, which `read_pty_output` returns after killing a shell
+/// that never exited — up to `max_attempts` times. None of these interactive
+/// tests legitimately run long enough to hit the wedge bound, so that exit code
+/// means the shell never ran (a job-control startup race), and re-running is
+/// safe. Returns the first non-wedged result, or the last wedged one if every
+/// attempt wedges.
+#[cfg(test)]
+fn retry_pty_on_wedge(
+    max_attempts: usize,
+    mut attempt: impl FnMut() -> (String, i32),
+) -> (String, i32) {
+    let mut result = (String::new(), 0);
+    for n in 1..=max_attempts {
+        result = attempt();
+        if result.1 != crate::common::pty::PTY_WEDGE_EXIT_CODE {
+            return result;
+        }
+        eprintln!("pty interactive shell wedged at startup (attempt {n}/{max_attempts})");
+    }
+    result
+}
+
+#[cfg(test)]
+fn exec_in_pty_interactive_once(
+    shell: &str,
+    script: &str,
+    working_dir: &std::path::Path,
+    env_vars: &[(&str, &str)],
+    inputs: &[&str],
+) -> (String, i32) {
     use portable_pty::CommandBuilder;
     use std::io::Write;
+
+    // Bound each attempt's wait for the shell to exit. The normal path resolves
+    // in milliseconds; this only fires on a wedge, and is short enough that the
+    // 3-attempt retry above stays under the harness timeout.
+    let wedge_timeout = std::time::Duration::from_secs(30);
 
     let pair = crate::common::open_pty();
 
@@ -419,6 +473,13 @@ fn exec_in_pty_interactive(
             cmd.arg(script);
         }
         "bash" => {
+            // Isolate from user rc files (parallels the zsh arm). Besides
+            // hermeticity, sourcing the host ~/.bashrc under an interactive
+            // shell is a plausible startup-hang source — and bash is the arm
+            // that flakes, since it was the only interactive shell here NOT
+            // isolating its rc files.
+            cmd.arg("--norc");
+            cmd.arg("--noprofile");
             cmd.arg("-i");
             cmd.arg("-c");
             cmd.arg(script);
@@ -473,7 +534,7 @@ fn exec_in_pty_interactive(
     // Read output and wait for exit using platform-aware handling
     // On Windows ConPTY, this handles cursor queries and proper pipe closure
     let (buf, exit_code) =
-        crate::common::pty::read_pty_output(reader, writer, pair.master, &mut child);
+        crate::common::pty::read_pty_output(reader, writer, pair.master, &mut child, wedge_timeout);
 
     // Normalize CRLF to LF (PTYs use CRLF on some platforms)
     let normalized = buf.replace("\r\n", "\n");
@@ -1712,9 +1773,49 @@ approved-commands = ["echo 'fish background task'"]
             "output emitted before the wedge should be captured.\nOutput:\n{output}"
         );
         assert_eq!(
-            exit_code, 124,
-            "a killed wedged shell should report the timeout exit code"
+            exit_code,
+            crate::common::pty::PTY_WEDGE_EXIT_CODE,
+            "a killed wedged shell should report the wedge exit code"
         );
+    }
+
+    /// `exec_in_pty_interactive` recovers from a startup wedge by re-running.
+    /// `test_pty_read_recovers_from_wedged_shell` covers the building block (a
+    /// wedged shell is bounded and reported as `PTY_WEDGE_EXIT_CODE`); this pins
+    /// the retry contract on top of it without paying a real 30s wedge: succeed
+    /// immediately on a clean result, retry past a wedge, and give up after the
+    /// cap returning the last result.
+    #[test]
+    fn test_retry_pty_on_wedge() {
+        let wedge = crate::common::pty::PTY_WEDGE_EXIT_CODE;
+
+        // Clean result on the first try → no retry.
+        let mut calls = 0;
+        let r = retry_pty_on_wedge(3, || {
+            calls += 1;
+            ("ok".to_string(), 0)
+        });
+        assert_eq!((r, calls), (("ok".to_string(), 0), 1));
+
+        // Wedge once, then recover → returns the recovered result.
+        let mut calls = 0;
+        let r = retry_pty_on_wedge(3, || {
+            calls += 1;
+            if calls == 1 {
+                (String::new(), wedge)
+            } else {
+                ("recovered".to_string(), 0)
+            }
+        });
+        assert_eq!((r, calls), (("recovered".to_string(), 0), 2));
+
+        // Wedge every time → gives up after the cap, returning the last result.
+        let mut calls = 0;
+        let r = retry_pty_on_wedge(3, || {
+            calls += 1;
+            (format!("try{calls}"), wedge)
+        });
+        assert_eq!((r, calls), (("try3".to_string(), wedge), 3));
     }
 
     // ========================================================================
@@ -3773,8 +3874,13 @@ mod windows_tests {
         let reader = pair.master.try_clone_reader().unwrap();
         let writer = pair.master.take_writer().unwrap();
 
-        let (output, exit_code) =
-            crate::common::pty::read_pty_output(reader, writer, pair.master, &mut child);
+        let (output, exit_code) = crate::common::pty::read_pty_output(
+            reader,
+            writer,
+            pair.master,
+            &mut child,
+            std::time::Duration::from_secs(60),
+        );
 
         let normalized = output.replace("\r\n", "\n");
 

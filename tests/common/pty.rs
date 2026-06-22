@@ -19,6 +19,11 @@ use std::path::Path;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
+/// Exit code returned when a PTY child is killed for overrunning its wedge
+/// timeout (see [`wait_for_child_or_kill`]). Nonzero, mirroring coreutils
+/// `timeout`. Callers that re-run on a wedge key off this value.
+pub const PTY_WEDGE_EXIT_CODE: i32 = 124;
+
 /// Read output from PTY and wait for child exit.
 ///
 /// On Unix, completion is detected **causally** by polling the child shell for
@@ -47,16 +52,14 @@ pub fn read_pty_output(
     writer: Box<dyn Write + Send>,
     master: Box<dyn MasterPty + Send>,
     child: &mut Box<dyn portable_pty::Child + Send + Sync>,
+    wedge_timeout: std::time::Duration,
 ) -> (String, i32) {
     #[cfg(unix)]
     {
         let _ = master; // Not needed on Unix
         // Drop writer to signal EOF to child's stdin (important for Unix PTYs)
         drop(writer);
-        // 60s is a generous safety net: the causal path (child exit) resolves in
-        // milliseconds, so this only bounds a genuinely wedged shell, and stays
-        // well under the test harness's 180s slow-timeout.
-        drain_pty_until_child_exit(reader, child, std::time::Duration::from_secs(60))
+        drain_pty_until_child_exit(reader, child, wedge_timeout)
     }
 
     #[cfg(windows)]
@@ -65,6 +68,10 @@ pub fn read_pty_output(
         use std::sync::{Arc, mpsc};
         use std::thread;
         use std::time::Duration;
+
+        // ConPTY drains differently (the output pipe outlives the child), so the
+        // Unix wedge bound doesn't apply here.
+        let _ = wedge_timeout;
 
         // Flag to signal the reader to stop
         let should_stop = Arc::new(AtomicBool::new(false));
@@ -206,7 +213,7 @@ fn wait_for_child_or_kill(
         if std::time::Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            return 124; // timeout marker (nonzero, like coreutils `timeout`)
+            return PTY_WEDGE_EXIT_CODE;
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
@@ -408,7 +415,15 @@ pub fn exec_cmd_in_pty(cmd: CommandBuilder, input: &str) -> (String, i32) {
         writer.flush().unwrap();
     }
 
-    let (buf, exit_code) = read_pty_output(reader, writer, pair.master, &mut child);
+    // Non-interactive command (no `-i` job control), so it doesn't hit the
+    // interactive-shell startup wedge; a generous bound is fine.
+    let (buf, exit_code) = read_pty_output(
+        reader,
+        writer,
+        pair.master,
+        &mut child,
+        std::time::Duration::from_secs(60),
+    );
     let normalized = buf.replace("\r\n", "\n");
 
     (normalized, exit_code)
