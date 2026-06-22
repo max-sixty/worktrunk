@@ -388,6 +388,27 @@ mod tests {
     }
 
     #[test]
+    fn test_fish_init_uses_builtin_cd() {
+        // Regression test for #3159: the fish integration must change directory
+        // with `builtin cd`, not a bare `cd`. A bare `cd` is interceptable by
+        // shell `cd` overrides (e.g. the zoxide.fish plugin replaces `cd` with
+        // a zoxide query function). When wt called `cd -- "$target"`, zoxide
+        // saw `--` as a query argument and failed with "no match found". Using
+        // `builtin cd` bypasses any user `cd` function, matching bash and zsh.
+        let output = ShellInit::with_prefix(Shell::Fish, "wt".to_string())
+            .generate()
+            .expect("Failed to generate fish init");
+        assert!(
+            output.contains("builtin cd"),
+            "fish init must use `builtin cd` to bypass shell `cd` overrides; got:\n{output}"
+        );
+        assert!(
+            !output.contains("\n        cd -- "),
+            "fish init must not use a bare `cd` that shell overrides can intercept; got:\n{output}"
+        );
+    }
+
+    #[test]
     fn test_shell_config_paths_returns_paths() {
         // All shells should return at least one config path
         let shells = [
