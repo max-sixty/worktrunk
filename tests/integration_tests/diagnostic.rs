@@ -400,7 +400,7 @@ fn test_vv_escapes_control_bytes_in_trace_not_subprocess(repo: TestRepo) {
 /// At `-vv`, Debug-level records (the noisy ones) stay out of stderr —
 /// the bounded subprocess preview lands in `trace.log` (not stderr), and
 /// `subprocess.log` still holds the unbounded body. Info-level routing
-/// from `-v` still applies at `-vv` (it's a superset), so the "Tracing
+/// from `-v` still applies at `-vv` (it's a superset), so the "Writing
 /// to ..." pointer and similar status lines DO appear on stderr; they're
 /// asserted at the end of this test. Guards against a regression that
 /// re-routes the debug stream to stderr and floods the terminal.
@@ -482,12 +482,20 @@ fn test_vv_debug_pipeline_silent_on_stderr(repo: TestRepo) {
         "trace.log should contain [wt-trace] records at -vv"
     );
 
-    // Stderr at -vv should contain the new pointer line (and the existing
-    // diagnostic line), so the user knows where the trace went.
+    // Stderr at -vv should announce each file's full path on its own line, so
+    // any one is copy-pasteable without joining a shared root to a filename.
+    // The `wt/logs/<file>` tails only appear contiguously when the full path
+    // is listed (the old root-plus-filenames form split them apart).
     assert!(
-        stderr.contains("Writing to") && stderr.contains("trace.log"),
-        "stderr should announce the trace destination at -vv: {stderr}"
+        stderr.contains("Writing to"),
+        "missing pointer header: {stderr}"
     );
+    for file in ["trace.log", "subprocess.log", "diagnostic.md"] {
+        assert!(
+            stderr.contains(&format!("wt/logs/{file}")),
+            "stderr should list the full path to {file}: {stderr}"
+        );
+    }
 }
 
 /// `RUST_LOG` is honored at every verbosity level — including `-v` — and
@@ -665,12 +673,18 @@ fn test_vv_pointer_handles_split_init(repo: TestRepo) {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
-        stderr.contains("Writing to") && stderr.contains("trace.log"),
-        "stderr should point at trace.log even when subprocess.log can't open: {stderr}"
+        stderr.contains("Writing to") && stderr.contains("wt/logs/trace.log"),
+        "stderr should list trace.log's full path even when subprocess.log can't open: {stderr}"
     );
     assert!(
         stderr.contains("subprocess.log unavailable"),
         "stderr should note subprocess.log is unavailable: {stderr}"
+    );
+    // subprocess.log didn't open, so it's named only in the unavailable note —
+    // never listed as a live path in the gutter.
+    assert!(
+        !stderr.contains("wt/logs/subprocess.log"),
+        "stderr should not list a path for the unavailable subprocess.log: {stderr}"
     );
     assert!(
         logs_dir.join("trace.log").exists(),
