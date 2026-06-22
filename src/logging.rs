@@ -433,6 +433,29 @@ fn rust_log_level() -> Option<log::LevelFilter> {
         .max()
 }
 
+/// Environment variable mirroring the `-v`/`-vv` flags as a level
+/// (`0`/`1`/`2`) — the env-var equivalent of the flag. Unlike the flag it is
+/// read everywhere, including shell completion, which exits before `main`
+/// parses the CLI; that is the only way to drive completion's logging (and, at
+/// level 2, the `-vv` trace files). Combined with the flag via `max`: the env
+/// sets a baseline the flag can raise but never lower.
+pub(crate) const VERBOSE_ENV: &str = "WORKTRUNK_VERBOSE";
+
+/// Read [`VERBOSE_ENV`] from the process environment into a verbosity count.
+/// See [`parse_verbose_level`] for the grammar.
+pub(crate) fn env_verbose_level() -> u8 {
+    parse_verbose_level(std::env::var(VERBOSE_ENV).ok().as_deref())
+}
+
+/// Pure parse of a [`VERBOSE_ENV`] value into a `0`/`1`/`2…` count. Unset,
+/// empty, or unparsable values yield `0`; the parse is lossy (never errors) so
+/// a stray value can't break a command — least of all completion, where it
+/// would corrupt the candidate list. Extracted as a pure function so it can be
+/// unit-tested without mutating the process env (which races parallel tests).
+fn parse_verbose_level(raw: Option<&str>) -> u8 {
+    raw.and_then(|v| v.trim().parse::<u8>().ok()).unwrap_or(0)
+}
+
 /// Stderr layer: the flag sets a baseline (`Off` / `Info` / `Info`) and
 /// `RUST_LOG`, when set, overrides via the standard directive grammar —
 /// matching the env-wins-when-set convention (see PR #2901). At `-vv`
@@ -550,7 +573,7 @@ mod tests {
 
     use super::{
         WT_TRACE_TARGET, WtTraceFields, effective_log_max_level, format_wt_trace,
-        label_for_thread_index, style_stderr_line,
+        label_for_thread_index, parse_verbose_level, style_stderr_line,
     };
 
     /// Branch coverage for `label_for_thread_index` — `thread_label` never
@@ -782,5 +805,26 @@ mod tests {
         // Env lowers (the env-wins-when-set contract — env can also
         // suppress, not just raise):
         assert_eq!(effective_log_max_level(2, Some(Warn)), Warn);
+    }
+
+    /// `WORKTRUNK_VERBOSE` parses like the `-v`/`-vv` count. Anything that
+    /// isn't a clean integer (including the empty string a bare `export`
+    /// leaves) falls back to `0` rather than erroring — a panic here would
+    /// corrupt the completion candidate list.
+    #[test]
+    fn parse_verbose_level_is_lossy() {
+        assert_eq!(parse_verbose_level(None), 0);
+        assert_eq!(parse_verbose_level(Some("")), 0);
+        assert_eq!(parse_verbose_level(Some("0")), 0);
+        assert_eq!(parse_verbose_level(Some("1")), 1);
+        assert_eq!(parse_verbose_level(Some("2")), 2);
+        assert_eq!(parse_verbose_level(Some(" 2 ")), 2);
+        // Higher counts pass through (treated like `-vvv`, which the layer
+        // builders already collapse to the `>= 2` behavior).
+        assert_eq!(parse_verbose_level(Some("3")), 3);
+        // Garbage and out-of-range values are dropped, not errored.
+        assert_eq!(parse_verbose_level(Some("abc")), 0);
+        assert_eq!(parse_verbose_level(Some("-1")), 0);
+        assert_eq!(parse_verbose_level(Some("999")), 0);
     }
 }

@@ -584,6 +584,66 @@ fn test_rust_log_debug_fallback_without_vv(repo: TestRepo) {
     );
 }
 
+/// `WORKTRUNK_VERBOSE` sets the verbosity level from the environment, mirroring
+/// the `-v`/`-vv` flags so logging can be turned on with no CLI flag — the only
+/// way to reach shell completion, which has nowhere to pass `-vv` (see the
+/// completion suite). The env and the flag combine via `max`: the env is a
+/// baseline the flags raise but never lower. Level 2 opens the on-disk trace
+/// files exactly like `-vv`; level 1 does not, proving the count is threaded
+/// rather than collapsed to a boolean "verbose on".
+#[rstest]
+fn test_worktrunk_verbose_env_sets_level(repo: TestRepo) {
+    let logs_dir = repo.root_path().join(".git").join("wt/logs");
+    let trace_log = logs_dir.join("trace.log");
+
+    // Level 2 with no flag opens the trace files, just like `-vv`.
+    let _ = fs::remove_dir_all(&logs_dir);
+    let out = repo
+        .wt_command()
+        .args(["list"])
+        .env("WORKTRUNK_VERBOSE", "2")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("wt list");
+    assert!(out.status.success());
+    assert!(
+        trace_log.exists(),
+        "WORKTRUNK_VERBOSE=2 should open trace.log like -vv"
+    );
+
+    // Level 1 with no flag does NOT — the trace files are a level-2 artifact,
+    // so the env must carry the count, not just a boolean.
+    let _ = fs::remove_dir_all(&logs_dir);
+    let out = repo
+        .wt_command()
+        .args(["list"])
+        .env("WORKTRUNK_VERBOSE", "1")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("wt list");
+    assert!(out.status.success());
+    assert!(
+        !trace_log.exists(),
+        "WORKTRUNK_VERBOSE=1 should not open the -vv trace files"
+    );
+
+    // An explicit `-vv` wins over a lower env baseline (`max`, not env-wins):
+    // env 0 + `-vv` still writes the files.
+    let _ = fs::remove_dir_all(&logs_dir);
+    let out = repo
+        .wt_command()
+        .args(["list", "-vv"])
+        .env("WORKTRUNK_VERBOSE", "0")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("wt list -vv");
+    assert!(out.status.success());
+    assert!(
+        trace_log.exists(),
+        "an explicit -vv must win over WORKTRUNK_VERBOSE=0"
+    );
+}
+
 // =============================================================================
 // Tests for -vv verbosity level (always write diagnostic)
 // =============================================================================
