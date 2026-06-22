@@ -19,28 +19,9 @@ use std::path::Path;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
-/// Exit code returned when a PTY child is killed for overrunning its wedge
-/// timeout (see [`wait_for_child_or_kill`]). Nonzero, mirroring coreutils
-/// `timeout`. Callers that re-run on a wedge key off this value.
-pub const PTY_WEDGE_EXIT_CODE: i32 = 124;
-
 /// Read output from PTY and wait for child exit.
 ///
-/// On Unix, completion is detected **causally** by polling the child shell for
-/// exit, *not* by reading the master to EOF. The naive "read to EOF, then
-/// `wait()`" shape deadlocks the run when the session-leader shell fails to
-/// terminate — e.g. a job-control SIGTTOU race under parallel load can leave it
-/// stopped (`T`). Because that shell owns the slave's controlling terminal, the
-/// kernel never revokes the tty, the master never sees EOF, and *both*
-/// `read_to_string` and `wait()` block until the test harness's 180s timeout
-/// kills the run. (Conversely, once the shell *does* exit, BSD/macOS revokes the
-/// tty and the master EOFs even if an orphaned grandchild still holds a slave
-/// fd — so a lingering child can't starve the read.)
-///
-/// So: drain the master on a background thread, treat the shell's exit as the
-/// done signal (bounded by a generous fallback that kills a wedged shell so the
-/// run ends in seconds, not minutes), then drain any trailing in-flight output.
-///
+/// On Unix, this simply reads to EOF then waits for child.
 /// On Windows ConPTY, special handling is required because:
 /// - The output pipe doesn't close when child exits (owned by pseudoconsole)
 /// - ConPTY may send cursor position requests (ESC[6n) that must be answered
@@ -52,14 +33,17 @@ pub fn read_pty_output(
     writer: Box<dyn Write + Send>,
     master: Box<dyn MasterPty + Send>,
     child: &mut Box<dyn portable_pty::Child + Send + Sync>,
-    wedge_timeout: std::time::Duration,
 ) -> (String, i32) {
     #[cfg(unix)]
     {
         let _ = master; // Not needed on Unix
         // Drop writer to signal EOF to child's stdin (important for Unix PTYs)
         drop(writer);
-        drain_pty_until_child_exit(reader, child, wedge_timeout)
+        let mut reader = reader;
+        let mut buf = String::new();
+        reader.read_to_string(&mut buf).unwrap();
+        let exit_status = child.wait().unwrap();
+        (buf, exit_status.exit_code() as i32)
     }
 
     #[cfg(windows)]
@@ -68,10 +52,6 @@ pub fn read_pty_output(
         use std::sync::{Arc, mpsc};
         use std::thread;
         use std::time::Duration;
-
-        // ConPTY drains differently (the output pipe outlives the child), so the
-        // Unix wedge bound doesn't apply here.
-        let _ = wedge_timeout;
 
         // Flag to signal the reader to stop
         let should_stop = Arc::new(AtomicBool::new(false));
@@ -184,111 +164,6 @@ pub fn read_pty_output(
 
         (buf, exit_code)
     }
-}
-
-/// Wait for a PTY child to exit, using its exit as the completion signal and
-/// bounding the wait so a wedged shell can't hang the run.
-///
-/// The normal path resolves in milliseconds. `wedge_timeout` only bounds a shell
-/// that never exits on its own — a job-control race under parallel load can
-/// leave the session-leader shell stopped (`T`), which `try_wait()` reports as
-/// not-yet-exited forever. On overrun the child is killed (`portable_pty`'s
-/// `kill` escalates to `SIGKILL`, which reaps even a stopped process) and `124`
-/// is returned, mirroring coreutils `timeout`. A read error yields `-1`.
-///
-/// Shared by both PTY readers ([`read_pty_output`] via [`drain_pty_until_child_exit`]
-/// and [`prompted_pty_interaction`]) and by interactive helpers that drive the
-/// shell directly, so none can block on a non-terminating child.
-pub fn wait_for_child_or_kill(
-    child: &mut Box<dyn portable_pty::Child + Send + Sync>,
-    wedge_timeout: std::time::Duration,
-) -> i32 {
-    let deadline = std::time::Instant::now() + wedge_timeout;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => return status.exit_code() as i32,
-            Ok(None) => {}
-            Err(_) => return -1,
-        }
-        if std::time::Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return PTY_WEDGE_EXIT_CODE;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-}
-
-/// Drain remaining PTY output from `rx` after the child has exited, bounded so a
-/// lingering slave-holder can't block us.
-///
-/// The reader thread drops its `tx` when it hits EOF, surfacing as
-/// `Disconnected` once all output is delivered — the common case on BSD/macOS,
-/// where the kernel revokes the tty when the session leader exits (so the master
-/// EOFs even if an orphaned grandchild still holds a slave fd). On Linux the tty
-/// isn't revoked, so a grandchild holding the slave keeps the reader blocked
-/// past EOF; the command's own output is already buffered and collected here in
-/// milliseconds, and `ceiling` caps the wait for the EOF that won't come (the
-/// reader thread is then left to exit when the process does).
-fn drain_remaining(rx: &mpsc::Receiver<Vec<u8>>, out: &mut Vec<u8>, ceiling: std::time::Duration) {
-    let deadline = std::time::Instant::now() + ceiling;
-    loop {
-        match rx.recv_timeout(std::time::Duration::from_millis(50)) {
-            Ok(data) => out.extend_from_slice(&data),
-            // Reader hit EOF and dropped `tx`: all output captured.
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                if std::time::Instant::now() >= deadline {
-                    break;
-                }
-            }
-        }
-    }
-}
-
-/// Drain a Unix PTY master, using the child shell's exit — not master EOF — as
-/// the completion signal.
-///
-/// `reader` is the master read end; `child` is the session-leader shell. The
-/// reader runs on a background thread accumulating output into a channel;
-/// completion is detected causally via [`wait_for_child_or_kill`], then
-/// [`drain_remaining`] collects any trailing in-flight output.
-///
-/// See [`read_pty_output`] for the full rationale. Exposed (rather than inlined)
-/// so the wedge-recovery path can be exercised with a short timeout in tests
-/// without waiting out the production safety net.
-#[cfg(unix)]
-pub fn drain_pty_until_child_exit(
-    reader: Box<dyn Read + Send>,
-    child: &mut Box<dyn portable_pty::Child + Send + Sync>,
-    wedge_timeout: std::time::Duration,
-) -> (String, i32) {
-    // Drain the master on a background thread. Dropping `tx` when the reader
-    // hits EOF/error signals that all output has been delivered.
-    let (tx, rx) = mpsc::channel::<Vec<u8>>();
-    std::thread::spawn(move || {
-        let mut reader = reader;
-        let mut chunk = [0u8; 4096];
-        loop {
-            match reader.read(&mut chunk) {
-                Ok(0) => break,
-                Ok(n) => {
-                    if tx.send(chunk[..n].to_vec()).is_err() {
-                        break;
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-    });
-
-    let exit_code = wait_for_child_or_kill(child, wedge_timeout);
-
-    let mut output = Vec::new();
-    drain_remaining(&rx, &mut output, std::time::Duration::from_secs(5));
-
-    let buf = String::from_utf8_lossy(&output).to_string();
-    (buf, exit_code)
 }
 
 /// Find cursor position request (ESC[6n) in a byte slice.
@@ -415,15 +290,7 @@ pub fn exec_cmd_in_pty(cmd: CommandBuilder, input: &str) -> (String, i32) {
         writer.flush().unwrap();
     }
 
-    // Non-interactive command (no `-i` job control), so it doesn't hit the
-    // interactive-shell startup wedge; a generous bound is fine.
-    let (buf, exit_code) = read_pty_output(
-        reader,
-        writer,
-        pair.master,
-        &mut child,
-        std::time::Duration::from_secs(60),
-    );
+    let (buf, exit_code) = read_pty_output(reader, writer, pair.master, &mut child);
     let normalized = buf.replace("\r\n", "\n");
 
     (normalized, exit_code)
@@ -468,7 +335,7 @@ fn prompted_pty_interaction(
     let (tx, rx) = mpsc::channel::<Vec<u8>>();
 
     // Read PTY output in background, sending chunks via channel
-    let _reader_thread = std::thread::spawn(move || {
+    let reader_thread = std::thread::spawn(move || {
         let mut reader = reader;
         let mut buf = [0u8; 4096];
         loop {
@@ -552,18 +419,21 @@ fn prompted_pty_interaction(
     // By waiting for the child first, the slave side closes and the echo
     // from the Drop's \n goes to a dead PTY — no artifact.
     //
-    // The child won't hang on stdin: after read_line() returns for all prompts,
-    // it continues executing without reading. The wait is bounded so a
-    // job-control-wedged shell that never exits can't hang the run either (see
-    // wait_for_child_or_kill / read_pty_output).
-    let exit_code = wait_for_child_or_kill(child, Duration::from_secs(60));
+    // The child won't hang: after read_line() returns for all prompts, it
+    // continues executing without reading stdin. EOF isn't needed.
+    let exit_status = child.wait().unwrap();
+    let exit_code = exit_status.exit_code() as i32;
 
     // Now safe to drop writer (child already exited, slave side closed)
     drop(writer);
 
-    // Collect any remaining output (the reader EOFs now that the child is gone),
-    // bounded so we can't block here even if the master never EOFs.
-    drain_remaining(&rx, &mut accumulated, Duration::from_secs(5));
+    // Wait for reader thread to finish
+    let _ = reader_thread.join();
+
+    // Drain any remaining chunks
+    while let Ok(chunk) = rx.try_recv() {
+        accumulated.extend_from_slice(&chunk);
+    }
 
     let buf = String::from_utf8_lossy(&accumulated).to_string();
     let normalized = buf.replace("\r\n", "\n");

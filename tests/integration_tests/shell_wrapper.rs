@@ -332,16 +332,6 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
 /// );
 /// // The output will show: "Allow? [y/N] y"
 /// ```
-///
-/// Retries on a startup wedge: a `bash -i`/`zsh -i` interactive shell can lose a
-/// job-control race at startup under heavy parallel load and never run the
-/// script — it wedges (stopped `T`) producing no output and never exiting, which
-/// `read_pty_output` bounds with a kill and reports as exit `124`. That was the
-/// flake behind `test_source_flag_forwards_errors` (it timed out at 180s before
-/// the read was bounded, and would still fail on empty output after). Because
-/// nothing ran, re-running is safe; a fresh attempt almost always starts
-/// cleanly. This is the feedback path the harness was missing — detect the wedge
-/// (the bounded kill) and recover (re-run), rather than hang or fail.
 #[cfg(test)]
 fn exec_in_pty_interactive(
     shell: &str,
@@ -350,52 +340,31 @@ fn exec_in_pty_interactive(
     env_vars: &[(&str, &str)],
     inputs: &[&str],
 ) -> (String, i32) {
-    // A wedge is rare; 3 attempts make a run that wedges every time astronomically
-    // unlikely, and each attempt is bounded (the 30s in `_once`), so the worst
-    // case stays well under the harness's 180s slow-timeout.
-    retry_pty_on_wedge(3, || {
-        exec_in_pty_interactive_once(shell, script, working_dir, env_vars, inputs)
-    })
+    exec_in_pty_shell(shell, script, working_dir, env_vars, inputs, true)
 }
 
-/// Re-run a PTY interaction while it reports a startup wedge — exit code
-/// `PTY_WEDGE_EXIT_CODE`, which `read_pty_output` returns after killing a shell
-/// that never exited — up to `max_attempts` times. None of these interactive
-/// tests legitimately run long enough to hit the wedge bound, so that exit code
-/// means the shell never ran (a job-control startup race), and re-running is
-/// safe. Returns the first non-wedged result, or the last wedged one if every
-/// attempt wedges.
+/// Like [`exec_in_pty_interactive`] but lets the caller choose whether `bash` /
+/// `zsh` run interactively (`-i`).
+///
+/// An interactive shell does job-control initialization at startup: if it
+/// decides it isn't the PTY's foreground process group it sends its own process
+/// group `SIGTTIN` and stops — producing no output and never exiting. Under
+/// parallel load that occasionally wedged `test_source_flag_forwards_errors`
+/// until the 180s harness timeout. A non-interactive shell skips job control
+/// entirely, so the wedge can't happen; pass `interactive = false` for tests
+/// that don't assert on job-control output. Tests that *do* (e.g.
+/// `test_zsh_no_job_control`) pass `interactive = true`.
 #[cfg(test)]
-fn retry_pty_on_wedge(
-    max_attempts: usize,
-    mut attempt: impl FnMut() -> (String, i32),
-) -> (String, i32) {
-    let mut result = (String::new(), 0);
-    for n in 1..=max_attempts {
-        result = attempt();
-        if result.1 != crate::common::pty::PTY_WEDGE_EXIT_CODE {
-            return result;
-        }
-        eprintln!("pty interactive shell wedged at startup (attempt {n}/{max_attempts})");
-    }
-    result
-}
-
-#[cfg(test)]
-fn exec_in_pty_interactive_once(
+fn exec_in_pty_shell(
     shell: &str,
     script: &str,
     working_dir: &std::path::Path,
     env_vars: &[(&str, &str)],
     inputs: &[&str],
+    interactive: bool,
 ) -> (String, i32) {
     use portable_pty::CommandBuilder;
     use std::io::Write;
-
-    // Bound each attempt's wait for the shell to exit. The normal path resolves
-    // in milliseconds; this only fires on a wedge, and is short enough that the
-    // 3-attempt retry above stays under the harness timeout.
-    let wedge_timeout = std::time::Duration::from_secs(30);
 
     let pair = crate::common::open_pty();
 
@@ -456,14 +425,17 @@ fn exec_in_pty_interactive_once(
     cmd.env("USER", "testuser");
     cmd.env("SHELL", shell_binary);
 
-    // Run in interactive mode to simulate real user environment.
-    // This ensures tests catch job control message leaks like "[1] 12345" and "[1]+ Done".
-    // Interactive shells have job control enabled by default.
+    // Interactive shells (`-i`) enable job control, so tests can catch
+    // job-control message leaks like "[1] 12345" and "[1]+ Done". Callers that
+    // don't assert on job control pass `interactive = false` to skip `-i` and
+    // avoid the startup job-control wedge (see `exec_in_pty_shell`).
     match shell {
         "zsh" => {
             // Isolate from user rc files
             cmd.env("ZDOTDIR", "/dev/null");
-            cmd.arg("-i");
+            if interactive {
+                cmd.arg("-i");
+            }
             cmd.arg("--no-rcs");
             cmd.arg("-o");
             cmd.arg("NO_GLOBAL_RCS");
@@ -473,14 +445,9 @@ fn exec_in_pty_interactive_once(
             cmd.arg(script);
         }
         "bash" => {
-            // Isolate from user rc files (parallels the zsh arm). Besides
-            // hermeticity, sourcing the host ~/.bashrc under an interactive
-            // shell is a plausible startup-hang source — and bash is the arm
-            // that flakes, since it was the only interactive shell here NOT
-            // isolating its rc files.
-            cmd.arg("--norc");
-            cmd.arg("--noprofile");
-            cmd.arg("-i");
+            if interactive {
+                cmd.arg("-i");
+            }
             cmd.arg("-c");
             cmd.arg(script);
         }
@@ -534,7 +501,7 @@ fn exec_in_pty_interactive_once(
     // Read output and wait for exit using platform-aware handling
     // On Windows ConPTY, this handles cursor queries and proper pipe closure
     let (buf, exit_code) =
-        crate::common::pty::read_pty_output(reader, writer, pair.master, &mut child, wedge_timeout);
+        crate::common::pty::read_pty_output(reader, writer, pair.master, &mut child);
 
     // Normalize CRLF to LF (PTYs use CRLF on some platforms)
     let normalized = buf.replace("\r\n", "\n");
@@ -640,11 +607,8 @@ fn exec_bash_truly_interactive(
         buf
     });
 
-    // Wait for bash to exit, bounded so a job-control-wedged shell can't hang
-    // the run (see wait_for_child_or_kill / read_pty_output). Once the child is
-    // gone the tty is revoked and the reader thread EOFs, so the join below
-    // completes without blocking.
-    let exit_code = crate::common::pty::wait_for_child_or_kill(&mut child, Duration::from_secs(60));
+    // Wait for bash to exit
+    let status = child.wait().unwrap();
 
     // Get the captured output
     let buf = reader_thread.join().unwrap();
@@ -652,7 +616,7 @@ fn exec_bash_truly_interactive(
     // Normalize CRLF to LF (same as exec_in_pty_interactive)
     let normalized = buf.replace("\r\n", "\n");
 
-    (normalized, exit_code)
+    (normalized, status.exit_code() as i32)
 }
 
 /// Execute a command through a shell wrapper
@@ -1686,8 +1650,17 @@ approved-commands = ["echo 'fish background task'"]
             ("WORKTRUNK_TEST_EPOCH", "1735776000"),
         ];
 
-        let (combined, exit_code) =
-            exec_in_pty_interactive(shell, &final_script, &worktrunk_source, &env_vars, &[]);
+        // Run non-interactively: this test only checks that the `--source`
+        // branch forwards wt's error, never job-control output. Skipping `-i`
+        // avoids the interactive-shell startup wedge that flaked this test.
+        let (combined, exit_code) = exec_in_pty_shell(
+            shell,
+            &final_script,
+            &worktrunk_source,
+            &env_vars,
+            &[],
+            false,
+        );
         let output = ShellOutput {
             combined,
             exit_code,
@@ -1718,107 +1691,6 @@ approved-commands = ["echo 'fish background task'"]
                 assert_snapshot!("source_flag_error_passthrough", &output.combined);
             }
         });
-    }
-
-    /// The PTY harness must not hang when the session-leader shell fails to
-    /// terminate. The drain previously read the master to EOF and then
-    /// `wait()`ed, so a shell wedged by a job-control race (stopped, never
-    /// exiting) starved both — the master never EOFs while the shell still owns
-    /// the controlling tty — and the run blocked until the 180s harness
-    /// timeout. That was the flake behind `test_source_flag_forwards_errors`:
-    /// the read now treats child exit as the completion signal and kills a shell
-    /// that overruns a bounded fallback, returning with the output already
-    /// captured.
-    ///
-    /// This drives that recovery directly with a short timeout: a shell that
-    /// prints its output and then stops itself (`SIGSTOP`, reproducing the
-    /// job-control stop) is bounded and killed in ~2s, the marker is still
-    /// captured, and the exit code signals the timeout. Under the old drain this
-    /// call would block forever (the stopped shell never EOFs the master nor
-    /// returns from `wait()`).
-    #[test]
-    fn test_pty_read_recovers_from_wedged_shell() {
-        use portable_pty::CommandBuilder;
-        use std::time::{Duration, Instant};
-
-        let pair = crate::common::open_pty();
-
-        // Emit output, then stop the shell itself with SIGSTOP — the same
-        // `T` (stopped) state a job-control SIGTTOU race produces. `printf` and
-        // `kill` are bash builtins, so this needs nothing on PATH, and the
-        // stopped session leader never exits on its own.
-        let mut cmd = CommandBuilder::new(shell_binary("bash"));
-        cmd.arg("-c");
-        cmd.arg(r#"printf '__WEDGE_MARKER__\n'; kill -STOP "$$"; exit 0"#);
-
-        let mut child = pair.slave.spawn_command(cmd).unwrap();
-        drop(pair.slave);
-
-        let reader = pair.master.try_clone_reader().unwrap();
-        let writer = pair.master.take_writer().unwrap();
-        drop(writer); // EOF to child stdin, matching read_pty_output
-        let _ = pair.master;
-
-        let start = Instant::now();
-        let (output, exit_code) = crate::common::pty::drain_pty_until_child_exit(
-            reader,
-            &mut child,
-            Duration::from_secs(2),
-        );
-        let elapsed = start.elapsed();
-
-        assert!(
-            elapsed < Duration::from_secs(30),
-            "drain should bound a wedged shell; took {elapsed:?}"
-        );
-        assert!(
-            output.contains("__WEDGE_MARKER__"),
-            "output emitted before the wedge should be captured.\nOutput:\n{output}"
-        );
-        assert_eq!(
-            exit_code,
-            crate::common::pty::PTY_WEDGE_EXIT_CODE,
-            "a killed wedged shell should report the wedge exit code"
-        );
-    }
-
-    /// `exec_in_pty_interactive` recovers from a startup wedge by re-running.
-    /// `test_pty_read_recovers_from_wedged_shell` covers the building block (a
-    /// wedged shell is bounded and reported as `PTY_WEDGE_EXIT_CODE`); this pins
-    /// the retry contract on top of it without paying a real 30s wedge: succeed
-    /// immediately on a clean result, retry past a wedge, and give up after the
-    /// cap returning the last result.
-    #[test]
-    fn test_retry_pty_on_wedge() {
-        let wedge = crate::common::pty::PTY_WEDGE_EXIT_CODE;
-
-        // Clean result on the first try → no retry.
-        let mut calls = 0;
-        let r = retry_pty_on_wedge(3, || {
-            calls += 1;
-            ("ok".to_string(), 0)
-        });
-        assert_eq!((r, calls), (("ok".to_string(), 0), 1));
-
-        // Wedge once, then recover → returns the recovered result.
-        let mut calls = 0;
-        let r = retry_pty_on_wedge(3, || {
-            calls += 1;
-            if calls == 1 {
-                (String::new(), wedge)
-            } else {
-                ("recovered".to_string(), 0)
-            }
-        });
-        assert_eq!((r, calls), (("recovered".to_string(), 0), 2));
-
-        // Wedge every time → gives up after the cap, returning the last result.
-        let mut calls = 0;
-        let r = retry_pty_on_wedge(3, || {
-            calls += 1;
-            (format!("try{calls}"), wedge)
-        });
-        assert_eq!((r, calls), (("try3".to_string(), wedge), 3));
     }
 
     // ========================================================================
@@ -3877,13 +3749,8 @@ mod windows_tests {
         let reader = pair.master.try_clone_reader().unwrap();
         let writer = pair.master.take_writer().unwrap();
 
-        let (output, exit_code) = crate::common::pty::read_pty_output(
-            reader,
-            writer,
-            pair.master,
-            &mut child,
-            std::time::Duration::from_secs(60),
-        );
+        let (output, exit_code) =
+            crate::common::pty::read_pty_output(reader, writer, pair.master, &mut child);
 
         let normalized = output.replace("\r\n", "\n");
 
