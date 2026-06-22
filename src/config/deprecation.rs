@@ -498,10 +498,11 @@ enum DeprecationRule {
 /// `[switch.picker]`.
 ///
 /// Most rows rewrite disjoint keys, but one ordering is load-bearing:
-/// - `[select]` → `[switch.picker]` precedes the rules that edit keys under
-///   `[switch]`: it moves a `timeout-ms` written under `[select]` to where
-///   the strip rule looks, and converts an inline `switch` table to a
-///   standard one, which the `no-cd` rule's `as_table()` match requires.
+/// - `[select]` → `[switch.picker]` precedes the `timeout-ms` strip rule so a
+///   `timeout-ms` written under `[select]` is first moved to `switch.picker`,
+///   where the strip rule then removes it. The `no-cd` and `timeout-ms` rules
+///   both match an inline `switch` directly, so the move is the only ordering
+///   dependency — no inline-to-standard conversion is relied on.
 ///
 /// The `[ci]` → `[forge]` rule is order-independent: `[forge]` takes over
 /// `[ci]`'s explicit document position (see [`migrate_ci_doc`]), so its
@@ -936,8 +937,28 @@ fn migrate_negated_bool(table: &mut toml_edit::Table, old_key: &str, new_key: &s
     true
 }
 
+/// The inline-table counterpart of [`migrate_negated_bool`], for a section
+/// written inline as `merge = { no-ff = true }`. `toml_edit` surfaces a regular
+/// `[merge]` section and an inline `merge = { … }` as different node types, so
+/// both forms need their own walk (mirroring [`remove_switch_picker_timeout_in`]).
+fn migrate_negated_bool_inline(
+    table: &mut toml_edit::InlineTable,
+    old_key: &str,
+    new_key: &str,
+) -> bool {
+    let Some(old_val) = table.get(old_key).and_then(|v| v.as_bool()) else {
+        return false;
+    };
+    table.remove(old_key);
+    if !table.contains_key(new_key) {
+        table.insert(new_key, toml_edit::Value::from(!old_val));
+    }
+    true
+}
+
 /// Migrate a negated boolean field in a section and its project-level
-/// counterparts, reporting `kind` when any scope changed.
+/// counterparts, reporting `kind` when any scope changed. Handles a section
+/// written as a standard table (`[merge]`) or inline (`merge = { … }`).
 fn migrate_negated_bool_doc(
     doc: &mut toml_edit::DocumentMut,
     section: &str,
@@ -945,11 +966,12 @@ fn migrate_negated_bool_doc(
     new_key: &str,
     kind: DeprecationKind,
 ) -> Deprecations {
-    if for_each_config_table_mut(doc, |_, scope| {
-        scope
-            .get_mut(section)
-            .and_then(|s| s.as_table_mut())
-            .is_some_and(|table| migrate_negated_bool(table, old_key, new_key))
+    if for_each_config_table_mut(doc, |_, scope| match scope.get_mut(section) {
+        Some(toml_edit::Item::Table(table)) => migrate_negated_bool(table, old_key, new_key),
+        Some(toml_edit::Item::Value(toml_edit::Value::InlineTable(table))) => {
+            migrate_negated_bool_inline(table, old_key, new_key)
+        }
+        _ => false,
     }) {
         vec![kind]
     } else {
@@ -999,26 +1021,29 @@ fn rename_hook_key(doc: &mut toml_edit::DocumentMut, old_key: &str, new_key: &st
     modified
 }
 
-/// Remove `timeout-ms` from `[switch.picker]` in a table (top-level or project).
-/// An emptied `[switch.picker]` section is left in place — it round-trips
-/// harmlessly.
+/// Remove `timeout-ms` from `switch.picker` in a table (top-level or project).
+/// An emptied `picker` is left in place — it round-trips harmlessly.
 ///
-/// `[switch.picker]` can be written either as a section (regular table) or
-/// inline (`picker = { ... }`); `toml_edit` surfaces these as different node
-/// types, so both branches are needed.
+/// Both `switch` and its `picker` can be written as a section table or inline
+/// (`switch = { picker = { ... } }`); `toml_edit` surfaces these as different
+/// node types, so every shape gets its own branch — matching the inline-aware
+/// `no-cd`/`no-ff` rules. A `picker` nested inside an inline `switch` is itself
+/// always inline.
 fn remove_switch_picker_timeout_in(table: &mut toml_edit::Table) -> bool {
-    let Some(picker) = table
-        .get_mut("switch")
-        .and_then(|s| s.as_table_mut())
-        .and_then(|t| t.get_mut("picker"))
-    else {
-        return false;
-    };
-    match picker {
-        toml_edit::Item::Table(t) => t.remove("timeout-ms").is_some(),
-        toml_edit::Item::Value(toml_edit::Value::InlineTable(it)) => {
-            it.remove("timeout-ms").is_some()
-        }
+    match table.get_mut("switch") {
+        // `[switch]` section: `picker` may be a section or inline table.
+        Some(toml_edit::Item::Table(switch)) => match switch.get_mut("picker") {
+            Some(toml_edit::Item::Table(t)) => t.remove("timeout-ms").is_some(),
+            Some(toml_edit::Item::Value(toml_edit::Value::InlineTable(it))) => {
+                it.remove("timeout-ms").is_some()
+            }
+            _ => false,
+        },
+        // Inline `switch = { picker = { ... } }`: `picker` is itself inline.
+        Some(toml_edit::Item::Value(toml_edit::Value::InlineTable(switch))) => switch
+            .get_mut("picker")
+            .and_then(|p| p.as_inline_table_mut())
+            .is_some_and(|it| it.remove("timeout-ms").is_some()),
         _ => false,
     }
 }
@@ -2937,9 +2962,10 @@ platform = "github"
             "switch = \"x\"\n\n[select]\npreview = \"p\"\n",
             "commit = \"x\"\n\n[commit-generation]\ncommand = \"llm\"\n",
             // non-bool negated key is left for the unknown-field warning,
-            // whether or not the new key is present
+            // whether or not the new key is present (section or inline form)
             "[merge]\nno-ff = \"yes\"\n",
             "[merge]\nff = true\nno-ff = \"yes\"\n",
+            "merge = { no-ff = \"yes\" }\n",
             // empty approved-commands is not deprecated
             "[projects.\"github.com/u/r\"]\napproved-commands = []\n",
         ];
@@ -2958,6 +2984,12 @@ platform = "github"
         let rewritten = [
             "[ci]\nplatform = \"github\"\n",
             "[merge]\nff = true\nno-ff = true\n",
+            // negated bool written inline (`merge = { no-ff = true }`) migrates
+            // like the section form
+            "merge = { no-ff = true }\n",
+            "switch = { no-cd = true }\n",
+            // timeout-ms under an inline `switch` is stripped like the section form
+            "switch = { picker = { timeout-ms = 500 } }\n",
             "[select]\ntimeout-ms = 500\n",
             "worktree-path = \"../{{ repo_root }}.{{ branch }}\"\n",
             "[projects.\"github.com/u/r\"]\napproved-commands = [\"npm test\"]\n",
@@ -3963,6 +3995,14 @@ no-ff = true
         let result = migrate_content(content);
         assert!(result.contains("cd = true"), "Should invert: {result}");
         assert!(!result.contains("no-cd"), "Should remove no-cd: {result}");
+    }
+
+    #[test]
+    fn test_migrate_negated_bool_inline_table() {
+        // A section written inline (`merge = { no-ff = true }`) migrates like the
+        // standard `[merge]` form, preserving the inline shape.
+        insta::assert_snapshot!(migrate_content("merge = { no-ff = true }\n"), @"merge = { ff = false }");
+        insta::assert_snapshot!(migrate_content("switch = { no-cd = true }\n"), @"switch = { cd = false }");
     }
 
     #[test]

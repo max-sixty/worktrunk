@@ -204,6 +204,36 @@ fn resolve_env_overlay(file_table: &toml::Table, vars: &[EnvVar]) -> toml::Table
     overlay
 }
 
+/// Canonicalize a built env-var overlay through the same deprecation migration
+/// as config files and `--config-set`, so a deprecated env var such as
+/// `WORKTRUNK__MERGE__NO_FF` (which resolves to the deprecated key
+/// `merge.no-ff`) takes effect as `merge.ff` instead of falling through as an
+/// unknown field. Migrating before the deep-merge keeps env winning over a
+/// lower layer's canonical key — the same fragment-before-merge ordering
+/// [`UserConfig::apply_cli_overrides`] uses.
+///
+/// The rewrite is silent, matching the other ephemeral layer: an env overlay
+/// has no file for `wt config update` to materialize.
+///
+/// Round-trips through [`super::deprecation::migrate_content`]'s string form.
+/// The overlay's leaves are the scalars [`try_parse_value`] produces (bool,
+/// int, float, string) plus nested tables, so it always serializes, and
+/// `migrate_content` always returns valid TOML — mirroring the same
+/// post-migration reparse `expect` in [`load_config_file`].
+///
+/// Canonicalization can surface a type mismatch the deprecated name hid: an
+/// unknown key like `commit-generation.command = 42` deserializes (unknown
+/// fields are ignored) but the migrated `commit.generation.command = 42` does
+/// not, so it joins the whole-env-layer `LoadError::Env` drop at the call site
+/// instead of being silently ignored — the same outcome a type-mismatched value
+/// in a *canonical* env var already produces.
+fn migrate_env_overlay(overlay: toml::Table) -> toml::Table {
+    let serialized = toml::to_string(&overlay).expect("env overlay serializes to TOML");
+    super::deprecation::migrate_content(&serialized)
+        .parse::<toml::Table>()
+        .expect("migrate_content returns valid TOML")
+}
+
 /// Try to coerce a string into a typed TOML value (bool → i64 → f64 → string).
 fn try_parse_value(s: &str) -> toml::Value {
     if s.eq_ignore_ascii_case("true") {
@@ -495,7 +525,7 @@ impl UserConfig {
             // field. This handles mixed cases (e.g., WORKTRUNK__LIST__TIMEOUT_MS=100
             // needs Integer for u64, WORKTRUNK_WORKTREE_PATH=42 needs String).
             let file_table = merged_table.clone();
-            let env_overlay = resolve_env_overlay(&file_table, &env_vars);
+            let env_overlay = migrate_env_overlay(resolve_env_overlay(&file_table, &env_vars));
             deep_merge_table(&mut merged_table, env_overlay);
 
             // Env overlay broke deserialization — fall back to file-only config.
@@ -527,6 +557,18 @@ impl UserConfig {
     /// (via [`deep_merge_table`]) so sibling keys survive —
     /// `--config-set list.full=true` leaves `list.branches` untouched.
     ///
+    /// Each fragment first runs through the same deprecation migration as a
+    /// config file ([`super::deprecation::migrate_content`] — structural and
+    /// silent rewrites, no `UpdateOnly`), so a deprecated key such as
+    /// `merge.no-ff` is canonicalized to `merge.ff` *before* the fragment is
+    /// parsed and merged, instead of falling through as an unknown field.
+    /// Migrating the fragment
+    /// (not the merged document) keeps layer precedence intact: the
+    /// canonicalized override wins over a lower layer's canonical key, rather
+    /// than colliding with it. The rewrite is silent — there is no file to
+    /// materialize, so the file-scoped "run `wt config update`" warning would
+    /// have nothing to act on.
+    ///
     /// The whole layer degrades as a unit: if any fragment fails to parse, or
     /// the merged result fails to deserialize or validate, every override is
     /// dropped and a [`LoadError::CliOverride`] is recorded, so a bad override
@@ -542,7 +584,11 @@ impl UserConfig {
 
         let base = merged_table.clone();
         for raw in overrides {
-            match raw.parse::<toml::Table>() {
+            // `migrate_content` returns the fragment unchanged when it is not
+            // valid TOML, so the parse below still catches a malformed fragment
+            // and drops the whole layer with an attributed warning.
+            let migrated = super::deprecation::migrate_content(raw);
+            match migrated.parse::<toml::Table>() {
                 Ok(fragment) => deep_merge_table(merged_table, fragment),
                 Err(err) => {
                     warnings.push(LoadError::CliOverride {

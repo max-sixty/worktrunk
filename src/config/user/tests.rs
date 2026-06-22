@@ -278,6 +278,7 @@ fn test_list_config_serde() {
         summary: None,
         task_timeout_ms: Some(500),
         timeout_ms: None,
+        columns: vec!["branch".into(), "ci".into(), "path".into()],
         custom_columns: Default::default(),
     };
     let json = serde_json::to_string(&config).unwrap();
@@ -288,6 +289,28 @@ fn test_list_config_serde() {
     assert_eq!(parsed.summary, None);
     assert_eq!(parsed.task_timeout_ms, Some(500));
     assert_eq!(parsed.timeout_ms, None);
+    assert_eq!(parsed.columns, vec!["branch", "ci", "path"]);
+}
+
+#[test]
+fn test_list_config_columns_from_toml_array() {
+    // Config files use a TOML array.
+    let from_array: ListConfig = toml::from_str(r#"columns = ["branch", "ci"]"#).unwrap();
+    assert_eq!(from_array.columns, vec!["branch", "ci"]);
+
+    // Array entries are taken verbatim, so a stray-space entry survives to fail
+    // loudly at the wt list edge rather than being silently dropped.
+    let untrimmed: ListConfig = toml::from_str(r#"columns = [" branch "]"#).unwrap();
+    assert_eq!(untrimmed.columns, vec![" branch "]);
+
+    // Absent → empty (the default column set), not an error.
+    let absent: ListConfig = toml::from_str("full = true").unwrap();
+    assert!(absent.columns.is_empty());
+
+    // TODO(list-columns-env): the env overlay can only deliver a scalar, so the
+    // string form is rejected until env-var support lands (see ListConfig::columns).
+    let from_string: Result<ListConfig, _> = toml::from_str(r#"columns = "branch,ci""#);
+    assert!(from_string.is_err());
 }
 
 #[test]
@@ -607,6 +630,7 @@ fn test_merge_list_config() {
         summary: Some(true),
         task_timeout_ms: Some(1000),
         timeout_ms: Some(2000),
+        columns: vec!["branch".into(), "ci".into()],
         custom_columns: Default::default(),
     };
     let override_config = ListConfig {
@@ -616,6 +640,7 @@ fn test_merge_list_config() {
         summary: None,         // Should fall back to base
         task_timeout_ms: None, // Should fall back to base
         timeout_ms: None,      // Should fall back to base
+        columns: Vec::new(),   // Empty → fall back to base
         custom_columns: Default::default(),
     };
 
@@ -626,6 +651,24 @@ fn test_merge_list_config() {
     assert_eq!(merged.summary, Some(true)); // From base
     assert_eq!(merged.task_timeout_ms, Some(1000)); // From base
     assert_eq!(merged.timeout_ms, Some(2000)); // From base
+    assert_eq!(merged.columns, vec!["branch", "ci"]); // From base (override empty)
+}
+
+#[test]
+fn test_merge_list_config_columns_replace() {
+    // A non-empty override replaces the whole list (it's an ordering, not a
+    // keyed set), unlike the per-key union used for custom_columns.
+    let base = ListConfig {
+        columns: vec!["branch".into(), "ci".into(), "path".into()],
+        ..Default::default()
+    };
+    let override_config = ListConfig {
+        columns: vec!["status".into(), "branch".into()],
+        ..Default::default()
+    };
+
+    let merged = base.merge_with(&override_config);
+    assert_eq!(merged.columns, vec!["status", "branch"]);
 }
 
 #[test]
@@ -1059,6 +1102,7 @@ fn test_list_config_accessor_methods_with_values() {
         summary: Some(true),
         task_timeout_ms: Some(5000),
         timeout_ms: Some(3000),
+        columns: Vec::new(),
         custom_columns: Default::default(),
     };
     assert!(config.full());
@@ -2557,6 +2601,41 @@ fn test_cli_override_validation_failure_drops_layer() {
 }
 
 #[test]
+fn test_cli_override_migrates_deprecated_keys() {
+    // A deprecated key passed via `--config-set` runs through the same
+    // deprecation migration as a config file, so it is canonicalized and takes
+    // effect instead of falling through as an unknown field (which serde
+    // silently drops). The rewrite is silent — there is no file to materialize,
+    // so no deprecation warning is recorded.
+
+    // merge.no-ff = true → merge.ff = false
+    let (table, warnings) = apply_overrides(toml::Table::new(), &["merge.no-ff = true"]);
+    assert!(warnings.is_empty(), "merge.no-ff: {warnings:?}");
+    let config: UserConfig = toml::Value::Table(table).try_into().unwrap();
+    assert_eq!(config.merge.ff, Some(false));
+
+    // switch.no-cd = true → switch.cd = false
+    let (table, warnings) = apply_overrides(toml::Table::new(), &["switch.no-cd = true"]);
+    assert!(warnings.is_empty(), "switch.no-cd: {warnings:?}");
+    let config: UserConfig = toml::Value::Table(table).try_into().unwrap();
+    assert_eq!(config.switch.cd, Some(false));
+}
+
+#[test]
+fn test_cli_override_deprecated_key_wins_over_lower_canonical() {
+    // Each fragment is migrated *before* it is merged, so the canonicalized
+    // override replaces a lower layer's canonical key rather than colliding
+    // with it. (Migrating the merged document instead would leave both
+    // `merge.ff` and `merge.no-ff` present, and the migration would keep the
+    // lower layer's `ff`, silently dropping the override.)
+    let base: toml::Table = "[merge]\nff = true\n".parse().unwrap();
+    let (table, warnings) = apply_overrides(base, &["merge.no-ff = true"]);
+    assert!(warnings.is_empty());
+    let config: UserConfig = toml::Value::Table(table).try_into().unwrap();
+    assert_eq!(config.merge.ff, Some(false)); // override (no-ff=true → ff=false) wins
+}
+
+#[test]
 fn test_cli_override_empty_is_noop() {
     let (table, warnings) = apply_overrides(toml::Table::new(), &[]);
     assert!(warnings.is_empty());
@@ -2577,6 +2656,24 @@ fn test_try_parse_value() {
         try_parse_value("hello"),
         toml::Value::String("hello".into())
     );
+}
+
+#[test]
+fn test_env_overlay_migrates_deprecated_key() {
+    use super::{EnvVar, migrate_env_overlay, resolve_env_overlay, try_parse_value};
+    // `WORKTRUNK__MERGE__NO_FF=true` resolves to the deprecated key
+    // `merge.no-ff`. The env overlay runs through the same deprecation migration
+    // as config files and `--config-set`, so it takes effect as `merge.ff =
+    // false` instead of falling through as an unknown field.
+    let var = EnvVar {
+        name: "WORKTRUNK__MERGE__NO_FF".to_string(),
+        segments: vec!["merge".to_string(), "no-ff".to_string()],
+        typed_value: try_parse_value("true"),
+        raw_value: "true".to_string(),
+    };
+    let overlay = migrate_env_overlay(resolve_env_overlay(&toml::Table::new(), &[var]));
+    let config: UserConfig = toml::Value::Table(overlay).try_into().unwrap();
+    assert_eq!(config.merge.ff, Some(false));
 }
 
 // =========================================================================

@@ -6536,6 +6536,42 @@ fn test_switch_no_cd_flag_explicit(repo: TestRepo) {
     );
 }
 
+/// A *deprecated* key passed via `--config-set` is migrated to its canonical
+/// form before it is applied (`switch.no-cd` → `switch.cd`), so it takes effect
+/// end-to-end instead of being dropped as an unknown field. The migrated
+/// `switch.cd = false` suppresses the cd directive, so the output omits the
+/// "Cannot change directory" line a cd-enabled switch prints. The migration is
+/// silent: an inline override has no file for `wt config update` to rewrite, so
+/// no deprecation warning appears.
+#[rstest]
+fn test_switch_config_set_migrates_deprecated_no_cd(repo: TestRepo) {
+    repo.run_git(&["branch", "dep-no-cd"]);
+
+    snapshot_switch(
+        "switch_config_set_migrates_deprecated_no_cd",
+        &repo,
+        &["dep-no-cd", "--config-set", "switch.no-cd = true"],
+    );
+}
+
+/// The `WORKTRUNK_*` env layer migrates deprecated keys the same way:
+/// `WORKTRUNK__SWITCH__NO_CD=true` resolves to the deprecated `switch.no-cd`,
+/// which is canonicalized to `switch.cd = false` and suppresses the cd
+/// directive — the output omits the "Cannot change directory" line. Without
+/// migration the env var would fall through as an unknown field and the line
+/// would appear.
+#[rstest]
+fn test_switch_env_var_migrates_deprecated_no_cd(repo: TestRepo) {
+    repo.run_git(&["branch", "env-no-cd"]);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["env-no-cd"], None);
+        cmd.env("WORKTRUNK__SWITCH__NO_CD", "true");
+        assert_cmd_snapshot!("switch_env_var_migrates_deprecated_no_cd", cmd);
+    });
+}
+
 /// Test that worktrunk works correctly when `worktree.useRelativePaths` is enabled.
 ///
 /// Git 2.48+ supports `worktree.useRelativePaths`, which stores relative paths in the
