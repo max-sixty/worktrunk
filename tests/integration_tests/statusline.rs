@@ -24,6 +24,12 @@ fn run_statusline_from_dir(
     // Apply repo's git environment
     repo.configure_wt_cmd(&mut cmd);
 
+    // Pin the timezone so any wall-clock segment (the claude-code statusline
+    // renders `chrono::Local`) is deterministic across machines — not only in
+    // the `run_statusline_with_locale` helper. `LC_ALL=C` is already pinned
+    // globally by the test harness.
+    cmd.env("TZ", "UTC");
+
     if stdin_json.is_some() {
         cmd.stdin(Stdio::piped());
     }
