@@ -6420,6 +6420,24 @@ fn test_switch_no_cd_flag_explicit(repo: TestRepo) {
     );
 }
 
+/// A *deprecated* key passed via `--config-set` is migrated to its canonical
+/// form before it is applied (`switch.no-cd` → `switch.cd`), so it takes effect
+/// end-to-end instead of being dropped as an unknown field. The migrated
+/// `switch.cd = false` suppresses the cd directive, so the output omits the
+/// "Cannot change directory" line a cd-enabled switch prints. The migration is
+/// silent: an inline override has no file for `wt config update` to rewrite, so
+/// no deprecation warning appears.
+#[rstest]
+fn test_switch_config_set_migrates_deprecated_no_cd(repo: TestRepo) {
+    repo.run_git(&["branch", "dep-no-cd"]);
+
+    snapshot_switch(
+        "switch_config_set_migrates_deprecated_no_cd",
+        &repo,
+        &["dep-no-cd", "--config-set", "switch.no-cd = true"],
+    );
+}
+
 /// Test that worktrunk works correctly when `worktree.useRelativePaths` is enabled.
 ///
 /// Git 2.48+ supports `worktree.useRelativePaths`, which stores relative paths in the

@@ -579,6 +579,31 @@ fn test_list_config_cli_override_after_subcommand(repo: TestRepo) {
     });
 }
 
+/// A *deprecated* key passed via `--config-set` is run through the same
+/// deprecation migration as a config file (`merge.no-ff` → `merge.ff`), so the
+/// override layer is accepted rather than dropped as unknown. The migration is
+/// silent — an inline override has no file for `wt config update` to rewrite —
+/// so no deprecation or `--config-set` warning appears and `list` runs
+/// normally. (That the migrated value takes effect is covered by the
+/// `apply_cli_overrides` unit tests and
+/// `test_switch_config_set_migrates_deprecated_no_cd`; `list` output does not
+/// reflect a `merge` key.)
+#[rstest]
+fn test_list_config_cli_override_deprecated_key_silently_migrated(repo: TestRepo) {
+    fs::write(repo.test_config_path(), "[list]\nbranches = true\n").unwrap();
+    repo.run_git(&["branch", "feature"]);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["--config-set", "merge.no-ff = true", "list"])
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 /// Bad values in non-section fields (projects, skip-*-prompt) must still be
 /// attributed to the file, not to env vars.
 #[rstest]
