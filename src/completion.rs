@@ -27,6 +27,18 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
     // warnings for the duration of this process.
     worktrunk::config::suppress_warnings();
 
+    // Completion exits before `main`'s `logging::init`, so the normal
+    // `-v`/`-vv` pipeline never runs here. `WORKTRUNK_VERBOSE` opts this
+    // short-lived subprocess into the same logging as a flagged command — the
+    // env-var equivalent of `-vv` — so `[wt-trace]` timing and `$ git …`
+    // records for a slow completion land in `.git/wt/logs/` just as `-vv`
+    // writes them. Left unset, completion stays silent so stray stderr never
+    // lands above the user's prompt.
+    let completion_verbose = crate::logging::env_verbose_level();
+    if completion_verbose > 0 {
+        crate::logging::init(completion_verbose);
+    }
+
     let mut args: Vec<OsString> = std::env::args_os().collect();
     CONTEXT.with(|ctx| *ctx.borrow_mut() = Some(CompletionContext { args: args.clone() }));
 
@@ -649,10 +661,17 @@ fn try_forward_completion_to_custom(
     if let Some(idx) = index {
         cmd.env("_CLAP_COMPLETE_INDEX", idx.to_string());
     }
+    // Don't propagate `WORKTRUNK_VERBOSE` to the forwarded binary: at level 2 a
+    // worktrunk-family child would re-run `logging::init` and truncate the
+    // repo-wide `.git/wt/logs/` trace files this completion just wrote — wasted
+    // work at best, the parent's trace lost at worst (the child's stderr is
+    // discarded below, so it can't surface anything useful anyway).
+    cmd.env_remove(crate::logging::VERBOSE_ENV);
 
-    // Capture stdout from the custom binary. Using std::process::Command
-    // directly (not shell_exec::Cmd) because this runs during completion —
-    // a short-lived subprocess where logging/tracing is unwanted.
+    // Capture the custom binary's stdout — it carries the forwarded completion
+    // candidates. Uses `std::process::Command` rather than `shell_exec::Cmd`
+    // because we only need that captured stdout, not `Cmd`'s tracing/streaming;
+    // stderr is discarded so the child can't write above the user's prompt.
     let result = cmd
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
