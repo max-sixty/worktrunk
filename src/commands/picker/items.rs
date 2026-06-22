@@ -402,9 +402,6 @@ fn render_worktree_pr(branch: &str, pr_ref: PrRef, status: &PrStatus) -> String 
     if let Some(url) = &status.url {
         out.push_str(&cformat!("<dim>url</>{reset}      {url}\n"));
     }
-    out.push_str(&cformat!(
-        "\n<dim>Open the PR for its title & discussion; Enter switches to this branch</>{reset}\n"
-    ));
     out
 }
 

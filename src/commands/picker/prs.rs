@@ -137,9 +137,9 @@ struct PrEntry {
     is_draft: bool,
     url: Option<String>,
     kind: RefKind,
-    /// PR/MR description (GitHub `body`, GitLab `description`), shown in the
-    /// `pr` preview tab. Rides the one list call — empty when the forge
-    /// returns no body. Markdown is shown verbatim (no rendering).
+    /// PR/MR description (GitHub `body`, GitLab `description`), rendered as
+    /// markdown in the `pr` preview tab. Rides the one list call — empty when
+    /// the forge returns no body.
     body: String,
     /// CI + review status for the CI column, built from the same forge call.
     /// `None` when the forge can't supply it in one call (the row then keeps
@@ -523,44 +523,31 @@ impl PrSkimItem {
     }
 }
 
-/// The PR/MR description block for the `pr` preview pane: the body wrapped to
-/// the pane width and quoted in the house gutter ([`format_with_gutter`], a
-/// bg-color bar that closes each line with a full `\x1b[0m` — skim-safe, unlike
-/// the SGR-22 the bold/dim spans emit). Capped so a long body stays scannable;
-/// the full PR is one Enter (or the `url`) away. Empty body → empty
-/// string, so the block is skipped. The leading `\x1b[0m` is a defensive
-/// boundary so the first gutter renders clean regardless of what precedes it
-/// (the metadata lines already reset their own spans).
+/// The PR/MR description block for the `pr` preview pane: the body rendered as
+/// markdown (bold headers, styled lists and inline code — the same renderer the
+/// `summary` tab uses) and quoted in the house gutter ([`format_with_gutter`],
+/// a bg-color bar that closes each line with a full `\x1b[0m`, skim-safe). The
+/// whole body renders; the preview pane scrolls (`ctrl-u`/`ctrl-d`) through a
+/// long one. Empty body → empty string, so the block is skipped. The leading
+/// `\x1b[0m` is a defensive boundary so the first gutter line renders clean
+/// regardless of what precedes it (the metadata lines already reset their own
+/// spans).
 ///
 /// `width` is the list width, a close proxy for the preview pane width in both
 /// layouts (Right splits ~50/50; Down gives list and preview the full width).
+/// The markdown wraps to the gutter's inner width (the bar plus its pad take
+/// two columns) so the gutter's own wrap is a no-op rather than re-breaking the
+/// already-styled lines.
 fn render_pr_description(body: &str, width: usize) -> String {
     let body = body.trim();
     if body.is_empty() {
         return String::new();
     }
-    /// Wrapped-line cap: enough to convey the gist, short enough to keep the
-    /// pane scannable. Overflow collapses to a one-line "… N more" hint.
-    const MAX_LINES: usize = 30;
-
     let reset = Reset;
-    let gutter = format_with_gutter(body, Some(width));
-    let lines: Vec<&str> = gutter.lines().collect();
-    let mut out = format!("\n{reset}");
-    if let Some(extra) = lines.len().checked_sub(MAX_LINES).filter(|&n| n > 0) {
-        for line in &lines[..MAX_LINES] {
-            out.push_str(line);
-            out.push('\n');
-        }
-        let plural = if extra == 1 { "" } else { "s" };
-        out.push_str(&cformat!(
-            "<dim>… {extra} more line{plural} — open the PR for the full description</>{reset}\n"
-        ));
-    } else {
-        out.push_str(&gutter);
-        out.push('\n');
-    }
-    out
+    let rendered =
+        crate::md_help::render_markdown_in_help_with_width(body, Some(width.saturating_sub(2)));
+    let gutter = format_with_gutter(&rendered, Some(width));
+    format!("\n{reset}{gutter}\n")
 }
 
 /// The pane for tabs 1-5 on a `--prs` row. The head branch isn't checked out
@@ -1222,20 +1209,26 @@ mod tests {
     }
 
     #[test]
-    fn description_caps_long_bodies_with_a_hint() {
-        // One word per line so wrapping yields one gutter line each.
+    fn description_renders_the_whole_body() {
+        // One word per line so each survives as its own gutter line; the pane
+        // scrolls, so the full body renders with no truncation hint.
         let body = (0..50)
-            .map(|i| format!("word{i}"))
+            .map(|i| format!("- word{i}"))
             .collect::<Vec<_>>()
             .join("\n");
         let out = render_pr_description(&body, 80);
-        assert!(
-            out.contains("more lines — open the PR"),
-            "truncation hint: {out:?}"
-        );
-        // First lines survive; the tail is collapsed.
+        assert!(!out.contains("more line"), "no truncation hint: {out:?}");
         assert!(out.contains("word0"), "head kept: {out:?}");
-        assert!(!out.contains("word49"), "tail dropped: {out:?}");
+        assert!(out.contains("word49"), "tail kept: {out:?}");
+    }
+
+    #[test]
+    fn description_renders_markdown() {
+        // Markdown is styled, not shown verbatim: a bold span carries the SGR-1
+        // termimad emits, and the literal `**` markers are gone.
+        let out = render_pr_description("Fixes the **flaky** retry.", 80);
+        assert!(out.contains("\x1b[1m"), "bold rendered: {out:?}");
+        assert!(!out.contains("**"), "markers consumed: {out:?}");
     }
 
     #[test]
