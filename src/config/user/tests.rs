@@ -293,33 +293,24 @@ fn test_list_config_serde() {
 }
 
 #[test]
-fn test_list_config_columns_from_toml_array_or_string() {
+fn test_list_config_columns_from_toml_array() {
     // Config files use a TOML array.
     let from_array: ListConfig = toml::from_str(r#"columns = ["branch", "ci"]"#).unwrap();
     assert_eq!(from_array.columns, vec!["branch", "ci"]);
 
-    // The env overlay can only deliver a scalar string; `string_or_seq` splits
-    // it (trimming whitespace and dropping empties) so WORKTRUNK__LIST__COLUMNS
-    // works. This is the form a typed-probe fallback feeds back through serde.
-    let from_string: ListConfig = toml::from_str(r#"columns = "branch, ci ,path,""#).unwrap();
-    assert_eq!(from_string.columns, vec!["branch", "ci", "path"]);
-
-    // An all-blank string trims to empty → the default set, never an error
-    // (so `WORKTRUNK__LIST__COLUMNS=` is a no-op rather than a failure).
-    let blank: ListConfig = toml::from_str(r#"columns = "  ,  ""#).unwrap();
-    assert!(blank.columns.is_empty());
-    let empty_str: ListConfig = toml::from_str(r#"columns = """#).unwrap();
-    assert!(empty_str.columns.is_empty());
-
-    // Array entries are NOT trimmed (only the scalar string form splits/trims),
-    // so a stray-space entry survives to fail loudly at the wt list edge rather
-    // than being silently dropped.
+    // Array entries are taken verbatim, so a stray-space entry survives to fail
+    // loudly at the wt list edge rather than being silently dropped.
     let untrimmed: ListConfig = toml::from_str(r#"columns = [" branch "]"#).unwrap();
     assert_eq!(untrimmed.columns, vec![" branch "]);
 
     // Absent → empty (the default column set), not an error.
     let absent: ListConfig = toml::from_str("full = true").unwrap();
     assert!(absent.columns.is_empty());
+
+    // TODO(list-columns-env): the env overlay can only deliver a scalar, so the
+    // string form is rejected until env-var support lands (see ListConfig::columns).
+    let from_string: Result<ListConfig, _> = toml::from_str(r#"columns = "branch,ci""#);
+    assert!(from_string.is_err());
 }
 
 #[test]

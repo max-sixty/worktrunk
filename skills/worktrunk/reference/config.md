@@ -208,13 +208,14 @@ header, so a selection mixes built-ins and custom columns in one ordered list
 list is hidden (omit `columns` entirely to keep the default set, where custom
 columns append automatically). A built-in name wins over a custom header that
 collides with it. The gutter type indicator always shows.
-`WORKTRUNK__LIST__COLUMNS` accepts the same list as a comma-separated string
-(splitting on commas, so a custom header named through it can't contain one —
-the TOML array form has no such limit). A name gated off elsewhere stays hidden
-— `ci` needs `--full`, `summary` needs `[commit.generation]` — so `columns`
-narrows the candidate set rather than forcing a column on. It affects the
-rendered table and the `wt switch` picker; `wt list --format json` is unaffected,
-always emitting every field (built-in and custom) regardless of the selection.
+
+Listing a column requests it but does not force it on: a column gated off
+elsewhere stays hidden — `ci` needs `--full`, `summary` needs
+`[commit.generation]` — so `columns` only narrows which columns may appear.
+
+The selection drives the rendered table and the `wt switch` picker.
+`wt list --format json` ignores it, always emitting every field, built-in and
+custom.
 
 #### Custom columns [experimental]
 

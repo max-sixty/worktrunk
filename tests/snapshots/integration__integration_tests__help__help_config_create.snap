@@ -187,13 +187,14 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# list is hidden (omit `columns` entirely to keep the default set, where custom[0m
 [107m [0m [2m# columns append automatically). A built-in name wins over a custom header that[0m
 [107m [0m [2m# collides with it. The gutter type indicator always shows.[0m
-[107m [0m [2m# `WORKTRUNK__LIST__COLUMNS` accepts the same list as a comma-separated string[0m
-[107m [0m [2m# (splitting on commas, so a custom header named through it can't contain one —[0m
-[107m [0m [2m# the TOML array form has no such limit). A name gated off elsewhere stays hidden[0m
-[107m [0m [2m# — `ci` needs `--full`, `summary` needs `[commit.generation]` — so `columns`[0m
-[107m [0m [2m# narrows the candidate set rather than forcing a column on. It affects the[0m
-[107m [0m [2m# rendered table and the `wt switch` picker; `wt list --format json` is unaffected,[0m
-[107m [0m [2m# always emitting every field (built-in and custom) regardless of the selection.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Listing a column requests it but does not force it on: a column gated off[0m
+[107m [0m [2m# elsewhere stays hidden — `ci` needs `--full`, `summary` needs[0m
+[107m [0m [2m# `[commit.generation]` — so `columns` only narrows which columns may appear.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# The selection drives the rendered table and the `wt switch` picker.[0m
+[107m [0m [2m# `wt list --format json` ignores it, always emitting every field, built-in and[0m
+[107m [0m [2m# custom.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# #### Custom columns [experimental][0m
 [107m [0m [2m#[0m

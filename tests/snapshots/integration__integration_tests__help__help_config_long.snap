@@ -235,13 +235,14 @@ header, so a selection mixes built-ins and custom columns in one ordered list
 list is hidden (omit [2mcolumns[0m entirely to keep the default set, where custom
 columns append automatically). A built-in name wins over a custom header that
 collides with it. The gutter type indicator always shows.
-[2mWORKTRUNK__LIST__COLUMNS[0m accepts the same list as a comma-separated string
-(splitting on commas, so a custom header named through it can't contain one —
-the TOML array form has no such limit). A name gated off elsewhere stays hidden
-— [2mci[0m needs [2m--full[0m, [2msummary[0m needs [2m[commit.generation][0m — so [2mcolumns[0m
-narrows the candidate set rather than forcing a column on. It affects the
-rendered table and the [2mwt switch[0m picker; [2mwt list --format json[0m is unaffected,
-always emitting every field (built-in and custom) regardless of the selection.
+
+Listing a column requests it but does not force it on: a column gated off
+elsewhere stays hidden — [2mci[0m needs [2m--full[0m, [2msummary[0m needs
+[2m[commit.generation][0m — so [2mcolumns[0m only narrows which columns may appear.
+
+The selection drives the rendered table and the [2mwt switch[0m picker.
+[2mwt list --format json[0m ignores it, always emitting every field, built-in and
+custom.
 
 [1mCustom columns [experimental][0m
 

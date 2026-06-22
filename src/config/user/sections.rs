@@ -201,13 +201,13 @@ pub struct ListConfig {
     /// built-in wins over a custom header that collides with its name. The
     /// gutter type indicator always shows. A custom column omitted from a
     /// non-empty selection is hidden; with no selection, custom columns append
-    /// to the default set. Accepts a TOML array in config files or a
-    /// comma-separated string from `WORKTRUNK__LIST__COLUMNS`.
-    #[serde(
-        default,
-        deserialize_with = "string_or_seq",
-        skip_serializing_if = "Vec::is_empty"
-    )]
+    /// to the default set. Set as a TOML array in config files.
+    // TODO(list-columns-env): `WORKTRUNK__LIST__COLUMNS` is not wired up yet. The
+    // env overlay can only deliver a scalar string, which a plain `Vec<String>`
+    // rejects. When we add it, parse the scalar as TOML
+    // (`WORKTRUNK__LIST__COLUMNS='["branch", "ci"]'`) so the env form matches the
+    // config-file array exactly, rather than splitting on commas.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub columns: Vec<String>,
 
     /// Custom columns, keyed by header text. See [`ListColumnConfig`].
@@ -219,55 +219,6 @@ pub struct ListConfig {
         skip_serializing_if = "BTreeMap::is_empty"
     )]
     pub custom_columns: BTreeMap<String, ListColumnConfig>,
-}
-
-/// Deserialize a column list from either a TOML array (`["branch", "ci"]`, the
-/// config-file form) or a comma-separated string (`"branch,ci"`).
-///
-/// The string form exists for the env overlay: `WORKTRUNK__*` can only deliver
-/// scalars, so a plain `Vec<String>` field would reject `WORKTRUNK__LIST__COLUMNS`
-/// outright. Only the string form is split: items are trimmed and empties dropped,
-/// so `"branch, ci"`, a trailing comma, and an all-blank value behave sensibly.
-/// Array entries are taken verbatim (a stray-space entry fails loudly at the
-/// edge rather than being silently dropped). Names are validated later at the
-/// `wt list` edge (`parse_selected_columns`), not at config load, since
-/// `ColumnKind` lives in the command layer out of reach of this crate.
-fn string_or_seq<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use std::fmt;
-
-    use serde::de::{self, SeqAccess, Visitor};
-
-    struct StringOrSeq;
-
-    impl<'de> Visitor<'de> for StringOrSeq {
-        type Value = Vec<String>;
-
-        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            f.write_str("a list of column names or a comma-separated string")
-        }
-
-        fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
-            Ok(value
-                .split(',')
-                .map(str::trim)
-                .filter(|item| !item.is_empty())
-                .map(str::to_string)
-                .collect())
-        }
-
-        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-            let mut columns = Vec::new();
-            while let Some(item) = seq.next_element::<String>()? {
-                columns.push(item);
-            }
-            Ok(columns)
-        }
-    }
-
-    deserializer.deserialize_any(StringOrSeq)
 }
 
 impl ListConfig {
