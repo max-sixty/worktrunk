@@ -427,6 +427,28 @@ fn test_list_config_env_override_bad_value_warns_on_stderr(repo: TestRepo) {
     });
 }
 
+/// A *deprecated* env var is canonicalized before it is applied, so a
+/// type-mismatched value the deprecated name hid now surfaces.
+/// `WORKTRUNK__COMMIT_GENERATION__COMMAND=42` migrates to
+/// `commit.generation.command = 42`, which fails to deserialize (the field is a
+/// String), so the whole env layer is dropped with a `LoadError::Env` warning
+/// naming the var — the same contract as a bad value in a canonical env var.
+/// File config survives. (Pre-migration the unknown key was silently ignored.)
+#[rstest]
+fn test_list_config_env_deprecated_type_mismatch_drops_layer(repo: TestRepo) {
+    fs::write(repo.test_config_path(), "[list]\nbranches = true\n").unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.env("WORKTRUNK__COMMIT_GENERATION__COMMAND", "42");
+        cmd.arg("list").current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 /// Numeric-looking env var values for String fields must not break config
 /// loading. WORKTRUNK_WORKTREE_PATH=42 should be treated as the string "42",
 /// not the integer 42 (which would fail to deserialize into Option<String>).

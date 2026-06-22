@@ -2614,6 +2614,24 @@ fn test_try_parse_value() {
     );
 }
 
+#[test]
+fn test_env_overlay_migrates_deprecated_key() {
+    use super::{EnvVar, migrate_env_overlay, resolve_env_overlay, try_parse_value};
+    // `WORKTRUNK__MERGE__NO_FF=true` resolves to the deprecated key
+    // `merge.no-ff`. The env overlay runs through the same deprecation migration
+    // as config files and `--config-set`, so it takes effect as `merge.ff =
+    // false` instead of falling through as an unknown field.
+    let var = EnvVar {
+        name: "WORKTRUNK__MERGE__NO_FF".to_string(),
+        segments: vec!["merge".to_string(), "no-ff".to_string()],
+        typed_value: try_parse_value("true"),
+        raw_value: "true".to_string(),
+    };
+    let overlay = migrate_env_overlay(resolve_env_overlay(&toml::Table::new(), &[var]));
+    let config: UserConfig = toml::Value::Table(overlay).try_into().unwrap();
+    assert_eq!(config.merge.ff, Some(false));
+}
+
 // =========================================================================
 // finalize() — defensive fallback
 // =========================================================================

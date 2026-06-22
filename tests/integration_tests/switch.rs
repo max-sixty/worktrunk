@@ -6438,6 +6438,24 @@ fn test_switch_config_set_migrates_deprecated_no_cd(repo: TestRepo) {
     );
 }
 
+/// The `WORKTRUNK_*` env layer migrates deprecated keys the same way:
+/// `WORKTRUNK__SWITCH__NO_CD=true` resolves to the deprecated `switch.no-cd`,
+/// which is canonicalized to `switch.cd = false` and suppresses the cd
+/// directive — the output omits the "Cannot change directory" line. Without
+/// migration the env var would fall through as an unknown field and the line
+/// would appear.
+#[rstest]
+fn test_switch_env_var_migrates_deprecated_no_cd(repo: TestRepo) {
+    repo.run_git(&["branch", "env-no-cd"]);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["env-no-cd"], None);
+        cmd.env("WORKTRUNK__SWITCH__NO_CD", "true");
+        assert_cmd_snapshot!("switch_env_var_migrates_deprecated_no_cd", cmd);
+    });
+}
+
 /// Test that worktrunk works correctly when `worktree.useRelativePaths` is enabled.
 ///
 /// Git 2.48+ supports `worktree.useRelativePaths`, which stores relative paths in the
