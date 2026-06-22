@@ -69,6 +69,19 @@ impl WorktreeData {
         self.prunable.is_some()
     }
 
+    /// This worktree's location on the gutter's presence axis (see
+    /// [`WorktreePresence`]). `is_current` wins when a worktree is both
+    /// current and primary — you're sitting in the main worktree.
+    pub fn presence(&self) -> WorktreePresence {
+        if self.is_current {
+            WorktreePresence::Current
+        } else if self.is_main {
+            WorktreePresence::Primary
+        } else {
+            WorktreePresence::Linked
+        }
+    }
+
     /// Create WorktreeData from a WorktreeInfo, with all computed fields set to None.
     pub(crate) fn from_worktree(
         wt: &worktrunk::git::WorktreeInfo,
@@ -117,16 +130,43 @@ impl ItemKind {
     /// keeps fuzzy ranks stable across the picker's progressive column updates.
     pub fn gutter_glyph(&self) -> char {
         match self {
-            ItemKind::Worktree(data) => {
-                if data.is_current {
-                    '@'
-                } else if data.is_main {
-                    '^'
-                } else {
-                    '+'
-                }
-            }
+            ItemKind::Worktree(data) => data.presence().gutter_glyph(),
             ItemKind::Branch(scope) => scope.gutter_glyph(),
+        }
+    }
+}
+
+/// A worktree row's location on the gutter's presence axis: the worktree
+/// currently in use (`@`), the primary/main worktree (`^`), or any other
+/// linked worktree (`+`) — the three worktree rungs before the branch
+/// glyphs (`/`/`|`). See [`ItemKind::gutter_glyph`].
+///
+/// Unlike [`BranchScope`], which is stored structurally, this is *derived*
+/// from `WorktreeData` via [`WorktreeData::presence`]. `is_current` and
+/// `is_main` are orthogonal bits — the main worktree is also current when
+/// you sit in it — and `is_main` is consumed independently by the status
+/// column and JSON, so the pair can't collapse into a single stored
+/// discriminant. `is_current` wins when a worktree is both.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum WorktreePresence {
+    /// The current worktree (matches repo discovery path: PWD or `-C`).
+    Current,
+    /// The primary/main worktree, and not the current one.
+    Primary,
+    /// Any other linked worktree.
+    Linked,
+}
+
+impl WorktreePresence {
+    /// The gutter glyph for a worktree row at this presence: `@` current,
+    /// `^` primary, `+` other linked. See [`ItemKind::gutter_glyph`] for the
+    /// row-kind axis this feeds and how the rendered sigil and picker search
+    /// text share it.
+    pub const fn gutter_glyph(self) -> char {
+        match self {
+            WorktreePresence::Current => '@',
+            WorktreePresence::Primary => '^',
+            WorktreePresence::Linked => '+',
         }
     }
 }
@@ -782,6 +822,7 @@ mod tests {
         assert_eq!(worktree(false, true).gutter_glyph(), '@');
         assert_eq!(worktree(true, false).gutter_glyph(), '^');
         assert_eq!(worktree(false, false).gutter_glyph(), '+');
+        assert_eq!(worktree(true, true).gutter_glyph(), '@');
         // Branches by scope.
         assert_eq!(ItemKind::Branch(BranchScope::Local).gutter_glyph(), '/');
         assert_eq!(ItemKind::Branch(BranchScope::Remote).gutter_glyph(), '|');
