@@ -441,6 +441,7 @@ fn gitlab_mr_status(
         ci_status,
         source: CiSource::PullRequest,
         is_stale: false,
+        is_priming: false,
         url,
         number: Some(PrRef::mr(u64::from(iid))),
         review_state,
@@ -470,8 +471,12 @@ impl PrSkimItem {
         let label = entry.kind.shortcut();
         let output_token = format!("{label}:{}", entry.number);
 
+        // Trailing gutter glyph (the `#` from `PR_GUTTER_SIGIL`, sans pad) so
+        // typing `#` filters to PR/MR rows, matching how the worktree/branch
+        // rows fold their sigil in (see `progressive_handler` `on_skeleton`).
+        let gutter = PR_GUTTER_SIGIL.trim_end();
         let search_text = format!(
-            "{label} {} {} {} {}",
+            "{label} {} {} {} {} {gutter}",
             entry.number, entry.title, entry.head_branch, entry.author
         );
 
@@ -723,6 +728,7 @@ mod tests {
                 ci_status: CiStatus::Passed,
                 source: CiSource::PullRequest,
                 is_stale: false,
+                is_priming: false,
                 url: None,
                 number: Some(number_ref),
                 review_state: None,
@@ -760,6 +766,35 @@ mod tests {
         assert!(text.contains("Speed up startup"));
         assert!(text.contains("feature/auth"));
         assert!(text.contains("alice"));
+        // Gutter glyph folded in so `#` filters to PR/MR rows.
+        assert!(text.trim_end().ends_with('#'), "gutter glyph: {text:?}");
+    }
+
+    /// `#` is a plain literal under skim's default engine (unlike `^`/`|`), so
+    /// it filters to PR/MR rows and leaves worktree/branch rows out. Companion
+    /// to `progressive_handler`'s `gutter_glyphs_filter_under_skims_default_engine`.
+    #[test]
+    fn hash_sigil_filters_to_pr_rows_under_skims_default_engine() {
+        struct TextItem(String);
+        impl SkimItem for TextItem {
+            fn text(&self) -> Cow<'_, str> {
+                Cow::Borrowed(&self.0)
+            }
+        }
+        let matches = |haystack: &dyn SkimItem| -> bool {
+            AndOrEngineFactory::new(ExactOrFuzzyEngineFactory::builder().build())
+                .create_engine("#")
+                .match_item(haystack)
+                .is_some()
+        };
+
+        let pr = PrSkimItem::new(entry(RefKind::Pr, 42, "Speed up startup"), 120, None);
+        assert!(matches(&pr), "# selects the PR row");
+        // A worktree-style row carries no `#` in its folded search_text.
+        assert!(
+            !matches(&TextItem("cur /tmp/cur @".into())),
+            "# must not match a worktree row"
+        );
     }
 
     #[test]

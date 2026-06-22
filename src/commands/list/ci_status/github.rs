@@ -127,6 +127,7 @@ pub(super) fn detect_github(
         ci_status,
         source: CiSource::PullRequest,
         is_stale,
+        is_priming: false,
         url: pr_info.url.clone(),
         number: pr_info.number.map(PrRef::pr),
         review_state: pr_info.review_state(),
@@ -194,6 +195,7 @@ pub(super) fn detect_github_commit_checks(
         ci_status,
         source: CiSource::Branch,
         is_stale: false, // We're querying by SHA, so always current
+        is_priming: false,
         url: None,
         number: None,
         review_state: None,
@@ -301,6 +303,7 @@ impl GitHubPrInfo {
             ci_status,
             source: CiSource::PullRequest,
             is_stale: false,
+            is_priming: false,
             url: self.url.clone(),
             number: self.number.map(PrRef::pr),
             review_state: self.review_state(),

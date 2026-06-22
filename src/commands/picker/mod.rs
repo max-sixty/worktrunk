@@ -548,9 +548,10 @@ pub fn handle_picker(
 
     // Skip BranchDiff — it walks history per item for a column the picker
     // doesn't surface. Keep the CiStatus task: the picker primes its CI cells
-    // from the local cache for an instant first paint (see `populate_from_cache`),
-    // then this task fetches live and streams each row's status in behind the
-    // frame — the picker's lifetime is bounded by the user, so a slow forge call
+    // from the local cache so the first frame shows cached status (see
+    // `populate_from_cache`), then this task fetches live and streams each row's
+    // status in behind the frame — the same 30–60s-TTL cache plus live fetch as
+    // `wt list --full`. The picker's lifetime is bounded by the user, so a slow forge call
     // never blocks anything (see the "Network Access" notes in CLAUDE.md). The
     // `pr` preview tab reads the same live status. `--prs` rows carry their own
     // number from the explicit `--prs` forge call.

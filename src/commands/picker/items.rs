@@ -1066,6 +1066,7 @@ mod tests {
             ci_status: CiStatus::Passed,
             source: CiSource::PullRequest,
             is_stale: false,
+            is_priming: false,
             url: url.map(String::from),
             number,
             review_state: Some(ReviewState::Approved),

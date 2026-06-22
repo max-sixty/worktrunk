@@ -370,6 +370,13 @@ pub struct PrStatus {
     pub source: CiSource,
     /// True if local HEAD differs from remote HEAD (unpushed changes)
     pub is_stale: bool,
+    /// True for the picker's cache-prime placeholder: the number is shown
+    /// from cache while the live `CiStatus` task refreshes, but the cached
+    /// CI color isn't yet trusted, so the cell renders neutral-dim instead of
+    /// green/red until the fetch overwrites it. Set only by
+    /// [`populate_from_cache`]; a transient render hint, never cached.
+    #[serde(skip)]
+    pub is_priming: bool,
     /// URL to the PR/MR (if available)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
@@ -424,6 +431,12 @@ impl PrStatus {
 
     /// Get the style for this PR status (color + dimming for stale/draft)
     pub fn style(&self) -> Style {
+        // Cache-prime placeholder: the number is real but the cached color is
+        // a guess the live fetch is about to overwrite, so render neutral-dim
+        // (no green/red) rather than assert a CI verdict we don't yet trust.
+        if self.is_priming {
+            return Style::new().dimmed();
+        }
         let style = Style::new().fg_color(Some(Color::Ansi(self.color())));
         if self.is_stale || self.review_state == Some(ReviewState::Draft) {
             style.dimmed()
@@ -491,6 +504,7 @@ impl PrStatus {
             ci_status: CiStatus::Error,
             source: CiSource::Branch,
             is_stale: false,
+            is_priming: false,
             url: None,
             number: None,
             review_state: None,
@@ -600,14 +614,14 @@ impl PrStatus {
 /// Prime `pr_status` on items from the CI cache without touching the network.
 ///
 /// The interactive picker fetches CI live, but a cached result is local data,
-/// so priming it lets the CI column and `pr` tab paint instantly while the
-/// live `CiStatus` task refreshes each row behind the first frame. A valid
+/// so priming it lets the CI column and `pr` tab show cached status on the
+/// first frame while the live `CiStatus` task refreshes each row behind it. A valid
 /// entry (HEAD unchanged, within TTL) is used as-is. An expired entry that
-/// names a PR/MR is kept with `is_stale` set: a PR/MR number is stable per
-/// branch *identity*, so it still identifies the PR even when the pipeline
-/// color may be outdated, and `is_stale` renders it dimmed until the live
-/// fetch overwrites it. An expired entry without a number is dropped — a stale
-/// dot conveys nothing but the outdated color.
+/// names a PR/MR is kept with `is_priming` set: a PR/MR number is stable per
+/// branch *identity*, so it still identifies the PR, but the cached CI color
+/// may be outdated, so `is_priming` renders the number neutral-dim (no
+/// green/red) until the live fetch overwrites it. An expired entry without a
+/// number is dropped — a stale dot conveys nothing but the outdated color.
 ///
 /// Rows with no usable cache entry are left `None` (pending): the live task
 /// fills them, so they must not be resolved to "no PR" here.
@@ -635,8 +649,13 @@ pub(crate) fn populate_from_cache(repo: &Repository, items: &mut [super::model::
         if cached.is_valid(&item.head, now_secs, &repo_path) {
             item.pr_status = Some(cached.status);
         } else if let Some(stale) = cached.status.filter(|s| s.number.is_some()) {
+            // Show the number now, but render it neutral-dim: the cached color
+            // is stale and the live task will overwrite this cell shortly.
+            // `is_stale` (a SHA mismatch) carries through from the cache as-is —
+            // the live fetch recomputes it; `is_priming` alone drives the
+            // placeholder rendering, so this never fabricates a SHA mismatch.
             item.pr_status = Some(Some(PrStatus {
-                is_stale: true,
+                is_priming: true,
                 ..stale
             }));
         }
@@ -691,6 +710,7 @@ mod tests {
             ci_status: CiStatus::Passed,
             source: CiSource::PullRequest,
             is_stale: false,
+            is_priming: false,
             url: None,
             number: None,
             review_state: None,
@@ -701,6 +721,7 @@ mod tests {
             ci_status: CiStatus::Running,
             source: CiSource::Branch,
             is_stale: false,
+            is_priming: false,
             url: None,
             number: None,
             review_state: None,
@@ -711,6 +732,7 @@ mod tests {
             ci_status: CiStatus::Error,
             source: CiSource::PullRequest,
             is_stale: false,
+            is_priming: false,
             url: None,
             number: None,
             review_state: None,
@@ -726,6 +748,7 @@ mod tests {
             ci_status: CiStatus::Passed,
             source: CiSource::PullRequest,
             is_stale: false,
+            is_priming: false,
             url: Some("https://github.com/owner/repo/pull/123".to_string()),
             number: Some(PrRef::pr(123)),
             review_state: None,
@@ -814,18 +837,40 @@ mod tests {
 
     #[test]
     fn test_pr_status_style() {
-        // Stale status gets dimmed
-        let stale = PrStatus {
-            ci_status: CiStatus::Running,
-            source: CiSource::Branch,
-            is_stale: true,
+        let passed = |is_stale: bool, is_priming: bool| PrStatus {
+            ci_status: CiStatus::Passed,
+            source: CiSource::PullRequest,
+            is_stale,
+            is_priming,
             url: None,
-            number: None,
+            number: Some(PrRef::pr(12)),
             review_state: None,
         };
-        let style = stale.style();
-        // Just verify it doesn't panic and returns a style
-        let _ = format!("{style}test{style:#}");
+        let green = "\u{1b}[32m";
+        let dim = "\u{1b}[2m";
+
+        // Fresh verdict: green, not dimmed.
+        let fresh = passed(false, false).format_cell(3, false);
+        assert!(
+            fresh.contains(green) && !fresh.contains(dim),
+            "fresh: green, no dim: {fresh:?}"
+        );
+
+        // SHA-mismatch stale keeps its verdict color, dimmed — `wt list` flags a
+        // failing/passing pushed commit even when local HEAD has moved on.
+        let stale = passed(true, false).format_cell(3, false);
+        assert!(
+            stale.contains(green) && stale.contains(dim),
+            "stale: green + dim: {stale:?}"
+        );
+
+        // Cache-prime placeholder: dimmed and neutral — the number shows, but no
+        // green/red is asserted until the live fetch lands.
+        let priming = passed(false, true).format_cell(3, false);
+        assert!(
+            priming.contains(dim) && !priming.contains(green),
+            "priming: dim, neutral: {priming:?}"
+        );
     }
 
     #[test]
@@ -834,6 +879,7 @@ mod tests {
             ci_status,
             source: CiSource::PullRequest,
             is_stale: false,
+            is_priming: false,
             url: None,
             number: None,
             review_state,
@@ -944,6 +990,7 @@ mod tests {
             ci_status: CiStatus::Passed,
             source: CiSource::PullRequest,
             is_stale: false,
+            is_priming: false,
             url: None,
             number: number.map(PrRef::pr),
             review_state: None,
@@ -1007,7 +1054,11 @@ mod tests {
 
         let expired = items[1].pr_status.as_ref().unwrap().as_ref().unwrap();
         assert_eq!(expired.number.unwrap().number, 77);
-        assert!(expired.is_stale, "expired entries render dimmed");
+        assert!(expired.is_priming, "expired entries render neutral-dim");
+        // Same HEAD, only TTL expired — not a SHA mismatch, so `is_stale` stays
+        // as cached (false). The neutral-dim comes from `is_priming`, not a
+        // fabricated `is_stale`.
+        assert!(!expired.is_stale);
 
         assert!(
             items[2].pr_status.is_none(),
@@ -1024,7 +1075,7 @@ mod tests {
     }
 
     #[test]
-    fn test_populate_from_cache_head_moved_keeps_number_as_stale() {
+    fn test_populate_from_cache_head_moved_primes_number() {
         let test = TestRepo::new();
         let repo = &test.repo;
 
@@ -1044,7 +1095,10 @@ mod tests {
         populate_from_cache(repo, &mut items);
         let status = items[0].pr_status.as_ref().unwrap().as_ref().unwrap();
         assert_eq!(status.number.unwrap().number, 9);
-        assert!(status.is_stale);
+        // Primed as a placeholder: the number shows now, but neutral-dim — the
+        // cached color isn't asserted until the live fetch refreshes it (which
+        // is also where `is_stale` is recomputed against the moved HEAD).
+        assert!(status.is_priming);
     }
 
     #[test]
