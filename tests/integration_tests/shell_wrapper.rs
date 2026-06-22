@@ -1656,6 +1656,67 @@ approved-commands = ["echo 'fish background task'"]
         });
     }
 
+    /// The PTY harness must not hang when the session-leader shell fails to
+    /// terminate. The drain previously read the master to EOF and then
+    /// `wait()`ed, so a shell wedged by a job-control race (stopped, never
+    /// exiting) starved both — the master never EOFs while the shell still owns
+    /// the controlling tty — and the run blocked until the 180s harness
+    /// timeout. That was the flake behind `test_source_flag_forwards_errors`:
+    /// the read now treats child exit as the completion signal and kills a shell
+    /// that overruns a bounded fallback, returning with the output already
+    /// captured.
+    ///
+    /// This drives that recovery directly with a short timeout: a shell that
+    /// prints its output and then stops itself (`SIGSTOP`, reproducing the
+    /// job-control stop) is bounded and killed in ~2s, the marker is still
+    /// captured, and the exit code signals the timeout. Under the old drain this
+    /// call would block forever (the stopped shell never EOFs the master nor
+    /// returns from `wait()`).
+    #[test]
+    fn test_pty_read_recovers_from_wedged_shell() {
+        use portable_pty::CommandBuilder;
+        use std::time::{Duration, Instant};
+
+        let pair = crate::common::open_pty();
+
+        // Emit output, then stop the shell itself with SIGSTOP — the same
+        // `T` (stopped) state a job-control SIGTTOU race produces. `printf` and
+        // `kill` are bash builtins, so this needs nothing on PATH, and the
+        // stopped session leader never exits on its own.
+        let mut cmd = CommandBuilder::new(shell_binary("bash"));
+        cmd.arg("-c");
+        cmd.arg(r#"printf '__WEDGE_MARKER__\n'; kill -STOP "$$"; exit 0"#);
+
+        let mut child = pair.slave.spawn_command(cmd).unwrap();
+        drop(pair.slave);
+
+        let reader = pair.master.try_clone_reader().unwrap();
+        let writer = pair.master.take_writer().unwrap();
+        drop(writer); // EOF to child stdin, matching read_pty_output
+        let _ = pair.master;
+
+        let start = Instant::now();
+        let (output, exit_code) = crate::common::pty::drain_pty_until_child_exit(
+            reader,
+            &mut child,
+            Duration::from_secs(2),
+        );
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < Duration::from_secs(30),
+            "drain should bound a wedged shell; took {elapsed:?}"
+        );
+        assert!(
+            output.contains("__WEDGE_MARKER__"),
+            "output emitted before the wedge should be captured.\nOutput:\n{output}"
+        );
+        assert_eq!(
+            exit_code, 124,
+            "a killed wedged shell should report the timeout exit code"
+        );
+    }
+
     // ========================================================================
     // Job Control Notification Tests
     // ========================================================================
