@@ -138,6 +138,8 @@ pub(super) fn detect_azure_pr(
         url,
         number: Some(PrRef::pr(u64::from(pr.pull_request_id))),
         review_state: None,
+        title: pr.title.clone(),
+        body: pr.description.clone(),
     })
 }
 
@@ -219,6 +221,8 @@ pub(super) fn detect_azure_pipeline(
         url: web_url,
         number: None,
         review_state: None,
+        title: None,
+        body: None,
     })
 }
 
@@ -246,6 +250,12 @@ struct AzPrListEntry {
     #[serde(default)]
     last_merge_source_commit: Option<AzCommitRef>,
     repository: AzPrRepository,
+    /// PR title; shown in the picker's `pr` preview pane. Rides this call.
+    #[serde(default)]
+    title: Option<String>,
+    /// PR description; rendered as markdown in the `pr` preview pane.
+    #[serde(default)]
+    description: Option<String>,
 }
 
 impl AzPrListEntry {

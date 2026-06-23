@@ -389,6 +389,15 @@ pub struct PrStatus {
     /// Review state of the PR/MR (absent when the forge reports no review signal)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub review_state: Option<ReviewState>,
+    /// PR/MR title. Absent for branch workflows (no PR) and for cache entries
+    /// written before this field existed. Shown in the picker's worktree-row
+    /// `pr` preview pane, riding the same forge call the CI column already makes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// PR/MR description (GitHub `body`, GitLab/Azure/Gitea `description`/`body`),
+    /// rendered as markdown in the `pr` preview pane. Absent as for `title`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
 }
 
 impl CiStatus {
@@ -508,6 +517,8 @@ impl PrStatus {
             url: None,
             number: None,
             review_state: None,
+            title: None,
+            body: None,
         }
     }
 
@@ -714,6 +725,8 @@ mod tests {
             url: None,
             number: None,
             review_state: None,
+            title: None,
+            body: None,
         };
         assert_eq!(pr_passed.indicator(), "#");
 
@@ -725,6 +738,8 @@ mod tests {
             url: None,
             number: None,
             review_state: None,
+            title: None,
+            body: None,
         };
         assert_eq!(branch_running.indicator(), "#");
 
@@ -736,6 +751,8 @@ mod tests {
             url: None,
             number: None,
             review_state: None,
+            title: None,
+            body: None,
         };
         assert_eq!(error_status.indicator(), "⚠");
     }
@@ -752,6 +769,8 @@ mod tests {
             url: Some("https://github.com/owner/repo/pull/123".to_string()),
             number: Some(PrRef::pr(123)),
             review_state: None,
+            title: None,
+            body: None,
         };
 
         // Number fits → PR reference, hyperlinked when supported
@@ -845,6 +864,8 @@ mod tests {
             url: None,
             number: Some(PrRef::pr(12)),
             review_state: None,
+            title: None,
+            body: None,
         };
         let green = "\u{1b}[32m";
         let dim = "\u{1b}[2m";
@@ -883,6 +904,8 @@ mod tests {
             url: None,
             number: None,
             review_state,
+            title: None,
+            body: None,
         };
 
         // Changes-requested outranks running and passed — waiting can't clear it
@@ -994,6 +1017,8 @@ mod tests {
             url: None,
             number: number.map(PrRef::pr),
             review_state: None,
+            title: None,
+            body: None,
         }
     }
 

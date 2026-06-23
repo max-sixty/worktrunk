@@ -48,6 +48,7 @@ use worktrunk::styling::{StyledLine, strip_osc8_hyperlinks};
 const RENDER_THROTTLE: Duration = Duration::from_millis(16);
 
 use super::items::{HeaderLoading, HeaderSkimItem, PrStatusSlot, PreviewCache, WorktreeSkimItem};
+use super::preview::PreviewMode;
 use super::preview_orchestrator::PreviewOrchestrator;
 use crate::commands::list::collect::PickerProgressHandler;
 use crate::commands::list::model::ListItem;
@@ -277,6 +278,11 @@ impl PickerProgressHandler for PickerHandler {
             && let Some(slot) = slots.get(idx)
         {
             *slot.lock().unwrap() = item.pr_status.clone();
+            // Drop the memoized `pr` pane for this row so the next `preview()`
+            // re-renders from the status just mirrored — see
+            // `WorktreeSkimItem::render_pr_pane_cached`.
+            self.preview_cache
+                .remove(&(item.branch_name().to_string(), PreviewMode::Pr));
         }
         self.request_render(false);
     }

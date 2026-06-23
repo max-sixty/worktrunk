@@ -500,6 +500,12 @@ impl JsonCi {
             repo,
             url: pr.url.clone(),
             review_state: pr.review_state,
+            // TODO(json-pr-title-body): `PrStatus` now carries `title`/`body`
+            // (for the picker's `pr` preview pane), but they're deliberately not
+            // surfaced here — `wt list --json` stays scoped to CI/review status.
+            // Add them (with `skip_serializing_if = "Option::is_none"` plus a row
+            // in the docs/content/list.md ci-object table) if a JSON consumer
+            // needs them.
         }
     }
 }
@@ -637,6 +643,8 @@ mod tests {
                 url: Some("https://github.com/org/repo/pull/123".to_string()),
                 number: Some(PrRef::pr(123)),
                 review_state: None,
+                title: None,
+                body: None,
             },
             None,
         );
@@ -675,6 +683,8 @@ mod tests {
                 url: None,
                 number: None,
                 review_state: None,
+                title: None,
+                body: None,
             },
             None,
         );
@@ -703,6 +713,8 @@ mod tests {
                     url: None,
                     number: None,
                     review_state: None,
+                    title: None,
+                    body: None,
                 },
                 None,
             );
@@ -723,6 +735,8 @@ mod tests {
             url: Some("https://git.example.com/org/repo/pull/7".to_string()),
             number: Some(PrRef::pr(7)),
             review_state: None,
+            title: None,
+            body: None,
         };
 
         let without = JsonCi::from_pr_status(&pr, None);
