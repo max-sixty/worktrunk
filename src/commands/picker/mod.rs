@@ -91,6 +91,7 @@
 mod items;
 mod log_formatter;
 mod pager;
+mod pr_pane;
 mod preview;
 pub(crate) mod preview_cache;
 mod preview_orchestrator;

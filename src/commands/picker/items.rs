@@ -22,6 +22,7 @@ use super::log_formatter::{
     FIELD_DELIM, batch_fetch_stats, format_log_output, process_log_with_dimming, strip_hash_markers,
 };
 use super::pager::{diff_pager, pipe_through_pager};
+use super::pr_pane;
 use super::preview::{PreviewMode, PreviewStateData};
 use super::preview_cache;
 
@@ -217,27 +218,12 @@ impl SkimItem for WorktreeSkimItem {
     }
 
     fn preview(&self, context: PreviewContext<'_>) -> ItemPreview {
+        // The mode is the only render input that comes from outside the item
+        // (it's per-process picker state); everything else is derived in
+        // `render_preview`, which takes the mode explicitly so it's testable
+        // without touching that global state.
         let mode = PreviewStateData::read_mode();
-
-        // Build preview: tabs header + content. `has_upstream` and
-        // `summaries_enabled` are synchronous skeleton-time facts (see
-        // `TabAvailability`); `pr` reads the row's live status slot, refreshed as
-        // the `CiStatus` task streams in, so it can change between selections.
-        // The `pr` tab dims only once the fetch reports no PR — while loading or
-        // with a PR it stays available.
-        let pr = self.pr_preview();
-        let avail = TabAvailability::worktree(
-            self.has_upstream,
-            self.summaries_enabled,
-            !matches!(pr, PrPreview::NoPr),
-        );
-        let mut result = render_preview_tabs(mode, avail);
-        result.push_str(&match mode {
-            PreviewMode::Pr => self.render_pr_pane(pr),
-            _ => self.preview_for_mode(mode, context.width, context.height),
-        });
-
-        ItemPreview::AnsiText(result)
+        ItemPreview::AnsiText(self.render_preview(mode, context.width, context.height))
     }
 }
 
@@ -387,25 +373,54 @@ pub(super) fn render_preview_tabs(mode: PreviewMode, avail: TabAvailability) -> 
     )
 }
 
-/// The `pr` pane for a worktree row whose branch has a PR/MR. Renders the
-/// reference and URL from the async CI fetch. The `url` label pads to the same
-/// width as the `--prs` rows' pane (`PrSkimItem::pr_pane`) so the two read
-/// alike.
+/// The `pr` pane for a worktree row whose branch has a PR/MR. Renders the same
+/// shape as the `--prs` rows' pane (`PrSkimItem::pr_pane`) — reference + title
+/// header, dim-labeled metadata, and the description as markdown — via the
+/// shared [`pr_pane`] helpers, so the two read alike. The title and body ride
+/// the same CI fetch the column already makes (see [`PrStatus`]); a status
+/// without them (an older cache entry, a forge that doesn't expose them) falls
+/// back to a reference-only header and skips the description.
 ///
-/// TODO(pr-preview-worktree-body): the CI-column fetch doesn't pull the PR
-/// title or description (just number/status/url), so this pane can't show them
-/// the way the `--prs` rows' pane does. Widen that fetch's `--json` (or add a
-/// per-row PR fetch) to fold them in.
-fn render_worktree_pr(branch: &str, pr_ref: PrRef, status: &PrStatus) -> String {
-    let reset = Reset;
-    let mut out = cformat!("<bold>{pr_ref}</>{reset}  {branch}\n\n");
+/// `width` is the live preview-pane width, used to wrap the markdown body.
+fn render_worktree_pr(branch: &str, pr_ref: PrRef, status: &PrStatus, width: usize) -> String {
+    let title = status.title.as_deref().filter(|t| !t.is_empty());
+    let mut out = pr_pane::header(pr_ref, title);
+    out.push_str(&pr_pane::metadata_line("branch", branch));
     if let Some(url) = &status.url {
-        out.push_str(&cformat!("<dim>url</>{reset}      {url}\n"));
+        out.push_str(&pr_pane::metadata_line("url", url));
+    }
+    if let Some(body) = status.body.as_deref() {
+        out.push_str(&pr_pane::description(body, width));
     }
     out
 }
 
 impl WorktreeSkimItem {
+    /// Render the full preview pane (tab bar + mode content) for an explicit
+    /// `mode`. Split out of [`SkimItem::preview`] so the dispatch — including
+    /// the `pr` tab's `render_pr_pane` call — is testable with a given mode
+    /// rather than the per-process picker-state file.
+    fn render_preview(&self, mode: PreviewMode, width: usize, height: usize) -> String {
+        // Build preview: tabs header + content. `has_upstream` and
+        // `summaries_enabled` are synchronous skeleton-time facts (see
+        // `TabAvailability`); `pr` reads the row's live status slot, refreshed as
+        // the `CiStatus` task streams in, so it can change between selections.
+        // The `pr` tab dims only once the fetch reports no PR — while loading or
+        // with a PR it stays available.
+        let pr = self.pr_preview();
+        let avail = TabAvailability::worktree(
+            self.has_upstream,
+            self.summaries_enabled,
+            !matches!(pr, PrPreview::NoPr),
+        );
+        let mut result = render_preview_tabs(mode, avail);
+        result.push_str(&match mode {
+            PreviewMode::Pr => self.render_pr_pane(pr, width),
+            _ => self.preview_for_mode(mode, width, height),
+        });
+        result
+    }
+
     /// Derive the `pr` tab's state from the row's live `pr_status` slot. The
     /// slot is primed from the CI cache at skeleton time and overwritten as the
     /// `CiStatus` task reports: `None` = no result yet (Loading); `Some(None)`,
@@ -422,8 +437,9 @@ impl WorktreeSkimItem {
         }
     }
 
-    /// Render the `pr` tab's pane from the derived [`PrPreview`] state.
-    fn render_pr_pane(&self, pr: PrPreview) -> String {
+    /// Render the `pr` tab's pane from the derived [`PrPreview`] state. `width`
+    /// is the live preview-pane width, threaded to wrap the description markdown.
+    fn render_pr_pane(&self, pr: PrPreview, width: usize) -> String {
         let reset = Reset;
         let branch = self.item.branch_name();
         match pr {
@@ -433,7 +449,7 @@ impl WorktreeSkimItem {
             PrPreview::NoPr => {
                 cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no PR\n")
             }
-            PrPreview::HasPr(pr_ref, status) => render_worktree_pr(branch, pr_ref, &status),
+            PrPreview::HasPr(pr_ref, status) => render_worktree_pr(branch, pr_ref, &status, width),
         }
     }
 
@@ -1059,7 +1075,10 @@ mod tests {
     fn worktree_pr_tab_reflects_live_status() {
         use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef, ReviewState};
 
-        let status = |number: Option<PrRef>, url: Option<&str>| PrStatus {
+        let status = |number: Option<PrRef>,
+                      url: Option<&str>,
+                      title: Option<&str>,
+                      body: Option<&str>| PrStatus {
             ci_status: CiStatus::Passed,
             source: CiSource::PullRequest,
             is_stale: false,
@@ -1067,6 +1086,8 @@ mod tests {
             url: url.map(String::from),
             number,
             review_state: Some(ReviewState::Approved),
+            title: title.map(String::from),
+            body: body.map(String::from),
         };
         // Build a row whose live `pr_status` slot carries a given state — what
         // the picker primes from the cache and then overwrites as the fetch lands.
@@ -1089,7 +1110,7 @@ mod tests {
         assert!(matches!(loading.pr_preview(), PrPreview::Loading));
         assert!(
             loading
-                .render_pr_pane(loading.pr_preview())
+                .render_pr_pane(loading.pr_preview(), 80)
                 .contains("Fetching PR status")
         );
 
@@ -1098,26 +1119,113 @@ mod tests {
         assert!(matches!(no_pr.pr_preview(), PrPreview::NoPr));
         assert!(
             no_pr
-                .render_pr_pane(no_pr.pr_preview())
+                .render_pr_pane(no_pr.pr_preview(), 80)
                 .contains("has no PR")
         );
 
-        // A cached PR carries a `number` → the pane shows the reference and URL.
-        let has_pr = row(Some(Some(status(
+        // A cached PR with no title/body (an older cache entry) → the pane still
+        // shows the reference, branch, and URL, with no description block.
+        let bare = row(Some(Some(status(
             Some(PrRef::pr(42)),
             Some("https://github.com/o/r/pull/42"),
+            None,
+            None,
         ))));
-        assert!(matches!(has_pr.pr_preview(), PrPreview::HasPr(..)));
-        let pane = has_pr.render_pr_pane(has_pr.pr_preview());
+        assert!(matches!(bare.pr_preview(), PrPreview::HasPr(..)));
+        let pane = bare.render_pr_pane(bare.pr_preview(), 80);
         assert!(pane.contains("#42"), "reference: {pane:?}");
+        assert!(pane.contains("feature"), "branch: {pane:?}");
         assert!(
             pane.contains("https://github.com/o/r/pull/42"),
             "url: {pane:?}"
         );
+        assert!(
+            !pane.contains("\x1b[107m"),
+            "no description gutter without a body: {pane:?}"
+        );
+
+        // A PR carrying title + body → the title rides the header and the body
+        // renders as markdown in the house gutter, matching the `--prs` pane.
+        let full = row(Some(Some(status(
+            Some(PrRef::pr(7)),
+            Some("https://github.com/o/r/pull/7"),
+            Some("Fix the flaky retry"),
+            Some("Adds a **bounded** retry."),
+        ))));
+        let pane = full.render_pr_pane(full.pr_preview(), 80);
+        assert!(pane.contains("#7"), "reference: {pane:?}");
+        assert!(pane.contains("Fix the flaky retry"), "title: {pane:?}");
+        assert!(pane.contains("\x1b[107m"), "description gutter: {pane:?}");
+        assert!(pane.contains("\x1b[1m"), "markdown bold rendered: {pane:?}");
+        assert!(!pane.contains("**"), "markdown markers consumed: {pane:?}");
 
         // Cached branch CI with no PR `number` → NoPr.
-        let branch_ci = row(Some(Some(status(None, None))));
+        let branch_ci = row(Some(Some(status(None, None, None, None))));
         assert!(matches!(branch_ci.pr_preview(), PrPreview::NoPr));
+    }
+
+    #[test]
+    fn preview_assembles_tab_bar_and_pr_pane() {
+        use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef, ReviewState};
+
+        // A worktree row whose live status carries a PR with title + body.
+        let item = ListItem::new_branch("abc".into(), "feature".into());
+        let row = WorktreeSkimItem {
+            search_text: String::new(),
+            rendered: Arc::new(Mutex::new(String::new())),
+            branch_name: "feature".into(),
+            item: Arc::new(item),
+            preview_cache: Arc::new(DashMap::new()),
+            has_upstream: false,
+            summaries_enabled: false,
+            pr_status: Arc::new(Mutex::new(Some(Some(PrStatus {
+                ci_status: CiStatus::Passed,
+                source: CiSource::PullRequest,
+                is_stale: false,
+                is_priming: false,
+                url: Some("https://github.com/o/r/pull/7".into()),
+                number: Some(PrRef::pr(7)),
+                review_state: Some(ReviewState::Approved),
+                title: Some("Fix the flaky retry".into()),
+                body: Some("Adds a **bounded** retry.".into()),
+            })))),
+        };
+
+        // In Pr mode, `render_preview` assembles the tab bar plus the worktree PR
+        // pane — the dispatch arm `SkimItem::preview` reaches once the picker-state
+        // file selects mode 6. The pane shows the title and the markdown body.
+        let pr_pane = row.render_preview(PreviewMode::Pr, 80, 24);
+        assert!(pr_pane.contains("6: pr"), "tab bar: {pr_pane:?}");
+        assert!(
+            pr_pane.contains("Fix the flaky retry"),
+            "title: {pr_pane:?}"
+        );
+        assert!(
+            pr_pane.contains("\x1b[107m"),
+            "description gutter: {pr_pane:?}"
+        );
+
+        // `SkimItem::preview` reads the default mode (no per-process state file in
+        // tests → WorkingTree) and delegates to `render_preview`, exercising the
+        // wrapper and the non-pr dispatch arm (cache miss → loading placeholder).
+        let ctx = PreviewContext {
+            query: "",
+            cmd_query: "",
+            width: 80,
+            height: 24,
+            current_index: 0,
+            current_selection: "",
+            selected_indices: &[],
+            selections: &[],
+        };
+        let ItemPreview::AnsiText(text) = row.preview(ctx) else {
+            panic!("expected AnsiText preview");
+        };
+        assert!(text.contains("HEAD"), "tab bar present: {text:?}");
+        assert!(
+            text.contains("Loading working-tree diff"),
+            "non-pr arm placeholder: {text:?}"
+        );
     }
 
     /// Helper: build a test repo with `main` at the initial commit, then a

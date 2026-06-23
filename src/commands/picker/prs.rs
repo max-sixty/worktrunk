@@ -49,7 +49,7 @@ use serde::Deserialize;
 use skim::prelude::*;
 use unicode_width::UnicodeWidthStr;
 use worktrunk::git::{CiPlatform, Repository};
-use worktrunk::styling::{INFO_SYMBOL, StyledLine, format_with_gutter, warning_message};
+use worktrunk::styling::{INFO_SYMBOL, StyledLine, warning_message};
 
 use super::super::list::ci_status::{
     CiSource, CiStatus, GitHubPrInfo, PrRef, PrStatus, ReviewState, non_interactive_cmd,
@@ -58,6 +58,7 @@ use super::super::list::ci_status::{
 use super::super::list::columns::ColumnKind;
 use super::super::list::layout::ColumnGrid;
 use super::items::{TabAvailability, ansi_to_line, render_preview_tabs};
+use super::pr_pane;
 use super::preview::{PreviewMode, PreviewStateData};
 
 /// One-shot handoff of the picker's column geometry from the collect thread
@@ -260,18 +261,16 @@ fn fetch_open_prs(repo: &Repository) -> anyhow::Result<Vec<PrEntry>> {
 
 #[derive(Deserialize)]
 struct GhPr {
-    title: String,
     #[serde(rename = "headRefName")]
     head_ref_name: String,
     #[serde(default)]
     author: GhAuthor,
-    /// PR description; shown in the `pr` preview tab. Rides the one list call.
-    #[serde(default)]
-    body: String,
-    /// CI/review fields reused via the shared `gh pr list` mapping: number,
-    /// `isDraft`, `url`, `statusCheckRollup`, `reviewDecision`,
-    /// `mergeStateStatus`. Flattened so one parse feeds both display and the
-    /// CI-column status.
+    /// CI/review and display fields reused via the shared `gh pr list` mapping:
+    /// number, `title`, `body`, `isDraft`, `url`, `statusCheckRollup`,
+    /// `reviewDecision`, `mergeStateStatus`. Flattened so one parse feeds the
+    /// row display, the `pr` preview pane, and the CI-column status. `title`/
+    /// `body` live on [`GitHubPrInfo`] (not here) so the worktree-row fetch,
+    /// which parses `GitHubPrInfo` directly, gets them from the same widened call.
     #[serde(flatten)]
     info: GitHubPrInfo,
 }
@@ -320,13 +319,13 @@ fn parse_github_prs(stdout: &[u8]) -> anyhow::Result<Vec<PrEntry>> {
         .into_iter()
         .map(|pr| PrEntry {
             number: pr.info.number.unwrap_or(0) as u32,
-            title: pr.title,
+            title: pr.info.title.clone().unwrap_or_default(),
             head_branch: pr.head_ref_name,
             author: pr.author.login,
             is_draft: pr.info.is_draft == Some(true),
             url: pr.info.url.clone(),
             kind: RefKind::Pr,
-            body: pr.body,
+            body: pr.info.body.clone().unwrap_or_default(),
             status: Some(pr.info.open_pr_status()),
         })
         .collect())
@@ -445,6 +444,10 @@ fn gitlab_mr_status(
         url,
         number: Some(PrRef::mr(u64::from(iid))),
         review_state,
+        // The `--prs` pane reads title/body from the `PrEntry`, not this status
+        // (which feeds only the CI column), so they stay absent here.
+        title: None,
+        body: None,
     }
 }
 
@@ -495,24 +498,25 @@ impl PrSkimItem {
             body,
             ..
         } = entry;
-        // A full `{reset}` (\x1b[0m) closes every styled span: skim's ANSI
-        // parser drops color_print's `</>` (SGR 22/39), so without it the
-        // header's bold and each label's dim bleed across the values and on
-        // down the pane. Same workaround as `pr_row_empty_placeholder` and the
-        // `compute_*` preview helpers; see `render_preview_tabs` for the why.
+        // The shared `pr_pane` helpers build the same header / metadata / body
+        // shape as the worktree-row pane (see `items::render_worktree_pr`), so
+        // the two read alike. They close each styled span with a full `{reset}`
+        // (\x1b[0m) because skim's ANSI parser drops color_print's `</>` (SGR
+        // 22/39); the `draft` value below does the same.
         let reset = Reset;
-        let mut pr_pane = cformat!(
-            "<bold>{pr_ref}</>{reset}  {title}\n\n<dim>branch</>{reset}   {head_branch}\n<dim>author</>{reset}   @{author}\n"
-        );
+        let mut pr_pane = pr_pane::header(pr_ref, Some(&title));
+        pr_pane.push_str(&pr_pane::metadata_line("branch", &head_branch));
+        pr_pane.push_str(&pr_pane::metadata_line("author", &format!("@{author}")));
         if is_draft {
-            pr_pane.push_str(&cformat!(
-                "<dim>state</>{reset}    <yellow>draft</>{reset}\n"
+            pr_pane.push_str(&pr_pane::metadata_line(
+                "state",
+                &cformat!("<yellow>draft</>{reset}"),
             ));
         }
         if let Some(url) = url {
-            pr_pane.push_str(&cformat!("<dim>url</>{reset}      {url}\n"));
+            pr_pane.push_str(&pr_pane::metadata_line("url", &url));
         }
-        pr_pane.push_str(&render_pr_description(&body, list_width));
+        pr_pane.push_str(&pr_pane::description(&body, list_width));
 
         Self {
             search_text,
@@ -521,33 +525,6 @@ impl PrSkimItem {
             pr_pane,
         }
     }
-}
-
-/// The PR/MR description block for the `pr` preview pane: the body rendered as
-/// markdown (bold headers, styled lists and inline code — the same renderer the
-/// `summary` tab uses) and quoted in the house gutter ([`format_with_gutter`],
-/// a bg-color bar that closes each line with a full `\x1b[0m`, skim-safe). The
-/// whole body renders; the preview pane scrolls (`ctrl-u`/`ctrl-d`) through a
-/// long one. Empty body → empty string, so the block is skipped. The leading
-/// `\x1b[0m` is a defensive boundary so the first gutter line renders clean
-/// regardless of what precedes it (the metadata lines already reset their own
-/// spans).
-///
-/// `width` is the list width, a close proxy for the preview pane width in both
-/// layouts (Right splits ~50/50; Down gives list and preview the full width).
-/// The markdown wraps to the gutter's inner width (the bar plus its pad take
-/// two columns) so the gutter's own wrap is a no-op rather than re-breaking the
-/// already-styled lines.
-fn render_pr_description(body: &str, width: usize) -> String {
-    let body = body.trim();
-    if body.is_empty() {
-        return String::new();
-    }
-    let reset = Reset;
-    let rendered =
-        crate::md_help::render_markdown_in_help_with_width(body, Some(width.saturating_sub(2)));
-    let gutter = format_with_gutter(&rendered, Some(width));
-    format!("\n{reset}{gutter}\n")
 }
 
 /// The pane for tabs 1-5 on a `--prs` row. The head branch isn't checked out
@@ -659,7 +636,7 @@ fn render_freeform_row(entry: &PrEntry, list_width: usize) -> String {
 //
 // TODO(pr-preview-comments): add a `7: comments` tab showing the PR/MR
 // discussion, rendered with the house gutter per comment (author + body, like
-// `render_pr_description`). Needs the same background per-row fetch as the log
+// `pr_pane::description`). Needs the same background per-row fetch as the log
 // (`gh pr view <n> --json comments`), and a 7th tab widens the preview tab bar
 // — already ~63 cols with six numbered tabs — so it clips sooner on narrow
 // (≤~125-col, Right-layout) previews. Weigh an abbreviated/scrolling tab bar
@@ -719,6 +696,8 @@ mod tests {
                 url: None,
                 number: Some(number_ref),
                 review_state: None,
+                title: None,
+                body: None,
             }),
         }
     }
@@ -1185,50 +1164,6 @@ mod tests {
     fn parse_invalid_json_errors() {
         assert!(parse_github_prs(b"not json").is_err());
         assert!(parse_gitlab_mrs(b"not json").is_err());
-    }
-
-    #[test]
-    fn description_empty_or_blank_renders_nothing() {
-        // No body, or whitespace-only — the block is skipped entirely so the
-        // pane doesn't show an empty gutter.
-        assert_eq!(render_pr_description("", 80), "");
-        assert_eq!(render_pr_description("   \n\t \n", 80), "");
-    }
-
-    #[test]
-    fn description_wraps_into_the_house_gutter() {
-        let out = render_pr_description("Fixes the flaky retry logic.", 80);
-        // Leading full reset clears inherited style; the house gutter sets a
-        // bg color and closes each line with a skim-safe `\x1b[0m`.
-        assert!(out.starts_with("\n\x1b[0m"), "leading reset: {out:?}");
-        assert!(out.contains("\x1b[107m"), "house gutter bg: {out:?}");
-        assert!(
-            out.contains("Fixes the flaky retry logic."),
-            "body: {out:?}"
-        );
-    }
-
-    #[test]
-    fn description_renders_the_whole_body() {
-        // One word per line so each survives as its own gutter line; the pane
-        // scrolls, so the full body renders with no truncation hint.
-        let body = (0..50)
-            .map(|i| format!("- word{i}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let out = render_pr_description(&body, 80);
-        assert!(!out.contains("more line"), "no truncation hint: {out:?}");
-        assert!(out.contains("word0"), "head kept: {out:?}");
-        assert!(out.contains("word49"), "tail kept: {out:?}");
-    }
-
-    #[test]
-    fn description_renders_markdown() {
-        // Markdown is styled, not shown verbatim: a bold span carries the SGR-1
-        // termimad emits, and the literal `**` markers are gone.
-        let out = render_pr_description("Fixes the **flaky** retry.", 80);
-        assert!(out.contains("\x1b[1m"), "bold rendered: {out:?}");
-        assert!(!out.contains("**"), "markers consumed: {out:?}");
     }
 
     #[test]

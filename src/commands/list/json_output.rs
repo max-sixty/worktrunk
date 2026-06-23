@@ -637,6 +637,8 @@ mod tests {
                 url: Some("https://github.com/org/repo/pull/123".to_string()),
                 number: Some(PrRef::pr(123)),
                 review_state: None,
+                title: None,
+                body: None,
             },
             None,
         );
@@ -675,6 +677,8 @@ mod tests {
                 url: None,
                 number: None,
                 review_state: None,
+                title: None,
+                body: None,
             },
             None,
         );
@@ -703,6 +707,8 @@ mod tests {
                     url: None,
                     number: None,
                     review_state: None,
+                    title: None,
+                    body: None,
                 },
                 None,
             );
@@ -723,6 +729,8 @@ mod tests {
             url: Some("https://git.example.com/org/repo/pull/7".to_string()),
             number: Some(PrRef::pr(7)),
             review_state: None,
+            title: None,
+            body: None,
         };
 
         let without = JsonCi::from_pr_status(&pr, None);
