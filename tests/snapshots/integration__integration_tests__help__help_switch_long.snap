@@ -227,7 +227,8 @@ Both work anywhere a branch is accepted, including [2m--base[0m. The [2m--cre
 
 If the PR or MR is on a fork, the local branch uses its branch name directly, so [2mgit push[0m works normally. A pre-existing local branch with that name tracking something else requires renaming first.
 
-The [2m--prs[0m flag adds the repository's open PRs (GitHub) or MRs (GitLab) to the interactive picker. Each row resolves to the same [2mpr:[0m/[2mmr:[0m shortcut, so selecting one fetches the ref and switches to its branch. A [2m--prs[0m row has no local worktree, so its [2mlog[0m, [2mpr[0m, and [2mcomments[0m preview tabs load the PR/MR's commits, metadata, and comments from the forge in the background.
+The [2m--prs[0m flag adds the repository's open PRs (GitHub) or MRs (GitLab) to the interactive picker. Each row resolves to the same [2mpr:[0m/[2mmr:[0m shortcut, so selecting one fetches the ref and switches to its branch. A [2m--prs[0m row has no local worktree, so its [2mpr[0m and [2mcomments[0m preview tabs load the PR/MR's metadata and comments from the forge in the background. The [2mlog[0m tab uses a local [2mgit log[0m — graph and merge-base dimming included — whenever the head commit is already in the object store (a same-repo PR 
+off a fetched remote), falling back to a flat forge-fetched commit list otherwise.
 
 Requires [2mgh[0m (GitHub), [2mglab[0m (GitLab), or an equivalent CLI installed and authenticated; see forge platform for Gitea, Azure DevOps, and other supported platforms.
 

@@ -57,7 +57,9 @@ use super::super::list::ci_status::{
 };
 use super::super::list::columns::ColumnKind;
 use super::super::list::layout::ColumnGrid;
-use super::items::{PreviewCache, TabAvailability, ansi_to_line, render_preview_tabs};
+use super::items::{
+    PreviewCache, TabAvailability, WorktreeSkimItem, ansi_to_line, render_preview_tabs,
+};
 use super::preview::{PreviewMode, PreviewStateData};
 use super::preview_orchestrator::PreviewOrchestrator;
 
@@ -134,6 +136,12 @@ struct PrEntry {
     number: u32,
     title: String,
     head_branch: String,
+    /// The head commit SHA, when the forge list call supplies it (GitHub
+    /// `headRefOid`, GitLab `sha`). Lets the `log` tab render the rich local
+    /// `git log` when the commit is already in the object store, falling back
+    /// to the forge API otherwise — see [`compute_pr_log`]. `None` when the
+    /// forge omits it; the row then always takes the API path.
+    head_oid: Option<String>,
     author: String,
     is_draft: bool,
     url: Option<String>,
@@ -175,6 +183,17 @@ pub(super) struct PrsStreamSignal<'a> {
     pub render_tx: &'a OnceLock<tokio::sync::mpsc::Sender<Event>>,
 }
 
+/// The two widths a `--prs` row renders against: `list_width` for the row's own
+/// column cell (matching the worktree rows' grid), and `preview_dims` for the
+/// deferred preview panes — the preview window is sized differently from the
+/// list column in both layouts, and the local `git log` path also needs the
+/// pane *height* for its line budget. Bundled so the streaming entry points stay
+/// within the argument budget.
+pub(super) struct PrsLayout {
+    pub list_width: usize,
+    pub preview_dims: (usize, usize),
+}
+
 /// Stream the open PRs/MRs into the picker, then clear the header's "loading…"
 /// marker — whatever the outcome.
 ///
@@ -185,21 +204,14 @@ pub(super) struct PrsStreamSignal<'a> {
 /// keystroke.
 pub(super) fn stream_open_prs(
     repo: &Repository,
-    list_width: usize,
+    layout: &PrsLayout,
     tx: &SkimItemSender,
     stashed_warnings: &Mutex<Vec<String>>,
     grid_slot: &GridSlot,
     orchestrator: &PreviewOrchestrator,
     signal: &PrsStreamSignal,
 ) {
-    fetch_and_stream(
-        repo,
-        list_width,
-        tx,
-        stashed_warnings,
-        grid_slot,
-        orchestrator,
-    );
+    fetch_and_stream(repo, layout, tx, stashed_warnings, grid_slot, orchestrator);
 
     signal.pending.store(false, Ordering::Relaxed);
     if let Some(tx) = signal.render_tx.get() {
@@ -214,7 +226,7 @@ pub(super) fn stream_open_prs(
 /// picker stays usable with its worktree rows.
 fn fetch_and_stream(
     repo: &Repository,
-    list_width: usize,
+    layout: &PrsLayout,
     tx: &SkimItemSender,
     stashed_warnings: &Mutex<Vec<String>>,
     grid_slot: &GridSlot,
@@ -253,10 +265,10 @@ fn fetch_and_stream(
     let items: Vec<Arc<dyn SkimItem>> = entries
         .into_iter()
         .map(|entry| {
-            spawn_pr_previews(orchestrator, &entry, list_width);
+            spawn_pr_previews(orchestrator, &entry, layout.preview_dims);
             Arc::new(PrSkimItem::new(
                 entry,
-                list_width,
+                layout.list_width,
                 grid.as_ref(),
                 &orchestrator.cache,
             )) as Arc<dyn SkimItem>
@@ -278,11 +290,26 @@ fn fetch_and_stream(
 /// a duplicate fetch on every repaint. `COLLECT_POOL` bounds how many run at once,
 /// and the picker's lifetime is user-bounded, so a slow forge call never blocks
 /// the command (see the "Network Access" notes in CLAUDE.md).
-fn spawn_pr_previews(orchestrator: &PreviewOrchestrator, entry: &PrEntry, width: usize) {
+fn spawn_pr_previews(
+    orchestrator: &PreviewOrchestrator,
+    entry: &PrEntry,
+    preview_dims: (usize, usize),
+) {
     let token = entry.output_token();
     let (kind, number) = (entry.kind, entry.number);
+    let (width, height) = preview_dims;
+    let head_oid = entry.head_oid.clone();
+    let head_branch = entry.head_branch.clone();
     orchestrator.spawn_compute((token.clone(), PreviewMode::Log), move |repo| {
-        compute_pr_log(repo, kind, number, width)
+        compute_pr_log(
+            repo,
+            kind,
+            number,
+            head_oid.as_deref(),
+            &head_branch,
+            width,
+            height,
+        )
     });
     orchestrator.spawn_compute((token, PreviewMode::Comments), move |repo| {
         compute_pr_comments(repo, kind, number, width)
@@ -321,6 +348,9 @@ struct GhPr {
     title: String,
     #[serde(rename = "headRefName")]
     head_ref_name: String,
+    /// Head commit SHA; lets the `log` tab use a local `git log` when present.
+    #[serde(rename = "headRefOid", default)]
+    head_ref_oid: String,
     #[serde(default)]
     author: GhAuthor,
     /// PR description; shown in the `pr` preview tab. Rides the one list call.
@@ -355,7 +385,7 @@ fn fetch_github(repo_root: &Path) -> anyhow::Result<Vec<PrEntry>> {
             &MAX_PRS.to_string(),
             "--json",
             // CI/review fields and the description ride the one call; no extra round-trip.
-            "number,title,headRefName,author,isDraft,url,body,statusCheckRollup,reviewDecision,mergeStateStatus",
+            "number,title,headRefName,headRefOid,author,isDraft,url,body,statusCheckRollup,reviewDecision,mergeStateStatus",
         ])
         .current_dir(repo_root)
         .run()
@@ -380,6 +410,7 @@ fn parse_github_prs(stdout: &[u8]) -> anyhow::Result<Vec<PrEntry>> {
             number: pr.info.number.unwrap_or(0) as u32,
             title: pr.title,
             head_branch: pr.head_ref_name,
+            head_oid: Some(pr.head_ref_oid).filter(|s| !s.is_empty()),
             author: pr.author.login,
             is_draft: pr.info.is_draft == Some(true),
             url: pr.info.url.clone(),
@@ -396,6 +427,9 @@ struct GlabMr {
     title: String,
     #[serde(default)]
     source_branch: String,
+    /// Diff head SHA; lets the `log` tab use a local `git log` when present.
+    #[serde(default)]
+    sha: String,
     #[serde(default)]
     author: GlabAuthor,
     #[serde(default)]
@@ -461,6 +495,7 @@ fn parse_gitlab_mrs(stdout: &[u8]) -> anyhow::Result<Vec<PrEntry>> {
                 number: mr.iid,
                 title: mr.title,
                 head_branch: mr.source_branch,
+                head_oid: Some(mr.sha).filter(|s| !s.is_empty()),
                 author: mr.author.username,
                 is_draft: mr.draft,
                 url: mr.web_url,
@@ -695,13 +730,37 @@ fn fetch_forge_json(
     output.status.success().then_some(output.stdout)
 }
 
-/// Fetch and render the commit log for a `--prs` row's `log` tab. A `--prs`
-/// head branch isn't fetched locally, so the commits come from the forge API
-/// rather than a local `git log`: `gh pr view <n> --json commits` (GitHub) or
-/// `glab api projects/:fullpath/merge_requests/<n>/commits` (GitLab). `glab`'s
-/// `--paginate` follows every page so a long PR isn't capped at GitLab's default
-/// page size, matching `gh`'s complete `--json` result.
-fn compute_pr_log(repo: &Repository, kind: RefKind, number: u32, width: usize) -> Option<String> {
+/// Fetch and render the commit log for a `--prs` row's `log` tab.
+///
+/// When the PR/MR head commit (`head_oid`, from the forge list call) is already
+/// in the local object store — a same-repo PR off a fetched `origin` — the tab
+/// renders the rich local `git log`: graph, dim/bright merge-base split, and
+/// relative timestamps, identical to a worktree row's `log` tab and sharing its
+/// SHA-keyed disk cache. No network for that row.
+///
+/// Otherwise (a fork PR, an unfetched head, or a forge that omits the SHA) the
+/// commit isn't local, so the commits come from the forge API instead: `gh pr
+/// view <n> --json commits` (GitHub) or `glab api
+/// projects/:fullpath/merge_requests/<n>/commits` (GitLab). That path renders a
+/// flat `git log --oneline`-style list — no graph or merge-base coloring, since
+/// the objects aren't present to compute them. `glab`'s `--paginate` follows
+/// every page so a long PR isn't capped at GitLab's default page size, matching
+/// `gh`'s complete `--json` result.
+fn compute_pr_log(
+    repo: &Repository,
+    kind: RefKind,
+    number: u32,
+    head_oid: Option<&str>,
+    head_branch: &str,
+    width: usize,
+    height: usize,
+) -> Option<String> {
+    if let Some(oid) = head_oid
+        && let Some(local) = local_log(repo, oid, head_branch, width, height)
+    {
+        return Some(local);
+    }
+
     let number = number.to_string();
     let endpoint = format!("projects/:fullpath/merge_requests/{number}/commits");
     let stdout = fetch_forge_json(
@@ -714,6 +773,35 @@ fn compute_pr_log(repo: &Repository, kind: RefKind, number: u32, width: usize) -
         RefKind::Pr => render_github_commits(&stdout, width),
         RefKind::Mr => render_gitlab_commits(&stdout, width),
     }
+}
+
+/// Render the local `git log` for `oid` when it's present in the object store,
+/// else `None` so [`compute_pr_log`] falls back to the forge API. The
+/// `^{commit}` peel both confirms the object exists locally and rejects a SHA
+/// that resolves to a non-commit (a stray blob/tree), and `--quiet` keeps a
+/// miss to a silent exit-1 rather than a `fatal:` on stderr.
+fn local_log(
+    repo: &Repository,
+    oid: &str,
+    head_branch: &str,
+    width: usize,
+    height: usize,
+) -> Option<String> {
+    let spec = format!("{oid}^{{commit}}");
+    if !repo
+        .run_command_check(&[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "--end-of-options",
+            &spec,
+        ])
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    let rendered = WorktreeSkimItem::compute_log_for_head(repo, oid, head_branch, width, height);
+    (!rendered.is_empty()).then_some(rendered)
 }
 
 #[derive(Deserialize)]
@@ -1070,6 +1158,7 @@ mod tests {
             number,
             title: title.to_string(),
             head_branch: "feature/auth".to_string(),
+            head_oid: None,
             author: "alice".to_string(),
             is_draft: false,
             url: Some("https://github.com/owner/repo/pull/123".to_string()),
@@ -1431,7 +1520,7 @@ mod tests {
         // Two PRs: one ready from a fork, one draft. Mirrors the
         // `gh pr list --json number,title,headRefName,author,isDraft,url` shape.
         let json = br#"[
-          {"number":2964,"title":"ci: freshen","headRefName":"fix/ci","author":{"login":"octocat"},"isDraft":false,"url":"https://github.com/o/r/pull/2964","body":"Bumps the CI image and re-pins actions."},
+          {"number":2964,"title":"ci: freshen","headRefName":"fix/ci","headRefOid":"abc1234500000000000000000000000000000000","author":{"login":"octocat"},"isDraft":false,"url":"https://github.com/o/r/pull/2964","body":"Bumps the CI image and re-pins actions."},
           {"number":2969,"title":"wip","headRefName":"wip-branch","author":{"login":"forkuser"},"isDraft":true,"url":"https://github.com/o/r/pull/2969"}
         ]"#;
         let entries = parse_github_prs(json).unwrap();
@@ -1440,6 +1529,11 @@ mod tests {
         assert_eq!(entries[0].number, 2964);
         assert_eq!(entries[0].title, "ci: freshen");
         assert_eq!(entries[0].head_branch, "fix/ci");
+        // `headRefOid` feeds the `log` tab's local-`git log` fast path.
+        assert_eq!(
+            entries[0].head_oid.as_deref(),
+            Some("abc1234500000000000000000000000000000000")
+        );
         assert_eq!(entries[0].author, "octocat");
         assert!(!entries[0].is_draft);
         assert!(matches!(entries[0].kind, RefKind::Pr));
@@ -1448,6 +1542,8 @@ mod tests {
         assert_eq!(entries[1].number, 2969);
         assert!(entries[1].is_draft);
         assert_eq!(entries[1].author, "forkuser");
+        // Absent `headRefOid` → `None`, so that row always takes the forge API.
+        assert!(entries[1].head_oid.is_none());
         // Absent `body` defaults to empty — the description block is skipped.
         assert_eq!(entries[1].body, "");
     }
@@ -1517,7 +1613,10 @@ mod tests {
 
         stream_open_prs(
             &test.repo,
-            80,
+            &PrsLayout {
+                list_width: 80,
+                preview_dims: (80, 24),
+            },
             &tx,
             &warnings,
             &grid,
@@ -1537,7 +1636,7 @@ mod tests {
         // `glab mr list --output json`: iid (not number), source_branch,
         // author.username, draft, web_url.
         let json = br#"[
-          {"iid":7,"title":"Add caching","source_branch":"feat/cache","author":{"username":"alice"},"draft":false,"web_url":"https://gitlab.com/o/r/-/merge_requests/7","description":"Caches the dependency graph between jobs."},
+          {"iid":7,"title":"Add caching","source_branch":"feat/cache","sha":"abc1234500000000000000000000000000000000","author":{"username":"alice"},"draft":false,"web_url":"https://gitlab.com/o/r/-/merge_requests/7","description":"Caches the dependency graph between jobs."},
           {"iid":8,"title":"WIP","source_branch":"wip","author":{"username":"bob"},"draft":true,"web_url":"https://gitlab.com/o/r/-/merge_requests/8"}
         ]"#;
         let entries = parse_gitlab_mrs(json).unwrap();
@@ -1545,6 +1644,12 @@ mod tests {
 
         assert_eq!(entries[0].number, 7);
         assert_eq!(entries[0].head_branch, "feat/cache");
+        // `sha` feeds the `log` tab's local-`git log` fast path; absent → None.
+        assert_eq!(
+            entries[0].head_oid.as_deref(),
+            Some("abc1234500000000000000000000000000000000")
+        );
+        assert!(entries[1].head_oid.is_none());
         assert_eq!(entries[0].author, "alice");
         assert!(matches!(entries[0].kind, RefKind::Mr));
         assert_eq!(entries[0].body, "Caches the dependency graph between jobs.");
@@ -1734,6 +1839,48 @@ mod tests {
         // slot empty and the next visit retries rather than caching garbage.
         assert!(render_github_commits(b"not json", 80).is_none());
         assert!(render_gitlab_commits(b"not json", 80).is_none());
+    }
+
+    #[test]
+    fn log_tab_uses_local_git_log_when_head_present() {
+        // When the PR head commit is already in the local object store, the
+        // `log` tab renders the rich local `git log` — graph marker and full
+        // subject — with no forge call, sharing the worktree rows' log path. An
+        // absent SHA falls through to `None` so `compute_pr_log` can hit the
+        // forge API instead. Both checks are hermetic: `local_log` never shells
+        // out to a forge CLI.
+        let t = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = Repository::at(t.path()).unwrap();
+        std::fs::write(t.path().join("feature.txt"), "x\n").unwrap();
+        repo.run_command(&["add", "feature.txt"]).unwrap();
+        repo.run_command(&["commit", "-m", "Add the retry"])
+            .unwrap();
+        let oid = repo
+            .run_command(&["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        // Present locally → the local git-log render (graph `*` + subject).
+        let local = local_log(&repo, &oid, "feature", 80, 24).expect("head present → local log");
+        let plain_local = plain(&local);
+        assert!(
+            plain_local.contains("Add the retry"),
+            "subject present: {plain_local:?}"
+        );
+        assert!(plain_local.contains('*'), "graph marker: {plain_local:?}");
+
+        // Absent locally → `None`, leaving the forge API path to the caller.
+        assert!(
+            local_log(&repo, &"0".repeat(40), "feature", 80, 24).is_none(),
+            "absent head → no local render"
+        );
+
+        // `compute_pr_log` takes the local path for a present head without
+        // touching the forge.
+        let via_compute = compute_pr_log(&repo, RefKind::Pr, 42, Some(&oid), "feature", 80, 24)
+            .expect("compute_pr_log renders the local log");
+        assert!(plain(&via_compute).contains("Add the retry"));
     }
 
     #[test]

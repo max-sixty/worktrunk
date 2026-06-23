@@ -827,7 +827,7 @@ impl WorktreeSkimItem {
         width: usize,
         height: usize,
     ) -> (String, bool) {
-        Self::compute_log_preview_inner(repo, item, width, height, false)
+        Self::compute_log_preview_inner(repo, item.head(), item.branch_name(), width, height, false)
     }
 
     /// Force-recompute the Log preview, bypassing the disk-cache read but
@@ -840,12 +840,31 @@ impl WorktreeSkimItem {
         width: usize,
         height: usize,
     ) -> String {
-        Self::compute_log_preview_inner(repo, item, width, height, true).0
+        Self::compute_log_preview_inner(repo, item.head(), item.branch_name(), width, height, true)
+            .0
+    }
+
+    /// Render the rich local `git log` for an arbitrary `(head, branch)` pair —
+    /// the same graph + dim/bright merge-base split + timestamps the worktree
+    /// rows show. Used by the `--prs` `log` tab for a row whose head commit is
+    /// already in the local object store (a same-repo PR off a fetched
+    /// `origin`); see `prs::compute_pr_log`. Discards the disk-hit flag — a
+    /// `--prs` row's preview renders once with no background-refresh loop, so
+    /// there's nothing to reschedule.
+    pub(super) fn compute_log_for_head(
+        repo: &Repository,
+        head: &str,
+        branch: &str,
+        width: usize,
+        height: usize,
+    ) -> String {
+        Self::compute_log_preview_inner(repo, head, branch, width, height, false).0
     }
 
     fn compute_log_preview_inner(
         repo: &Repository,
-        item: &ListItem,
+        head: &str,
+        branch: &str,
         width: usize,
         height: usize,
         force_recompute: bool,
@@ -859,8 +878,6 @@ impl WorktreeSkimItem {
         let show_timestamps = width >= TIMESTAMP_WIDTH_THRESHOLD;
         // Calculate how many log lines fit in preview (height minus header)
         let log_limit = height.saturating_sub(HEADER_LINES).max(1);
-        let head = item.head();
-        let branch = item.branch_name();
         let reset = Reset;
         let Some(default_branch) = repo.default_branch() else {
             return (

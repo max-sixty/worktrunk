@@ -880,7 +880,10 @@ pub fn handle_picker(
                 .spawn(move || {
                     prs::stream_open_prs(
                         &prs_repo,
-                        skim_list_width,
+                        &prs::PrsLayout {
+                            list_width: skim_list_width,
+                            preview_dims,
+                        },
                         &prs_tx,
                         &prs_warnings,
                         &prs_grid,
