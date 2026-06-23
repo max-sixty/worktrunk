@@ -106,7 +106,7 @@ What currently reaches the wire:
 - generating a branch summary with a `commit.generation` command
 - generating a commit message with a `commit.generation` command
 - `wt switch pr:<n>`, `wt switch mr:<n>` — host API to resolve the PR/MR, then `git fetch` of its branch
-- `wt switch --prs` — one `gh pr list` / `glab mr list` to populate the interactive picker (streamed in after the frame paints)
+- `wt switch --prs` — one `gh pr list` / `glab mr list` to populate the interactive picker (streamed in after the frame paints), then a per-row background `gh pr view <n> --json commits`/`comments` (`glab api …/commits`/`notes` on GitLab) to fill each row's `log` and `comments` preview tabs (off the pool, once per row when the rows land — see `picker::prs::spawn_pr_previews`)
 - `wt config show --full` — version check against GitHub
 - the first `Repository::default_branch()` per repo — `git ls-remote` (above)
 

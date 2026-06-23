@@ -192,7 +192,14 @@ pub(super) fn stream_open_prs(
     orchestrator: &PreviewOrchestrator,
     signal: &PrsStreamSignal,
 ) {
-    fetch_and_stream(repo, list_width, tx, stashed_warnings, grid_slot, orchestrator);
+    fetch_and_stream(
+        repo,
+        list_width,
+        tx,
+        stashed_warnings,
+        grid_slot,
+        orchestrator,
+    );
 
     signal.pending.store(false, Ordering::Relaxed);
     if let Some(tx) = signal.render_tx.get() {
@@ -247,8 +254,12 @@ fn fetch_and_stream(
         .into_iter()
         .map(|entry| {
             spawn_pr_previews(orchestrator, &entry, list_width);
-            Arc::new(PrSkimItem::new(entry, list_width, grid.as_ref(), &orchestrator.cache))
-                as Arc<dyn SkimItem>
+            Arc::new(PrSkimItem::new(
+                entry,
+                list_width,
+                grid.as_ref(),
+                &orchestrator.cache,
+            )) as Arc<dyn SkimItem>
         })
         .collect();
     let _ = tx.send(items);
@@ -261,8 +272,11 @@ fn fetch_and_stream(
 fn spawn_pr_previews(orchestrator: &PreviewOrchestrator, entry: &PrEntry, width: usize) {
     let token = entry.output_token();
     let (kind, number) = (entry.kind, entry.number);
-    orchestrator.spawn_compute((token, PreviewMode::Log), move |repo| {
+    orchestrator.spawn_compute((token.clone(), PreviewMode::Log), move |repo| {
         compute_pr_log(repo, kind, number, width)
+    });
+    orchestrator.spawn_compute((token, PreviewMode::Comments), move |repo| {
+        compute_pr_comments(repo, kind, number, width)
     });
 }
 
@@ -629,6 +643,7 @@ fn pr_deferred_loading(mode: PreviewMode) -> String {
     let reset = Reset;
     let (label, key) = match mode {
         PreviewMode::Log => ("commit log", 2u8),
+        PreviewMode::Comments => ("comments", 7u8),
         // Only the deferred tabs reach here; other modes render synchronously.
         _ => ("preview", mode as u8),
     };
@@ -709,10 +724,7 @@ struct GlabCommit {
 /// commits endpoint returns newest-first already, so keep the order.
 fn render_gitlab_commits(stdout: &[u8], width: usize) -> Option<String> {
     let commits: Vec<GlabCommit> = serde_json::from_slice(stdout).ok()?;
-    let lines: Vec<(String, String)> = commits
-        .into_iter()
-        .map(|c| (c.short_id, c.title))
-        .collect();
+    let lines: Vec<(String, String)> = commits.into_iter().map(|c| (c.short_id, c.title)).collect();
     Some(render_commit_lines(&lines, width))
 }
 
@@ -739,6 +751,162 @@ fn render_commit_lines(commits: &[(String, String)], width: usize) -> String {
         out.push_str(&cformat!("<dim>{short}</>{reset}  {headline}\n"));
     }
     out
+}
+
+/// Fetch and render the discussion thread for a `--prs` row's `comments` tab:
+/// `gh pr view <n> --json comments` (GitHub) or
+/// `glab api …/merge_requests/<n>/notes?sort=asc` (GitLab). Returns `None` on
+/// any failure so the cache stays empty and the next selection retries (see
+/// [`PreviewOrchestrator::spawn_compute`]). Runs off-thread on `COLLECT_POOL`.
+fn compute_pr_comments(
+    repo: &Repository,
+    kind: RefKind,
+    number: u32,
+    width: usize,
+) -> Option<String> {
+    let repo_root = repo.current_worktree().root().ok()?;
+    let number = number.to_string();
+    match kind {
+        RefKind::Pr => {
+            let output = non_interactive_cmd("gh")
+                .args(["pr", "view", &number, "--json", "comments"])
+                .current_dir(&repo_root)
+                .run()
+                .ok()?;
+            output.status.success().then_some(())?;
+            render_github_comments(&output.stdout, width)
+        }
+        RefKind::Mr => {
+            // `sort=asc` matches GitHub's oldest-first thread order (GitLab
+            // defaults to newest-first).
+            let endpoint = format!("projects/:fullpath/merge_requests/{number}/notes?sort=asc");
+            let output = non_interactive_cmd("glab")
+                .args(["api", &endpoint])
+                .current_dir(&repo_root)
+                .run()
+                .ok()?;
+            output.status.success().then_some(())?;
+            render_gitlab_notes(&output.stdout, width)
+        }
+    }
+}
+
+/// One PR/MR comment, normalized across forges for the `comments` pane.
+struct Comment {
+    author: String,
+    body: String,
+    /// RFC 3339 timestamp; rendered as relative time when parseable.
+    created_at: String,
+}
+
+#[derive(Deserialize)]
+struct GhCommentsResponse {
+    #[serde(default)]
+    comments: Vec<GhComment>,
+}
+
+#[derive(Deserialize)]
+struct GhComment {
+    #[serde(default)]
+    author: GhAuthor,
+    #[serde(default)]
+    body: String,
+    #[serde(rename = "createdAt", default)]
+    created_at: String,
+}
+
+/// Map `gh pr view <n> --json comments` to the `comments` pane. gh returns the
+/// thread oldest-first, which reads top-to-bottom.
+fn render_github_comments(stdout: &[u8], width: usize) -> Option<String> {
+    let parsed: GhCommentsResponse = serde_json::from_slice(stdout).ok()?;
+    let comments: Vec<Comment> = parsed
+        .comments
+        .into_iter()
+        .map(|c| Comment {
+            author: c.author.login,
+            body: c.body,
+            created_at: c.created_at,
+        })
+        .collect();
+    Some(render_comment_blocks(&comments, width))
+}
+
+#[derive(Deserialize)]
+struct GlabNote {
+    #[serde(default)]
+    body: String,
+    #[serde(default)]
+    author: GlabAuthor,
+    #[serde(default)]
+    created_at: String,
+    /// GitLab tags activity events (label changes, "changed the description") as
+    /// system notes; only human comments belong in the pane.
+    #[serde(default)]
+    system: bool,
+}
+
+/// Map `glab api …/notes` to the `comments` pane, dropping system notes (label
+/// changes, description edits, …) so only human comments show.
+fn render_gitlab_notes(stdout: &[u8], width: usize) -> Option<String> {
+    let notes: Vec<GlabNote> = serde_json::from_slice(stdout).ok()?;
+    let comments: Vec<Comment> = notes
+        .into_iter()
+        .filter(|n| !n.system)
+        .map(|n| Comment {
+            author: n.author.username,
+            body: n.body,
+            created_at: n.created_at,
+        })
+        .collect();
+    Some(render_comment_blocks(&comments, width))
+}
+
+/// Render the `comments` pane: each comment as a header line (author + relative
+/// time) followed by its body as markdown in the house gutter — the same gutter
+/// [`render_pr_description`] uses for the PR body. An empty thread renders an
+/// info line so the slot caches something rather than retrying forever.
+fn render_comment_blocks(comments: &[Comment], width: usize) -> String {
+    let reset = Reset;
+    if comments.is_empty() {
+        return cformat!("{INFO_SYMBOL}{reset} No comments\n");
+    }
+    let mut out = String::new();
+    for comment in comments {
+        let author = if comment.author.is_empty() {
+            "unknown"
+        } else {
+            &comment.author
+        };
+        let header = match relative_time(&comment.created_at) {
+            Some(when) => cformat!("<bold>@{author}</>{reset} <dim>· {when}</>{reset}"),
+            None => cformat!("<bold>@{author}</>{reset}"),
+        };
+        out.push_str(&header);
+        out.push('\n');
+
+        let body = comment.body.trim();
+        if body.is_empty() {
+            out.push_str(&cformat!("<dim>(no body)</>{reset}\n"));
+        } else {
+            let rendered = crate::md_help::render_markdown_in_help_with_width(
+                body,
+                Some(width.saturating_sub(2)),
+            );
+            let gutter = format_with_gutter(&rendered, Some(width));
+            out.push_str(&format!("{reset}{gutter}\n"));
+        }
+        // Blank line between comments.
+        out.push('\n');
+    }
+    out
+}
+
+/// Parse an RFC 3339 timestamp to abbreviated relative time ("2h", "3d"),
+/// honoring `WORKTRUNK_TEST_EPOCH` via `format_relative_time_short`. `None` when
+/// the forge omits or malforms the date, so the header just drops the time.
+fn relative_time(iso: &str) -> Option<String> {
+    let ts = chrono::DateTime::parse_from_rfc3339(iso).ok()?.timestamp();
+    Some(crate::display::format_relative_time_short(ts))
 }
 
 /// Place the PR's cells on the worktree rows' grid so every column lines up:
@@ -850,18 +1018,18 @@ impl SkimItem for PrSkimItem {
         Cow::Borrowed(&self.output_token)
     }
 
-    fn preview(&self, _context: PreviewContext<'_>) -> ItemPreview {
+    fn preview(&self, context: PreviewContext<'_>) -> ItemPreview {
         // Share the worktree rows' tab bar. A `--prs` row has content on the
-        // `pr` tab (built at construction) and the `log` tab (fetched in the
-        // background, read from the shared cache); the working-tree/branch-diff/
-        // upstream/summary tabs are de-emphasized and show a placeholder. The
-        // active tab is the same global digit, so an empty tab shows its
-        // placeholder until the user switches with alt-N / Tab.
+        // `pr` tab (built at construction) and the `log` / `comments` tabs
+        // (fetched in the background, read from the shared cache); the
+        // working-tree/branch-diff/upstream/summary tabs are de-emphasized and
+        // show a placeholder. The active tab is the same global digit, so an
+        // empty tab shows its placeholder until the user switches with alt-N / Tab.
         let mode = PreviewStateData::read_mode();
-        let mut result = render_preview_tabs(mode, TabAvailability::pull_request());
+        let mut result = render_preview_tabs(mode, TabAvailability::pull_request(), context.width);
         match mode {
             PreviewMode::Pr => result.push_str(&self.pr_pane),
-            PreviewMode::Log => result.push_str(&self.cached_pane(PreviewMode::Log)),
+            PreviewMode::Log | PreviewMode::Comments => result.push_str(&self.cached_pane(mode)),
             _ => result.push_str(&pr_row_empty_placeholder()),
         }
         ItemPreview::AnsiText(result)
@@ -1447,8 +1615,8 @@ mod tests {
         // default (WorkingTree) — empty on a --prs row — so `preview()` renders
         // the shared tab bar plus the "not checked out" placeholder. Drives the
         // real `SkimItem::preview` (the `--prs` streaming path is too async to
-        // exercise it reliably under a PTY); `PreviewContext` is ignored by the
-        // impl, so a minimal one suffices.
+        // exercise it reliably under a PTY). `context.width` (80) is wide enough
+        // for the full tab bar, so the `pr` / `comments` tabs show their labels.
         let pr = pr_item(entry(RefKind::Pr, 7, "Title"), 120, Some(&grid()));
         let ctx = PreviewContext {
             query: "",
@@ -1463,7 +1631,11 @@ mod tests {
         let ItemPreview::AnsiText(text) = pr.preview(ctx) else {
             panic!("expected AnsiText preview");
         };
-        assert!(text.contains("6: pr"), "tab bar present: {text:?}");
+        // Assert on the ANSI-stripped bar so the check targets the tab labels
+        // themselves, not a coincidental substring of the styled controls line.
+        let bar = plain(&text);
+        assert!(bar.contains("6: pr"), "pr tab present: {bar:?}");
+        assert!(bar.contains("7: comments"), "comments tab present: {bar:?}");
         assert!(
             text.contains("Not checked out locally"),
             "placeholder present: {text:?}"
@@ -1548,5 +1720,105 @@ mod tests {
         // slot empty and the next visit retries rather than caching garbage.
         assert!(render_github_commits(b"not json", 80).is_none());
         assert!(render_gitlab_commits(b"not json", 80).is_none());
+    }
+
+    #[test]
+    fn comments_tab_reads_cache_then_placeholder() {
+        // Like the log tab, the deferred `comments` tab reads the shared cache
+        // keyed by the row's output token, with a loading placeholder (pointing
+        // at alt-7) on a miss.
+        let cache: PreviewCache = Arc::new(DashMap::new());
+        let pr = PrSkimItem::new(entry(RefKind::Mr, 7, "t"), 120, None, &cache);
+
+        let miss = pr.cached_pane(PreviewMode::Comments);
+        assert!(miss.contains("Loading comments"), "miss: {miss:?}");
+        assert!(miss.contains("alt-7"), "refresh hint: {miss:?}");
+
+        cache.insert(
+            ("mr:7".to_string(), PreviewMode::Comments),
+            "rendered thread".to_string(),
+        );
+        assert_eq!(pr.cached_pane(PreviewMode::Comments), "rendered thread");
+    }
+
+    #[test]
+    fn render_github_comments_threads_author_time_and_body() {
+        // Each comment renders an author + relative-time header and its body in
+        // the house gutter. The timestamps are old, so a relative-time suffix
+        // renders; we assert the separator's presence, not the exact value, so
+        // the test is stable regardless of the wall clock.
+        let json = br#"{"comments":[
+          {"author":{"login":"octocat"},"body":"Looks **good** to me.","createdAt":"2024-12-01T00:00:00Z"},
+          {"author":{"login":"hubot"},"body":"Reran CI.","createdAt":"2024-11-01T00:00:00Z"}
+        ]}"#;
+        let out = render_github_comments(json, 80).unwrap();
+        let plain = plain(&out);
+        assert!(
+            plain.contains("@octocat") && plain.contains("@hubot"),
+            "authors: {plain:?}"
+        );
+        // Body rendered as markdown (the `**` markers are consumed) in the gutter.
+        assert!(out.contains("\x1b[107m"), "house gutter bg: {out:?}");
+        assert!(
+            plain.contains("good") && !plain.contains("**good**"),
+            "markdown: {plain:?}"
+        );
+        // A relative-time suffix is present (e.g. "1mo" / "2mo").
+        assert!(plain.contains('·'), "time separator: {plain:?}");
+    }
+
+    #[test]
+    fn render_gitlab_notes_drops_system_notes() {
+        // GitLab `/notes` interleaves human comments with system activity
+        // ("changed the description", label events); only the human comment
+        // survives.
+        let json = br#"[
+          {"body":"changed the description","author":{"username":"alice"},"created_at":"2024-12-01T00:00:00Z","system":true},
+          {"body":"Nice cleanup.","author":{"username":"bob"},"created_at":"2024-12-02T00:00:00Z","system":false}
+        ]"#;
+        let plain = plain(&render_gitlab_notes(json, 80).unwrap());
+        assert!(
+            plain.contains("@bob") && plain.contains("Nice cleanup."),
+            "human note: {plain:?}"
+        );
+        assert!(
+            !plain.contains("changed the description"),
+            "system note dropped: {plain:?}"
+        );
+        assert!(
+            !plain.contains("@alice"),
+            "system author dropped: {plain:?}"
+        );
+    }
+
+    #[test]
+    fn render_comments_empty_and_missing_fields() {
+        // No comments (or only system notes filtered out) → an info line, so the
+        // slot caches something rather than retrying forever.
+        assert!(
+            plain(&render_github_comments(br#"{"comments":[]}"#, 80).unwrap())
+                .contains("No comments")
+        );
+        // A comment missing author/date still renders: "@unknown", no time, body.
+        let json = br#"{"comments":[{"body":"orphaned"}]}"#;
+        let plain = plain(&render_github_comments(json, 80).unwrap());
+        assert!(plain.contains("@unknown"), "fallback author: {plain:?}");
+        assert!(plain.contains("orphaned"), "body kept: {plain:?}");
+        assert!(!plain.contains('·'), "no time when date absent: {plain:?}");
+    }
+
+    #[test]
+    fn render_comments_invalid_json_is_none() {
+        assert!(render_github_comments(b"not json", 80).is_none());
+        assert!(render_gitlab_notes(b"not json", 80).is_none());
+    }
+
+    #[test]
+    fn relative_time_parses_rfc3339_else_none() {
+        // A parseable timestamp yields a short relative string; junk yields None
+        // so the comment header just drops the time.
+        assert!(relative_time("2024-12-01T00:00:00Z").is_some());
+        assert!(relative_time("not a date").is_none());
+        assert!(relative_time("").is_none());
     }
 }

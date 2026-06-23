@@ -1153,9 +1153,9 @@ fn test_switch_picker_preview_cycle_tab_forward(mut repo: TestRepo) {
 
 #[rstest]
 fn test_switch_picker_preview_cycle_tab_forward_wraps(mut repo: TestRepo) {
-    // Forward cycling wraps 6 → 1: from the pr tab (reached via Alt-6), one Tab
-    // returns to the HEAD± tab. This covers the `6 → 1` end of the
-    // `tr 123456 234561` map, the half most easily typo'd away.
+    // Forward cycling wraps 7 → 1: from the comments tab (reached via Alt-7), one
+    // Tab returns to the HEAD± tab. This covers the `7 → 1` end of the
+    // `tr 1234567 2345671` map, the half most easily typo'd away.
     repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
     let feature_path = repo.add_worktree("feature");
@@ -1192,9 +1192,11 @@ fn test_switch_picker_preview_cycle_tab_forward_wraps(mut repo: TestRepo) {
         &[
             // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
             // for the matcher-lag rationale.
-            ("\x1b[B", None),                       // Down: move cursor to `feature`
-            ("\x1b6", Some("PR")), // Alt-6: jump to pr (6); "Fetching PR status"/"has no PR"
-            ("\t", Some("no uncommitted changes")), // Tab: wrap 6 → HEAD± (1)
+            ("\x1b[B", None), // Down: move cursor to `feature`
+            // Alt-7: jump to comments (7). On a worktree row the comments tab
+            // points at `--prs` rows (it's fetched only there).
+            ("\x1b7", Some("--prs")),
+            ("\t", Some("no uncommitted changes")), // Tab: wrap 7 → HEAD± (1)
         ],
     );
 
@@ -1203,15 +1205,15 @@ fn test_switch_picker_preview_cycle_tab_forward_wraps(mut repo: TestRepo) {
     let (_list, preview) = result.panels();
     assert!(
         preview.contains("no uncommitted changes"),
-        "Tab from the pr tab should wrap to the HEAD± tab; preview was:\n{preview}"
+        "Tab from the comments tab should wrap to the HEAD± tab; preview was:\n{preview}"
     );
 }
 
 #[rstest]
 fn test_switch_picker_preview_cycle_shift_tab_wraps(mut repo: TestRepo) {
     // Shift-Tab cycles backward and wraps: from the default HEAD± tab (1), one
-    // Shift-Tab lands on the pr tab (6), exercising the reverse rotation
-    // `tr 123456 612345` including the 1 → 6 wraparound.
+    // Shift-Tab lands on the comments tab (7), exercising the reverse rotation
+    // `tr 1234567 7123456` including the 1 → 7 wraparound.
     repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
     let feature_path = repo.add_worktree("feature");
@@ -1245,21 +1247,19 @@ fn test_switch_picker_preview_cycle_shift_tab_wraps(mut repo: TestRepo) {
         &[
             // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
             // for the matcher-lag rationale.
-            ("\x1b[B", None),       // Down: move cursor to `feature`
-            ("\x1b[Z", Some("PR")), // Shift-Tab: HEAD± → pr (wrap); "Fetching PR status"/"has no PR"
+            ("\x1b[B", None), // Down: move cursor to `feature`
+            // Shift-Tab: HEAD± (1) → comments (7), the 1 → 7 wraparound. The
+            // comments tab on a worktree row points at `--prs` rows.
+            ("\x1b[Z", Some("--prs")),
         ],
     );
 
     assert_valid_abort_exit_code(result.exit_code);
 
     let (_list, preview) = result.panels();
-    // The worktree row has no remote and no CI cache, so its `pr` pane is either
-    // "Fetching PR status …" (the live fetch hasn't reported yet) or "feature
-    // has no PR" (it reported nothing) — both confirm Shift-Tab wrapped to the
-    // pr tab.
     assert!(
-        preview.contains("Fetching PR status") || preview.contains("has no PR"),
-        "Shift-Tab should wrap to the pr tab; preview was:\n{preview}"
+        preview.contains("Comments show on"),
+        "Shift-Tab should wrap to the comments tab; preview was:\n{preview}"
     );
 }
 

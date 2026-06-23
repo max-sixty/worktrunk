@@ -14,7 +14,7 @@ use dashmap::DashMap;
 use ratatui::text::{Line, Span};
 use skim::prelude::*;
 use worktrunk::git::Repository;
-use worktrunk::styling::INFO_SYMBOL;
+use worktrunk::styling::{INFO_SYMBOL, visual_width};
 
 use super::super::list::ci_status::{PrRef, PrStatus};
 use super::super::list::model::ListItem;
@@ -231,9 +231,12 @@ impl SkimItem for WorktreeSkimItem {
             self.summaries_enabled,
             !matches!(pr, PrPreview::NoPr),
         );
-        let mut result = render_preview_tabs(mode, avail);
+        let mut result = render_preview_tabs(mode, avail, context.width);
         result.push_str(&match mode {
             PreviewMode::Pr => self.render_pr_pane(pr),
+            // The `comments` tab (7) is `--prs`-only — worktree rows don't fetch
+            // PR discussion — so it shows a pointer rather than the cache path.
+            PreviewMode::Comments => Self::comments_unavailable_pane(),
             _ => self.preview_for_mode(mode, context.width, context.height),
         });
 
@@ -278,13 +281,15 @@ pub(super) struct TabAvailability {
     upstream: bool,
     summary: bool,
     pr: bool,
+    comments: bool,
 }
 
 impl TabAvailability {
     /// A worktree-backed row: working-tree/log/branch-diff always render; the
     /// upstream and summary tabs depend on synchronous skeleton-time facts; the
     /// `pr` tab is available unless the live fetch has reported no PR for this
-    /// branch (see [`WorktreeSkimItem::pr_preview`]).
+    /// branch (see [`WorktreeSkimItem::pr_preview`]). The `comments` tab is
+    /// always empty here — comments are fetched only for `--prs` rows.
     pub(super) fn worktree(has_upstream: bool, summaries_enabled: bool, pr: bool) -> Self {
         Self {
             working_tree: true,
@@ -293,13 +298,15 @@ impl TabAvailability {
             upstream: has_upstream,
             summary: summaries_enabled,
             pr,
+            comments: false,
         }
     }
 
     /// A `--prs` row: it carries no local worktree, so the working-tree,
     /// branch-diff, upstream, and summary tabs are empty. The `pr` tab is built
-    /// at construction and the `log` tab loads commits in the background (see
-    /// `prs::compute_pr_log`), so both are available.
+    /// at construction; the `log` and `comments` tabs load in the background
+    /// (see `prs::compute_pr_log` / `prs::compute_pr_comments`), so all three
+    /// are available.
     pub(super) fn pull_request() -> Self {
         Self {
             working_tree: false,
@@ -308,85 +315,164 @@ impl TabAvailability {
             upstream: false,
             summary: false,
             pr: true,
+            comments: true,
         }
     }
 }
 
+/// One preview tab's identity: its `alt-N` digit, label, and whether it's the
+/// active mode / has content for the current row. Built once, then rendered
+/// full or compact depending on the pane width.
+struct Tab {
+    number: u8,
+    label: &'static str,
+    is_active: bool,
+    has_content: bool,
+}
+
 /// Render the preview tab bar, shared by worktree rows and `--prs` rows.
 ///
-/// Every tab always keeps its `N: label` text — only the formatting varies, so
-/// the accelerators stay discoverable. Two **orthogonal** signals carry through
-/// the styling: the **number's** brightness says whether the tab is selectable
-/// (normal = has content, dim = empty for this row — see `TabAvailability`),
-/// and the **label's** weight says whether it's the active mode (bold = active,
-/// dim = inactive). The two compose independently: an empty tab dims its number
-/// whether or not it's selected, but the active tab's label still bolds — so an
-/// active-but-empty tab (dim number, bold label) stays distinct from an
-/// inactive-empty one (dim number, dim label), and the selected tab is always
-/// identifiable even when it has nothing to show (its pane, e.g. "… has no PR",
-/// says the rest).
-pub(super) fn render_preview_tabs(mode: PreviewMode, avail: TabAvailability) -> String {
-    // Full SGR reset (\x1b[0m) after each styled span. color_print's `</>`
-    // emits only \x1b[22m (intensity reset); pairing it with an explicit [0m
-    // keeps dim/bold from bleeding across the dividers and into the rest of the
-    // line in the list and preview panels. Same reason the `compute_*_preview`
-    // helpers below scatter `{reset}` after each styled span.
+/// Every full-form tab keeps its `N: label` text — only the formatting varies,
+/// so the accelerators stay discoverable. Two **orthogonal** signals carry
+/// through the styling: the **number's** brightness says whether the tab is
+/// selectable (normal = has content, dim = empty for this row — see
+/// `TabAvailability`), and the **label's** weight says whether it's the active
+/// mode (bold = active, dim = inactive). The two compose independently: an empty
+/// tab dims its number whether or not it's selected, but the active tab's label
+/// still bolds — so an active-but-empty tab (dim number, bold label) stays
+/// distinct from an inactive-empty one (dim number, dim label), and the selected
+/// tab is always identifiable even when it has nothing to show (its pane, e.g.
+/// "… has no PR", says the rest).
+///
+/// **Width adaptation.** skim renders previews with wrapping off (its default),
+/// so a tab bar wider than `width` would truncate on the right — and the `pr` /
+/// `comments` tabs, exactly the ones with content on a `--prs` row, sit at that
+/// end. When the seven full-form tabs don't fit, the bar falls back to a compact
+/// form (`1 2: log 3 …`): every accelerator digit stays visible, but only the
+/// active tab keeps its label. The two style signals survive — empty digits dim,
+/// the active digit+label bolds — so navigation works at any width. `width` is
+/// the preview pane width skim reports.
+pub(super) fn render_preview_tabs(
+    mode: PreviewMode,
+    avail: TabAvailability,
+    width: usize,
+) -> String {
     let reset = Reset;
 
-    /// Format one tab, keeping the `N: label` text in every state so the
-    /// accelerator never disappears. The number and label carry the two
-    /// orthogonal signals independently: the number dims when the tab is empty
-    /// (not selectable), and the label bolds on the active tab. They compose,
-    /// so an active-but-empty tab is dim-number + bold-label — distinct from an
-    /// inactive-empty one (dim-number + dim-label).
-    fn format_tab(number: u8, label: &str, is_active: bool, has_content: bool) -> String {
-        let number = if has_content {
-            format!("{number}:")
-        } else {
-            cformat!("<dim>{number}:</>")
-        };
-        let label = if is_active {
-            cformat!("<bold>{label}</>")
-        } else {
-            cformat!("<dim>{label}</>")
-        };
-        format!("{number} {label}")
-    }
+    let tabs = [
+        Tab {
+            number: 1,
+            label: "HEAD±",
+            is_active: mode == PreviewMode::WorkingTree,
+            has_content: avail.working_tree,
+        },
+        Tab {
+            number: 2,
+            label: "log",
+            is_active: mode == PreviewMode::Log,
+            has_content: avail.log,
+        },
+        Tab {
+            number: 3,
+            label: "main…±",
+            is_active: mode == PreviewMode::BranchDiff,
+            has_content: avail.branch_diff,
+        },
+        Tab {
+            number: 4,
+            label: "remote⇅",
+            is_active: mode == PreviewMode::UpstreamDiff,
+            has_content: avail.upstream,
+        },
+        Tab {
+            number: 5,
+            label: "summary",
+            is_active: mode == PreviewMode::Summary,
+            has_content: avail.summary,
+        },
+        Tab {
+            number: 6,
+            label: "pr",
+            is_active: mode == PreviewMode::Pr,
+            has_content: avail.pr,
+        },
+        Tab {
+            number: 7,
+            label: "comments",
+            is_active: mode == PreviewMode::Comments,
+            has_content: avail.comments,
+        },
+    ];
 
-    let tab1 = format_tab(
-        1,
-        "HEAD±",
-        mode == PreviewMode::WorkingTree,
-        avail.working_tree,
-    );
-    let tab2 = format_tab(2, "log", mode == PreviewMode::Log, avail.log);
-    let tab3 = format_tab(
-        3,
-        "main…±",
-        mode == PreviewMode::BranchDiff,
-        avail.branch_diff,
-    );
-    let tab4 = format_tab(
-        4,
-        "remote⇅",
-        mode == PreviewMode::UpstreamDiff,
-        avail.upstream,
-    );
-    let tab5 = format_tab(5, "summary", mode == PreviewMode::Summary, avail.summary);
-    let tab6 = format_tab(6, "pr", mode == PreviewMode::Pr, avail.pr);
+    // Prefer the full bar; fall back to compact only when it would overflow the
+    // pane (`visual_width` measures the styled string with ANSI stripped).
+    let full = render_tab_row_full(&tabs, reset);
+    let bar = if visual_width(&full) <= width {
+        full
+    } else {
+        render_tab_row_compact(&tabs, reset)
+    };
 
     // Controls use dim yellow to distinguish from dimmed (white) tabs.
     // The tab numbers above are the alt-N accelerators (bare digits type
     // into the query); Tab/shift-tab cycle the same tabs.
     let controls = cformat!(
-        "<dim,yellow>Enter: switch | Tab/alt-1…6: preview | alt-c: create | Esc: cancel | ctrl-u/d: scroll | alt-p: toggle</>"
+        "<dim,yellow>Enter: switch | Tab/alt-1…7: preview | alt-c: create | Esc: cancel | ctrl-u/d: scroll | alt-p: toggle</>"
     );
 
-    // End each tab and controls with full reset to prevent style bleeding
-    // into dividers and preview content
-    format!(
-        "{tab1}{reset} | {tab2}{reset} | {tab3}{reset} | {tab4}{reset} | {tab5}{reset} | {tab6}{reset}\n{controls}{reset}\n\n"
-    )
+    // Each tab/segment already ends with a full reset (so styling never bleeds
+    // into the dividers or preview content); `{reset}` here only closes the
+    // controls line's dim-yellow span.
+    format!("{bar}\n{controls}{reset}\n\n")
+}
+
+/// Full tab bar: `N: label` per tab, ` | `-separated. The number dims when the
+/// tab is empty (not selectable), and the label bolds on the active tab — two
+/// orthogonal signals that compose (see [`render_preview_tabs`]).
+fn render_tab_row_full(tabs: &[Tab], reset: Reset) -> String {
+    tabs.iter()
+        .map(|t| {
+            let number = if t.has_content {
+                format!("{}:", t.number)
+            } else {
+                cformat!("<dim>{}:</>", t.number)
+            };
+            let label = if t.is_active {
+                cformat!("<bold>{}</>", t.label)
+            } else {
+                cformat!("<dim>{}</>", t.label)
+            };
+            format!("{number} {label}{reset}")
+        })
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+/// Compact tab bar for narrow panes: just the digits, space-separated, with the
+/// active tab keeping its label (`1 2: log 3 …`). The number still dims when
+/// empty and the active digit+label bolds, so both style signals survive and
+/// every accelerator stays visible — only the inactive labels drop.
+fn render_tab_row_compact(tabs: &[Tab], reset: Reset) -> String {
+    tabs.iter()
+        .map(|t| {
+            let number = if t.has_content {
+                t.number.to_string()
+            } else {
+                cformat!("<dim>{}</>", t.number)
+            };
+            if t.is_active {
+                let number = if t.has_content {
+                    cformat!("<bold>{}:</>", t.number)
+                } else {
+                    cformat!("<dim,bold>{}:</>", t.number)
+                };
+                format!("{number} {}{reset}", cformat!("<bold>{}</>", t.label))
+            } else {
+                format!("{number}{reset}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The `pr` pane for a worktree row whose branch has a PR/MR. Renders the
@@ -439,6 +525,15 @@ impl WorktreeSkimItem {
         }
     }
 
+    /// The `comments` tab's pane on a worktree row. The discussion thread is
+    /// fetched only for `--prs` rows (a worktree row has no PR number until its
+    /// `pr` tab resolves one, and no background comments fetch wired to it), so
+    /// the tab dims and points at where comments live.
+    fn comments_unavailable_pane() -> String {
+        let reset = Reset;
+        cformat!("{INFO_SYMBOL}{reset} Comments show on <bold>wt switch --prs</>{reset} rows\n")
+    }
+
     /// Render preview for the given mode with specified dimensions.
     ///
     /// Pure cache read: skim invokes `preview()` synchronously while drawing
@@ -475,9 +570,14 @@ impl WorktreeSkimItem {
             PreviewMode::BranchDiff => ("Loading", "branch diff"),
             PreviewMode::UpstreamDiff => ("Loading", "upstream diff"),
             PreviewMode::Summary => ("Generating", "summary"),
-            // The `pr` tab has no background task — `preview()` renders it from
-            // the row's cached `pr_status` via `render_pr_pane`, never here.
+            // The `pr` and `comments` tabs have no worktree-row background task —
+            // `preview()` renders `pr` from the cached `pr_status` via
+            // `render_pr_pane` and routes `comments` to `comments_unavailable_pane`,
+            // never here.
             PreviewMode::Pr => unreachable!("pr tab renders via render_pr_pane"),
+            PreviewMode::Comments => {
+                unreachable!("comments tab renders via comments_unavailable_pane")
+            }
         };
         let key = mode as u8;
         format!("○ {verb} {label}. Press alt-{key} again to refresh.\n")
@@ -516,10 +616,12 @@ impl WorktreeSkimItem {
                 false,
             ),
             PreviewMode::Summary => (Self::loading_placeholder(PreviewMode::Summary), false),
-            // PR previews never precompute (no git/LLM work) — the orchestrator
-            // never spawns this mode, and `preview()` renders the `pr` pane from
-            // the row's cached `pr_status`.
+            // PR and comments previews never precompute on worktree rows (no
+            // git/LLM work) — the orchestrator never spawns these modes, and
+            // `preview()` renders them directly (cached `pr_status` / the
+            // `--prs`-only pointer).
             PreviewMode::Pr => unreachable!("pr tab is never precomputed"),
+            PreviewMode::Comments => unreachable!("comments tab is never precomputed"),
         }
     }
 
@@ -912,13 +1014,18 @@ impl WorktreeSkimItem {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ansi_str::AnsiStr;
     use insta::assert_snapshot;
+
+    /// Width at which all seven full-form tabs fit, so the snapshots capture the
+    /// full bar (the compact fallback has its own test).
+    const WIDE: usize = 200;
 
     #[test]
     fn test_render_preview_tabs() {
-        // Each mode active, on a worktree row with upstream + summaries
-        // enabled but no PR (tabs 1-5 available; tab 6 dim). The active
-        // mode's label is bold, inactive available labels dim, and on the
+        // Each mode active, on a worktree row with upstream + summaries enabled
+        // but no PR (tabs 1-5 available; tabs 6 pr and 7 comments dim). The
+        // active mode's label is bold, inactive available labels dim, and on the
         // `pr` iteration tab 6 is active-but-empty — exercising the rule that
         // emptiness dims even the active tab. Verifies labels and structure.
         let wt = TabAvailability::worktree(true, true, false);
@@ -930,21 +1037,56 @@ mod tests {
             ("summary", PreviewMode::Summary),
             ("pr", PreviewMode::Pr),
         ] {
-            assert_snapshot!(name, render_preview_tabs(mode, wt));
+            assert_snapshot!(name, render_preview_tabs(mode, wt, WIDE));
         }
 
         // Empty states: a worktree row with no upstream and summaries disabled
-        // dims tabs 4 and 5 (number dim too); a --prs row dims tabs 1-5.
+        // dims tabs 4 and 5 (number dim too); a --prs row dims the
+        // working-tree/branch-diff/upstream/summary tabs but keeps log/pr/comments.
         assert_snapshot!(
             "empty_upstream_and_summary",
             render_preview_tabs(
                 PreviewMode::WorkingTree,
-                TabAvailability::worktree(false, false, false)
+                TabAvailability::worktree(false, false, false),
+                WIDE,
             )
         );
         assert_snapshot!(
             "pr_row",
-            render_preview_tabs(PreviewMode::Pr, TabAvailability::pull_request())
+            render_preview_tabs(PreviewMode::Pr, TabAvailability::pull_request(), WIDE)
+        );
+    }
+
+    /// Narrow panes can't fit the full bar (skim renders previews with wrapping
+    /// off, so it would truncate the `pr` / `comments` tabs — exactly the ones
+    /// with content on a `--prs` row). The compact fallback keeps every
+    /// accelerator digit visible and labels only the active tab.
+    #[test]
+    fn render_preview_tabs_compacts_when_narrow() {
+        // A --prs row with the `pr` tab active, in a narrow pane.
+        let compact = render_preview_tabs(PreviewMode::Pr, TabAvailability::pull_request(), 40);
+        let plain = compact.lines().next().unwrap().ansi_strip().to_string();
+        // Every digit 1-7 is present; only the active tab keeps its label.
+        for n in 1..=7 {
+            assert!(
+                plain.contains(&n.to_string()),
+                "digit {n} present: {plain:?}"
+            );
+        }
+        assert!(plain.contains("6: pr"), "active tab labeled: {plain:?}");
+        assert!(
+            !plain.contains("comments"),
+            "inactive label dropped: {plain:?}"
+        );
+        assert!(!plain.contains("HEAD"), "inactive label dropped: {plain:?}");
+        // The compact bar fits a narrow pane where the full bar would not.
+        assert!(visual_width(&plain) <= 40, "fits the pane: {plain:?}");
+
+        // The same row in a wide pane uses the full bar (labels for all tabs).
+        let full = render_preview_tabs(PreviewMode::Pr, TabAvailability::pull_request(), WIDE);
+        assert!(
+            full.contains("7: ") && full.contains("comments"),
+            "wide pane keeps full labels"
         );
     }
 
@@ -1416,13 +1558,15 @@ mod tests {
     #[test]
     fn test_render_preview_tabs_ansi_codes() {
         // Test that ANSI escape sequences properly reset to prevent style bleeding.
-        // The per-tab `{reset}` is appended in the outer format regardless of a
+        // The per-tab `{reset}` is appended in the full bar regardless of a
         // tab's internal styling, so the reset/divider counts hold whether a tab
         // is active (bold label), inactive-available (dim label), or empty (dim
-        // number + label — here tab 6, pr).
+        // number + label — here tabs 6 pr and 7 comments). WIDE forces the full
+        // (not compact) bar.
         let output = render_preview_tabs(
             PreviewMode::WorkingTree,
             TabAvailability::worktree(true, true, false),
+            WIDE,
         );
 
         let first_line = output.lines().next().unwrap();
@@ -1432,13 +1576,13 @@ mod tests {
         // This prevents bold/dim from bleeding into the " | " dividers
         let full_reset = "\x1b[0m";
 
-        // Count resets - should have one after each of the 6 tabs
-        assert_eq!(first_line.matches(full_reset).count(), 6);
+        // Count resets - should have one after each of the 7 tabs
+        assert_eq!(first_line.matches(full_reset).count(), 7);
 
         // The sequence should be: style + text + [22m + [0m + divider
         // Check that dividers come after full resets
         let parts: Vec<&str> = first_line.split(" | ").collect();
-        assert_eq!(parts.len(), 6);
+        assert_eq!(parts.len(), 7);
         assert!(parts.iter().all(|part| part.ends_with(full_reset)));
 
         // Controls line should end with full reset to ensure clean state for preview content

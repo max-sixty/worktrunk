@@ -2421,6 +2421,58 @@ fn test_switch_prs_dry_run_github_log_tab(repo: TestRepo) {
     );
 }
 
+/// The `comments` tab (7) loads the PR discussion in the background, the same
+/// way the `log` tab loads commits: `spawn_pr_previews` fires `gh pr view <n>
+/// --json comments` keyed by the row's `pr:{N}` token. A `{branch:"pr:42",
+/// mode:7}` entry in the dry-run cache dump proves `compute_pr_comments` →
+/// `render_github_comments` → cache ran end to end. (`gh pr view --json
+/// commits` and `--json comments` both match the mock's `pr view` key, so the
+/// canned response carries both arrays; serde ignores the one each renderer
+/// doesn't read.)
+#[cfg(unix)]
+#[rstest]
+fn test_switch_prs_dry_run_github_comments_tab(repo: TestRepo) {
+    repo.write_project_config("[forge]\nplatform = \"github\"\n");
+    let pr_json = r#"[{"number":42,"title":"Retry the flaky test","headRefName":"fix/flaky","author":{"login":"octocat"},"isDraft":false,"url":"https://github.com/owner/test-repo/pull/42"}]"#;
+    let view_json = r#"{"commits":[{"oid":"abc1234500000000000000000000000000000000","messageHeadline":"Wrap the request in a retry"}],"comments":[{"author":{"login":"reviewer"},"body":"Nice fix.","createdAt":"2024-12-01T00:00:00Z"}]}"#;
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    fs::write(mock_bin.join("list.json"), pr_json).unwrap();
+    fs::write(mock_bin.join("view.json"), view_json).unwrap();
+    MockConfig::new("gh")
+        .version("gh version 1.0.0 (mock)")
+        .command("pr list", MockResponse::file("list.json"))
+        .command("pr view", MockResponse::file("view.json"))
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "--prs"]);
+    cmd.env("WORKTRUNK_PICKER_DRY_RUN", "1");
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "dry-run --prs comments tab failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
+    let entries = parsed["entries"].as_array().expect("entries array");
+    // Mode 7 is Comments; the row keys its cache by `pr:42`.
+    let comments_entry = entries
+        .iter()
+        .find(|e| e["branch"] == "pr:42" && e["mode"] == 7)
+        .unwrap_or_else(|| panic!("no pr:42 Comments cache entry in dump:\n{stdout}"));
+    assert!(
+        comments_entry["bytes"].as_u64().unwrap_or(0) > 0,
+        "comments pane rendered non-empty: {comments_entry}"
+    );
+}
+
 /// GitLab counterpart of [`test_switch_prs_dry_run_github`], covering the
 /// `fetch_gitlab` / `parse_gitlab_mrs` / `gitlab_mr_status` path via a mocked
 /// `glab mr list`.

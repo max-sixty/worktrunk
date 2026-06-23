@@ -76,7 +76,7 @@ The CI column shows each row's PR/MR CI and review status, the same as [`wt list
 | `Enter` | Switch to selected worktree |
 | `Alt-c` | Create new worktree named as entered text |
 | `Esc` | Cancel |
-| `Alt-1`–`Alt-6` | Jump to a preview tab |
+| `Alt-1`–`Alt-7` | Jump to a preview tab |
 | `Tab`/`Shift-Tab` | Cycle preview tabs forward/backward |
 | `Alt-p` | Toggle preview panel |
 | `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
@@ -94,6 +94,9 @@ Typing a gutter sigil filters by row kind: `+` narrows to linked worktrees and `
 4. **remote⇅** — Ahead/behind diff vs upstream tracking branch
 5. **summary** — LLM-generated branch summary; requires `[list] summary = true` and [`commit.generation`](@/config.md#commit)
 6. **pr** — The selected row's PR/MR, for any row whose branch has one
+7. **comments** — The PR/MR discussion thread, fetched from the forge on `--prs` rows
+
+On narrow previews the tab bar compacts to digits — only the active tab keeps its label — so every `Alt-N` accelerator stays visible.
 
 **Pager configuration:** The preview panel pipes diff output through git's pager. Override in user config:
 
@@ -114,7 +117,7 @@ Both work anywhere a branch is accepted, including `--base`. The `--create` flag
 
 If the PR or MR is on a fork, the local branch uses its branch name directly, so `git push` works normally. A pre-existing local branch with that name tracking something else requires renaming first.
 
-The `--prs` flag adds the repository's open PRs (GitHub) or MRs (GitLab) to the interactive picker. Each row resolves to the same `pr:`/`mr:` shortcut, so selecting one fetches the ref and switches to its branch.
+The `--prs` flag adds the repository's open PRs (GitHub) or MRs (GitLab) to the interactive picker. Each row resolves to the same `pr:`/`mr:` shortcut, so selecting one fetches the ref and switches to its branch. A `--prs` row has no local worktree, so its `log`, `pr`, and `comments` preview tabs load the PR/MR's commits, metadata, and discussion from the forge in the background.
 
 Requires `gh` (GitHub), `glab` (GitLab), or an equivalent CLI installed and authenticated; see [forge platform](@/config.md#forge-platform) for Gitea, Azure DevOps, and other supported platforms.
 
