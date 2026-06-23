@@ -462,10 +462,17 @@ impl PrStatus {
     fn styled(&self, text: &str, include_link: bool) -> String {
         if let (true, Some(url)) = (include_link, &self.url) {
             let style = self.style().underline();
+            // The URL comes from forge JSON (untrusted). It is interpolated into
+            // an OSC-8 escape (`\x1b]8;;<url>\x07`), so an embedded BEL or ST
+            // would close the sequence early and let trailing bytes run as live
+            // terminal control on the `wt list` / statusline line — outside the
+            // picker's preview boundary. Strip control sequences from the link
+            // target here, at the sink, before it becomes an escape.
+            let url = worktrunk::styling::sanitize_untrusted_text(url);
             format!(
                 "{}{}{}{}{}",
                 style,
-                osc8::Hyperlink::new(url),
+                osc8::Hyperlink::new(url.as_ref()),
                 text,
                 osc8::Hyperlink::END,
                 style.render_reset()

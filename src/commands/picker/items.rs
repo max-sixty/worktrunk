@@ -194,6 +194,24 @@ pub(super) struct WorktreeSkimItem {
     pub pr_status: PrStatusSlot,
 }
 
+/// The single boundary where picker preview content reaches skim.
+///
+/// Preview panes interleave worktrunk's own styling and `git --color` output
+/// (both legitimate SGR) with untrusted free text — forge PR/MR titles and
+/// descriptions, LLM summaries, and commit messages / `git log` graphs from a
+/// branch that may have been fetched from a malicious remote. A crafted body
+/// could otherwise smuggle a `\x1b[2J` screen-clear, an alt-screen switch, a
+/// cursor move, an OSC-8 hyperlink, or a BEL straight to the terminal.
+///
+/// [`sanitize_styled_output`](worktrunk::styling::sanitize_styled_output) strips
+/// every terminal control sequence except SGR color/style, so colored diffs and
+/// styled markdown still render while the dangerous sequences are removed. Every
+/// `SkimItem::preview` impl must return through here rather than constructing
+/// `ItemPreview::AnsiText` directly (see [`PrSkimItem`](super::prs)).
+pub(super) fn sanitized_preview(result: String) -> ItemPreview {
+    ItemPreview::AnsiText(worktrunk::styling::sanitize_styled_output(&result).into_owned())
+}
+
 impl SkimItem for WorktreeSkimItem {
     fn text(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.search_text)
@@ -237,7 +255,7 @@ impl SkimItem for WorktreeSkimItem {
             _ => self.preview_for_mode(mode, context.width, context.height),
         });
 
-        ItemPreview::AnsiText(result)
+        sanitized_preview(result)
     }
 }
 

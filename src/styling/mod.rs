@@ -18,6 +18,7 @@ mod format;
 mod highlighting;
 mod hyperlink;
 mod line;
+mod sanitize;
 mod suggest;
 
 use ansi_str::AnsiStr;
@@ -38,6 +39,7 @@ pub use format::{
 pub use highlighting::format_toml;
 pub use hyperlink::{Stream, hyperlink_stdout, strip_osc8_hyperlinks, supports_hyperlinks};
 pub use line::{StyledLine, StyledString, truncate_visible};
+pub use sanitize::{sanitize_styled_output, sanitize_untrusted_text};
 pub use suggest::{suggest_command, suggest_command_in_dir};
 
 // ============================================================================

@@ -311,6 +311,18 @@ fn fetch_github(repo_root: &Path) -> anyhow::Result<Vec<PrEntry>> {
     parse_github_prs(&output.stdout)
 }
 
+/// Strip terminal control sequences from a forge-supplied string at its
+/// ingestion edge. PR/MR titles, descriptions, author names, and URLs are
+/// attacker-influenceable free text; this makes the picker's data model plain
+/// text so the value is clean everywhere it is later used (the preview pane, the
+/// fuzzy-match `search_text`, and — for callers that persist it — any cache).
+/// The picker preview pane is independently sanitized at the skim boundary (see
+/// [`super::items::sanitized_preview`]); cleaning here additionally removes raw
+/// SGR recoloring that the display boundary must keep for `git --color` output.
+fn clean(s: String) -> String {
+    worktrunk::styling::sanitize_untrusted_text(&s).into_owned()
+}
+
 /// Map `gh pr list --json …` output to picker entries.
 fn parse_github_prs(stdout: &[u8]) -> anyhow::Result<Vec<PrEntry>> {
     let prs: Vec<GhPr> =
@@ -320,13 +332,13 @@ fn parse_github_prs(stdout: &[u8]) -> anyhow::Result<Vec<PrEntry>> {
         .into_iter()
         .map(|pr| PrEntry {
             number: pr.info.number.unwrap_or(0) as u32,
-            title: pr.title,
-            head_branch: pr.head_ref_name,
-            author: pr.author.login,
+            title: clean(pr.title),
+            head_branch: clean(pr.head_ref_name),
+            author: clean(pr.author.login),
             is_draft: pr.info.is_draft == Some(true),
-            url: pr.info.url.clone(),
+            url: pr.info.url.clone().map(clean),
             kind: RefKind::Pr,
-            body: pr.body,
+            body: clean(pr.body),
             status: Some(pr.info.open_pr_status()),
         })
         .collect())
@@ -401,13 +413,13 @@ fn parse_gitlab_mrs(stdout: &[u8]) -> anyhow::Result<Vec<PrEntry>> {
             );
             PrEntry {
                 number: mr.iid,
-                title: mr.title,
-                head_branch: mr.source_branch,
-                author: mr.author.username,
+                title: clean(mr.title),
+                head_branch: clean(mr.source_branch),
+                author: clean(mr.author.username),
                 is_draft: mr.draft,
-                url: mr.web_url,
+                url: mr.web_url.map(clean),
                 kind: RefKind::Mr,
-                body: mr.description,
+                body: clean(mr.description),
                 status: Some(status),
             }
         })
@@ -689,7 +701,7 @@ impl SkimItem for PrSkimItem {
         } else {
             result.push_str(&pr_row_empty_placeholder());
         }
-        ItemPreview::AnsiText(result)
+        super::items::sanitized_preview(result)
     }
 }
 
@@ -1245,6 +1257,80 @@ mod tests {
             !plain_pr.pr_pane.contains("\x1b[107m"),
             "no gutter when empty"
         );
+    }
+
+    /// A crafted body's terminal control sequences reach the rendered pane
+    /// verbatim (the markdown renderer is the trusted `--help` path and does not
+    /// sanitize), but the skim preview boundary strips them — while keeping the
+    /// gutter's color and all visible text. This pins the boundary established by
+    /// [`super::items::sanitized_preview`].
+    #[test]
+    fn pr_pane_control_sequences_stripped_at_preview_boundary() {
+        let mut e = entry(RefKind::Pr, 9, "title");
+        e.body = "alt\x1b[?1049h cur\x1b[5A clr\x1b[2J bell\x07 \
+                  \x1b]8;;https://evil.example\x07link\x1b]8;;\x07 and \x1b[31mred\x1b[0m"
+            .to_string();
+        let item = PrSkimItem::new(e, 120, Some(&grid()));
+
+        // Precondition: the renderer passed the raw escapes straight through.
+        assert!(
+            item.pr_pane.contains("\x1b[2J") && item.pr_pane.contains("\x1b]8;"),
+            "expected raw escapes in the rendered pane: {:?}",
+            item.pr_pane
+        );
+
+        let ItemPreview::AnsiText(out) =
+            super::super::items::sanitized_preview(item.pr_pane.clone())
+        else {
+            panic!("expected AnsiText preview");
+        };
+        for danger in [
+            "\x1b[?1049h",
+            "\x1b[5A",
+            "\x1b[2J",
+            "\x07",
+            "\x1b]8;",
+            "\x1b]",
+        ] {
+            assert!(
+                !out.contains(danger),
+                "dangerous sequence {danger:?} survived: {out:?}"
+            );
+        }
+        // Visible text survives, including the OSC-8 link's display text.
+        for visible in ["alt", "cur", "clr", "bell", "link", "red"] {
+            assert!(
+                out.contains(visible),
+                "lost visible text {visible:?}: {out:?}"
+            );
+        }
+        // Legitimate SGR (the gutter bar, the body's own color) is preserved.
+        assert!(out.contains("\x1b[107m"), "gutter color dropped: {out:?}");
+        assert!(out.contains("\x1b[31m"), "body SGR dropped: {out:?}");
+    }
+
+    /// Forge fields are sanitized at the ingestion edge, so the picker's data
+    /// model is plain text (covers the fuzzy-match `search_text` and any caller
+    /// that persists the value, on top of the preview boundary above).
+    #[test]
+    fn parse_github_prs_strips_control_sequences_from_fields() {
+        // serde_json encodes the real control chars to JSON `\uXXXX` (as gh
+        // does), and decoding on parse hands `clean` the raw bytes to strip.
+        let json = serde_json::json!([{
+            "number": 1,
+            "title": "Fix \u{1b}[2Jthing",
+            "headRefName": "feature",
+            "author": { "login": "al\u{1b}[31mice" },
+            "body": "Body \u{1b}[?1049h\u{7}text",
+            "url": "https://x/\u{1b}]8;;evil\u{7}",
+        }])
+        .to_string();
+        let entries = parse_github_prs(json.as_bytes()).unwrap();
+        let e = &entries[0];
+        assert_eq!(e.title, "Fix thing");
+        assert_eq!(e.author, "alice");
+        assert_eq!(e.body, "Body text");
+        assert_eq!(e.url.as_deref(), Some("https://x/"));
     }
 
     #[test]

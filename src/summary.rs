@@ -316,7 +316,14 @@ pub(crate) fn generate_summary_core(
     // clean `main` branch sits behind up to 8 slow summary calls and misses
     // the picker's collect deadline, surfacing as a `·` in the Summary column.
     let _permit = LLM_SEMAPHORE.acquire();
-    let summary = execute_llm_command(llm_command, &prompt)?;
+    // Sanitize the model's stdout at this ingestion edge: it is untrusted free
+    // text rendered into the picker preview and the `wt list` Summary column, and
+    // it is persisted to the on-disk summary cache below — so a control sequence
+    // here would otherwise survive across sessions. Stripping it now keeps every
+    // downstream consumer (and the cache) plain text.
+    let summary =
+        worktrunk::styling::sanitize_untrusted_text(&execute_llm_command(llm_command, &prompt)?)
+            .into_owned();
 
     let cached = CachedSummary {
         summary: summary.clone(),

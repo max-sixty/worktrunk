@@ -1483,7 +1483,12 @@ pub fn collect(
         }
         item.commit = Some(CommitDetails {
             timestamp: *timestamp,
-            commit_message: commit_message.clone(),
+            // A commit message from a branch fetched off a malicious remote is
+            // untrusted free text shown in the `wt list` Message column and the
+            // picker rows. Strip terminal control sequences at this ingestion
+            // edge so a crafted subject can't clear the screen or move the cursor.
+            commit_message: worktrunk::styling::sanitize_untrusted_text(commit_message)
+                .into_owned(),
         });
     }
 
@@ -2004,7 +2009,11 @@ pub fn populate_item(
         if !is_prunable {
             item.commit = Some(CommitDetails {
                 timestamp: *timestamp,
-                commit_message: commit_message.clone(),
+                // Sanitize at this ingestion edge too, matching `collect()` — so
+                // both paths that build `item.commit` yield plain text and can't
+                // drift (this single-item path feeds `wt statusline`).
+                commit_message: worktrunk::styling::sanitize_untrusted_text(commit_message)
+                    .into_owned(),
             });
         }
     }

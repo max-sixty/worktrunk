@@ -559,6 +559,22 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_summary_strips_control_sequences_from_llm_output() {
+        let (t, repo, head) = temp_repo_with_feature();
+
+        // A model that emits a screen-clear and a BEL in its output. The ESC/BEL
+        // bytes are real here (single-quoted in the shell, printed verbatim).
+        let summary = crate::summary::generate_summary(
+            "feature",
+            &head,
+            Some(t.path()),
+            "cat >/dev/null && printf '%s' 'Add \x1b[2Jnew\x07 file'",
+            &repo,
+        );
+        assert_eq!(summary, "Add new file");
+    }
+
+    #[test]
     fn test_generate_summary_caches_result() {
         let (t, repo, head) = temp_repo_with_feature();
 
