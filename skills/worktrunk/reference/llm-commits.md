@@ -10,10 +10,10 @@ Any command that reads a prompt from stdin and outputs a commit message works. A
 
 ```toml
 [commit.generation]
-command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
+command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --safe-mode --setting-sources='user' --system-prompt=''"
 ```
 
-`--no-session-persistence` prevents the commit conversation from polluting `claude --continue`. The other flags disable tools, skills, settings, and system prompt for fast text-only output. See [Claude Code docs](https://docs.anthropic.com/en/docs/build-with-claude/claude-code) for installation.
+`--no-session-persistence` prevents the commit conversation from polluting `claude --continue`. `--safe-mode` keeps the run hermetic — no hooks, plugins, MCP, skills, or CLAUDE.md — while leaving authentication working normally, so setups that authenticate via `apiKeyHelper` (not just OAuth or `ANTHROPIC_API_KEY`) still get a key. `--setting-sources='user'` scopes settings to your user config so a project `.claude/settings.json` can't override auth. The remaining flags disable tools, system prompt, and thinking for fast text-only output. `--safe-mode` requires Claude Code ≥ 2.1.169. See [Claude Code docs](https://docs.anthropic.com/en/docs/build-with-claude/claude-code) for installation.
 
 ### Codex
 
