@@ -14,7 +14,7 @@ use std::path::PathBuf;
 /// 4. UpstreamDiff: Diff vs upstream tracking branch (ahead/behind)
 /// 5. Summary: LLM-generated branch summary (requires [commit.generation] config)
 /// 6. Pr: The selected row's PR/MR, rendered from already-fetched data (no network)
-/// 7. Comments: The PR/MR discussion thread (background forge fetch on `--prs` rows)
+/// 7. Comments: The PR/MR's comment thread (background forge fetch on `--prs` rows)
 ///
 /// A mode whose content is structurally absent for the current row is rendered
 /// de-emphasized in the tab bar (see `TabAvailability` / `render_preview_tabs`):

@@ -2496,6 +2496,65 @@ fn test_switch_prs_dry_run_gitlab(repo: TestRepo) {
     );
 }
 
+/// GitLab counterpart of the GitHub `_log_tab` / `_comments_tab` dry-run tests:
+/// an MR row's deferred `log` and `comments` tabs load via background `glab api
+/// --paginate projects/:fullpath/merge_requests/<n>/commits` / `…/notes?sort=asc`
+/// calls keyed by the row's `mr:{N}` token. Both `mode:2` (Log) and `mode:7`
+/// (Comments) cache entries with non-empty bytes prove `compute_pr_log` /
+/// `compute_pr_comments` → `render_gitlab_commits` / `render_gitlab_notes` →
+/// cache for the GitLab forge — the half the unit tests (canned JSON straight
+/// into the renderers) can't reach, pinning the endpoint/arg construction.
+///
+/// Both `glab api …/commits` and `…/notes` match the mock's `api --paginate`
+/// compound key, so one canned response carries all fields each renderer reads
+/// (`short_id`/`title` for commits; `body`/`author`/`created_at`/`system` for
+/// notes) — serde ignores the rest.
+#[cfg(unix)]
+#[rstest]
+fn test_switch_prs_dry_run_gitlab_deferred_tabs(repo: TestRepo) {
+    repo.write_project_config("[forge]\nplatform = \"gitlab\"\n");
+    let mr_json = r#"[{"iid":7,"title":"Cache the dependency graph","source_branch":"feat/cache","author":{"username":"alice"},"draft":false,"web_url":"https://gitlab.com/owner/test-repo/-/merge_requests/7"}]"#;
+    let api_json = r#"[{"short_id":"abc12345","title":"Cache deps between jobs","body":"Looks good.","author":{"username":"reviewer"},"created_at":"2024-12-01T00:00:00Z","system":false}]"#;
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    fs::write(mock_bin.join("list.json"), mr_json).unwrap();
+    fs::write(mock_bin.join("api.json"), api_json).unwrap();
+    MockConfig::new("glab")
+        .version("glab version 1.0.0 (mock)")
+        .command("mr list", MockResponse::file("list.json"))
+        // `glab api --paginate <endpoint>` for both commits and notes.
+        .command("api --paginate", MockResponse::file("api.json"))
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "--prs"]);
+    cmd.env("WORKTRUNK_PICKER_DRY_RUN", "1");
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "dry-run --prs gitlab deferred tabs failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
+    let entries = parsed["entries"].as_array().expect("entries array");
+    for (mode, label) in [(2, "Log"), (7, "Comments")] {
+        let entry = entries
+            .iter()
+            .find(|e| e["branch"] == "mr:7" && e["mode"] == mode)
+            .unwrap_or_else(|| panic!("no mr:7 {label} cache entry in dump:\n{stdout}"));
+        assert!(
+            entry["bytes"].as_u64().unwrap_or(0) > 0,
+            "{label} pane rendered non-empty: {entry}"
+        );
+    }
+}
+
 /// An empty forge list still runs `stream_open_prs` to completion, exercising
 /// the empty-list branch and `forge_noun` (`_ => "PRs"` on GitHub).
 #[cfg(unix)]

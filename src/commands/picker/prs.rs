@@ -269,6 +269,15 @@ fn fetch_and_stream(
 /// row's `pr:{N}` / `mr:{N}` token so [`PrSkimItem::preview`] reads them back.
 /// Each is fire-and-forget on `COLLECT_POOL`; a forge failure leaves the slot
 /// empty and the next visit retries (see [`PreviewOrchestrator::spawn_compute`]).
+///
+/// Both tabs are spawned eagerly, once per row, for all rows — so a `--prs` open
+/// queues up to `2 × MAX_PRS` (~100) per-PR forge calls. This is deliberate and
+/// mirrors how the picker already fetches per-row CI status: spawning once here
+/// (not from `preview()`) keeps [`PrSkimItem::preview`] a pure cache read with no
+/// in-flight bookkeeping, so skim's UI thread never blocks and a row can't spawn
+/// a duplicate fetch on every repaint. `COLLECT_POOL` bounds how many run at once,
+/// and the picker's lifetime is user-bounded, so a slow forge call never blocks
+/// the command (see the "Network Access" notes in CLAUDE.md).
 fn spawn_pr_previews(orchestrator: &PreviewOrchestrator, entry: &PrEntry, width: usize) {
     let token = entry.output_token();
     let (kind, number) = (entry.kind, entry.number);
@@ -590,7 +599,7 @@ impl PrSkimItem {
     fn cached_pane(&self, mode: PreviewMode) -> String {
         self.preview_cache
             .get(&(self.output_token.clone(), mode))
-            .map(|v| v.clone())
+            .map(|v| v.value().clone())
             .unwrap_or_else(|| pr_deferred_loading(mode))
     }
 }
@@ -616,10 +625,19 @@ fn render_pr_description(body: &str, width: usize) -> String {
         return String::new();
     }
     let reset = Reset;
+    format!("\n{reset}{}\n", markdown_in_gutter(body, width))
+}
+
+/// Render `body` as markdown and quote it in the house gutter — the shared idiom
+/// for the PR description ([`render_pr_description`]) and each comment body
+/// ([`render_comment_blocks`]). The markdown wraps to the gutter's inner width
+/// (the bar plus its pad take two columns) so the gutter's own wrap is a no-op
+/// rather than re-breaking the already-styled lines. Returns no leading/trailing
+/// newline; the caller separates it from surrounding content.
+fn markdown_in_gutter(body: &str, width: usize) -> String {
     let rendered =
         crate::md_help::render_markdown_in_help_with_width(body, Some(width.saturating_sub(2)));
-    let gutter = format_with_gutter(&rendered, Some(width));
-    format!("\n{reset}{gutter}\n")
+    format_with_gutter(&rendered, Some(width))
 }
 
 /// The pane for the tabs a `--prs` row leaves empty — working-tree (1),
@@ -652,36 +670,49 @@ fn pr_deferred_loading(mode: PreviewMode) -> String {
     )
 }
 
+/// Run a forge CLI and return its stdout, or `None` on any failure (root
+/// unresolvable, spawn error, non-zero exit). Shared by the deferred `log` /
+/// `comments` fetches: a PR runs `gh <gh_args>`, an MR runs `glab <glab_args>`.
+/// Runs off-thread on `COLLECT_POOL`, never on skim's UI thread; a `None` result
+/// leaves the cache slot empty so the next visit retries (see
+/// [`PreviewOrchestrator::spawn_compute`]).
+fn fetch_forge_json(
+    repo: &Repository,
+    kind: RefKind,
+    gh_args: &[&str],
+    glab_args: &[&str],
+) -> Option<Vec<u8>> {
+    let repo_root = repo.current_worktree().root().ok()?;
+    let (program, args) = match kind {
+        RefKind::Pr => ("gh", gh_args),
+        RefKind::Mr => ("glab", glab_args),
+    };
+    let output = non_interactive_cmd(program)
+        .args(args.iter().copied())
+        .current_dir(&repo_root)
+        .run()
+        .ok()?;
+    output.status.success().then_some(output.stdout)
+}
+
 /// Fetch and render the commit log for a `--prs` row's `log` tab. A `--prs`
 /// head branch isn't fetched locally, so the commits come from the forge API
 /// rather than a local `git log`: `gh pr view <n> --json commits` (GitHub) or
-/// `glab api projects/:fullpath/merge_requests/<n>/commits` (GitLab). Returns
-/// `None` on any failure so the cache stays empty and the next selection
-/// retries (see [`PreviewOrchestrator::spawn_compute`]). Runs off-thread on
-/// `COLLECT_POOL`, never on skim's UI thread.
+/// `glab api projects/:fullpath/merge_requests/<n>/commits` (GitLab). `glab`'s
+/// `--paginate` follows every page so a long PR isn't capped at GitLab's default
+/// page size, matching `gh`'s complete `--json` result.
 fn compute_pr_log(repo: &Repository, kind: RefKind, number: u32, width: usize) -> Option<String> {
-    let repo_root = repo.current_worktree().root().ok()?;
     let number = number.to_string();
+    let endpoint = format!("projects/:fullpath/merge_requests/{number}/commits");
+    let stdout = fetch_forge_json(
+        repo,
+        kind,
+        &["pr", "view", &number, "--json", "commits"],
+        &["api", "--paginate", &endpoint],
+    )?;
     match kind {
-        RefKind::Pr => {
-            let output = non_interactive_cmd("gh")
-                .args(["pr", "view", &number, "--json", "commits"])
-                .current_dir(&repo_root)
-                .run()
-                .ok()?;
-            output.status.success().then_some(())?;
-            render_github_commits(&output.stdout, width)
-        }
-        RefKind::Mr => {
-            let endpoint = format!("projects/:fullpath/merge_requests/{number}/commits");
-            let output = non_interactive_cmd("glab")
-                .args(["api", &endpoint])
-                .current_dir(&repo_root)
-                .run()
-                .ok()?;
-            output.status.success().then_some(())?;
-            render_gitlab_commits(&output.stdout, width)
-        }
+        RefKind::Pr => render_github_commits(&stdout, width),
+        RefKind::Mr => render_gitlab_commits(&stdout, width),
     }
 }
 
@@ -753,41 +784,29 @@ fn render_commit_lines(commits: &[(String, String)], width: usize) -> String {
     out
 }
 
-/// Fetch and render the discussion thread for a `--prs` row's `comments` tab:
-/// `gh pr view <n> --json comments` (GitHub) or
-/// `glab api …/merge_requests/<n>/notes?sort=asc` (GitLab). Returns `None` on
-/// any failure so the cache stays empty and the next selection retries (see
-/// [`PreviewOrchestrator::spawn_compute`]). Runs off-thread on `COLLECT_POOL`.
+/// Fetch and render the comments on a `--prs` row's `comments` tab:
+/// `gh pr view <n> --json comments` (GitHub, the conversation-level comments) or
+/// `glab api …/merge_requests/<n>/notes?sort=asc` (GitLab, human notes). `sort=asc`
+/// matches GitHub's oldest-first order (GitLab defaults to newest-first), and
+/// `--paginate` follows every page so a long thread isn't capped at GitLab's
+/// default page size. Returns `None` on any failure so the next selection retries.
 fn compute_pr_comments(
     repo: &Repository,
     kind: RefKind,
     number: u32,
     width: usize,
 ) -> Option<String> {
-    let repo_root = repo.current_worktree().root().ok()?;
     let number = number.to_string();
+    let endpoint = format!("projects/:fullpath/merge_requests/{number}/notes?sort=asc");
+    let stdout = fetch_forge_json(
+        repo,
+        kind,
+        &["pr", "view", &number, "--json", "comments"],
+        &["api", "--paginate", &endpoint],
+    )?;
     match kind {
-        RefKind::Pr => {
-            let output = non_interactive_cmd("gh")
-                .args(["pr", "view", &number, "--json", "comments"])
-                .current_dir(&repo_root)
-                .run()
-                .ok()?;
-            output.status.success().then_some(())?;
-            render_github_comments(&output.stdout, width)
-        }
-        RefKind::Mr => {
-            // `sort=asc` matches GitHub's oldest-first thread order (GitLab
-            // defaults to newest-first).
-            let endpoint = format!("projects/:fullpath/merge_requests/{number}/notes?sort=asc");
-            let output = non_interactive_cmd("glab")
-                .args(["api", &endpoint])
-                .current_dir(&repo_root)
-                .run()
-                .ok()?;
-            output.status.success().then_some(())?;
-            render_gitlab_notes(&output.stdout, width)
-        }
+        RefKind::Pr => render_github_comments(&stdout, width),
+        RefKind::Mr => render_gitlab_notes(&stdout, width),
     }
 }
 
@@ -888,12 +907,7 @@ fn render_comment_blocks(comments: &[Comment], width: usize) -> String {
         if body.is_empty() {
             out.push_str(&cformat!("<dim>(no body)</>{reset}\n"));
         } else {
-            let rendered = crate::md_help::render_markdown_in_help_with_width(
-                body,
-                Some(width.saturating_sub(2)),
-            );
-            let gutter = format_with_gutter(&rendered, Some(width));
-            out.push_str(&format!("{reset}{gutter}\n"));
+            out.push_str(&format!("{reset}{}\n", markdown_in_gutter(body, width)));
         }
         // Blank line between comments.
         out.push('\n');
@@ -1801,10 +1815,26 @@ mod tests {
         );
         // A comment missing author/date still renders: "@unknown", no time, body.
         let json = br#"{"comments":[{"body":"orphaned"}]}"#;
-        let plain = plain(&render_github_comments(json, 80).unwrap());
-        assert!(plain.contains("@unknown"), "fallback author: {plain:?}");
-        assert!(plain.contains("orphaned"), "body kept: {plain:?}");
-        assert!(!plain.contains('·'), "no time when date absent: {plain:?}");
+        let missing = plain(&render_github_comments(json, 80).unwrap());
+        assert!(missing.contains("@unknown"), "fallback author: {missing:?}");
+        assert!(missing.contains("orphaned"), "body kept: {missing:?}");
+        assert!(
+            !missing.contains('·'),
+            "no time when date absent: {missing:?}"
+        );
+
+        // An empty-body comment keeps its header and shows a "(no body)" marker
+        // (a reaction-only or deleted comment), rather than a blank gutter.
+        let empty_body = br#"{"comments":[{"author":{"login":"octocat"},"body":"","createdAt":"2024-12-01T00:00:00Z"}]}"#;
+        let rendered = plain(&render_github_comments(empty_body, 80).unwrap());
+        assert!(
+            rendered.contains("@octocat"),
+            "header survives: {rendered:?}"
+        );
+        assert!(
+            rendered.contains("(no body)"),
+            "empty-body marker: {rendered:?}"
+        );
     }
 
     #[test]

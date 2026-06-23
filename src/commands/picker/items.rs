@@ -416,6 +416,11 @@ pub(super) fn render_preview_tabs(
     // Controls use dim yellow to distinguish from dimmed (white) tabs.
     // The tab numbers above are the alt-N accelerators (bare digits type
     // into the query); Tab/shift-tab cycle the same tabs.
+    //
+    // The controls line is intentionally NOT width-managed: skim clips it on the
+    // right on a narrow pane, but it's only a reminder — the accelerators it
+    // names live in the tab bar above, which IS width-managed, so nothing
+    // navigable is lost when the tail clips.
     let controls = cformat!(
         "<dim,yellow>Enter: switch | Tab/alt-1…7: preview | alt-c: create | Esc: cancel | ctrl-u/d: scroll | alt-p: toggle</>"
     );
@@ -455,12 +460,8 @@ fn render_tab_row_full(tabs: &[Tab], reset: Reset) -> String {
 fn render_tab_row_compact(tabs: &[Tab], reset: Reset) -> String {
     tabs.iter()
         .map(|t| {
-            let number = if t.has_content {
-                t.number.to_string()
-            } else {
-                cformat!("<dim>{}</>", t.number)
-            };
             if t.is_active {
+                // Active: `N: label`, with the number bold (and dim too when empty).
                 let number = if t.has_content {
                     cformat!("<bold>{}:</>", t.number)
                 } else {
@@ -468,6 +469,12 @@ fn render_tab_row_compact(tabs: &[Tab], reset: Reset) -> String {
                 };
                 format!("{number} {}{reset}", cformat!("<bold>{}</>", t.label))
             } else {
+                // Inactive: just the digit, dim when empty.
+                let number = if t.has_content {
+                    t.number.to_string()
+                } else {
+                    cformat!("<dim>{}</>", t.number)
+                };
                 format!("{number}{reset}")
             }
         })
@@ -1087,6 +1094,23 @@ mod tests {
         assert!(
             full.contains("7: ") && full.contains("comments"),
             "wide pane keeps full labels"
+        );
+
+        // Boundary: the switch is `visual_width(full) <= width`. Measure the full
+        // bar's own width, then check that exactly that width stays full while one
+        // column narrower compacts (the `pr` tab is active, so only the full bar
+        // carries the inactive `comments` label).
+        let avail = TabAvailability::pull_request();
+        let full_w = visual_width(full.lines().next().unwrap());
+        let at_fit = render_preview_tabs(PreviewMode::Pr, avail, full_w);
+        assert!(
+            at_fit.contains("comments"),
+            "full bar at exact-fit width: {at_fit:?}"
+        );
+        let one_under = render_preview_tabs(PreviewMode::Pr, avail, full_w - 1);
+        assert!(
+            !one_under.contains("comments"),
+            "compacts one column under: {one_under:?}"
         );
     }
 
