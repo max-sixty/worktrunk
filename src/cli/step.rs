@@ -3,7 +3,7 @@ use clap::{Args, Subcommand};
 #[derive(Args)]
 pub struct CommitArgs {
     /// Branch to operate on (defaults to current worktree)
-    #[arg(short, long, add = crate::completion::worktree_only_completer())]
+    #[arg(short, long, add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
     pub(crate) branch: Option<String>,
 
     #[command(flatten)]
@@ -33,7 +33,7 @@ pub struct SquashArgs {
     /// Target branch
     ///
     /// Defaults to default branch.
-    #[arg(add = crate::completion::branch_value_completer())]
+    #[arg(add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
     pub(crate) target: Option<String>,
 
     #[command(flatten)]
@@ -165,7 +165,7 @@ $ wt step rebase develop    # Rebase onto develop
         /// Target branch
         ///
         /// Defaults to default branch.
-        #[arg(add = crate::completion::branch_value_completer())]
+        #[arg(add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         target: Option<String>,
 
         /// Output format
@@ -193,7 +193,7 @@ Similar to `git push . HEAD:<target>`, but uses `receive.denyCurrentBranch=updat
         /// Target branch
         ///
         /// Defaults to default branch.
-        #[arg(add = crate::completion::branch_value_completer())]
+        #[arg(add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         target: Option<String>,
 
         /// Create a merge commit (no fast-forward)
@@ -260,11 +260,11 @@ $ GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state defau
         /// Target branch
         ///
         /// Defaults to default branch.
-        #[arg(add = crate::completion::branch_value_completer())]
+        #[arg(add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         target: Option<String>,
 
         /// Branch to operate on (defaults to current worktree)
-        #[arg(short, long, add = crate::completion::worktree_only_completer())]
+        #[arg(short, long, add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
 
         /// Extra arguments forwarded to `git diff`
@@ -372,13 +372,13 @@ The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://c
         /// Source worktree branch
         ///
         /// Defaults to main worktree.
-        #[arg(long, add = crate::completion::worktree_only_completer())]
+        #[arg(long, add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
         from: Option<String>,
 
         /// Destination worktree branch
         ///
         /// Defaults to current worktree.
-        #[arg(long, add = crate::completion::worktree_only_completer())]
+        #[arg(long, add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
         to: Option<String>,
 
         /// Show what would be copied
@@ -562,7 +562,7 @@ The swap uses `rename()` for each entry — fast regardless of entry size, since
         /// Branch to promote to main worktree
         ///
         /// Defaults to current branch, or default branch from main worktree.
-        #[arg(add = crate::completion::worktree_only_completer())]
+        #[arg(add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
     },
 
@@ -681,7 +681,7 @@ Note: This command is experimental and may change in future versions.
 "#)]
     Relocate {
         /// Worktrees to relocate (defaults to all mismatched)
-        #[arg(add = crate::completion::worktree_only_completer())]
+        #[arg(add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
         branches: Vec<String>,
 
         /// Show what would be moved

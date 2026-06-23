@@ -84,22 +84,26 @@ wt --source -C /path/to/repo switch
 3. Add an `after_long_help` attribute — it is the source of truth for `docs/content/{command}.md`.
 4. Run `cargo test --test integration test_docs_are_in_sync`.
 
-## Shell Completion for CLI Arguments
+## Branch Argument Conventions
 
-Branch and worktree arguments should include shell completion for better UX. Add completion helpers to CLI definitions:
+Every branch-name argument carries a completer (shell completion) and the
+`non_empty_branch` value parser (rejects `--branch=` at the parse boundary, so
+an empty value surfaces as a clear usage error instead of a garbled
+`Branch  has no worktree`):
 
 ```rust
 /// Target branch (defaults to current)
-#[arg(long, add = crate::completion::branch_value_completer())]
+#[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
 branch: Option<String>,
 ```
 
 **Available completers:**
 - `branch_value_completer()` - Completes with branch names
 - `worktree_branch_completer()` - Completes with branch names, suppresses when --create flag present
+- `worktree_only_completer()` - Completes with branches that have a worktree
 - `local_branches_completer()` - Completes with local branch names, excludes remote-only
 
-**Pattern:** All branch arguments should use `branch_value_completer()` for consistency with commands like `wt merge`, `wt switch --base`, `wt rebase`.
+Pick the completer that fits the argument; `value_parser = crate::cli::non_empty_branch` is the same on all of them.
 
 ## CLI Flag Descriptions
 

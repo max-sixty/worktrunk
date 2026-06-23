@@ -21,6 +21,21 @@ use std::sync::OnceLock;
 
 use crate::commands::Shell;
 
+/// Reject an empty (or whitespace-only) branch-name argument.
+///
+/// The `value_parser` for every branch-name argument. Without it, `--branch=`
+/// (or a bare empty positional) flows downstream as an empty branch name and
+/// surfaces as a garbled diagnostic — `Branch  has no worktree` /
+/// `wt switch ''`. Rejecting it at the parse boundary yields a clear usage
+/// error instead.
+pub(crate) fn non_empty_branch(s: &str) -> Result<String, String> {
+    if s.trim().is_empty() {
+        Err("branch name cannot be empty".to_string())
+    } else {
+        Ok(s.to_string())
+    }
+}
+
 /// Parse KEY=VALUE string for `wt config state vars set`.
 ///
 /// Like `parse_key_val`, but without hyphen→underscore canonicalization.
@@ -331,7 +346,7 @@ pub(crate) struct SwitchArgs {
     ///
     /// Opens interactive picker if omitted.
     /// Shortcuts: `^` (default branch), `-` (previous), `@` (current), `pr:{N}` (GitHub PR), `mr:{N}` (GitLab MR)
-    #[arg(add = crate::completion::worktree_branch_completer())]
+    #[arg(add = crate::completion::worktree_branch_completer(), value_parser = crate::cli::non_empty_branch)]
     pub(crate) branch: Option<String>,
 
     /// Include branches without worktrees
@@ -354,7 +369,7 @@ pub(crate) struct SwitchArgs {
     ///
     /// Defaults to default branch. Supports the same shortcuts as the branch
     /// argument: `^`, `@`, `-`, `pr:{N}`, `mr:{N}`.
-    #[arg(short = 'b', long, requires = "branch", add = crate::completion::branch_value_completer())]
+    #[arg(short = 'b', long, requires = "branch", add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
     pub(crate) base: Option<String>,
 
     /// Command to run after switch
@@ -455,7 +470,7 @@ pub(crate) struct ListArgs {
 #[derive(Args)]
 pub(crate) struct RemoveArgs {
     /// Branch name or worktree path [default: current]
-    #[arg(add = crate::completion::local_branches_completer())]
+    #[arg(add = crate::completion::local_branches_completer(), value_parser = crate::cli::non_empty_branch)]
     pub(crate) branches: Vec<String>,
 
     /// Keep branch after removal
@@ -501,7 +516,7 @@ pub(crate) struct MergeArgs {
     /// Target branch
     ///
     /// Defaults to default branch.
-    #[arg(add = crate::completion::branch_value_completer())]
+    #[arg(add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
     pub(crate) target: Option<String>,
 
     /// Force commit squashing
@@ -2345,7 +2360,14 @@ This composes with aliases — an alias body can invoke `wt --config-set … <co
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_version;
+    use super::{non_empty_branch, resolve_version};
+
+    #[test]
+    fn non_empty_branch_rejects_blank() {
+        assert_eq!(non_empty_branch("feature").unwrap(), "feature");
+        assert!(non_empty_branch("").is_err());
+        assert!(non_empty_branch("   ").is_err());
+    }
 
     #[test]
     fn resolve_version_uses_git_describe_when_available() {
