@@ -44,7 +44,7 @@ Organizations can deploy a system-wide config file for shared defaults — run `
 worktree-path = ".worktrees/{{ branch | sanitize }}"
 
 [commit.generation]
-command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
+command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --safe-mode --setting-sources='user' --system-prompt=''"
 ```
 
 **Project config** — shared team settings:
@@ -138,7 +138,7 @@ Generate commit messages automatically during merge. Requires an external CLI to
 
 ```toml
 [commit.generation]
-command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
+command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --safe-mode --setting-sources='user' --system-prompt=''"
 ```
 
 ### Codex
@@ -185,9 +185,37 @@ full = false       # Show CI, main…± diffstat, and LLM summaries (--full)
 branches = false   # Include branches without worktrees (--branches)
 remotes = false    # Include remote-only branches (--remotes)
 
+columns = ["branch", "status", "ci", "path"]   # Columns to show, in order — built-ins or custom headers (omit for the default set)
+
 task-timeout-ms = 0   # Kill individual git commands after N ms; 0 disables
 timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disables
 ```
+
+`columns` selects and orders the columns to render; omit it for the default set.
+It is designed to be driven by an [alias](https://worktrunk.dev/extending/#aliases) that sets it
+per invocation — a body like `wt --config-set 'list.columns=[…]' list` gives a
+named view (run as `wt <alias>`) without disturbing the default `wt list`.
+Setting it statically in the config file uses the same key and works, but is not
+the intended use: it pins one layout over a table that otherwise adapts to
+`--full` and terminal width.
+
+Valid built-in names are `branch`, `status`, `working-diff`, `ahead-behind`,
+`branch-diff`, `summary`, `upstream`, `ci`, `path`, `url`, `commit`, `age`, and
+`message`. A [custom column](#custom-columns) is named by its `[list.custom-columns]`
+header, so a selection mixes built-ins and custom columns in one ordered list
+(`columns = ["branch", "Ticket", "ci"]`). When `columns` is set it is exhaustive
+— only the listed columns render, so a custom column omitted from a non-empty
+list is hidden (omit `columns` entirely to keep the default set, where custom
+columns append automatically). A built-in name wins over a custom header that
+collides with it. The gutter type indicator always shows.
+
+Listing a column requests it but does not force it on: a column gated off
+elsewhere stays hidden — `ci` needs `--full`, `summary` needs
+`[commit.generation]` — so `columns` only narrows which columns may appear.
+
+The selection drives the rendered table and the `wt switch` picker.
+`wt list --format json` ignores it, always emitting every field, built-in and
+custom.
 
 #### Custom columns [experimental]
 
@@ -580,6 +608,8 @@ $ WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
 | `WORKTRUNK_DIRECTIVE_EXEC_FILE` | Internal: set by shell wrappers. wt writes shell commands; the wrapper sources the file |
 | `WORKTRUNK_SHELL` | Internal: set by shell wrappers to indicate shell type (e.g., `powershell`) |
 | `WORKTRUNK_MAX_CONCURRENT_COMMANDS` | Max parallel git commands (default: 32). Lower if hitting file descriptor limits. |
+| `WORKTRUNK_VERBOSE` | Verbosity level (`0`/`1`/`2`), like `-v`/`-vv` but applied everywhere — including shell completion, which no flag can reach |
+| `RUST_LOG` | Logging directive (e.g. `worktrunk=debug`); overrides the verbosity baseline for what reaches stderr |
 | `NO_COLOR` | Disable colored output ([standard](https://no-color.org/)) |
 | `CLICOLOR_FORCE` | Force colored output even when not a TTY |
 
@@ -629,7 +659,8 @@ Global Options:
 
   -v, --verbose...
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/)
+          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
+          apply the same level everywhere — including shell completion, which no flag can reach
 
   -y, --yes
           Skip approval prompts
@@ -692,7 +723,8 @@ Global Options:
 
   -v, --verbose...
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/)
+          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
+          apply the same level everywhere — including shell completion, which no flag can reach
 
   -y, --yes
           Skip approval prompts
@@ -752,7 +784,8 @@ Global Options:
 
   -v, --verbose...
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/)
+          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
+          apply the same level everywhere — including shell completion, which no flag can reach
 
   -y, --yes
           Skip approval prompts
@@ -809,7 +842,8 @@ Global Options:
 
   -v, --verbose...
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/)
+          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
+          apply the same level everywhere — including shell completion, which no flag can reach
 
   -y, --yes
           Skip approval prompts
@@ -898,7 +932,8 @@ Global Options:
 
   -v, --verbose...
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/)
+          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
+          apply the same level everywhere — including shell completion, which no flag can reach
 
   -y, --yes
           Skip approval prompts
@@ -965,7 +1000,8 @@ Global Options:
 
   -v, --verbose...
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/)
+          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
+          apply the same level everywhere — including shell completion, which no flag can reach
 
   -y, --yes
           Skip approval prompts
@@ -1034,7 +1070,8 @@ Global Options:
 
   -v, --verbose...
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/)
+          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
+          apply the same level everywhere — including shell completion, which no flag can reach
 
   -y, --yes
           Skip approval prompts
@@ -1152,7 +1189,8 @@ Global Options:
 
   -v, --verbose...
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/)
+          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
+          apply the same level everywhere — including shell completion, which no flag can reach
 
   -y, --yes
           Skip approval prompts
@@ -1218,7 +1256,8 @@ Global Options:
 
   -v, --verbose...
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/)
+          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
+          apply the same level everywhere — including shell completion, which no flag can reach
 
   -y, --yes
           Skip approval prompts
@@ -1293,7 +1332,8 @@ Global Options:
 
   -v, --verbose...
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/)
+          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
+          apply the same level everywhere — including shell completion, which no flag can reach
 
   -y, --yes
           Skip approval prompts
@@ -1382,7 +1422,8 @@ Global Options:
 
   -v, --verbose...
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/)
+          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
+          apply the same level everywhere — including shell completion, which no flag can reach
 
   -y, --yes
           Skip approval prompts

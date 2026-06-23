@@ -466,18 +466,24 @@ pub trait PickerProgressHandler: Send + Sync {
     /// before any task results arrive. `rendered` is one entry per item,
     /// with fast fields (branch, path, head) populated and blank
     /// placeholders for slow cells. `header` is the column-header line;
-    /// the handler calls `render()` / `plain_text()` as needed.
+    /// the handler calls `render()` / `plain_text()` as needed. `grid` is
+    /// the layout's column geometry, for rows rendered outside collect
+    /// (the picker's `--prs` rows align their cells to it).
     fn on_skeleton(
         &self,
         items: Vec<super::model::ListItem>,
         rendered: Vec<String>,
         header: worktrunk::styling::StyledLine,
+        grid: super::layout::ColumnGrid,
     );
 
     /// Fired after a single task result updates row `idx`. `rendered` is the
     /// new line — write it through the item's shared state and wake the picker
-    /// to repaint (skim 4.x renders on demand, not on a timer).
-    fn on_update(&self, idx: usize, rendered: String);
+    /// to repaint (skim 4.x renders on demand, not on a timer). `item` is the
+    /// row's current model carrying the just-updated fields; the picker reads
+    /// `pr_status` from it to feed the live `pr` preview tab, which cannot see
+    /// the frozen skeleton snapshot.
+    fn on_update(&self, idx: usize, rendered: String, item: &super::model::ListItem);
 
     /// Fired at the 200ms reveal deadline. One pre-rendered line per row,
     /// with the placeholder promoted from blank to `·`: rows that have
@@ -794,9 +800,10 @@ pub fn collect(
             collect_deadline,
             list_width,
             progressive_handler,
-            // Picker is the only `Resolved` caller and runs the same fast
-            // bucket as default `wt list` (skips BranchDiff/CiStatus), so
-            // it also opts out of the untracked-inclusive working diff.
+            // Picker is the only `Resolved` caller. Like default `wt list` it
+            // opts out of the untracked-inclusive working diff; unlike it, the
+            // picker keeps the CiStatus task (see `handle_picker`'s skip set),
+            // so this is not the same bucket.
             false,
         ),
         ShowConfig::DeferredToParallel {
@@ -1120,27 +1127,39 @@ pub fn collect(
         );
     }
 
-    // The picker skips the networked CiStatus task, but cached statuses are
-    // local data: fill rows from `.git/wt/cache/ci-status/` so PR/MR numbers
-    // appear in the picker without touching the wire. The CI column is
-    // allocated only when some row actually had a usable cache entry —
-    // `layout_skip_tasks` diverges from `effective_skip_tasks` exactly then
-    // (the skip set still governs task spawning; this copy only tells layout
-    // which columns will have data).
-    let mut layout_skip_tasks = effective_skip_tasks.clone();
-    if progressive_handler.is_some()
-        && effective_skip_tasks.contains(&TaskKind::CiStatus)
-        && super::ci_status::populate_from_cache(repo, &mut all_items)
-    {
-        layout_skip_tasks.remove(&TaskKind::CiStatus);
+    // `[list] columns` selects/reorders the columns to render. Names address
+    // built-ins or custom columns (by header → resolved index), so the custom
+    // names are passed in resolution order. Like custom columns, a bad name
+    // aborts `wt list` but only degrades the picker (which can't surface an
+    // abort mid-render), so the same `progressive_handler` fork applies. An
+    // empty selection means "use the default column set".
+    let custom_names: Vec<&str> = custom_columns.iter().map(|c| c.name.as_str()).collect();
+    let selected_columns =
+        match super::columns::parse_selected_columns(&config.list.columns, &custom_names) {
+            Ok(columns) => columns,
+            Err(e) if progressive_handler.is_some() => {
+                emit_warning(warning_message(format!("Column selection ignored: {e}")).to_string());
+                Vec::new()
+            }
+            Err(e) => return Err(e),
+        };
+
+    // The picker primes its CI cells from the local cache so the column paints
+    // instantly, then the live `CiStatus` task (which the picker keeps — see
+    // `handle_picker`) overwrites each cell as results stream in. Uncached rows
+    // stay pending until the fetch reports, exactly like the other progressive
+    // columns. `wt list` drives its progressive render through `progressive_state`,
+    // not a handler, so the prime is picker-only.
+    if progressive_handler.is_some() {
+        super::ci_status::populate_from_cache(repo, &mut all_items);
     }
 
     // CI column width hint: the largest PR/MR number any previous fetch saw
     // (one small file read — cheap enough for the pre-skeleton budget, and
-    // the skeleton can't size the column without it). Also covers the
-    // cache-populated picker rows: `detect` re-ratchets on every cache hit,
-    // so the stored maximum is at least as wide as any cached number.
-    let max_pr_number = (!layout_skip_tasks.contains(&TaskKind::CiStatus))
+    // the skeleton can't size the column without it). Whatever fetch wrote a
+    // cache entry also ratcheted this maximum, so the hint already covers any
+    // number the prime above reads back.
+    let max_pr_number = (!effective_skip_tasks.contains(&TaskKind::CiStatus))
         .then(|| super::ci_status::MaxPrNumber::read(repo))
         .flatten();
 
@@ -1149,14 +1168,17 @@ pub fn collect(
     // terminal — the rest belongs to the preview pane.
     let layout = super::layout::calculate_layout_with_width(
         &all_items,
-        &layout_skip_tasks,
+        &effective_skip_tasks,
         list_width
             .or_else(crate::display::terminal_width)
             .unwrap_or(usize::MAX),
         &main_worktree.path,
         url_template.as_deref(),
         max_pr_number,
-        &custom_columns,
+        super::layout::ColumnSelection {
+            custom: &custom_columns,
+            selected: (!selected_columns.is_empty()).then_some(selected_columns.as_slice()),
+        },
     );
 
     // Single-line invariant: with no detectable width, an unlimited width
@@ -1249,7 +1271,12 @@ pub fn collect(
             .iter()
             .map(|item| layout.render_skeleton_row(item, placeholder).render())
             .collect();
-        handler.on_skeleton(all_items.clone(), skeletons, layout.render_header_line());
+        handler.on_skeleton(
+            all_items.clone(),
+            skeletons,
+            layout.render_header_line(),
+            layout.column_grid(),
+        );
         // Mirror the `wt list` progressive-table marker so `wt-perf phases`
         // sees the same boundary across both commands.
         worktrunk::trace::instant("Skeleton rendered");
@@ -1654,7 +1681,7 @@ pub fn collect(
                     }
 
                     if let Some(handler) = progressive_handler.as_ref() {
-                        handler.on_update(item_idx, rendered);
+                        handler.on_update(item_idx, rendered, item);
                     }
                 }
                 results::DrainEvent::Reveal { items } => {
@@ -2296,7 +2323,10 @@ mod tests {
             Path::new("/tmp"),
             None,
             None,
-            &[],
+            super::super::layout::ColumnSelection {
+                custom: &[],
+                selected: None,
+            },
         );
         let placeholder = super::super::render::PLACEHOLDER;
 

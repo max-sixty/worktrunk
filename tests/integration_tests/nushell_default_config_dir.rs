@@ -17,7 +17,7 @@ use std::process::Command;
 
 fn run_nu_default_config_dir(configure_env: impl FnOnce(&mut Command)) -> String {
     let mut cmd = Command::new("nu");
-    cmd.args(["-c", "echo $nu.default-config-dir"]);
+    cmd.args(["--no-config-file", "-c", "echo $nu.default-config-dir"]);
     configure_env(&mut cmd);
     let output = cmd
         .output()

@@ -1851,6 +1851,7 @@ pub fn handle_switch_command(args: SwitchArgs, yes: bool) -> anyhow::Result<()> 
                     return crate::commands::handle_picker(
                         args.branches,
                         args.remotes,
+                        args.prs,
                         change_dir_flag,
                         args.format,
                     );
@@ -1860,7 +1861,7 @@ pub fn handle_switch_command(args: SwitchArgs, yes: bool) -> anyhow::Result<()> 
                 {
                     use worktrunk::git::WorktrunkError;
                     // Suppress unused variable warnings on Windows
-                    let _ = (args.branches, args.remotes, change_dir_flag);
+                    let _ = (args.branches, args.remotes, args.prs, change_dir_flag);
 
                     crate::commands::print_windows_picker_unavailable();
                     return Err(WorktrunkError::AlreadyDisplayed { exit_code: 2 }.into());

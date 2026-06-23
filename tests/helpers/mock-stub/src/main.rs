@@ -31,6 +31,8 @@
 //! - `output`: output literal string to stdout
 //! - `stderr`: output literal string to stderr
 //! - `exit_code`: exit with specified code (default 0)
+//! - `delay_ms`: sleep this long before responding (default 0), to simulate a
+//!   slow command (e.g. a forge call the picker streams in behind its frame)
 
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -39,6 +41,8 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::exit;
+use std::thread::sleep;
+use std::time::Duration;
 
 #[derive(Debug, Deserialize)]
 struct Config {
@@ -54,6 +58,8 @@ struct CommandResponse {
     stderr: Option<String>,
     #[serde(default)]
     exit_code: i32,
+    #[serde(default)]
+    delay_ms: u64,
 }
 
 /// Get command name from argv\[0\].
@@ -103,6 +109,7 @@ fn main() {
         output: None,
         stderr: None,
         exit_code: 1,
+        delay_ms: 0,
     };
 
     // Try triple match first (e.g., "mr view 1", "mr view 2")
@@ -133,6 +140,12 @@ fn main() {
         // Fall back to _default
         .or_else(|| config.commands.get("_default"))
         .unwrap_or(&default_response);
+
+    // Simulate a slow command (e.g. a forge call) so tests can observe the
+    // caller's in-flight UI before the response lands.
+    if response.delay_ms > 0 {
+        sleep(Duration::from_millis(response.delay_ms));
+    }
 
     if let Some(file) = &response.file {
         let file_path = config_dir.join(file);

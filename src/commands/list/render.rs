@@ -331,10 +331,10 @@ impl LayoutConfig {
                     return col.render_text_cell(text, None);
                 }
                 ColumnKind::CiStatus if item.pr_status.is_some() => {
-                    // Resolved before the skeleton only by the picker's
-                    // cache-only fill, where no task will repaint the cell;
-                    // `wt list` never sets pr_status this early and keeps
-                    // the placeholder arm below.
+                    // Set before the skeleton only by the picker's cache prime —
+                    // render it now for an instant first paint; the live CiStatus
+                    // task repaints the cell as it lands. `wt list` never sets
+                    // pr_status this early and keeps the placeholder arm below.
                     return match &item.pr_status {
                         Some(Some(pr_status)) => {
                             let mut ci = StyledLine::new();
@@ -416,12 +416,11 @@ impl ColumnLayout {
                 // presence gradient, glyph still primary. All single-width
                 // ASCII — the gutter must dodge skim's `width_cjk` clipping.
                 //
-                // TODO(pr-rows): PR rows (open PRs with no local branch) land
-                // on a separate branch; add a `#` arm to `ItemKind::gutter_glyph`
-                // (and a matching `#` in the Status upstream column). Not done
-                // here — PR rows don't exist on this branch, and the picker
-                // skips CI/PR detection (a network call), so a `#` driven by PR
-                // status would never render in the picker.
+                // PR rows (open PRs with no local branch, `wt switch --prs`)
+                // also carry a gutter sigil — a dim `#` — but they're a picker
+                // source (`PrSkimItem`), not a `ListItem`, so they render their
+                // gutter in `commands::picker::prs` (`PR_GUTTER_SIGIL`) rather
+                // than through this `ItemKind` match.
                 let mut cell = StyledLine::new();
                 // `glyph` + trailing space = the two-cell sigil; the bare glyph
                 // also feeds the picker's fuzzy-search text (`gutter_glyph`).
