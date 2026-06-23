@@ -3,6 +3,6 @@ source: tests/integration_tests/switch_picker.rs
 expression: list
 ---
 >
-    Branch   Status        HEAD±    main↕  Remote⇅  Commit
-  @ main         ^                                  [HASH]
-> + feature   !  ↑       +3   -1   ↑1               [HASH]
+    Branch   Status        HEAD±    main↕  Remote⇅  CI
+  @ main         ^
+> + feature   !  ↑       +3   -1   ↑1

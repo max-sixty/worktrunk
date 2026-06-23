@@ -55,7 +55,7 @@ Usage: [1m[36mwt config create[0m [36m[OPTIONS][0m
           Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to apply the same level everywhere — including shell completion, which no flag can reach
 
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
@@ -165,8 +165,36 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# branches = false   # Include branches without worktrees (--branches)[0m
 [107m [0m [2m# remotes = false    # Include remote-only branches (--remotes)[0m
 [107m [0m [2m#[0m
+[107m [0m [2m# columns = ["branch", "status", "ci", "path"]   # Columns to show, in order — built-ins or custom headers (omit for the default set)[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# task-timeout-ms = 0   # Kill individual git commands after N ms; 0 disables[0m
 [107m [0m [2m# timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disables[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# `columns` selects and orders the columns to render; omit it for the default set.[0m
+[107m [0m [2m# It is designed to be driven by an alias (https://worktrunk.dev/extending/#aliases) that sets it[0m
+[107m [0m [2m# per invocation — a body like `wt --config-set 'list.columns=[…]' list` gives a[0m
+[107m [0m [2m# named view (run as `wt <alias>`) without disturbing the default `wt list`.[0m
+[107m [0m [2m# Setting it statically in the config file uses the same key and works, but is not[0m
+[107m [0m [2m# the intended use: it pins one layout over a table that otherwise adapts to[0m
+[107m [0m [2m# `--full` and terminal width.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Valid built-in names are `branch`, `status`, `working-diff`, `ahead-behind`,[0m
+[107m [0m [2m# `branch-diff`, `summary`, `upstream`, `ci`, `path`, `url`, `commit`, `age`, and[0m
+[107m [0m [2m# `message`. A custom column (#custom-columns) is named by its `[list.custom-columns]`[0m
+[107m [0m [2m# header, so a selection mixes built-ins and custom columns in one ordered list[0m
+[107m [0m [2m# (`columns = ["branch", "Ticket", "ci"]`). When `columns` is set it is exhaustive[0m
+[107m [0m [2m# — only the listed columns render, so a custom column omitted from a non-empty[0m
+[107m [0m [2m# list is hidden (omit `columns` entirely to keep the default set, where custom[0m
+[107m [0m [2m# columns append automatically). A built-in name wins over a custom header that[0m
+[107m [0m [2m# collides with it. The gutter type indicator always shows.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Listing a column requests it but does not force it on: a column gated off[0m
+[107m [0m [2m# elsewhere stays hidden — `ci` needs `--full`, `summary` needs[0m
+[107m [0m [2m# `[commit.generation]` — so `columns` only narrows which columns may appear.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# The selection drives the rendered table and the `wt switch` picker.[0m
+[107m [0m [2m# `wt list --format json` ignores it, always emitting every field, built-in and[0m
+[107m [0m [2m# custom.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# #### Custom columns [experimental][0m
 [107m [0m [2m#[0m

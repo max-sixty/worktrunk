@@ -106,13 +106,13 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
 
     - name: Install cargo-hack
-      uses: taiki-e/install-action@v2.82.0
+      uses: taiki-e/install-action@v2.82.2
       with:
         tool: cargo-hack
 
@@ -166,7 +166,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: Install musl-tools
       if: matrix.install == 'musl-tools'
@@ -192,7 +192,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
@@ -253,7 +253,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     # cargo-udeps requires nightly; update date periodically
     - run: rustup override set nightly-2026-03-01
@@ -282,7 +282,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - run: rustup override set nightly-2026-03-01
 
@@ -320,7 +320,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
@@ -345,7 +345,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: Install Nix
       uses: cachix/install-nix-action@v31
@@ -373,7 +373,7 @@ jobs:
       issues: write
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - uses: JasonEtco/create-an-issue@v2
       env:

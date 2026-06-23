@@ -59,9 +59,9 @@ Shortcuts also apply to `--base`. For a fork PR/MR, the head commit is fetched a
 
 ## Interactive picker
 
-When called without arguments, `wt switch` opens an interactive picker to browse and select worktrees with live preview.
+When called without arguments, `wt switch` opens an interactive picker to browse and select worktrees with live preview. The candidate set widens with `--branches` (local branches without worktrees), `--remotes` (remote branches), and `--prs` (open PRs/MRs — see below).
 
-The CI column shows cached PR/MR status when earlier runs (`wt list --full`, the statusline) have fetched it — the picker never fetches CI status itself. An entry whose branch has moved or whose TTL has passed keeps its PR/MR number, dimmed.
+The CI column shows each row's PR/MR CI and review status, the same as [`wt list --full`](https://worktrunk.dev/list/).
 
 **Keybindings:**
 
@@ -72,7 +72,7 @@ The CI column shows cached PR/MR status when earlier runs (`wt list --full`, the
 | `Enter` | Switch to selected worktree |
 | `Alt-c` | Create new worktree named as entered text |
 | `Esc` | Cancel |
-| `Alt-1`–`Alt-5` | Jump to a preview tab |
+| `Alt-1`–`Alt-6` | Jump to a preview tab |
 | `Tab`/`Shift-Tab` | Cycle preview tabs forward/backward |
 | `Alt-p` | Toggle preview panel |
 | `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
@@ -82,13 +82,14 @@ Plain digits go to the filter, so a branch name containing a number can be typed
 
 Typing a gutter sigil filters by row kind: `+` narrows to linked worktrees and `@` to the current worktree. The other sigils don't filter cleanly — `^` and `|` are skim's prefix-anchor and OR query operators (so `^` matches every row and `|` none), and `/` matches most rows because every worktree path contains it.
 
-**Preview tabs** — jump with `Alt-1`–`Alt-5`, or cycle with `Tab`/`Shift-Tab`:
+**Preview tabs:**
 
 1. **HEAD±** — Diff of uncommitted changes
 2. **log** — Recent commits; commits already on the default branch have dimmed hashes
 3. **main…±** — Diff of changes since the merge-base with the default branch
 4. **remote⇅** — Ahead/behind diff vs upstream tracking branch
 5. **summary** — LLM-generated branch summary; requires `[list] summary = true` and [`commit.generation`](https://worktrunk.dev/config/#commit)
+6. **pr** — The selected row's PR/MR, for any row whose branch has one
 
 **Pager configuration:** The preview panel pipes diff output through git's pager. Override in user config:
 
@@ -108,11 +109,14 @@ $ wt switch pr:101                                  # GitHub PR #101
 $ wt switch https://github.com/owner/repo/pull/101  # ...the same PR, by URL
 $ wt switch mr:101                                  # GitLab MR !101
 $ wt switch https://gitlab.com/owner/repo/-/merge_requests/101  # ...the same MR, by URL
+$ wt switch --prs                                   # Browse open PRs/MRs in the picker
 ```
 
 Both work anywhere a branch is accepted, including `--base`. The `--create` flag cannot be used with a PR/MR reference since the branch already exists.
 
 If the PR or MR is on a fork, the local branch uses its branch name directly, so `git push` works normally. A pre-existing local branch with that name tracking something else requires renaming first.
+
+The `--prs` flag adds the repository's open PRs (GitHub) or MRs (GitLab) to the interactive picker. Each row resolves to the same `pr:`/`mr:` shortcut, so selecting one fetches the ref and switches to its branch.
 
 Requires `gh` (GitHub), `glab` (GitLab), or an equivalent CLI installed and authenticated; see [forge platform](https://worktrunk.dev/config/#forge-platform) for Gitea, Azure DevOps, and other supported platforms.
 
@@ -194,6 +198,9 @@ Picker Options:
       --remotes
           Include remote branches
 
+      --prs
+          Include open PRs/MRs
+
 Automation:
       --no-hooks
           Skip hooks
@@ -219,7 +226,8 @@ Global Options:
 
   -v, --verbose...
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/)
+          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
+          apply the same level everywhere — including shell completion, which no flag can reach
 
   -y, --yes
           Skip approval prompts

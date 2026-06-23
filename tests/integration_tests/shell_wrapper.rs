@@ -340,6 +340,29 @@ fn exec_in_pty_interactive(
     env_vars: &[(&str, &str)],
     inputs: &[&str],
 ) -> (String, i32) {
+    exec_in_pty_shell(shell, script, working_dir, env_vars, inputs, true)
+}
+
+/// Like [`exec_in_pty_interactive`] but lets the caller choose whether `bash` /
+/// `zsh` run interactively (`-i`).
+///
+/// An interactive shell does job-control initialization at startup: if it
+/// decides it isn't the PTY's foreground process group it sends its own process
+/// group `SIGTTIN` and stops — producing no output and never exiting. Under
+/// parallel load that occasionally wedged `test_source_flag_forwards_errors`
+/// until the 180s harness timeout. A non-interactive shell skips job control
+/// entirely, so the wedge can't happen; pass `interactive = false` for tests
+/// that don't assert on job-control output. Tests that *do* (e.g.
+/// `test_zsh_no_job_control`) pass `interactive = true`.
+#[cfg(test)]
+fn exec_in_pty_shell(
+    shell: &str,
+    script: &str,
+    working_dir: &std::path::Path,
+    env_vars: &[(&str, &str)],
+    inputs: &[&str],
+    interactive: bool,
+) -> (String, i32) {
     use portable_pty::CommandBuilder;
     use std::io::Write;
 
@@ -402,14 +425,17 @@ fn exec_in_pty_interactive(
     cmd.env("USER", "testuser");
     cmd.env("SHELL", shell_binary);
 
-    // Run in interactive mode to simulate real user environment.
-    // This ensures tests catch job control message leaks like "[1] 12345" and "[1]+ Done".
-    // Interactive shells have job control enabled by default.
+    // Interactive shells (`-i`) enable job control, so tests can catch
+    // job-control message leaks like "[1] 12345" and "[1]+ Done". Callers that
+    // don't assert on job control pass `interactive = false` to skip `-i` and
+    // avoid the startup job-control wedge (see `exec_in_pty_shell`).
     match shell {
         "zsh" => {
             // Isolate from user rc files
             cmd.env("ZDOTDIR", "/dev/null");
-            cmd.arg("-i");
+            if interactive {
+                cmd.arg("-i");
+            }
             cmd.arg("--no-rcs");
             cmd.arg("-o");
             cmd.arg("NO_GLOBAL_RCS");
@@ -419,21 +445,9 @@ fn exec_in_pty_interactive(
             cmd.arg(script);
         }
         "bash" => {
-            // Isolate from user startup files, mirroring the zsh arm above and
-            // the hermetic `bash --norc --noprofile -i` in
-            // `exec_bash_truly_interactive`. An interactive bash (`-i`, with job
-            // control) that sources the host's rc/profile can touch /dev/tty
-            // during startup and take SIGTTIN/TTOU/TSTP, which *suspends* the
-            // shell: it never exits, so the PTY read and `child.wait()` both
-            // block until nextest's 180s slow-timeout (terminate-after=1, no
-            // retries — a hard, unrecoverable failure). This matches the
-            // macOS CI flake in `test_source_flag_forwards_errors::case_1`:
-            // bash is the only one of these shells both interactive and
-            // un-isolated (zsh is isolated above; fish runs non-interactively),
-            // and case_1 (bash) is the case that timed out.
-            cmd.arg("--norc");
-            cmd.arg("--noprofile");
-            cmd.arg("-i");
+            if interactive {
+                cmd.arg("-i");
+            }
             cmd.arg("-c");
             cmd.arg(script);
         }
@@ -1636,8 +1650,17 @@ approved-commands = ["echo 'fish background task'"]
             ("WORKTRUNK_TEST_EPOCH", "1735776000"),
         ];
 
-        let (combined, exit_code) =
-            exec_in_pty_interactive(shell, &final_script, &worktrunk_source, &env_vars, &[]);
+        // Run non-interactively: this test only checks that the `--source`
+        // branch forwards wt's error, never job-control output. Skipping `-i`
+        // avoids the interactive-shell startup wedge that flaked this test.
+        let (combined, exit_code) = exec_in_pty_shell(
+            shell,
+            &final_script,
+            &worktrunk_source,
+            &env_vars,
+            &[],
+            false,
+        );
         let output = ShellOutput {
             combined,
             exit_code,

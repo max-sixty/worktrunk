@@ -24,6 +24,7 @@
 //! - **Stabilization detection** waits for screen to stop changing
 //! - **Content expectations** wait for async preview content to load (e.g., "diff --git")
 
+use crate::common::mock_commands::{MockConfig, MockResponse};
 use crate::common::{TestRepo, repo, wt_bin};
 use insta::assert_snapshot;
 use portable_pty::CommandBuilder;
@@ -491,16 +492,22 @@ fn switch_picker_settings(repo: &TestRepo) -> insta::Settings {
     // reverse video — see `skim::previewer::Previewer::draw`. We don't see the
     // reverse-video attribute (vt100's `rows()` strips it), so it lands on screen
     // as bare `N/M` overlapping the tab header text. content.len() varies with
-    // terminal width and preview content height, so normalize it to a fixed
-    // placeholder.
+    // terminal width and preview content height, so it must be normalized.
     //
-    // The previewer right-aligns the indicator at `screen_width - len - 1` and
-    // can land flush against the truncated `summary` tab label (e.g.
-    // `summa1/28`) — width_cjk's treatment of ambiguous-width glyphs (±, …, ⇅)
-    // shifts how much of `5: summary` survives truncation. Strip leading
-    // whitespace too so the placeholder is stable across that variance.
-    settings.add_filter(r"(?m)summary?\w*\s*\d+/\d+[ \t]*$", "summary [N/M]");
-    settings.add_filter(r"(?m)\s+\d+/\d+[ \t]*$", " [N/M]");
+    // The previewer right-aligns the indicator at `screen_width - len - 1`, so
+    // it overwrites a variable-width chunk at the right edge of the tab bar. With
+    // all six numbered tabs the bar fills the 60-col preview pane, so the chunk
+    // covers tab 6 (`6: pr`), its ` | ` divider, and a few trailing chars of tab
+    // 5 — how many depends on the indicator's digit count (`5: summary1/46` vs
+    // `5: summar1/286`). Anchor on the always-visible left portion (through
+    // `5: summ`, well inside the pane) and rewrite the corrupted tail to the
+    // canonical full bar. The exact per-tab styling (bold/plain/dim) is asserted
+    // by the `items.rs` unit snapshots; here we only need a stable marker that
+    // the bar rendered with tab 6 present.
+    settings.add_filter(
+        r"(?m)^(1: HEAD± \| 2: log \| 3: main…± \| 4: remote⇅ \| 5: summ).*$",
+        "${1}ary | 6: pr [N/M]",
+    );
 
     // Commit hashes (7-8 hex chars)
     settings.add_filter(r"\b[0-9a-f]{7,8}\b", "[HASH]");
@@ -927,11 +934,173 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
     });
 }
 
+/// Install a mock forge CLI (`gh`/`glab`) that answers the `--prs` list call
+/// from a canned JSON file, and return env vars (mock on PATH + MOCK_CONFIG_DIR)
+/// for a `wt switch --prs` PTY run. No network is touched. `list_delay_ms`
+/// sleeps the list call (0 = instant) so a test can observe the picker's
+/// in-flight loading marker before the rows land.
+fn mock_forge_env(
+    repo: &TestRepo,
+    cli: &str,
+    list_cmd: &str,
+    list_json: &str,
+    list_delay_ms: u64,
+) -> Vec<(String, String)> {
+    let mock_bin = repo.root_path().join("mock-bin");
+    std::fs::create_dir_all(&mock_bin).unwrap();
+    std::fs::write(mock_bin.join("list.json"), list_json).unwrap();
+    MockConfig::new(cli)
+        .version(&format!("{cli} version 1.0.0 (mock)"))
+        .command(
+            list_cmd,
+            MockResponse::file("list.json").with_delay_ms(list_delay_ms),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let mut env_vars = repo.test_env_vars();
+    env_vars.push((
+        "MOCK_CONFIG_DIR".to_string(),
+        mock_bin.display().to_string(),
+    ));
+    let base_path = std::env::var("PATH").unwrap_or_default();
+    env_vars.push((
+        "PATH".to_string(),
+        format!("{}:{base_path}", mock_bin.display()),
+    ));
+    env_vars
+}
+
+/// `wt switch --prs` on a GitHub repo: the open-PR list streams into the picker
+/// via a mocked `gh pr list`. Asserts the PR row reaches the list (the `#42`
+/// reference in the CI column), which deterministically exercises the whole
+/// fetch → stream → render path (`fetch_open_prs`, `fetch_github`,
+/// `parse_github_prs`, `stream_open_prs`, `PrSkimItem::new`, `render_grid_row`,
+/// `render_pr_description`). The title isn't on the row — it lives in the `pr`
+/// preview tab so the columns align — so the row's stable substring is `#42`.
+/// The full list isn't snapshotted because the worktree rows' CI cells fill
+/// asynchronously.
+#[rstest]
+fn test_switch_picker_prs_github_list(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    let pr_json = r#"[{"number":42,"title":"Retry the flaky network test","headRefName":"fix/flaky","author":{"login":"octocat"},"isDraft":false,"url":"https://github.com/owner/test-repo/pull/42","body":"Wraps the request in a retry so the suite stops flaking."}]"#;
+    let env_vars = mock_forge_env(&repo, "gh", "pr list", pr_json, 0);
+
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--prs"],
+        repo.root_path(),
+        &env_vars,
+        // Wait for the PR row to stream into the list (the `#42` content gate),
+        // then assert on the row itself — deterministic, with no dependency on
+        // selecting an async-arrived row.
+        &[("", Some("#42"))],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+    let (list, _preview) = result.panels();
+    // `#42` in the CI column; the head branch is truncated in the narrow list.
+    assert!(list.contains("#42"), "PR number in list:\n{list}");
+    // The title is NOT on the row — it lives in the preview so columns align.
+    assert!(
+        !list.contains("Retry the flaky network test"),
+        "PR title should stay off the row:\n{list}"
+    );
+    // The header's loading marker is gone once the rows have streamed in.
+    assert!(
+        !list.contains("loading open PRs"),
+        "loading marker cleared once rows arrived:\n{list}"
+    );
+}
+
+/// `wt switch --prs` on a GitLab repo: the open-MR list streams in via a mocked
+/// `glab mr list`. Covers the GitLab fetch path (`fetch_gitlab`,
+/// `parse_gitlab_mrs`, `gitlab_mr_status`).
+#[rstest]
+fn test_switch_picker_prs_gitlab_list(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+    let mr_json = r#"[{"iid":7,"title":"Cache the dependency graph","source_branch":"feat/cache","author":{"username":"alice"},"draft":false,"web_url":"https://gitlab.com/owner/test-repo/-/merge_requests/7","detailed_merge_status":"ci_still_running","description":"Speeds up CI by caching deps between jobs."}]"#;
+    let env_vars = mock_forge_env(&repo, "glab", "mr list", mr_json, 0);
+
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--prs"],
+        repo.root_path(),
+        &env_vars,
+        // `!7` (GitLab MR ref) is the row's stable substring; the title lives in
+        // the preview, not the row.
+        &[("", Some("!7"))],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+    let (list, _preview) = result.panels();
+    // `!7` (GitLab MR ref) in the CI column; source branch truncates.
+    assert!(list.contains("!7"), "MR number in list:\n{list}");
+    assert!(
+        !list.contains("Cache the dependency graph"),
+        "MR title should stay off the row:\n{list}"
+    );
+}
+
+/// `wt switch --prs` shows a dim "loading open PRs…" marker on the header row
+/// while the forge call is in flight. A delayed mock holds the PR list long
+/// enough to observe the marker on the real screen before the rows land. The
+/// picker captures and aborts at stabilize time — well before the delay
+/// elapses — and the `--prs` thread is detached on exit (not joined), so the
+/// test never pays the full delay. The marker's *clearing* once rows arrive is
+/// covered by the `header_loading_marker_shows_until_cleared` unit test and the
+/// negative assertion in `test_switch_picker_prs_github_list`.
+#[rstest]
+fn test_switch_picker_prs_shows_loading_marker(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    let pr_json = r#"[{"number":42,"title":"Retry the flaky network test","headRefName":"fix/flaky","author":{"login":"octocat"},"isDraft":false,"url":"https://github.com/owner/test-repo/pull/42","body":""}]"#;
+    // 3s delay >> the ~1s capture, so the marker is still on screen when the
+    // helper snapshots and aborts.
+    let env_vars = mock_forge_env(&repo, "gh", "pr list", pr_json, 3000);
+
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--prs"],
+        repo.root_path(),
+        &env_vars,
+        // The loading line paints at skeleton, before the (slow) forge call
+        // returns its rows.
+        &[("", Some("loading open PRs"))],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+    let (list, _preview) = result.panels();
+    assert!(
+        list.contains("loading open PRs"),
+        "loading line on the header while --prs fetches:\n{list}"
+    );
+    // The PR row hasn't streamed in yet — still inside the delayed forge call.
+    assert!(!list.contains("#42"), "rows not yet streamed in:\n{list}");
+}
+
 #[rstest]
 fn test_switch_picker_preview_cycle_tab_forward(mut repo: TestRepo) {
     // Tab cycles the preview tab forward. From the default HEAD± tab (1), one
-    // Tab lands on the log tab (2), proving the `tr 12345 23451` rotation in the
-    // keybinding runs under the real shell. (alt-1..alt-5 jump directly; the
+    // Tab lands on the log tab (2), proving the `tr 123456 234561` rotation in
+    // the keybinding runs under the real shell. (alt-1..alt-6 jump directly; the
     // panel tests above cover those — this covers the cycle path.)
     repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
@@ -984,9 +1153,9 @@ fn test_switch_picker_preview_cycle_tab_forward(mut repo: TestRepo) {
 
 #[rstest]
 fn test_switch_picker_preview_cycle_tab_forward_wraps(mut repo: TestRepo) {
-    // Forward cycling wraps 5 → 1: from the summary tab (reached via Alt-5),
-    // one Tab returns to the HEAD± tab. This covers the `5 → 1` end of the
-    // `tr 12345 23451` map, the half most easily typo'd away.
+    // Forward cycling wraps 6 → 1: from the pr tab (reached via Alt-6), one Tab
+    // returns to the HEAD± tab. This covers the `6 → 1` end of the
+    // `tr 123456 234561` map, the half most easily typo'd away.
     repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
     let feature_path = repo.add_worktree("feature");
@@ -1024,8 +1193,8 @@ fn test_switch_picker_preview_cycle_tab_forward_wraps(mut repo: TestRepo) {
             // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
             // for the matcher-lag rationale.
             ("\x1b[B", None),                       // Down: move cursor to `feature`
-            ("\x1b5", Some("Configure")),           // Alt-5: jump to summary (5)
-            ("\t", Some("no uncommitted changes")), // Tab: wrap 5 → HEAD± (1)
+            ("\x1b6", Some("PR")), // Alt-6: jump to pr (6); "Fetching PR status"/"has no PR"
+            ("\t", Some("no uncommitted changes")), // Tab: wrap 6 → HEAD± (1)
         ],
     );
 
@@ -1034,15 +1203,15 @@ fn test_switch_picker_preview_cycle_tab_forward_wraps(mut repo: TestRepo) {
     let (_list, preview) = result.panels();
     assert!(
         preview.contains("no uncommitted changes"),
-        "Tab from the summary tab should wrap to the HEAD± tab; preview was:\n{preview}"
+        "Tab from the pr tab should wrap to the HEAD± tab; preview was:\n{preview}"
     );
 }
 
 #[rstest]
 fn test_switch_picker_preview_cycle_shift_tab_wraps(mut repo: TestRepo) {
     // Shift-Tab cycles backward and wraps: from the default HEAD± tab (1), one
-    // Shift-Tab lands on the summary tab (5), exercising the reverse rotation
-    // `tr 12345 51234` including the 1 → 5 wraparound.
+    // Shift-Tab lands on the pr tab (6), exercising the reverse rotation
+    // `tr 123456 612345` including the 1 → 6 wraparound.
     repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
     let feature_path = repo.add_worktree("feature");
@@ -1076,17 +1245,21 @@ fn test_switch_picker_preview_cycle_shift_tab_wraps(mut repo: TestRepo) {
         &[
             // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
             // for the matcher-lag rationale.
-            ("\x1b[B", None),              // Down: move cursor to `feature`
-            ("\x1b[Z", Some("Configure")), // Shift-Tab: HEAD± → summary (wrap)
+            ("\x1b[B", None),       // Down: move cursor to `feature`
+            ("\x1b[Z", Some("PR")), // Shift-Tab: HEAD± → pr (wrap); "Fetching PR status"/"has no PR"
         ],
     );
 
     assert_valid_abort_exit_code(result.exit_code);
 
     let (_list, preview) = result.panels();
+    // The worktree row has no remote and no CI cache, so its `pr` pane is either
+    // "Fetching PR status …" (the live fetch hasn't reported yet) or "feature
+    // has no PR" (it reported nothing) — both confirm Shift-Tab wrapped to the
+    // pr tab.
     assert!(
-        preview.contains("Configure"),
-        "Shift-Tab should wrap to the summary tab; preview was:\n{preview}"
+        preview.contains("Fetching PR status") || preview.contains("has no PR"),
+        "Shift-Tab should wrap to the pr tab; preview was:\n{preview}"
     );
 }
 

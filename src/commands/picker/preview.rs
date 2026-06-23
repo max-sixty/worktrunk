@@ -7,18 +7,26 @@ use std::path::PathBuf;
 
 /// Preview modes for the interactive selector
 ///
-/// Each mode shows a different aspect of the worktree:
+/// Each mode shows a different aspect of the selected row:
 /// 1. WorkingTree: Uncommitted changes (git diff HEAD --stat)
 /// 2. Log: Commit history since diverging from the default branch (git log with merge-base)
 /// 3. BranchDiff: Line diffs since the merge-base with the default branch (git diff --stat DEFAULT…)
 /// 4. UpstreamDiff: Diff vs upstream tracking branch (ahead/behind)
 /// 5. Summary: LLM-generated branch summary (requires [commit.generation] config)
+/// 6. Pr: The selected row's PR/MR, rendered from already-fetched data (no network)
+///
+/// A mode whose content is structurally absent for the current row is rendered
+/// de-emphasized in the tab bar (see `TabAvailability` / `render_preview_tabs`):
+/// tab 4 when the branch has no upstream, tab 5 when summaries are disabled,
+/// tabs 1-5 on a `--prs` row (no local worktree), and tab 6 on a worktree row
+/// (PR previews render only on `--prs` rows).
 ///
 /// Loosely aligned with `wt list` columns, though not a perfect match:
 /// - Tab 1 corresponds to "HEAD±" column
 /// - Tab 2 shows commits (related to "main↕" counts)
 /// - Tab 3 corresponds to "main…± (--full)" column
 /// - Tab 4 corresponds to "Remote⇅" column
+/// - Tab 6 corresponds to the "CI" column's PR/MR
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum PreviewMode {
     WorkingTree = 1,
@@ -26,6 +34,7 @@ pub(super) enum PreviewMode {
     BranchDiff = 3,
     UpstreamDiff = 4,
     Summary = 5,
+    Pr = 6,
 }
 
 impl PreviewMode {
@@ -35,6 +44,7 @@ impl PreviewMode {
             3 => Self::BranchDiff,
             4 => Self::UpstreamDiff,
             5 => Self::Summary,
+            6 => Self::Pr,
             _ => Self::WorkingTree,
         }
     }
@@ -157,7 +167,7 @@ impl PreviewLayout {
 
 /// Preview state persistence (mode only, layout auto-detected)
 ///
-/// State file format: Single digit representing preview mode (1-5)
+/// State file format: Single digit representing preview mode (1-6)
 pub(super) struct PreviewStateData;
 
 impl PreviewStateData {
@@ -224,6 +234,7 @@ mod tests {
         assert_eq!(PreviewMode::from_u8(3), PreviewMode::BranchDiff);
         assert_eq!(PreviewMode::from_u8(4), PreviewMode::UpstreamDiff);
         assert_eq!(PreviewMode::from_u8(5), PreviewMode::Summary);
+        assert_eq!(PreviewMode::from_u8(6), PreviewMode::Pr);
         // Invalid values default to WorkingTree
         assert_eq!(PreviewMode::from_u8(0), PreviewMode::WorkingTree);
         assert_eq!(PreviewMode::from_u8(99), PreviewMode::WorkingTree);
