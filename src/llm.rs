@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use worktrunk::config::CommitGenerationConfig;
 use worktrunk::git::{CommitMessageDetail, Repository};
 use worktrunk::path::format_path_for_display;
-use worktrunk::shell_exec::{Cmd, SUBPROCESS_FULL_TARGET, ShellConfig};
+use worktrunk::shell_exec::{Cmd, ShellConfig};
 use worktrunk::styling::{eprintln, warning_message};
 
 use minijinja::Environment;
@@ -399,13 +399,6 @@ pub(crate) fn execute_llm_command(command: &str, prompt: &str) -> anyhow::Result
     // `Cmd::pipe_into` (preamble + epilogue through env vars). Avoids buffering
     // MB-scale diffs in our process memory and removes them from our logs
     // entirely. See conversation around PR #2136 for sketch.
-
-    // Log the prompt to subprocess.log alongside captured subprocess stdout —
-    // SUBPROCESS_FULL_TARGET routes to subprocess.log at `-vv`, never to stderr.
-    log::debug!(target: SUBPROCESS_FULL_TARGET, "  Prompt (stdin):");
-    for line in prompt.lines() {
-        log::debug!(target: SUBPROCESS_FULL_TARGET, "    {}", line);
-    }
 
     let shell = ShellConfig::get()?;
     let output = Cmd::new(shell.executable.to_string_lossy())

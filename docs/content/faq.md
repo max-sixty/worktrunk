@@ -102,7 +102,7 @@ At `-vv`, debug-level records (`$ cmd` headers, `[wt-trace]` timing, bounded sub
 The three `-vv` files have distinct audiences:
 
 - **`trace.log`** — bounded preview (~1K lines), `[wt-trace]` records, gistable.
-- **`subprocess.log`** — raw uncapped stdout/stderr of every subprocess `wt` spawns (multi-MB possible, e.g. full `git log -p` output). The deep-dive escape hatch.
+- **`subprocess.log`** — raw uncapped stdout/stderr of every subprocess `wt` spawns (multi-MB possible, e.g. full `git log -p` output), each block headed by a `$ cmd … seq=N` line whose `seq` matches the command's `[wt-trace]` record in `trace.log`. The deep-dive escape hatch.
 - **`diagnostic.md`** — markdown bug-report bundle that inlines `trace.log`. `wt` prints a `gh gist create` command pointing at it.
 
 `RUST_LOG` overrides the flag baseline when set (`RUST_LOG=debug wt -v` lifts `-v` to debug-on-stderr).

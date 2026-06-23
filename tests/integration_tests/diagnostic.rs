@@ -360,6 +360,72 @@ fn test_vv_splits_full_and_bounded_output(repo: TestRepo) {
     );
 }
 
+/// Each command's block in `subprocess.log` is introduced by a
+/// `$ cmd … [seq=N tid=T]` header, and that `seq` also tags the command's
+/// `[wt-trace]` record in `trace.log` — so an otherwise-undelimited raw output
+/// block can be segmented and joined back to its timed command record. Guards
+/// the segmentation + correlation contract the two files share.
+#[rstest]
+fn test_vv_subprocess_log_headers_join_trace(repo: TestRepo) {
+    repo.wt_command().args(["list", "-vv"]).output().unwrap();
+
+    let logs_dir = repo.root_path().join(".git").join("wt/logs");
+    let subprocess = fs::read_to_string(logs_dir.join("subprocess.log")).unwrap();
+    let trace = fs::read_to_string(logs_dir.join("trace.log")).unwrap();
+
+    // Pick a known captured command (`wt list` runs `git worktree list
+    // --porcelain`) so the join can be checked by command identity, not just by
+    // a seq value that — being process-global and dense — exists on *some*
+    // record regardless. A header starts with `$ ` (body lines start with `  `,
+    // so blocks self-segment) and carries the `seq` join key.
+    let header = subprocess
+        .lines()
+        .find(|l| l.starts_with("$ ") && l.contains("git worktree list") && l.contains("[seq="))
+        .expect("subprocess.log should head the `git worktree list` block with `$ … [seq=N …]`");
+
+    let seq: u64 = header
+        .split("[seq=")
+        .nth(1)
+        .and_then(|s| s.split([' ', ']']).next())
+        .and_then(|s| s.parse().ok())
+        .expect("the subprocess.log header should carry a numeric seq");
+
+    // The [wt-trace] record carrying that seq must be the SAME command —
+    // asserting both `seq` and `cmd` closes the gap where a dense seq coincides
+    // with an unrelated record.
+    assert!(
+        trace.lines().any(|l| {
+            l.contains("[wt-trace]")
+                && l.contains(&format!("seq={seq} "))
+                && l.contains(r#"cmd="git worktree list"#)
+        }),
+        "trace.log should carry the [wt-trace] record for `git worktree list` with seq={seq} to join the subprocess.log block:\n{header}"
+    );
+}
+
+/// A command that pipes stdin has it captured in its `subprocess.log` block
+/// under a `  < ` prefix, so the deep log shows what was fed in, not just what
+/// came out. `wt list --full` counts each worktree's diff including untracked
+/// files, staging them via `git add --pathspec-from-file=-` (stdin), which
+/// exercises the path.
+#[rstest]
+fn test_vv_subprocess_log_captures_stdin(repo: TestRepo) {
+    for path in repo.worktrees.values() {
+        std::fs::write(path.join("untracked-probe.txt"), "stdin probe\n").unwrap();
+    }
+    repo.wt_command()
+        .args(["list", "--full", "-vv"])
+        .output()
+        .unwrap();
+
+    let subprocess =
+        fs::read_to_string(repo.root_path().join(".git").join("wt/logs/subprocess.log")).unwrap();
+    assert!(
+        subprocess.lines().any(|l| l.starts_with("  < ")),
+        "subprocess.log should capture piped stdin under a `  < ` prefix:\n{subprocess}"
+    );
+}
+
 /// Control bytes in captured subprocess output must be escaped on the
 /// human-facing routes (stderr + `trace.log`) but kept verbatim in
 /// `subprocess.log`. `wt list` runs `git for-each-ref --format=…%00…`
