@@ -406,16 +406,17 @@ impl WorktreeSkimItem {
         // `TabAvailability`); `pr` reads the row's live status slot, refreshed as
         // the `CiStatus` task streams in, so it can change between selections.
         // The `pr` tab dims only once the fetch reports no PR — while loading or
-        // with a PR it stays available.
-        let pr = self.pr_preview();
+        // with a PR it stays available. `pr_tab_available` is a cheap
+        // discriminant read (no body clone); the pane itself is rendered once and
+        // memoized in `render_pr_pane_cached`.
         let avail = TabAvailability::worktree(
             self.has_upstream,
             self.summaries_enabled,
-            !matches!(pr, PrPreview::NoPr),
+            self.pr_tab_available(),
         );
         let mut result = render_preview_tabs(mode, avail);
         result.push_str(&match mode {
-            PreviewMode::Pr => self.render_pr_pane(pr, width),
+            PreviewMode::Pr => self.render_pr_pane_cached(width),
             _ => self.preview_for_mode(mode, width, height),
         });
         result
@@ -435,6 +436,37 @@ impl WorktreeSkimItem {
                 None => PrPreview::NoPr,
             },
         }
+    }
+
+    /// Whether the `pr` tab has content for this row — it dims only once the
+    /// live fetch reports no PR. A cheap discriminant read of the `pr_status`
+    /// slot (no `PrStatus` clone, unlike [`Self::pr_preview`]), so the tab bar
+    /// can be drawn on every `preview()` call without re-cloning the
+    /// possibly-large body that [`Self::render_pr_pane_cached`] already memoizes.
+    fn pr_tab_available(&self) -> bool {
+        match &*self.pr_status.lock().unwrap() {
+            None => true,                                  // still fetching
+            Some(None) => false,                           // fetch reported no PR
+            Some(Some(status)) => status.number.is_some(), // a bare branch workflow is "no PR"
+        }
+    }
+
+    /// Render the `pr` pane, memoized in the shared `preview_cache` so repeated
+    /// `preview()` calls (every keystroke while the tab is active) don't re-run
+    /// the markdown render of the body. The other modes are pre-computed into
+    /// this same cache by the orchestrator; the `pr` pane is filled lazily here
+    /// instead because its inputs aren't known at skeleton time — they stream in
+    /// on the `CiStatus` task. The collect handler's `on_update` removes this
+    /// entry whenever the live `pr_status` slot changes (fetch lands, manual
+    /// refresh), so a cache hit is always consistent with the current slot.
+    fn render_pr_pane_cached(&self, width: usize) -> String {
+        let key = (self.branch_name.clone(), PreviewMode::Pr);
+        if let Some(cached) = self.preview_cache.get(&key) {
+            return cached.value().clone();
+        }
+        let rendered = self.render_pr_pane(self.pr_preview(), width);
+        self.preview_cache.insert(key, rendered.clone());
+        rendered
     }
 
     /// Render the `pr` tab's pane from the derived [`PrPreview`] state. `width`
@@ -1225,6 +1257,69 @@ mod tests {
         assert!(
             text.contains("Loading working-tree diff"),
             "non-pr arm placeholder: {text:?}"
+        );
+    }
+
+    #[test]
+    fn pr_pane_is_memoized_until_the_slot_is_invalidated() {
+        use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef, ReviewState};
+
+        let status = |title: &str| {
+            Some(Some(PrStatus {
+                ci_status: CiStatus::Passed,
+                source: CiSource::PullRequest,
+                is_stale: false,
+                is_priming: false,
+                url: Some("https://github.com/o/r/pull/7".into()),
+                number: Some(PrRef::pr(7)),
+                review_state: Some(ReviewState::Approved),
+                title: Some(title.into()),
+                body: Some("body".into()),
+            }))
+        };
+        // Share the cache and slot Arcs so the test can mutate the slot and
+        // invalidate the entry the way the collect handler's `on_update` does.
+        let cache: PreviewCache = Arc::new(DashMap::new());
+        let slot: PrStatusSlot = Arc::new(Mutex::new(status("First title")));
+        let key = ("feature".to_string(), PreviewMode::Pr);
+        let row = WorktreeSkimItem {
+            search_text: String::new(),
+            rendered: Arc::new(Mutex::new(String::new())),
+            branch_name: "feature".into(),
+            item: Arc::new(ListItem::new_branch("abc".into(), "feature".into())),
+            preview_cache: Arc::clone(&cache),
+            has_upstream: false,
+            summaries_enabled: false,
+            pr_status: Arc::clone(&slot),
+        };
+
+        // First render populates the shared cache.
+        assert!(
+            row.render_preview(PreviewMode::Pr, 80, 24)
+                .contains("First title")
+        );
+        assert!(cache.contains_key(&key), "render populates the cache");
+
+        // The slot changes but the entry is NOT invalidated → the cached render
+        // is reused, proving the markdown render didn't re-run.
+        *slot.lock().unwrap() = status("Second title");
+        let served = row.render_preview(PreviewMode::Pr, 80, 24);
+        assert!(
+            served.contains("First title"),
+            "served from cache: {served:?}"
+        );
+        assert!(
+            !served.contains("Second title"),
+            "not re-rendered: {served:?}"
+        );
+
+        // Invalidating the entry (what `on_update` does on a slot change) makes
+        // the next render reflect the new slot.
+        cache.remove(&key);
+        let refreshed = row.render_preview(PreviewMode::Pr, 80, 24);
+        assert!(
+            refreshed.contains("Second title"),
+            "re-rendered after invalidation: {refreshed:?}"
         );
     }
 
