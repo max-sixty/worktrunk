@@ -522,12 +522,13 @@ pub fn work_items_for_branch(
     // *does* read `item.user_marker` and leaves position 6 unresolved while
     // it is `None`. Seed it here so the marker gate resolves for branches.
     seed_skipped_task_defaults(item, TaskKind::UserMarker);
-    // `WorkingTreeDiff` / `WorkingTreeConflicts` / `GitOperation` only
-    // feed the worktree-only gates of `refresh_status_symbols`, which are
-    // pre-seeded for `ItemKind::Branch`. Seeding them is a no-op today (the
-    // seed helper branches on `ItemKind::Worktree` internally) but makes
-    // the per-item task set explicit and keeps this loop forward-compatible
-    // if the branch path ever starts reading them.
+    // `WorkingTreeDiff` / `WorkingTreeConflicts` / `GitOperation` feed
+    // worktree-specific inputs; for branches the gates that read them
+    // resolve via dedicated `ItemKind::Branch` arms in
+    // `refresh_status_symbols`, never reading these fields. Seeding them is
+    // a no-op today (the seed helper branches on `ItemKind::Worktree`
+    // internally) but makes the per-item task set explicit and keeps this
+    // loop forward-compatible if the branch path ever starts reading them.
     for kind in [
         TaskKind::WorkingTreeDiff,
         TaskKind::WorkingTreeConflicts,
