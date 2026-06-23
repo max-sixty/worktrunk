@@ -2376,11 +2376,16 @@ fn test_switch_prs_dry_run_github(repo: TestRepo) {
 /// path joins that work and dumps the preview cache, so a `{branch:"pr:42",
 /// mode:2}` (Log) entry with non-empty bytes proves the whole mechanism end to
 /// end: `spawn_compute` → `compute_pr_log` → `render_github_commits` → cache.
+///
+/// `headRefOid` here is a SHA that isn't in the test repo's object store, so
+/// `compute_pr_log`'s local-`git log` fast path misses and falls back to the
+/// forge API — exercising that branch (the present-head fast path has its own
+/// test, `test_switch_prs_dry_run_github_log_tab_local`).
 #[cfg(unix)]
 #[rstest]
 fn test_switch_prs_dry_run_github_log_tab(repo: TestRepo) {
     repo.write_project_config("[forge]\nplatform = \"github\"\n");
-    let pr_json = r#"[{"number":42,"title":"Retry the flaky test","headRefName":"fix/flaky","author":{"login":"octocat"},"isDraft":false,"url":"https://github.com/owner/test-repo/pull/42"}]"#;
+    let pr_json = r#"[{"number":42,"title":"Retry the flaky test","headRefName":"fix/flaky","headRefOid":"1111111111111111111111111111111111111111","author":{"login":"octocat"},"isDraft":false,"url":"https://github.com/owner/test-repo/pull/42"}]"#;
     let commits_json = r#"{"commits":[{"oid":"abc1234500000000000000000000000000000000","messageHeadline":"Wrap the request in a retry"}]}"#;
 
     let mock_bin = repo.root_path().join("mock-bin");
