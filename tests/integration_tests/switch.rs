@@ -2370,6 +2370,57 @@ fn test_switch_prs_dry_run_github(repo: TestRepo) {
     );
 }
 
+/// The `log` tab on a `--prs` row loads its commits in the background: as each
+/// PR row streams in, `spawn_pr_previews` kicks off `gh pr view <n> --json
+/// commits` on `COLLECT_POOL`, keyed by the row's `pr:{N}` token. The dry-run
+/// path joins that work and dumps the preview cache, so a `{branch:"pr:42",
+/// mode:2}` (Log) entry with non-empty bytes proves the whole mechanism end to
+/// end: `spawn_compute` → `compute_pr_log` → `render_github_commits` → cache.
+#[cfg(unix)]
+#[rstest]
+fn test_switch_prs_dry_run_github_log_tab(repo: TestRepo) {
+    repo.write_project_config("[forge]\nplatform = \"github\"\n");
+    let pr_json = r#"[{"number":42,"title":"Retry the flaky test","headRefName":"fix/flaky","author":{"login":"octocat"},"isDraft":false,"url":"https://github.com/owner/test-repo/pull/42"}]"#;
+    let commits_json = r#"{"commits":[{"oid":"abc1234500000000000000000000000000000000","messageHeadline":"Wrap the request in a retry"}]}"#;
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    fs::write(mock_bin.join("list.json"), pr_json).unwrap();
+    fs::write(mock_bin.join("commits.json"), commits_json).unwrap();
+    MockConfig::new("gh")
+        .version("gh version 1.0.0 (mock)")
+        .command("pr list", MockResponse::file("list.json"))
+        // `gh pr view 42 --json commits` matches the "pr view" compound key.
+        .command("pr view", MockResponse::file("commits.json"))
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "--prs"]);
+    cmd.env("WORKTRUNK_PICKER_DRY_RUN", "1");
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "dry-run --prs log tab failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
+    let entries = parsed["entries"].as_array().expect("entries array");
+    // Mode 2 is Log (see `PreviewMode`); the row keys its cache by `pr:42`.
+    let log_entry = entries
+        .iter()
+        .find(|e| e["branch"] == "pr:42" && e["mode"] == 2)
+        .unwrap_or_else(|| panic!("no pr:42 Log cache entry in dump:\n{stdout}"));
+    assert!(
+        log_entry["bytes"].as_u64().unwrap_or(0) > 0,
+        "log pane rendered non-empty: {log_entry}"
+    );
+}
+
 /// GitLab counterpart of [`test_switch_prs_dry_run_github`], covering the
 /// `fetch_gitlab` / `parse_gitlab_mrs` / `gitlab_mr_status` path via a mocked
 /// `glab mr list`.

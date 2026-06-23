@@ -296,12 +296,14 @@ impl TabAvailability {
         }
     }
 
-    /// A `--prs` row: it carries no local worktree, so only the PR tab has
-    /// content; tabs 1-5 are empty.
+    /// A `--prs` row: it carries no local worktree, so the working-tree,
+    /// branch-diff, upstream, and summary tabs are empty. The `pr` tab is built
+    /// at construction and the `log` tab loads commits in the background (see
+    /// `prs::compute_pr_log`), so both are available.
     pub(super) fn pull_request() -> Self {
         Self {
             working_tree: false,
-            log: false,
+            log: true,
             branch_diff: false,
             upstream: false,
             summary: false,

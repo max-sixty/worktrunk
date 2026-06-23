@@ -868,6 +868,7 @@ pub fn handle_picker(
         let prs_repo = repo.clone();
         let prs_warnings = Arc::clone(&stashed_warnings);
         let prs_grid = Arc::clone(&grid_slot);
+        let prs_orchestrator = Arc::clone(&orchestrator);
         let prs_render_tx = Arc::clone(&render_tx);
         Some(
             std::thread::Builder::new()
@@ -879,8 +880,11 @@ pub fn handle_picker(
                         &prs_tx,
                         &prs_warnings,
                         &prs_grid,
-                        &prs_loading,
-                        &prs_render_tx,
+                        &prs_orchestrator,
+                        &prs::PrsStreamSignal {
+                            pending: &prs_loading,
+                            render_tx: &prs_render_tx,
+                        },
                     );
                 })
                 .context("Failed to spawn picker-prs thread")?,
