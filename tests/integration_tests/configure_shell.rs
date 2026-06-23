@@ -2410,7 +2410,11 @@ fn test_nushell_install_target_is_a_vendor_autoload_dir(repo: TestRepo, temp_hom
     // Ask the same `nu` (HOME isolated to temp_home) where it autoloads vendor
     // files, then confirm worktrunk's wrapper landed in one of those dirs.
     let listing = std::process::Command::new("nu")
-        .args(["-c", "$nu.vendor-autoload-dirs | str join (char newline)"])
+        .args([
+            "--no-config-file",
+            "-c",
+            "$nu.vendor-autoload-dirs | str join (char newline)",
+        ])
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .output()
