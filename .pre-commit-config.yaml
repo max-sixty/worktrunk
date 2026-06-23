@@ -59,9 +59,10 @@ repos:
         types: ["rust"]
         entry: '\\x1b\['
         # format.rs strips ANSI codes injected by wrap_ansi crate
+        # sanitize.rs parses & strips ANSI from untrusted text (must name the codes)
         # picker tests verify ANSI dimming behavior
         # src/testing: validate_ansi_codes tests raw escape sequences
-        exclude: '^(tests/|.*_test\.rs$|src/styling/(mod|format)\.rs$|src/commands/picker/|src/testing/|vendor/)'
+        exclude: '^(tests/|.*_test\.rs$|src/styling/(mod|format|sanitize)\.rs$|src/commands/picker/|src/testing/|vendor/)'
       - id: no-std-canonicalize-in-tests
         name: no-std-canonicalize-in-tests
         description: Use dunce::canonicalize in tests to avoid Windows \\?\ prefix issues
