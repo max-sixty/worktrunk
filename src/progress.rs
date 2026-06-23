@@ -614,14 +614,25 @@ mod imp {
         #[test]
         fn test_watchdog_renders_after_startup_delay() {
             // Tiny startup delay, escalation far off: the status renders but the
-            // command gutter never appears.
+            // command gutter never appears. The first render happens on the
+            // background ticker thread, so poll for it rather than sleeping a
+            // fixed window the thread could be starved past under load. The
+            // far-off escalation delay keeps the gutter absent for the whole
+            // poll, so the `!escalated` assertion holds regardless of timing.
             let w = Watchdog::enabled_with_delays(
                 "the commit message",
                 Some("sh -c 'claude -p'"),
                 Duration::from_millis(10),
                 Duration::from_secs(3600),
             );
-            std::thread::sleep(Duration::from_millis(120));
+            let timeout = Duration::from_secs(5);
+            let start = Instant::now();
+            while start.elapsed() < timeout {
+                if w.shared.rendered_rows.load(Ordering::Relaxed) > 0 {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
             assert!(w.shared.rendered_rows.load(Ordering::Relaxed) > 0);
             assert!(!w.shared.escalated.load(Ordering::Relaxed));
             w.finish();
@@ -639,14 +650,28 @@ mod imp {
         #[test]
         fn test_watchdog_escalates_and_grows_the_block() {
             // Short startup + escalation delays so the second tier fires fast; the
-            // revealed gutter makes the block more than one row.
+            // revealed gutter makes the block more than one row. The escalation
+            // and render both happen on the background ticker thread, so poll for
+            // its work rather than sleeping a fixed window: a loaded runner can
+            // starve the ticker past any fixed deadline, but the condition itself
+            // is what we're verifying. Generous timeout, fast poll — fast when
+            // healthy, reliable under load.
             let w = Watchdog::enabled_with_delays(
                 "the commit message",
                 Some("sh -c 'claude -p'"),
                 Duration::from_millis(10),
                 Duration::from_millis(30),
             );
-            std::thread::sleep(Duration::from_millis(150));
+            let timeout = Duration::from_secs(5);
+            let start = Instant::now();
+            while start.elapsed() < timeout {
+                if w.shared.escalated.load(Ordering::Relaxed)
+                    && w.shared.rendered_rows.load(Ordering::Relaxed) >= 2
+                {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
             assert!(w.shared.escalated.load(Ordering::Relaxed));
             assert!(w.shared.rendered_rows.load(Ordering::Relaxed) >= 2);
             w.finish();
