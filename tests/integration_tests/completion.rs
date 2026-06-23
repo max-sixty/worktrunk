@@ -1866,6 +1866,241 @@ deploy = "make deploy"
     assert!(stdout.contains("--var"), "Missing --var flag: {stdout}");
 }
 
+// --- Alias argument-completion mirroring -------------------------------------
+//
+// An alias that forwards `{{ args }}` to a `wt` leaf built-in (`co = "wt switch
+// {{ args }}"`) mirrors that built-in's completion instead of the generic stub.
+// Detection: exactly one `{{ args }}`-forwarding command, leading `wt`, then a
+// tree-walk that lands on a leaf. See `mirror_builtin_leaf` in src/completion.rs.
+
+/// `wt co <Tab>` mirrors `wt switch <Tab>`: the positional completes branches,
+/// switch's flags are offered after `--`, and a bare positional tab does not
+/// spam flags (`hide_non_positional_options_for_completion` ordering).
+#[rstest]
+fn test_complete_alias_mirrors_wrapped_switch(repo: TestRepo) {
+    repo.commit("initial");
+    repo.write_project_config(
+        r#"
+[aliases]
+co = "wt switch {{ args }}"
+"#,
+    );
+    repo.commit("add config");
+    repo.run_git(&["branch", "feature/new"]);
+
+    // Bare positional → branch candidates (mirrored completer), no flag spam.
+    let output = repo.completion_cmd(&["wt", "co", ""]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("feature/new"),
+        "mirrored switch should complete branches: {stdout}"
+    );
+    assert!(
+        !stdout.contains("--create"),
+        "bare tab must not list switch's flags: {stdout}"
+    );
+
+    // Flag prefix → switch's flags.
+    let output = repo.completion_cmd(&["wt", "co", "--"]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--create"),
+        "mirrored switch should offer --create: {stdout}"
+    );
+}
+
+/// A baked-in flag in the template (`mk = "wt switch --create {{ args }}"`)
+/// stops the tree-walk at `switch` but still mirrors it.
+#[rstest]
+fn test_complete_alias_mirrors_switch_with_baked_flag(repo: TestRepo) {
+    repo.commit("initial");
+    repo.write_project_config(
+        r#"
+[aliases]
+mk = "wt switch --create {{ args }}"
+"#,
+    );
+    repo.commit("add config");
+
+    let output = repo.completion_cmd(&["wt", "mk", "--"]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--create"),
+        "mk should offer --create: {stdout}"
+    );
+    assert!(
+        stdout.contains("--base"),
+        "mk should offer --base: {stdout}"
+    );
+}
+
+/// A nested leaf (`cm = "wt step commit {{ args }}"`) mirrors `step commit`:
+/// its flags appear (not the generic stub's), and `--branch`'s value completes
+/// via commit's worktree-only completer.
+#[rstest]
+fn test_complete_alias_mirrors_nested_step_command(mut repo: TestRepo) {
+    repo.commit("initial");
+    repo.write_project_config(
+        r#"
+[aliases]
+cm = "wt step commit {{ args }}"
+"#,
+    );
+    repo.commit("add config");
+    // `wt step commit`'s `--branch` uses `worktree_only_completer`, so create a
+    // worktree (which also creates its branch).
+    repo.add_worktree("feature/new");
+
+    // Flag prefix → step-commit's own flags (not the generic stub's --var).
+    let output = repo.completion_cmd(&["wt", "cm", "--"]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--stage"),
+        "mirrored step-commit should offer --stage: {stdout}"
+    );
+    assert!(
+        stdout.contains("--show-prompt"),
+        "mirrored step-commit should offer --show-prompt: {stdout}"
+    );
+    assert!(
+        !stdout.contains("--var"),
+        "mirrored step-commit must not expose the generic stub's --var: {stdout}"
+    );
+
+    // `--branch <value>` completes via commit's worktree_only_completer.
+    let output = repo
+        .completion_cmd(&["wt", "cm", "--branch", ""])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("feature/new"),
+        "mirrored step-commit --branch should complete worktree branches: {stdout}"
+    );
+}
+
+/// An alias that does not wrap a `wt` built-in falls back to the generic stub:
+/// no branch completion.
+#[rstest]
+fn test_complete_alias_falls_back_when_not_wrapping_builtin(repo: TestRepo) {
+    repo.commit("initial");
+    repo.write_project_config(
+        r#"
+[aliases]
+greet = "echo hi {{ branch }}"
+"#,
+    );
+    repo.commit("add config");
+    repo.run_git(&["branch", "feature/new"]);
+
+    let output = repo.completion_cmd(&["wt", "greet", ""]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("feature/new"),
+        "non-wrapping alias must not complete branches: {stdout}"
+    );
+}
+
+/// A bare dispatcher (`s = "wt step {{ args }}"`) lands on a non-leaf and falls
+/// back to the generic stub — it must NOT offer `step`'s subcommands.
+#[rstest]
+fn test_complete_alias_bare_dispatcher_falls_back(repo: TestRepo) {
+    repo.commit("initial");
+    repo.write_project_config(
+        r#"
+[aliases]
+s = "wt step {{ args }}"
+"#,
+    );
+    repo.commit("add config");
+
+    let output = repo.completion_cmd(&["wt", "s", ""]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("commit"),
+        "bare wt step wrapper must not mirror step's subcommands: {stdout}"
+    );
+    assert!(
+        !stdout.contains("diff"),
+        "bare wt step wrapper must not mirror step's subcommands: {stdout}"
+    );
+}
+
+/// Multiple commands forwarding `{{ args }}` is ambiguous → generic stub.
+#[rstest]
+fn test_complete_alias_multiple_forwarders_fall_back(repo: TestRepo) {
+    repo.commit("initial");
+    repo.write_project_config(
+        r#"
+[aliases]
+both = ["wt switch {{ args }}", "echo {{ args }}"]
+"#,
+    );
+    repo.commit("add config");
+    repo.run_git(&["branch", "feature/new"]);
+
+    let output = repo.completion_cmd(&["wt", "both", ""]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("feature/new"),
+        "ambiguous multi-forwarder alias must not mirror: {stdout}"
+    );
+}
+
+/// An alias whose command doesn't reference `{{ args }}` doesn't forward CLI
+/// positionals → generic stub.
+#[rstest]
+fn test_complete_alias_no_args_forwarding_falls_back(repo: TestRepo) {
+    repo.commit("initial");
+    repo.write_project_config(
+        r#"
+[aliases]
+co = "wt switch --create main"
+"#,
+    );
+    repo.commit("add config");
+    repo.run_git(&["branch", "feature/new"]);
+
+    let output = repo.completion_cmd(&["wt", "co", ""]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("feature/new"),
+        "alias that doesn't forward {{ args }} must not mirror: {stdout}"
+    );
+}
+
+/// The single forwarder need not be the first command — a pipeline that runs a
+/// prep step then `wt switch {{ args }}` still mirrors switch.
+#[rstest]
+fn test_complete_alias_mirrors_when_forwarder_not_first(repo: TestRepo) {
+    repo.commit("initial");
+    repo.write_project_config(
+        r#"
+[aliases]
+pre = ["npm install", "wt switch {{ args }}"]
+"#,
+    );
+    repo.commit("add config");
+    repo.run_git(&["branch", "feature/new"]);
+
+    let output = repo.completion_cmd(&["wt", "pre", ""]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("feature/new"),
+        "forwarder-not-first alias should still mirror switch: {stdout}"
+    );
+}
+
 /// Prepend a directory to PATH on a Command.
 fn prepend_path(cmd: &mut std::process::Command, dir: &std::path::Path) {
     let (path_var, current) = std::env::vars_os()
