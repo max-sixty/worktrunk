@@ -314,7 +314,7 @@ impl JsonItem {
 
         // Working tree: read directly from `WorktreeData`, not from
         // `status_symbols.working_tree`. `status_symbols` may be set by
-        // the metadata-only fallback in `compute_status_symbols` (locked
+        // the metadata-only Gate 2 of `refresh_status_symbols` (locked
         // / prunable / mismatched worktrees) carrying a default
         // `WorkingTreeStatus`. The JSON output must reflect whether
         // `WorkingTreeDiff` actually loaded the field — collapsing

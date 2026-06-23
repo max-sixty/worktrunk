@@ -101,8 +101,8 @@ fn pick_pending_hint<'a>(
 ///
 /// Errors are collected in the `errors` vec for display after rendering. No
 /// defaults are applied — an errored field stays `None`, so the renderer
-/// shows its standard placeholder and `compute_status_symbols` stays a
-/// no-op for that item.
+/// shows its standard placeholder and the gate that reads it in
+/// `refresh_status_symbols` stays unresolved.
 ///
 /// Callers decide how to handle timeout:
 /// - `collect()`: Shows user-facing diagnostic (interactive command)
@@ -417,9 +417,9 @@ mod tests {
         item.upstream = Some(UpstreamStatus::default());
     }
 
-    /// True iff `compute_status_symbols` produced its full output (using
+    /// True iff `refresh_status_symbols` resolved every gate (using
     /// the seed values from `seed_all_fields`). False iff status is at
-    /// default (nothing computed) or the metadata-only fallback ran.
+    /// default (nothing computed) or only the metadata-only gate ran.
     fn full_computation_ran(item: &ListItem) -> bool {
         item.status_symbols.main_state == Some(MainState::Diverged)
     }

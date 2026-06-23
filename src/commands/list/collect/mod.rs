@@ -2086,7 +2086,7 @@ pub fn populate_item(
     });
 
     // Drain task results (blocking until complete). `drain_results`
-    // writes each result onto the item and calls `compute_status_symbols`
+    // writes each result onto the item and calls `refresh_status_symbols`
     // after every write, so the callback here is just a no-op — there is
     // no progressive table to refresh on the statusline path.
     let drain_outcome = drain_results(
