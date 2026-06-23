@@ -1,8 +1,8 @@
 # wt-switch-create design rationale
 
 Why the skill is create-then-reach: create the worktree with `wt`, enter it with
-`EnterWorktree`, and when entry is rejected (the worktree is in another repo),
-work in it if it's reachable or escalate to the user to make it reachable. Not
+`EnterWorktree`, and when entry is rejected, work in it if it's reachable or
+escalate to the user to make it reachable. Not
 the guard-heavy multi-route flow it replaced, and not the silent absolute-paths
 fallback that read as a failure.
 
@@ -24,8 +24,8 @@ deliberately omitted — they re-minify every build.
    constrained.
 2. Enter it with `EnterWorktree({path})` — the only way to re-root a Claude Code
    session, and it accepts only a worktree of the session's own repo.
-3. On rejection (the worktree is in another repo), the session can still work
-   there iff the path sits inside a directory it's allowed in (an
+3. On rejection, the session can still work there iff the path sits inside a
+   directory it's allowed in (an
    `additionalDirectories` entry). A single `cd <path>` discovers which: it
    sticks when reachable, resets when not. Reachable → work in place.
    Unreachable → escalate, because the agent can't enlarge that set itself: ask
@@ -125,6 +125,19 @@ plain session re-roots into the sibling `wt` creates. The agent **cannot**
 enlarge that set itself (`/add-dir` is user-typed; the only automatic add is a
 narrow symlink-resolving-to-the-same-cwd fixup), so a repo reachable by neither
 the cwd nor config is a genuine handback to the user.
+
+### Why `--no-cd`
+
+The Bash tool is not a bare shell: Claude Code replays the user's shell startup
+from a snapshot, so a user who installed wt shell integration runs the `wt`
+wrapper function inside the tool. wt then runs with integration active, and a
+plain `wt switch` hands the wrapper a cd directive that moves the tool's cwd — a
+second, untracked re-root racing `EnterWorktree`. `--no-cd` skips the directive,
+so `EnterWorktree` stays the single re-root. Verified: without `--no-cd`,
+`wt switch <branch>` moved the session and the new cwd persisted to the next
+Bash call. Where the user never installed integration (a fresh shell, CI) the
+wrapper is absent and wt cannot cd regardless, so `--no-cd` is load-bearing on an
+integrated machine and a no-op elsewhere. Don't drop it.
 
 ### Why not `EnterWorktree({name})` + the WorktreeCreate hook
 

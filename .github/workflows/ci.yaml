@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
@@ -54,7 +54,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
@@ -84,7 +84,7 @@ jobs:
 
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - uses: ./.github/actions/test-setup
 
@@ -92,7 +92,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: worktrunk
-        version: "=0.58.0"
+        version: "=0.60.0"
 
     - name: "Use fast D: drive for temp files (Windows)"
       if: runner.os == 'Windows'
@@ -144,7 +144,7 @@ jobs:
       docs: ${{ steps.filter.outputs.docs }}
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
     - uses: dorny/paths-filter@v4
       id: filter
       with:
@@ -164,7 +164,7 @@ jobs:
     if: needs.changes.outputs.cargo == 'true' || github.event_name == 'workflow_dispatch'
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
@@ -183,10 +183,10 @@ jobs:
     if: needs.changes.outputs.docs == 'true' || github.event_name == 'workflow_dispatch'
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: Setup Zola
-      uses: taiki-e/install-action@v2.82.0
+      uses: taiki-e/install-action@v2.82.2
       with:
         tool: zola@0.22.1
 
@@ -265,7 +265,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
       with:
         # `cargo affected run` later diffs PR HEAD against the sha that was
         # HEAD when collect ran. That sha must be reachable.
@@ -344,7 +344,7 @@ jobs:
     continue-on-error: true
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
       with:
         # Need the cached `collect_sha` reachable from HEAD for the diff;
         # see collect-affected above.
@@ -427,7 +427,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - uses: baptiste0928/cargo-install@v3
       with:

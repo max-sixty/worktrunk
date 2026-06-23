@@ -57,10 +57,11 @@ fn test_picker_dry_run_dumps_cache_json(mut repo: TestRepo) {
     }
 }
 
-/// Cached CI statuses surface PR numbers in picker rows without any network
-/// access: the picker skips the CiStatus task, and collect fills `pr_status`
-/// from `.git/wt/cache/ci-status/` instead. A fresh entry renders its
-/// number; a branch without one renders an empty CI cell.
+/// A fresh cached CI status surfaces a PR number in picker rows without any
+/// network access: the picker primes rows from `.git/wt/cache/ci-status/`, and
+/// the live `CiStatus` task's `detect` reads the same fresh entry through its
+/// own cache rather than calling the forge. A branch without an entry renders
+/// an empty CI cell.
 #[rstest]
 fn test_picker_dry_run_shows_cached_pr_numbers(mut repo: TestRepo) {
     repo.add_worktree("feature-a");
