@@ -250,9 +250,17 @@ fn check_zsh_compinit_missing() -> bool {
     // The (( ... )) arithmetic returns exit 0 if true (compdef exists), 1 if false
     // Suppress zsh's "insecure directories" warning from compinit.
     // See detailed rationale in shell::detect_zsh_compinit().
+    //
+    // Bound the probe with a timeout that kills the child on expiry — the same
+    // hardening detect_zsh_compinit() relies on. An interactive `zsh -ic` whose
+    // startup prompts on /dev/tty (compinit's insecure-directories prompt
+    // bypasses both the stdin=null default and the stderr suppression above)
+    // would otherwise hang `wt config show` indefinitely. On timeout run()
+    // returns Err, so the `else` below declines to warn rather than misreport.
     let Ok(output) = Cmd::new("zsh")
         .args(["--no-globalrcs", "-ic", "(( $+functions[compdef] ))"])
         .env("ZSH_DISABLE_COMPFIX", "true")
+        .timeout(std::time::Duration::from_secs(2))
         .run()
     else {
         return false; // Can't determine, don't warn

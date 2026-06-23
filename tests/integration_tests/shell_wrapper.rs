@@ -445,6 +445,12 @@ fn exec_in_pty_shell(
             cmd.arg(script);
         }
         "bash" => {
+            // Isolate from user rc/profile files, mirroring the zsh arm and
+            // `exec_bash_truly_interactive`. A no-op for non-interactive
+            // `bash -c`, but it keeps interactive (`-i`) startup from sourcing
+            // the host's ~/.bashrc and leaking host-specific output.
+            cmd.arg("--norc");
+            cmd.arg("--noprofile");
             if interactive {
                 cmd.arg("-i");
             }
