@@ -54,13 +54,13 @@
 //! final_priority = base_priority + empty_penalty
 //! ```
 //!
-//! **Base priorities** (0-12) are determined by **user need hierarchy** - what questions users need
+//! **Base priorities** (0-13) are determined by **user need hierarchy** - what questions users need
 //! answered when scanning worktrees:
 //! - 0: Gutter (always present)
 //! - 1: Branch (identity - "what is this?")
 //! - 2-4: Critical (status, working diff, ahead/behind)
-//! - 5-11: Context (CI, branch diff, path, upstream, URL, commit, time)
-//! - 12: Message (nice-to-have, space-hungry)
+//! - 5-12: Context (CI, branch diff, path, upstream, URL, summary, commit, time)
+//! - 13: Message (nice-to-have, space-hungry)
 //!
 //! **Empty penalty**: +10 if column has no data (only header)
 //! - Empty working_diff: 3 + 10 = priority 13
@@ -68,8 +68,8 @@
 //! - etc.
 //!
 //! This creates two effective priority tiers:
-//! - **Tier 1 (priorities 0-12)**: Columns with actual data
-//! - **Tier 2 (priorities 12-22)**: Empty columns (visual consistency)
+//! - **Tier 1 (priorities 0-13)**: Columns with actual data
+//! - **Tier 2 (priorities 13-23)**: Empty columns (visual consistency)
 //!
 //! The empty penalty is large (+10) but not infinite, so empty columns maintain their relative
 //! ordering (empty working_diff still ranks higher than empty ci_status) for visual consistency.
@@ -83,7 +83,7 @@
 //! 2. Show nice-to-have data (message, commit hash) when space allows
 //! 3. Maintain visual consistency - empty columns in predictable positions at wide widths
 //!
-//! **Key decision**: Message sits at the boundary (priority 12). Empty columns (priority 12+)
+//! **Key decision**: Message sits at the boundary (priority 13). Empty columns (priority 13+)
 //! rank below message, so:
 //! - Narrow terminals: Data columns + message (hide empty columns)
 //! - Wide terminals: Data columns + message + empty columns (visual consistency)
