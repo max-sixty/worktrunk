@@ -160,8 +160,11 @@ impl PreviewOrchestrator {
     ///
     /// Idempotent on `key` (short-circuits on a cache hit) and runs `compute`
     /// outside any DashMap lock, like `spawn_preview`. A `None` or empty result
-    /// is deliberately NOT cached, so a transient forge failure leaves the slot
-    /// empty and the next visit retries rather than pinning a blank pane.
+    /// is deliberately NOT cached: the slot stays empty rather than pinning a
+    /// blank pane, so a later `spawn_compute` with the same key recomputes. The
+    /// `--prs` callers spawn once per row and never re-invoke, so in practice an
+    /// uncached failure leaves the tab on its loading placeholder until the
+    /// picker reopens.
     pub(super) fn spawn_compute<F>(&self, key: PreviewCacheKey, compute: F)
     where
         F: FnOnce(&Repository) -> Option<String> + Send + 'static,

@@ -279,8 +279,10 @@ fn fetch_and_stream(
 
 /// Spawn the deferred per-row preview fetches for one `--prs` row, keyed by the
 /// row's `pr:{N}` / `mr:{N}` token so [`PrSkimItem::preview`] reads them back.
-/// Each is fire-and-forget on `COLLECT_POOL`; a forge failure leaves the slot
-/// empty and the next visit retries (see [`PreviewOrchestrator::spawn_compute`]).
+/// Each is fire-and-forget on `COLLECT_POOL`, spawned once per row. `preview()`
+/// only reads the cache, so a forge failure leaves the slot empty and the tab
+/// keeps its loading placeholder until the picker reopens — there's no in-session
+/// retry (see [`PreviewOrchestrator::spawn_compute`]).
 ///
 /// Both tabs are spawned eagerly, once per row, for all rows — so a `--prs` open
 /// queues up to `2 × MAX_PRS` (~100) per-PR forge calls. This is deliberate and
@@ -688,10 +690,11 @@ fn pr_row_empty_placeholder() -> String {
 }
 
 /// Placeholder for a `--prs` row's deferred tab while its background fetch is
-/// still in flight (or after a forge failure, which leaves the cache slot empty
-/// so the next visit retries). skim can't re-query a preview on its own, so the
-/// hint points at the accelerator that re-reads the now-warm cache — the same
-/// contract as the worktree rows' `loading_placeholder`.
+/// still in flight. skim can't re-query a preview on its own, so the hint points
+/// at the accelerator that re-reads the cache once the fetch lands — the same
+/// contract as the worktree rows' `loading_placeholder`. A failed fetch (spawned
+/// once per row) leaves the slot empty, so this placeholder persists until the
+/// picker reopens; the refresh hint is a no-op then.
 fn pr_deferred_loading(mode: PreviewMode) -> String {
     let reset = Reset;
     let (label, key) = match mode {
@@ -709,7 +712,7 @@ fn pr_deferred_loading(mode: PreviewMode) -> String {
 /// unresolvable, spawn error, non-zero exit). Shared by the deferred `log` /
 /// `comments` fetches: a PR runs `gh <gh_args>`, an MR runs `glab <glab_args>`.
 /// Runs off-thread on `COLLECT_POOL`, never on skim's UI thread; a `None` result
-/// leaves the cache slot empty so the next visit retries (see
+/// leaves the cache slot empty so the tab keeps its loading placeholder (see
 /// [`PreviewOrchestrator::spawn_compute`]).
 fn fetch_forge_json(
     repo: &Repository,
@@ -856,8 +859,9 @@ fn short_hash(oid: &str) -> String {
 /// Render a `git log --oneline`-style list for the `log` pane: a dim short hash,
 /// then the subject. The preview pane doesn't wrap, so each subject truncates to
 /// the pane width rather than letting skim clip mid-escape. An empty list (a PR
-/// with no commits the API returned) renders an info line so the slot caches
-/// something rather than retrying forever.
+/// with no commits the API returned) renders an info line so `spawn_compute`
+/// caches a terminal value rather than leaving the slot empty (an empty string
+/// is skipped, which would keep the loading placeholder).
 fn render_commit_lines(commits: &[(String, String)], width: usize) -> String {
     let reset = Reset;
     if commits.is_empty() {
@@ -877,7 +881,8 @@ fn render_commit_lines(commits: &[(String, String)], width: usize) -> String {
 /// `glab api …/merge_requests/<n>/notes?sort=asc` (GitLab, human notes). `sort=asc`
 /// matches GitHub's oldest-first order (GitLab defaults to newest-first), and
 /// `--paginate` follows every page so a long thread isn't capped at GitLab's
-/// default page size. Returns `None` on any failure so the next selection retries.
+/// default page size. Returns `None` on any failure, leaving the slot empty so
+/// the tab keeps its loading placeholder.
 fn compute_pr_comments(
     repo: &Repository,
     kind: RefKind,
@@ -971,7 +976,8 @@ fn render_gitlab_notes(stdout: &[u8], width: usize) -> Option<String> {
 /// Render the `comments` pane: each comment as a header line (author + relative
 /// time) followed by its body as markdown in the house gutter — the same gutter
 /// [`render_pr_description`] uses for the PR body. An empty thread renders an
-/// info line so the slot caches something rather than retrying forever.
+/// info line so `spawn_compute` caches a terminal value rather than leaving the
+/// slot empty (an empty string is skipped, which would keep the loading placeholder).
 fn render_comment_blocks(comments: &[Comment], width: usize) -> String {
     let reset = Reset;
     if comments.is_empty() {
@@ -1099,14 +1105,6 @@ fn render_freeform_row(entry: &PrEntry, list_width: usize) -> String {
 // summary would feed those commits (or the PR body) through the same
 // `[commit.generation]` LLM path the worktree `summary` tab uses, keyed and
 // cached the same way via `spawn_pr_previews`.
-//
-// TODO(pr-preview-comments): add a `7: comments` tab showing the PR/MR
-// discussion, rendered with the house gutter per comment (author + body, like
-// `render_pr_description`). Needs the same background per-row fetch as the log
-// (`gh pr view <n> --json comments`), and a 7th tab widens the preview tab bar
-// — already ~63 cols with six numbered tabs — so it clips sooner on narrow
-// (≤~125-col, Right-layout) previews. Weigh an abbreviated/scrolling tab bar
-// alongside it.
 impl SkimItem for PrSkimItem {
     fn text(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.search_text)
@@ -1817,8 +1815,8 @@ mod tests {
 
     #[test]
     fn render_commits_empty_and_truncation() {
-        // A PR the API reports with no commits caches an info line rather than
-        // retrying forever.
+        // A PR the API reports with no commits caches an info line (a terminal
+        // value) rather than leaving the slot empty.
         assert!(
             plain(&render_github_commits(br#"{"commits":[]}"#, 80).unwrap()).contains("No commits")
         );
@@ -1836,7 +1834,7 @@ mod tests {
     #[test]
     fn render_commits_invalid_json_is_none() {
         // A forge that returns junk yields `None`, so `spawn_compute` leaves the
-        // slot empty and the next visit retries rather than caching garbage.
+        // slot empty rather than caching garbage.
         assert!(render_github_commits(b"not json", 80).is_none());
         assert!(render_gitlab_commits(b"not json", 80).is_none());
     }
@@ -1955,7 +1953,7 @@ mod tests {
     #[test]
     fn render_comments_empty_and_missing_fields() {
         // No comments (or only system notes filtered out) → an info line, so the
-        // slot caches something rather than retrying forever.
+        // slot caches a terminal value rather than staying empty.
         assert!(
             plain(&render_github_comments(br#"{"comments":[]}"#, 80).unwrap())
                 .contains("No comments")

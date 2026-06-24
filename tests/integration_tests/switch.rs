@@ -2433,6 +2433,13 @@ fn test_switch_prs_dry_run_github_log_tab(repo: TestRepo) {
 /// entry can only have come from the local-`git log` fast path, proving the
 /// `headRefOid` → `spawn_pr_previews` → `compute_pr_log` wiring short-circuits
 /// the API when the commit is present.
+///
+/// The same run pins the deferred-fetch failure contract: the `comments` tab has
+/// no local path, so its forge fetch fails here, and `spawn_compute` leaves the
+/// slot empty rather than caching a blank pane (the present Log entry proves the
+/// row was built, so the absent Comments entry is a genuine miss, not a row that
+/// never streamed). Nothing re-spawns it — the tab keeps its loading placeholder
+/// for the session.
 #[cfg(unix)]
 #[rstest]
 fn test_switch_prs_dry_run_github_log_tab_local(repo: TestRepo) {
@@ -2476,6 +2483,16 @@ fn test_switch_prs_dry_run_github_log_tab_local(repo: TestRepo) {
     assert!(
         log_entry["bytes"].as_u64().unwrap_or(0) > 0,
         "local log pane rendered non-empty: {log_entry}"
+    );
+
+    // The comments tab has no local path, so its forge fetch failed (pr view →
+    // exit 1) and `spawn_compute` cached nothing — the failure leaves the slot
+    // empty rather than pinning a blank pane. Mode 7 is Comments.
+    assert!(
+        !entries
+            .iter()
+            .any(|e| e["branch"] == "pr:42" && e["mode"] == 7),
+        "failed comments fetch must leave the slot empty, not cache a blank pane:\n{stdout}"
     );
 }
 
