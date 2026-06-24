@@ -183,7 +183,11 @@ fn handle_hook_command(action: HookCommand, yes: bool) -> anyhow::Result<()> {
     }
 }
 
-fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
+fn handle_step_command(
+    action: StepCommand,
+    working_dir: Option<std::path::PathBuf>,
+    yes: bool,
+) -> anyhow::Result<()> {
     match action {
         StepCommand::Commit(args) => {
             let verify = args.hooks.resolve();
@@ -391,7 +395,7 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
             clobber,
             format,
         } => step_relocate(branches, dry_run, commit, clobber, format),
-        StepCommand::Tether { command } => step_tether(&command),
+        StepCommand::Tether { command } => step_tether(&command, working_dir.as_deref()),
         StepCommand::External(args) => commands::step_alias(args, yes),
     }
 }
@@ -867,7 +871,7 @@ fn dispatch_command(
 ) -> anyhow::Result<()> {
     match command {
         Commands::Config { action } => handle_config_command(action, yes),
-        Commands::Step { action } => handle_step_command(action, yes),
+        Commands::Step { action } => handle_step_command(action, working_dir, yes),
         Commands::Hook { action } => handle_hook_command(action, yes),
         Commands::Select { branches, remotes } => handle_select_command(branches, remotes),
         Commands::List(args) => handle_list_command(args),
