@@ -552,17 +552,16 @@ mod tests {
 
         let received = rx.recv().expect("skeleton batch");
         let text = |i: usize| received[i].text().into_owned();
+        let (inside, outside) = (text(1), text(2));
 
         // Inside the shared parent: only the leaf is indexed (gutter `+` for a
         // non-current linked worktree). The absolute prefix is gone.
-        assert_eq!(text(1), "inside repo.feat +", "leaf only: {:?}", text(1));
+        assert_eq!(inside, "inside repo.feat +", "leaf only: {inside:?}");
 
         // Outside the shared parent: the full path is retained (fallback).
         assert_eq!(
-            text(2),
-            "outside /nonexistent-root/external-wt +",
-            "out-of-tree path kept whole: {:?}",
-            text(2)
+            outside, "outside /nonexistent-root/external-wt +",
+            "out-of-tree path kept whole: {outside:?}"
         );
     }
 
