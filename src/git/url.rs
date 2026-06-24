@@ -146,6 +146,15 @@ fn split_namespace_repo(path: &str) -> Option<(String, String)> {
     Some((namespace, repo.to_string()))
 }
 
+pub(crate) fn canonical_url_path_segment(segment: &str) -> String {
+    let decoded = urlencoding::decode(segment).unwrap_or(std::borrow::Cow::Borrowed(segment));
+    urlencoding::encode(decoded.as_ref()).into_owned()
+}
+
+pub(crate) fn url_path_segments_eq(left: &str, right: &str) -> bool {
+    canonical_url_path_segment(left).eq_ignore_ascii_case(&canonical_url_path_segment(right))
+}
+
 impl GitRemoteUrl {
     /// Parse a git remote URL into structured components.
     ///
