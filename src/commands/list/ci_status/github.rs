@@ -309,7 +309,7 @@ impl GitHubPrInfo {
 
     /// The conversation-comment count for [`PrStatus::comment_count`], or `None`
     /// when there are none — zero is flattened so a PR with no comments shows
-    /// nothing. The `--prs` call omits `comments`, so this is `None` there.
+    /// nothing in the `pr` pane.
     pub fn comment_count(&self) -> Option<u32> {
         u32::try_from(self.comments.len()).ok().filter(|&n| n > 0)
     }
@@ -335,16 +335,13 @@ impl GitHubPrInfo {
             url: self.url.clone(),
             number: self.number.map(PrRef::pr),
             review_state: self.review_state(),
-            // TODO(prs-status-title-body): the `--prs` pane reads title/body from
-            // the `PrEntry`, not from this status (which feeds only the CI column),
-            // so these clones are dead data here. GitLab's `gitlab_mr_status` sets
-            // both `None` for this reason — unify the two `--prs` status builders
-            // (drop them here to match, or have both read from the status).
-            title: self.title.clone(),
-            body: self.body.clone(),
-            // The `--prs` call omits `comments`, and the `--prs` rows have their
-            // own background-fetched comments tab, so this is always `None` here.
-            comment_count: self.comment_count(),
+            // The `--prs` pane reads title/body from the `PrEntry`, not this status
+            // (which feeds only the CI column), so they stay absent here. Likewise
+            // the comment count: the `--prs` rows surface comments in their own
+            // background-fetched comments tab, and the list call omits `comments`.
+            title: None,
+            body: None,
+            comment_count: None,
         }
     }
 }
