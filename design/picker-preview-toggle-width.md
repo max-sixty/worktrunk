@@ -62,7 +62,7 @@ These gate which options are buildable. All confirmed against skim 4.8.0 source.
 
 - **The preview splits the screen; it never overlays.** `LayoutTemplate::apply`
   carves the terminal into disjoint `list_area` and `preview_area` rects via
-  ratatui `Layout` (`skim/src/tui/layout.rs:99-117, 165-200`). There is no
+  ratatouille `Layout` (`skim/src/tui/layout.rs:99-117, 165-200`). There is no
   floating preview drawn on top of a full-width list. A literal overlay (the
   table rendered full-width *underneath* the preview) would require forking
   skim's render path.
