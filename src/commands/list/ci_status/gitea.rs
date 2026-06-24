@@ -122,6 +122,8 @@ pub(super) fn detect_gitea_pr(
         url: Some(pr.html_url.clone()),
         number: pr.number.map(PrRef::pr),
         review_state: None,
+        title: pr.title.clone(),
+        body: pr.body.clone(),
     })
 }
 
@@ -144,6 +146,8 @@ pub(super) fn detect_gitea_commit_status(
         url: None,
         number: None,
         review_state: None,
+        title: None,
+        body: None,
     })
 }
 
@@ -181,6 +185,12 @@ struct GiteaPr {
     mergeable: Option<bool>,
     html_url: String,
     head: GiteaPrBranch,
+    /// PR title; shown in the picker's `pr` preview pane. Rides this call.
+    #[serde(default)]
+    title: Option<String>,
+    /// PR description; rendered as markdown in the `pr` preview pane.
+    #[serde(default)]
+    body: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

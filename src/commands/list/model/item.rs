@@ -15,8 +15,8 @@ use crate::commands::list::columns::ColumnKind;
 
 /// Compute the `WorktreeState` from `WorktreeData` metadata alone.
 ///
-/// Used by both `compute_status_symbols` (full computation) and the
-/// metadata-only fallback path. The decision priority is:
+/// Used by `refresh_status_symbols` to resolve the worktree-state position
+/// (Gate 2) from metadata alone. The decision priority is:
 /// `branch_worktree_mismatch` > `prunable` > `locked` > `None`.
 fn metadata_worktree_state(data: &WorktreeData) -> WorktreeState {
     if data.branch_worktree_mismatch {

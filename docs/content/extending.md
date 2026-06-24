@@ -88,6 +88,8 @@ For indexing (`{{ args[0] }}`), looping, and counting, see [Passing values](@/ho
 
 Tokens after `--` forward unconditionally, bypassing any binding. Writing `wt deploy -- --branch=foo` forwards the literal `--branch=foo` to `{{ args }}` even though the template references `{{ branch }}`.
 
+An alias that forwards `{{ args }}` to a `wt` command — like `co = "wt switch {{ args }}"` or `cm = "wt step commit {{ args }}"` — inherits that command's argument and flag completion, so `wt co <Tab>` completes branches the same way `wt switch <Tab>` does.
+
 ### Inspecting and previewing
 
 - `wt config alias show <name>` prints the template.

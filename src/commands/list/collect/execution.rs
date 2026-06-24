@@ -9,14 +9,15 @@
 //!
 //! ## Status field bookkeeping at spawn time
 //!
-//! `compute_status_symbols` refuses to compute until every required field on
-//! `ListItem` / `WorktreeData` is `Some`. Tasks that *will* run are written
-//! by the drain as their results arrive. Tasks that will *not* run (stale
-//! branches skip expensive tasks, unborn branches skip commit-dependent
-//! tasks, `--skip-tasks` filters, branches with no worktree have no
-//! worktree-only tasks) have their fields seeded here via
-//! [`seed_skipped_task_defaults`] with conservative defaults — otherwise
-//! the fields would stay `None` forever and status would never compute.
+//! `refresh_status_symbols` resolves each gate independently, reading that
+//! gate's required fields on `ListItem` / `WorktreeData` as they become
+//! `Some`. Tasks that *will* run are written by the drain as their results
+//! arrive. Tasks that will *not* run (stale branches skip expensive tasks,
+//! unborn branches skip commit-dependent tasks, `--skip-tasks` filters,
+//! branches with no worktree have no worktree-only tasks) have their fields
+//! seeded here via [`seed_skipped_task_defaults`] with conservative defaults
+//! — otherwise the fields would stay `None` forever and their gate would
+//! never resolve.
 
 use std::sync::Arc;
 
@@ -517,16 +518,17 @@ pub fn work_items_for_branch(
         });
     }
     // `UserMarker` is never in the branch task list above (it only runs
-    // for worktrees), but the branch arm of `compute_status_symbols`
-    // *does* read `item.user_marker` and will bail while it is `None`.
-    // Seed it here so branches can compute status.
+    // for worktrees), but the user-marker gate of `refresh_status_symbols`
+    // *does* read `item.user_marker` and leaves position 6 unresolved while
+    // it is `None`. Seed it here so the marker gate resolves for branches.
     seed_skipped_task_defaults(item, TaskKind::UserMarker);
-    // `WorkingTreeDiff` / `WorkingTreeConflicts` / `GitOperation` only
-    // affect the worktree arm of `compute_status_symbols`, which is never
-    // entered for `ItemKind::Branch`. Seeding them is a no-op today (the
-    // seed helper branches on `ItemKind::Worktree` internally) but makes
-    // the per-item task set explicit and keeps this loop forward-compatible
-    // if the branch arm ever starts reading them.
+    // `WorkingTreeDiff` / `WorkingTreeConflicts` / `GitOperation` feed
+    // worktree-specific inputs; for branches the gates that read them
+    // resolve via dedicated `ItemKind::Branch` arms in
+    // `refresh_status_symbols`, never reading these fields. Seeding them is
+    // a no-op today (the seed helper branches on `ItemKind::Worktree`
+    // internally) but makes the per-item task set explicit and keeps this
+    // loop forward-compatible if the branch path ever starts reading them.
     for kind in [
         TaskKind::WorkingTreeDiff,
         TaskKind::WorkingTreeConflicts,

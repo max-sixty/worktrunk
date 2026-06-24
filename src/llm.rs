@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use worktrunk::config::CommitGenerationConfig;
 use worktrunk::git::{CommitMessageDetail, Repository};
 use worktrunk::path::format_path_for_display;
-use worktrunk::shell_exec::{Cmd, SUBPROCESS_FULL_TARGET, ShellConfig};
+use worktrunk::shell_exec::{Cmd, ShellConfig};
 use worktrunk::styling::{eprintln, warning_message};
 
 use minijinja::Environment;
@@ -400,13 +400,6 @@ pub(crate) fn execute_llm_command(command: &str, prompt: &str) -> anyhow::Result
     // MB-scale diffs in our process memory and removes them from our logs
     // entirely. See conversation around PR #2136 for sketch.
 
-    // Log the prompt to subprocess.log alongside captured subprocess stdout —
-    // SUBPROCESS_FULL_TARGET routes to subprocess.log at `-vv`, never to stderr.
-    log::debug!(target: SUBPROCESS_FULL_TARGET, "  Prompt (stdin):");
-    for line in prompt.lines() {
-        log::debug!(target: SUBPROCESS_FULL_TARGET, "    {}", line);
-    }
-
     let shell = ShellConfig::get()?;
     let output = Cmd::new(shell.executable.to_string_lossy())
         .args(&shell.args)
@@ -647,6 +640,14 @@ pub(crate) fn generate_commit_message(
     // Check if commit generation is configured (non-empty command)
     if commit_generation_config.is_configured() {
         let command = commit_generation_config.command.as_ref().unwrap();
+        // The shell-out captures stdout, so a slow or hung LLM is otherwise
+        // silent — show a dim "still waiting" status, escalating to reveal the
+        // exact invocation in a gutter after a longer delay. Held until the
+        // function returns, then dropped (clearing the block) before the caller
+        // prints the generated message.
+        let invocation = render_llm_invocation(command).ok();
+        let _watchdog =
+            worktrunk::progress::Watchdog::start("the commit message", invocation.as_deref());
         // Commit generation is explicitly configured - fail if it doesn't work
         return try_generate_commit_message(
             command,
@@ -818,6 +819,13 @@ pub(crate) fn generate_squash_message(
             project_append,
         )?;
 
+        // See `generate_commit_message` — surface a "still waiting" status so a
+        // slow squash-message generation isn't silent.
+        let invocation = render_llm_invocation(command).ok();
+        let _watchdog = worktrunk::progress::Watchdog::start(
+            "the squash commit message",
+            invocation.as_deref(),
+        );
         return execute_llm_command(command, &prompt).map_err(|e| {
             worktrunk::git::GitError::LlmCommandFailed {
                 command: command.clone(),

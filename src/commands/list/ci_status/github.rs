@@ -68,7 +68,9 @@ pub(super) fn detect_github(
             "--limit",
             &MAX_PRS_TO_FETCH.to_string(),
             "--json",
-            "number,headRefOid,mergeStateStatus,statusCheckRollup,url,headRepositoryOwner,reviewDecision,isDraft",
+            // title,body ride this existing call so the picker's `pr` preview
+            // pane can show them — no extra round-trip.
+            "number,title,body,headRefOid,mergeStateStatus,statusCheckRollup,url,headRepositoryOwner,reviewDecision,isDraft",
         ])
         .current_dir(&repo_root)
         .run()
@@ -131,6 +133,8 @@ pub(super) fn detect_github(
         url: pr_info.url.clone(),
         number: pr_info.number.map(PrRef::pr),
         review_state: pr_info.review_state(),
+        title: pr_info.title.clone(),
+        body: pr_info.body.clone(),
     })
 }
 
@@ -199,6 +203,8 @@ pub(super) fn detect_github_commit_checks(
         url: None,
         number: None,
         review_state: None,
+        title: None,
+        body: None,
     })
 }
 
@@ -211,6 +217,10 @@ pub(super) fn detect_github_commit_checks(
 #[derive(Debug, Deserialize)]
 pub(crate) struct GitHubPrInfo {
     pub number: Option<u64>,
+    /// PR title; shown in the picker's `pr` preview pane. Rides this call.
+    pub title: Option<String>,
+    /// PR description; shown in the `pr` preview pane. Rides this call.
+    pub body: Option<String>,
     #[serde(rename = "headRefOid")]
     pub head_ref_oid: Option<String>,
     #[serde(rename = "mergeStateStatus")]
@@ -307,6 +317,13 @@ impl GitHubPrInfo {
             url: self.url.clone(),
             number: self.number.map(PrRef::pr),
             review_state: self.review_state(),
+            // TODO(prs-status-title-body): the `--prs` pane reads title/body from
+            // the `PrEntry`, not from this status (which feeds only the CI column),
+            // so these clones are dead data here. GitLab's `gitlab_mr_status` sets
+            // both `None` for this reason — unify the two `--prs` status builders
+            // (drop them here to match, or have both read from the status).
+            title: self.title.clone(),
+            body: self.body.clone(),
         }
     }
 }
@@ -388,6 +405,8 @@ mod tests {
             status_check_rollup: None,
             url: None,
             head_repository_owner: None,
+            title: None,
+            body: None,
             review_decision: None,
             is_draft: None,
         };
@@ -404,6 +423,8 @@ mod tests {
             status_check_rollup: None,
             url: None,
             head_repository_owner: None,
+            title: None,
+            body: None,
             review_decision: None,
             is_draft: None,
         };
@@ -417,6 +438,8 @@ mod tests {
             status_check_rollup: Some(vec![]),
             url: None,
             head_repository_owner: None,
+            title: None,
+            body: None,
             review_decision: None,
             is_draft: None,
         };
@@ -435,6 +458,8 @@ mod tests {
                 }]),
                 url: None,
                 head_repository_owner: None,
+                title: None,
+                body: None,
                 review_decision: None,
                 is_draft: None,
             };
@@ -453,6 +478,8 @@ mod tests {
             }]),
             url: None,
             head_repository_owner: None,
+            title: None,
+            body: None,
             review_decision: None,
             is_draft: None,
         };
@@ -471,6 +498,8 @@ mod tests {
                 }]),
                 url: None,
                 head_repository_owner: None,
+                title: None,
+                body: None,
                 review_decision: None,
                 is_draft: None,
             };
@@ -490,6 +519,8 @@ mod tests {
                 }]),
                 url: None,
                 head_repository_owner: None,
+                title: None,
+                body: None,
                 review_decision: None,
                 is_draft: None,
             };
@@ -508,6 +539,8 @@ mod tests {
             }]),
             url: None,
             head_repository_owner: None,
+            title: None,
+            body: None,
             review_decision: None,
             is_draft: None,
         };
@@ -523,6 +556,8 @@ mod tests {
             status_check_rollup: None,
             url: None,
             head_repository_owner: None,
+            title: None,
+            body: None,
             review_decision: review_decision.map(Into::into),
             is_draft,
         };

@@ -9,7 +9,9 @@ use clap_complete::env::CompleteEnv;
 use crate::cli;
 use crate::commands::{AliasMap, load_aliases};
 use crate::display::format_relative_time_short;
-use worktrunk::config::{CommandConfig, ProjectConfig, UserConfig};
+use worktrunk::config::{
+    ALIAS_ARGS_KEY, CommandConfig, ProjectConfig, UserConfig, template_references_var,
+};
 use worktrunk::git::{BranchCategory, HookType, Repository};
 
 /// Handle shell-initiated completion requests via `COMPLETE=$SHELL wt`
@@ -547,7 +549,16 @@ fn inject_alias_subcommands(cmd: Command) -> Command {
         if cmd.get_subcommands().any(|s| s.get_name() == name.as_str()) {
             continue;
         }
-        cmd = cmd.subcommand(build_alias_completion_command(name, entry.representative()));
+        // Mirror the wrapped built-in leaf when the alias forwards {{ args }}
+        // to one (e.g. `co = "wt switch {{ args }}"` gets switch's completion,
+        // `cm = "wt step commit {{ args }}"` gets step-commit's); otherwise fall
+        // back to the generic alias stub.
+        let rep = entry.representative();
+        let stub = match mirror_builtin_leaf(rep, &cmd) {
+            Some(leaf) => mirror_alias_command(leaf, name, rep),
+            None => build_alias_completion_command(name, rep),
+        };
+        cmd = cmd.subcommand(stub);
     }
     // Step-level injection: keep historical `wt step <alias>` completions.
     cmd.mut_subcommand("step", |mut step| {
@@ -565,6 +576,82 @@ fn inject_alias_subcommands(cmd: Command) -> Command {
         }
         step
     })
+}
+
+/// If an alias forwards `{{ args }}` from exactly one command that invokes a
+/// `wt` subcommand chain, return a clone of the deepest **leaf** subcommand it
+/// targets — so completion can mirror that subcommand's flags + positional
+/// completers under the alias name (e.g. `co = "wt switch {{ args }}"` mirrors
+/// `switch`, `cm = "wt step commit {{ args }}"` mirrors `step commit`).
+///
+/// Detection gates, each load-bearing:
+/// - **`template_references_var` per command** (minijinja, not a substring) —
+///   scoped to each command rather than the cross-command union returned by
+///   `referenced_vars_for_config`, so a non-forwarding sibling referencing
+///   `{{ args }}` can't flip mirroring on. Satisfies CLAUDE.md's "Use Existing
+///   Dependencies" rule.
+/// - **Exactly one forwarder.** Zero means the alias ignores CLI positionals;
+///   many means args fan out and mirroring any one would mislead.
+/// - **Leading `wt`.** Bare `switch {{ args }}` runs the shell builtin, not wt.
+/// - **Tree-walk to a leaf.** Descend `find_subcommand` token by token, stopping
+///   at the first non-subcommand token (a flag, positional, or `{{`); mirror
+///   only if the walk lands on a leaf. A bare dispatcher (`wt step {{ args }}`)
+///   lands on a non-leaf and bails — it never offers the dispatcher's children.
+fn mirror_builtin_leaf(rep: &CommandConfig, root: &Command) -> Option<Command> {
+    // Exactly one command forwards CLI args via {{ args }}.
+    let mut forwarders = rep
+        .commands()
+        .filter(|c| template_references_var(&c.template, ALIAS_ARGS_KEY))
+        .collect::<Vec<_>>();
+    if forwarders.len() != 1 {
+        return None;
+    }
+    let template = &forwarders.pop()?.template;
+
+    // Leading `wt` — bare `switch {{ args }}` runs the shell builtin, not wt.
+    let mut tokens = template.split_whitespace();
+    if tokens.next()? != "wt" {
+        return None;
+    }
+
+    // Descend the tree through subcommand tokens; stop at the first token that
+    // isn't a subcommand (a flag, a positional, or `{{`).
+    let mut node = root;
+    let mut descended = false;
+    for tok in tokens {
+        match node.find_subcommand(tok) {
+            Some(child) => {
+                node = child;
+                descended = true;
+            }
+            None => break,
+        }
+    }
+
+    // Mirror only leaves, and only if we actually descended (rejects a bare
+    // `wt {{ args }}` with no subcommand).
+    if !descended || node.get_subcommands().next().is_some() {
+        return None;
+    }
+    Some(node.clone())
+}
+
+/// Build the completion `Command` for a mirrored alias: clone the target leaf
+/// and rename it to the alias. The clone carries the leaf's flags, positional
+/// completers, value parsers, and help verbatim — `Command`/`Arg`/`Extensions`
+/// and `ArgValueCompleter` are all `Clone` in clap 4.6, and the completer is
+/// `Arc`-backed so the live git query survives. clap_complete's engine descends
+/// by subcommand name only, so a renamed clone is completed like the original.
+fn mirror_alias_command(leaf: Command, alias_name: &str, rep: &CommandConfig) -> Command {
+    let first_template = rep
+        .commands()
+        .next()
+        .map(|c| c.template.as_str())
+        .unwrap_or("");
+    let help = truncate_template(first_template);
+    let name: &'static str = Box::leak(alias_name.to_string().into_boxed_str());
+    let about: &'static str = Box::leak(format!("alias: {help}").into_boxed_str());
+    leaf.name(name).about(about)
 }
 
 /// Build a completion stub `clap::Command` for an alias. Leaks strings since
