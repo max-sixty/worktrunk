@@ -109,6 +109,7 @@ use std::time::{Duration, Instant};
 
 use ansi_str::AnsiStr;
 use anyhow::Context;
+use color_print::cformat;
 // bounded/unbounded/Sender are re-exported by skim::prelude
 use skim::prelude::*;
 use skim::reader::CommandCollector;
@@ -116,7 +117,8 @@ use skim::tui::event::ActionCallback;
 use worktrunk::HookType;
 use worktrunk::config::Approvals;
 use worktrunk::git::{Repository, current_or_recover};
-use worktrunk::styling::eprintln;
+use worktrunk::path::format_path_for_display;
+use worktrunk::styling::{eprintln, warning_message};
 
 use super::hook_plan::{ApprovedHookPlan, HookPlanBuilder};
 use super::hooks::HookAnnouncer;
@@ -218,6 +220,15 @@ fn picker_item_identifier(item: &dyn SkimItem) -> String {
 /// sticky, `invoke` injects a [`reposition_cursor_action`] Custom action that
 /// moves the cursor back to the slot the removed row occupied once the reloaded
 /// rows land.
+///
+/// The row is dropped optimistically (before the background removal runs), so
+/// the list can't show a removal that didn't happen: once `do_removal` returns,
+/// the thread checks whether the target still exists
+/// ([`removal_target_still_present`]) and, if so, calls
+/// [`restore_failed_removal`] to put the row back and surface why. Observing the
+/// target — rather than trusting `do_removal`'s `Result` — handles both a removal
+/// that errors *after* the worktree is gone and a branch-only safe-delete refusal
+/// that returns `Ok` while keeping the branch.
 struct PickerCollector {
     items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>>,
     repo: Repository,
@@ -233,6 +244,11 @@ struct PickerCollector {
     /// cursor after the reload. `None` until the TUI is up — but a reload can
     /// only fire after skim is showing rows, so it's always set by then.
     render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
+    /// Same warning stash the progressive handler fills (drained to stderr once
+    /// skim releases the terminal). A failed background removal pushes a
+    /// `worktree kept` warning here so the user learns the row that flickered
+    /// back didn't actually go away. See [`restore_failed_removal`].
+    stashed_warnings: Arc<Mutex<Vec<String>>>,
 }
 
 impl PickerCollector {
@@ -289,8 +305,16 @@ impl PickerCollector {
     ///
     /// Called from a background thread after the picker optimistically removes
     /// the item from the list, so the whole operation runs off skim's event loop
-    /// and the TUI stays responsive. A removal failure is logged; the item stays
-    /// gone from the picker — a tradeoff until we can show in-progress state.
+    /// and the TUI stays responsive. The caller does not infer the outcome from
+    /// this `Result` — a removal can fail before *or* after the worktree is
+    /// physically gone (rendering or spawning a `post-remove`/`post-switch` hook
+    /// can error during the announcer flush, which runs after the dir is renamed
+    /// into `.git/wt/trash/`), and a `BranchOnly` safe-delete refusal returns
+    /// `Ok`. Instead it
+    /// observes whether the target still exists ([`removal_target_still_present`])
+    /// and restores the row via [`restore_failed_removal`] only when it does, so
+    /// the list never shows a removal that didn't happen. The `Result` is for
+    /// logging.
     ///
     /// `repo` is the worktree the picker is operating from — the config source
     /// for the removal hooks (see [`approved_removal_plan`]) and the target of
@@ -330,14 +354,20 @@ impl PickerCollector {
                 if !deletion_mode.should_keep() {
                     let default_branch = repo.default_branch();
                     let target = default_branch.as_deref().unwrap_or("HEAD");
-                    if let Ok(snapshot) = repo.capture_refs() {
-                        let _ = delete_branch_if_safe(
+                    if let Ok(snapshot) = repo.capture_refs()
+                        && let Err(e) = delete_branch_if_safe(
                             repo,
                             &snapshot,
                             branch_name,
                             target,
                             deletion_mode.is_force(),
-                        );
+                        )
+                    {
+                        // A safe-delete refusal is `Ok(NotDeleted)`, not an error;
+                        // this is a genuine `git branch -D` failure. The row is
+                        // restored anyway because the branch still exists (see
+                        // `removal_target_still_present`) — surface the cause.
+                        log::warn!("picker: failed to delete branch '{branch_name}': {e:#}");
                     }
                 }
             }
@@ -463,6 +493,107 @@ fn reposition_cursor_action(
     ))
 }
 
+/// A removal's user-facing subject for the `kept` warning: a `(label, noun)`
+/// pair where `noun` is `worktree` or `branch` and `label` is the branch name
+/// (or the worktree's display path for a detached worktree). Computed before the
+/// `RemoveResult` moves into the background thread; surfaced by
+/// [`restore_failed_removal`].
+fn removal_failure_subject(result: &RemoveResult) -> (String, &'static str) {
+    match result {
+        RemoveResult::RemovedWorktree {
+            branch_name: Some(branch),
+            ..
+        } => (branch.clone(), "worktree"),
+        RemoveResult::RemovedWorktree { worktree_path, .. } => {
+            (format_path_for_display(worktree_path), "worktree")
+        }
+        RemoveResult::BranchOnly { branch_name, .. } => (branch_name.clone(), "branch"),
+    }
+}
+
+/// Whether the row's underlying target still exists after `do_removal` ran — the
+/// primary evidence for "was this actually removed," used in place of inferring
+/// from `do_removal`'s `Result`.
+///
+/// A `Result` is the wrong signal in two directions: a `RemovedWorktree` removal
+/// can return `Err` *after* the worktree is already trashed (rendering or
+/// spawning a `post-remove`/`post-switch` hook fails during the announcer flush),
+/// and a `BranchOnly` safe-delete refusal of an unmerged branch returns `Ok`
+/// while leaving the branch in place. Observing the target directly handles
+/// both: the worktree dir is gone once removed (renamed into `.git/wt/trash/`),
+/// and the branch ref is gone once deleted. The check runs on the background
+/// thread, off skim's event loop.
+fn removal_target_still_present(repo: &Repository, result: &RemoveResult) -> bool {
+    match result {
+        RemoveResult::RemovedWorktree { worktree_path, .. } => worktree_path.exists(),
+        RemoveResult::BranchOnly { branch_name, .. } => {
+            repo.branch(branch_name).exists_locally().unwrap_or(false)
+        }
+    }
+}
+
+/// Put a row back after its background removal didn't happen, closing the alt-r
+/// loop so the list never shows a removal that didn't occur.
+///
+/// `invoke` drops a row optimistically once alt-r's validation passes, then
+/// removes the target on a background thread. When the target survives (data
+/// safety: a clean-check race against `ensure_clean`, a locked directory, a
+/// failing `pre-remove` hook, or a `BranchOnly` safe-delete refusal of an
+/// unmerged branch — see [`removal_target_still_present`]), the row must
+/// reappear. This re-inserts it into `shared_items` at its original slot, stashes
+/// a `kept` warning (drained to stderr once skim releases the terminal; the full
+/// error, if any, is in the `log::warn!` the caller emits), then reloads the
+/// picker to re-stream the restored list and lands the cursor back on the row.
+///
+/// The reload command is any string that isn't `remove <token>`: `invoke`
+/// re-streams `shared_items` without removing anything for those (see
+/// [`parse_reload_remove_token`]), so a plain `restore` reload repaints the
+/// re-inserted row — the same reload→reposition path the happy alt-r case uses.
+fn restore_failed_removal(
+    items: &Arc<Mutex<Vec<Arc<dyn SkimItem>>>>,
+    render_tx: &Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
+    stashed_warnings: &Arc<Mutex<Vec<String>>>,
+    removed_item: Arc<dyn SkimItem>,
+    removed_pos: usize,
+    label: &str,
+    noun: &str,
+) {
+    let reposition_target = {
+        let mut items = items.lock().unwrap();
+        let token = removed_item.output().into_owned();
+        // A concurrent restore (rapid alt-r on the same row) may have already
+        // put it back; don't duplicate it.
+        if items.iter().any(|item| item.output().as_ref() == token) {
+            return;
+        }
+        // Another removal may have shrunk the list since the drop; clamp.
+        let insert_at = removed_pos.min(items.len());
+        items.insert(insert_at, removed_item);
+        let remaining_data_rows = items.len().saturating_sub(PICKER_HEADER_ROWS);
+        sticky_reposition_target(insert_at, remaining_data_rows)
+    };
+
+    stashed_warnings.lock().unwrap().push(
+        warning_message(cformat!(
+            "Kept <bold>{label}</> {noun} — could not remove it"
+        ))
+        .to_string(),
+    );
+
+    let Some(event_tx) = render_tx.get() else {
+        return;
+    };
+    // Re-stream the restored list, then land the cursor back on the row.
+    let _ = event_tx.try_send(Event::Reload("restore".to_string()));
+    if let Some(target) = reposition_target {
+        let _ = event_tx.try_send(Event::Action(reposition_cursor_action(
+            target,
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicUsize::new(0)),
+        )));
+    }
+}
+
 impl CommandCollector for PickerCollector {
     fn invoke(
         &mut self,
@@ -490,19 +621,25 @@ impl CommandCollector for PickerCollector {
                         // thread compilation units). All item lookups use output()
                         // matching instead.
                         //
-                        // Capture the removed row's position before dropping it so
-                        // the cursor can be restored to that slot (the row that
-                        // slides up) after the reload — see `reposition_cursor_action`.
-                        let reposition_target = {
+                        // Capture the removed row (and its position) before dropping
+                        // it: the position restores the cursor to that slot (the row
+                        // that slides up) after the reload — see
+                        // `reposition_cursor_action` — and the row itself is handed to
+                        // the background thread so it can put the row back if the
+                        // removal fails (see `restore_failed_removal`).
+                        let (removed, reposition_target) = {
                             let mut items = self.items.lock().unwrap();
-                            let removed_pos = items
+                            let removed = items
                                 .iter()
-                                .position(|item| item.output().as_ref() == selected_output);
+                                .position(|item| item.output().as_ref() == selected_output)
+                                .map(|pos| (Arc::clone(&items[pos]), pos));
                             items.retain(|item| item.output().as_ref() != selected_output);
                             let remaining_data_rows =
                                 items.len().saturating_sub(PICKER_HEADER_ROWS);
-                            removed_pos
-                                .and_then(|pos| sticky_reposition_target(pos, remaining_data_rows))
+                            let target = removed.as_ref().and_then(|(_, pos)| {
+                                sticky_reposition_target(*pos, remaining_data_rows)
+                            });
+                            (removed, target)
                         };
 
                         // If removing the current worktree, cd to home so skim and git
@@ -521,16 +658,43 @@ impl CommandCollector for PickerCollector {
                             }
                         }
 
+                        // A user-facing (label, noun) for the `kept` message, taken
+                        // from the result before it moves into the background thread.
+                        let (removal_label, removal_noun) = removal_failure_subject(&result);
+
                         // Defer actual git removal to a background thread so skim's
-                        // event loop stays responsive.
+                        // event loop stays responsive. Restore the dropped row only
+                        // when the target survives — observed directly, not inferred
+                        // from `do_removal`'s Result, which is Err after a successful
+                        // removal whose post-remove hook fails to render/spawn, and Ok
+                        // after a branch-only safe-delete refusal (see
+                        // `removal_target_still_present`). This keeps the list from
+                        // showing a removal that didn't happen without ever resurrecting
+                        // a row for a target that's actually gone.
                         let repo = planning_repo.clone();
                         let approvals = Arc::clone(&self.approvals);
+                        let items = Arc::clone(&self.items);
+                        let render_tx = Arc::clone(&self.render_tx);
+                        let stashed_warnings = Arc::clone(&self.stashed_warnings);
                         let _ = std::thread::Builder::new()
                             .name(format!("picker-remove-{selected_output}"))
                             .spawn(move || {
                                 if let Err(e) = Self::do_removal(&repo, &result, &approvals) {
                                     log::warn!(
-                                        "picker: failed to remove '{selected_output}': {e:#}"
+                                        "picker: removal of '{selected_output}' errored: {e:#}"
+                                    );
+                                }
+                                if removal_target_still_present(&repo, &result)
+                                    && let Some((item, pos)) = removed
+                                {
+                                    restore_failed_removal(
+                                        &items,
+                                        &render_tx,
+                                        &stashed_warnings,
+                                        item,
+                                        pos,
+                                        &removal_label,
+                                        removal_noun,
                                     );
                                 }
                             });
@@ -793,11 +957,18 @@ pub fn handle_picker(
     // module docstring.
     let render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>> = Arc::new(OnceLock::new());
 
+    // Shared between the bg-thread collect handler and a failed alt-r removal
+    // (both push warnings while skim owns the terminal) and the main thread
+    // (which drains them after `Skim::run_with` returns and stderr is safe
+    // again).
+    let stashed_warnings: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+
     let collector = PickerCollector {
         items: Arc::clone(&shared_items),
         repo: repo.clone(),
         approvals,
         render_tx: Arc::clone(&render_tx),
+        stashed_warnings: Arc::clone(&stashed_warnings),
     };
 
     // Get state path for key bindings (shell-escaped for safety)
@@ -945,11 +1116,6 @@ pub fn handle_picker(
     worktrunk::trace::instant("Picker skim options built");
 
     let (tx, rx): (SkimItemSender, SkimItemReceiver) = unbounded();
-
-    // Shared between the bg-thread handler (which pushes warnings while
-    // skim owns the terminal) and the main thread (which drains them after
-    // `Skim::run_with` returns and stderr is safe again).
-    let stashed_warnings: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
 
     // Column-geometry handoff: the collect thread fills it at skeleton time,
     // the `--prs` thread reads it to align PR rows with the worktree rows.
@@ -1652,6 +1818,7 @@ pub mod tests {
             repo,
             approvals: Arc::new(Approvals::default()),
             render_tx: Arc::new(OnceLock::new()),
+            stashed_warnings: Arc::new(Mutex::new(Vec::new())),
         };
 
         let target = PickerRemovalTarget::from_signal("branch-only-feature").unwrap();
@@ -1675,6 +1842,7 @@ pub mod tests {
             repo,
             approvals: Arc::new(Approvals::default()),
             render_tx: Arc::new(OnceLock::new()),
+            stashed_warnings: Arc::new(Mutex::new(Vec::new())),
         };
 
         // `RemoveResult` isn't `Debug`; drop the Ok payload so `unwrap_err`
@@ -1845,6 +2013,7 @@ pub mod tests {
             repo: repo.clone(),
             approvals: Arc::new(Approvals::default()),
             render_tx: Arc::new(OnceLock::new()),
+            stashed_warnings: Arc::new(Mutex::new(Vec::new())),
         };
 
         // skim's `reload(remove {})` hands invoke `remove <single-quoted token>`.
@@ -1883,6 +2052,7 @@ pub mod tests {
             repo,
             approvals: Arc::new(Approvals::default()),
             render_tx: Arc::new(OnceLock::new()),
+            stashed_warnings: Arc::new(Mutex::new(Vec::new())),
         };
         let (_rx, _interrupt) = collector.invoke("remove ''", Arc::new(AtomicUsize::new(0)));
         assert_eq!(
@@ -1890,6 +2060,321 @@ pub mod tests {
             1,
             "empty selection must not remove anything"
         );
+    }
+
+    /// `restore_failed_removal` puts a dropped row back at its original slot and
+    /// stashes a `worktree kept` warning — the correction path that keeps the
+    /// alt-r list from showing a removal that didn't happen.
+    #[test]
+    fn test_restore_failed_removal_reinserts_row_and_stashes_warning() {
+        // The list as it stands after `dropped-b` (originally shared_items
+        // index 2) was optimistically dropped: a header at 0, two surviving
+        // data rows.
+        let items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>> = Arc::new(Mutex::new(vec![
+            branch_only_picker_item("header"),
+            branch_only_picker_item("keep-a"),
+            branch_only_picker_item("keep-c"),
+        ]));
+        let render_tx = Arc::new(OnceLock::new());
+        let stashed = Arc::new(Mutex::new(Vec::new()));
+
+        super::restore_failed_removal(
+            &items,
+            &render_tx,
+            &stashed,
+            branch_only_picker_item("dropped-b"),
+            2,
+            "dropped-b",
+            "worktree",
+        );
+
+        let outputs: Vec<String> = items
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|item| item.output().into_owned())
+            .collect();
+        assert_eq!(
+            outputs,
+            vec!["header", "keep-a", "dropped-b", "keep-c"],
+            "row restored at its original slot"
+        );
+        let warnings = stashed.lock().unwrap();
+        assert_eq!(warnings.len(), 1, "one warning stashed");
+        assert!(
+            warnings[0].contains("dropped-b") && warnings[0].contains("Kept"),
+            "warning names the kept worktree: {}",
+            warnings[0]
+        );
+    }
+
+    /// Restoring a row that's already back is a no-op — no duplicate, no extra
+    /// warning. Guards rapid repeated alt-r racing on the same row.
+    #[test]
+    fn test_restore_failed_removal_skips_when_already_present() {
+        let row = branch_only_picker_item("present");
+        let items = Arc::new(Mutex::new(vec![Arc::clone(&row)]));
+        let render_tx = Arc::new(OnceLock::new());
+        let stashed = Arc::new(Mutex::new(Vec::new()));
+
+        super::restore_failed_removal(&items, &render_tx, &stashed, row, 0, "present", "worktree");
+
+        assert_eq!(items.lock().unwrap().len(), 1, "no duplicate inserted");
+        assert!(
+            stashed.lock().unwrap().is_empty(),
+            "no warning when there's nothing to restore"
+        );
+    }
+
+    /// `removal_failure_subject` prefers the branch name (falling back to the
+    /// worktree path for a detached worktree) and pairs it with the right noun:
+    /// `worktree` for a worktree removal, `branch` for a branch-only deletion.
+    #[test]
+    fn test_removal_failure_subject() {
+        let branched = RemoveResult::RemovedWorktree {
+            main_path: std::path::PathBuf::from("/tmp/main"),
+            worktree_path: std::path::PathBuf::from("/tmp/wt-feature"),
+            changed_directory: false,
+            branch_name: Some("feature".to_string()),
+            deletion_mode: BranchDeletionMode::SafeDelete,
+            target_branch: Some("main".to_string()),
+            force_worktree: false,
+            expected_path: None,
+            removed_commit: None,
+        };
+        assert_eq!(
+            super::removal_failure_subject(&branched),
+            ("feature".to_string(), "worktree")
+        );
+
+        let detached = RemoveResult::RemovedWorktree {
+            main_path: std::path::PathBuf::from("/tmp/main"),
+            worktree_path: std::path::PathBuf::from("/tmp/wt-detached"),
+            changed_directory: false,
+            branch_name: None,
+            deletion_mode: BranchDeletionMode::SafeDelete,
+            target_branch: Some("main".to_string()),
+            force_worktree: false,
+            expected_path: None,
+            removed_commit: None,
+        };
+        assert_eq!(
+            super::removal_failure_subject(&detached),
+            ("/tmp/wt-detached".to_string(), "worktree")
+        );
+
+        let branch_only = RemoveResult::BranchOnly {
+            branch_name: "orphan".to_string(),
+            deletion_mode: BranchDeletionMode::SafeDelete,
+            pruned: false,
+            target_branch: None,
+            integration_reason: None,
+        };
+        assert_eq!(
+            super::removal_failure_subject(&branch_only),
+            ("orphan".to_string(), "branch")
+        );
+    }
+
+    /// End-to-end through `invoke`: `prepare_removal` passes (the worktree is
+    /// clean and removable), but the background `do_removal` fails on an
+    /// approved-yet-failing `pre-remove` hook. The row is dropped optimistically,
+    /// then restored when the removal fails — the worktree is preserved and the
+    /// list reflects that, instead of leaving a phantom-removed row.
+    #[test]
+    fn test_invoke_restores_row_when_removal_fails() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        let wt_dir = tempfile::tempdir().unwrap();
+        let wt_path = wt_dir.path().join("feature");
+        repo.run_command(&[
+            "worktree",
+            "add",
+            "-b",
+            "feature",
+            wt_path.to_str().unwrap(),
+        ])
+        .unwrap();
+
+        // A `pre-remove` hook that always fails, in the project config the
+        // picker removal resolves against.
+        fs::create_dir_all(test.path().join(".config")).unwrap();
+        fs::write(
+            test.path().join(".config/wt.toml"),
+            "pre-remove = \"false\"\n",
+        )
+        .unwrap();
+
+        // Approve `false` so the hook is selected into the read-only plan and
+        // actually runs; an isolated approvals path keeps real config untouched.
+        let pid = repo.project_identifier().unwrap();
+        let approvals_dir = tempfile::tempdir().unwrap();
+        let approvals_path = approvals_dir.path().join("approvals.toml");
+        let mut approvals = Approvals::default();
+        approvals
+            .approve_command(pid, "false".to_string(), &approvals_path)
+            .unwrap();
+
+        // Build the row from the git-reported worktree path, not the raw temp
+        // path: on macOS `git worktree list` resolves the `/var`→`/private/var`
+        // symlink, and `prepare_removal`'s path lookup matches that resolved
+        // form.
+        let reported_path = repo
+            .list_worktrees()
+            .unwrap()
+            .iter()
+            .find(|wt| wt.branch.as_deref() == Some("feature"))
+            .map(|wt| wt.path.clone())
+            .expect("feature worktree is listed");
+        let item = branched_picker_item("feature", &reported_path);
+        let token = item.output().to_string();
+        let items = Arc::new(Mutex::new(vec![Arc::clone(&item)]));
+        let stashed: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let mut collector = PickerCollector {
+            items: Arc::clone(&items),
+            repo: repo.clone(),
+            approvals: Arc::new(approvals),
+            render_tx: Arc::new(OnceLock::new()),
+            stashed_warnings: Arc::clone(&stashed),
+        };
+
+        let cmd = format!("remove '{token}'");
+        let (_rx, _interrupt) = collector.invoke(&cmd, Arc::new(AtomicUsize::new(0)));
+
+        // The background removal fails on the approved-yet-failing hook, so
+        // `restore_failed_removal` runs: only that path stashes a warning, so
+        // poll on it as the synchronization point.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while stashed.lock().unwrap().is_empty() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let warnings = stashed.lock().unwrap().clone();
+        assert!(
+            warnings.iter().any(|w| w.contains("feature")),
+            "a failed removal stashes a `kept` warning: {warnings:?}"
+        );
+
+        let outputs: Vec<String> = items
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|item| item.output().into_owned())
+            .collect();
+        assert_eq!(
+            outputs,
+            vec![token],
+            "the row is restored after the removal fails"
+        );
+        assert!(
+            reported_path.exists(),
+            "the worktree is preserved when removal fails"
+        );
+    }
+
+    /// `removal_target_still_present` observes reality: a worktree dir or a
+    /// branch ref that's gone reads as removed; one still on disk / in the
+    /// ref store reads as present (the restore trigger).
+    #[test]
+    fn test_removal_target_still_present() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+
+        let worktree_result = |path: std::path::PathBuf| RemoveResult::RemovedWorktree {
+            main_path: test.path().to_path_buf(),
+            worktree_path: path,
+            changed_directory: false,
+            branch_name: Some("x".to_string()),
+            deletion_mode: BranchDeletionMode::SafeDelete,
+            target_branch: Some("main".to_string()),
+            force_worktree: false,
+            expected_path: None,
+            removed_commit: None,
+        };
+        assert!(super::removal_target_still_present(
+            &repo,
+            &worktree_result(test.path().to_path_buf()) // exists
+        ));
+        assert!(!super::removal_target_still_present(
+            &repo,
+            &worktree_result(test.path().join("does-not-exist"))
+        ));
+
+        repo.run_command(&["branch", "live-branch"]).unwrap();
+        let present_branch = RemoveResult::BranchOnly {
+            branch_name: "live-branch".to_string(),
+            deletion_mode: BranchDeletionMode::SafeDelete,
+            pruned: false,
+            target_branch: None,
+            integration_reason: None,
+        };
+        assert!(super::removal_target_still_present(&repo, &present_branch));
+
+        let gone_branch = RemoveResult::BranchOnly {
+            branch_name: "no-such-branch".to_string(),
+            deletion_mode: BranchDeletionMode::SafeDelete,
+            pruned: false,
+            target_branch: None,
+            integration_reason: None,
+        };
+        assert!(!super::removal_target_still_present(&repo, &gone_branch));
+    }
+
+    /// Branch-only restore (the path the Result-only signal missed): an unmerged
+    /// branch with no worktree resolves to `BranchOnly`; `SafeDelete` refuses to
+    /// delete it and `do_removal` returns `Ok`, yet the branch survives — so the
+    /// row must be restored. Driven through `invoke` end-to-end.
+    #[test]
+    fn test_invoke_restores_branch_only_row_when_unmerged() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+
+        // An unmerged branch (a commit not on main) with no worktree — SafeDelete
+        // keeps it.
+        repo.run_command(&["checkout", "-b", "unmerged"]).unwrap();
+        fs::write(test.path().join("new.txt"), "unmerged work").unwrap();
+        repo.run_command(&["add", "."]).unwrap();
+        repo.run_command(&["commit", "-m", "unmerged work"])
+            .unwrap();
+        repo.run_command(&["checkout", "main"]).unwrap();
+
+        let item = branch_only_picker_item("unmerged");
+        let token = item.output().to_string();
+        let items = Arc::new(Mutex::new(vec![Arc::clone(&item)]));
+        let stashed: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let mut collector = PickerCollector {
+            items: Arc::clone(&items),
+            repo: repo.clone(),
+            approvals: Arc::new(Approvals::default()),
+            render_tx: Arc::new(OnceLock::new()),
+            stashed_warnings: Arc::clone(&stashed),
+        };
+
+        let cmd = format!("remove '{token}'");
+        let (_rx, _interrupt) = collector.invoke(&cmd, Arc::new(AtomicUsize::new(0)));
+
+        // SafeDelete keeps the unmerged branch; `do_removal` returns Ok, but the
+        // branch survives, so the row is restored and a `kept … branch` warning
+        // is stashed. Poll on the warning.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while stashed.lock().unwrap().is_empty() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let warnings = stashed.lock().unwrap().clone();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("unmerged") && w.contains("branch")),
+            "a kept branch stashes a `kept … branch` warning: {warnings:?}"
+        );
+        let outputs: Vec<String> = items
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|item| item.output().into_owned())
+            .collect();
+        assert_eq!(outputs, vec![token], "the branch-only row is restored");
+        let branch_list = repo.run_command(&["branch", "--list", "unmerged"]).unwrap();
+        assert!(!branch_list.is_empty(), "the unmerged branch is preserved");
     }
 
     // Note: skim's `as_any().downcast_ref::<WorktreeSkimItem>()` can fail at
