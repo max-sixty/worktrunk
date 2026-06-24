@@ -831,6 +831,22 @@ pub fn handle_picker(
         // shows just the `>` pointer (the row's own `display()` ANSI spans carry
         // no background). skim 0.20's tuikit backend highlighted the row for free.
         .highlight_line(true)
+        // Each row's `display()` owns its layout: a leading gutter sigil
+        // (`+`/`@`/`^`/`/`/`|`), then columns, right-truncated to the list width
+        // with a trailing `…`. skim's horizontal scroll is a second, conflicting
+        // layout authority over the same row — on a query match it scrolls the row
+        // left to bring the matched char into view, deriving the offset from that
+        // char's *position* in the match text (`search_text` = branch + full path +
+        // glyph), which is far longer than the visible row, while clamping against
+        // the rendered line's own width. Any row whose rendered width exceeds skim's
+        // container (e.g. a long branch name, or a width-count disagreement on wide
+        // glyphs) then gets shifted left far enough to clip its leading gutter sigil
+        // — typing a few chars made the sigil vanish from every overflowing row.
+        // Disabling hscroll leaves worktrunk as the sole row-layout
+        // authority: overflow truncates on the right (gutter kept) instead of
+        // scrolling left. The picker doesn't reveal matches by scrolling anyway —
+        // `display()` ignores the match context and renders its own ANSI.
+        .no_hscroll(true)
         // Draw a scrollbar thumb on the item list when it overflows the view.
         // skim's `▐` default is the clap `default_value`, gated on skim's `cli`
         // feature; with `default-features = false` the library `Default` for
