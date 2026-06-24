@@ -165,21 +165,24 @@ impl PickerProgressHandler for PickerHandler {
             .unwrap_or_default();
         let summaries_enabled = self.llm_command.is_some();
 
-        // Parent of the primary worktree — stripped from each row's matcher path
+        // Parent of the main worktree — stripped from each row's matcher path
         // (below) so the fuzzy matcher indexes only the distinguishing tail
         // (`worktrunk.skim-features`), not the `~/workspace/` prefix every sibling
-        // worktree shares. Worktrunk's convention is flat siblings under one
-        // parent, so this is that parent. Computed once; a worktree living outside
-        // it keeps its full path via the `strip_prefix` fallback. Cheap and
-        // network-free here — `primary_worktree()` reads the already-warmed
-        // `repo_path()` / worktree-list caches.
+        // worktree shares. The base comes from `list_worktrees()` — the same
+        // source the row paths come from — so it shares their exact
+        // canonicalization (the strip can't miss on a `/private/var`-vs-`/var`
+        // mismatch) and adds no network or uncached work (the skeleton was just
+        // built from this list). `[0]` is the main worktree for normal repos and
+        // the first linked worktree for bare ones; either way its parent is the
+        // shared sibling parent. Computed once; a worktree outside that parent
+        // keeps its full path via the `strip_prefix` fallback.
         let path_base = self
             .orchestrator
             .repo()
-            .primary_worktree()
+            .list_worktrees()
             .ok()
-            .flatten()
-            .and_then(|p| p.parent().map(Path::to_path_buf));
+            .and_then(|worktrees| worktrees.first())
+            .and_then(|wt| wt.path.parent().map(Path::to_path_buf));
 
         // Header row — non-selectable via `header_lines(1)` on the options.
         // In `--prs` mode it shows a dim "loading open PRs…" line (in place of
@@ -504,21 +507,28 @@ mod tests {
         assert!(text(2).contains("origin/remotebr"));
     }
 
-    /// `on_skeleton` strips the shared primary-worktree parent from each row's
+    /// `on_skeleton` strips the shared main-worktree parent from each row's
     /// matcher `search_text`, so the fuzzy matcher indexes the distinguishing
     /// leaf (`repo.feat`) rather than the absolute prefix every sibling worktree
-    /// carries. Uses a real `git worktree add` path so the strip runs against the
-    /// same canonicalization production sees (`primary_worktree()` vs the
-    /// list-worktrees path); a divergence would surface here as a retained
-    /// absolute path. A worktree outside the shared parent keeps its full path
-    /// via the `strip_prefix` fallback.
+    /// carries. The inside row's path is read back from `worktree_for_branch`, so
+    /// the strip runs against the real `list_worktrees()` path the rows carry, not
+    /// `add_worktree`'s separately canonicalized return. A worktree outside the
+    /// shared parent keeps its full path via the `strip_prefix` fallback.
     #[test]
     fn search_text_strips_shared_worktree_parent() {
         use crate::commands::list::model::{ItemKind, WorktreeData};
 
         let (handler, mut test, rx) = make_handler();
-        // A genuine sibling worktree at `{temp}/repo.feat`; its leaf is `repo.feat`.
-        let inside_path = test.add_worktree("feat");
+        // A genuine sibling worktree at `{temp}/repo.feat`; read its path back from
+        // the worktree list (the production path source — both the row path and
+        // the stripped base come from `list_worktrees()`, so they share one
+        // canonicalization).
+        test.add_worktree("feat");
+        let inside_path = test
+            .repo
+            .worktree_for_branch("feat")
+            .unwrap()
+            .expect("feat worktree is registered");
         let outside_path = std::path::PathBuf::from("/nonexistent-root/external-wt");
 
         let worktree_item = |branch: &str, path: &Path| {

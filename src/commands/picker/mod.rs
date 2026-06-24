@@ -678,6 +678,14 @@ pub fn handle_picker(
         // criterion, so setting the knobs directly is the same effect without the
         // artifact. (Default tiebreak is `[Score, Begin, End]`.) Paired with the
         // distinct-path `search_text` built in `progressive_handler::on_skeleton`.
+        //
+        // `PathName` reads the whole `search_text`, including the trailing gutter
+        // glyph. Local-branch rows fold in `/` as that glyph (the gutter sigil),
+        // which `PathName` then reads as a path separator, so on a *score tie* a
+        // local-branch row sorts just under a worktree/remote row whose glyph
+        // (`+`/`@`/`^`/`|`) isn't a separator. The effect is confined to exact
+        // ties (`PathName` is the 2nd criterion) and only reorders rows, so it
+        // rides along rather than warranting a change to the gutter sigils.
         .last_match(true)
         .tiebreak(vec![
             RankCriteria::Score,
