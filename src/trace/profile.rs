@@ -448,7 +448,10 @@ impl Profile {
         };
         // Build the summary from segments so the timestamp-derived fields
         // (thread count, traced wall span) drop out for a log without `ts`/`tid`
-        // rather than rendering a confusing `0 threads · traced 0.00ms`.
+        // rather than rendering a confusing `0 threads · 0.00ms traced`.
+        // Every magnitude leads with its value (`32.00ms subprocess time`,
+        // `5 subprocesses`); the derived metrics (`parallelism`, `peak`) lead
+        // with their label since they aren't measured quantities.
         let mut segments = vec![
             format!(
                 "{} subprocess{}",
@@ -467,7 +470,7 @@ impl Profile {
             ));
         }
         if !self.traced.is_zero() {
-            segments.push(format!("traced {}", fmt_dur(self.traced)));
+            segments.push(format!("{} traced", fmt_dur(self.traced)));
         }
         if !self.span_total.is_zero() {
             segments.push(format!("{} in-process", fmt_dur(self.span_total)));
