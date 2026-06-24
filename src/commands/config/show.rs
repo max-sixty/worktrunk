@@ -1444,17 +1444,28 @@ fn fetch_latest_version() -> anyhow::Result<String> {
         "worktrunk/{} (https://worktrunk.dev)",
         env!("CARGO_PKG_VERSION")
     );
-    let output = Cmd::new("curl")
-        .args([
-            "--silent",
-            "--fail",
-            "--max-time",
-            "5",
-            "--header",
-            &format!("User-Agent: {user_agent}"),
-            "https://api.github.com/repos/max-sixty/worktrunk/releases/latest",
-        ])
-        .run()?;
+    // The watchdog (below) supplies "still waiting" feedback, so the fetch needn't
+    // be cut off at an aggressive 5s. But the watchdog is TTY-gated — a
+    // non-interactive run (CI, scripts, redirected stderr) gets no feedback — so a
+    // hard ceiling still has to exist or such a run could hang silently:
+    // --connect-timeout fails fast when offline, and a generous --max-time bounds a
+    // connected-but-stalled host without cutting off a slow-but-progressing fetch.
+    let output = {
+        let _watchdog = worktrunk::progress::Watchdog::start("the latest version", None);
+        Cmd::new("curl")
+            .args([
+                "--silent",
+                "--fail",
+                "--connect-timeout",
+                "10",
+                "--max-time",
+                "60",
+                "--header",
+                &format!("User-Agent: {user_agent}"),
+                "https://api.github.com/repos/max-sixty/worktrunk/releases/latest",
+            ])
+            .run()?
+    };
 
     if !output.status.success() {
         anyhow::bail!("GitHub API request failed");

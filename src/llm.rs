@@ -88,6 +88,23 @@ pub(crate) fn render_llm_invocation(command: &str) -> anyhow::Result<String> {
     Ok(rendered)
 }
 
+/// Start a "still waiting" watchdog for a *foreground* LLM shell-out.
+///
+/// [`execute_llm_command`] captures stdout, so a slow or hung command is
+/// otherwise silent. The watchdog shows a dim status line that escalates to
+/// reveal the exact invocation (via [`render_llm_invocation`]) in a gutter. The
+/// caller holds the returned guard until the command returns; on drop it clears
+/// the status before the result is printed.
+///
+/// Only for single, foreground calls — never the concurrent summary path
+/// ([`generate_summary_core`](crate::summary::generate_summary_core), up to 8
+/// under a semaphore), where
+/// per-call spinners would interleave.
+fn watch_llm_command(command: &str, waiting_for: &str) -> worktrunk::progress::Watchdog {
+    let invocation = render_llm_invocation(command).ok();
+    worktrunk::progress::Watchdog::start(waiting_for, invocation.as_deref())
+}
+
 /// Format a reproduction command, only wrapping with `sh -c` if needed.
 ///
 /// Simple commands like `llm -m haiku` are shown as-is.
@@ -647,14 +664,10 @@ pub(crate) fn generate_commit_message(
     // Check if commit generation is configured (non-empty command)
     if commit_generation_config.is_configured() {
         let command = commit_generation_config.command.as_ref().unwrap();
-        // The shell-out captures stdout, so a slow or hung LLM is otherwise
-        // silent — show a dim "still waiting" status, escalating to reveal the
-        // exact invocation in a gutter after a longer delay. Held until the
-        // function returns, then dropped (clearing the block) before the caller
-        // prints the generated message.
-        let invocation = render_llm_invocation(command).ok();
-        let _watchdog =
-            worktrunk::progress::Watchdog::start("the commit message", invocation.as_deref());
+        // A slow or hung command is otherwise silent (stdout is captured); the
+        // watchdog surfaces a "still waiting" status. Held until this function
+        // returns, clearing the block before the caller prints the message.
+        let _watchdog = watch_llm_command(command, "the commit message");
         // Commit generation is explicitly configured - fail if it doesn't work
         return try_generate_commit_message(
             command,
@@ -826,13 +839,9 @@ pub(crate) fn generate_squash_message(
             project_append,
         )?;
 
-        // See `generate_commit_message` — surface a "still waiting" status so a
-        // slow squash-message generation isn't silent.
-        let invocation = render_llm_invocation(command).ok();
-        let _watchdog = worktrunk::progress::Watchdog::start(
-            "the squash commit message",
-            invocation.as_deref(),
-        );
+        // See `generate_commit_message` — keep a slow squash-message generation
+        // from being silent.
+        let _watchdog = watch_llm_command(command, "the squash commit message");
         return execute_llm_command(command, &prompt).map_err(|e| {
             worktrunk::git::GitError::LlmCommandFailed {
                 command: command.clone(),
@@ -956,6 +965,9 @@ pub(crate) fn test_commit_generation(
     };
     let prompt = build_prompt(commit_generation_config, TemplateType::Commit, &context)?;
 
+    // The connectivity test shells out the same way real generation does, so a
+    // slow command would be just as silent — surface the same waiting status.
+    let _watchdog = watch_llm_command(command, "the test commit message");
     execute_llm_command(command, &prompt).map_err(|e| {
         worktrunk::git::GitError::LlmCommandFailed {
             command: command.clone(),
