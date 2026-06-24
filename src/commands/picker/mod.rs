@@ -26,8 +26,8 @@
 //!    `git diff HEAD` for the current worktree on `COLLECT_POOL`.
 //!    That bg work overlaps with everything below.
 //! 4. Computes `num_items_estimate` — `list_worktrees` plus (conditionally)
-//!    `local_branches` / `remote_branches`, capped at
-//!    `MAX_VISIBLE_ITEMS`. Only used to size skim's `preview_window`.
+//!    `local_branches` / `remote_branches`, capped at the Down layout's
+//!    `max_visible_items(available)`. Only used to size skim's `preview_window`.
 //! 5. Builds `SkimOptions` (immutable after this — which is why steps 1-4 have
 //!    to run first).
 //! 6. Spawns the `picker-collect` bg thread, which calls `collect::collect`.
@@ -583,11 +583,17 @@ pub fn handle_picker(
     .saturating_sub(2);
 
     // Estimate item count for the preview window spec (only the Down
-    // layout depends on it). Every row over MAX_VISIBLE_ITEMS is a no-op
-    // for the height computation, so we short-circuit once we know the
-    // list already fills the cap.
+    // layout depends on it). The Down layout caps visible rows at
+    // `max_visible_items(available)`; every row past that cap is a no-op
+    // for the height computation, so we short-circuit once the estimate
+    // reaches it.
     let num_items_estimate = {
-        let cap = preview::MAX_VISIBLE_ITEMS;
+        let cap = {
+            let term_height = terminal_size::terminal_size()
+                .map(|(_, terminal_size::Height(h))| h as usize)
+                .unwrap_or(24);
+            preview::max_visible_items(preview::available_height(term_height))
+        };
         let mut estimate = repo.list_worktrees().map(|w| w.len()).unwrap_or(cap);
         if estimate < cap && show_branches {
             // Local branches are a superset of worktree branches (each
@@ -650,9 +656,9 @@ pub fn handle_picker(
     let state_path_display = state.path.display().to_string();
     let state_path_str = shell_escape::unix::escape(state_path_display.into()).into_owned();
 
-    // Calculate half-page scroll: skim uses 90% of terminal height, half of that = 45%
+    // Half-page preview scroll: half of skim's usable height.
     let half_page = terminal_size::terminal_size()
-        .map(|(_, terminal_size::Height(h))| (h as usize * 45 / 100).max(5))
+        .map(|(_, terminal_size::Height(h))| (preview::available_height(h as usize) / 2).max(5))
         .unwrap_or(10);
 
     // Configure skim options with Rust-based preview and mode switching keybindings
