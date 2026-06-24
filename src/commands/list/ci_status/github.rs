@@ -317,13 +317,10 @@ impl GitHubPrInfo {
             url: self.url.clone(),
             number: self.number.map(PrRef::pr),
             review_state: self.review_state(),
-            // TODO(prs-status-title-body): the `--prs` pane reads title/body from
-            // the `PrEntry`, not from this status (which feeds only the CI column),
-            // so these clones are dead data here. GitLab's `gitlab_mr_status` sets
-            // both `None` for this reason — unify the two `--prs` status builders
-            // (drop them here to match, or have both read from the status).
-            title: self.title.clone(),
-            body: self.body.clone(),
+            // The `--prs` pane reads title/body from the `PrEntry`, not this status
+            // (which feeds only the CI column), so they stay absent here.
+            title: None,
+            body: None,
         }
     }
 }
