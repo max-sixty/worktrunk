@@ -475,9 +475,9 @@ fn render_tab_row_compact(tabs: &[Tab], reset: Reset) -> String {
 /// missing lines.
 ///
 /// The `comments` line shows only the count — the full thread is a `--prs`-only
-/// fetch (see [`Self::comments_unavailable_pane`]). A PR with no comments
-/// carries `None` (zero is flattened at the mapping boundary), so the line is
-/// skipped.
+/// fetch (see [`WorktreeSkimItem::comments_unavailable_pane`]). A PR with no
+/// comments carries `None` (zero is flattened at the mapping boundary), so the
+/// line is skipped.
 ///
 /// `width` is the live preview-pane width, used to wrap the markdown body.
 fn render_worktree_pr(branch: &str, pr_ref: PrRef, status: &PrStatus, width: usize) -> String {
