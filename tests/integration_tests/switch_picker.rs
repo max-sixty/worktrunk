@@ -609,6 +609,48 @@ fn test_switch_picker_with_branches(mut repo: TestRepo) {
     });
 }
 
+/// A list taller than the viewport renders skim's scrollbar thumb (`▐`) down
+/// the right edge of the item pane. The thumb only appears because the picker
+/// sets `.scrollbar("▐")` explicitly: skim's `▐` default lives in its clap
+/// `default_value`, gated on the `cli` feature we disable, so the library
+/// `Default` for the field is the empty string ("no scrollbar"). Without the
+/// explicit setting a long worktree/`--prs` list scrolls with no position cue.
+/// `--branches` overflows the 30-row test terminal cheaply (one `git branch`
+/// per row, no `git worktree add`).
+#[rstest]
+fn test_switch_picker_scrollbar_on_overflow(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // Far more branches than the ~24 item rows the 30-row terminal can show, so
+    // the list is guaranteed to overflow and skim paints the scrollbar.
+    for i in 0..50 {
+        let name = format!("scroll-{i:02}");
+        repo.run_git(&["branch", name.as_str()]);
+    }
+
+    let env_vars = repo.test_env_vars();
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--branches"],
+        repo.root_path(),
+        &env_vars,
+        // `@ main` is the current worktree, always the top row of the list:
+        // gating on it confirms the item rows rendered before capture, and a
+        // regression fails fast with the list shown rather than via a 30s
+        // stabilize timeout (the role `orphan-branch` plays above).
+        &[("", Some("@ main"))],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+
+    let (list, _preview) = result.panels();
+    assert!(
+        list.contains('▐'),
+        "scrollbar thumb (▐) should render when the list overflows the viewport:\n{list}"
+    );
+}
+
 /// Typing a gutter glyph filters the picker by row kind. `+` is the linked-
 /// worktree glyph, so it narrows to linked worktrees — excluding the current
 /// worktree (`@`) and branch rows (`/`). This is the end-to-end answer to "why

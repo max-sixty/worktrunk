@@ -665,6 +665,14 @@ pub fn handle_picker(
         // shows just the `>` pointer (the row's own `display()` ANSI spans carry
         // no background). skim 0.20's tuikit backend highlighted the row for free.
         .highlight_line(true)
+        // Draw a scrollbar thumb on the item list when it overflows the view.
+        // skim's `▐` default is the clap `default_value`, gated on skim's `cli`
+        // feature; with `default-features = false` the library `Default` for
+        // this `String` field is empty, which skim reads as "no scrollbar".
+        // Setting it explicitly restores the thumb — without it a long worktree
+        // (or `--prs`) list scrolls with no position cue, made worse by
+        // `no_info(true)` below hiding the matched/total counter.
+        .scrollbar("▐".to_string())
         .header_lines(1usize) // Make first line (header) non-selectable
         .multi(false)
         .no_info(true) // Hide info line (matched/total counter)
