@@ -292,7 +292,7 @@ jobs:
       run: rustup component add llvm-tools
 
     - name: 💾 Restore prior coverage DB
-      uses: actions/cache/restore@v5
+      uses: actions/cache/restore@v6
       with:
         path: target/affected/coverage.db
         # Primary key matches the current sha (no-op on first push of this
@@ -315,7 +315,7 @@ jobs:
       run: cargo affected collect -- --features shell-integration-tests
 
     - name: 💾 Save coverage DB
-      uses: actions/cache/save@v5
+      uses: actions/cache/save@v6
       with:
         # Only the SQLite DB. `target/affected/profraw-<PID>/` holds raw
         # profile bundles (~5 GB on this repo) that aren't needed past the
@@ -378,7 +378,7 @@ jobs:
     # there. Order: rust-cache populates `target/` first; we then drop the
     # DB on top, where nothing else touches it.
     - name: 💾 Restore coverage DB
-      uses: actions/cache/restore@v5
+      uses: actions/cache/restore@v6
       with:
         path: target/affected/coverage.db
         # Exact match: collect ran on the PR's merge-base → tight diff.
