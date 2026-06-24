@@ -160,11 +160,12 @@ impl PreviewOrchestrator {
     ///
     /// Idempotent on `key` (short-circuits on a cache hit) and runs `compute`
     /// outside any DashMap lock, like `spawn_preview`. A `None` or empty result
-    /// is deliberately NOT cached: the slot stays empty rather than pinning a
-    /// blank pane, so a later `spawn_compute` with the same key recomputes. The
-    /// `--prs` callers spawn once per row and never re-invoke, so in practice an
-    /// uncached failure leaves the tab on its loading placeholder until the
-    /// picker reopens.
+    /// is deliberately NOT cached: the slot stays empty (read as "still
+    /// loading"), so a later `spawn_compute` with the same key recomputes. The
+    /// `--prs` callers spawn once per row and never re-invoke, so they convert a
+    /// failed fetch into a terminal "couldn't load" pane and hand that back as
+    /// `Some(..)` rather than `None` — an uncached `None` would strand the tab on
+    /// its loading placeholder until the picker reopens.
     pub(super) fn spawn_compute<F>(&self, key: PreviewCacheKey, compute: F)
     where
         F: FnOnce(&Repository) -> Option<String> + Send + 'static,

@@ -2435,11 +2435,11 @@ fn test_switch_prs_dry_run_github_log_tab(repo: TestRepo) {
 /// the API when the commit is present.
 ///
 /// The same run pins the deferred-fetch failure contract: the `comments` tab has
-/// no local path, so its forge fetch fails here, and `spawn_compute` leaves the
-/// slot empty rather than caching a blank pane (the present Log entry proves the
-/// row was built, so the absent Comments entry is a genuine miss, not a row that
-/// never streamed). Nothing re-spawns it — the tab keeps its loading placeholder
-/// for the session.
+/// no local path, so its forge fetch fails here (`pr view` → exit 1), and the
+/// closure caches a terminal "couldn't load" pane rather than leaving the slot
+/// empty — so the present Log entry (local fast path) and the present, non-empty
+/// Comments entry (failure pane) both prove the row streamed and resolved. The
+/// tab shows a clear failure for the session, never a perpetual loading spinner.
 #[cfg(unix)]
 #[rstest]
 fn test_switch_prs_dry_run_github_log_tab_local(repo: TestRepo) {
@@ -2486,14 +2486,75 @@ fn test_switch_prs_dry_run_github_log_tab_local(repo: TestRepo) {
     );
 
     // The comments tab has no local path, so its forge fetch failed (pr view →
-    // exit 1) and `spawn_compute` cached nothing — the failure leaves the slot
-    // empty rather than pinning a blank pane. Mode 7 is Comments.
+    // exit 1); the closure caches a terminal "couldn't load" pane rather than
+    // leaving the slot empty. Mode 7 is Comments. A non-empty entry here can only
+    // be that failure pane — a successful comments fetch is impossible with
+    // `pr view` rigged to exit 1.
+    let comments_entry = entries
+        .iter()
+        .find(|e| e["branch"] == "pr:42" && e["mode"] == 7)
+        .unwrap_or_else(|| {
+            panic!("failed comments fetch must cache a couldn't-load pane:\n{stdout}")
+        });
     assert!(
-        !entries
-            .iter()
-            .any(|e| e["branch"] == "pr:42" && e["mode"] == 7),
-        "failed comments fetch must leave the slot empty, not cache a blank pane:\n{stdout}"
+        comments_entry["bytes"].as_u64().unwrap_or(0) > 0,
+        "couldn't-load pane rendered non-empty: {comments_entry}"
     );
+}
+
+/// A `--prs` row whose deferred fetches all fail caches a terminal "couldn't
+/// load" pane for each tab rather than leaving the slot empty (which would
+/// strand the tab on its loading spinner for the session — there's no in-session
+/// retry). Here the PR carries no `headRefOid`, so the `log` tab can't take the
+/// local fast path and must hit the forge API, and `gh pr view` is rigged to
+/// exit 1 — so both the `log` (mode 2) and `comments` (mode 7) cache entries are
+/// present and non-empty, each the couldn't-load pane.
+#[cfg(unix)]
+#[rstest]
+fn test_switch_prs_dry_run_github_deferred_fetch_failure(repo: TestRepo) {
+    repo.write_project_config("[forge]\nplatform = \"github\"\n");
+    // No headRefOid → the log tab can't render locally and must hit the forge.
+    let pr_json = r#"[{"number":42,"title":"No local head","headRefName":"fix/flaky","author":{"login":"octocat"},"isDraft":false,"url":"https://github.com/owner/test-repo/pull/42"}]"#;
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    fs::write(mock_bin.join("list.json"), pr_json).unwrap();
+    MockConfig::new("gh")
+        .version("gh version 1.0.0 (mock)")
+        .command("pr list", MockResponse::file("list.json"))
+        // Both deferred fetches (`pr view --json commits` / `--json comments`)
+        // fail, so each tab falls back to the couldn't-load pane.
+        .command("pr view", MockResponse::exit(1))
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "--prs"]);
+    cmd.env("WORKTRUNK_PICKER_DRY_RUN", "1");
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "dry-run --prs deferred-failure run failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
+    let entries = parsed["entries"].as_array().expect("entries array");
+    // Both deferred tabs cached a terminal couldn't-load pane (non-empty), never
+    // an empty slot. Modes: 2 = Log, 7 = Comments.
+    for (mode, tab) in [(2, "log"), (7, "comments")] {
+        let entry = entries
+            .iter()
+            .find(|e| e["branch"] == "pr:42" && e["mode"] == mode)
+            .unwrap_or_else(|| panic!("no pr:42 {tab} cache entry in dump:\n{stdout}"));
+        assert!(
+            entry["bytes"].as_u64().unwrap_or(0) > 0,
+            "{tab} couldn't-load pane rendered non-empty: {entry}"
+        );
+    }
 }
 
 /// The `comments` tab (7) loads the PR discussion in the background, the same
