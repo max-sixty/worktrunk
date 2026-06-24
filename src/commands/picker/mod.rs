@@ -21,7 +21,9 @@
 //! On the main thread, `handle_picker`:
 //!
 //! 1. `current_or_recover` + config resolution.
-//! 2. `PreviewState::new` — auto-detects Right vs Down layout.
+//! 2. Reads the terminal size once; `PreviewState::new` records the
+//!    Right-vs-Down layout detected from it. Every later sizing step (the
+//!    estimate cap, preview dimensions, half-page scroll) reuses that snapshot.
 //! 3. Allocates the `PreviewOrchestrator` and kicks off a *speculative*
 //!    `git diff HEAD` for the current worktree on `COLLECT_POOL`.
 //!    That bg work overlaps with everything below.
@@ -638,8 +640,20 @@ pub fn handle_picker(
     let show_prs = cli_prs;
     worktrunk::trace::instant("Picker config resolved");
 
+    // Read the terminal size once. Layout detection, the visible-row cap, the
+    // preview dimensions, and the half-page scroll all derive from this single
+    // snapshot, so the estimate cap and the actual layout can never observe
+    // different terminal sizes across a resize. (`crate::display::terminal_width`
+    // below is a separate, stderr-first width probe for the skim list column.)
+    let (term_width, term_height) = terminal_size::terminal_size()
+        .map(|(terminal_size::Width(w), terminal_size::Height(h))| (w as usize, h as usize))
+        .unwrap_or((80, 24));
+
     // Initialize preview mode state file (auto-cleanup on drop)
-    let state = PreviewState::new();
+    let state = PreviewState::new(PreviewLayout::for_dimensions(
+        term_width as f64,
+        term_height as f64,
+    ));
     worktrunk::trace::instant("Picker layout detected");
 
     // Prime the current worktree's root / git-dir / branch caches with one
@@ -682,7 +696,9 @@ pub fn handle_picker(
         }));
         // num_items doesn't matter for Right (dims independent of it); for
         // Down it only affects height, which doesn't alter pager wrapping.
-        let dims = state.initial_layout.preview_dimensions(0);
+        let dims = state
+            .initial_layout
+            .dimensions_for(term_width, term_height, 0);
         orchestrator.spawn_preview(Arc::new(item), PreviewMode::WorkingTree, dims);
     }
 
@@ -727,12 +743,7 @@ pub fn handle_picker(
     // for the height computation, so we short-circuit once the estimate
     // reaches it.
     let num_items_estimate = {
-        let cap = {
-            let term_height = terminal_size::terminal_size()
-                .map(|(_, terminal_size::Height(h))| h as usize)
-                .unwrap_or(24);
-            preview::max_visible_items(preview::available_height(term_height))
-        };
+        let cap = preview::max_visible_items(preview::available_height(term_height));
         let mut estimate = repo.list_worktrees().map(|w| w.len()).unwrap_or(cap);
         if estimate < cap && show_branches {
             // Local branches are a superset of worktree branches (each
@@ -748,10 +759,13 @@ pub fn handle_picker(
         estimate
     };
     worktrunk::trace::instant("Picker estimate computed");
-    let preview_window_spec = state
-        .initial_layout
-        .to_preview_window_spec(num_items_estimate);
-    let preview_dims = state.initial_layout.preview_dimensions(num_items_estimate);
+    // Compute the dimensions once; the skim preview-window spec is formatted
+    // from them rather than recomputed.
+    let preview_dims =
+        state
+            .initial_layout
+            .dimensions_for(term_width, term_height, num_items_estimate);
+    let preview_window_spec = state.initial_layout.spec_for(preview_dims);
 
     // Summary hint: when summaries are disabled, prime the Summary cache
     // with config guidance instead of showing a perpetual "Generating…"
@@ -805,9 +819,7 @@ pub fn handle_picker(
     let state_path_str = shell_escape::unix::escape(state_path_display.into()).into_owned();
 
     // Half-page preview scroll: half of skim's usable height.
-    let half_page = terminal_size::terminal_size()
-        .map(|(_, terminal_size::Height(h))| (preview::available_height(h as usize) / 2).max(5))
-        .unwrap_or(10);
+    let half_page = (preview::available_height(term_height) / 2).max(5);
 
     // Configure skim options with Rust-based preview and mode switching keybindings
     let options = SkimOptionsBuilder::default()
@@ -1326,7 +1338,7 @@ fn resolve_identifier(
 #[cfg(test)]
 pub mod tests {
     use super::items::WorktreeSkimItem;
-    use super::preview::{PreviewLayout, PreviewMode, PreviewStateData};
+    use super::preview::{PreviewMode, PreviewStateData};
     use super::{
         PickerAction, PickerCollector, PickerRemovalTarget, drain_stashed_warnings,
         parse_reload_remove_token, picker_item_identifier, resolve_identifier,
@@ -1383,17 +1395,6 @@ pub mod tests {
 
         // Cleanup
         let _ = fs::remove_file(&state_path);
-    }
-
-    #[test]
-    fn test_preview_layout() {
-        // Right uses absolute width derived from terminal size
-        let spec = PreviewLayout::Right.to_preview_window_spec(10);
-        assert!(spec.starts_with("right:"));
-
-        // Down calculates based on item count
-        let spec = PreviewLayout::Down.to_preview_window_spec(5);
-        assert!(spec.starts_with("down:"));
     }
 
     #[test]
