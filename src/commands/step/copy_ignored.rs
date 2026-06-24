@@ -210,7 +210,7 @@ pub fn step_copy_ignored(
     for (src_entry, is_dir) in &entries_to_copy {
         let relative = src_entry
             .strip_prefix(&source_path)
-            .expect("git ls-files path under worktree");
+            .unwrap_or(src_entry.as_path());
         let dest_entry = dest_path.join(relative);
 
         if *is_dir {
