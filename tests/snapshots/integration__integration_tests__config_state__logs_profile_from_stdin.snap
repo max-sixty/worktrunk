@@ -1,0 +1,32 @@
+---
+source: tests/integration_tests/config_state.rs
+expression: "String::from_utf8_lossy(&output.stdout)"
+---
+[36mPERFORMANCE PROFILE[39m @ stdin
+  5 subprocesses · 32.00ms subprocess time · parallelism 1.9× · peak 3 · 2 threads · traced 17.50ms · 2.00ms in-process
+
+[36mBY COMMAND TYPE[39m
+  command     count    total      max      avg
+  git status      2  20.00ms  12.00ms  10.00ms
+  git config      2   7.00ms   4.00ms   3.50ms
+  git diff        1   5.00ms   5.00ms   5.00ms
+
+[36mSLOWEST CALLS[39m
+  12.00ms  git status --porcelain [main]
+   8.00ms  git status --porcelain [feature]
+   5.00ms  git diff --shortstat [main] (ok=false)
+   4.00ms  git config --list [main]
+   3.00ms  git config --list [main]
+   2.00ms  span:user_config_load
+
+[36mCACHE[39m
+  1 duplicate call wasting ~3.00ms (same context, slowest run kept)
+  3.00ms  git config --list (×2)
+
+[36mKEY INTERVALS[39m
+  time to skeleton  12.00ms
+
+[36mPHASES[39m
+   0.50ms            List collect started
+  12.50ms  +12.00ms  Skeleton rendered
+  17.50ms   +5.00ms  All results drained

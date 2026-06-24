@@ -96,6 +96,7 @@ fn snapshot_help(test_name: &str, args: &[&str]) {
 #[case("help_config_state_ci_status", "config state ci-status --help")]
 #[case("help_config_state_marker", "config state marker --help")]
 #[case("help_config_state_logs", "config state logs --help")]
+#[case("help_config_state_logs_profile", "config state logs profile --help")]
 #[case("help_config_state_get", "config state get --help")]
 #[case("help_config_state_clear", "config state clear --help")]
 #[case("help_config_approvals", "config approvals --help")]

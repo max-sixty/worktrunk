@@ -25,9 +25,9 @@ pub use plugins::{
 };
 pub use show::handle_config_show;
 pub use state::{
-    handle_cache_clear, handle_cache_get, handle_logs_list, handle_state_clear,
-    handle_state_clear_all, handle_state_get, handle_state_set, handle_state_show,
-    handle_vars_clear, handle_vars_get, handle_vars_list, handle_vars_set,
+    handle_cache_clear, handle_cache_get, handle_logs_list, handle_logs_profile,
+    handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
+    handle_state_show, handle_vars_clear, handle_vars_get, handle_vars_list, handle_vars_set,
 };
 pub use update::handle_config_update;
 

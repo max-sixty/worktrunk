@@ -46,7 +46,7 @@ use commands::{
     handle_claude_uninstall, handle_codex_install, handle_codex_uninstall, handle_completions,
     handle_config_create, handle_config_show, handle_config_update, handle_configure_shell,
     handle_custom_command, handle_hints_clear, handle_hints_get, handle_hook_show, handle_init,
-    handle_list, handle_logs_list, handle_merge, handle_opencode_install,
+    handle_list, handle_logs_list, handle_logs_profile, handle_merge, handle_opencode_install,
     handle_opencode_uninstall, handle_promote, handle_rebase, handle_remove_command,
     handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get,
     handle_state_set, handle_state_show, handle_switch_command, handle_unconfigure_shell,
@@ -509,6 +509,7 @@ fn handle_state_command(action: StateCommand, yes: bool) -> anyhow::Result<()> {
             }
             match action {
                 Some(LogsAction::Get) | None => handle_logs_list(format),
+                Some(LogsAction::Profile { file }) => handle_logs_profile(file, format),
                 Some(LogsAction::Clear) => handle_state_clear("logs", None, false),
             }
         }

@@ -75,6 +75,12 @@ fn test_diagnostic_report_file_format(mut repo: TestRepo) {
         "Diagnostic should include trace log section when run with -vv"
     );
 
+    // The rendered performance profile rides alongside the raw trace.
+    assert!(
+        content.contains("<summary>Performance profile</summary>"),
+        "Diagnostic should include a performance profile section when run with -vv"
+    );
+
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         assert_snapshot!("diagnostic_file_format", normalize_report(&content));
@@ -856,6 +862,22 @@ fn normalize_report(content: &str) -> String {
         .unwrap()
         .replace_all(&result, "$1 $2")
         .to_string();
+
+    // Truncate performance profile section - its durations and by-type/slowest
+    // ordering depend on the run's real timing, so exact comparison is flaky.
+    // We verify the section exists separately in the test.
+    if let Some(start) = result.find("<summary>Performance profile</summary>") {
+        // Find the closing </details> after this point
+        if let Some(end_offset) = result[start..].find("</details>") {
+            let end = start + end_offset + "</details>".len();
+            let before = &result[..start];
+            let after = &result[end..];
+            result = format!(
+                "{}<summary>Performance profile</summary>\n\n[PERFORMANCE_PROFILE_CONTENT]\n</details>{}",
+                before, after
+            );
+        }
+    }
 
     // Truncate trace log section - it has parallel git commands that interleave
     // in different orders, making exact snapshot comparison flaky.

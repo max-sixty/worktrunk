@@ -57,6 +57,12 @@ Project config: _REPO_/.config/wt.toml
 </details>
 
 <details>
+<summary>Performance profile</summary>
+
+[PERFORMANCE_PROFILE_CONTENT]
+</details>
+
+<details>
 <summary>Trace log</summary>
 
 [TRACE_LOG_CONTENT]

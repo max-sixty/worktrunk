@@ -466,101 +466,14 @@ fn read_trace_entries(file: Option<&std::path::Path>) -> Vec<worktrunk::trace::T
 
 /// Analyze trace entries for cache effectiveness.
 ///
-/// Outputs structured JSON to stdout, composable with jq.
-///
-/// For each (command, context) pair called N times, the first call is "necessary"
-/// and the remaining N-1 are "extra". Wasted time is computed by keeping the
-/// slowest call (likely a cache-miss/cold call) and summing the rest.
+/// Outputs structured JSON to stdout, composable with jq. The analysis lives in
+/// `worktrunk::trace::CacheReport` so `wt config state logs profile` and this
+/// helper share one implementation: each `(command, context)` pair run N times
+/// counts the first call as necessary and the rest as extra, with wasted time
+/// summed over all but the slowest (likely cold) run per context.
 fn cache_check(entries: &[worktrunk::trace::TraceEntry]) {
-    use std::collections::{BTreeMap, HashMap, HashSet};
-    use worktrunk::trace::TraceEntryKind;
-
-    let mut total_commands = 0;
-    let mut cmd_counts: HashMap<&str, usize> = HashMap::new();
-    let mut contexts: HashSet<&str> = HashSet::new();
-
-    // Collect all durations per (command, context) pair
-    let mut pair_durations: HashMap<(&str, &str), Vec<u64>> = HashMap::new();
-
-    for entry in entries {
-        if let TraceEntryKind::Command {
-            command, duration, ..
-        } = &entry.kind
-        {
-            let ctx = entry.context.as_deref().unwrap_or("(none)");
-            *cmd_counts.entry(command.as_str()).or_default() += 1;
-            pair_durations
-                .entry((command.as_str(), ctx))
-                .or_default()
-                .push(duration.as_micros() as u64);
-            contexts.insert(ctx);
-            total_commands += 1;
-        }
-    }
-
-    // Build structured duplicates list: group by command
-    let mut cmd_ctx_info: BTreeMap<&str, Vec<(&str, &Vec<u64>)>> = BTreeMap::new();
-    for ((cmd, ctx), durations) in &pair_durations {
-        if durations.len() > 1 {
-            cmd_ctx_info.entry(cmd).or_default().push((ctx, durations));
-        }
-    }
-
-    let mut duplicates = Vec::new();
-    let mut total_extra = 0usize;
-    let mut total_extra_us = 0u64;
-    for (cmd, ctx_list) in &cmd_ctx_info {
-        let max_count = ctx_list.iter().map(|(_, d)| d.len()).max().unwrap();
-        let extra: usize = ctx_list.iter().map(|(_, d)| d.len() - 1).sum();
-        total_extra += extra;
-
-        // Wasted time: for each context, keep the slowest call, sum the rest
-        let extra_us: u64 = ctx_list
-            .iter()
-            .map(|(_, durations)| {
-                let max = durations.iter().max().unwrap();
-                durations.iter().sum::<u64>() - max
-            })
-            .sum();
-        total_extra_us += extra_us;
-
-        let contexts: Vec<_> = ctx_list
-            .iter()
-            .map(|(ctx, durations)| {
-                let total_us: u64 = durations.iter().sum();
-                serde_json::json!({
-                    "context": ctx,
-                    "count": durations.len(),
-                    "total_us": total_us,
-                })
-            })
-            .collect();
-        duplicates.push(serde_json::json!({
-            "command": cmd,
-            "max_per_context": max_count,
-            "extra_calls": extra,
-            "extra_us": extra_us,
-            "contexts": contexts,
-        }));
-    }
-    duplicates.sort_by(|a, b| b["extra_us"].as_u64().cmp(&a["extra_us"].as_u64()));
-
-    let total_time_us: u64 = pair_durations.values().flat_map(|d| d.iter()).sum();
-    let dup_count = cmd_counts.values().filter(|c| **c > 1).count();
-    let dup_total: usize = cmd_counts.values().filter(|c| **c > 1).map(|c| c - 1).sum();
-
-    let output = serde_json::json!({
-        "total_commands": total_commands,
-        "unique_commands": cmd_counts.len(),
-        "contexts": contexts.len(),
-        "total_time_us": total_time_us,
-        "duplicated_commands": dup_count,
-        "extra_calls": dup_total,
-        "same_context_duplicates": duplicates,
-        "same_context_extra_calls": total_extra,
-        "same_context_extra_us": total_extra_us,
-    });
-    println!("{}", serde_json::to_string_pretty(&output).unwrap());
+    let report = worktrunk::trace::CacheReport::from_entries(entries);
+    println!("{}", serde_json::to_string_pretty(&report).unwrap());
 }
 
 #[cfg(test)]

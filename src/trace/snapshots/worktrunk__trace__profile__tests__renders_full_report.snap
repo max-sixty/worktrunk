@@ -1,0 +1,32 @@
+---
+source: src/trace/profile.rs
+expression: "plain(profile.render_text(\"trace.log\"))"
+---
+PERFORMANCE PROFILE @ trace.log
+  5 subprocesses · 32.00ms subprocess time · parallelism 1.9× · peak 3 · 2 threads · traced 18.00ms · 2.00ms in-process
+
+BY COMMAND TYPE
+  command     count    total      max      avg
+  git status      2  20.00ms  12.00ms  10.00ms
+  git config      2   7.00ms   4.00ms   3.50ms
+  git diff        1   5.00ms   5.00ms   5.00ms
+
+SLOWEST CALLS
+  12.00ms  git status --porcelain [main]
+   8.00ms  git status --porcelain [feature]
+   5.00ms  git diff --shortstat [main] (ok=false)
+   4.00ms  git config --list [main]
+   3.00ms  git config --list [main]
+   2.00ms  span:user_config_load
+
+CACHE
+  1 duplicate call wasting ~3.00ms (same context, slowest run kept)
+  3.00ms  git config --list (×2)
+
+KEY INTERVALS
+  time to skeleton  13.00ms
+
+PHASES
+   0.00ms            List collect started
+  13.00ms  +13.00ms  Skeleton rendered
+  18.00ms   +5.00ms  All results drained
