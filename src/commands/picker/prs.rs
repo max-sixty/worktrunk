@@ -1076,6 +1076,18 @@ fn render_freeform_row(entry: &PrEntry, list_width: usize) -> String {
 // summary would feed those commits (or the PR body) through the same
 // `[commit.generation]` LLM path the worktree `summary` tab uses, keyed and
 // cached the same way via `spawn_pr_previews`.
+//
+// TODO(pr-preview-fetch-error): on a forge-fetch failure the deferred `log` /
+// `comments` slot stays empty (`spawn_compute` drops a `None`), and since the
+// fetch is spawned once per row and `preview()` only reads the cache, the tab
+// shows the "Loading…" placeholder for the rest of the session — there's no
+// in-session retry, so the hint to press the key again is a no-op. Cache a
+// terminal "couldn't load" pane on failure instead, so the tab distinguishes
+// in-flight from failed; this needs the PR-row closures (or `spawn_compute`) to
+// signal failure vs. a genuinely-empty result. The same terminal-pane path
+// would also give the orphan-root local-head case (a present head sharing no
+// merge-base with the default branch, which `compute_log_for_head` renders as
+// "has no commits") a clear outcome rather than a misleading one.
 impl SkimItem for PrSkimItem {
     fn text(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.search_text)
