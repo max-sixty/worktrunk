@@ -7,6 +7,7 @@
 //! the description as markdown inside the house gutter — so they read alike.
 //! They build from these shared pieces rather than each formatting their own.
 
+use ansi_str::AnsiStr;
 use anstyle::Reset;
 use color_print::cformat;
 use worktrunk::styling::format_with_gutter;
@@ -43,14 +44,26 @@ pub(super) fn metadata_line(label: &str, value: &str) -> String {
     format!("{label}{pad}{value}\n")
 }
 
+/// Gutter rows the description preview keeps before trimming. The body is a
+/// preview, not the canonical copy, so a long one is cut here rather than left
+/// to scroll the pane; the `url` metadata line reads the rest.
+const MAX_PREVIEW_ROWS: usize = 6;
+
 /// The description block: `body` rendered as markdown (bold headers, styled
 /// lists and inline code — the same renderer the `summary` tab uses) and quoted
 /// in the house gutter ([`format_with_gutter`], a bg-color bar that closes each
-/// line with a full `\x1b[0m`, skim-safe). The whole body renders; the preview
-/// pane scrolls (`ctrl-u`/`ctrl-d`) through a long one. Empty body → empty
-/// string, so the block is skipped. The leading `\x1b[0m` is a defensive
-/// boundary so the first gutter line renders clean regardless of what precedes
-/// it (the metadata lines already reset their own spans).
+/// line with a full `\x1b[0m`, skim-safe). A short body renders whole; a long
+/// one is trimmed to the first [`MAX_PREVIEW_ROWS`] gutter rows, closed by a dim
+/// `…` row (the picker's truncation marker), with the `url` metadata line above
+/// reading the rest. Empty body → empty string, so the block is skipped. The
+/// leading `\x1b[0m` is a defensive boundary so the first gutter line renders
+/// clean regardless of what precedes it (the metadata lines already reset their
+/// own spans).
+///
+/// Trimming bounds the rendered height rather than the source: the cut lands on
+/// gutter-row boundaries (each row self-closes with `\x1b[0m`, so no style
+/// bleeds past the cut), which also caps a long single-paragraph body that
+/// arrives as one soft-wrapped source line.
 ///
 /// `width` is the preview-pane width. The `--prs` pane is built before skim
 /// renders, so it passes the list width as a close proxy (Right splits ~50/50;
@@ -64,7 +77,27 @@ pub(super) fn description(body: &str, width: usize) -> String {
         return String::new();
     }
     let reset = Reset;
-    format!("\n{reset}{}\n", markdown_in_gutter(body, width))
+    let rendered = markdown_in_gutter(body, width);
+    let rows: Vec<&str> = rendered.lines().collect();
+    // Trim only when real content sits past the budget — trailing blank gutter
+    // rows (a markdown render's closing newlines) don't earn a `…` marker.
+    let truncated = rows
+        .iter()
+        .skip(MAX_PREVIEW_ROWS)
+        .any(|r| !r.ansi_strip().trim().is_empty());
+    if !truncated {
+        return format!("\n{reset}{rendered}\n");
+    }
+    let mut kept: Vec<&str> = rows.into_iter().take(MAX_PREVIEW_ROWS).collect();
+    // Don't leave the `…` trailing a blank gutter bar.
+    while kept
+        .last()
+        .is_some_and(|r| r.ansi_strip().trim().is_empty())
+    {
+        kept.pop();
+    }
+    let more = format_with_gutter(&cformat!("<dim>…</>{reset}"), Some(width));
+    format!("\n{reset}{}\n{more}\n", kept.join("\n"))
 }
 
 /// Render `body` as markdown and quote it in the house gutter, returning no
@@ -152,17 +185,36 @@ mod tests {
     }
 
     #[test]
-    fn description_renders_the_whole_body() {
-        // One item per line so each survives as its own gutter line; the pane
-        // scrolls, so the full body renders with no truncation hint.
+    fn description_keeps_a_short_body_whole() {
+        // A body that fits the row budget renders in full, with no `…` marker.
+        let body = "- one\n- two\n- three";
+        let out = description(body, 80);
+        assert!(out.contains("one"), "head kept: {out:?}");
+        assert!(out.contains("three"), "tail kept: {out:?}");
+        assert!(!out.contains('…'), "no truncation marker: {out:?}");
+    }
+
+    #[test]
+    fn description_trims_a_long_body() {
+        use ansi_str::AnsiStr;
+        // One item per line so each renders as its own gutter row; well past the
+        // budget, so the head is kept, the tail is dropped, and a `…` marks the
+        // cut. The body carries no `…` of its own, so finding one proves the
+        // marker.
         let body = (0..50)
             .map(|i| format!("- word{i}"))
             .collect::<Vec<_>>()
             .join("\n");
         let out = description(&body, 80);
-        assert!(!out.contains("more line"), "no truncation hint: {out:?}");
         assert!(out.contains("word0"), "head kept: {out:?}");
-        assert!(out.contains("word49"), "tail kept: {out:?}");
+        assert!(!out.contains("word49"), "tail dropped: {out:?}");
+        assert!(out.contains('…'), "truncation marker: {out:?}");
+        // The marker is the last row, so nothing renders below it.
+        let last = out.trim_end().lines().last().unwrap_or_default();
+        assert!(
+            last.ansi_strip().trim().ends_with('…'),
+            "marker last: {out:?}"
+        );
     }
 
     #[test]
