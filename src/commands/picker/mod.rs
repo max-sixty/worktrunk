@@ -723,19 +723,19 @@ pub fn handle_picker(
     // until its results channel closes or the fallback DRAIN_TIMEOUT
     // (120s) fires.
 
-    // List width depends on the preview position. Right splits the terminal
-    // ~50/50; Down gives the list the full width. Passed to `collect` so
-    // the skeleton layout matches the picker's actual render width.
-    // The picker requires a TTY, so detection essentially always succeeds;
-    // the unlimited-width fallback just keeps the math total. Skim
-    // prefixes every line with a 2-column cursor gutter ("> "), so rows that
-    // use the full width would otherwise spill into its ".." truncation.
+    // PROTOTYPE (design/picker-preview-toggle-width, Option 3): always lay the
+    // table out at full terminal width, regardless of Right/Down. When the
+    // preview is shown (Right), skim's split renders this full-width row into the
+    // left half and clips the overflow at the boundary (no_hscroll + empty
+    // ellipsis give a clean left-anchored cut). Hiding the preview with alt-p
+    // widens skim's list pane to full width and the SAME rows reveal their
+    // right-hand columns: no reload, no re-layout, columns never move.
+    //
+    // The picker requires a TTY, so detection essentially always succeeds; the
+    // unlimited-width fallback just keeps the math total. Skim prefixes every
+    // line with a 2-column cursor gutter ("> "), so the full width loses 2.
     let terminal_width = crate::display::terminal_width().unwrap_or(usize::MAX);
-    let skim_list_width = match state.initial_layout {
-        PreviewLayout::Right => terminal_width / 2,
-        PreviewLayout::Down => terminal_width,
-    }
-    .saturating_sub(2);
+    let skim_list_width = terminal_width.saturating_sub(2);
 
     // Estimate item count for the preview window spec (only the Down
     // layout depends on it). The Down layout caps visible rows at
@@ -843,6 +843,14 @@ pub fn handle_picker(
         // count so the alt-r cursor-reposition math stays in sync — keep them one.
         .header_lines(PICKER_HEADER_ROWS)
         .multi(false)
+        // PROTOTYPE (Option 3): the table is rendered at full width but the list
+        // pane is only half-width while the preview is shown, so rows overflow the
+        // pane. Disable horizontal scroll so a fuzzy match deep in the search key
+        // can never shift the leading columns out of view — the row always clips
+        // left-anchored at the pane boundary. Empty ellipsis (skim's library
+        // default with default-features=false) makes that a clean cut, no "..".
+        .no_hscroll(true)
+        .ellipsis(String::new())
         .no_info(true) // Hide info line (matched/total counter)
         .preview("") // Enable preview (empty string means use SkimItem::preview())
         .preview_window(preview_window_spec.as_str())
