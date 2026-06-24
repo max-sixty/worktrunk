@@ -5481,6 +5481,40 @@ fn test_switch_pr_azure_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) 
     });
 }
 
+#[rstest]
+fn test_switch_pr_azure_project_name_with_spaces(#[from(repo_with_remote)] mut repo: TestRepo) {
+    repo.add_worktree("feature-auth");
+    repo.run_git(&["push", "origin", "feature-auth"]);
+
+    set_azure_remote_url(
+        &repo,
+        "https://dev.azure.com/myorg/project%20with%20spaces/_git/test-repo",
+    );
+
+    let az_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "createdBy": {"uniqueName": "alice@example.com"},
+        "status": "active",
+        "isDraft": false,
+        "sourceRefName": "refs/heads/feature-auth",
+        "repository": {
+            "name": "test-repo",
+            "project": {"name": "project with spaces"},
+            "webUrl": "https://dev.azure.com/myorg/project%20with%20spaces/_git/test-repo"
+        },
+        "forkSource": null
+    }"#;
+
+    let mock_bin = setup_mock_az(&repo, Some(az_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_azure_project_name_with_spaces", cmd);
+    });
+}
+
 /// A full Azure DevOps PR web URL passed to `wt switch` resolves the same as the
 /// `pr:N` shortcut: the URL normalises to `pr:101` (shape-based `parse_ref_url`),
 /// dispatch selects `AzureDevOpsProvider`, and the worktree is created. The
