@@ -1,9 +1,13 @@
 //! Integration tests for `wt step <alias>`
 
 use crate::common::{
-    SLEEP_FOR_ABSENCE_CHECK, TestRepo, configure_directive_files, directive_files,
-    make_snapshot_cmd, make_snapshot_cmd_with_global_flags, repo, setup_snapshot_settings, wt_bin,
+    TestRepo, configure_directive_files, directive_files, make_snapshot_cmd,
+    make_snapshot_cmd_with_global_flags, repo, setup_snapshot_settings, wt_bin,
 };
+// Used only by the `#[cfg(unix)]` signal tests below; gate the import to match,
+// or it reads as unused on Windows under `-D warnings`.
+#[cfg(unix)]
+use crate::common::SLEEP_FOR_ABSENCE_CHECK;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::io::Write;
