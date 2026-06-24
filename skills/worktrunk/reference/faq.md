@@ -96,11 +96,11 @@ The three `-vv` files have distinct audiences:
 
 - **`trace.log`** — bounded preview (~1K lines), `[wt-trace]` records, gistable.
 - **`subprocess.log`** — raw uncapped stdout/stderr of every subprocess `wt` spawns (multi-MB possible, e.g. full `git log -p` output). The deep-dive escape hatch.
-- **`diagnostic.md`** — markdown bug-report bundle that inlines `trace.log`. `wt` prints a `gh gist create` command pointing at it.
+- **`diagnostic.md`** — markdown bug-report bundle that inlines `trace.log` and a rendered performance profile (subprocess time by command type, slowest calls, repeated calls). `wt` prints a `gh gist create` command pointing at it.
 
 `RUST_LOG` overrides the flag baseline when set (`RUST_LOG=debug wt -v` lifts `-v` to debug-on-stderr).
 
-The flags only reach a command you type; shell completion runs as its own process with nowhere to pass one. Set `WORKTRUNK_VERBOSE=0|1|2` to apply the level to *every* invocation, completion included — it's the env-var equivalent of `-v`/`-vv`, so level 2 writes the same `trace.log`/`subprocess.log`/`diagnostic.md` files. An explicit `-v`/`-vv` on a command raises the level further but never lowers this baseline. To profile a slow tab-completion, run it the way your shell does — e.g. `WORKTRUNK_VERBOSE=2 COMPLETE=fish wt -- wt switch ''` — then read `trace.log`.
+The flags only reach a command you type; shell completion runs as its own process with nowhere to pass one. Set `WORKTRUNK_VERBOSE=0|1|2` to apply the level to *every* invocation, completion included — it's the env-var equivalent of `-v`/`-vv`, so level 2 writes the same `trace.log`/`subprocess.log`/`diagnostic.md` files. An explicit `-v`/`-vv` on a command raises the level further but never lowers this baseline. To profile a slow tab-completion, run it the way your shell does — e.g. `WORKTRUNK_VERBOSE=2 COMPLETE=fish wt -- wt switch ''` — then render the result with `wt config state logs profile`.
 
 ## What files does Worktrunk create?
 

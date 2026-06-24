@@ -3,7 +3,7 @@ source: tests/integration_tests/config_state.rs
 expression: "String::from_utf8_lossy(&output.stdout)"
 ---
 [36mPERFORMANCE PROFILE[39m @ stdin
-  5 subprocesses · 32.00ms subprocess time · parallelism 1.9× · peak 3 · 2 threads · traced 17.50ms · 2.00ms in-process
+  5 subprocesses · 32.00ms subprocess time · parallelism 1.9× · peak 3 · 2 threads · 17.50ms traced · 2.00ms in-process
 
 [36mBY COMMAND TYPE[39m
   command     count    total      max      avg

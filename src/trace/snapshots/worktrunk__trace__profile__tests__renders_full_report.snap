@@ -3,7 +3,7 @@ source: src/trace/profile.rs
 expression: "plain(profile.render_text(\"trace.log\"))"
 ---
 PERFORMANCE PROFILE @ trace.log
-  5 subprocesses · 32.00ms subprocess time · parallelism 1.9× · peak 3 · 2 threads · traced 18.00ms · 2.00ms in-process
+  5 subprocesses · 32.00ms subprocess time · parallelism 1.9× · peak 3 · 2 threads · 18.00ms traced · 2.00ms in-process
 
 BY COMMAND TYPE
   command     count    total      max      avg
