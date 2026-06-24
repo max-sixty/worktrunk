@@ -1,8 +1,8 @@
 use crate::common::{
-    TestRepo, configure_directive_files, directive_files, make_snapshot_cmd,
-    make_snapshot_cmd_with_global_flags, repo, repo_with_remote, set_temp_home_env,
-    setup_home_snapshot_settings, setup_snapshot_settings, temp_home, wait_for_file_content,
-    wt_command,
+    SLEEP_FOR_ABSENCE_CHECK, TestRepo, configure_directive_files, directive_files,
+    make_snapshot_cmd, make_snapshot_cmd_with_global_flags, repo, repo_with_remote,
+    set_temp_home_env, setup_home_snapshot_settings, setup_snapshot_settings, temp_home,
+    wait_for_file_content, wt_command,
 };
 use ansi_str::AnsiStr;
 use insta_cmd::assert_cmd_snapshot;
@@ -1120,7 +1120,7 @@ approved-commands = ["{}"]
     // post-start runs in the background; with --no-hooks it is never spawned,
     // but sleep briefly so a regression that incorrectly spawns it has time to
     // create the marker (per tests/CLAUDE.md "Testing absence").
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     let repo_name = repo.root_path().file_name().unwrap().to_str().unwrap();
     let worktree = repo
         .root_path()
@@ -1176,7 +1176,7 @@ fn test_switch_no_config_commands_with_yes(repo: TestRepo) {
     // post-start runs in the background; with --no-hooks it is never spawned,
     // but sleep briefly so a regression that incorrectly spawns it has time to
     // create the marker (per tests/CLAUDE.md "Testing absence").
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     let repo_name = repo.root_path().file_name().unwrap().to_str().unwrap();
     let worktree = repo
         .root_path()
@@ -1250,7 +1250,7 @@ post-start = "echo post-start-from-invoking > {{ repo_path }}/post-start-marker.
     );
 
     // The base branch's committed hook must never run.
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     assert!(
         !repo.root_path().join("base-branch-marker.txt").exists(),
         "the base branch's committed config must not be consulted for `--create`"
@@ -1295,7 +1295,7 @@ fn test_switch_existing_reads_invoking_worktree_config(mut repo: TestRepo) {
     );
 
     // The destination worktree's own hook must never run.
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     assert!(
         !repo.root_path().join("dest-marker.txt").exists(),
         "the destination worktree's config must not be consulted"
@@ -1375,7 +1375,7 @@ fn test_switch_create_honors_project_config_path_override(mut repo: TestRepo) {
     wait_for_file_content(&right);
     assert_eq!(fs::read_to_string(&right).unwrap().trim(), "OVERRIDE-HOOK");
     // The base ref's committed hook must never have run.
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     assert!(
         !repo.root_path().join("wrong-marker.txt").exists(),
         "the base ref's committed hook must not run when the config path is overridden"
@@ -3316,7 +3316,7 @@ fn test_switch_pr_reads_invoking_worktree_config(#[from(repo_with_remote)] repo:
         "INVOKING-HOOK-RAN",
         "post-start should run from the invoking worktree's config"
     );
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     assert!(
         !repo.root_path().join("pr-hook-marker.txt").exists(),
         "the PR ref's committed config must not be consulted"
@@ -5478,6 +5478,40 @@ fn test_switch_pr_azure_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) 
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_azure_same_repo", cmd);
+    });
+}
+
+#[rstest]
+fn test_switch_pr_azure_project_name_with_spaces(#[from(repo_with_remote)] mut repo: TestRepo) {
+    repo.add_worktree("feature-auth");
+    repo.run_git(&["push", "origin", "feature-auth"]);
+
+    set_azure_remote_url(
+        &repo,
+        "https://dev.azure.com/myorg/project%20with%20spaces/_git/test-repo",
+    );
+
+    let az_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "createdBy": {"uniqueName": "alice@example.com"},
+        "status": "active",
+        "isDraft": false,
+        "sourceRefName": "refs/heads/feature-auth",
+        "repository": {
+            "name": "test-repo",
+            "project": {"name": "project with spaces"},
+            "webUrl": "https://dev.azure.com/myorg/project%20with%20spaces/_git/test-repo"
+        },
+        "forkSource": null
+    }"#;
+
+    let mock_bin = setup_mock_az(&repo, Some(az_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_azure_project_name_with_spaces", cmd);
     });
 }
 

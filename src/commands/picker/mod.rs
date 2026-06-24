@@ -26,8 +26,8 @@
 //!    `git diff HEAD` for the current worktree on `COLLECT_POOL`.
 //!    That bg work overlaps with everything below.
 //! 4. Computes `num_items_estimate` — `list_worktrees` plus (conditionally)
-//!    `local_branches` / `remote_branches`, capped at
-//!    `MAX_VISIBLE_ITEMS`. Only used to size skim's `preview_window`.
+//!    `local_branches` / `remote_branches`, capped at the Down layout's
+//!    `max_visible_items(available)`. Only used to size skim's `preview_window`.
 //! 5. Builds `SkimOptions` (immutable after this — which is why steps 1-4 have
 //!    to run first).
 //! 6. Spawns the `picker-collect` bg thread, which calls `collect::collect`.
@@ -112,6 +112,7 @@ use anyhow::Context;
 // bounded/unbounded/Sender are re-exported by skim::prelude
 use skim::prelude::*;
 use skim::reader::CommandCollector;
+use skim::tui::event::ActionCallback;
 use worktrunk::HookType;
 use worktrunk::config::Approvals;
 use worktrunk::git::{Repository, current_or_recover};
@@ -212,8 +213,11 @@ fn picker_item_identifier(item: &dyn SkimItem) -> String {
 /// thread because skim calls `invoke()` on the main event loop thread.
 /// Blocking it freezes the TUI.
 ///
-/// Cursor position resets to the first item after reload (skim limitation,
-/// tracked in #1695).
+/// skim resets the cursor to the top on every reload (`handle_reload` clears
+/// `item_list` before the new rows stream in — skim #1695). To keep the cursor
+/// sticky, `invoke` injects a [`reposition_cursor_action`] Custom action that
+/// moves the cursor back to the slot the removed row occupied once the reloaded
+/// rows land.
 struct PickerCollector {
     items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>>,
     repo: Repository,
@@ -223,6 +227,12 @@ struct PickerCollector {
     /// unapproved project commands are skipped, never run. See
     /// [`approved_removal_plan`].
     approvals: Arc<Approvals>,
+    /// skim's event sender, published once the TUI is initialized (same
+    /// `OnceLock` the progressive handler pushes `Event::Render` through). alt-r
+    /// removals inject a [`reposition_cursor_action`] through it to restore the
+    /// cursor after the reload. `None` until the TUI is up — but a reload can
+    /// only fire after skim is showing rows, so it's always set by then.
+    render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
 }
 
 impl PickerCollector {
@@ -350,6 +360,109 @@ fn parse_reload_remove_token(cmd: &str) -> String {
     unquoted.replace("'\\''", "'")
 }
 
+/// Number of leading non-selectable header rows the picker streams (the single
+/// `HeaderSkimItem`). The skim options pass this to `.header_lines(...)`: skim
+/// reserves these from the item pool into its own Header widget, so `item_list`
+/// — what the cursor moves over — holds data rows only, indexed from 0.
+const PICKER_HEADER_ROWS: usize = 1;
+
+/// Consecutive "matcher settled but list still empty" observations
+/// [`reposition_cursor_action`] waits out before concluding the reloaded list is
+/// genuinely empty (no row to land on). `item_list.count()` lags the matcher by
+/// one render — the matcher writes its result, then a later `Event::Render`
+/// applies it — so a bare `settled && count() == 0` could give up while matches
+/// are still one render away. Each re-arm queues a Render (skim appends one after
+/// every action), so three consecutive settled observations guarantee the
+/// matcher's result has been applied before giving up.
+const REPOSITION_SETTLED_RENDERS: usize = 3;
+
+/// Hard backstop on [`reposition_cursor_action`] re-arms, far above the handful a
+/// normal reload needs. The `settled` check is the real stop condition; this only
+/// guards against an unforeseen state where the matcher never settles.
+const REPOSITION_MAX_ATTEMPTS: usize = 1000;
+
+/// The `item_list` row the cursor should land on after an alt-r removal, given
+/// the removed row's position in `shared_items` (header included) and how many
+/// data rows remain.
+///
+/// The removed row sat at `removed_pos`; the row that slides up into its slot is
+/// the next one, which lands at the same `item_list` index once the header is
+/// subtracted. Returns `None` when there's nothing to land on (the list is now
+/// header-only) or the position was the header itself. The caller clamps to the
+/// list's last row via `scroll_by`, so a removed-last-row target just overshoots
+/// and snaps back to the new last row.
+fn sticky_reposition_target(removed_pos: usize, remaining_data_rows: usize) -> Option<usize> {
+    if remaining_data_rows == 0 {
+        return None;
+    }
+    removed_pos.checked_sub(PICKER_HEADER_ROWS)
+}
+
+/// A skim `Custom` action that moves the cursor to `target` once the reloaded
+/// item list is populated.
+///
+/// skim has no "set cursor to index N" action and resets the cursor to the top
+/// on reload, so this drives the move through `ItemList`'s public cursor API
+/// with `&mut App` in hand: `jump_to_first` + `scroll_by(target)` lands on
+/// `target`, clamped to the last row.
+///
+/// The reload repopulates `item_list` asynchronously — the reader refills
+/// `item_pool`, then the matcher filters it into `item_list` — so the first
+/// invocation usually runs before the rows exist. It re-arms (returns another
+/// copy of itself; skim queues a Render after each) until the rows land. Stopping
+/// is gated on the matcher, not a blind count: once it has settled on an empty
+/// result (a removal that emptied the list, or an active query now matching
+/// nothing) for [`REPOSITION_SETTLED_RENDERS`] checks, there's nothing to land
+/// on. Sleeping instead of re-arming would hold `&mut App` across the await and
+/// starve the render that loads the rows.
+///
+/// `target` is an `item_list` index (data rows only — see [`PICKER_HEADER_ROWS`])
+/// from [`sticky_reposition_target`]. Under an active fuzzy query the displayed
+/// order diverges from `shared_items` order, so the landing row is approximate
+/// (a valid nearby row) rather than the exact next row.
+fn reposition_cursor_action(
+    target: usize,
+    attempts: Arc<AtomicUsize>,
+    settled_streak: Arc<AtomicUsize>,
+) -> Action {
+    Action::Custom(ActionCallback::new_sync(
+        move |app| -> Result<Vec<Event>, Box<dyn std::error::Error + Send + Sync>> {
+            // Rows are in: land the cursor on the removed row's slot.
+            if app.item_list.count() > 0 {
+                app.item_list.jump_to_first();
+                app.item_list
+                    .scroll_by(i32::try_from(target).unwrap_or(i32::MAX));
+                return Ok(Vec::new());
+            }
+            // No rows yet. The matcher has "settled" once it has stopped with the
+            // reloaded items taken and a non-empty pool (the empty pool is the
+            // pre-refill transient). A settled-but-empty `item_list` means the
+            // reload produced no matchable rows — wait out the count() render lag,
+            // then give up. `attempts` is a hard backstop for an unforeseen
+            // never-settles state.
+            let matcher_settled = app.matcher_control.stopped()
+                && !app.item_pool.is_empty()
+                && app.item_pool.num_not_taken() == 0;
+            let streak = if matcher_settled {
+                settled_streak.fetch_add(1, Ordering::Relaxed) + 1
+            } else {
+                settled_streak.store(0, Ordering::Relaxed);
+                0
+            };
+            if streak >= REPOSITION_SETTLED_RENDERS
+                || attempts.fetch_add(1, Ordering::Relaxed) >= REPOSITION_MAX_ATTEMPTS
+            {
+                return Ok(Vec::new());
+            }
+            Ok(vec![Event::Action(reposition_cursor_action(
+                target,
+                Arc::clone(&attempts),
+                Arc::clone(&settled_streak),
+            ))])
+        },
+    ))
+}
+
 impl CommandCollector for PickerCollector {
     fn invoke(
         &mut self,
@@ -376,10 +489,21 @@ impl CommandCollector for PickerCollector {
                         // fail at runtime (TypeId mismatch between reader thread and main
                         // thread compilation units). All item lookups use output()
                         // matching instead.
-                        {
+                        //
+                        // Capture the removed row's position before dropping it so
+                        // the cursor can be restored to that slot (the row that
+                        // slides up) after the reload — see `reposition_cursor_action`.
+                        let reposition_target = {
                             let mut items = self.items.lock().unwrap();
+                            let removed_pos = items
+                                .iter()
+                                .position(|item| item.output().as_ref() == selected_output);
                             items.retain(|item| item.output().as_ref() != selected_output);
-                        }
+                            let remaining_data_rows =
+                                items.len().saturating_sub(PICKER_HEADER_ROWS);
+                            removed_pos
+                                .and_then(|pos| sticky_reposition_target(pos, remaining_data_rows))
+                        };
 
                         // If removing the current worktree, cd to home so skim and git
                         // commands continue to work after the directory disappears.
@@ -410,6 +534,21 @@ impl CommandCollector for PickerCollector {
                                     );
                                 }
                             });
+
+                        // Restore the cursor near the removed row. skim resets it
+                        // to the top on every reload; inject a Custom action that
+                        // moves it back to the removed row's slot once the reloaded
+                        // rows land (`render_tx` is skim's event sender, set once
+                        // the TUI is up — always present by the time a reload fires).
+                        if let Some(target) = reposition_target
+                            && let Some(event_tx) = self.render_tx.get()
+                        {
+                            let _ = event_tx.try_send(Event::Action(reposition_cursor_action(
+                                target,
+                                Arc::new(AtomicUsize::new(0)),
+                                Arc::new(AtomicUsize::new(0)),
+                            )));
+                        }
                     }
                     Err(e) => {
                         log::info!("picker: cannot remove '{selected_output}': {e:#}");
@@ -583,11 +722,17 @@ pub fn handle_picker(
     .saturating_sub(2);
 
     // Estimate item count for the preview window spec (only the Down
-    // layout depends on it). Every row over MAX_VISIBLE_ITEMS is a no-op
-    // for the height computation, so we short-circuit once we know the
-    // list already fills the cap.
+    // layout depends on it). The Down layout caps visible rows at
+    // `max_visible_items(available)`; every row past that cap is a no-op
+    // for the height computation, so we short-circuit once the estimate
+    // reaches it.
     let num_items_estimate = {
-        let cap = preview::MAX_VISIBLE_ITEMS;
+        let cap = {
+            let term_height = terminal_size::terminal_size()
+                .map(|(_, terminal_size::Height(h))| h as usize)
+                .unwrap_or(24);
+            preview::max_visible_items(preview::available_height(term_height))
+        };
         let mut estimate = repo.list_worktrees().map(|w| w.len()).unwrap_or(cap);
         if estimate < cap && show_branches {
             // Local branches are a superset of worktree branches (each
@@ -640,19 +785,28 @@ pub fn handle_picker(
     // to filter the hook plan; see `approved_removal_plan`.
     let approvals = Arc::new(Approvals::load().context("Failed to load approvals")?);
 
+    // skim 4.x repaints on demand, so the collect handler needs a handle to
+    // skim's event loop to surface in-place row updates. The picker fills this
+    // once `Skim::init_tui` has run (inside `run_skim`); until then the handler
+    // simply skips its render pokes. The alt-r collector shares it too, to inject
+    // the cursor-reposition action after a removal. See `progressive_handler`
+    // module docstring.
+    let render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>> = Arc::new(OnceLock::new());
+
     let collector = PickerCollector {
         items: Arc::clone(&shared_items),
         repo: repo.clone(),
         approvals,
+        render_tx: Arc::clone(&render_tx),
     };
 
     // Get state path for key bindings (shell-escaped for safety)
     let state_path_display = state.path.display().to_string();
     let state_path_str = shell_escape::unix::escape(state_path_display.into()).into_owned();
 
-    // Calculate half-page scroll: skim uses 90% of terminal height, half of that = 45%
+    // Half-page preview scroll: half of skim's usable height.
     let half_page = terminal_size::terminal_size()
-        .map(|(_, terminal_size::Height(h))| (h as usize * 45 / 100).max(5))
+        .map(|(_, terminal_size::Height(h))| (preview::available_height(h as usize) / 2).max(5))
         .unwrap_or(10);
 
     // Configure skim options with Rust-based preview and mode switching keybindings
@@ -673,7 +827,9 @@ pub fn handle_picker(
         // (or `--prs`) list scrolls with no position cue, made worse by
         // `no_info(true)` below hiding the matched/total counter.
         .scrollbar("▐".to_string())
-        .header_lines(1usize) // Make first line (header) non-selectable
+        // First line (header) non-selectable. `PICKER_HEADER_ROWS` mirrors this
+        // count so the alt-r cursor-reposition math stays in sync — keep them one.
+        .header_lines(PICKER_HEADER_ROWS)
         .multi(false)
         .no_info(true) // Hide info line (matched/total counter)
         .preview("") // Enable preview (empty string means use SkimItem::preview())
@@ -780,7 +936,9 @@ pub fn handle_picker(
             // and streams updated items back — all without leaving the picker.
             // Passing the token through the reload cmd (not an execute-silent +
             // file write) sidesteps skim 4.x's fire-and-forget execute-silent,
-            // which raced the reader and removed nothing.
+            // which raced the reader and removed nothing. The collector also
+            // re-positions the cursor onto the removed row's slot afterward —
+            // reload otherwise snaps it back to the top (see PickerCollector).
             "alt-r:reload(remove {})".to_string(),
             // Preview toggle (alt-p shows/hides preview)
             // Note: skim doesn't support change-preview-window like fzf, only toggle
@@ -804,12 +962,6 @@ pub fn handle_picker(
     // Column-geometry handoff: the collect thread fills it at skeleton time,
     // the `--prs` thread reads it to align PR rows with the worktree rows.
     let grid_slot = Arc::new(prs::GridSlot::new());
-
-    // skim 4.x repaints on demand, so the collect handler needs a handle to
-    // skim's event loop to surface in-place row updates. The picker fills this
-    // once `Skim::init_tui` has run (inside `run_skim`); until then the handler
-    // simply skips its render pokes. See `progressive_handler` module docstring.
-    let render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>> = Arc::new(OnceLock::new());
 
     // `--prs` loading flag, shared between the header (shows a "loading…"
     // marker while true) and the `--prs` thread (clears it when the forge call
@@ -1194,7 +1346,7 @@ pub mod tests {
     use std::fs;
     use std::path::Path;
     use std::sync::atomic::AtomicUsize;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, OnceLock};
     use std::time::{Duration, Instant};
     use worktrunk::config::Approvals;
     use worktrunk::git::BranchDeletionMode;
@@ -1301,6 +1453,26 @@ pub mod tests {
         assert_eq!(parse_reload_remove_token("remove 'it'\\''s'"), "it's");
         // missing verb / unquoted fall back to the trimmed remainder
         assert_eq!(parse_reload_remove_token("remove plain"), "plain");
+    }
+
+    /// `sticky_reposition_target` maps a removed row's `shared_items` position
+    /// (header at index 0) to the `item_list` index the cursor should land on —
+    /// the data-row index of the slot the removed row vacated. It declines when
+    /// the list is now header-only (nothing to land on); `scroll_by` clamps the
+    /// removed-last-row overshoot, so the helper itself never caps the target.
+    #[test]
+    fn test_sticky_reposition_target() {
+        // First data row (shared_items index 1) → item_list index 0.
+        assert_eq!(super::sticky_reposition_target(1, 3), Some(0));
+        // Third data row (index 3) → item_list index 2, with rows remaining.
+        assert_eq!(super::sticky_reposition_target(3, 2), Some(2));
+        // Removed the only data row → header-only list, nothing to land on.
+        assert_eq!(super::sticky_reposition_target(1, 0), None);
+        // The header position itself never repositions.
+        assert_eq!(super::sticky_reposition_target(0, 2), None);
+        // Removed-last-row target may exceed the remaining rows; the helper
+        // returns it verbatim and leaves clamping to `scroll_by`.
+        assert_eq!(super::sticky_reposition_target(4, 3), Some(3));
     }
 
     /// `from_signal` rejects tokens that carry no usable target: a blank or
@@ -1487,6 +1659,7 @@ pub mod tests {
             items: Arc::new(Mutex::new(Vec::new())),
             repo,
             approvals: Arc::new(Approvals::default()),
+            render_tx: Arc::new(OnceLock::new()),
         };
 
         let target = PickerRemovalTarget::from_signal("branch-only-feature").unwrap();
@@ -1509,6 +1682,7 @@ pub mod tests {
             items: Arc::new(Mutex::new(Vec::new())),
             repo,
             approvals: Arc::new(Approvals::default()),
+            render_tx: Arc::new(OnceLock::new()),
         };
 
         // `RemoveResult` isn't `Debug`; drop the Ok payload so `unwrap_err`
@@ -1678,6 +1852,7 @@ pub mod tests {
             items: Arc::clone(&items),
             repo: repo.clone(),
             approvals: Arc::new(Approvals::default()),
+            render_tx: Arc::new(OnceLock::new()),
         };
 
         // skim's `reload(remove {})` hands invoke `remove <single-quoted token>`.
@@ -1715,6 +1890,7 @@ pub mod tests {
             items: Arc::clone(&items),
             repo,
             approvals: Arc::new(Approvals::default()),
+            render_tx: Arc::new(OnceLock::new()),
         };
         let (_rx, _interrupt) = collector.invoke("remove ''", Arc::new(AtomicUsize::new(0)));
         assert_eq!(

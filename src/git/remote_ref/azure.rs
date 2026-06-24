@@ -7,6 +7,7 @@ use anyhow::{Context, bail};
 use serde::Deserialize;
 
 use super::{CliApiRequest, PlatformData, RemoteRefInfo, RemoteRefProvider, cli_api_error};
+use crate::git::canonical_url_path_segment;
 use crate::git::url::GitRemoteUrl;
 use crate::git::{RefType, Repository};
 
@@ -40,6 +41,9 @@ impl RemoteRefProvider for AzureDevOpsProvider {
 /// public keys, so HTTPS — which works with both PAT and Azure CLI auth — is
 /// the safe default.
 pub fn fork_remote_url(host: &str, organization: &str, project: &str, repo: &str) -> String {
+    let organization = canonical_url_path_segment(organization);
+    let project = canonical_url_path_segment(project);
+    let repo = canonical_url_path_segment(repo);
     if host.to_ascii_lowercase().ends_with(".visualstudio.com") {
         format!("https://{}/{}/_git/{}", host, project, repo)
     } else {
@@ -52,6 +56,9 @@ pub fn fork_remote_url(host: &str, organization: &str, project: &str, repo: &str
 
 /// Construct the PR web URL for the user's actual host (handles `*.visualstudio.com`).
 pub fn pr_web_url(host: &str, organization: &str, project: &str, repo: &str, pr: u32) -> String {
+    let organization = canonical_url_path_segment(organization);
+    let project = canonical_url_path_segment(project);
+    let repo = canonical_url_path_segment(repo);
     if host.to_ascii_lowercase().ends_with(".visualstudio.com") {
         format!(
             "https://{}/{}/_git/{}/pullrequest/{}",
@@ -67,6 +74,8 @@ pub fn pr_web_url(host: &str, organization: &str, project: &str, repo: &str, pr:
 
 /// Construct the build-results web URL for the user's actual host.
 pub fn build_web_url(host: &str, organization: &str, project: &str, build_id: u32) -> String {
+    let organization = canonical_url_path_segment(organization);
+    let project = canonical_url_path_segment(project);
     if host.to_ascii_lowercase().ends_with(".visualstudio.com") {
         format!(
             "https://{}/{}/_build/results?buildId={}",

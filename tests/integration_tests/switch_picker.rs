@@ -1706,3 +1706,178 @@ fn test_switch_picker_pre_switch_hook_requires_approval(mut repo: TestRepo) {
     );
     assert!(!marker.exists(), "a declined pre-switch hook must not run");
 }
+
+/// Drive the picker to remove the first non-current worktree with alt-r, then
+/// switch — capturing the screen between steps so the assertion doesn't depend on
+/// the picker's commit-recency row order. Returns `(landing_branch, final_screen,
+/// exit_code)`, where `landing_branch` is the worktree that slid into the removed
+/// row's slot (the row the sticky cursor must land on).
+fn drive_alt_r_then_switch(
+    args: &[&str],
+    working_dir: &Path,
+    env_vars: &[(String, String)],
+    candidates: [&str; 2],
+) -> (String, String, i32) {
+    let pair = crate::common::open_pty_with_size(TERM_ROWS, TERM_COLS);
+
+    let mut cmd = CommandBuilder::new(wt_bin().to_str().unwrap());
+    for arg in args {
+        cmd.arg(arg);
+    }
+    cmd.cwd(working_dir);
+    crate::common::configure_pty_command(&mut cmd);
+    cmd.env("CLICOLOR_FORCE", "1");
+    cmd.env("TERM", "xterm-256color");
+    for (key, value) in env_vars {
+        cmd.env(key, value);
+    }
+
+    let mut child = pair.slave.spawn_command(cmd).unwrap();
+    drop(pair.slave);
+
+    let reader = pair.master.try_clone_reader().unwrap();
+    let writer: crate::common::pty::SharedPtyWriter =
+        Arc::new(Mutex::new(pair.master.take_writer().unwrap()));
+    let rx = crate::common::pty::spawn_pty_reader_answering_queries(reader, Arc::clone(&writer));
+
+    let mut parser = vt100::Parser::new(TERM_ROWS, TERM_COLS, 0);
+    let drain = |rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser| {
+        while let Ok(chunk) = rx.try_recv() {
+            parser.process(&chunk);
+        }
+    };
+    let send = |writer: &crate::common::pty::SharedPtyWriter, bytes: &[u8]| {
+        let mut w = writer.lock().unwrap();
+        w.write_all(bytes).unwrap();
+        w.flush().unwrap();
+    };
+
+    // Wait for skim to be ready.
+    let start = Instant::now();
+    loop {
+        drain(&rx, &mut parser);
+        if is_skim_ready(&parser.screen().contents()) || start.elapsed() > READY_TIMEOUT {
+            break;
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+
+    // Both worktree rows land in one skeleton batch, so waiting for the first
+    // candidate implies the second is present too.
+    wait_for_stable_with_content(&rx, &mut parser, Some(candidates[0]));
+
+    // Learn the row order: the candidate on the earlier list line is row 1 — the
+    // one Down lands on and alt-r removes; the other is the sticky landing row.
+    let (row1, row2) = {
+        let screen = parser.screen();
+        let list = screen
+            .rows(0, LIST_WIDTH)
+            .map(|row| row.trim_end().to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let line_of = |name: &str| list.lines().position(|l| l.contains(name));
+        let a = line_of(candidates[0]).expect("candidate 0 in list");
+        let b = line_of(candidates[1]).expect("candidate 1 in list");
+        if a < b {
+            (candidates[0], candidates[1])
+        } else {
+            (candidates[1], candidates[0])
+        }
+    };
+
+    // Down onto row 1, confirmed via its preview pane (cursor navigation never
+    // invokes the matcher, so this is deterministic regardless of load).
+    send(&writer, b"\x1b[B");
+    wait_for_stable_with_content(
+        &rx,
+        &mut parser,
+        Some(&format!("{row1} has no uncommitted changes")),
+    );
+
+    // alt-r removes row 1; the cursor must stick to its slot — now holding row 2.
+    // Gating on row 2's preview *is* the sticky assertion: a cursor reset to the
+    // top would show the current worktree's preview and time this out.
+    send(&writer, b"\x1br");
+    wait_for_stable_with_content(
+        &rx,
+        &mut parser,
+        Some(&format!("{row2} has no uncommitted changes")),
+    );
+
+    // Enter switches to the cursor row (row 2).
+    send(&writer, b"\r");
+    drop(writer);
+
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(5) {
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let _ = child.kill();
+    drain(&rx, &mut parser);
+    let exit_code = child.wait().unwrap().exit_code() as i32;
+
+    (row2.to_string(), parser.screen().contents(), exit_code)
+}
+
+/// alt-r keeps the cursor on the removed row's slot. After removing the first
+/// non-current worktree, the cursor stays on the row that slides up (the next
+/// worktree), so Enter switches there — not back to the current worktree at the
+/// top, which is where skim's reload would otherwise reset the cursor.
+#[rstest]
+fn test_switch_picker_alt_r_keeps_cursor_sticky(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.add_worktree("wt-keep");
+    repo.add_worktree("wt-drop");
+
+    let env_vars = repo.test_env_vars();
+    let (landing, screen, exit_code) = drive_alt_r_then_switch(
+        &["switch", "--no-cd", "--format=json"],
+        repo.root_path(),
+        &env_vars,
+        ["wt-keep", "wt-drop"],
+    );
+
+    assert_eq!(
+        exit_code, 0,
+        "switch after alt-r should exit 0.\nScreen:\n{screen}"
+    );
+    // The structured result reaches stdout only after the switch pipeline ran;
+    // it targets the sticky row, not the current worktree.
+    assert!(
+        screen.contains("\"action\""),
+        "switch emitted its --format=json result.\nScreen:\n{screen}"
+    );
+    assert!(
+        screen.contains(&landing),
+        "switch targeted the sticky row `{landing}`.\nScreen:\n{screen}"
+    );
+}
+
+/// Removing the sole row matching an active query leaves the filtered list empty,
+/// so the cursor-reposition gives up once the matcher settles empty rather than
+/// spinning the event loop. The picker stays responsive — its screen stabilizes,
+/// then aborts cleanly.
+#[rstest]
+fn test_switch_picker_alt_r_no_match_stays_responsive(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.add_worktree("solo-wt");
+
+    let env_vars = repo.test_env_vars();
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            ("solo-wt", Some("solo-wt")), // filter to the sole matching worktree
+            ("\x1br", None),              // alt-r removes it; query now matches nothing
+        ],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+}
