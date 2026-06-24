@@ -1,7 +1,7 @@
 //! Preview mode and layout management.
 //!
-//! Tracks the active preview tab (in process memory) and auto-detects the
-//! preview layout for the interactive selector.
+//! Tracks the active preview tab (in process memory) and selects the preview
+//! layout for the interactive selector.
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
@@ -121,7 +121,7 @@ pub(super) fn max_visible_items(available: usize) -> usize {
 
 /// Preview layout orientation for the interactive selector
 ///
-/// Preview window position (auto-detected at startup based on terminal dimensions)
+/// Preview window position, selected from the terminal dimensions read once at startup
 ///
 /// - Right: Preview on the right side (50% width) - better for wide terminals
 /// - Down: Preview below the list - better for tall/vertical monitors
@@ -133,7 +133,7 @@ pub(super) enum PreviewLayout {
 }
 
 impl PreviewLayout {
-    /// Auto-detect layout based on terminal dimensions.
+    /// Determine the layout for the given terminal dimensions (cols × rows).
     ///
     /// Terminal dimensions are in characters, not pixels. Since characters are
     /// typically twice as tall as wide (~0.5 aspect ratio), we correct for this
@@ -146,16 +146,10 @@ impl PreviewLayout {
     /// Returns Down for portrait (effective ratio < 1.0), Right for landscape.
     /// Also returns Down when the terminal is too narrow for side-by-side layout,
     /// even if the aspect ratio suggests landscape (e.g. 60×24 on a phone).
-    pub(super) fn auto_detect() -> Self {
-        let (cols, rows) = terminal_size::terminal_size()
-            .map(|(terminal_size::Width(w), terminal_size::Height(h))| (w as f64, h as f64))
-            .unwrap_or((80.0, 24.0));
-
-        Self::for_dimensions(cols, rows)
-    }
-
-    /// Determine layout for given terminal dimensions (cols × rows).
-    fn for_dimensions(cols: f64, rows: f64) -> Self {
+    ///
+    /// The terminal is read once in `handle_picker`; both layout detection here
+    /// and the preview sizing below are threaded that single snapshot.
+    pub(super) fn for_dimensions(cols: f64, rows: f64) -> Self {
         // Too narrow for side-by-side — branch names won't fit in half the width
         if cols < MIN_COLS_FOR_RIGHT_LAYOUT {
             return Self::Down;
@@ -171,36 +165,26 @@ impl PreviewLayout {
         }
     }
 
-    /// Calculate the preview window spec for skim.
-    /// Derives dimensions from `preview_dimensions` to ensure consistency.
-    pub(super) fn to_preview_window_spec(self, num_items: usize) -> String {
-        let (width, height) = self.preview_dimensions(num_items);
+    /// Format the skim preview-window spec from already-computed dimensions.
+    /// Right positions the preview by width, Down by height.
+    pub(super) fn spec_for(self, (width, height): (usize, usize)) -> String {
         match self {
-            Self::Right => format!("right:{}", width),
-            Self::Down => format!("down:{}", height),
+            Self::Right => format!("right:{width}"),
+            Self::Down => format!("down:{height}"),
         }
     }
 
-    /// Calculate preview dimensions (width, height) in characters.
-    /// Single source of truth for preview sizing — used by both skim config
-    /// and background pre-computation. Reads the live terminal size, then
-    /// delegates the pure layout math to `dimensions_for`.
-    pub(super) fn preview_dimensions(self, num_items: usize) -> (usize, usize) {
-        let (term_width, term_height) = terminal_size::terminal_size()
-            .map(|(terminal_size::Width(w), terminal_size::Height(h))| (w as usize, h as usize))
-            .unwrap_or((80, 24));
-
-        self.dimensions_for(term_width, term_height, num_items)
-    }
-
-    /// Pure layout math behind `preview_dimensions`, with the terminal size
-    /// passed in so the split is testable without a live TTY.
+    /// Compute preview dimensions (width, height) in characters for a terminal
+    /// size. Single source of truth for preview sizing — the picker reads the
+    /// terminal once and calls this for both the skim preview-window spec (via
+    /// `spec_for`) and background pre-computation. Pure, so it's testable
+    /// without a live TTY.
     ///
     /// Right keeps a fixed 50%/90% split independent of `num_items`. Down lets
     /// the list grow to `max_visible_items(available)` rows (half of skim's
     /// area) and hands the rest to the preview, floored at `MIN_PREVIEW_LINES`
     /// and clamped to never exceed `available`.
-    fn dimensions_for(
+    pub(super) fn dimensions_for(
         self,
         term_width: usize,
         term_height: usize,
@@ -266,19 +250,18 @@ impl PreviewStateData {
     }
 }
 
-/// Per-session preview state: the auto-detected initial layout. Constructing it
-/// also resets [`PreviewStateData`] to the working-tree tab so every picker
-/// opens on the same tab.
+/// Per-session preview state: the initial layout (selected once from the
+/// terminal size in `handle_picker`). Constructing it also resets
+/// [`PreviewStateData`] to the working-tree tab so every picker opens on the
+/// same tab.
 pub(super) struct PreviewState {
     pub(super) initial_layout: PreviewLayout,
 }
 
 impl PreviewState {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(initial_layout: PreviewLayout) -> Self {
         PreviewStateData::set_mode(PreviewMode::WorkingTree);
-        Self {
-            initial_layout: PreviewLayout::auto_detect(),
-        }
+        Self { initial_layout }
     }
 }
 
@@ -301,14 +284,10 @@ mod tests {
     }
 
     #[test]
-    fn test_preview_layout_to_preview_window_spec() {
-        // Right uses absolute width derived from terminal size
-        let spec = PreviewLayout::Right.to_preview_window_spec(10);
-        assert!(spec.starts_with("right:"));
-
-        // Down calculates based on item count
-        let spec = PreviewLayout::Down.to_preview_window_spec(5);
-        assert!(spec.starts_with("down:"));
+    fn test_preview_layout_spec_for() {
+        // Right positions by width, Down by height.
+        assert_eq!(PreviewLayout::Right.spec_for((40, 21)), "right:40");
+        assert_eq!(PreviewLayout::Down.spec_for((80, 15)), "down:15");
     }
 
     #[test]
