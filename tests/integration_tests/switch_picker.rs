@@ -1099,9 +1099,9 @@ fn test_switch_picker_prs_shows_loading_marker(mut repo: TestRepo) {
 #[rstest]
 fn test_switch_picker_preview_cycle_tab_forward(mut repo: TestRepo) {
     // Tab cycles the preview tab forward. From the default HEAD± tab (1), one
-    // Tab lands on the log tab (2), proving the `tr 123456 234561` rotation in
-    // the keybinding runs under the real shell. (alt-1..alt-6 jump directly; the
-    // panel tests above cover those — this covers the cycle path.)
+    // Tab lands on the log tab (2), exercising the native `PreviewMode::next`
+    // rotation behind the tab key's `Action::Custom` binding. (alt-1..alt-7 jump
+    // directly; the panel tests above cover those — this covers the cycle path.)
     repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
     let feature_path = repo.add_worktree("feature");
@@ -1154,8 +1154,8 @@ fn test_switch_picker_preview_cycle_tab_forward(mut repo: TestRepo) {
 #[rstest]
 fn test_switch_picker_preview_cycle_tab_forward_wraps(mut repo: TestRepo) {
     // Forward cycling wraps 7 → 1: from the comments tab (reached via Alt-7), one
-    // Tab returns to the HEAD± tab. This covers the `7 → 1` end of the
-    // `tr 1234567 2345671` map, the half most easily typo'd away.
+    // Tab returns to the HEAD± tab. This covers the `7 → 1` wraparound in
+    // `PreviewMode::next`, the half most easily typo'd away.
     repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
     let feature_path = repo.add_worktree("feature");
@@ -1213,7 +1213,7 @@ fn test_switch_picker_preview_cycle_tab_forward_wraps(mut repo: TestRepo) {
 fn test_switch_picker_preview_cycle_shift_tab_wraps(mut repo: TestRepo) {
     // Shift-Tab cycles backward and wraps: from the default HEAD± tab (1), one
     // Shift-Tab lands on the comments tab (7), exercising the reverse rotation
-    // `tr 1234567 7123456` including the 1 → 7 wraparound.
+    // `PreviewMode::prev` including the 1 → 7 wraparound.
     repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
     let feature_path = repo.add_worktree("feature");

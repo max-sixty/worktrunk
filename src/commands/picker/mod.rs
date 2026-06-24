@@ -105,7 +105,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use ansi_str::AnsiStr;
 use anyhow::Context;
@@ -129,7 +129,7 @@ use crate::output::{BackgroundFallbackMode, handle_remove_output};
 use worktrunk::git::{BranchDeletionMode, delete_branch_if_safe};
 
 use items::{PreviewCache, WORKTREE_OUTPUT_PREFIX};
-use preview::{PreviewLayout, PreviewMode, PreviewState};
+use preview::{PreviewLayout, PreviewMode, PreviewState, PreviewStateData};
 use preview_orchestrator::PreviewOrchestrator;
 
 /// Drain stashed warnings to stderr. Called after skim has released the
@@ -638,7 +638,7 @@ pub fn handle_picker(
     let show_prs = cli_prs;
     worktrunk::trace::instant("Picker config resolved");
 
-    // Initialize preview mode state file (auto-cleanup on drop)
+    // Reset the preview tab to working-tree and detect the layout.
     let state = PreviewState::new();
     worktrunk::trace::instant("Picker layout detected");
 
@@ -800,17 +800,13 @@ pub fn handle_picker(
         render_tx: Arc::clone(&render_tx),
     };
 
-    // Get state path for key bindings (shell-escaped for safety)
-    let state_path_display = state.path.display().to_string();
-    let state_path_str = shell_escape::unix::escape(state_path_display.into()).into_owned();
-
     // Half-page preview scroll: half of skim's usable height.
     let half_page = terminal_size::terminal_size()
         .map(|(_, terminal_size::Height(h))| (preview::available_height(h as usize) / 2).max(5))
         .unwrap_or(10);
 
     // Configure skim options with Rust-based preview and mode switching keybindings
-    let options = SkimOptionsBuilder::default()
+    let mut options = SkimOptionsBuilder::default()
         .height("90%".to_string())
         .reverse(true)
         // Fill the whole selected row with the `current` background (set via
@@ -842,85 +838,12 @@ pub fn handle_picker(
         .color("fg:-1,bg:-1,header:-1,matched:108,current:237,current_bg:251,current_match:108")
         .cmd_collector(Rc::new(RefCell::new(collector)) as Rc<RefCell<dyn CommandCollector>>)
         .bind(vec![
-            // Preview-tab switching. Bare digits 1-7 are intentionally NOT
-            // bound — they flow to the query input so a number can be typed
-            // (a PR number, or digits within a branch name). Two ways to
-            // switch tabs remain:
-            //   * alt-1..alt-7 jump straight to a tab. skim 4.x parses
-            //     `alt-<digit>` natively via crossterm; an unparsable bind is
-            //     just logged and dropped.
-            //   * tab / shift-tab cycle forward / backward (below).
-            format!(
-                "alt-1:execute-silent(echo 1 > {0})+refresh-preview",
-                state_path_str
-            ),
-            format!(
-                "alt-2:execute-silent(echo 2 > {0})+refresh-preview",
-                state_path_str
-            ),
-            format!(
-                "alt-3:execute-silent(echo 3 > {0})+refresh-preview",
-                state_path_str
-            ),
-            format!(
-                "alt-4:execute-silent(echo 4 > {0})+refresh-preview",
-                state_path_str
-            ),
-            format!(
-                "alt-5:execute-silent(echo 5 > {0})+refresh-preview",
-                state_path_str
-            ),
-            format!(
-                "alt-6:execute-silent(echo 6 > {0})+refresh-preview",
-                state_path_str
-            ),
-            format!(
-                "alt-7:execute-silent(echo 7 > {0})+refresh-preview",
-                state_path_str
-            ),
-            // Cycle tabs with tab / shift-tab. The state file holds the current
-            // digit; `tr` rotates it (1→2→…→7→1 forward, the reverse for btab)
-            // with wraparound, via a temp file + rename so the read and write
-            // don't race on one path. Two hard constraints shape this:
-            //   * Paren-free — skim 4.x parses an `execute-silent(…)` body by
-            //     splitting at the first `(` and trimming the trailing `)`, and
-            //     splits the action chain on `+`. So the body must contain no
-            //     `+` and must not end in `)`; `$(...)` / `$(( ))` would do both.
-            //     Keeping it paren-free entirely (the embedded `{0}` temp path
-            //     is — `std::env::temp_dir()` paths have none) satisfies this,
-            //     which the alt-r/alt-N bindings share.
-            //   * Shell-agnostic — skim runs it under the user's $SHELL
-            //     (fish/zsh/sh), so no shell-specific syntax: `tr` + `mv` are
-            //     external and behave identically everywhere.
-            // This overrides skim's default Tab (toggle-select + cursor down)
-            // and Shift-Tab (toggle-select + cursor up); `bind` replaces the
-            // chain wholesale, and both are inert in this single-select picker.
+            // Preview-tab switching (alt-1..alt-7 jump to a tab; tab / shift-tab
+            // cycle) is installed natively below via `install_preview_tab_keybindings`
+            // rather than here — those keys run Rust callbacks, not shell commands.
+            // Bare digits 1-7 stay unbound so they flow to the query input (a PR
+            // number, or digits within a branch name).
             //
-            // Shift-Tab needs three bindings, not one. skim parses `btab` to
-            // `KeyEvent{BackTab, NONE}`, but crossterm delivers Shift-Tab with
-            // the SHIFT modifier set, so that lone bind never matches and skim's
-            // built-in Shift-Tab (cursor up) wins — a back-cycle that silently
-            // moved the selection instead. skim's own default keymap hedges the
-            // same ambiguity across `BackTab+SHIFT`, `Tab+SHIFT`, and
-            // `BackTab+all()`; we bind every representation crossterm might
-            // report (`btab` / `shift-btab` / `shift-tab`) so the override holds
-            // regardless of terminal. (Plain Tab is unambiguous — `Tab+NONE`.)
-            format!(
-                "tab:execute-silent(tr 1234567 2345671 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
-                state_path_str
-            ),
-            format!(
-                "btab:execute-silent(tr 1234567 7123456 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
-                state_path_str
-            ),
-            format!(
-                "shift-btab:execute-silent(tr 1234567 7123456 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
-                state_path_str
-            ),
-            format!(
-                "shift-tab:execute-silent(tr 1234567 7123456 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
-                state_path_str
-            ),
             // Create new worktree with query as branch name (alt-c for "create")
             "alt-c:accept(create)".to_string(),
             // Remove selected worktree: `reload(remove {})` hands the selected
@@ -942,6 +865,10 @@ pub fn handle_picker(
         // Legend/controls moved to preview window tabs (render_preview_tabs)
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to build skim options: {}", e))?;
+    // `.build()` parsed the string binds above into `options.keymap`; layer the
+    // preview-tab switches on top as native `Action::Custom` callbacks (skim's
+    // string bind API can't express a custom action).
+    install_preview_tab_keybindings(&mut options.keymap);
     worktrunk::trace::instant("Picker skim options built");
 
     let (tx, rx): (SkimItemSender, SkimItemReceiver) = unbounded();
@@ -1111,7 +1038,7 @@ pub fn handle_picker(
     // network tasks, and joining would block exit for up to DRAIN_TIMEOUT
     // (120s). Process exit terminates the bg thread; its git subprocesses
     // are read-only.
-    let output = run_skim(options, rx, &render_tx, &state.path);
+    let output = run_skim(options, rx, &render_tx);
     drop(bg_handle);
     // Same rationale as `bg_handle`: don't join — the forge call may still be
     // in flight, and process exit terminates the thread (its `gh`/`glab`
@@ -1128,7 +1055,7 @@ pub fn handle_picker(
     // a user cancel is `Ok` with `is_abort` set. Surface a real failure.
     let out = output?;
 
-    // Handle selection (signal file cleaned up by PreviewState::Drop)
+    // Handle selection
     if !out.is_abort {
         // Determine action: create (alt-c) or switch (enter)
         // Remove is handled inline via reload — it never reaches accept.
@@ -1189,75 +1116,77 @@ pub fn handle_picker(
     Ok(())
 }
 
-/// Background poller that nudges skim to re-run its preview when the
-/// preview-mode state file changes. See [`run_skim`] for why; it lives only for
-/// one picker session and stops when [`ModeWatcher::stop`] is called.
-struct ModeWatcher {
-    stop: Arc<AtomicBool>,
-    handle: Option<std::thread::JoinHandle<()>>,
-}
+/// Install the preview-tab switches into skim's keymap: alt-1…alt-7 jump to a
+/// tab, tab / shift-tab cycle forward / backward.
+///
+/// skim's string bind API only maps keys to its built-in actions, so these go
+/// in as `Action::Custom` callbacks that set the process-wide
+/// [`PreviewStateData`] mode and return `Event::RunPreview` to repaint. They're
+/// native rather than `execute-silent` shell commands, so they behave
+/// identically everywhere — the previous `echo`/`tr`/`mv` keybind bodies ran
+/// through skim's shell, which on Windows is cmd.exe and has neither `tr` nor
+/// `mv`. This is also what lets `wt switch` run its picker on Windows at all.
+///
+/// Keys are resolved with skim's own `parse_key` so they match exactly what its
+/// keymap lookup expects (`KeyMap` is keyed by the crossterm `KeyEvent`
+/// `parse_key` produces). Shift-Tab is bound under every spelling crossterm
+/// might report (`btab` / `shift-btab` / `shift-tab`), mirroring skim's default
+/// keymap, so the cycle-back override holds regardless of terminal.
+fn install_preview_tab_keybindings(keymap: &mut skim::binds::KeyMap) {
+    use skim::binds::parse_key;
 
-impl ModeWatcher {
-    fn spawn(event_tx: tokio::sync::mpsc::Sender<Event>, path: PathBuf) -> Self {
-        let stop = Arc::new(AtomicBool::new(false));
-        let stop_thread = Arc::clone(&stop);
-        let handle = std::thread::Builder::new()
-            .name("picker-mode-watcher".into())
-            .spawn(move || {
-                // Seed with the current contents so the initial mode isn't
-                // treated as a change.
-                let mut last = std::fs::read(&path).ok();
-                while !stop_thread.load(Ordering::Relaxed) {
-                    std::thread::sleep(Duration::from_millis(20));
-                    let current = std::fs::read(&path).ok();
-                    if current != last {
-                        last = current;
-                        // Channel closed (skim exited) just makes this a no-op;
-                        // the loop then ends on the next `stop` check.
-                        let _ = event_tx.try_send(Event::RunPreview);
-                    }
-                }
-            })
-            .ok();
-        Self { stop, handle }
+    // alt-N jumps to tab N (1-indexed, matching PreviewMode's discriminant).
+    let switch_to = |mode: PreviewMode| {
+        Action::Custom(ActionCallback::new_sync(move |_app| {
+            PreviewStateData::set_mode(mode);
+            Ok(vec![Event::RunPreview])
+        }))
+    };
+    for digit in 1..=7u8 {
+        if let Ok(key) = parse_key(&format!("alt-{digit}")) {
+            keymap.insert(key, vec![switch_to(PreviewMode::from_u8(digit))]);
+        }
     }
 
-    fn stop(mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+    let cycle = |forward: bool| {
+        Action::Custom(ActionCallback::new_sync(move |_app| {
+            PreviewStateData::rotate(forward);
+            Ok(vec![Event::RunPreview])
+        }))
+    };
+    if let Ok(key) = parse_key("tab") {
+        keymap.insert(key, vec![cycle(true)]);
+    }
+    for back in ["btab", "shift-btab", "shift-tab"] {
+        if let Ok(key) = parse_key(back) {
+            keymap.insert(key, vec![cycle(false)]);
         }
     }
 }
 
 /// Run skim to completion, exposing its event sender for progressive repaints.
 ///
-/// This inlines what `Skim::run_with` does, with two additions: after the TUI is
-/// initialized we publish `Skim::event_sender()` into `render_tx`, and we start
-/// a [`ModeWatcher`]. skim 4.x renders on demand, so the background collect
-/// thread's in-place row mutations stay invisible until something wakes the
-/// event loop — the handler pushes `Event::Render` through that sender (see
-/// `progressive_handler`).
-///
-/// `preview_mode_path` is the file the alt-1…5 / tab keybinds rewrite to switch
-/// preview tabs; `ModeWatcher` re-runs the preview once the write lands, fixing
-/// the one-step tab lag skim 0.20's heartbeat used to mask.
+/// This inlines what `Skim::run_with` does, plus one addition: after the TUI is
+/// initialized we publish `Skim::event_sender()` into `render_tx`. skim 4.x
+/// renders on demand, so the background collect thread's in-place row mutations
+/// stay invisible until something wakes the event loop — the handler pushes
+/// `Event::Render` through that sender (see `progressive_handler`), and the
+/// preview-tab keybindings return `Event::RunPreview` from their callbacks.
 ///
 /// `wt` runs no outer tokio runtime, so skim's event loop runs on a fresh
 /// multi-thread `Runtime` — the same one `run_with` builds in that case. A user
 /// cancel is `Ok(SkimOutput)` with `is_abort` set; only a genuine init /
 /// event-loop failure is an `Err`.
 ///
-/// Injecting `Event::Render` / `Event::RunPreview` from the handler and the
-/// watcher is safe against clobbering the recorded selection: skim's `Accept` /
-/// `Abort` set `should_quit` in the same `tick` that records them as
-/// `final_event`, and `run()` breaks before the next `tick`, so a trailing
-/// injected event is never processed after the terminal action.
+/// Injecting `Event::Render` / `Event::RunPreview` is safe against clobbering
+/// the recorded selection: skim's `Accept` / `Abort` set `should_quit` in the
+/// same `tick` that records them as `final_event`, and `run()` breaks before
+/// the next `tick`, so a trailing injected event is never processed after the
+/// terminal action.
 fn run_skim(
     options: SkimOptions,
     rx: SkimItemReceiver,
     render_tx: &Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
-    preview_mode_path: &Path,
 ) -> anyhow::Result<SkimOutput> {
     let mut skim: Skim = Skim::init(options, Some(rx))
         .map_err(|e| anyhow::anyhow!("failed to initialize picker: {e}"))?;
@@ -1272,21 +1201,14 @@ fn run_skim(
             .map_err(|e| anyhow::anyhow!("failed to initialize picker TUI: {e}"))?;
         // event_sender() requires init_tui(); publish it before entering the
         // loop so the handler's in-place updates can request repaints.
-        let event_tx = skim.event_sender();
-        let _ = render_tx.set(event_tx.clone());
+        let _ = render_tx.set(skim.event_sender());
 
-        // Build the runtime before spawning the watcher: it's the only fallible
-        // step here, and ordering it first keeps the infallible spawn paired
-        // with the unconditional `watcher.stop()` below (no early return can
-        // leak the watcher thread).
         let runtime =
             tokio::runtime::Runtime::new().context("failed to start picker event-loop runtime")?;
-        let watcher = ModeWatcher::spawn(event_tx, preview_mode_path.to_path_buf());
         let result = runtime.block_on(async {
             skim.enter().await?;
             skim.run().await
         });
-        watcher.stop();
         result.map_err(|e| anyhow::anyhow!("interactive picker failed: {e}"))?;
     }
 
@@ -1326,10 +1248,11 @@ fn resolve_identifier(
 #[cfg(test)]
 pub mod tests {
     use super::items::WorktreeSkimItem;
-    use super::preview::{PreviewLayout, PreviewMode, PreviewStateData};
+    use super::preview::PreviewLayout;
     use super::{
         PickerAction, PickerCollector, PickerRemovalTarget, drain_stashed_warnings,
-        parse_reload_remove_token, picker_item_identifier, resolve_identifier,
+        install_preview_tab_keybindings, parse_reload_remove_token, picker_item_identifier,
+        resolve_identifier,
     };
     use crate::commands::list::model::{ItemKind, ListItem, WorktreeData};
     use crate::commands::worktree::RemoveResult;
@@ -1362,27 +1285,34 @@ pub mod tests {
     }
 
     #[test]
-    fn test_preview_state_data_roundtrip() {
-        let state_path = PreviewStateData::state_path();
+    fn test_install_preview_tab_keybindings() {
+        use skim::binds::{KeyMap, parse_key};
+        use skim::prelude::Action;
 
-        // Write and read back various modes
-        let _ = fs::write(&state_path, "1");
-        assert_eq!(PreviewStateData::read_mode(), PreviewMode::WorkingTree);
+        // The native preview-tab switches replace skim's default bindings for
+        // these keys with exactly one custom action each. This asserts the
+        // wiring (keyed via skim's own `parse_key` so the lookup matches its
+        // event loop). Which tab each callback selects can't be asserted here
+        // (`Action::Custom` has no `Eq`), but the callbacks are built by a
+        // uniform `from_u8` loop — `from_u8`/`next`/`prev` are unit-tested in
+        // `preview`, and the `switch_picker` PTY tests drive the keys end-to-end.
+        let mut keymap = KeyMap::default();
+        install_preview_tab_keybindings(&mut keymap);
 
-        let _ = fs::write(&state_path, "2");
-        assert_eq!(PreviewStateData::read_mode(), PreviewMode::Log);
-
-        let _ = fs::write(&state_path, "3");
-        assert_eq!(PreviewStateData::read_mode(), PreviewMode::BranchDiff);
-
-        let _ = fs::write(&state_path, "4");
-        assert_eq!(PreviewStateData::read_mode(), PreviewMode::UpstreamDiff);
-
-        let _ = fs::write(&state_path, "5");
-        assert_eq!(PreviewStateData::read_mode(), PreviewMode::Summary);
-
-        // Cleanup
-        let _ = fs::remove_file(&state_path);
+        let mut specs: Vec<String> = (1..=7).map(|d| format!("alt-{d}")).collect();
+        specs.extend(["tab", "btab", "shift-btab", "shift-tab"].map(String::from));
+        for spec in specs {
+            let key = parse_key(&spec).expect("known key spec parses");
+            let chain = keymap
+                .get(&key)
+                .unwrap_or_else(|| panic!("{spec} not bound"));
+            assert_eq!(chain.len(), 1, "{spec} should bind a single action");
+            assert!(
+                matches!(chain[0], Action::Custom(_)),
+                "{spec} should bind a native custom action, got {:?}",
+                chain[0]
+            );
+        }
     }
 
     #[test]

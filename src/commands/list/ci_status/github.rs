@@ -301,8 +301,7 @@ impl GitHubPrInfo {
     /// treatment [`detect_github`] produces per branch. PR rows have no local
     /// checkout to diff against, so the result is never marked stale.
     ///
-    /// Only the `--prs` picker calls this, and the picker is unix-only.
-    #[cfg(unix)]
+    /// Only the `--prs` picker calls this.
     pub(crate) fn open_pr_status(&self) -> PrStatus {
         let ci_status = if self.merge_state_status.as_deref() == Some("DIRTY") {
             CiStatus::Conflicts
@@ -392,7 +391,6 @@ mod tests {
 
     /// A `DIRTY` merge state (merge conflicts) reports `Conflicts` regardless of
     /// the check rollup — the `--prs` picker's CI column treatment.
-    #[cfg(unix)]
     #[test]
     fn open_pr_status_dirty_merge_state_reports_conflicts() {
         let pr = GitHubPrInfo {

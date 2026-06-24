@@ -460,7 +460,6 @@ fn worktree_branch_set(worktrees: &[WorktreeInfo]) -> HashSet<&str> {
 /// The handler receives pre-rendered strings so it doesn't need to share the
 /// layout across threads (`LayoutConfig` is `!Sync` via an interior
 /// `Cell<&'static str>`).
-#[cfg_attr(not(unix), allow(dead_code))]
 pub trait PickerProgressHandler: Send + Sync {
     /// Fired once after items are initialized and layout is computed, but
     /// before any task results arrive. `rendered` is one entry per item,
@@ -512,7 +511,6 @@ pub trait PickerProgressHandler: Send + Sync {
 }
 
 /// Controls how show flags (branches/remotes/full) are determined in [`collect`].
-#[cfg_attr(not(unix), allow(dead_code))]
 pub enum ShowConfig {
     /// Flags already resolved by the caller (used by the picker).
     Resolved {
