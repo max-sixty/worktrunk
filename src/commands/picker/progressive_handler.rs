@@ -33,6 +33,7 @@
 //!   workers' local deques during drain.
 
 use std::collections::HashSet;
+use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -164,6 +165,22 @@ impl PickerProgressHandler for PickerHandler {
             .unwrap_or_default();
         let summaries_enabled = self.llm_command.is_some();
 
+        // Parent of the primary worktree — stripped from each row's matcher path
+        // (below) so the fuzzy matcher indexes only the distinguishing tail
+        // (`worktrunk.skim-features`), not the `~/workspace/` prefix every sibling
+        // worktree shares. Worktrunk's convention is flat siblings under one
+        // parent, so this is that parent. Computed once; a worktree living outside
+        // it keeps its full path via the `strip_prefix` fallback. Cheap and
+        // network-free here — `primary_worktree()` reads the already-warmed
+        // `repo_path()` / worktree-list caches.
+        let path_base = self
+            .orchestrator
+            .repo()
+            .primary_worktree()
+            .ok()
+            .flatten()
+            .and_then(|p| p.parent().map(Path::to_path_buf));
+
         // Header row — non-selectable via `header_lines(1)` on the options.
         // In `--prs` mode it shows a dim "loading open PRs…" line (in place of
         // the column labels) until the forge call's rows land — wording mirrors
@@ -184,9 +201,21 @@ impl PickerProgressHandler for PickerHandler {
         for (item, rendered_line) in items.into_iter().zip(rendered) {
             let branch_name = item.branch_name().to_string();
             let has_upstream = upstream_branches.contains(&branch_name);
+            // The *distinct* path (leaf relative to the shared worktree parent),
+            // not the absolute path — see `path_base`. This feeds only the
+            // matcher's `search_text`; the rendered Path column is a separate
+            // field and is untouched.
             let path_str = item
                 .worktree_path()
-                .map(|p| p.to_string_lossy().into_owned())
+                .map(|p| {
+                    let p = p.as_path();
+                    path_base
+                        .as_deref()
+                        .and_then(|base| p.strip_prefix(base).ok())
+                        .unwrap_or(p)
+                        .to_string_lossy()
+                        .into_owned()
+                })
                 .unwrap_or_default();
             // `search_text` is what the matcher sees — fuzzy ranks stay
             // stable across progressive updates because this field only
@@ -473,6 +502,58 @@ mod tests {
         // Branch name stays searchable alongside the folded-in glyph.
         assert!(text(1).contains("localbr"));
         assert!(text(2).contains("origin/remotebr"));
+    }
+
+    /// `on_skeleton` strips the shared primary-worktree parent from each row's
+    /// matcher `search_text`, so the fuzzy matcher indexes the distinguishing
+    /// leaf (`repo.feat`) rather than the absolute prefix every sibling worktree
+    /// carries. Uses a real `git worktree add` path so the strip runs against the
+    /// same canonicalization production sees (`primary_worktree()` vs the
+    /// list-worktrees path); a divergence would surface here as a retained
+    /// absolute path. A worktree outside the shared parent keeps its full path
+    /// via the `strip_prefix` fallback.
+    #[test]
+    fn search_text_strips_shared_worktree_parent() {
+        use crate::commands::list::model::{ItemKind, WorktreeData};
+
+        let (handler, mut test, rx) = make_handler();
+        // A genuine sibling worktree at `{temp}/repo.feat`; its leaf is `repo.feat`.
+        let inside_path = test.add_worktree("feat");
+        let outside_path = std::path::PathBuf::from("/nonexistent-root/external-wt");
+
+        let worktree_item = |branch: &str, path: &Path| {
+            let mut item = ListItem::new_branch("abc".into(), branch.into());
+            item.kind = ItemKind::Worktree(Box::new(WorktreeData {
+                path: path.to_path_buf(),
+                ..Default::default()
+            }));
+            item
+        };
+
+        handler.on_skeleton(
+            vec![
+                worktree_item("inside", &inside_path),
+                worktree_item("outside", &outside_path),
+            ],
+            vec!["skel-inside".into(), "skel-outside".into()],
+            header("hdr"),
+            grid(),
+        );
+
+        let received = rx.recv().expect("skeleton batch");
+        let text = |i: usize| received[i].text().into_owned();
+
+        // Inside the shared parent: only the leaf is indexed (gutter `+` for a
+        // non-current linked worktree). The absolute prefix is gone.
+        assert_eq!(text(1), "inside repo.feat +", "leaf only: {:?}", text(1));
+
+        // Outside the shared parent: the full path is retained (fallback).
+        assert_eq!(
+            text(2),
+            "outside /nonexistent-root/external-wt +",
+            "out-of-tree path kept whole: {:?}",
+            text(2)
+        );
     }
 
     /// Locks the gutter-sigil filtering contract against skim's default engine —

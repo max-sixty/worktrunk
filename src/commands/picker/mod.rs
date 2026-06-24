@@ -665,6 +665,26 @@ pub fn handle_picker(
     let options = SkimOptionsBuilder::default()
         .height("90%".to_string())
         .reverse(true)
+        // Rank matches by a row's *distinguishing* tail, not the shared
+        // `~/workspace/` prefix every worktree path carries. `last_match` makes
+        // the matcher prefer the query's rightmost occurrence, and front-loading
+        // `PathName` in the tiebreak ranks leaf-segment matches (at/after the
+        // last `/`) above parent-directory ones — so `feature/auth` ranks on
+        // `auth`, and the worktree folder name ranks on its tail. This is skim's
+        // `Path` scheme spelled out as its two underlying knobs: a
+        // `.scheme(MatchScheme::Path)` call would also expand here (the builder's
+        // `build()` runs `SkimOptions::build`, which expands the scheme — unlike
+        // the clap-only `scrollbar` default), but it injects a duplicate `Score`
+        // criterion, so setting the knobs directly is the same effect without the
+        // artifact. (Default tiebreak is `[Score, Begin, End]`.) Paired with the
+        // distinct-path `search_text` built in `progressive_handler::on_skeleton`.
+        .last_match(true)
+        .tiebreak(vec![
+            RankCriteria::Score,
+            RankCriteria::PathName,
+            RankCriteria::Begin,
+            RankCriteria::End,
+        ])
         // Fill the whole selected row with the `current` background (set via
         // `current_bg` in `.color(...)` below). skim 4.x applies the current-row
         // style at the line level only when this is on; without it the selection
