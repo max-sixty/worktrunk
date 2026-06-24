@@ -9,10 +9,12 @@ Status: proposal (no production code). This answers two questions about the
 
 ## Summary of recommendations
 
-- **Built-in shortcuts.** Add `ctrl-r` to reload the worktree list (pure
-  worktrunk, no OS dependency). Add `alt-y` (copy branch) and `ctrl-o` (open the
+- **Built-in shortcuts.** Add `alt-l` to reload the worktree list (pure
+  worktrunk, no OS dependency). Add `alt-y` (copy branch) and `alt-o` (open the
   row's PR/MR URL) once a small cross-platform clipboard/open helper exists;
-  worktrunk has none today, and that helper is the real cost, not the binds.
+  worktrunk has none today, and that helper is the real cost, not the binds. All
+  three sit on `alt+`, with the existing action binds (`alt-c`, `alt-r`, `alt-p`,
+  `alt-1`…`7`) — see "Key convention".
 - **Custom shortcuts.** Worth building, in a tightly scoped form:
   **user-config only**, under `[switch.picker.shortcuts]`, one key to one
   template, expanded against the selected row and run in the background while
@@ -108,16 +110,23 @@ Renaming and relocating are deliberately excluded: they need planning and
 confirmation that doesn't fit a single keystroke, and `wt step relocate` already
 covers them.
 
-### Key assignments and collisions
+### Key convention
 
-Taken: Enter, `alt-c`, `alt-r`, `alt-p`, `alt-1`…`alt-7`, `tab`/`shift-tab`,
-`ctrl-u`/`ctrl-d`. Bare digits are reserved for the query. Free and mnemonic:
+Discrete actions live on `alt+`. The existing action binds already follow this
+(`alt-c` create, `alt-r` remove, `alt-p` toggle preview, `alt-1`…`7` tabs), so
+new actions join them rather than reaching for `ctrl+`. The remaining keys are
+navigation, not actions, and keep their conventional bindings: `Enter` accepts
+(switches), `tab` / `shift-tab` cycle the preview tabs, and `ctrl-u` / `ctrl-d`
+scroll the preview half a page (the vim/less convention). Bare digits `1`-`7`
+stay reserved for the query.
+
+So the new built-ins are `alt+`:
 
 | Action | Key | Notes |
 |--------|-----|-------|
-| Copy branch name | `alt-y` | "yank"; `ctrl-y` is free too |
-| Open PR/MR URL | `ctrl-o` | no-op when the row has no URL |
-| Reload list | `ctrl-r` | distinct from `alt-r` (remove) |
+| Copy branch name | `alt-y` | "yank" |
+| Open PR/MR URL | `alt-o` | no-op when the row has no URL |
+| Reload list | `alt-l` | "reload"; `alt-r` is taken (remove) |
 
 ### The cost: worktrunk has no clipboard or open abstraction
 
@@ -130,7 +139,7 @@ low-friction first win.
 Two ways to deliver copy and open:
 
 - **Build the helper.** A ~30-line `clipboard_copy(text)` / `open_url(url)`
-  module dispatching on `cfg!(target_os = ...)`. Then `alt-y` and `ctrl-o` are
+  module dispatching on `cfg!(target_os = ...)`. Then `alt-y` and `alt-o` are
   real built-ins.
 - **Ship them as default custom shortcuts** (Part 2), templates like
   `pbcopy <<< {{ branch }}` and `open {{ pr_url }}`. Zero new Rust, but not
@@ -141,7 +150,7 @@ open on the same helper. Reload ships independently and first.
 
 ### Implementing reload
 
-`ctrl-r:reload(refresh)` routes `refresh` into `PickerCollector::invoke`, which
+`alt-l:reload(refresh)` routes `refresh` into `PickerCollector::invoke`, which
 re-runs `collect::collect` against a fresh `Repository` and streams the new item
 list back, the same shape as the `alt-r` removal path. This is more than a
 one-liner: the startup flow builds the collect pipeline once and the handler
@@ -173,7 +182,7 @@ alt-d = "git -C {{ worktree_path }} difftool {{ default_branch }}"
 ```
 
 The keys avoid the built-ins from Part 1; a shortcut on a key that's already a
-built-in (or `alt-y` / `ctrl-o` from Part 1) is rejected at load (see "Key
+built-in (or `alt-y` / `alt-o` from Part 1) is rejected at load (see "Key
 validation").
 
 The Rust shape mirrors `[aliases]` (`BTreeMap<String, CommandConfig>`) and
@@ -185,7 +194,7 @@ The Rust shape mirrors `[aliases]` (`BTreeMap<String, CommandConfig>`) and
 pub shortcuts: BTreeMap<String, String>,
 ```
 
-Keys are skim key names (`alt-y`, `ctrl-o`). Values are minijinja templates,
+Keys are skim key names (`alt-y`, `alt-o`). Values are minijinja templates,
 the same dialect as aliases and hooks. Start with a bare `key = "template"` map
 rather than an array of tables with descriptions; it matches the existing
 precedent and leaves room to grow if the controls line later needs labels.
@@ -362,7 +371,7 @@ The behavior deliberately does **not** cover:
 - **Mutating the worktree set.** A shortcut that removes or creates a worktree
   leaves the picker's list stale: route (A) re-streams the list it already has,
   and there's no bespoke list-surgery like `alt-r` performs. The list refreshes
-  on the next `ctrl-r` reload. No runtime guard intercepts this: the command is
+  on the next `alt-l` reload. No runtime guard intercepts this: the command is
   the user's own, the same trust as a `[aliases]` entry that worktrunk already
   runs unguarded, so detecting and blocking "looks like a mutation" would be
   inconsistent special-casing. Removal has a dedicated key (`alt-r`); a custom
@@ -383,17 +392,17 @@ The behavior deliberately does **not** cover:
 ### Key validation
 
 At config load, reject a shortcut key that collides with a built-in bind
-(`enter`, `alt-c`, `alt-r`, `alt-p`, `alt-1`…`alt-7`, `tab`, `shift-tab`,
-`ctrl-u`, `ctrl-d`) or with a bare digit (which must reach the query). A
-collision is a config error naming the conflict, not a last-writer-wins
-surprise.
+(`enter`, `alt-c`, `alt-r`, `alt-p`, `alt-y`, `alt-o`, `alt-l`, `alt-1`…`alt-7`,
+`tab`, `shift-tab`, `ctrl-u`, `ctrl-d`) or with a bare digit (which must reach
+the query). A collision is a config error naming the conflict, not a
+last-writer-wins surprise.
 
 ## Phasing
 
-1. **`ctrl-r` reload.** Pure worktrunk, no OS dependency, immediately useful in
+1. **`alt-l` reload.** Pure worktrunk, no OS dependency, immediately useful in
    multi-agent and external-change workflows. Exercises the `reload`-verb plumbing
    that custom shortcuts reuse.
-2. **Clipboard/open helper + `alt-y` / `ctrl-o` built-ins.** Small
+2. **Clipboard/open helper + `alt-y` / `alt-o` built-ins.** Small
    cross-platform module; the two highest-frequency row actions.
 3. **Custom shortcuts.** `[switch.picker.shortcuts]`, `ValidationScope::PickerShortcut`,
    the `run` verb, key validation. Ship copy/open as documented examples so the
