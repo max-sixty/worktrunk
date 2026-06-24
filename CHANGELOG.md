@@ -14,6 +14,8 @@
 
 - **"Still waiting" status for slow commit-message generation**: A configured `commit.generation` command captures stdout, so a slow or hung LLM previously showed nothing while `wt step commit`/`squash` waited. After a 2s delay worktrunk now shows a dim, in-place `○ Waiting for the commit message (Ns)` status, escalating at 10s to reveal the exact shell-escaped invocation in a gutter beneath it; the block clears on completion, mirroring `wt list`'s stall footer. ([#3178](https://github.com/max-sixty/worktrunk/pull/3178))
 
+- **"Still waiting" status extended to more slow commands**: The same waiting status now covers three more foreground commands that were silent while a captured subprocess ran — the `wt config show --full` commit-generation self-test, the `wt switch pr:`/`mr:` host lookup, and the `wt config show --full` version check. The version check no longer caps its fetch at an aggressive 5s, instead showing the status while a slow-but-working request completes (with a generous ceiling so a non-interactive run can't hang). ([#3183](https://github.com/max-sixty/worktrunk/pull/3183))
+
 ### Internal
 
 - **Picker migrated to skim 4.8 (ratatui/crossterm)**: The `wt switch` picker moved off skim 0.20.5 (tuikit) to skim 4.8.0, dropping the vendored `vendor/skim-tuikit/` patch tree (both patches it carried are now native or upstream). Two cosmetic picker changes come with it: the match counter no longer overlaps the preview-tab header, and the HEAD column shows the full short-SHA. ([#3137](https://github.com/max-sixty/worktrunk/pull/3137))
