@@ -1,20 +1,15 @@
 use crate::common::{
-    TestRepo, make_snapshot_cmd, make_snapshot_cmd_with_global_flags, repo, repo_with_remote,
-    resolve_git_common_dir, set_temp_home_env, setup_snapshot_settings, wait_for_file,
-    wait_for_file_content, wait_for_file_count, wait_for_file_lines, wait_for_valid_json,
+    SLEEP_FOR_ABSENCE_CHECK, TestRepo, make_snapshot_cmd, make_snapshot_cmd_with_global_flags,
+    repo, repo_with_remote, resolve_git_common_dir, set_temp_home_env, setup_snapshot_settings,
+    wait_for_file, wait_for_file_content, wait_for_file_count, wait_for_file_lines,
+    wait_for_valid_json,
 };
 use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
 use std::thread;
-use std::time::Duration; // Used for SLEEP_FOR_ABSENCE_CHECK
 use tempfile::TempDir;
-
-/// Wait duration when checking file absence (testing command did NOT run).
-/// Must be long enough that a background command would have started and created
-/// the file if it were going to. 500ms gives CI systems breathing room.
-const SLEEP_FOR_ABSENCE_CHECK: Duration = Duration::from_millis(500);
 
 /// Helper to create snapshot with normalized paths and SHAs
 ///

@@ -835,6 +835,14 @@ pub fn handle_picker(
         // scrolling left. The picker doesn't reveal matches by scrolling anyway —
         // `display()` ignores the match context and renders its own ANSI.
         .no_hscroll(true)
+        // Draw a scrollbar thumb on the item list when it overflows the view.
+        // skim's `▐` default is the clap `default_value`, gated on skim's `cli`
+        // feature; with `default-features = false` the library `Default` for
+        // this `String` field is empty, which skim reads as "no scrollbar".
+        // Setting it explicitly restores the thumb — without it a long worktree
+        // (or `--prs`) list scrolls with no position cue, made worse by
+        // `no_info(true)` below hiding the matched/total counter.
+        .scrollbar("▐".to_string())
         // First line (header) non-selectable. `PICKER_HEADER_ROWS` mirrors this
         // count so the alt-r cursor-reposition math stays in sync — keep them one.
         .header_lines(PICKER_HEADER_ROWS)
