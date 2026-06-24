@@ -68,9 +68,11 @@ pub(super) fn detect_github(
             "--limit",
             &MAX_PRS_TO_FETCH.to_string(),
             "--json",
-            // title,body ride this existing call so the picker's `pr` preview
-            // pane can show them — no extra round-trip.
-            "number,title,body,headRefOid,mergeStateStatus,statusCheckRollup,url,headRepositoryOwner,reviewDecision,isDraft",
+            // title,body and the comments array ride this existing call so the
+            // picker's `pr` preview pane can show them — no extra round-trip.
+            // `gh pr list` has no comment-count field, so we request the array and
+            // count it; for a `--head <branch>` call that's typically one PR.
+            "number,title,body,comments,headRefOid,mergeStateStatus,statusCheckRollup,url,headRepositoryOwner,reviewDecision,isDraft",
         ])
         .current_dir(&repo_root)
         .run()
@@ -135,6 +137,7 @@ pub(super) fn detect_github(
         review_state: pr_info.review_state(),
         title: pr_info.title.clone(),
         body: pr_info.body.clone(),
+        comment_count: pr_info.comment_count(),
     })
 }
 
@@ -205,6 +208,7 @@ pub(super) fn detect_github_commit_checks(
         review_state: None,
         title: None,
         body: None,
+        comment_count: None,
     })
 }
 
@@ -221,6 +225,13 @@ pub(crate) struct GitHubPrInfo {
     pub title: Option<String>,
     /// PR description; shown in the `pr` preview pane. Rides this call.
     pub body: Option<String>,
+    /// Conversation comments on the PR. Requested only on the worktree-row
+    /// [`detect_github`] call to count them for the `pr` pane; the `--prs` call
+    /// omits `comments` to keep its 50-PR payload light, so this stays empty
+    /// there (`#[serde(default)]`). Only the count is needed, so each element
+    /// deserializes as [`serde::de::IgnoredAny`] rather than a comment struct.
+    #[serde(default)]
+    pub comments: Vec<serde::de::IgnoredAny>,
     #[serde(rename = "headRefOid")]
     pub head_ref_oid: Option<String>,
     #[serde(rename = "mergeStateStatus")]
@@ -296,6 +307,13 @@ impl GitHubPrInfo {
         }
     }
 
+    /// The conversation-comment count for [`PrStatus::comment_count`], or `None`
+    /// when there are none — zero is flattened so a PR with no comments shows
+    /// nothing. The `--prs` call omits `comments`, so this is `None` there.
+    pub fn comment_count(&self) -> Option<u32> {
+        u32::try_from(self.comments.len()).ok().filter(|&n| n > 0)
+    }
+
     /// Build a [`PrStatus`] from this open-PR entry, for callers that already
     /// hold the open-PR list (the `--prs` picker) and want the same CI-column
     /// treatment [`detect_github`] produces per branch. PR rows have no local
@@ -324,6 +342,9 @@ impl GitHubPrInfo {
             // (drop them here to match, or have both read from the status).
             title: self.title.clone(),
             body: self.body.clone(),
+            // The `--prs` call omits `comments`, and the `--prs` rows have their
+            // own background-fetched comments tab, so this is always `None` here.
+            comment_count: self.comment_count(),
         }
     }
 }
@@ -407,6 +428,7 @@ mod tests {
             head_repository_owner: None,
             title: None,
             body: None,
+            comments: Vec::new(),
             review_decision: None,
             is_draft: None,
         };
@@ -425,6 +447,7 @@ mod tests {
             head_repository_owner: None,
             title: None,
             body: None,
+            comments: Vec::new(),
             review_decision: None,
             is_draft: None,
         };
@@ -440,6 +463,7 @@ mod tests {
             head_repository_owner: None,
             title: None,
             body: None,
+            comments: Vec::new(),
             review_decision: None,
             is_draft: None,
         };
@@ -460,6 +484,7 @@ mod tests {
                 head_repository_owner: None,
                 title: None,
                 body: None,
+                comments: Vec::new(),
                 review_decision: None,
                 is_draft: None,
             };
@@ -480,6 +505,7 @@ mod tests {
             head_repository_owner: None,
             title: None,
             body: None,
+            comments: Vec::new(),
             review_decision: None,
             is_draft: None,
         };
@@ -500,6 +526,7 @@ mod tests {
                 head_repository_owner: None,
                 title: None,
                 body: None,
+                comments: Vec::new(),
                 review_decision: None,
                 is_draft: None,
             };
@@ -521,6 +548,7 @@ mod tests {
                 head_repository_owner: None,
                 title: None,
                 body: None,
+                comments: Vec::new(),
                 review_decision: None,
                 is_draft: None,
             };
@@ -541,6 +569,7 @@ mod tests {
             head_repository_owner: None,
             title: None,
             body: None,
+            comments: Vec::new(),
             review_decision: None,
             is_draft: None,
         };
@@ -558,6 +587,7 @@ mod tests {
             head_repository_owner: None,
             title: None,
             body: None,
+            comments: Vec::new(),
             review_decision: review_decision.map(Into::into),
             is_draft,
         };
@@ -582,6 +612,31 @@ mod tests {
             pr(Some("APPROVED"), Some(true)).review_state(),
             Some(ReviewState::Draft)
         );
+    }
+
+    #[test]
+    fn test_github_pr_info_comment_count() {
+        // The count comes from the length of the requested `comments` array.
+        let with = |n: usize| GitHubPrInfo {
+            number: None,
+            head_ref_oid: None,
+            merge_state_status: None,
+            status_check_rollup: None,
+            url: None,
+            head_repository_owner: None,
+            title: None,
+            body: None,
+            comments: std::iter::repeat_with(|| serde::de::IgnoredAny)
+                .take(n)
+                .collect(),
+            review_decision: None,
+            is_draft: None,
+        };
+
+        // Zero comments flatten to None so a PR with no comments shows nothing.
+        assert_eq!(with(0).comment_count(), None);
+        assert_eq!(with(1).comment_count(), Some(1));
+        assert_eq!(with(4).comment_count(), Some(4));
     }
 
     #[test]

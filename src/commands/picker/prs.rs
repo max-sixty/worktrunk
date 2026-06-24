@@ -551,6 +551,7 @@ fn gitlab_mr_status(
         // (which feeds only the CI column), so they stay absent here.
         title: None,
         body: None,
+        comment_count: None,
     }
 }
 
@@ -1166,6 +1167,7 @@ mod tests {
                 review_state: None,
                 title: None,
                 body: None,
+                comment_count: None,
             }),
         }
     }
