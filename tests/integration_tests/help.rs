@@ -156,11 +156,12 @@ fn test_help_goes_to_stdout() {
 }
 
 /// When stdout is piped, help must be plain text — no ANSI escapes leaking into
-/// `wt --help > file.txt` or `wt --help | less`. Uses the raw binary so
-/// `CLICOLOR_FORCE` (set by `wt_command`) doesn't override color detection.
+/// `wt --help > file.txt` or `wt --help | less`. Built from `wt_command()` for
+/// HOME/config isolation, then clears the `CLICOLOR_FORCE` it sets so color
+/// detection sees a non-tty (piped) stdout.
 #[test]
 fn test_help_strips_ansi_when_piped() {
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_wt"))
+    let output = wt_command()
         .arg("--help")
         .env_remove("CLICOLOR_FORCE")
         .env("NO_COLOR", "1")

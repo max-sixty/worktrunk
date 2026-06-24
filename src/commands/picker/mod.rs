@@ -91,10 +91,12 @@
 mod items;
 mod log_formatter;
 mod pager;
+mod pr_pane;
 mod preview;
 pub(crate) mod preview_cache;
 mod preview_orchestrator;
 mod progressive_handler;
+mod prs;
 mod summary;
 
 use std::cell::RefCell;
@@ -469,6 +471,7 @@ fn approved_removal_plan(
 pub fn handle_picker(
     cli_branches: bool,
     cli_remotes: bool,
+    cli_prs: bool,
     change_dir_flag: Option<bool>,
     format: SwitchFormat,
 ) -> anyhow::Result<()> {
@@ -491,6 +494,9 @@ pub fn handle_picker(
     let change_dir = change_dir_flag.unwrap_or_else(|| config.switch.cd());
     let show_branches = cli_branches || config.list.branches();
     let show_remotes = cli_remotes || config.list.remotes();
+    // Flag-only: listing PRs always reaches the forge, so it stays opt-in
+    // per invocation rather than defaulting on via config.
+    let show_prs = cli_prs;
     worktrunk::trace::instant("Picker config resolved");
 
     // Initialize preview mode state file (auto-cleanup on drop)
@@ -541,17 +547,17 @@ pub fn handle_picker(
         orchestrator.spawn_preview(Arc::new(item), PreviewMode::WorkingTree, dims);
     }
 
-    // Skip expensive operations — BranchDiff walks history per item,
-    // CiStatus hits the network. Both are slow enough that waiting for
-    // them adds perceptible cost for a modest column-population win.
-    // Cached CI statuses still appear: when the CiStatus task is skipped
-    // under a progressive handler, collect fills rows from the CI cache
-    // (one local file read per branch, no fetch), so PR/MR numbers from
-    // recent `wt list --full` or statusline runs show in the picker.
+    // Skip BranchDiff — it walks history per item for a column the picker
+    // doesn't surface. Keep the CiStatus task: the picker primes its CI cells
+    // from the local cache so the first frame shows cached status (see
+    // `populate_from_cache`), then this task fetches live and streams each row's
+    // status in behind the frame — the same 30–60s-TTL cache plus live fetch as
+    // `wt list --full`. The picker's lifetime is bounded by the user, so a slow forge call
+    // never blocks anything (see the "Network Access" notes in CLAUDE.md). The
+    // `pr` preview tab reads the same live status. `--prs` rows carry their own
+    // number from the explicit `--prs` forge call.
     let skip_tasks: std::collections::HashSet<collect::TaskKind> =
-        [collect::TaskKind::BranchDiff, collect::TaskKind::CiStatus]
-            .into_iter()
-            .collect();
+        [collect::TaskKind::BranchDiff].into_iter().collect();
 
     // Per-task command timeout (bounds any single git invocation) from
     // shared `[list]` config. Still applies in progressive mode.
@@ -566,12 +572,15 @@ pub fn handle_picker(
     // ~50/50; Down gives the list the full width. Passed to `collect` so
     // the skeleton layout matches the picker's actual render width.
     // The picker requires a TTY, so detection essentially always succeeds;
-    // the unlimited-width fallback just keeps the math total.
+    // the unlimited-width fallback just keeps the math total. Skim
+    // prefixes every line with a 2-column cursor gutter ("> "), so rows that
+    // use the full width would otherwise spill into its ".." truncation.
     let terminal_width = crate::display::terminal_width().unwrap_or(usize::MAX);
     let skim_list_width = match state.initial_layout {
         PreviewLayout::Right => terminal_width / 2,
         PreviewLayout::Down => terminal_width,
-    };
+    }
+    .saturating_sub(2);
 
     // Estimate item count for the preview window spec (only the Down
     // layout depends on it). Every row over MAX_VISIBLE_ITEMS is a no-op
@@ -677,11 +686,11 @@ pub fn handle_picker(
         .color("fg:-1,bg:-1,header:-1,matched:108,current:237,current_bg:251,current_match:108")
         .cmd_collector(Rc::new(RefCell::new(collector)) as Rc<RefCell<dyn CommandCollector>>)
         .bind(vec![
-            // Preview-tab switching. Bare digits 1-5 are intentionally NOT
+            // Preview-tab switching. Bare digits 1-6 are intentionally NOT
             // bound — they flow to the query input so a number can be typed
             // (a PR number, or digits within a branch name). Two ways to
             // switch tabs remain:
-            //   * alt-1..alt-5 jump straight to a tab. skim 4.x parses
+            //   * alt-1..alt-6 jump straight to a tab. skim 4.x parses
             //     `alt-<digit>` natively via crossterm; an unparsable bind is
             //     just logged and dropped.
             //   * tab / shift-tab cycle forward / backward (below).
@@ -705,8 +714,12 @@ pub fn handle_picker(
                 "alt-5:execute-silent(echo 5 > {0})+refresh-preview",
                 state_path_str
             ),
+            format!(
+                "alt-6:execute-silent(echo 6 > {0})+refresh-preview",
+                state_path_str
+            ),
             // Cycle tabs with tab / shift-tab. The state file holds the current
-            // digit; `tr` rotates it (1→2→3→4→5→1 forward, the reverse for
+            // digit; `tr` rotates it (1→2→3→4→5→6→1 forward, the reverse for
             // btab) with wraparound, via a temp file + rename so the read and
             // write don't race on one path. Two hard constraints shape this:
             //   * Paren-free — skim 4.x parses an `execute-silent(…)` body by
@@ -733,19 +746,19 @@ pub fn handle_picker(
             // report (`btab` / `shift-btab` / `shift-tab`) so the override holds
             // regardless of terminal. (Plain Tab is unambiguous — `Tab+NONE`.)
             format!(
-                "tab:execute-silent(tr 12345 23451 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
+                "tab:execute-silent(tr 123456 234561 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
                 state_path_str
             ),
             format!(
-                "btab:execute-silent(tr 12345 51234 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
+                "btab:execute-silent(tr 123456 612345 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
                 state_path_str
             ),
             format!(
-                "shift-btab:execute-silent(tr 12345 51234 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
+                "shift-btab:execute-silent(tr 123456 612345 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
                 state_path_str
             ),
             format!(
-                "shift-tab:execute-silent(tr 12345 51234 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
+                "shift-tab:execute-silent(tr 123456 612345 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
                 state_path_str
             ),
             // Create new worktree with query as branch name (alt-c for "create")
@@ -776,11 +789,22 @@ pub fn handle_picker(
     // `Skim::run_with` returns and stderr is safe again).
     let stashed_warnings: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
 
+    // Column-geometry handoff: the collect thread fills it at skeleton time,
+    // the `--prs` thread reads it to align PR rows with the worktree rows.
+    let grid_slot = Arc::new(prs::GridSlot::new());
+
     // skim 4.x repaints on demand, so the collect handler needs a handle to
     // skim's event loop to surface in-place row updates. The picker fills this
     // once `Skim::init_tui` has run (inside `run_skim`); until then the handler
     // simply skips its render pokes. See `progressive_handler` module docstring.
     let render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>> = Arc::new(OnceLock::new());
+
+    // `--prs` loading flag, shared between the header (shows a "loading…"
+    // marker while true) and the `--prs` thread (clears it when the forge call
+    // resolves). `Some` exactly when that thread spawns below, so the marker
+    // tracks its lifetime.
+    let prs_loading: Option<Arc<AtomicBool>> =
+        (show_prs && !is_preview_bench).then(|| Arc::new(AtomicBool::new(true)));
 
     // Concrete type so the dry-run dump can read the handler's rendered rows.
     let handler: Arc<progressive_handler::PickerHandler> =
@@ -790,6 +814,7 @@ pub fn handle_picker(
             last_render_poke: Mutex::new(Instant::now()),
             shared_items: Arc::clone(&shared_items),
             rendered_slots: std::sync::OnceLock::new(),
+            pr_status_slots: std::sync::OnceLock::new(),
             preview_cache: Arc::clone(&preview_cache),
             orchestrator: Arc::clone(&orchestrator),
             preview_dims,
@@ -797,6 +822,8 @@ pub fn handle_picker(
             summary_hint,
             stashed_warnings: Arc::clone(&stashed_warnings),
             deferred_items: std::sync::OnceLock::new(),
+            grid_slot: Arc::clone(&grid_slot),
+            prs_loading: prs_loading.clone(),
         });
 
     // Spawn collect on a background thread. The handler holds the only
@@ -828,10 +855,45 @@ pub fn handle_picker(
         .context("Failed to spawn picker-collect thread")?;
     worktrunk::trace::instant("Picker collect spawned");
 
-    // Drop main-thread copies so the bg thread's `tx` clone is the last
-    // sender (its drop is what signals EOF to skim's reader). The dry run keeps
-    // the handler: skim never runs there, so the EOF contract doesn't apply,
-    // and the dump below reads its rendered rows.
+    // PR/MR streaming (`--prs`). One forge call on its own thread that holds
+    // another `tx` clone, so the picker frame paints from local worktree data
+    // immediately and PR rows stream in (~1s) when the call returns. The
+    // clone defers EOF: skim's reader sees end-of-stream only once both this
+    // thread and the collect thread drop their senders. The dry-run runs it
+    // (joined below) so the fetch/render path is exercised headlessly — the only
+    // way it gets coverage, since the interactive picker's skim-abort exit never
+    // flushes a profile. Only the preview-bench skips it: that path measures the
+    // preview workload and must not reach the network.
+    let prs_handle = if let Some(prs_loading) = prs_loading.clone() {
+        let prs_tx = tx.clone();
+        let prs_repo = repo.clone();
+        let prs_warnings = Arc::clone(&stashed_warnings);
+        let prs_grid = Arc::clone(&grid_slot);
+        let prs_render_tx = Arc::clone(&render_tx);
+        Some(
+            std::thread::Builder::new()
+                .name("picker-prs".into())
+                .spawn(move || {
+                    prs::stream_open_prs(
+                        &prs_repo,
+                        skim_list_width,
+                        &prs_tx,
+                        &prs_warnings,
+                        &prs_grid,
+                        &prs_loading,
+                        &prs_render_tx,
+                    );
+                })
+                .context("Failed to spawn picker-prs thread")?,
+        )
+    } else {
+        None
+    };
+
+    // Drop main-thread copies so the bg threads' `tx` clones are the last
+    // senders (their drop is what signals EOF to skim's reader). The dry run
+    // keeps the handler: skim never runs there, so the EOF contract doesn't
+    // apply, and the dump below reads its rendered rows.
     drop(tx);
     let dry_run_handler = is_dry_run.then_some(handler);
 
@@ -845,6 +907,14 @@ pub fn handle_picker(
     if skip_tui {
         drop(rx);
         let _ = bg_handle.join();
+        // Join the `--prs` thread (present only for the dry-run, not the bench)
+        // so its forge fetch and row render run to completion before we dump
+        // and exit — this normal-exit path is what gives the streaming code its
+        // coverage. The PR rows it built went nowhere (`rx` is dropped); the
+        // dump is the worktree-preview cache, unchanged.
+        if let Some(handle) = prs_handle {
+            let _ = handle.join();
+        }
         orchestrator.wait_for_idle();
         if is_dry_run {
             drain_stashed_warnings(&stashed_warnings);
@@ -880,6 +950,10 @@ pub fn handle_picker(
     // are read-only.
     let output = run_skim(options, rx, &render_tx, &state.path);
     drop(bg_handle);
+    // Same rationale as `bg_handle`: don't join — the forge call may still be
+    // in flight, and process exit terminates the thread (its `gh`/`glab`
+    // subprocess is read-only).
+    drop(prs_handle);
 
     // Skim has released the terminal — emit any warnings that collect's bg
     // thread stashed during the run. Late warnings (e.g. drain timeouts)
@@ -1483,12 +1557,16 @@ pub mod tests {
 
     /// Build a `WorktreeSkimItem` from a snapshot `ListItem`.
     fn picker_item(branch_name: &str, item: ListItem) -> Arc<dyn SkimItem> {
+        let pr_status = Arc::new(Mutex::new(item.pr_status.clone()));
         Arc::new(WorktreeSkimItem {
             search_text: branch_name.to_string(),
             rendered: Arc::new(Mutex::new(String::new())),
             branch_name: branch_name.to_string(),
             item: Arc::new(item),
             preview_cache: Arc::new(dashmap::DashMap::new()),
+            has_upstream: false,
+            summaries_enabled: false,
+            pr_status,
         }) as Arc<dyn SkimItem>
     }
 

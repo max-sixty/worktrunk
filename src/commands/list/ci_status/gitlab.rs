@@ -183,9 +183,12 @@ pub(super) fn detect_gitlab(
             ci_status: CiStatus::Error,
             source: CiSource::PullRequest,
             is_stale: mr_entry.sha != local_head,
+            is_priming: false,
             url: mr_entry.web_url.clone(),
             number: Some(PrRef::mr(mr_entry.iid)),
             review_state: mr_entry.review_state(),
+            title: mr_entry.title.clone(),
+            body: mr_entry.description.clone(),
         });
     };
 
@@ -195,9 +198,12 @@ pub(super) fn detect_gitlab(
         ci_status,
         source: CiSource::PullRequest,
         is_stale,
+        is_priming: false,
         url: mr_entry.web_url.clone(),
         number: Some(PrRef::mr(mr_entry.iid)),
         review_state: mr_entry.review_state(),
+        title: mr_entry.title.clone(),
+        body: mr_entry.description.clone(),
     })
 }
 
@@ -263,9 +269,12 @@ pub(super) fn detect_gitlab_pipeline(
         ci_status,
         source: CiSource::Branch,
         is_stale,
+        is_priming: false,
         url: pipeline.web_url.clone(),
         number: None,
         review_state: None,
+        title: None,
+        body: None,
     })
 }
 
@@ -289,6 +298,12 @@ struct GitLabMrListEntry {
     pub web_url: Option<String>,
     /// Draft/WIP flag (absent in older glab versions)
     pub draft: Option<bool>,
+    /// MR title; shown in the picker's `pr` preview pane. Rides this call.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// MR description; rendered as markdown in the `pr` preview pane.
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 impl GitLabMrListEntry {
@@ -399,6 +414,8 @@ mod tests {
             source_project_id: None,
             web_url: None,
             draft,
+            title: None,
+            description: None,
         };
 
         // Draft wins over the approval gap

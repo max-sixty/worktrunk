@@ -1090,7 +1090,7 @@ $ wt config state default-branch set main
 ```"#)]
     Set {
         /// Branch name to set as default
-        #[arg(add = crate::completion::branch_value_completer())]
+        #[arg(add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: String,
     },
 
@@ -1119,7 +1119,7 @@ $ wt config state previous-branch set feature
 ```"#)]
     Set {
         /// Branch name to set as previous
-        #[arg(add = crate::completion::branch_value_completer())]
+        #[arg(add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: String,
     },
 
@@ -1163,7 +1163,7 @@ $ wt config state ci-status clear && wt config state ci-status get
     )]
     Get {
         /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer())]
+        #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
     },
 
@@ -1186,7 +1186,7 @@ $ wt config state ci-status clear --all
 ```"#)]
     Clear {
         /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer(), conflicts_with = "all")]
+        #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch, conflicts_with = "all")]
         branch: Option<String>,
 
         /// Clear all CI status cache
@@ -1212,7 +1212,7 @@ $ wt config state marker get --branch=feature
 ```"#)]
     Get {
         /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer())]
+        #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
     },
 
@@ -1233,7 +1233,7 @@ $ wt config state marker set "✅ ready" --branch=feature
         value: String,
 
         /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer())]
+        #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
     },
 
@@ -1256,7 +1256,7 @@ $ wt config state marker clear --all
 ```"#)]
     Clear {
         /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer(), conflicts_with = "all")]
+        #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch, conflicts_with = "all")]
         branch: Option<String>,
 
         /// Clear all markers
@@ -1457,7 +1457,7 @@ $ wt config state vars get env --branch=feature
         key: String,
 
         /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer())]
+        #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
     },
 
@@ -1475,7 +1475,7 @@ $ wt config state vars list --branch=feature
 ```"#)]
     List {
         /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer())]
+        #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
 
         /// Output format
@@ -1506,7 +1506,7 @@ $ wt config state vars set env=production --branch=main
         assignment: (String, String),
 
         /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer())]
+        #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
     },
 
@@ -1537,7 +1537,7 @@ $ wt config state vars clear env --branch=feature
         all: bool,
 
         /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer())]
+        #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
     },
 }

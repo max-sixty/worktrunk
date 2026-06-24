@@ -63,7 +63,7 @@ Usage: [1m[36mwt config[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
           Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to apply the same level everywhere — including shell completion, which no flag can reach
 
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
@@ -101,7 +101,7 @@ Organizations can deploy a system-wide config file for shared defaults — run 
 [107m [0m [2mworktree-path = [0m[2m[32m".worktrees/{{ branch | sanitize }}"[0m
 [107m [0m 
 [107m [0m [2m[36m[commit.generation][0m
-[107m [0m [2mcommand = [0m[2m[32m"MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
+[107m [0m [2mcommand = [0m[2m[32m"MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --safe-mode --setting-sources='user' --system-prompt=''"[0m
 
 [1mProject config[0m — shared team settings:
 
@@ -176,7 +176,7 @@ Generate commit messages automatically during merge. Requires an external CLI to
 [32mClaude Code[0m
 
 [107m [0m [2m[36m[commit.generation][0m
-[107m [0m [2mcommand = [0m[2m[32m"MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
+[107m [0m [2mcommand = [0m[2m[32m"MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --safe-mode --setting-sources='user' --system-prompt=''"[0m
 
 [32mCodex[0m
 
@@ -575,19 +575,21 @@ Override the LLM command in CI to use a mock:
 
 [32mOther environment variables[0m
 
-             Variable                                                      Purpose                                         
- ───────────────────────────────── ─────────────────────────────────────────────────────────────────────────────────────── 
- [2mWORKTRUNK_BIN[0m                     Override binary path for shell wrappers; useful for testing dev builds                  
- [2mWORKTRUNK_CONFIG_PATH[0m             Override user config file location                                                      
- [2mWORKTRUNK_SYSTEM_CONFIG_PATH[0m      Override system config file location                                                    
- [2mWORKTRUNK_PROJECT_CONFIG_PATH[0m     Override project config file location (defaults to [2m.config/wt.toml[0m)                     
- [2mXDG_CONFIG_DIRS[0m                   Colon-separated system config directories (default: [2m/etc/xdg[0m)                           
- [2mWORKTRUNK_DIRECTIVE_CD_FILE[0m       Internal: set by shell wrappers. wt writes a raw path; the wrapper [2mcd[0ms to it            
- [2mWORKTRUNK_DIRECTIVE_EXEC_FILE[0m     Internal: set by shell wrappers. wt writes shell commands; the wrapper sources the file 
- [2mWORKTRUNK_SHELL[0m                   Internal: set by shell wrappers to indicate shell type (e.g., [2mpowershell[0m)               
- [2mWORKTRUNK_MAX_CONCURRENT_COMMANDS[0m Max parallel git commands (default: 32). Lower if hitting file descriptor limits.       
- [2mNO_COLOR[0m                          Disable colored output (standard)                                                       
- [2mCLICOLOR_FORCE[0m                    Force colored output even when not a TTY                                                
+             Variable                                                                   Purpose                                                      
+ ───────────────────────────────── ───────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
+ [2mWORKTRUNK_BIN[0m                     Override binary path for shell wrappers; useful for testing dev builds                                            
+ [2mWORKTRUNK_CONFIG_PATH[0m             Override user config file location                                                                                
+ [2mWORKTRUNK_SYSTEM_CONFIG_PATH[0m      Override system config file location                                                                              
+ [2mWORKTRUNK_PROJECT_CONFIG_PATH[0m     Override project config file location (defaults to [2m.config/wt.toml[0m)                                               
+ [2mXDG_CONFIG_DIRS[0m                   Colon-separated system config directories (default: [2m/etc/xdg[0m)                                                     
+ [2mWORKTRUNK_DIRECTIVE_CD_FILE[0m       Internal: set by shell wrappers. wt writes a raw path; the wrapper [2mcd[0ms to it                                      
+ [2mWORKTRUNK_DIRECTIVE_EXEC_FILE[0m     Internal: set by shell wrappers. wt writes shell commands; the wrapper sources the file                           
+ [2mWORKTRUNK_SHELL[0m                   Internal: set by shell wrappers to indicate shell type (e.g., [2mpowershell[0m)                                         
+ [2mWORKTRUNK_MAX_CONCURRENT_COMMANDS[0m Max parallel git commands (default: 32). Lower if hitting file descriptor limits.                                 
+ [2mWORKTRUNK_VERBOSE[0m                 Verbosity level ([2m0[0m/[2m1[0m/[2m2[0m), like [2m-v[0m/[2m-vv[0m but applied everywhere — including shell completion, which no flag can reach 
+ [2mRUST_LOG[0m                          Logging directive (e.g. [2mworktrunk=debug[0m); overrides the verbosity baseline for what reaches stderr                
+ [2mNO_COLOR[0m                          Disable colored output (standard)                                                                                 
+ [2mCLICOLOR_FORCE[0m                    Force colored output even when not a TTY                                                                          
 
 [1m[32mInline config overrides (--config-set)[0m
 

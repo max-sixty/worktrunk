@@ -8,7 +8,7 @@
 //! | ---------------- | --------------------------------------------------- | ----------------- |
 //! | stderr           | `$RUST_LOG` or flag baseline (`Off`/`Info`/`Info`)  | styled with ANSI  |
 //! | `trace.log`      | `-vv` only, excludes `SUBPROCESS_FULL_TARGET`       | plain text        |
-//! | `subprocess.log` | `-vv` only, includes only `SUBPROCESS_FULL_TARGET`  | raw (no prefix)   |
+//! | `subprocess.log` | `-vv` only, includes only `SUBPROCESS_FULL_TARGET`  | raw bodies + `$ cmd … seq=N` headers |
 //!
 //! At `-vv` the stderr layer keeps its Info baseline — `-vv` is a strict
 //! superset of `-v`, with Debug-level records (the noisy ones, including
@@ -30,7 +30,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
 use worktrunk::shell_exec::SUBPROCESS_FULL_TARGET;
-use worktrunk::styling::{eprintln, info_message};
+use worktrunk::styling::{eprintln, format_with_gutter, info_message};
 use worktrunk::trace::WT_TRACE_TARGET;
 use worktrunk::utils::escape_controls;
 
@@ -201,6 +201,7 @@ struct WtTraceFields {
     kind: Option<String>,
     ts: Option<u64>,
     tid: Option<u64>,
+    seq: Option<u64>,
     dur_us: Option<u64>,
     ok: Option<bool>,
     context: Option<String>,
@@ -215,6 +216,7 @@ impl tracing::field::Visit for WtTraceFields {
         match field.name() {
             "ts" => self.ts = Some(value),
             "tid" => self.tid = Some(value),
+            "seq" => self.seq = Some(value),
             "dur_us" => self.dur_us = Some(value),
             _ => {}
         }
@@ -273,28 +275,32 @@ fn format_wt_trace(f: &WtTraceFields) -> String {
 
     match f.kind.as_deref() {
         Some("cmd_completed") => {
+            let seq = f.seq.unwrap_or(0);
             let cmd = f.cmd.as_deref().unwrap_or("");
             let dur_us = f.dur_us.unwrap_or(0);
             let ok = f.ok.unwrap_or(false);
             match &f.context {
                 Some(ctx) => format!(
-                    r#"[wt-trace] ts={ts} tid={tid} context={ctx} cmd="{cmd}" dur_us={dur_us} ok={ok}"#
+                    r#"[wt-trace] ts={ts} tid={tid} seq={seq} context={ctx} cmd="{cmd}" dur_us={dur_us} ok={ok}"#
                 ),
                 None => {
-                    format!(r#"[wt-trace] ts={ts} tid={tid} cmd="{cmd}" dur_us={dur_us} ok={ok}"#)
+                    format!(
+                        r#"[wt-trace] ts={ts} tid={tid} seq={seq} cmd="{cmd}" dur_us={dur_us} ok={ok}"#
+                    )
                 }
             }
         }
         Some("cmd_errored") => {
+            let seq = f.seq.unwrap_or(0);
             let cmd = f.cmd.as_deref().unwrap_or("");
             let dur_us = f.dur_us.unwrap_or(0);
             let err = f.err.as_deref().unwrap_or("");
             match &f.context {
                 Some(ctx) => format!(
-                    r#"[wt-trace] ts={ts} tid={tid} context={ctx} cmd="{cmd}" dur_us={dur_us} err="{err}""#
+                    r#"[wt-trace] ts={ts} tid={tid} seq={seq} context={ctx} cmd="{cmd}" dur_us={dur_us} err="{err}""#
                 ),
                 None => format!(
-                    r#"[wt-trace] ts={ts} tid={tid} cmd="{cmd}" dur_us={dur_us} err="{err}""#
+                    r#"[wt-trace] ts={ts} tid={tid} seq={seq} cmd="{cmd}" dur_us={dur_us} err="{err}""#
                 ),
             }
         }
@@ -314,8 +320,11 @@ fn format_wt_trace(f: &WtTraceFields) -> String {
     }
 }
 
-/// `subprocess.log` formatter: the message verbatim. Subprocess bodies are
-/// already prefixed (`  …` / `  ! …`) by `shell_exec::format_stream_full`.
+/// `subprocess.log` formatter: the message verbatim. Body lines are already
+/// prefixed (`  …` / `  ! …`) by `shell_exec::format_stream_full`, and each
+/// command's block is introduced by a `$ cmd … seq=N` header line emitted by
+/// `shell_exec::log_output` — both arrive pre-rendered, so this writer adds
+/// nothing.
 struct SubprocessFileFormat;
 
 impl<S, N> FormatEvent<S, N> for SubprocessFileFormat
@@ -433,6 +442,29 @@ fn rust_log_level() -> Option<log::LevelFilter> {
         .max()
 }
 
+/// Environment variable mirroring the `-v`/`-vv` flags as a level
+/// (`0`/`1`/`2`) — the env-var equivalent of the flag. Unlike the flag it is
+/// read everywhere, including shell completion, which exits before `main`
+/// parses the CLI; that is the only way to drive completion's logging (and, at
+/// level 2, the `-vv` trace files). Combined with the flag via `max`: the env
+/// sets a baseline the flag can raise but never lower.
+pub(crate) const VERBOSE_ENV: &str = "WORKTRUNK_VERBOSE";
+
+/// Read [`VERBOSE_ENV`] from the process environment into a verbosity count.
+/// See [`parse_verbose_level`] for the grammar.
+pub(crate) fn env_verbose_level() -> u8 {
+    parse_verbose_level(std::env::var(VERBOSE_ENV).ok().as_deref())
+}
+
+/// Pure parse of a [`VERBOSE_ENV`] value into a `0`/`1`/`2…` count. Unset,
+/// empty, or unparsable values yield `0`; the parse is lossy (never errors) so
+/// a stray value can't break a command — least of all completion, where it
+/// would corrupt the candidate list. Extracted as a pure function so it can be
+/// unit-tested without mutating the process env (which races parallel tests).
+fn parse_verbose_level(raw: Option<&str>) -> u8 {
+    raw.and_then(|v| v.trim().parse::<u8>().ok()).unwrap_or(0)
+}
+
 /// Stderr layer: the flag sets a baseline (`Off` / `Info` / `Info`) and
 /// `RUST_LOG`, when set, overrides via the standard directive grammar —
 /// matching the env-wins-when-set convention (see PR #2901). At `-vv`
@@ -483,7 +515,8 @@ where
     Some(layer)
 }
 
-/// `subprocess.log` layer: only `SUBPROCESS_FULL_TARGET` records, raw passthrough.
+/// `subprocess.log` layer: only `SUBPROCESS_FULL_TARGET` records (raw bodies
+/// and their `$ cmd … seq=N` headers), written through verbatim.
 fn build_subprocess_layer<S>(verbose_level: u8) -> Option<impl Layer<S>>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
@@ -500,16 +533,20 @@ where
     Some(layer)
 }
 
-/// Print a one-line stderr pointer at `-vv` so users know where the noisy
-/// log pipeline output went. Silent if `trace.log` couldn't be opened
-/// (outside a git repo, permission error) — there's nothing meaningful to
-/// point at.
+/// Print a stderr pointer at `-vv` so users know where the noisy log
+/// pipeline output went — an info header over a gutter that lists each
+/// file's full path on its own line, so any one can be copied without
+/// joining a shared root to a filename. Silent if `trace.log` couldn't be
+/// opened (outside a git repo, permission error) — there's nothing
+/// meaningful to point at.
 fn announce_trace_destination() {
     // TRACE and SUBPROCESS open independently — `LogSink::init` succeeds per
     // file. The (Some, None) case (trace.log open, subprocess.log failed) is
-    // rare but real (path-type mismatch, fs quota); the reverse is
-    // possible too but `subprocess.log` alone has no `$ cmd` context, so we
-    // stay silent there. `diagnostic.md` is named even though it's written
+    // rare but real (path-type mismatch, fs quota); the reverse is possible
+    // too, but the pointer is anchored on trace.log's path (we derive the logs
+    // dir from it below) and subprocess.log's uncapped raw bodies aren't worth
+    // surfacing on their own, so we stay silent there. `diagnostic.md` is named
+    // even though it's written
     // at exit (not init) — by the time the user reads the pointer and looks
     // for files, all three will be there.
     let Some(trace_path) = log_files::TRACE.path() else {
@@ -518,16 +555,28 @@ fn announce_trace_destination() {
     // trace.log is always at `<git>/wt/logs/trace.log` (see `log_files::try_create`),
     // so the parent is structurally guaranteed.
     let dir = trace_path.parent().expect("trace.log path has a parent");
-    let dir_display = worktrunk::path::format_path_for_display(dir);
-    let msg = match log_files::SUBPROCESS.path() {
-        Some(_) => cformat!(
-            "Writing to <underline>{dir_display}/</> — trace.log, subprocess.log, diagnostic.md"
-        ),
-        None => cformat!(
-            "Writing to <underline>{dir_display}/</> — trace.log, diagnostic.md (subprocess.log unavailable)"
-        ),
+
+    // subprocess.log opening or not decides two things at once: whether it
+    // joins the gutter list, and whether the header flags it as unavailable.
+    // Keeping the "unavailable" note in the header leaves the gutter a clean
+    // list of live, copy-pasteable paths.
+    let mut paths = vec![dir.join("trace.log")];
+    let header = match log_files::SUBPROCESS.path() {
+        Some(_) => {
+            paths.push(dir.join("subprocess.log"));
+            "Writing to:"
+        }
+        None => "Writing to (subprocess.log unavailable):",
     };
-    eprintln!("{}", info_message(msg));
+    paths.push(dir.join("diagnostic.md"));
+
+    let gutter = paths
+        .iter()
+        .map(|p| worktrunk::path::format_path_for_display(p))
+        .collect::<Vec<_>>()
+        .join("\n");
+    eprintln!("{}", info_message(header));
+    eprintln!("{}", format_with_gutter(&gutter, None));
 }
 
 #[cfg(test)]
@@ -536,7 +585,7 @@ mod tests {
 
     use super::{
         WT_TRACE_TARGET, WtTraceFields, effective_log_max_level, format_wt_trace,
-        label_for_thread_index, style_stderr_line,
+        label_for_thread_index, parse_verbose_level, style_stderr_line,
     };
 
     /// Branch coverage for `label_for_thread_index` — `thread_label` never
@@ -650,6 +699,7 @@ mod tests {
             kind: Some("cmd_completed".into()),
             ts: Some(100),
             tid: Some(3),
+            seq: Some(1),
             context: Some("worktree".into()),
             cmd: Some("git status".into()),
             dur_us: Some(12300),
@@ -658,7 +708,7 @@ mod tests {
         };
         assert_eq!(
             format_wt_trace(&f),
-            r#"[wt-trace] ts=100 tid=3 context=worktree cmd="git status" dur_us=12300 ok=true"#
+            r#"[wt-trace] ts=100 tid=3 seq=1 context=worktree cmd="git status" dur_us=12300 ok=true"#
         );
 
         // cmd_completed without context
@@ -666,6 +716,7 @@ mod tests {
             kind: Some("cmd_completed".into()),
             ts: Some(100),
             tid: Some(3),
+            seq: Some(2),
             cmd: Some("gh pr list".into()),
             dur_us: Some(45200),
             ok: Some(false),
@@ -673,7 +724,7 @@ mod tests {
         };
         assert_eq!(
             format_wt_trace(&f),
-            r#"[wt-trace] ts=100 tid=3 cmd="gh pr list" dur_us=45200 ok=false"#
+            r#"[wt-trace] ts=100 tid=3 seq=2 cmd="gh pr list" dur_us=45200 ok=false"#
         );
 
         // cmd_errored with context
@@ -681,6 +732,7 @@ mod tests {
             kind: Some("cmd_errored".into()),
             ts: Some(100),
             tid: Some(3),
+            seq: Some(3),
             context: Some("main".into()),
             cmd: Some("git merge-base".into()),
             dur_us: Some(100000),
@@ -689,7 +741,7 @@ mod tests {
         };
         assert_eq!(
             format_wt_trace(&f),
-            r#"[wt-trace] ts=100 tid=3 context=main cmd="git merge-base" dur_us=100000 err="fatal: ...""#
+            r#"[wt-trace] ts=100 tid=3 seq=3 context=main cmd="git merge-base" dur_us=100000 err="fatal: ...""#
         );
 
         // cmd_errored without context (standalone tools like gh)
@@ -697,6 +749,7 @@ mod tests {
             kind: Some("cmd_errored".into()),
             ts: Some(100),
             tid: Some(3),
+            seq: Some(4),
             cmd: Some("gh pr list".into()),
             dur_us: Some(1000),
             err: Some("network down".into()),
@@ -704,7 +757,7 @@ mod tests {
         };
         assert_eq!(
             format_wt_trace(&f),
-            r#"[wt-trace] ts=100 tid=3 cmd="gh pr list" dur_us=1000 err="network down""#
+            r#"[wt-trace] ts=100 tid=3 seq=4 cmd="gh pr list" dur_us=1000 err="network down""#
         );
 
         // instant
@@ -768,5 +821,26 @@ mod tests {
         // Env lowers (the env-wins-when-set contract — env can also
         // suppress, not just raise):
         assert_eq!(effective_log_max_level(2, Some(Warn)), Warn);
+    }
+
+    /// `WORKTRUNK_VERBOSE` parses like the `-v`/`-vv` count. Anything that
+    /// isn't a clean integer (including the empty string a bare `export`
+    /// leaves) falls back to `0` rather than erroring — a panic here would
+    /// corrupt the completion candidate list.
+    #[test]
+    fn parse_verbose_level_is_lossy() {
+        assert_eq!(parse_verbose_level(None), 0);
+        assert_eq!(parse_verbose_level(Some("")), 0);
+        assert_eq!(parse_verbose_level(Some("0")), 0);
+        assert_eq!(parse_verbose_level(Some("1")), 1);
+        assert_eq!(parse_verbose_level(Some("2")), 2);
+        assert_eq!(parse_verbose_level(Some(" 2 ")), 2);
+        // Higher counts pass through (treated like `-vvv`, which the layer
+        // builders already collapse to the `>= 2` behavior).
+        assert_eq!(parse_verbose_level(Some("3")), 3);
+        // Garbage and out-of-range values are dropped, not errored.
+        assert_eq!(parse_verbose_level(Some("abc")), 0);
+        assert_eq!(parse_verbose_level(Some("-1")), 0);
+        assert_eq!(parse_verbose_level(Some("999")), 0);
     }
 }

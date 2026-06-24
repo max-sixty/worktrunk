@@ -220,8 +220,7 @@
 //! skeleton render — every gate starts as `None` → `·`. Per-gate resolution
 //! populates individual fields as task results arrive.
 //!
-//! `refresh_status_symbols` (replacing the current "all or nothing"
-//! `compute_status_symbols`) is called after every drain tick: it tries each
+//! `refresh_status_symbols` is called after every drain tick: it tries each
 //! gate independently and sets any fields whose inputs are now ready. It is
 //! idempotent — a gate, once resolved, is never un-resolved.
 //!
@@ -273,7 +272,7 @@ impl PositionMask {
             1, // MODIFIED: ! (1 char)
             1, // UNTRACKED: ? (1 char)
             1, // WORKTREE_STATE: ✘⤴⤵/⚑⊟⊞ (1 char, priority: conflicts > rebase > merge > branch_worktree_mismatch > prunable > locked > branch)
-            1, // MAIN_STATE: ^✗_–⊂↕↑↓ (1 char, priority: is_main > would_conflict > empty > same_commit > integrated > diverged > ahead > behind)
+            1, // MAIN_STATE: ^✗_–⊂↕↑↓ (1 char, priority: is_main > orphan > would_conflict > empty > same_commit > integrated > diverged > ahead > behind)
             1, // UPSTREAM_DIVERGENCE: |⇡⇣⇅ (1 char)
             2, // USER_MARKER: single emoji or two chars (allocate 2)
         ],

@@ -90,6 +90,9 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
       [1m[36m--remotes[0m
           Include remote branches
 
+      [1m[36m--prs[0m
+          Include open PRs/MRs
+
 [1m[32mAutomation:[0m
       [1m[36m--no-hooks[0m
           Skip hooks
@@ -113,7 +116,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
           Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to apply the same level everywhere — including shell completion, which no flag can reach
 
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
@@ -169,9 +172,9 @@ Shortcuts also apply to [2m--base[0m. For a fork PR/MR, the head commit is fet
 
 [1m[32mInteractive picker[0m
 
-When called without arguments, [2mwt switch[0m opens an interactive picker to browse and select worktrees with live preview.
+When called without arguments, [2mwt switch[0m opens an interactive picker to browse and select worktrees with live preview. The candidate set widens with [2m--branches[0m (local branches without worktrees), [2m--remotes[0m (remote branches), and [2m--prs[0m (open PRs/MRs — see below).
 
-The CI column shows cached PR/MR status when earlier runs ([2mwt list --full[0m, the statusline) have fetched it — the picker never fetches CI status itself. An entry whose branch has moved or whose TTL has passed keeps its PR/MR number, dimmed.
+The CI column shows each row's PR/MR CI and review status, the same as [2mwt list --full[0m.
 
 [1mKeybindings:[0m
 
@@ -182,7 +185,7 @@ The CI column shows cached PR/MR status when earlier runs ([2mwt list --full[0
  [2mEnter[0m         Switch to selected worktree               
  [2mAlt-c[0m         Create new worktree named as entered text 
  [2mEsc[0m           Cancel                                    
- [2mAlt-1[0m–[2mAlt-5[0m   Jump to a preview tab                     
+ [2mAlt-1[0m–[2mAlt-6[0m   Jump to a preview tab                     
  [2mTab[0m/[2mShift-Tab[0m Cycle preview tabs forward/backward       
  [2mAlt-p[0m         Toggle preview panel                      
  [2mCtrl-u[0m/[2mCtrl-d[0m Scroll preview up/down                    
@@ -191,13 +194,14 @@ Plain digits go to the filter, so a branch name containing a number can be typed
 
 Typing a gutter sigil filters by row kind: [36m+[0m narrows to linked worktrees and [2m@[0m to the current worktree. The other sigils don't filter cleanly — [2m^[0m and [2m|[0m are skim's prefix-anchor and OR query operators (so [2m^[0m matches every row and [2m|[0m none), and [2m/[0m matches most rows because every worktree path contains it.
 
-[1mPreview tabs[0m — jump with [2mAlt-1[0m–[2mAlt-5[0m, or cycle with [2mTab[0m/[2mShift-Tab[0m:
+[1mPreview tabs:[0m
 
 1. [1mHEAD±[0m — Diff of uncommitted changes
 2. [1mlog[0m — Recent commits; commits already on the default branch have dimmed hashes
 3. [1mmain…±[0m — Diff of changes since the merge-base with the default branch
 4. [1mremote⇅[0m — Ahead/behind diff vs upstream tracking branch
 5. [1msummary[0m — LLM-generated branch summary; requires [2m[list] summary = true[0m and [2mcommit.generation[0m
+6. [1mpr[0m — The selected row's PR/MR, for any row whose branch has one
 
 [1mPager configuration:[0m The preview panel pipes diff output through git's pager. Override in user config:
 
@@ -214,10 +218,13 @@ The [2mpr:<number>[0m / [2mmr:<number>[0m shortcut and the PR/MR's web URL b
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch https://github.com/owner/repo/pull/101  # ...the same PR, by URL[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch mr:101                                  # GitLab MR !101[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch https://gitlab.com/owner/repo/-/merge_requests/101  # ...the same MR, by URL[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--prs[0m[2m                                   # Browse open PRs/MRs in the picker[0m
 
 Both work anywhere a branch is accepted, including [2m--base[0m. The [2m--create[0m flag cannot be used with a PR/MR reference since the branch already exists.
 
 If the PR or MR is on a fork, the local branch uses its branch name directly, so [2mgit push[0m works normally. A pre-existing local branch with that name tracking something else requires renaming first.
+
+The [2m--prs[0m flag adds the repository's open PRs (GitHub) or MRs (GitLab) to the interactive picker. Each row resolves to the same [2mpr:[0m/[2mmr:[0m shortcut, so selecting one fetches the ref and switches to its branch.
 
 Requires [2mgh[0m (GitHub), [2mglab[0m (GitLab), or an equivalent CLI installed and authenticated; see forge platform for Gitea, Azure DevOps, and other supported platforms.
 

@@ -32,9 +32,12 @@
 //!   that pool's injector while row tasks are still landing on
 //!   workers' local deques during drain.
 
+use std::collections::HashSet;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use color_print::cformat;
 use skim::prelude::*;
 use worktrunk::styling::{StyledLine, strip_osc8_hyperlinks};
 
@@ -44,7 +47,8 @@ use worktrunk::styling::{StyledLine, strip_osc8_hyperlinks};
 /// `Event::Render` bypasses skim's own frame-rate cap, so we cap it here.
 const RENDER_THROTTLE: Duration = Duration::from_millis(16);
 
-use super::items::{HeaderSkimItem, PreviewCache, WorktreeSkimItem};
+use super::items::{HeaderLoading, HeaderSkimItem, PrStatusSlot, PreviewCache, WorktreeSkimItem};
+use super::preview::PreviewMode;
 use super::preview_orchestrator::PreviewOrchestrator;
 use crate::commands::list::collect::PickerProgressHandler;
 use crate::commands::list::model::ListItem;
@@ -73,6 +77,11 @@ pub(super) struct PickerHandler {
     /// One `Arc<Mutex<String>>` per data row — same Arcs `WorktreeSkimItem`
     /// holds. Set once in `on_skeleton`, read lock-free thereafter.
     pub(super) rendered_slots: OnceLock<Box<[Arc<Mutex<String>>]>>,
+    /// One live `pr_status` slot per data row — same `PrStatusSlot` Arcs the
+    /// `WorktreeSkimItem`s hold. Set once in `on_skeleton` (primed from the
+    /// cache-filled snapshot), then written by `on_update` as the `CiStatus`
+    /// task reports, so the `pr` tab reflects the live fetch.
+    pub(super) pr_status_slots: OnceLock<Box<[PrStatusSlot]>>,
     pub(super) preview_cache: PreviewCache,
     pub(super) orchestrator: Arc<PreviewOrchestrator>,
     pub(super) preview_dims: (usize, usize),
@@ -89,6 +98,13 @@ pub(super) struct PickerHandler {
     /// to fan out the bulk preview pre-compute for items 1..N. Set once
     /// (`OnceLock`) because skeletons fire exactly once per collect.
     pub(super) deferred_items: OnceLock<Vec<Arc<ListItem>>>,
+    /// Handoff of the layout's column geometry to the `--prs` thread, which
+    /// renders PR rows on the same grid as the worktree rows.
+    pub(super) grid_slot: Arc<super::prs::GridSlot>,
+    /// Shared with the header: `Some(true)` while the `--prs` forge call is in
+    /// flight, so the header shows a "loading…" marker. The `--prs` thread
+    /// clears it when the fetch resolves. `None` on non-`--prs` pickers.
+    pub(super) prs_loading: Option<Arc<AtomicBool>>,
 }
 
 impl PickerHandler {
@@ -114,21 +130,60 @@ impl PickerHandler {
 }
 
 impl PickerProgressHandler for PickerHandler {
-    fn on_skeleton(&self, items: Vec<ListItem>, rendered: Vec<String>, header: StyledLine) {
+    fn on_skeleton(
+        &self,
+        items: Vec<ListItem>,
+        rendered: Vec<String>,
+        header: StyledLine,
+        grid: crate::commands::list::layout::ColumnGrid,
+    ) {
         debug_assert_eq!(items.len(), rendered.len());
+        self.grid_slot.set(grid);
 
         let mut slots: Vec<Arc<Mutex<String>>> = Vec::with_capacity(items.len());
+        let mut pr_slots: Vec<PrStatusSlot> = Vec::with_capacity(items.len());
         let mut skim_items: Vec<Arc<dyn SkimItem>> = Vec::with_capacity(items.len() + 1);
         let mut list_items: Vec<Arc<ListItem>> = Vec::with_capacity(items.len());
 
+        // Synchronous skeleton-time tab-availability facts (see `TabAvailability`).
+        // Branches with an upstream tracking ref drive the tab-4 (remote⇅) empty
+        // state, read from the pre-skeleton `for-each-ref` inventory — never the
+        // async `item.upstream`. A `local_branches()` failure yields the empty set
+        // (every branch reads as no-upstream); preview rendering must not error.
+        let upstream_branches: HashSet<String> = self
+            .orchestrator
+            .repo()
+            .local_branches()
+            .map(|branches| {
+                branches
+                    .iter()
+                    .filter(|b| b.upstream_short.is_some())
+                    .map(|b| b.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let summaries_enabled = self.llm_command.is_some();
+
         // Header row — non-selectable via `header_lines(1)` on the options.
+        // In `--prs` mode it shows a dim "loading open PRs…" line (in place of
+        // the column labels) until the forge call's rows land — wording mirrors
+        // the empty-list "No open PRs found".
+        let loading = self.prs_loading.as_ref().map(|pending| {
+            let noun = super::prs::forge_noun(self.orchestrator.repo());
+            HeaderLoading {
+                pending: Arc::clone(pending),
+                marker_ansi: cformat!("  <dim>loading open {noun}…</>"),
+            }
+        });
         skim_items.push(Arc::new(HeaderSkimItem {
             display_text: header.plain_text(),
             display_text_with_ansi: header.render(),
+            loading,
         }) as Arc<dyn SkimItem>);
 
         for (item, rendered_line) in items.into_iter().zip(rendered) {
             let branch_name = item.branch_name().to_string();
+            let has_upstream = upstream_branches.contains(&branch_name);
             let path_str = item
                 .worktree_path()
                 .map(|p| p.to_string_lossy().into_owned())
@@ -155,12 +210,21 @@ impl PickerProgressHandler for PickerHandler {
             let item_arc = Arc::new(item);
             list_items.push(Arc::clone(&item_arc));
 
+            // Prime the live slot from the (cache-filled) snapshot so the `pr`
+            // tab paints instantly; `on_update` overwrites it as the CiStatus
+            // task reports.
+            let pr_status_arc: PrStatusSlot = Arc::new(Mutex::new(item_arc.pr_status.clone()));
+            pr_slots.push(Arc::clone(&pr_status_arc));
+
             skim_items.push(Arc::new(WorktreeSkimItem {
                 search_text,
                 rendered: rendered_arc,
                 branch_name,
                 item: item_arc,
                 preview_cache: Arc::clone(&self.preview_cache),
+                has_upstream,
+                summaries_enabled,
+                pr_status: pr_status_arc,
             }) as Arc<dyn SkimItem>);
         }
 
@@ -168,6 +232,7 @@ impl PickerProgressHandler for PickerHandler {
         // (which reads `shared_items`) sees a populated list the moment
         // skim calls `CommandCollector::invoke`.
         let _ = self.rendered_slots.set(slots.into_boxed_slice());
+        let _ = self.pr_status_slots.set(pr_slots.into_boxed_slice());
         *self.shared_items.lock().unwrap() = skim_items.clone();
 
         // skim 4.x's item channel carries Vec batches; the skeleton is a single
@@ -200,11 +265,24 @@ impl PickerProgressHandler for PickerHandler {
         let _ = self.deferred_items.set(list_items);
     }
 
-    fn on_update(&self, idx: usize, rendered: String) {
+    fn on_update(&self, idx: usize, rendered: String, item: &ListItem) {
         if let Some(slots) = self.rendered_slots.get()
             && let Some(slot) = slots.get(idx)
         {
             *slot.lock().unwrap() = strip_osc8_hyperlinks(&rendered);
+        }
+        // Mirror the row's current CI status into its live slot so the `pr`
+        // tab reflects the fetch as it lands. Cheap clone; `pr_status` is
+        // `None` until the CiStatus task reports, then `Some(..)`.
+        if let Some(slots) = self.pr_status_slots.get()
+            && let Some(slot) = slots.get(idx)
+        {
+            *slot.lock().unwrap() = item.pr_status.clone();
+            // Drop the memoized `pr` pane for this row so the next `preview()`
+            // re-renders from the status just mirrored — see
+            // `WorktreeSkimItem::render_pr_pane_cached`.
+            self.preview_cache
+                .remove(&(item.branch_name().to_string(), PreviewMode::Pr));
         }
         self.request_render(false);
     }
@@ -260,6 +338,7 @@ mod tests {
             last_render_poke: Mutex::new(Instant::now()),
             shared_items,
             rendered_slots: OnceLock::new(),
+            pr_status_slots: OnceLock::new(),
             preview_cache,
             orchestrator,
             preview_dims: (80, 24),
@@ -267,6 +346,8 @@ mod tests {
             summary_hint: Some("disabled".to_string()),
             stashed_warnings: Arc::new(Mutex::new(Vec::new())),
             deferred_items: OnceLock::new(),
+            grid_slot: Arc::new(super::super::prs::GridSlot::new()),
+            prs_loading: None,
         };
         (handler, test, rx)
     }
@@ -275,6 +356,10 @@ mod tests {
         let mut line = StyledLine::new();
         line.push_raw(text);
         line
+    }
+
+    fn grid() -> crate::commands::list::layout::ColumnGrid {
+        crate::commands::list::layout::ColumnGrid::default()
     }
 
     /// Skeleton → update → reveal: verifies that each event writes through
@@ -290,7 +375,7 @@ mod tests {
         ];
         let rendered = vec!["skel-one".to_string(), "skel-two".to_string()];
 
-        handler.on_skeleton(items, rendered, header("hdr"));
+        handler.on_skeleton(items, rendered, header("hdr"), grid());
 
         // Header + 2 items sent to skim as one batch.
         let received = rx.recv().expect("skeleton batch");
@@ -301,10 +386,26 @@ mod tests {
         assert_eq!(*slots[0].lock().unwrap(), "skel-one");
         assert_eq!(*slots[1].lock().unwrap(), "skel-two");
 
-        // on_update rewrites a single slot (the second item here).
-        handler.on_update(1, "updated-two".into());
+        // pr_status slots start primed from the (empty) snapshots.
+        let pr_slots = handler.pr_status_slots.get().unwrap();
+        assert!(pr_slots[0].lock().unwrap().is_none());
+        assert!(pr_slots[1].lock().unwrap().is_none());
+
+        // on_update rewrites a single render slot (the second item here) and
+        // mirrors that item's CI status into its pr_status slot.
+        let mut updated = ListItem::new_branch("bbb".into(), "two".into());
+        updated.pr_status = Some(None);
+        handler.on_update(1, "updated-two".into(), &updated);
         assert_eq!(*slots[0].lock().unwrap(), "skel-one", "row 0 untouched");
         assert_eq!(*slots[1].lock().unwrap(), "updated-two");
+        assert!(
+            matches!(&*pr_slots[1].lock().unwrap(), Some(None)),
+            "row 1 pr status mirrored from the updated item"
+        );
+        assert!(
+            pr_slots[0].lock().unwrap().is_none(),
+            "row 0 pr status untouched"
+        );
 
         // on_reveal rewrites every slot — slot writes are idempotent
         // through `Mutex<String>`, so unconditional updates are safe.
@@ -328,6 +429,7 @@ mod tests {
             items,
             vec!["skel-a".into(), "skel-b".into()],
             header("Branch Status"),
+            grid(),
         );
 
         let received = rx.recv().expect("skeleton batch");
@@ -360,6 +462,7 @@ mod tests {
             items,
             vec!["skel-local".into(), "skel-remote".into()],
             header("hdr"),
+            grid(),
         );
 
         let received = rx.recv().expect("skeleton batch");
@@ -464,7 +567,7 @@ mod tests {
         ];
         let rendered = vec!["s1".into(), "s2".into(), "s3".into()];
 
-        handler.on_skeleton(items, rendered, header("hdr"));
+        handler.on_skeleton(items, rendered, header("hdr"), grid());
         handler.orchestrator.wait_for_idle();
 
         // Static Summary hint primed for every item at skeleton time.
@@ -557,7 +660,7 @@ mod tests {
         // left to defer; on_collect_complete must not add any entries.
         let (handler, _test, _rx) = make_handler();
         let items = vec![ListItem::new_branch("aaa".into(), "solo".into())];
-        handler.on_skeleton(items, vec!["s1".into()], header("hdr"));
+        handler.on_skeleton(items, vec!["s1".into()], header("hdr"), grid());
         handler.orchestrator.wait_for_idle();
         let before = handler.preview_cache.iter().count();
         for mode in [

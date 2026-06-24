@@ -9,17 +9,21 @@
 //! # Format
 //!
 //! ```text
-//! [wt-trace] ts=1234567 tid=3 context=worktree cmd="git status" dur_us=12300 ok=true
-//! [wt-trace] ts=1234567 tid=3 cmd="gh pr list" dur_us=45200 ok=false
-//! [wt-trace] ts=1234567 tid=3 context=main cmd="git merge-base" dur_us=100000 err="fatal: ..."
+//! [wt-trace] ts=1234567 tid=3 seq=1 context=worktree cmd="git status" dur_us=12300 ok=true
+//! [wt-trace] ts=1234567 tid=3 seq=2 cmd="gh pr list" dur_us=45200 ok=false
+//! [wt-trace] ts=1234567 tid=3 seq=3 context=main cmd="git merge-base" dur_us=100000 err="fatal: ..."
 //! [wt-trace] ts=1234567 tid=3 event="Showed skeleton"
 //! [wt-trace] ts=1234567 tid=3 span="build_hook_context" dur_us=8200
 //! ```
 //!
+//! `seq` is a process-global monotonic command counter (command records only).
+//! The same value is printed into the per-command header in `subprocess.log`,
+//! so a raw output block there joins back to its command record here.
+//!
 //! # Emission model
 //!
 //! Records emit as `tracing` events under [`WT_TRACE_TARGET`] with typed
-//! structured fields (`kind`, `ts`, `tid`, `cmd`, `dur_us`, `ok`, `err`,
+//! structured fields (`kind`, `ts`, `tid`, `seq`, `cmd`, `dur_us`, `ok`, `err`,
 //! `event`, `span`, `context`). The text grammar is produced downstream by
 //! the `trace.log` layer's `FormatEvent` impl in
 //! `src/logging.rs::TraceFileFormat`, which reads the structured fields
@@ -70,11 +74,14 @@
 //! visible. Subprocess stdout/stderr continuations route through separate
 //! targets: the full output goes to `subprocess.log`, and a bounded preview
 //! shares the routing of all other records — `trace.log` at `-vv`, stderr
-//! otherwise — so raw bodies don't spam `-vv`.
+//! otherwise — so raw bodies don't spam `-vv`. Each block in `subprocess.log`
+//! is prefixed with a `$ cmd … seq=N` header (see `shell_exec::log_output`)
+//! so it stays segmentable and joins back to this record via `seq`.
 
 use std::borrow::Cow;
 use std::fmt::Display;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 /// Tracing target the `trace.log` layer keys on to render the `[wt-trace]`
@@ -108,18 +115,35 @@ pub fn thread_id() -> u64 {
         .unwrap_or(0)
 }
 
+/// Process-global monotonic command counter. Each [`CommandTrace`] claims the
+/// next value at construction; the same `seq` is printed into the `[wt-trace]`
+/// record in `trace.log` and the per-command header in `subprocess.log`, so a
+/// raw output block can be joined back to its command record. Claimed at
+/// construction (outside any verbosity gate) so the sequence is dense
+/// regardless of whether the file layers are active. Starts at 1.
+static CMD_SEQ: AtomicU64 = AtomicU64::new(1);
+
 /// Emit a completed-command record (`ok=true`/`ok=false`).
 ///
 /// Private: the sole caller is [`CommandTrace::complete`]. Keeping the writer
 /// module-private makes [`CommandTrace`] the only way to emit a command
 /// record — see the module-level "subprocess chokepoint" note.
-fn command_completed(context: Option<&str>, cmd: &str, ts: u64, tid: u64, dur_us: u64, ok: bool) {
+fn command_completed(
+    context: Option<&str>,
+    cmd: &str,
+    ts: u64,
+    tid: u64,
+    seq: u64,
+    dur_us: u64,
+    ok: bool,
+) {
     match context {
         Some(ctx) => tracing::debug!(
             target: WT_TRACE_TARGET,
             kind = "cmd_completed",
             ts,
             tid,
+            seq,
             context = ctx,
             cmd,
             dur_us,
@@ -130,6 +154,7 @@ fn command_completed(context: Option<&str>, cmd: &str, ts: u64, tid: u64, dur_us
             kind = "cmd_completed",
             ts,
             tid,
+            seq,
             cmd,
             dur_us,
             ok,
@@ -145,6 +170,7 @@ fn command_errored(
     cmd: &str,
     ts: u64,
     tid: u64,
+    seq: u64,
     dur_us: u64,
     err: impl Display,
 ) {
@@ -155,6 +181,7 @@ fn command_errored(
             kind = "cmd_errored",
             ts,
             tid,
+            seq,
             context = ctx,
             cmd,
             dur_us,
@@ -165,6 +192,7 @@ fn command_errored(
             kind = "cmd_errored",
             ts,
             tid,
+            seq,
             cmd,
             dur_us,
             err = %err,
@@ -206,6 +234,7 @@ pub struct CommandTrace {
     start_ts_us: u64,
     start: Instant,
     tid: u64,
+    seq: u64,
     resolved: bool,
 }
 
@@ -219,8 +248,31 @@ impl CommandTrace {
             start_ts_us: now_us(),
             start: Instant::now(),
             tid: thread_id(),
+            seq: CMD_SEQ.fetch_add(1, Ordering::Relaxed),
             resolved: false,
         }
+    }
+
+    /// The command's monotonic sequence number — the key shared by this
+    /// command's `[wt-trace]` record (`trace.log`) and its raw output block
+    /// (`subprocess.log`).
+    pub(crate) fn seq(&self) -> u64 {
+        self.seq
+    }
+
+    /// The thread that ran the command.
+    pub(crate) fn tid(&self) -> u64 {
+        self.tid
+    }
+
+    /// The command string (e.g. `git status --porcelain`).
+    pub(crate) fn cmd(&self) -> &str {
+        &self.cmd
+    }
+
+    /// The command's context label (typically a worktree name), if any.
+    pub(crate) fn context(&self) -> Option<&str> {
+        self.context.as_deref()
     }
 
     /// The child ran to completion; `success` is its exit status. Emits an
@@ -232,6 +284,7 @@ impl CommandTrace {
             &self.cmd,
             self.start_ts_us,
             self.tid,
+            self.seq,
             dur_us,
             success,
         );
@@ -255,6 +308,7 @@ impl CommandTrace {
             &self.cmd,
             self.start_ts_us,
             self.tid,
+            self.seq,
             dur_us,
             err,
         );

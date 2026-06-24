@@ -6,9 +6,10 @@
 //!     headers, and bounded subprocess previews. High-signal, bounded size —
 //!     safe to embed in `diagnostic.md` bug reports.
 //!   - [`SUBPROCESS`] → `subprocess.log`: raw, uncapped subprocess
-//!     stdout/stderr bodies captured by `shell_exec::Cmd`. Potentially
-//!     multi-MB (full `git log -p` / patch-id output); opt-in for deep
-//!     dives.
+//!     stdout/stderr bodies captured by `shell_exec::Cmd`, each block
+//!     introduced by a `$ cmd … [seq=N tid=T]` header whose `seq` joins it to
+//!     the command's `[wt-trace]` record in `trace.log`. Potentially multi-MB
+//!     (full `git log -p` / patch-id output); opt-in for deep dives.
 //!
 //! Direct user-facing output (`info_message` / `eprintln!` from command
 //! code) is unaffected — it goes to stderr at every verbosity level. This

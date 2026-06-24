@@ -489,9 +489,11 @@ const LOG_OUTPUT_MAX_LINES: usize = 200;
 /// addition to [`LOG_OUTPUT_MAX_LINES`].
 const LOG_OUTPUT_MAX_BYTES: usize = 64 * 1024;
 
-/// Log target used for *full* subprocess stdout/stderr. The tracing-subscriber
-/// `subprocess.log` layer filters on this target, so raw subprocess bodies (diffs,
-/// `git log -p`, patch-id pipelines) never reach stderr or `trace.log`.
+/// Log target used for *full* subprocess stdin/stdout/stderr (and the per-command
+/// `$ cmd … seq=N` header `log_output` prepends to each block). The
+/// tracing-subscriber `subprocess.log` layer filters on this target, so raw
+/// subprocess bodies (diffs, `git log -p`, patch-id pipelines) never reach
+/// stderr or `trace.log`.
 pub const SUBPROCESS_FULL_TARGET: &str = "worktrunk::subprocess_full";
 
 /// Log target used for the *bounded* preview of subprocess output (capped
@@ -501,30 +503,71 @@ pub const SUBPROCESS_FULL_TARGET: &str = "worktrunk::subprocess_full";
 /// uncapped version is captured via [`SUBPROCESS_FULL_TARGET`].
 pub const SUBPROCESS_BOUNDED_TARGET: &str = "worktrunk::subprocess_bounded";
 
-/// Log captured stdout/stderr of a finished command.
+/// The `$ <cmd> [<context>]` command header. Shared by the stderr/`trace.log`
+/// start line ([`Cmd::log_run_start`] and friends) and the per-command header
+/// that [`log_output`] prepends to each block in `subprocess.log`, so the two
+/// render the command identically.
+fn command_header(cmd: &str, context: Option<&str>) -> String {
+    match context {
+        Some(ctx) => format!("$ {cmd} [{ctx}]"),
+        None => format!("$ {cmd}"),
+    }
+}
+
+/// Log a command's captured stdin, stdout, and stderr to the debug targets.
 ///
-/// At `tracing::DEBUG` (`-vv`) each stream is emitted twice via separate
-/// targets, and the tracing-subscriber layers route them:
-///   - [`SUBPROCESS_FULL_TARGET`]: uncapped, line-per-record, `subprocess.log` only.
-///   - [`SUBPROCESS_BOUNDED_TARGET`]: capped at [`LOG_OUTPUT_MAX_LINES`] and
-///     [`LOG_OUTPUT_MAX_BYTES`] per stream with an elision marker, then
-///     routed to `trace.log` at `-vv` or stderr otherwise.
+/// At `tracing::DEBUG` (`-vv`) each stream is emitted twice, and the
+/// tracing-subscriber layers route the two targets:
+///   - [`SUBPROCESS_FULL_TARGET`] → `subprocess.log`: uncapped, one record per
+///     line. Each command with I/O opens with a `$ cmd … [seq=N tid=T]` header
+///     over its stdin (`  < `), stdout (`  `), and stderr (`  ! `) lines, so the
+///     otherwise-undelimited bytes segment into blocks and `seq` joins each
+///     block to its `[wt-trace]` record.
+///   - [`SUBPROCESS_BOUNDED_TARGET`] → `trace.log` at `-vv` (else stderr):
+///     capped at [`LOG_OUTPUT_MAX_LINES`] / [`LOG_OUTPUT_MAX_BYTES`] with an
+///     elision marker, under the `$ cmd` start line `trace.log` already carries.
+///
+/// One record per line keeps a command's own output contiguous but lets
+/// concurrent commands interleave by line; `tid` groups a block and the atomic
+/// header recovers the `seq` join.
+///
+/// `output` is `None` for a command that never produced any (spawn or wait
+/// failure); its header and stdin still emit, so the input survives in the deep
+/// log even when nothing ran.
 ///
 /// Below Debug both targets are disabled and this is a no-op.
-fn log_output(output: &std::process::Output) {
+fn log_output(trace: &CommandTrace, stdin: Option<&[u8]>, output: Option<&std::process::Output>) {
     if !log::log_enabled!(log::Level::Debug) {
         return;
     }
-    for line in format_stream_full(&output.stdout, "  ") {
+    let stdin = stdin.unwrap_or_default();
+    // `None` when the command never produced output (spawn/wait failure); stdin
+    // is still logged so the input survives in the deep log.
+    let (stdout, stderr) = output
+        .map(|o| (o.stdout.as_slice(), o.stderr.as_slice()))
+        .unwrap_or_default();
+    if !stdin.is_empty() || !stdout.is_empty() || !stderr.is_empty() {
+        log::debug!(
+            target: SUBPROCESS_FULL_TARGET,
+            "{}  [seq={} tid={}]",
+            command_header(trace.cmd(), trace.context()),
+            trace.seq(),
+            trace.tid(),
+        );
+    }
+    for line in format_stream_full(stdin, "  < ") {
         log::debug!(target: SUBPROCESS_FULL_TARGET, "{}", line);
     }
-    for line in format_stream_full(&output.stderr, "  ! ") {
+    for line in format_stream_full(stdout, "  ") {
         log::debug!(target: SUBPROCESS_FULL_TARGET, "{}", line);
     }
-    for line in format_stream_bounded(&output.stdout, "  ") {
+    for line in format_stream_full(stderr, "  ! ") {
+        log::debug!(target: SUBPROCESS_FULL_TARGET, "{}", line);
+    }
+    for line in format_stream_bounded(stdout, "  ") {
         log::debug!(target: SUBPROCESS_BOUNDED_TARGET, "{}", line);
     }
-    for line in format_stream_bounded(&output.stderr, "  ! ") {
+    for line in format_stream_bounded(stderr, "  ! ") {
         log::debug!(target: SUBPROCESS_BOUNDED_TARGET, "{}", line);
     }
 }
@@ -750,20 +793,25 @@ impl ExternalCommandLog {
 }
 
 /// Resolve a [`CommandTrace`] from a finished `run`/`pipe_into` invocation and
-/// surface the captured stdout/stderr to the debug log.
+/// surface the command's captured stdin/stdout/stderr to the debug log.
 ///
 /// The buffered counterpart to calling `complete`/`fail` directly: `run` and
-/// `pipe_into` capture output, so on success they also feed it to
-/// [`log_output`]. `stream`/`delayed_stream` inherit or stream stdio and resolve
-/// their `CommandTrace` directly at each exit point.
-fn record_captured(trace: &mut CommandTrace, result: &std::io::Result<std::process::Output>) {
+/// `pipe_into` capture output, so they also feed it to [`log_output`] — stdin
+/// regardless of outcome, stdout/stderr when the command produced any.
+/// `stream`/`delayed_stream` inherit or stream stdio and resolve their
+/// `CommandTrace` directly at each exit point.
+fn record_captured(
+    trace: &mut CommandTrace,
+    stdin: Option<&[u8]>,
+    result: &std::io::Result<std::process::Output>,
+) {
     match result {
-        Ok(output) => {
-            trace.complete(output.status.success());
-            log_output(output);
-        }
+        Ok(output) => trace.complete(output.status.success()),
         Err(e) => trace.fail(e),
     }
+    // stdin is logged either way; stdout/stderr only when the command produced
+    // output — a command that failed to spawn still leaves its input behind.
+    log_output(trace, stdin, result.as_ref().ok());
 }
 
 /// Structured error from [`Cmd::delayed_stream`].
@@ -943,24 +991,23 @@ impl Cmd {
     }
 
     fn log_run_start(&self, cmd_str: &str) {
-        match &self.context {
-            Some(ctx) => log::debug!("$ {} [{}]", cmd_str, ctx),
-            None => log::debug!("$ {}", cmd_str),
-        }
+        log::debug!("{}", command_header(cmd_str, self.context.as_deref()));
     }
 
     fn log_stream_start(&self, cmd_str: &str, exec_mode: &str) {
-        match &self.context {
-            Some(ctx) => log::debug!("$ {} [{}] (streaming, {})", cmd_str, ctx, exec_mode),
-            None => log::debug!("$ {} (streaming, {})", cmd_str, exec_mode),
-        }
+        log::debug!(
+            "{} (streaming, {})",
+            command_header(cmd_str, self.context.as_deref()),
+            exec_mode
+        );
     }
 
     fn log_delayed_stream_start(&self, cmd_str: &str, delay_ms: i64) {
-        match &self.context {
-            Some(ctx) => log::debug!("$ {} [{}] (delayed stream, {}ms)", cmd_str, ctx, delay_ms),
-            None => log::debug!("$ {} (delayed stream, {}ms)", cmd_str, delay_ms),
-        }
+        log::debug!(
+            "{} (delayed stream, {}ms)",
+            command_header(cmd_str, self.context.as_deref()),
+            delay_ms
+        );
     }
 
     /// Add a single argument.
@@ -1185,7 +1232,7 @@ impl Cmd {
         // `Result<Output>` so spawn/write failures resolve the trace through
         // `record_captured` rather than `?`-ing past it (which would leave the
         // command unattributed and trip CommandTrace's drop assertion).
-        let result = if let Some(stdin_data) = self.stdin_data {
+        let result = if let Some(stdin_data) = self.stdin_data.as_deref() {
             // Stdin piping requires spawn/write/wait
             // Note: stdin path doesn't support timeout (would need async I/O)
             cmd.stdin(Stdio::piped())
@@ -1200,7 +1247,7 @@ impl Cmd {
                     // forever. (ignore BrokenPipe - some commands exit early)
                     let write_result = {
                         let mut stdin = child.stdin.take().expect("stdin was configured as piped");
-                        stdin.write_all(&stdin_data)
+                        stdin.write_all(stdin_data)
                     };
                     match write_result {
                         Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => Err(e),
@@ -1217,7 +1264,7 @@ impl Cmd {
             cmd.output()
         };
 
-        record_captured(&mut trace, &result);
+        record_captured(&mut trace, self.stdin_data.as_deref(), &result);
 
         let exit_code = result.as_ref().ok().and_then(|output| output.status.code());
         external_log.record(exit_code);
@@ -1233,6 +1280,10 @@ impl Cmd {
     /// debug logs. This keeps large intermediate outputs (for example
     /// `git diff-tree -p | git patch-id`) out of the `-vv` trace stream, where
     /// `log_output` would otherwise dump every line of the raw diff.
+    ///
+    /// The source's *own* stdin (`stdin_bytes`, e.g. the `git rev-list` commit
+    /// list) is logged under `  < ` like any `.run()` command — only the
+    /// intermediate stream above is suppressed.
     ///
     /// Each command is logged and traced individually (same format as
     /// `.run()`), so `-vv` still shows both commands and their exit status.
@@ -1321,16 +1372,14 @@ impl Cmd {
             .stdout
             .take()
             .expect("stdout was configured as piped");
-        // Pair the source's stdin pipe with the data to write; a writer
-        // thread (below) drains it concurrently with the rest of the pipeline.
-        let first_stdin = source_stdin.map(|data| {
-            (
-                first_child
-                    .stdin
-                    .take()
-                    .expect("stdin was configured as piped"),
-                data,
-            )
+        // Take the source's stdin pipe, keeping `source_stdin` owned so it can
+        // also be logged below; a writer thread (in the scope) drains it
+        // concurrently with the rest of the pipeline.
+        let source_stdin_pipe = source_stdin.as_ref().map(|_| {
+            first_child
+                .stdin
+                .take()
+                .expect("stdin was configured as piped")
         });
 
         let mut second = next.direct_command();
@@ -1378,18 +1427,22 @@ impl Cmd {
             // with the drain below — writing it all up front would deadlock
             // once the source's stdout pipe fills. A short write (the source
             // exited early) surfaces as its non-zero exit status, which
-            // callers already inspect.
-            if let Some((mut stdin, data)) = first_stdin {
+            // callers already inspect. The scoped thread only borrows the
+            // data, so `source_stdin` stays available to log after the
+            // pipeline reaps the source.
+            if let (Some(mut stdin), Some(data)) = (source_stdin_pipe, source_stdin.as_deref()) {
                 s.spawn(move || {
-                    let _ = stdin.write_all(&data);
+                    let _ = stdin.write_all(data);
                     // `stdin` drops here, closing the pipe so the source sees EOF.
                 });
             }
 
             // Drain `next` first (its `wait_with_output` reads its own
-            // stdout/stderr), so `first`'s writes can complete.
+            // stdout/stderr), so `first`'s writes can complete. Its stdin is the
+            // source's stdout (the OS pipe), not its own input, so it is logged
+            // with `None` — the intermediate stream stays out of the deep log.
             let second_result = second_child.wait_with_output();
-            record_captured(&mut second_trace, &second_result);
+            record_captured(&mut second_trace, None, &second_result);
 
             // Reap `first`. Its stderr is already being drained; combine
             // the captured stderr with the exit status into an Output.
@@ -1403,7 +1456,10 @@ impl Cmd {
                     stderr,
                 })
             });
-            record_captured(&mut first_trace, &first_result);
+            // The source's own stdin (the commit list) is logged under `  < `,
+            // symmetric with `run`. Only the intermediate diff stream — the
+            // source's stdout, routed to the sink via OS pipe — stays out.
+            record_captured(&mut first_trace, source_stdin.as_deref(), &first_result);
 
             (first_result, second_result)
         });
@@ -2357,6 +2413,19 @@ mod tests {
             .unwrap();
         assert!(source.status.success() && sink.status.success());
         assert_eq!(String::from_utf8_lossy(&sink.stdout), "hello");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_pipe_into_feeds_source_stdin() {
+        // The source's stdin must flow through to the sink: `cat` echoes its
+        // stdin to stdout, piped into a second `cat`, so the bytes round-trip.
+        let (source, sink) = Cmd::new("cat")
+            .stdin_bytes(b"piped stdin".to_vec())
+            .pipe_into(Cmd::new("cat"))
+            .unwrap();
+        assert!(source.status.success() && sink.status.success());
+        assert_eq!(String::from_utf8_lossy(&sink.stdout), "piped stdin");
     }
 
     #[test]

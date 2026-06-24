@@ -3,7 +3,7 @@ source: tests/integration_tests/switch_picker.rs
 expression: list
 ---
 >
-    Branch           Status        HEAD±    main↕  Remote⇅
+    Branch           Status        HEAD±    main↕  CI
 > @ main                 ^
   + active-worktree      _
   / orphan-branch       /_

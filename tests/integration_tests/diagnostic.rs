@@ -366,6 +366,72 @@ fn test_vv_splits_full_and_bounded_output(repo: TestRepo) {
     );
 }
 
+/// Each command's block in `subprocess.log` is introduced by a
+/// `$ cmd … [seq=N tid=T]` header, and that `seq` also tags the command's
+/// `[wt-trace]` record in `trace.log` — so an otherwise-undelimited raw output
+/// block can be segmented and joined back to its timed command record. Guards
+/// the segmentation + correlation contract the two files share.
+#[rstest]
+fn test_vv_subprocess_log_headers_join_trace(repo: TestRepo) {
+    repo.wt_command().args(["list", "-vv"]).output().unwrap();
+
+    let logs_dir = repo.root_path().join(".git").join("wt/logs");
+    let subprocess = fs::read_to_string(logs_dir.join("subprocess.log")).unwrap();
+    let trace = fs::read_to_string(logs_dir.join("trace.log")).unwrap();
+
+    // Pick a known captured command (`wt list` runs `git worktree list
+    // --porcelain`) so the join can be checked by command identity, not just by
+    // a seq value that — being process-global and dense — exists on *some*
+    // record regardless. A header starts with `$ ` (body lines start with `  `,
+    // so blocks self-segment) and carries the `seq` join key.
+    let header = subprocess
+        .lines()
+        .find(|l| l.starts_with("$ ") && l.contains("git worktree list") && l.contains("[seq="))
+        .expect("subprocess.log should head the `git worktree list` block with `$ … [seq=N …]`");
+
+    let seq: u64 = header
+        .split("[seq=")
+        .nth(1)
+        .and_then(|s| s.split([' ', ']']).next())
+        .and_then(|s| s.parse().ok())
+        .expect("the subprocess.log header should carry a numeric seq");
+
+    // The [wt-trace] record carrying that seq must be the SAME command —
+    // asserting both `seq` and `cmd` closes the gap where a dense seq coincides
+    // with an unrelated record.
+    assert!(
+        trace.lines().any(|l| {
+            l.contains("[wt-trace]")
+                && l.contains(&format!("seq={seq} "))
+                && l.contains(r#"cmd="git worktree list"#)
+        }),
+        "trace.log should carry the [wt-trace] record for `git worktree list` with seq={seq} to join the subprocess.log block:\n{header}"
+    );
+}
+
+/// A command that pipes stdin has it captured in its `subprocess.log` block
+/// under a `  < ` prefix, so the deep log shows what was fed in, not just what
+/// came out. `wt list --full` counts each worktree's diff including untracked
+/// files, staging them via `git add --pathspec-from-file=-` (stdin), which
+/// exercises the path.
+#[rstest]
+fn test_vv_subprocess_log_captures_stdin(repo: TestRepo) {
+    for path in repo.worktrees.values() {
+        std::fs::write(path.join("untracked-probe.txt"), "stdin probe\n").unwrap();
+    }
+    repo.wt_command()
+        .args(["list", "--full", "-vv"])
+        .output()
+        .unwrap();
+
+    let subprocess =
+        fs::read_to_string(repo.root_path().join(".git").join("wt/logs/subprocess.log")).unwrap();
+    assert!(
+        subprocess.lines().any(|l| l.starts_with("  < ")),
+        "subprocess.log should capture piped stdin under a `  < ` prefix:\n{subprocess}"
+    );
+}
+
 /// Control bytes in captured subprocess output must be escaped on the
 /// human-facing routes (stderr + `trace.log`) but kept verbatim in
 /// `subprocess.log`. `wt list` runs `git for-each-ref --format=…%00…`
@@ -406,7 +472,7 @@ fn test_vv_escapes_control_bytes_in_trace_not_subprocess(repo: TestRepo) {
 /// At `-vv`, Debug-level records (the noisy ones) stay out of stderr —
 /// the bounded subprocess preview lands in `trace.log` (not stderr), and
 /// `subprocess.log` still holds the unbounded body. Info-level routing
-/// from `-v` still applies at `-vv` (it's a superset), so the "Tracing
+/// from `-v` still applies at `-vv` (it's a superset), so the "Writing
 /// to ..." pointer and similar status lines DO appear on stderr; they're
 /// asserted at the end of this test. Guards against a regression that
 /// re-routes the debug stream to stderr and floods the terminal.
@@ -488,12 +554,20 @@ fn test_vv_debug_pipeline_silent_on_stderr(repo: TestRepo) {
         "trace.log should contain [wt-trace] records at -vv"
     );
 
-    // Stderr at -vv should contain the new pointer line (and the existing
-    // diagnostic line), so the user knows where the trace went.
+    // Stderr at -vv should announce each file's full path on its own line, so
+    // any one is copy-pasteable without joining a shared root to a filename.
+    // The `wt/logs/<file>` tails only appear contiguously when the full path
+    // is listed (the old root-plus-filenames form split them apart).
     assert!(
-        stderr.contains("Writing to") && stderr.contains("trace.log"),
-        "stderr should announce the trace destination at -vv: {stderr}"
+        stderr.contains("Writing to"),
+        "missing pointer header: {stderr}"
     );
+    for file in ["trace.log", "subprocess.log", "diagnostic.md"] {
+        assert!(
+            stderr.contains(&format!("wt/logs/{file}")),
+            "stderr should list the full path to {file}: {stderr}"
+        );
+    }
 }
 
 /// `RUST_LOG` is honored at every verbosity level — including `-v` — and
@@ -579,6 +653,66 @@ fn test_rust_log_debug_fallback_without_vv(repo: TestRepo) {
     assert!(
         !stderr.contains("more lines, "),
         "short subprocess output should not trip the elision marker: {stderr}"
+    );
+}
+
+/// `WORKTRUNK_VERBOSE` sets the verbosity level from the environment, mirroring
+/// the `-v`/`-vv` flags so logging can be turned on with no CLI flag — the only
+/// way to reach shell completion, which has nowhere to pass `-vv` (see the
+/// completion suite). The env and the flag combine via `max`: the env is a
+/// baseline the flags raise but never lower. Level 2 opens the on-disk trace
+/// files exactly like `-vv`; level 1 does not, proving the count is threaded
+/// rather than collapsed to a boolean "verbose on".
+#[rstest]
+fn test_worktrunk_verbose_env_sets_level(repo: TestRepo) {
+    let logs_dir = repo.root_path().join(".git").join("wt/logs");
+    let trace_log = logs_dir.join("trace.log");
+
+    // Level 2 with no flag opens the trace files, just like `-vv`.
+    let _ = fs::remove_dir_all(&logs_dir);
+    let out = repo
+        .wt_command()
+        .args(["list"])
+        .env("WORKTRUNK_VERBOSE", "2")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("wt list");
+    assert!(out.status.success());
+    assert!(
+        trace_log.exists(),
+        "WORKTRUNK_VERBOSE=2 should open trace.log like -vv"
+    );
+
+    // Level 1 with no flag does NOT — the trace files are a level-2 artifact,
+    // so the env must carry the count, not just a boolean.
+    let _ = fs::remove_dir_all(&logs_dir);
+    let out = repo
+        .wt_command()
+        .args(["list"])
+        .env("WORKTRUNK_VERBOSE", "1")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("wt list");
+    assert!(out.status.success());
+    assert!(
+        !trace_log.exists(),
+        "WORKTRUNK_VERBOSE=1 should not open the -vv trace files"
+    );
+
+    // An explicit `-vv` wins over a lower env baseline (`max`, not env-wins):
+    // env 0 + `-vv` still writes the files.
+    let _ = fs::remove_dir_all(&logs_dir);
+    let out = repo
+        .wt_command()
+        .args(["list", "-vv"])
+        .env("WORKTRUNK_VERBOSE", "0")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("wt list -vv");
+    assert!(out.status.success());
+    assert!(
+        trace_log.exists(),
+        "an explicit -vv must win over WORKTRUNK_VERBOSE=0"
     );
 }
 
@@ -671,12 +805,18 @@ fn test_vv_pointer_handles_split_init(repo: TestRepo) {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
-        stderr.contains("Writing to") && stderr.contains("trace.log"),
-        "stderr should point at trace.log even when subprocess.log can't open: {stderr}"
+        stderr.contains("Writing to") && stderr.contains("wt/logs/trace.log"),
+        "stderr should list trace.log's full path even when subprocess.log can't open: {stderr}"
     );
     assert!(
         stderr.contains("subprocess.log unavailable"),
         "stderr should note subprocess.log is unavailable: {stderr}"
+    );
+    // subprocess.log didn't open, so it's named only in the unavailable note —
+    // never listed as a live path in the gutter.
+    assert!(
+        !stderr.contains("wt/logs/subprocess.log"),
+        "stderr should not list a path for the unavailable subprocess.log: {stderr}"
     );
     assert!(
         logs_dir.join("trace.log").exists(),

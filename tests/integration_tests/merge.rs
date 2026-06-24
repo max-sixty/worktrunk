@@ -2807,9 +2807,13 @@ command = "cat >/dev/null && echo 'feat: combined feature work'"
     ));
 
     // The feature branch must still have its multiple commits — squash didn't run.
-    let log = std::process::Command::new("git")
-        .args(["-C", feature_wt.to_str().unwrap(), "log", "--oneline"])
-        .output()
+    // Use the repo's isolated git_command (test GIT_CONFIG_GLOBAL, LC_ALL=C)
+    // rather than a bare `git` spawn that would inherit the host's gitconfig.
+    let log = repo
+        .git_command()
+        .args(["log", "--oneline"])
+        .current_dir(feature_wt)
+        .run()
         .expect("git log failed");
     let log_text = String::from_utf8(log.stdout).unwrap();
     assert!(

@@ -673,7 +673,7 @@ fn handle_select_command(branches: bool, remotes: bool) -> anyhow::Result<()> {
     // Deprecated: show warning and delegate to handle_picker
     warn_select_deprecated();
     worktrunk::config::suppress_warnings();
-    handle_picker(branches, remotes, None, SwitchFormat::Text)
+    handle_picker(branches, remotes, false, None, SwitchFormat::Text)
 }
 
 #[cfg(not(unix))]
@@ -1063,6 +1063,11 @@ fn main() {
         yes,
         command,
     } = cli;
+    // `WORKTRUNK_VERBOSE` provides a baseline verbosity the `-v`/`-vv` flags
+    // raise but never lower (`max`). It also drives shell completion, which
+    // exits in `parse_cli` before reaching here — see
+    // `completion::maybe_handle_env_completion`.
+    let verbose = verbose.max(logging::env_verbose_level());
     // Globals were already applied in `parse_cli` before help rendering;
     // OnceLock makes this call a no-op, but keeping it avoids touching the
     // existing destructure pattern.

@@ -197,6 +197,25 @@ fn resolve_pr_base(
     }
 }
 
+/// Fetch PR/MR info while showing a "still waiting" status.
+///
+/// The host lookup (`gh`/`glab` API) captures its output and can stall on a slow
+/// network, so without feedback the command looks frozen. The watchdog clears
+/// before the caller prints the resolved ref context. No command gutter — the
+/// host CLI invocation isn't readily available here, and the status line alone
+/// is the signal.
+fn fetch_ref_info(
+    provider: &dyn RemoteRefProvider,
+    number: u32,
+    repo: &Repository,
+) -> anyhow::Result<RemoteRefInfo> {
+    let _watchdog = worktrunk::progress::Watchdog::start(
+        &format!("the {} info", provider.ref_type().name()),
+        None,
+    );
+    provider.fetch_info(number, repo)
+}
+
 /// Resolve a remote ref (PR or MR) using the unified provider interface.
 fn resolve_remote_ref(
     repo: &Repository,
@@ -219,7 +238,7 @@ fn resolve_remote_ref(
         progress_message(cformat!("Fetching {} {symbol}{number}...", ref_type.name()))
     );
 
-    let info = provider.fetch_info(number, repo)?;
+    let info = fetch_ref_info(provider, number, repo)?;
 
     // Display context with URL (as gutter under fetch progress)
     eprintln!("{}", format_with_gutter(&format_ref_context(&info), None));
@@ -513,7 +532,7 @@ fn resolve_remote_ref_as_base(
         ))
     );
 
-    let info = provider.fetch_info(number, repo)?;
+    let info = fetch_ref_info(provider, number, repo)?;
     eprintln!("{}", format_with_gutter(&format_ref_context(&info), None));
 
     if !info.is_cross_repo {
@@ -1851,6 +1870,7 @@ pub fn handle_switch_command(args: SwitchArgs, yes: bool) -> anyhow::Result<()> 
                     return crate::commands::handle_picker(
                         args.branches,
                         args.remotes,
+                        args.prs,
                         change_dir_flag,
                         args.format,
                     );
@@ -1860,7 +1880,7 @@ pub fn handle_switch_command(args: SwitchArgs, yes: bool) -> anyhow::Result<()> 
                 {
                     use worktrunk::git::WorktrunkError;
                     // Suppress unused variable warnings on Windows
-                    let _ = (args.branches, args.remotes, change_dir_flag);
+                    let _ = (args.branches, args.remotes, args.prs, change_dir_flag);
 
                     crate::commands::print_windows_picker_unavailable();
                     return Err(WorktrunkError::AlreadyDisplayed { exit_code: 2 }.into());
