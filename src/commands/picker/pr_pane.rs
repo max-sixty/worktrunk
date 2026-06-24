@@ -43,13 +43,14 @@ pub(super) fn metadata_line(label: &str, value: &str) -> String {
     format!("{label}{pad}{value}\n")
 }
 
-/// The description block: the full `body` rendered as markdown (bold headers,
-/// styled lists and inline code — the same renderer the `summary` tab uses),
-/// flush at the pane width rather than quoted in a gutter. The whole body
-/// renders; the preview pane scrolls (`ctrl-u`/`ctrl-d`) through a long one.
-/// Empty body → empty string, so the block is skipped. The leading `\x1b[0m`
-/// is a defensive boundary so the first line renders clean regardless of what
-/// precedes it (the metadata lines already reset their own spans).
+/// The description block: the full `body` rendered flush as markdown (bold
+/// headers, styled lists, inline code; fenced code blocks dim and flush) via
+/// [`render_markdown_flush`](crate::md_help::render_markdown_flush) — nothing
+/// is quoted in the house gutter, so the whole body sits flush-left. The whole
+/// body renders; the preview pane scrolls (`ctrl-u`/`ctrl-d`) through a long
+/// one. Empty body → empty string, so the block is skipped. The leading
+/// `\x1b[0m` is a defensive boundary so the first line renders clean regardless
+/// of what precedes it (the metadata lines already reset their own spans).
 ///
 /// `width` is the preview-pane width, which the markdown wraps prose to. The
 /// `--prs` pane is built before skim renders, so it passes the list width as a
@@ -61,7 +62,7 @@ pub(super) fn description(body: &str, width: usize) -> String {
         return String::new();
     }
     let reset = Reset;
-    let rendered = crate::md_help::render_markdown_in_help_with_width(body, Some(width));
+    let rendered = crate::md_help::render_markdown_flush(body, Some(width));
     format!("\n{reset}{rendered}\n")
 }
 
@@ -170,5 +171,20 @@ mod tests {
         let out = description("Fixes the **flaky** retry.", 80);
         assert!(out.contains("\x1b[1m"), "bold rendered: {out:?}");
         assert!(!out.contains("**"), "markers consumed: {out:?}");
+    }
+
+    #[test]
+    fn description_renders_code_blocks_flush() {
+        use ansi_str::AnsiStr;
+        // A fenced code block renders flush and dim — no house gutter bar, and
+        // the code line sits at column 0, not indented into a gutter.
+        let out = description("Run it:\n\n```\nwt switch\n```", 80);
+        assert!(!out.contains("\x1b[107m"), "no gutter bar: {out:?}");
+        let code = out
+            .lines()
+            .map(|l| l.ansi_strip().into_owned())
+            .find(|l| l.contains("wt switch"))
+            .expect("code line present");
+        assert_eq!(code, "wt switch", "code flush at column 0: {code:?}");
     }
 }
