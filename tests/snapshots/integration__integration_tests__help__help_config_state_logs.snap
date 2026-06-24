@@ -106,7 +106,7 @@ All [2mpost-*[0m hooks (post-start, post-switch, post-commit, post-merge) run 
  [2msubprocess.log[0m Running with [2m-vv[0m 
  [2mdiagnostic.md[0m  Running with [2m-vv[0m 
 
-[2mtrace.log[0m captures debug-level records at [2m-vv[0m — commands, [2m[wt-trace][0m records, bounded subprocess previews. [2msubprocess.log[0m holds the raw uncapped subprocess stdout/stderr bodies, each headed by a [2m$ cmd … seq=N[0m line whose [2mseq[0m matches the command's [2m[wt-trace][0m record in [2mtrace.log[0m, so a raw block joins back to its timed record. [2mdiagnostic.md[0m is a markdown bug-report bundle that inlines [2mtrace.log[0m; [2mwt[0m prints a [2mgh gist create[0m command pointing at it. All three are overwritten on each [2m-vv[0m run.
+[2mtrace.log[0m captures debug-level records at [2m-vv[0m — commands, [2m[wt-trace][0m records, bounded subprocess previews. [2msubprocess.log[0m holds the raw uncapped subprocess stdout/stderr bodies. [2mdiagnostic.md[0m is a markdown bug-report bundle that inlines [2mtrace.log[0m; [2mwt[0m prints a [2mgh gist create[0m command pointing at it. All three are overwritten on each [2m-vv[0m run.
 
 [1m[32mLocation[0m
 
