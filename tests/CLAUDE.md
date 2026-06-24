@@ -141,11 +141,13 @@ silently: it passes wherever `$HOME` is writable and fails only in a sandbox
 that forbids it. `config_path()` and `system_config_path()` have no guard at
 all.
 
-## Timing Tests: Long Timeouts with Fast Polling
+## Timing Tests: Polling and Absence Windows
 
-**Core principle:** Use long timeouts (5+ seconds) for reliability on slow CI, but poll frequently (10-50ms) so tests complete quickly when things work.
+**The assertion's polarity picks the tool.** A *presence* assertion waits for something that will happen (a file appears, a counter ticks): poll it, so the test returns the instant the event lands. An *absence* assertion proves something did NOT happen (a hook stays silent, a marker never appears): there's no event to wait for, so hold a fixed window with `SLEEP_FOR_ABSENCE_CHECK`, then assert. The most common timing flake is pairing a fixed sleep with a presence assertion: it guesses how long the work takes and fails when load overruns the guess.
 
-This achieves both goals:
+### Presence: long timeouts, fast polling
+
+Use long timeouts (5+ seconds) for reliability on slow CI, but poll frequently (10-50ms) so tests complete quickly when things work:
 - **No flaky failures** on slow machines - generous timeout accommodates worst-case
 - **Fast tests** on normal machines - frequent polling means no unnecessary waiting
 
@@ -159,7 +161,7 @@ while start.elapsed() < timeout {
     thread::sleep(poll_interval);
 }
 
-// ❌ BAD: Fixed sleep (always slow, might still fail)
+// ❌ BAD: fixed sleep before a presence assertion (always slow, races under load)
 thread::sleep(Duration::from_millis(500));
 assert!(condition_met());
 
@@ -227,12 +229,21 @@ let outcome = drain_results_with_timings(
 
 **Rule of thumb:** if your producer thread needs `thread::sleep` to line up with a deadline in the code under test, you're racing the scheduler. Reach for the callback, a channel, or a condvar instead. Fixed deadlines belong only in the safety-net role — "stop if something has truly hung" — not in the assertion path.
 
-**Exception - testing absence:** When verifying something did NOT happen, polling doesn't work. Use a fixed 500ms+ sleep:
+### Absence: hold a fixed window
+
+When the assertion proves a negative (`assert!(!marker.exists())`), polling can't help, because there's no event to wait for. Hold a window long enough that the thing would have happened if it were going to, then assert it didn't. Use the shared constant (defined in `src/testing/mod.rs`, re-exported via `tests/common`) so absence sleeps stay greppable and self-documenting:
 
 ```rust
-thread::sleep(Duration::from_millis(500));
+use crate::common::SLEEP_FOR_ABSENCE_CHECK;
+
+thread::sleep(SLEEP_FOR_ABSENCE_CHECK); // 500ms, the floor for an absence window
 assert!(!marker_file.exists(), "Command should NOT have run");
 ```
+
+Two traps:
+
+- **Give each half its own wait.** Sleeping once and then asserting both "X happened" and "Y didn't" makes the presence half flaky. Poll for X, then hold the window for Y.
+- **Structural absence needs no window at all.** When the event is gated on a condition the test never sets up, it can't fire regardless of timing. Drop the sleep: poll the positive precondition and the absence holds by construction. A watchdog whose escalation is gated on `command.is_some()` can't escalate with no command, so the test polls for the first render and asserts `!escalated` with no window.
 
 ## Testing with --execute Commands
 

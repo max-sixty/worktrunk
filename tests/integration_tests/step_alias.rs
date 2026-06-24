@@ -1,8 +1,8 @@
 //! Integration tests for `wt step <alias>`
 
 use crate::common::{
-    TestRepo, configure_directive_files, directive_files, make_snapshot_cmd,
-    make_snapshot_cmd_with_global_flags, repo, setup_snapshot_settings, wt_bin,
+    SLEEP_FOR_ABSENCE_CHECK, TestRepo, configure_directive_files, directive_files,
+    make_snapshot_cmd, make_snapshot_cmd_with_global_flags, repo, setup_snapshot_settings, wt_bin,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -1441,7 +1441,7 @@ two = "sh -c 'echo start-two >> slow_two.log; sleep 30; echo done-two >> slow_tw
     );
 
     // Grace period — the killed children must NOT reach their "done" write.
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     for log in [&one_log, &two_log] {
         let contents = std::fs::read_to_string(log).unwrap_or_default();
         assert!(
@@ -1501,7 +1501,7 @@ two = "sh -c 'trap \"\" INT; echo start-two >> ignored_two.log; sleep 30'"
     // (the old design), within ~400 ms SIGTERM would have killed both
     // children and wt would be in the process of exiting. With the new
     // contract, both children keep sleeping and wt is still running.
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
 
     match child.try_wait().expect("try_wait failed") {
         None => {

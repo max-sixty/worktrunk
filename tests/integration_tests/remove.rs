@@ -1,6 +1,6 @@
 use crate::common::{
-    BareRepoTest, TestRepo, TestRepoBase, configure_directive_files, directive_files,
-    make_snapshot_cmd, repo, repo_with_remote, setup_snapshot_settings,
+    BareRepoTest, SLEEP_FOR_ABSENCE_CHECK, TestRepo, TestRepoBase, configure_directive_files,
+    directive_files, make_snapshot_cmd, repo, repo_with_remote, setup_snapshot_settings,
     setup_temp_snapshot_settings, wt_command,
 };
 use ansi_str::AnsiStr;
@@ -8,7 +8,6 @@ use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
 use path_slash::PathExt as _;
 use rstest::rstest;
-use std::time::Duration; // For absence checks (SLEEP_FOR_ABSENCE_CHECK pattern)
 
 #[rstest]
 fn test_remove_already_on_default(repo: TestRepo) {
@@ -2134,8 +2133,8 @@ approved-commands = ["echo 'hook ran' > {}"]
         None
     ));
 
-    // Wait for any potential hook execution (absence check - can't poll, use 500ms per guidelines)
-    thread::sleep(Duration::from_millis(500));
+    // Give a wrongly-spawned hook time to create its marker before asserting it didn't.
+    thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
 
     // Marker file should NOT exist - --no-hooks skips the hook
     assert!(
