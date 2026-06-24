@@ -14,12 +14,15 @@ use std::path::PathBuf;
 /// 4. UpstreamDiff: Diff vs upstream tracking branch (ahead/behind)
 /// 5. Summary: LLM-generated branch summary (requires [commit.generation] config)
 /// 6. Pr: The selected row's PR/MR, rendered from already-fetched data (no network)
+/// 7. Comments: The PR/MR's comment thread (background forge fetch on `--prs` rows)
 ///
 /// A mode whose content is structurally absent for the current row is rendered
 /// de-emphasized in the tab bar (see `TabAvailability` / `render_preview_tabs`):
 /// tab 4 when the branch has no upstream, tab 5 when summaries are disabled,
-/// tabs 1-5 on a `--prs` row (no local worktree), and tab 6 on a worktree row
-/// (PR previews render only on `--prs` rows).
+/// the working-tree/branch-diff/upstream/summary tabs on a `--prs` row (no
+/// local worktree), tab 6 on a worktree row (PR previews render only on `--prs`
+/// rows), and tab 7 (comments) on a worktree row (comments are fetched only for
+/// `--prs` rows).
 ///
 /// Loosely aligned with `wt list` columns, though not a perfect match:
 /// - Tab 1 corresponds to "HEAD±" column
@@ -35,6 +38,7 @@ pub(super) enum PreviewMode {
     UpstreamDiff = 4,
     Summary = 5,
     Pr = 6,
+    Comments = 7,
 }
 
 impl PreviewMode {
@@ -45,6 +49,7 @@ impl PreviewMode {
             4 => Self::UpstreamDiff,
             5 => Self::Summary,
             6 => Self::Pr,
+            7 => Self::Comments,
             _ => Self::WorkingTree,
         }
     }
@@ -235,6 +240,7 @@ mod tests {
         assert_eq!(PreviewMode::from_u8(4), PreviewMode::UpstreamDiff);
         assert_eq!(PreviewMode::from_u8(5), PreviewMode::Summary);
         assert_eq!(PreviewMode::from_u8(6), PreviewMode::Pr);
+        assert_eq!(PreviewMode::from_u8(7), PreviewMode::Comments);
         // Invalid values default to WorkingTree
         assert_eq!(PreviewMode::from_u8(0), PreviewMode::WorkingTree);
         assert_eq!(PreviewMode::from_u8(99), PreviewMode::WorkingTree);

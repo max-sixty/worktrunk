@@ -686,11 +686,11 @@ pub fn handle_picker(
         .color("fg:-1,bg:-1,header:-1,matched:108,current:237,current_bg:251,current_match:108")
         .cmd_collector(Rc::new(RefCell::new(collector)) as Rc<RefCell<dyn CommandCollector>>)
         .bind(vec![
-            // Preview-tab switching. Bare digits 1-6 are intentionally NOT
+            // Preview-tab switching. Bare digits 1-7 are intentionally NOT
             // bound — they flow to the query input so a number can be typed
             // (a PR number, or digits within a branch name). Two ways to
             // switch tabs remain:
-            //   * alt-1..alt-6 jump straight to a tab. skim 4.x parses
+            //   * alt-1..alt-7 jump straight to a tab. skim 4.x parses
             //     `alt-<digit>` natively via crossterm; an unparsable bind is
             //     just logged and dropped.
             //   * tab / shift-tab cycle forward / backward (below).
@@ -718,10 +718,14 @@ pub fn handle_picker(
                 "alt-6:execute-silent(echo 6 > {0})+refresh-preview",
                 state_path_str
             ),
+            format!(
+                "alt-7:execute-silent(echo 7 > {0})+refresh-preview",
+                state_path_str
+            ),
             // Cycle tabs with tab / shift-tab. The state file holds the current
-            // digit; `tr` rotates it (1→2→3→4→5→6→1 forward, the reverse for
-            // btab) with wraparound, via a temp file + rename so the read and
-            // write don't race on one path. Two hard constraints shape this:
+            // digit; `tr` rotates it (1→2→…→7→1 forward, the reverse for btab)
+            // with wraparound, via a temp file + rename so the read and write
+            // don't race on one path. Two hard constraints shape this:
             //   * Paren-free — skim 4.x parses an `execute-silent(…)` body by
             //     splitting at the first `(` and trimming the trailing `)`, and
             //     splits the action chain on `+`. So the body must contain no
@@ -746,19 +750,19 @@ pub fn handle_picker(
             // report (`btab` / `shift-btab` / `shift-tab`) so the override holds
             // regardless of terminal. (Plain Tab is unambiguous — `Tab+NONE`.)
             format!(
-                "tab:execute-silent(tr 123456 234561 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
+                "tab:execute-silent(tr 1234567 2345671 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
                 state_path_str
             ),
             format!(
-                "btab:execute-silent(tr 123456 612345 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
+                "btab:execute-silent(tr 1234567 7123456 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
                 state_path_str
             ),
             format!(
-                "shift-btab:execute-silent(tr 123456 612345 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
+                "shift-btab:execute-silent(tr 1234567 7123456 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
                 state_path_str
             ),
             format!(
-                "shift-tab:execute-silent(tr 123456 612345 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
+                "shift-tab:execute-silent(tr 1234567 7123456 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
                 state_path_str
             ),
             // Create new worktree with query as branch name (alt-c for "create")
@@ -869,6 +873,7 @@ pub fn handle_picker(
         let prs_repo = repo.clone();
         let prs_warnings = Arc::clone(&stashed_warnings);
         let prs_grid = Arc::clone(&grid_slot);
+        let prs_orchestrator = Arc::clone(&orchestrator);
         let prs_render_tx = Arc::clone(&render_tx);
         Some(
             std::thread::Builder::new()
@@ -876,12 +881,18 @@ pub fn handle_picker(
                 .spawn(move || {
                     prs::stream_open_prs(
                         &prs_repo,
-                        skim_list_width,
+                        &prs::PrsLayout {
+                            list_width: skim_list_width,
+                            preview_dims,
+                        },
                         &prs_tx,
                         &prs_warnings,
                         &prs_grid,
-                        &prs_loading,
-                        &prs_render_tx,
+                        &prs_orchestrator,
+                        &prs::PrsStreamSignal {
+                            pending: &prs_loading,
+                            render_tx: &prs_render_tx,
+                        },
                     );
                 })
                 .context("Failed to spawn picker-prs thread")?,

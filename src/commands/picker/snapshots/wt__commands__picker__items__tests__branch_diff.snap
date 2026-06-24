@@ -1,6 +1,6 @@
 ---
 source: src/commands/picker/items.rs
-expression: "render_preview_tabs(mode, wt)"
+expression: "render_preview_tabs(mode, wt, WIDE)"
 ---
-1: [2mHEAD±[22m[0m | 2: [2mlog[22m[0m | 3: [1mmain…±[22m[0m | 4: [2mremote⇅[22m[0m | 5: [2msummary[22m[0m | [2m6:[22m [2mpr[22m[0m
-[33m[2mEnter: switch | Tab/alt-1…6: preview | alt-c: create | Esc: cancel | ctrl-u/d: scroll | alt-p: toggle[39m[22m[0m
+1: [2mHEAD±[22m[0m | 2: [2mlog[22m[0m | 3: [1mmain…±[22m[0m | 4: [2mremote⇅[22m[0m | 5: [2msummary[22m[0m | [2m6:[22m [2mpr[22m[0m | [2m7:[22m [2mcomments[22m[0m
+[33m[2mEnter: switch | Tab/alt-1…7: preview | alt-c: create | Esc: cancel | ctrl-u/d: scroll | alt-p: toggle[39m[22m[0m
