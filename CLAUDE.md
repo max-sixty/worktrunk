@@ -45,6 +45,8 @@ Load relevant skills before starting; reload when scope changes mid-session. Pro
 
 Behavior changes require doc updates. `src/cli/mod.rs` (`after_long_help` plus clap attributes) is the PRIMARY SOURCE for command pages; never hand-edit the generated mirrors under `docs/content/` or `skills/worktrunk/reference/`. Ask: "does `--help` still describe what the code does?" After any doc change run `cargo test --test integration test_docs_are_in_sync`. Sync taxonomy, help-text authoring (three render contexts, link text, config-TOML blocks): `docs/CLAUDE.md`.
 
+Design proposals live in `design/` and are review-only: open a PR to discuss, then close it without merging. They guide implementation PRs but don't land on `main`.
+
 ## Plugin Layout
 
 Per-tool layout and path resolution (Claude/Codex/Gemini), the Codex no-hooks re-enablement conditions, the accepted `wt-switch-create` tradeoff, and `test_plugin_layout_is_consolidated`: `plugins/worktrunk/CLAUDE.md`.
