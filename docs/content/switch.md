@@ -105,8 +105,6 @@ On narrow previews the tab bar compacts to digits — only the active tab keeps 
 pager = "delta --paging=never --width=$COLUMNS"
 ```
 
-Available on Unix only (macOS, Linux). On Windows, use `wt list` or `wt switch <branch>` directly.
-
 ## Pull requests and merge requests
 
 The `pr:<number>` / `mr:<number>` shortcut and the PR/MR's web URL both resolve to its branch. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref (`refs/pull/N/head` or `refs/merge-requests/N/head`) and configures `pushRemote` to the fork URL.

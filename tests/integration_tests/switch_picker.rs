@@ -1,9 +1,11 @@
-#![cfg(all(unix, feature = "shell-integration-tests"))]
+#![cfg(feature = "shell-integration-tests")]
 //! TUI snapshot tests for `wt switch` interactive picker
 //!
 //! These tests use PTY execution combined with vt100 terminal emulation to capture
 //! what the user actually sees on screen, enabling meaningful snapshot testing of
-//! the skim-based TUI interface.
+//! the skim-based TUI interface. They run on every platform — `portable_pty` uses a
+//! ConPTY on Windows (see `tests/common/pty.rs`), and capturing the vt100-emulated
+//! grid (not raw escape sequences) keeps the snapshots backend-agnostic.
 //!
 //! ## Capture-Before-Abort Pattern
 //!
