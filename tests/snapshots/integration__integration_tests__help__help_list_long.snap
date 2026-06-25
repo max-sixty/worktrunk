@@ -318,7 +318,7 @@ Query structured data with [2m--format=json[0m:
  [2mrepo[0m               object      Structured repository metadata (see below); includes [2mremote[0m                                      
  [2murl[0m                string      Dev server URL from project config; absent when not configured                                   
  [2murl_active[0m         boolean     Whether the URL's port is listening; absent when not configured                                  
- [2msummary[0m            string      LLM-generated branch summary; absent when not configured or no summary                           
+ [2msummary[0m            string      LLM-generated branch summary; [2m--full[0m only, then absent when not configured or no summary         
  [2mstatusline[0m         string      Pre-formatted status with ANSI colors                                                            
  [2msymbols[0m            string      Raw status symbols without colors (e.g., [2m"!?↓"[0m)                                                  
  [2mvars[0m               object      Per-branch variables from [2mwt config state vars[0m (absent when empty)                               
@@ -348,11 +348,11 @@ The five change flags map to the Working tree symbols ([2mrenamed[0m and [2md
 
 [32mmain object[0m
 
- Field   Type                       Description                      
- ────── ────── ───────────────────────────────────────────────────── 
- [2mahead[0m  number Commits ahead of the default branch                   
- [2mbehind[0m number Commits behind the default branch                     
- [2mdiff[0m   object Lines changed vs the default branch: [2m{added, deleted}[0m 
+ Field   Type                             Description                             
+ ────── ────── ────────────────────────────────────────────────────────────────── 
+ [2mahead[0m  number Commits ahead of the default branch                                
+ [2mbehind[0m number Commits behind the default branch                                  
+ [2mdiff[0m   object Lines changed vs the default branch: [2m{added, deleted}[0m; [2m--full[0m only 
 
 [32mremote object[0m
 
