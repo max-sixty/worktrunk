@@ -1839,3 +1839,43 @@ fn test_switch_picker_alt_r_no_match_stays_responsive(mut repo: TestRepo) {
 
     assert_valid_abort_exit_code(result.exit_code);
 }
+
+/// alt-r on an unmerged branch-only row keeps the row — `SafeDelete` refuses to
+/// delete an unmerged branch, so the row must not vanish. The picker decides this
+/// up front (no optimistic drop), so the list never flickers the row off and back
+/// on. The query stays filtered to the branch across the alt-r reload: if the row
+/// were wrongly dropped, the branch would disappear and the post-alt-r content
+/// wait would time out. The inverse of `…_no_match_stays_responsive`, which
+/// removes a row and expects emptiness.
+#[rstest]
+fn test_switch_picker_alt_r_keeps_unmerged_branch_row(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // An unmerged branch — a commit off the default branch — with no worktree.
+    let default_branch = repo.git_output(&["rev-parse", "--abbrev-ref", "HEAD"]);
+    repo.run_git(&["checkout", "-b", "unmerged-orphan"]);
+    std::fs::write(repo.root_path().join("orphan.txt"), "unmerged work").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "unmerged work"]);
+    repo.run_git(&["checkout", &default_branch]);
+
+    let env_vars = repo.test_env_vars();
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--branches"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            ("unmerged-orphan", Some("unmerged-orphan")), // filter to the branch
+            ("\x1br", Some("unmerged-orphan")),           // alt-r keeps it: still visible
+        ],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+    let (list, _preview) = result.panels();
+    assert!(
+        list.contains("unmerged-orphan"),
+        "the unmerged branch-only row survives alt-r.\nList:\n{list}"
+    );
+}

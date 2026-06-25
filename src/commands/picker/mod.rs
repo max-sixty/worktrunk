@@ -118,7 +118,7 @@ use worktrunk::HookType;
 use worktrunk::config::Approvals;
 use worktrunk::git::{Repository, current_or_recover};
 use worktrunk::path::format_path_for_display;
-use worktrunk::styling::{eprintln, warning_message};
+use worktrunk::styling::{eprintln, hint_message, info_message, suggest_command, warning_message};
 
 use super::hook_plan::{ApprovedHookPlan, HookPlanBuilder};
 use super::hooks::HookAnnouncer;
@@ -305,12 +305,15 @@ impl PickerCollector {
     ///
     /// Called from a background thread after the picker optimistically removes
     /// the item from the list, so the whole operation runs off skim's event loop
-    /// and the TUI stays responsive. The caller does not infer the outcome from
-    /// this `Result` — a removal can fail before *or* after the worktree is
-    /// physically gone (rendering or spawning a `post-remove`/`post-switch` hook
-    /// can error during the announcer flush, which runs after the dir is renamed
-    /// into `.git/wt/trash/`), and a `BranchOnly` safe-delete refusal returns
-    /// `Ok`. Instead it
+    /// and the TUI stays responsive. Only reached for a removal
+    /// [`removal_will_remove_target`] predicts will remove the target — a
+    /// predictably-kept unmerged branch never gets here. The caller does not infer
+    /// the outcome from this `Result` — a removal can fail before *or* after the
+    /// worktree is physically gone (rendering or spawning a
+    /// `post-remove`/`post-switch` hook can error during the announcer flush, which
+    /// runs after the dir is renamed into `.git/wt/trash/`), and a `BranchOnly`
+    /// delete that raced from integrated to unmerged returns `Ok` with the branch
+    /// surviving. Instead it
     /// observes whether the target still exists ([`removal_target_still_present`])
     /// and restores the row via [`restore_failed_removal`] only when it does, so
     /// the list never shows a removal that didn't happen. The `Result` is for
@@ -373,6 +376,164 @@ impl PickerCollector {
             }
         }
         Ok(())
+    }
+
+    /// Drop the selected row and remove its target on a background thread.
+    ///
+    /// For a removal [`removal_will_remove_target`] predicts will actually remove
+    /// the target (a clean worktree, or an integrated / force-deleted branch). The
+    /// `output()` token is unique per row (a `worktree-path:` path for worktrees),
+    /// so this drops exactly the selected row even when several detached rows share
+    /// the `(detached)` branch label.
+    ///
+    /// The row drops optimistically so the list stays snappy; the git work runs on
+    /// a background thread off skim's event loop. The dropped row is restored only
+    /// when the target survives — observed directly ([`removal_target_still_present`]),
+    /// not inferred from `do_removal`'s `Result`, which is `Err` after a successful
+    /// removal whose `post-remove` hook fails to render/spawn, and `Ok` after an
+    /// integrated→unmerged race leaves the branch in place. This keeps the list
+    /// from showing a removal that didn't happen without ever resurrecting a row
+    /// for a target that's actually gone.
+    fn drop_and_remove_in_background(
+        &mut self,
+        selected_output: String,
+        planning_repo: Repository,
+        result: RemoveResult,
+    ) {
+        // Capture the removed row (and its position) before dropping it: the
+        // position restores the cursor to that slot (the row that slides up) after
+        // the reload — see `reposition_cursor_action` — and the row itself is
+        // handed to the background thread so it can put the row back if the removal
+        // fails (see `restore_failed_removal`).
+        let (removed, reposition_target) = {
+            let mut items = self.items.lock().unwrap();
+            let removed = items
+                .iter()
+                .position(|item| item.output().as_ref() == selected_output)
+                .map(|pos| (Arc::clone(&items[pos]), pos));
+            items.retain(|item| item.output().as_ref() != selected_output);
+            let remaining_data_rows = items.len().saturating_sub(PICKER_HEADER_ROWS);
+            let target = removed
+                .as_ref()
+                .and_then(|(_, pos)| sticky_reposition_target(*pos, remaining_data_rows));
+            (removed, target)
+        };
+
+        // If removing the current worktree, cd to home so skim and git commands
+        // continue to work after the directory disappears.
+        if matches!(
+            &result,
+            RemoveResult::RemovedWorktree {
+                changed_directory: true,
+                ..
+            }
+        ) && let Some(home) = result.destination_path()
+        {
+            let _ = std::env::set_current_dir(home);
+            if let Ok(repo) = Repository::at(home) {
+                self.repo = repo;
+            }
+        }
+
+        // A user-facing (label, noun) for the `kept` message, taken from the result
+        // before it moves into the background thread.
+        let (removal_label, removal_noun) = removal_failure_subject(&result);
+
+        let repo = planning_repo.clone();
+        let approvals = Arc::clone(&self.approvals);
+        let items = Arc::clone(&self.items);
+        let render_tx = Arc::clone(&self.render_tx);
+        let stashed_warnings = Arc::clone(&self.stashed_warnings);
+        let _ = std::thread::Builder::new()
+            .name(format!("picker-remove-{selected_output}"))
+            .spawn(move || {
+                if let Err(e) = Self::do_removal(&repo, &result, &approvals) {
+                    log::warn!("picker: removal of '{selected_output}' errored: {e:#}");
+                }
+                if removal_target_still_present(&repo, &result)
+                    && let Some((item, pos)) = removed
+                {
+                    restore_failed_removal(
+                        &items,
+                        &render_tx,
+                        &stashed_warnings,
+                        item,
+                        pos,
+                        &removal_label,
+                        removal_noun,
+                    );
+                }
+            });
+
+        // Restore the cursor near the removed row. skim resets it to the top on
+        // every reload; inject a Custom action that moves it back to the removed
+        // row's slot once the reloaded rows land (`render_tx` is skim's event
+        // sender, set once the TUI is up — always present by the time a reload
+        // fires).
+        if let Some(target) = reposition_target
+            && let Some(event_tx) = self.render_tx.get()
+        {
+            let _ = event_tx.try_send(Event::Action(reposition_cursor_action(
+                target,
+                Arc::new(AtomicUsize::new(0)),
+                Arc::new(AtomicUsize::new(0)),
+            )));
+        }
+    }
+
+    /// Keep the selected row in place and explain why its target wasn't removed.
+    ///
+    /// Called from `invoke` when [`removal_will_remove_target`] predicts the
+    /// removal would keep the target — a branch-only row whose branch is unmerged,
+    /// which `SafeDelete` declines to delete (data safety). Deciding this up front
+    /// from `prepare_removal`'s already-computed integration check means the row
+    /// never drops (no flicker) and no background `do_removal` runs for a no-op.
+    /// alt-r's reload still resets the cursor to the top, so this lands it back on
+    /// the kept row and stashes the canonical "retained; unmerged" info + hint pair
+    /// `wt remove` itself prints (see `print_retained_unmerged_branch`), deduped
+    /// and drained to stderr when the picker exits. (This is a by-design retain,
+    /// not a failure — distinct from [`restore_failed_removal`]'s `kept … could
+    /// not remove it` warning.)
+    fn keep_unremovable_row(&self, selected_output: &str, result: &RemoveResult) {
+        if let RemoveResult::BranchOnly { branch_name, .. } = result {
+            let info = info_message(cformat!(
+                "Branch <bold>{branch_name}</> retained; has unmerged changes"
+            ))
+            .to_string();
+            let cmd = suggest_command("remove", &[branch_name], &["-D"]);
+            let hint = hint_message(cformat!(
+                "To delete the unmerged branch, run <underline>{cmd}</>"
+            ))
+            .to_string();
+            let mut stashed = self.stashed_warnings.lock().unwrap();
+            // Dedup on repeated alt-r of the same kept row.
+            if !stashed.contains(&info) {
+                stashed.push(info);
+                stashed.push(hint);
+            }
+        }
+
+        // The row never moved, so land the cursor back on it (alt-r's reload reset
+        // it to the top).
+        let reposition_target = {
+            let items = self.items.lock().unwrap();
+            items
+                .iter()
+                .position(|item| item.output().as_ref() == selected_output)
+                .and_then(|pos| {
+                    let remaining = items.len().saturating_sub(PICKER_HEADER_ROWS);
+                    sticky_reposition_target(pos, remaining)
+                })
+        };
+        if let Some(target) = reposition_target
+            && let Some(event_tx) = self.render_tx.get()
+        {
+            let _ = event_tx.try_send(Event::Action(reposition_cursor_action(
+                target,
+                Arc::new(AtomicUsize::new(0)),
+                Arc::new(AtomicUsize::new(0)),
+            )));
+        }
     }
 }
 
@@ -511,6 +672,34 @@ fn removal_failure_subject(result: &RemoveResult) -> (String, &'static str) {
     }
 }
 
+/// Whether `do_removal` will actually remove the target — predicted up front from
+/// `prepare_removal`'s already-computed [`RemoveResult`], before the row is
+/// dropped. The dual of [`removal_target_still_present`]: this decides whether to
+/// drop the row, that confirms the drop afterward.
+///
+/// A `RemovedWorktree` result has passed `ensure_clean` (Phase 5 of
+/// `prepare_worktree_removal`), so the worktree removes — the only failures left
+/// are async and rare (a clean-check race, a failing approved `pre-remove` hook),
+/// which the background restore still catches. A `BranchOnly` result deletes only
+/// when `delete_branch_if_safe` would: not `Keep` mode, and either force or an
+/// integrated branch (the `integration_reason` here is computed from the *same*
+/// `Repository::integration_reason` the later delete consults, so they can't
+/// drift). An unmerged branch-only row is thus kept, and predicting it here means
+/// it never drops (no flicker) — see [`PickerCollector::keep_unremovable_row`].
+fn removal_will_remove_target(result: &RemoveResult) -> bool {
+    match result {
+        RemoveResult::RemovedWorktree { .. } => true,
+        RemoveResult::BranchOnly {
+            deletion_mode,
+            integration_reason,
+            ..
+        } => {
+            !deletion_mode.should_keep()
+                && (deletion_mode.is_force() || integration_reason.is_some())
+        }
+    }
+}
+
 /// Whether the row's underlying target still exists after `do_removal` ran — the
 /// primary evidence for "was this actually removed," used in place of inferring
 /// from `do_removal`'s `Result`.
@@ -518,11 +707,12 @@ fn removal_failure_subject(result: &RemoveResult) -> (String, &'static str) {
 /// A `Result` is the wrong signal in two directions: a `RemovedWorktree` removal
 /// can return `Err` *after* the worktree is already trashed (rendering or
 /// spawning a `post-remove`/`post-switch` hook fails during the announcer flush),
-/// and a `BranchOnly` safe-delete refusal of an unmerged branch returns `Ok`
-/// while leaving the branch in place. Observing the target directly handles
-/// both: the worktree dir is gone once removed (renamed into `.git/wt/trash/`),
-/// and the branch ref is gone once deleted. The check runs on the background
-/// thread, off skim's event loop.
+/// and a `BranchOnly` safe-delete that raced from integrated to unmerged returns
+/// `Ok` while leaving the branch in place. (The *predictable* unmerged case never
+/// reaches here — [`removal_will_remove_target`] keeps that row without dropping
+/// it.) Observing the target directly handles both: the worktree dir is gone once
+/// removed (renamed into `.git/wt/trash/`), and the branch ref is gone once
+/// deleted. The check runs on the background thread, off skim's event loop.
 fn removal_target_still_present(repo: &Repository, result: &RemoveResult) -> bool {
     match result {
         RemoveResult::RemovedWorktree { worktree_path, .. } => worktree_path.exists(),
@@ -536,11 +726,13 @@ fn removal_target_still_present(repo: &Repository, result: &RemoveResult) -> boo
 /// loop so the list never shows a removal that didn't occur.
 ///
 /// `invoke` drops a row optimistically once alt-r's validation passes, then
-/// removes the target on a background thread. When the target survives (data
-/// safety: a clean-check race against `ensure_clean`, a locked directory, a
-/// failing `pre-remove` hook, or a `BranchOnly` safe-delete refusal of an
-/// unmerged branch — see [`removal_target_still_present`]), the row must
-/// reappear. This re-inserts it into `shared_items` at its original slot, stashes
+/// removes the target on a background thread. When the target unexpectedly
+/// survives (data safety: a clean-check race against `ensure_clean`, a locked
+/// directory, a failing `pre-remove` hook, or a `BranchOnly` delete that raced
+/// from integrated to unmerged — see [`removal_target_still_present`]; the
+/// predictably-kept unmerged branch is filtered earlier by
+/// [`removal_will_remove_target`]), the row must reappear. This re-inserts it into
+/// `shared_items` at its original slot, stashes
 /// a `kept` warning (drained to stderr once skim releases the terminal; the full
 /// error, if any, is in the `log::warn!` the caller emits), then reloads the
 /// picker to re-stream the restored list and lands the cursor back on the row.
@@ -610,108 +802,20 @@ impl CommandCollector for PickerCollector {
 
                 match preparation {
                     Ok((planning_repo, result)) => {
-                        // Removal validated — remove the selected item from the
-                        // picker list. The `output()` token is unique per row
-                        // (a `worktree-path:` path for worktrees), so this
-                        // drops exactly the selected row even when several
-                        // detached rows share the `(detached)` branch label.
-                        //
-                        // Note: skim's `as_any().downcast_ref::<WorktreeSkimItem>()` can
-                        // fail at runtime (TypeId mismatch between reader thread and main
-                        // thread compilation units). All item lookups use output()
-                        // matching instead.
-                        //
-                        // Capture the removed row (and its position) before dropping
-                        // it: the position restores the cursor to that slot (the row
-                        // that slides up) after the reload — see
-                        // `reposition_cursor_action` — and the row itself is handed to
-                        // the background thread so it can put the row back if the
-                        // removal fails (see `restore_failed_removal`).
-                        let (removed, reposition_target) = {
-                            let mut items = self.items.lock().unwrap();
-                            let removed = items
-                                .iter()
-                                .position(|item| item.output().as_ref() == selected_output)
-                                .map(|pos| (Arc::clone(&items[pos]), pos));
-                            items.retain(|item| item.output().as_ref() != selected_output);
-                            let remaining_data_rows =
-                                items.len().saturating_sub(PICKER_HEADER_ROWS);
-                            let target = removed.as_ref().and_then(|(_, pos)| {
-                                sticky_reposition_target(*pos, remaining_data_rows)
-                            });
-                            (removed, target)
-                        };
-
-                        // If removing the current worktree, cd to home so skim and git
-                        // commands continue to work after the directory disappears.
-                        if matches!(
-                            &result,
-                            RemoveResult::RemovedWorktree {
-                                changed_directory: true,
-                                ..
-                            }
-                        ) && let Some(home) = result.destination_path()
-                        {
-                            let _ = std::env::set_current_dir(home);
-                            if let Ok(repo) = Repository::at(home) {
-                                self.repo = repo;
-                            }
-                        }
-
-                        // A user-facing (label, noun) for the `kept` message, taken
-                        // from the result before it moves into the background thread.
-                        let (removal_label, removal_noun) = removal_failure_subject(&result);
-
-                        // Defer actual git removal to a background thread so skim's
-                        // event loop stays responsive. Restore the dropped row only
-                        // when the target survives — observed directly, not inferred
-                        // from `do_removal`'s Result, which is Err after a successful
-                        // removal whose post-remove hook fails to render/spawn, and Ok
-                        // after a branch-only safe-delete refusal (see
-                        // `removal_target_still_present`). This keeps the list from
-                        // showing a removal that didn't happen without ever resurrecting
-                        // a row for a target that's actually gone.
-                        let repo = planning_repo.clone();
-                        let approvals = Arc::clone(&self.approvals);
-                        let items = Arc::clone(&self.items);
-                        let render_tx = Arc::clone(&self.render_tx);
-                        let stashed_warnings = Arc::clone(&self.stashed_warnings);
-                        let _ = std::thread::Builder::new()
-                            .name(format!("picker-remove-{selected_output}"))
-                            .spawn(move || {
-                                if let Err(e) = Self::do_removal(&repo, &result, &approvals) {
-                                    log::warn!(
-                                        "picker: removal of '{selected_output}' errored: {e:#}"
-                                    );
-                                }
-                                if removal_target_still_present(&repo, &result)
-                                    && let Some((item, pos)) = removed
-                                {
-                                    restore_failed_removal(
-                                        &items,
-                                        &render_tx,
-                                        &stashed_warnings,
-                                        item,
-                                        pos,
-                                        &removal_label,
-                                        removal_noun,
-                                    );
-                                }
-                            });
-
-                        // Restore the cursor near the removed row. skim resets it
-                        // to the top on every reload; inject a Custom action that
-                        // moves it back to the removed row's slot once the reloaded
-                        // rows land (`render_tx` is skim's event sender, set once
-                        // the TUI is up — always present by the time a reload fires).
-                        if let Some(target) = reposition_target
-                            && let Some(event_tx) = self.render_tx.get()
-                        {
-                            let _ = event_tx.try_send(Event::Action(reposition_cursor_action(
-                                target,
-                                Arc::new(AtomicUsize::new(0)),
-                                Arc::new(AtomicUsize::new(0)),
-                            )));
+                        // Decide up front, from the already-computed result, whether
+                        // this removal will actually remove the target. Only an
+                        // outcome that removes drops the row; a branch-only row whose
+                        // branch is unmerged stays put and is explained, so the list
+                        // never flickers a row off and back on (see
+                        // `removal_will_remove_target`).
+                        if removal_will_remove_target(&result) {
+                            self.drop_and_remove_in_background(
+                                selected_output,
+                                planning_repo,
+                                result,
+                            );
+                        } else {
+                            self.keep_unremovable_row(&selected_output, &result);
                         }
                     }
                     Err(e) => {
@@ -2319,12 +2423,72 @@ pub mod tests {
         assert!(!super::removal_target_still_present(&repo, &gone_branch));
     }
 
-    /// Branch-only restore (the path the Result-only signal missed): an unmerged
-    /// branch with no worktree resolves to `BranchOnly`; `SafeDelete` refuses to
-    /// delete it and `do_removal` returns `Ok`, yet the branch survives — so the
-    /// row must be restored. Driven through `invoke` end-to-end.
+    /// `removal_will_remove_target` predicts removal from the prepared result
+    /// alone: a worktree always removes (it passed `ensure_clean`); a branch-only
+    /// row removes only when the branch is integrated or force-deleted, and never
+    /// under `Keep` — mirroring `delete_branch_if_safe` so the up-front prediction
+    /// can't drift from what `do_removal` does.
     #[test]
-    fn test_invoke_restores_branch_only_row_when_unmerged() {
+    fn test_removal_will_remove_target() {
+        use worktrunk::git::IntegrationReason;
+
+        let branch_only = |mode: BranchDeletionMode, integration: Option<IntegrationReason>| {
+            RemoveResult::BranchOnly {
+                branch_name: "b".to_string(),
+                deletion_mode: mode,
+                pruned: false,
+                target_branch: None,
+                integration_reason: integration,
+            }
+        };
+
+        let worktree = RemoveResult::RemovedWorktree {
+            main_path: std::path::PathBuf::from("/repo"),
+            worktree_path: std::path::PathBuf::from("/repo.feature"),
+            changed_directory: false,
+            branch_name: Some("feature".to_string()),
+            deletion_mode: BranchDeletionMode::SafeDelete,
+            target_branch: Some("main".to_string()),
+            force_worktree: false,
+            expected_path: None,
+            removed_commit: None,
+        };
+        assert!(
+            super::removal_will_remove_target(&worktree),
+            "a worktree removal always drops the row"
+        );
+
+        assert!(
+            super::removal_will_remove_target(&branch_only(
+                BranchDeletionMode::SafeDelete,
+                Some(IntegrationReason::SameCommit)
+            )),
+            "an integrated branch is safe-deleted"
+        );
+        assert!(
+            !super::removal_will_remove_target(&branch_only(BranchDeletionMode::SafeDelete, None)),
+            "an unmerged branch is kept, so the row stays"
+        );
+        assert!(
+            super::removal_will_remove_target(&branch_only(BranchDeletionMode::ForceDelete, None)),
+            "force-delete removes even an unmerged branch"
+        );
+        assert!(
+            !super::removal_will_remove_target(&branch_only(
+                BranchDeletionMode::Keep,
+                Some(IntegrationReason::SameCommit)
+            )),
+            "Keep never deletes, even when integrated"
+        );
+    }
+
+    /// alt-r on an unmerged branch-only row never drops it (no flicker): an
+    /// unmerged branch with no worktree resolves to `BranchOnly` with no
+    /// integration reason, so `removal_will_remove_target` predicts `SafeDelete`
+    /// keeps it. Decided synchronously in `invoke` — no background removal — so the
+    /// row stays and a one-time `kept … branch` hint is stashed. Driven end-to-end.
+    #[test]
+    fn test_invoke_keeps_unmerged_branch_only_row() {
         let test = worktrunk::testing::TestRepo::with_initial_commit();
         let repo = worktrunk::git::Repository::at(test.path()).unwrap();
 
@@ -2352,27 +2516,30 @@ pub mod tests {
         let cmd = format!("remove '{token}'");
         let (_rx, _interrupt) = collector.invoke(&cmd, Arc::new(AtomicUsize::new(0)));
 
-        // SafeDelete keeps the unmerged branch; `do_removal` returns Ok, but the
-        // branch survives, so the row is restored and a `kept … branch` warning
-        // is stashed. Poll on the warning.
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while stashed.lock().unwrap().is_empty() && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        let warnings = stashed.lock().unwrap().clone();
-        assert!(
-            warnings
-                .iter()
-                .any(|w| w.contains("unmerged") && w.contains("branch")),
-            "a kept branch stashes a `kept … branch` warning: {warnings:?}"
-        );
+        // The keep path is synchronous (no background thread), so by the time
+        // `invoke` returns the row is still present and the hint is stashed.
         let outputs: Vec<String> = items
             .lock()
             .unwrap()
             .iter()
             .map(|item| item.output().into_owned())
             .collect();
-        assert_eq!(outputs, vec![token], "the branch-only row is restored");
+        assert_eq!(
+            outputs,
+            vec![token],
+            "the unmerged branch-only row is never dropped"
+        );
+        let warnings = stashed.lock().unwrap().clone();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("unmerged") && w.contains("retained")),
+            "a kept unmerged branch stashes a `retained` info line: {warnings:?}"
+        );
+        assert!(
+            warnings.iter().any(|w| w.contains("wt remove -D unmerged")),
+            "a kept unmerged branch stashes the actionable `-D` hint: {warnings:?}"
+        );
         let branch_list = repo.run_command(&["branch", "--list", "unmerged"]).unwrap();
         assert!(!branch_list.is_empty(), "the unmerged branch is preserved");
     }
