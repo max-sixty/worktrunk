@@ -1658,6 +1658,31 @@ fn install_preview_tab_keybindings(keymap: &mut skim::binds::KeyMap) {
     }
 }
 
+/// The branch name `alt-y` copies for the row whose `output()` token is `token`:
+/// its `RowShortcutData.branch`. `None` when the token isn't in the table or the
+/// row has no branch (a detached worktree), so `alt-y` no-ops. Pulled out of the
+/// keybinding closure so the lookup — the part that doesn't need a live skim
+/// `App` — is unit-testable.
+fn resolve_shortcut_branch(table: &ShortcutTable, token: &str) -> Option<String> {
+    table
+        .lock()
+        .unwrap()
+        .get(token)
+        .and_then(|d| d.branch.clone())
+}
+
+/// The PR/MR URL `alt-o` opens for the row whose `output()` token is `token`.
+/// `None` when the token isn't in the table or the row has no URL (a worktree
+/// whose PR hasn't resolved, or has none), so `alt-o` no-ops. The counterpart to
+/// [`resolve_shortcut_branch`].
+fn resolve_shortcut_url(table: &ShortcutTable, token: &str) -> Option<String> {
+    table
+        .lock()
+        .unwrap()
+        .get(token)
+        .and_then(|d| d.url.resolve())
+}
+
 /// Install the `alt-y` (copy branch) and `alt-o` (open PR/MR URL) row shortcuts
 /// as native callbacks, alongside the preview-tab keys.
 ///
@@ -1678,13 +1703,10 @@ fn install_shortcut_keybindings(keymap: &mut skim::binds::KeyMap, shortcut_table
         keymap.insert(
             key,
             vec![Action::Custom(ActionCallback::new_sync(move |app| {
-                let branch = app.item_list.selected().and_then(|m| {
-                    table
-                        .lock()
-                        .unwrap()
-                        .get(m.item.output().as_ref())
-                        .and_then(|d| d.branch.clone())
-                });
+                let branch = app
+                    .item_list
+                    .selected()
+                    .and_then(|m| resolve_shortcut_branch(&table, m.item.output().as_ref()));
                 if let Some(branch) = branch {
                     spawn_shortcut("picker-copy", move || os::copy_to_clipboard(&branch));
                 }
@@ -1699,13 +1721,10 @@ fn install_shortcut_keybindings(keymap: &mut skim::binds::KeyMap, shortcut_table
         keymap.insert(
             key,
             vec![Action::Custom(ActionCallback::new_sync(move |app| {
-                let url = app.item_list.selected().and_then(|m| {
-                    table
-                        .lock()
-                        .unwrap()
-                        .get(m.item.output().as_ref())
-                        .and_then(|d| d.url.resolve())
-                });
+                let url = app
+                    .item_list
+                    .selected()
+                    .and_then(|m| resolve_shortcut_url(&table, m.item.output().as_ref()));
                 if let Some(url) = url {
                     spawn_shortcut("picker-open", move || os::open_url(&url));
                 }
@@ -1817,7 +1836,7 @@ pub mod tests {
     use super::{
         PickerAction, PickerCollector, PickerRemovalTarget, drain_stashed_warnings,
         install_preview_tab_keybindings, install_shortcut_keybindings, parse_reload_remove_token,
-        picker_item_identifier, resolve_identifier,
+        picker_item_identifier, resolve_identifier, resolve_shortcut_branch, resolve_shortcut_url,
     };
     use crate::commands::list::model::{ItemKind, ListItem, WorktreeData};
     use crate::commands::worktree::RemoveResult;
@@ -1906,6 +1925,47 @@ pub mod tests {
                 chain[0]
             );
         }
+    }
+
+    /// The lookup the `alt-y` / `alt-o` closures delegate to — pure table logic,
+    /// no live skim `App`. Covers a row with a branch + URL, a detached row (no
+    /// branch, no URL — both shortcuts no-op), and a token absent from the table.
+    #[test]
+    fn resolve_shortcut_branch_and_url() {
+        use super::items::{RowShortcutData, RowUrl, ShortcutTable};
+
+        let table: ShortcutTable = Arc::new(Mutex::new(std::collections::HashMap::new()));
+        {
+            let mut t = table.lock().unwrap();
+            t.insert(
+                "feat".into(),
+                RowShortcutData {
+                    branch: Some("feat".into()),
+                    url: RowUrl::Static(Some("https://example.test/pr/1".into())),
+                },
+            );
+            t.insert(
+                "wt".into(),
+                RowShortcutData {
+                    branch: None,
+                    url: RowUrl::Static(None),
+                },
+            );
+        }
+
+        assert_eq!(
+            resolve_shortcut_branch(&table, "feat").as_deref(),
+            Some("feat")
+        );
+        assert_eq!(resolve_shortcut_branch(&table, "wt"), None); // detached: no branch
+        assert_eq!(resolve_shortcut_branch(&table, "missing"), None);
+
+        assert_eq!(
+            resolve_shortcut_url(&table, "feat").as_deref(),
+            Some("https://example.test/pr/1")
+        );
+        assert_eq!(resolve_shortcut_url(&table, "wt"), None); // no URL
+        assert_eq!(resolve_shortcut_url(&table, "missing"), None);
     }
 
     #[test]
