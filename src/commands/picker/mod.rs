@@ -972,6 +972,8 @@ impl PipelineFactory {
                 shortcut_table: Arc::clone(&self.shortcut_table),
                 rendered_slots: OnceLock::new(),
                 pr_status_slots: OnceLock::new(),
+                comments_fetched: OnceLock::new(),
+                local_content_slots: OnceLock::new(),
                 preview_cache: Arc::clone(&self.preview_cache),
                 orchestrator: Arc::clone(&self.orchestrator),
                 preview_dims: self.preview_dims,
@@ -1663,9 +1665,10 @@ fn install_preview_tab_keybindings(keymap: &mut skim::binds::KeyMap) {
 /// in `shortcut_table` for the branch / URL — and run the OS action (clipboard,
 /// browser) on a background thread, so skim's event loop never blocks and a slow
 /// clipboard or opener can't freeze the frame. Neither touches the list, so
-/// there's no reload and the cursor stays put. A row with no URL (a worktree
-/// whose PR hasn't resolved, or has none) makes `alt-o` a no-op. Failures are
-/// logged, not surfaced — skim owns the terminal.
+/// there's no reload and the cursor stays put. Both no-op when the row lacks the
+/// thing they act on: `alt-y` on a detached worktree (no branch), `alt-o` on a
+/// row with no URL (a worktree whose PR hasn't resolved, or has none). Failures
+/// are logged, not surfaced — skim owns the terminal.
 fn install_shortcut_keybindings(keymap: &mut skim::binds::KeyMap, shortcut_table: ShortcutTable) {
     use skim::binds::parse_key;
 
@@ -1680,7 +1683,7 @@ fn install_shortcut_keybindings(keymap: &mut skim::binds::KeyMap, shortcut_table
                         .lock()
                         .unwrap()
                         .get(m.item.output().as_ref())
-                        .map(|d| d.branch.clone())
+                        .and_then(|d| d.branch.clone())
                 });
                 if let Some(branch) = branch {
                     spawn_shortcut("picker-copy", move || os::copy_to_clipboard(&branch));
@@ -1810,7 +1813,7 @@ fn resolve_identifier(
 
 #[cfg(test)]
 pub mod tests {
-    use super::items::WorktreeSkimItem;
+    use super::items::{LocalContent, WorktreeSkimItem};
     use super::{
         PickerAction, PickerCollector, PickerRemovalTarget, drain_stashed_warnings,
         install_preview_tab_keybindings, install_shortcut_keybindings, parse_reload_remove_token,
@@ -2271,6 +2274,7 @@ pub mod tests {
             has_upstream: false,
             summaries_enabled: false,
             pr_status,
+            local_content: Arc::new(Mutex::new(LocalContent::default())),
         }) as Arc<dyn SkimItem>
     }
 

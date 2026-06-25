@@ -67,6 +67,14 @@ pub(super) type PreviewCache = Arc<DashMap<PreviewCacheKey, String>>;
 /// `Some(Some(status))` = a PR/MR with status.
 pub(super) type PrStatusSlot = Arc<Mutex<Option<Option<PrStatus>>>>;
 
+/// Per-row live content signals for the local-checkout tabs, shared with the
+/// collect handler. Like [`PrStatusSlot`], the frozen `item` snapshot can't
+/// carry these (its `counts` / `upstream` / `working_tree_status` are `None` at
+/// skeleton and never update), so the handler mirrors them here as the list
+/// pipeline lands (`on_update`). Read live by [`WorktreeSkimItem::render_preview`]
+/// to dim a tab once its diff is known empty.
+pub(super) type LocalContentSlot = Arc<Mutex<LocalContent>>;
+
 /// Prefix on a worktree-backed item's `output()` token. Detached worktrees
 /// all share the `(detached)` branch label, so `output()` returns the
 /// worktree path (which is unique) behind this prefix instead.
@@ -84,9 +92,11 @@ pub(super) const WORKTREE_OUTPUT_PREFIX: &str = "worktree-path:";
 /// `prs::stream_open_prs` for `--prs` rows — and read by the keybinding
 /// callbacks in `picker::install_shortcut_keybindings`.
 pub(super) struct RowShortcutData {
-    /// The row's branch name — what `alt-y` copies. For a `--prs` row this is
-    /// the PR/MR's head branch.
-    pub branch: String,
+    /// The row's branch name — what `alt-y` copies. `None` for a detached
+    /// worktree (no branch), which makes `alt-y` a no-op rather than copying
+    /// the `"(detached)"` label. For a `--prs` row this is the PR/MR's head
+    /// branch.
+    pub branch: Option<String>,
     /// Where `alt-o` finds the row's PR/MR URL.
     pub url: RowUrl,
 }
@@ -253,6 +263,13 @@ pub(super) struct WorktreeSkimItem {
     /// skeleton), this slot is primed from the cache and then overwritten as the
     /// `CiStatus` task streams in — so the `pr` tab reflects the live fetch.
     pub pr_status: PrStatusSlot,
+    /// Live diff-content signals for the `working_tree` / `branch_diff` /
+    /// `upstream` tabs, shared with the collect handler. The frozen `item`
+    /// snapshot can't carry these (its `counts` / `upstream` /
+    /// `working_tree_status` are `None` at skeleton and never update), so the
+    /// handler mirrors them here as the pipeline lands — letting those tabs dim
+    /// once their diff is known empty (see [`LocalContent`]).
+    pub local_content: LocalContentSlot,
 }
 
 impl SkimItem for WorktreeSkimItem {
@@ -297,19 +314,128 @@ enum PrPreview {
     HasPr(PrRef, PrStatus),
 }
 
+/// Live, content-aware availability for the local-checkout tabs whose pane is a
+/// diff — `working_tree`, `branch_diff`, and `upstream`. Each tab dims once its
+/// diff is *known* empty, the same way the `pr` tab dims once the fetch reports
+/// no PR (see [`WorktreeSkimItem::pr_tab_available`]).
+///
+/// The diff emptiness is async (the `counts` / `upstream` / `working_tree_status`
+/// fields are `None` at skeleton and land via the list pipeline), so each signal
+/// is `Option<bool>`: `None` while loading, `Some(has_content)` once known. A tab
+/// stays available while its signal is `None` — we don't dim before we know it's
+/// empty — and dims when the signal resolves to "no content". Each predicate
+/// mirrors exactly what its pane renders, so a dimmed number never contradicts a
+/// non-empty pane.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct LocalContent {
+    /// `working_tree`: tracked uncommitted changes exist. Matches the pane's
+    /// `git diff HEAD` — staged/modified/renamed/deleted, NOT untracked (which
+    /// `git diff HEAD` doesn't show). `Some(false)` for a branch-only row (no
+    /// working tree to diff).
+    working_tree: Option<bool>,
+    /// `branch_diff`: the branch has commits ahead of the **local** default
+    /// branch — the same base `compute_branch_diff_preview`'s pane diffs against
+    /// (`default_branch_sha()`). Deliberately NOT `has_file_changes`, which
+    /// measures against the *integration target*: when the local default is
+    /// behind or diverged from its upstream, that target is the upstream, so a
+    /// branch already integrated upstream resolves `has_file_changes = false`
+    /// while the pane (vs the stale local default) still shows a diff — dimming
+    /// over a non-empty pane, the one case the invariant rules out.
+    branch_diff: Option<bool>,
+    /// `upstream`: the branch is ahead of or behind its tracking ref. Combined
+    /// with the synchronous `has_upstream` floor (no tracking ref dims the tab
+    /// immediately, with no loading window); this only narrows a *present*
+    /// upstream from "available" to "dim" once it's known to be up to date.
+    upstream_diverged: Option<bool>,
+}
+
+impl LocalContent {
+    /// Read the content signals off a row's `ListItem`. Called from the collect
+    /// handler each time a row updates, then stored in the row's live slot.
+    pub(super) fn from_item(item: &ListItem) -> Self {
+        let working_tree = match item.worktree_data() {
+            // A real worktree: tracked changes per the porcelain status (matches
+            // the pane's `git diff HEAD`, which excludes untracked files).
+            Some(data) => data
+                .working_tree_status
+                .map(|s| s.staged || s.modified || s.renamed || s.deleted),
+            // Branch-only row: no working tree, so nothing to diff.
+            None => Some(false),
+        };
+        Self {
+            working_tree,
+            // Commits ahead of the local default (matching the pane's base). An
+            // orphan has no merge base with the default, so its three-dot diff is
+            // ill-defined — keep the tab available rather than dim a pane that may
+            // show content. `counts` and `is_orphan` land together (one task), so
+            // when `counts` is known `is_orphan` is too.
+            branch_diff: item
+                .counts
+                .map(|c| c.ahead > 0 || item.is_orphan == Some(true)),
+            upstream_diverged: item
+                .upstream
+                .as_ref()
+                .map(|u| u.active().is_some_and(|a| a.ahead > 0 || a.behind > 0)),
+        }
+    }
+}
+
+/// The local-checkout-backed preview tabs — present for a row with a local
+/// worktree, absent for a listed PR/MR row (`--prs`), which has no local copy.
+/// Grouping them names *why* they're empty on a `--prs` row (no checkout), so
+/// the difference reads as a data fact rather than a row-type policy.
+#[derive(Debug, Clone, Copy, Default)]
+struct LocalTabs {
+    working_tree: bool,
+    branch_diff: bool,
+    upstream: bool,
+    summary: bool,
+}
+
+impl LocalTabs {
+    /// A worktree-backed row. The diff tabs (`working_tree`, `branch_diff`,
+    /// `upstream`) follow the live [`LocalContent`] signals — available while
+    /// loading, dim once their diff is known empty; `upstream` also requires the
+    /// synchronous `has_upstream` floor (no tracking ref → dim with no loading
+    /// window). `summary` follows the process-wide `[commit.generation]` flag.
+    fn worktree(content: LocalContent, has_upstream: bool, summaries_enabled: bool) -> Self {
+        Self {
+            working_tree: content.working_tree.unwrap_or(true),
+            branch_diff: content.branch_diff.unwrap_or(true),
+            upstream: has_upstream && content.upstream_diverged.unwrap_or(true),
+            summary: summaries_enabled,
+        }
+    }
+}
+
 /// Which preview tabs have renderable content for the selected row.
 ///
 /// Empty tabs are de-emphasized in the bar (number dimmed). Skim computes a
 /// preview once per selection and cannot re-query it mid-selection (see
-/// `loading_placeholder`). `upstream` and `summary` are synchronous
-/// skeleton-time facts, read to avoid locking the bar into a stale state:
-/// `upstream` reads `Repository::local_branches()` (the pre-skeleton
-/// `for-each-ref` scan), NOT the async `item.upstream`; `summary` reads the
-/// process-wide `[commit.generation]` flag, NOT the async `item.summary`. `pr`
-/// reads the row's live status slot (primed from the CI cache, then refreshed
-/// by the `CiStatus` task — see [`WorktreeSkimItem::pr_status`]), so it can
-/// change between selections: it dims once the fetch reports no PR, and stays
-/// available while loading or with a PR. `--prs` rows always render their PR.
+/// `loading_placeholder`). Two genuine axes drive availability, and `--prs`
+/// touches neither — it only decides whether a PR row is *listed* at all:
+///
+/// - The local-checkout tabs ([`LocalTabs`]): the three diff tabs
+///   (`working_tree` / `branch_diff` / `upstream`) follow the row's live
+///   [`LocalContent`] — available while their diff is still loading, dim once
+///   it's known empty (a clean working tree, no commits ahead, up to date with
+///   upstream), the same loading-then-dim shape as the `pr` tab. `upstream` also
+///   carries a synchronous `has_upstream` floor (`Repository::local_branches()`),
+///   so a branch with no tracking ref dims immediately with no loading window.
+///   `summary` follows the process-wide `[commit.generation]` flag. A `--prs` row
+///   has no local checkout, so all four are empty.
+/// - The PR-backed tabs: `pr` and `comments` are available together, gated by
+///   `has_pr`. On a worktree row that's the live status slot (primed from the CI
+///   cache, then refreshed by the `CiStatus` task — see
+///   [`WorktreeSkimItem::pr_tab_available`]): it dims once the fetch reports no
+///   PR, and stays available while loading or with a PR. A `--prs` row always
+///   has a PR, so both are available.
+///
+/// `comments` tracks `has_pr` on *every* row, so the comments tab behaves the
+/// same whether the row is a worktree or a listed PR — only its content differs
+/// where the data legitimately does (no local checkout). `log` is always
+/// present (local `git log` on a worktree row, a background forge fetch on a
+/// `--prs` row).
 #[derive(Debug, Clone, Copy)]
 pub(super) struct TabAvailability {
     working_tree: bool,
@@ -322,38 +448,46 @@ pub(super) struct TabAvailability {
 }
 
 impl TabAvailability {
-    /// A worktree-backed row: working-tree/log/branch-diff always render; the
-    /// upstream and summary tabs depend on synchronous skeleton-time facts; the
-    /// `pr` tab is available unless the live fetch has reported no PR for this
-    /// branch (see [`WorktreeSkimItem::pr_preview`]). The `comments` tab is
-    /// always empty here — comments are fetched only for `--prs` rows.
-    pub(super) fn worktree(has_upstream: bool, summaries_enabled: bool, pr: bool) -> Self {
+    /// Build from the two genuine axes: which local-checkout tabs the row has,
+    /// and whether it has a PR. Centralizing the mapping pins the invariants the
+    /// task depends on — `log` is always present, and the PR-backed tabs (`pr`,
+    /// `comments`) both follow `has_pr` — so they can't drift between a worktree
+    /// row and a listed-PR row.
+    fn from_axes(local: LocalTabs, has_pr: bool) -> Self {
         Self {
-            working_tree: true,
+            working_tree: local.working_tree,
             log: true,
-            branch_diff: true,
-            upstream: has_upstream,
-            summary: summaries_enabled,
-            pr,
-            comments: false,
+            branch_diff: local.branch_diff,
+            upstream: local.upstream,
+            summary: local.summary,
+            pr: has_pr,
+            comments: has_pr,
         }
     }
 
-    /// A `--prs` row: it carries no local worktree, so the working-tree,
-    /// branch-diff, upstream, and summary tabs are empty. The `pr` tab is built
-    /// at construction; the `log` and `comments` tabs load in the background
-    /// (see `prs::compute_pr_log` / `prs::compute_pr_comments`), so all three
-    /// are available.
-    pub(super) fn pull_request() -> Self {
-        Self {
-            working_tree: false,
-            log: true,
-            branch_diff: false,
-            upstream: false,
-            summary: false,
-            pr: true,
-            comments: true,
-        }
+    /// A worktree-backed row: the local-checkout tabs follow [`LocalTabs`]
+    /// (diff tabs gated by the live [`LocalContent`] + the `has_upstream` floor);
+    /// the PR-backed tabs follow the live PR status (see
+    /// [`WorktreeSkimItem::pr_tab_available`]).
+    pub(super) fn worktree(
+        content: LocalContent,
+        has_upstream: bool,
+        summaries_enabled: bool,
+        has_pr: bool,
+    ) -> Self {
+        Self::from_axes(
+            LocalTabs::worktree(content, has_upstream, summaries_enabled),
+            has_pr,
+        )
+    }
+
+    /// A listed PR/MR row (`--prs`): no local checkout, so the local-checkout
+    /// tabs are empty; it always has a PR, so the `pr` and `comments` tabs are
+    /// available and the `log` tab loads in the background (see
+    /// `prs::compute_pr_log`). The differences from a worktree row are only the
+    /// genuine data ones — no local checkout, and a PR that's always present.
+    pub(super) fn listed_pr() -> Self {
+        Self::from_axes(LocalTabs::default(), true)
     }
 }
 
@@ -522,25 +656,26 @@ fn render_tab_row_compact(tabs: &[Tab], reset: Reset) -> String {
 
 /// The `pr` pane for a worktree row whose branch has a PR/MR. Renders the same
 /// shape as the `--prs` rows' pane (`PrSkimItem::pr_pane`) — reference + title
-/// header, dim-labeled metadata, and the description as markdown — via the
-/// shared [`pr_pane`] helpers, so the two read alike. The title, body, and
+/// header, cyan all-caps labeled metadata (the branch bold, the url underlined),
+/// and the description as markdown — via the shared [`pr_pane`] helpers, so the
+/// two read alike. The title, body, and
 /// comment count ride the same CI fetch the column already makes (see
 /// [`PrStatus`]); a status without them (an older cache entry, a forge that
 /// doesn't expose them) falls back to a reference-only header and skips the
 /// missing lines.
 ///
-/// The `comments` line shows only the count — the full thread is a `--prs`-only
-/// fetch (see [`WorktreeSkimItem::comments_unavailable_pane`]). A PR with no
-/// comments carries `None` (zero is flattened at the mapping boundary), so the
-/// line is skipped.
+/// The `comments` line shows only the count; the full thread is the `comments`
+/// tab's own background fetch (see [`WorktreeSkimItem::render_comments_pane`]).
+/// A PR with no comments carries `None` (zero is flattened at the mapping
+/// boundary), so the line is skipped.
 ///
 /// `width` is the live preview-pane width, used to wrap the markdown body.
 fn render_worktree_pr(branch: &str, pr_ref: PrRef, status: &PrStatus, width: usize) -> String {
     let title = status.title.as_deref().filter(|t| !t.is_empty());
     let mut out = pr_pane::header(pr_ref, title);
-    out.push_str(&pr_pane::metadata_line("branch", branch));
+    out.push_str(&pr_pane::branch_line(branch));
     if let Some(url) = &status.url {
-        out.push_str(&pr_pane::metadata_line("url", url));
+        out.push_str(&pr_pane::url_line(url));
     }
     if let Some(count) = status.comment_count {
         out.push_str(&pr_pane::metadata_line("comments", &count.to_string()));
@@ -559,13 +694,14 @@ impl WorktreeSkimItem {
     fn render_preview(&self, mode: PreviewMode, width: usize, height: usize) -> String {
         // Build preview: tabs header + content. `has_upstream` and
         // `summaries_enabled` are synchronous skeleton-time facts (see
-        // `TabAvailability`); `pr` reads the row's live status slot, refreshed as
-        // the `CiStatus` task streams in, so it can change between selections.
-        // The `pr` tab dims only once the fetch reports no PR — while loading or
-        // with a PR it stays available. `pr_tab_available` is a cheap
-        // discriminant read (no body clone); the pane itself is rendered once and
-        // memoized in `render_pr_pane_cached`.
+        // `TabAvailability`); the diff tabs' live emptiness (`local_content`) and
+        // `pr` (`pr_tab_available`) read the row's live slots, refreshed as the
+        // list pipeline / `CiStatus` task stream in, so they can change between
+        // selections — a tab dims once its diff (or PR) is known empty, and stays
+        // available while still loading. Both reads are cheap (no body clone); the
+        // panes themselves are rendered once and memoized.
         let avail = TabAvailability::worktree(
+            self.local_content(),
             self.has_upstream,
             self.summaries_enabled,
             self.pr_tab_available(),
@@ -573,9 +709,10 @@ impl WorktreeSkimItem {
         let mut result = render_preview_tabs(mode, avail, width);
         result.push_str(&match mode {
             PreviewMode::Pr => self.render_pr_pane_cached(width),
-            // The `comments` tab (7) is `--prs`-only — worktree rows don't fetch
-            // PR discussion — so it shows a pointer rather than the cache path.
-            PreviewMode::Comments => Self::comments_unavailable_pane(),
+            // The PR-backed tabs share one source: the live `pr_status` slot. The
+            // `comments` tab renders the same background-fetched thread a `--prs`
+            // row's does when the branch has a PR (see `render_comments_pane`).
+            PreviewMode::Comments => self.render_comments_pane(),
             _ => self.preview_for_mode(mode, width, height),
         });
         result
@@ -597,17 +734,26 @@ impl WorktreeSkimItem {
         }
     }
 
-    /// Whether the `pr` tab has content for this row — it dims only once the
-    /// live fetch reports no PR. A cheap discriminant read of the `pr_status`
-    /// slot (no `PrStatus` clone, unlike [`Self::pr_preview`]), so the tab bar
-    /// can be drawn on every `preview()` call without re-cloning the
-    /// possibly-large body that [`Self::render_pr_pane_cached`] already memoizes.
+    /// Whether the PR-backed tabs (`pr` and `comments`) have content for this
+    /// row — they dim together only once the live fetch reports no PR. A cheap
+    /// discriminant read of the `pr_status` slot (no `PrStatus` clone, unlike
+    /// [`Self::pr_preview`]), so the tab bar can be drawn on every `preview()`
+    /// call without re-cloning the possibly-large body that
+    /// [`Self::render_pr_pane_cached`] already memoizes.
     fn pr_tab_available(&self) -> bool {
         match &*self.pr_status.lock().unwrap() {
             None => true,                                  // still fetching
             Some(None) => false,                           // fetch reported no PR
             Some(Some(status)) => status.number.is_some(), // a bare branch workflow is "no PR"
         }
+    }
+
+    /// Snapshot the row's live diff-content signals for the `working_tree` /
+    /// `branch_diff` / `upstream` tabs (see [`LocalContent`]). A cheap copy of
+    /// three `Option<bool>`s; the collect handler overwrites the slot as the list
+    /// pipeline lands.
+    fn local_content(&self) -> LocalContent {
+        *self.local_content.lock().unwrap()
     }
 
     /// Render the `pr` pane, memoized in the shared `preview_cache` so repeated
@@ -644,13 +790,35 @@ impl WorktreeSkimItem {
         }
     }
 
-    /// The `comments` tab's pane on a worktree row. The discussion thread is
-    /// fetched only for `--prs` rows (a worktree row has no PR number until its
-    /// `pr` tab resolves one, and no background comments fetch wired to it), so
-    /// the tab dims and points at where comments live.
-    fn comments_unavailable_pane() -> String {
+    /// The `comments` tab's pane on a worktree row — identical in behavior to a
+    /// `--prs` row's comments tab. When the branch has an open PR, the thread is
+    /// fetched in the background (spawned from `progressive_handler`'s
+    /// `on_update`/`on_skeleton` once the CI fetch surfaces the PR) and read here
+    /// from the shared cache, keyed by branch name; a miss is the in-flight
+    /// window and shows the same loading placeholder a `--prs` row's tab does. No
+    /// PR — or a CI fetch that hasn't resolved yet — mirrors the `pr` tab's
+    /// empty/loading states, so the two PR-backed tabs stay consistent. The
+    /// background fetch renders at the preview width, so this reads it back
+    /// without re-wrapping (matching `PrSkimItem::cached_pane`).
+    fn render_comments_pane(&self) -> String {
         let reset = Reset;
-        cformat!("{INFO_SYMBOL}{reset} Comments show on <bold>wt switch --prs</>{reset} rows\n")
+        let branch = self.item.branch_name();
+        match self.pr_preview() {
+            // The CI fetch hasn't reported yet — we don't know whether there's a
+            // PR to fetch comments for. Mirror the `pr` tab's loading state,
+            // pointing at this tab's accelerator.
+            PrPreview::Loading => cformat!(
+                "○ Fetching PR status for <bold>{branch}</>{reset}… press <bold>alt-7</>{reset} to refresh\n"
+            ),
+            PrPreview::NoPr => {
+                cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no PR\n")
+            }
+            PrPreview::HasPr(..) => self
+                .preview_cache
+                .get(&(self.branch_name.clone(), PreviewMode::Comments))
+                .map(|v| v.value().clone())
+                .unwrap_or_else(|| super::prs::pr_deferred_loading(PreviewMode::Comments)),
+        }
     }
 
     /// Render preview for the given mode with specified dimensions.
@@ -689,13 +857,14 @@ impl WorktreeSkimItem {
             PreviewMode::BranchDiff => ("Loading", "branch diff"),
             PreviewMode::UpstreamDiff => ("Loading", "upstream diff"),
             PreviewMode::Summary => ("Generating", "summary"),
-            // The `pr` and `comments` tabs have no worktree-row background task —
-            // `preview()` renders `pr` from the cached `pr_status` via
-            // `render_pr_pane` and routes `comments` to `comments_unavailable_pane`,
-            // never here.
+            // `preview()` routes the PR-backed tabs around this path: `pr` renders
+            // from the cached `pr_status` via `render_pr_pane`, and `comments`
+            // through `render_comments_pane` (which uses the `--prs` rows' shared
+            // `pr_deferred_loading` for its own in-flight placeholder), so neither
+            // reaches here.
             PreviewMode::Pr => unreachable!("pr tab renders via render_pr_pane"),
             PreviewMode::Comments => {
-                unreachable!("comments tab renders via comments_unavailable_pane")
+                unreachable!("comments tab renders via render_comments_pane")
             }
         };
         let key = mode as u8;
@@ -1157,14 +1326,32 @@ mod tests {
     /// full bar (the compact fallback has its own test).
     const WIDE: usize = 200;
 
+    /// A worktree row whose three diff tabs (working-tree, branch-diff, upstream)
+    /// all have content — every diff signal known and non-empty.
+    const CONTENT_FULL: LocalContent = LocalContent {
+        working_tree: Some(true),
+        branch_diff: Some(true),
+        upstream_diverged: Some(true),
+    };
+
+    /// A worktree row whose three diff tabs are all *known* empty — a clean
+    /// working tree, no commits ahead, and up to date with a present upstream.
+    const CONTENT_EMPTY: LocalContent = LocalContent {
+        working_tree: Some(false),
+        branch_diff: Some(false),
+        upstream_diverged: Some(false),
+    };
+
     #[test]
     fn test_render_preview_tabs() {
-        // Each mode active, on a worktree row with upstream + summaries enabled
-        // but no PR (tabs 1-5 available; tabs 6 pr and 7 comments dim). The
-        // active mode's label is bold, inactive available labels dim, and on the
-        // `pr` iteration tab 6 is active-but-empty — exercising the rule that
-        // emptiness dims even the active tab. Verifies labels and structure.
-        let wt = TabAvailability::worktree(true, true, false);
+        // Each mode active, on a worktree row whose diffs all have content
+        // (uncommitted changes, commits ahead, diverged from upstream) with
+        // summaries enabled but no PR (tabs 1-5 available; tabs 6 pr and 7
+        // comments dim). The active mode's label is bold, inactive available
+        // labels dim, and on the `pr` iteration tab 6 is active-but-empty —
+        // exercising the rule that emptiness dims even the active tab. Verifies
+        // labels and structure.
+        let wt = TabAvailability::worktree(CONTENT_FULL, true, true, false);
         for (name, mode) in [
             ("working_tree", PreviewMode::WorkingTree),
             ("log", PreviewMode::Log),
@@ -1176,20 +1363,175 @@ mod tests {
             assert_snapshot!(name, render_preview_tabs(mode, wt, WIDE));
         }
 
-        // Empty states: a worktree row with no upstream and summaries disabled
-        // dims tabs 4 and 5 (number dim too); a --prs row dims the
-        // working-tree/branch-diff/upstream/summary tabs but keeps log/pr/comments.
+        // Empty states. Three rows:
+        // - `empty_upstream_and_summary`: diffs still loading (so tabs 1 and 3
+        //   read as available), no upstream ref, summaries disabled, no PR — dims
+        //   tabs 4, 5, 6, and 7.
+        // - `empty_all_local_diffs`: every diff *known* empty (clean working tree,
+        //   no commits ahead, up to date with a present upstream) — dims tabs 1,
+        //   3, 4, plus 5/6/7, leaving only `log`. This is the behavior the diff
+        //   tabs gained: a dimmed number once the diff is known empty.
+        // - `pr_row`: a listed-PR row dims the working-tree/branch-diff/upstream/
+        //   summary tabs but keeps log/pr/comments.
         assert_snapshot!(
             "empty_upstream_and_summary",
             render_preview_tabs(
                 PreviewMode::WorkingTree,
-                TabAvailability::worktree(false, false, false),
+                TabAvailability::worktree(LocalContent::default(), false, false, false),
+                WIDE,
+            )
+        );
+        assert_snapshot!(
+            "empty_all_local_diffs",
+            render_preview_tabs(
+                PreviewMode::WorkingTree,
+                TabAvailability::worktree(CONTENT_EMPTY, true, false, false),
                 WIDE,
             )
         );
         assert_snapshot!(
             "pr_row",
-            render_preview_tabs(PreviewMode::Pr, TabAvailability::pull_request(), WIDE)
+            render_preview_tabs(PreviewMode::Pr, TabAvailability::listed_pr(), WIDE)
+        );
+    }
+
+    /// `LocalContent::from_item` reads each diff tab's emptiness off the row's
+    /// `ListItem`, matching exactly what the corresponding pane renders.
+    #[test]
+    fn local_content_mirrors_item_diff_state() {
+        use crate::commands::list::model::{
+            ItemKind, UpstreamStatus, WorkingTreeStatus, WorktreeData,
+        };
+
+        // A branch-only row has no working tree, so its working-tree tab is empty
+        // immediately (no loading window). The other signals are still unknown.
+        let branch = ListItem::new_branch("abc".into(), "feature".into());
+        let c = LocalContent::from_item(&branch);
+        assert_eq!(c.working_tree, Some(false), "branch-only: no working tree");
+        assert_eq!(c.branch_diff, None, "branch_diff loads from item.counts");
+        assert_eq!(
+            c.upstream_diverged, None,
+            "upstream loads from item.upstream"
+        );
+
+        // `branch_diff` follows the commits-ahead count vs the local default (the
+        // pane's base), not `has_file_changes` (integration target).
+        use crate::commands::list::model::AheadBehind;
+        let mut ahead = ListItem::new_branch("abc".into(), "feature".into());
+        ahead.counts = Some(AheadBehind {
+            ahead: 2,
+            behind: 0,
+        });
+        assert_eq!(LocalContent::from_item(&ahead).branch_diff, Some(true));
+        ahead.counts = Some(AheadBehind {
+            ahead: 0,
+            behind: 3,
+        });
+        assert_eq!(
+            LocalContent::from_item(&ahead).branch_diff,
+            Some(false),
+            "behind-only (no commits ahead) is empty"
+        );
+        // An orphan has an ill-defined three-dot diff — stays available even with
+        // a zero ahead count.
+        ahead.is_orphan = Some(true);
+        assert_eq!(
+            LocalContent::from_item(&ahead).branch_diff,
+            Some(true),
+            "orphan keeps branch_diff available"
+        );
+
+        // `upstream_diverged` is true only when a *present* upstream is ahead or
+        // behind; a configured-but-even upstream, and no remote at all, are empty.
+        let with_upstream = |remote: Option<&str>, a: usize, b: usize| {
+            let mut item = ListItem::new_branch("abc".into(), "feature".into());
+            item.upstream = Some(UpstreamStatus {
+                remote: remote.map(String::from),
+                ahead: a,
+                behind: b,
+            });
+            LocalContent::from_item(&item).upstream_diverged
+        };
+        assert_eq!(with_upstream(Some("origin/feature"), 2, 0), Some(true));
+        assert_eq!(with_upstream(Some("origin/feature"), 0, 3), Some(true));
+        assert_eq!(
+            with_upstream(Some("origin/feature"), 0, 0),
+            Some(false),
+            "up to date with a present upstream is empty"
+        );
+        assert_eq!(
+            with_upstream(None, 0, 0),
+            Some(false),
+            "no remote configured is empty"
+        );
+
+        // `working_tree` matches `git diff HEAD`: tracked changes count, untracked
+        // alone does not (the pane wouldn't show them).
+        let worktree_with = |status: WorkingTreeStatus| {
+            let mut item = ListItem::new_branch("abc".into(), "feature".into());
+            item.kind = ItemKind::Worktree(Box::new(WorktreeData {
+                working_tree_status: Some(status),
+                ..Default::default()
+            }));
+            LocalContent::from_item(&item).working_tree
+        };
+        // staged, modified, renamed, deleted → tracked content present.
+        assert_eq!(
+            worktree_with(WorkingTreeStatus::new(false, true, false, false, false)),
+            Some(true),
+            "modified is tracked content"
+        );
+        // untracked only → `git diff HEAD` is empty.
+        assert_eq!(
+            worktree_with(WorkingTreeStatus::new(false, false, true, false, false)),
+            Some(false),
+            "untracked alone is not shown by `git diff HEAD`"
+        );
+        // A worktree whose status task hasn't landed yet stays loading.
+        let mut pending = ListItem::new_branch("abc".into(), "feature".into());
+        pending.kind = ItemKind::Worktree(Box::default());
+        assert_eq!(LocalContent::from_item(&pending).working_tree, None);
+    }
+
+    /// The diff tabs stay available while their signal is still loading, dim once
+    /// it's known empty, and `upstream` additionally requires the synchronous
+    /// `has_upstream` floor — a branch with no tracking ref dims immediately, even
+    /// before (or despite) the live ahead/behind signal.
+    #[test]
+    fn diff_tabs_dim_only_once_known_empty() {
+        let has = |avail: TabAvailability| (avail.working_tree, avail.branch_diff, avail.upstream);
+
+        // Loading (default): every diff tab available — we don't dim before we know.
+        assert_eq!(
+            has(TabAvailability::worktree(
+                LocalContent::default(),
+                true,
+                false,
+                false
+            )),
+            (true, true, true),
+            "loading → available"
+        );
+
+        // Known empty + a present upstream: all three dim.
+        assert_eq!(
+            has(TabAvailability::worktree(CONTENT_EMPTY, true, false, false)),
+            (false, false, false),
+            "known empty → dim"
+        );
+
+        // Known non-empty: all three available.
+        assert_eq!(
+            has(TabAvailability::worktree(CONTENT_FULL, true, false, false)),
+            (true, true, true),
+            "known content → available"
+        );
+
+        // No tracking ref: the upstream tab dims regardless of the live signal —
+        // the synchronous floor wins over a (stale or loading) divergence read.
+        assert!(
+            !has(TabAvailability::worktree(CONTENT_FULL, false, false, false)).2,
+            "no upstream ref → dim despite a 'diverged' signal"
         );
     }
 
@@ -1200,7 +1542,7 @@ mod tests {
     #[test]
     fn render_preview_tabs_compacts_when_narrow() {
         // A --prs row with the `pr` tab active, in a narrow pane.
-        let compact = render_preview_tabs(PreviewMode::Pr, TabAvailability::pull_request(), 40);
+        let compact = render_preview_tabs(PreviewMode::Pr, TabAvailability::listed_pr(), 40);
         let plain = compact.lines().next().unwrap().ansi_strip().to_string();
         // Every digit 1-7 is present; only the active tab keeps its label.
         for n in 1..=7 {
@@ -1219,7 +1561,7 @@ mod tests {
         assert!(visual_width(&plain) <= 40, "fits the pane: {plain:?}");
 
         // The same row in a wide pane uses the full bar (labels for all tabs).
-        let full = render_preview_tabs(PreviewMode::Pr, TabAvailability::pull_request(), WIDE);
+        let full = render_preview_tabs(PreviewMode::Pr, TabAvailability::listed_pr(), WIDE);
         assert!(
             full.contains("7: ") && full.contains("comments"),
             "wide pane keeps full labels"
@@ -1229,7 +1571,7 @@ mod tests {
         // bar's own width, then check that exactly that width stays full while one
         // column narrower compacts (the `pr` tab is active, so only the full bar
         // carries the inactive `comments` label).
-        let avail = TabAvailability::pull_request();
+        let avail = TabAvailability::listed_pr();
         let full_w = visual_width(full.lines().next().unwrap());
         let at_fit = render_preview_tabs(PreviewMode::Pr, avail, full_w);
         assert!(
@@ -1325,6 +1667,7 @@ mod tests {
                 has_upstream: false,
                 summaries_enabled: false,
                 pr_status: Arc::new(Mutex::new(None)),
+                local_content: Arc::new(Mutex::new(LocalContent::default())),
             }
         };
 
@@ -1339,6 +1682,7 @@ mod tests {
                 has_upstream: false,
                 summaries_enabled: false,
                 pr_status: Arc::new(Mutex::new(None)),
+                local_content: Arc::new(Mutex::new(LocalContent::default())),
             }
         };
 
@@ -1424,6 +1768,7 @@ mod tests {
                 has_upstream: false,
                 summaries_enabled: false,
                 pr_status: Arc::new(Mutex::new(pr_status)),
+                local_content: Arc::new(Mutex::new(LocalContent::default())),
             }
         };
 
@@ -1500,6 +1845,76 @@ mod tests {
     }
 
     #[test]
+    fn comments_tab_mirrors_pr_status_and_reads_the_shared_cache() {
+        use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef};
+
+        // A worktree row's `comments` tab behaves like a `--prs` row's: with a
+        // PR it reads the background-fetched thread from the shared cache (keyed
+        // by branch name), and with no PR — or while CI is still loading — it
+        // mirrors the `pr` tab's empty/loading states.
+        let pr_status = |number: Option<PrRef>| {
+            Some(Some(PrStatus {
+                ci_status: CiStatus::Passed,
+                source: CiSource::PullRequest,
+                is_stale: false,
+                is_priming: false,
+                url: None,
+                number,
+                review_state: None,
+                title: None,
+                body: None,
+                comment_count: None,
+            }))
+        };
+        let row = |slot: Option<Option<PrStatus>>, cache: PreviewCache| WorktreeSkimItem {
+            search_text: String::new(),
+            rendered: Arc::new(Mutex::new(String::new())),
+            branch_name: "feature".into(),
+            item: Arc::new(ListItem::new_branch("abc".into(), "feature".into())),
+            preview_cache: cache,
+            has_upstream: false,
+            summaries_enabled: false,
+            pr_status: Arc::new(Mutex::new(slot)),
+            local_content: Arc::new(Mutex::new(LocalContent::default())),
+        };
+
+        // CI hasn't reported (None) → fetching hint pointing at this tab's key.
+        let loading = row(None, Arc::new(DashMap::new()));
+        let pane = loading.render_comments_pane();
+        assert!(pane.contains("Fetching PR status"), "loading: {pane:?}");
+        assert!(pane.contains("alt-7"), "loading points at alt-7: {pane:?}");
+
+        // No PR (Some(None)) → "has no PR", matching the `pr` tab.
+        let no_pr = row(Some(None), Arc::new(DashMap::new()));
+        assert!(
+            no_pr.render_comments_pane().contains("has no PR"),
+            "no-pr state"
+        );
+
+        // A PR with the thread already cached → the cached thread is shown.
+        let cache: PreviewCache = Arc::new(DashMap::new());
+        cache.insert(
+            ("feature".to_string(), PreviewMode::Comments),
+            "@octocat\nLooks good\n".to_string(),
+        );
+        let with_thread = row(pr_status(Some(PrRef::pr(7))), Arc::clone(&cache));
+        assert_eq!(
+            with_thread.render_comments_pane(),
+            "@octocat\nLooks good\n",
+            "cached thread served verbatim"
+        );
+
+        // A PR whose fetch hasn't landed → the shared `--prs` loading placeholder,
+        // so a worktree row and a `--prs` row show the identical in-flight pane.
+        let pending = row(pr_status(Some(PrRef::pr(7))), Arc::new(DashMap::new()));
+        assert_eq!(
+            pending.render_comments_pane(),
+            super::super::prs::pr_deferred_loading(PreviewMode::Comments),
+            "cache miss falls back to the shared loading placeholder"
+        );
+    }
+
+    #[test]
     fn worktree_pr_pane_shows_comment_count() {
         use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef};
 
@@ -1564,6 +1979,7 @@ mod tests {
                 body: Some("Adds a **bounded** retry.".into()),
                 comment_count: None,
             })))),
+            local_content: Arc::new(Mutex::new(LocalContent::default())),
         };
 
         // In Pr mode, `render_preview` assembles the tab bar plus the worktree PR
@@ -1645,6 +2061,7 @@ mod tests {
             has_upstream: false,
             summaries_enabled: false,
             pr_status: Arc::clone(&slot),
+            local_content: Arc::new(Mutex::new(LocalContent::default())),
         };
 
         // First render populates the shared cache.
@@ -1978,7 +2395,7 @@ mod tests {
         // (not compact) bar.
         let output = render_preview_tabs(
             PreviewMode::WorkingTree,
-            TabAvailability::worktree(true, true, false),
+            TabAvailability::worktree(CONTENT_FULL, true, true, false),
             WIDE,
         );
 
