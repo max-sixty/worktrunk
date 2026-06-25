@@ -1670,13 +1670,35 @@ mod tests {
         with_body.body = "A short summary of the change.".to_string();
         let pr = pr_item(with_body, 120, Some(&grid()));
         assert!(pr.pr_pane.contains("A short summary of the change."));
-        assert!(pr.pr_pane.contains("\x1b[107m"), "gutter present");
+        // The body renders flush, not quoted in a gutter bar; `description`
+        // prefixes its block with a blank line + full reset.
+        assert!(
+            !pr.pr_pane.contains("\x1b[107m"),
+            "no gutter bar: {:?}",
+            pr.pr_pane
+        );
+        assert!(
+            pr.pr_pane.contains("\n\n\x1b[0m"),
+            "description block present"
+        );
+        // The block is headed by a cyan `DESCRIPTION` label, matching branch/url.
+        assert!(
+            pr.pr_pane.contains("DESCRIPTION"),
+            "DESCRIPTION label present: {:?}",
+            pr.pr_pane
+        );
 
-        // The base fixture has an empty body — no gutter, no description.
+        // The base fixture has an empty body — the description block is skipped,
+        // label and all.
         let plain_pr = pr_item(entry(RefKind::Pr, 2, "t"), 120, Some(&grid()));
         assert!(
-            !plain_pr.pr_pane.contains("\x1b[107m"),
-            "no gutter when empty"
+            !plain_pr.pr_pane.contains("\n\n\x1b[0m"),
+            "no description block when empty"
+        );
+        assert!(
+            !plain_pr.pr_pane.contains("DESCRIPTION"),
+            "no DESCRIPTION label when empty: {:?}",
+            plain_pr.pr_pane
         );
     }
 

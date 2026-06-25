@@ -1366,13 +1366,14 @@ mod tests {
             pane.contains("https://github.com/o/r/pull/42"),
             "url: {pane:?}"
         );
+        // No body → no description block (it prefixes a blank line + reset).
         assert!(
-            !pane.contains("\x1b[107m"),
-            "no description gutter without a body: {pane:?}"
+            !pane.contains("\n\n\x1b[0m"),
+            "no description block without a body: {pane:?}"
         );
 
         // A PR carrying title + body → the title rides the header and the body
-        // renders as markdown in the house gutter, matching the `--prs` pane.
+        // renders flush as markdown, matching the `--prs` pane.
         let full = row(Some(Some(status(
             Some(PrRef::pr(7)),
             Some("https://github.com/o/r/pull/7"),
@@ -1382,7 +1383,19 @@ mod tests {
         let pane = full.render_pr_pane(full.pr_preview(), 80);
         assert!(pane.contains("#7"), "reference: {pane:?}");
         assert!(pane.contains("Fix the flaky retry"), "title: {pane:?}");
-        assert!(pane.contains("\x1b[107m"), "description gutter: {pane:?}");
+        assert!(pane.contains("\n\n\x1b[0m"), "description block: {pane:?}");
+        assert!(
+            pane.contains("DESCRIPTION"),
+            "cyan `DESCRIPTION` label heads the block: {pane:?}"
+        );
+        assert!(
+            !pane.contains("\x1b[107m"),
+            "renders flush, no gutter: {pane:?}"
+        );
+        assert!(
+            pane.contains("bounded"),
+            "description body rendered: {pane:?}"
+        );
         assert!(pane.contains("\x1b[1m"), "markdown bold rendered: {pane:?}");
         assert!(!pane.contains("**"), "markdown markers consumed: {pane:?}");
 
@@ -1408,13 +1421,14 @@ mod tests {
             comment_count,
         };
 
-        // A PR with comments adds a `comments` metadata line carrying the count.
+        // A PR with comments adds a cyan all-caps `COMMENTS` metadata line
+        // carrying the count (same `field_label` styling as BRANCH/URL).
         let with = render_worktree_pr("feature", PrRef::pr(7), &status(Some(3)), 80)
             .ansi_strip()
             .to_string();
         assert!(
             with.lines()
-                .any(|l| l.contains("comments") && l.contains('3')),
+                .any(|l| l.contains("COMMENTS") && l.contains('3')),
             "comments line with count: {with:?}"
         );
 
@@ -1424,7 +1438,7 @@ mod tests {
             .ansi_strip()
             .to_string();
         assert!(
-            !without.contains("comments"),
+            !without.contains("COMMENTS"),
             "no comments line when absent: {without:?}"
         );
     }
@@ -1472,8 +1486,12 @@ mod tests {
             "title: {pr_pane:?}"
         );
         assert!(
-            pr_pane.contains("\x1b[107m"),
-            "description gutter: {pr_pane:?}"
+            !pr_pane.contains("\x1b[107m"),
+            "description renders flush, no gutter: {pr_pane:?}"
+        );
+        assert!(
+            pr_pane.contains("bounded"),
+            "description body rendered: {pr_pane:?}"
         );
 
         // `SkimItem::preview` reads the default in-memory mode (WorkingTree, since

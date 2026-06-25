@@ -734,6 +734,14 @@ For pipes, redirects, variables, or globs, wrap in `sh -c`:
 $ wt step tether -- sh -c 'PORT=$P npm run dev | tee dev.log'
 ```
 
+To run the command from a subdirectory, pass the global `-C` flag (teardown
+still watches the worktree root, so a server launched with a relative `-C` is
+torn down with the worktree):
+
+```console
+$ wt step tether -C frontend -- npm run dev
+```
+
 ## Examples
 
 Run a dev server, torn down automatically when the worktree goes away:

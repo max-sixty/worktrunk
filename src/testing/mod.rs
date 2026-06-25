@@ -744,6 +744,10 @@ pub fn set_temp_home_env(cmd: &mut Command, home: &Path) {
     // OpenCode: override config dir to avoid platform-specific dirs::config_dir() differences
     // (Linux: ~/.config, macOS: ~/Library/Application Support, Windows: AppData\Roaming)
     cmd.env("OPENCODE_CONFIG_DIR", home.join("opencode-config"));
+    // Claude Code: pin the config dir to the temp home's `.claude` so detection
+    // matches the setup helpers and stays hermetic against an ambient
+    // CLAUDE_CONFIG_DIR inherited from the test runner's environment.
+    cmd.env("CLAUDE_CONFIG_DIR", home.join(".claude"));
 }
 
 /// Override `WORKTRUNK_CONFIG_PATH` to point to the XDG-derived user config path

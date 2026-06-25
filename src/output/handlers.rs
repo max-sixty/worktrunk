@@ -524,20 +524,27 @@ struct BranchDeletionDisplay {
     show_unmerged_hint: bool,
 }
 
-fn print_retained_unmerged_branch(branch_name: &str) {
-    eprintln!(
-        "{}",
-        info_message(cformat!(
-            "Branch <bold>{branch_name}</> retained; has unmerged changes"
-        ))
-    );
+/// The canonical "branch retained because unmerged" info + hint lines, as an
+/// `(info, hint)` pair. [`print_retained_unmerged_branch`] prints them; the
+/// picker's `keep_unremovable_row` stashes them (it can't print mid-render).
+/// Shared so the two emit paths can't drift in wording, flag, or styling.
+pub(crate) fn retained_unmerged_branch_messages(branch_name: &str) -> (String, String) {
+    let info = info_message(cformat!(
+        "Branch <bold>{branch_name}</> retained; has unmerged changes"
+    ))
+    .to_string();
     let cmd = suggest_command("remove", &[branch_name], &["-D"]);
-    eprintln!(
-        "{}",
-        hint_message(cformat!(
-            "To delete the unmerged branch, run <underline>{cmd}</>"
-        ))
-    );
+    let hint = hint_message(cformat!(
+        "To delete the unmerged branch, run <underline>{cmd}</>"
+    ))
+    .to_string();
+    (info, hint)
+}
+
+fn print_retained_unmerged_branch(branch_name: &str) {
+    let (info, hint) = retained_unmerged_branch_messages(branch_name);
+    eprintln!("{info}");
+    eprintln!("{hint}");
 }
 
 /// Handle the result of a branch deletion attempt.
