@@ -126,7 +126,7 @@ use super::hook_plan::{ApprovedHookPlan, HookPlanBuilder};
 use super::hooks::HookAnnouncer;
 use super::list::collect;
 use super::list::progressive::RenderTarget;
-use super::repository_ext::{RemoveTarget, RepositoryCliExt};
+use super::repository_ext::{RemoveTarget, RepositoryCliExt, compute_integration_reason};
 use super::worktree::{RemoveResult, SwitchPipeline};
 use crate::cli::SwitchFormat;
 use crate::output::{BackgroundFallbackMode, handle_remove_output};
@@ -396,6 +396,13 @@ impl PickerCollector {
     /// integrated→unmerged race leaves the branch in place. This keeps the list
     /// from showing a removal that didn't happen without ever resurrecting a row
     /// for a target that's actually gone.
+    ///
+    /// When a worktree removal *succeeds* but leaves its unmerged branch behind
+    /// (`SafeDelete` won't delete unmerged work), the thread stashes the same
+    /// "retained; unmerged" message the branch-only keep path shows
+    /// ([`branch_retained_as_unmerged`] / [`stash_retained_unmerged_branch`]) —
+    /// the silent removal printed nothing, so this is the only place the user
+    /// learns the branch survived.
     fn drop_and_remove_in_background(
         &mut self,
         selected_output: String,
@@ -452,18 +459,30 @@ impl PickerCollector {
                 if let Err(e) = Self::do_removal(&repo, &result, &approvals) {
                     log::warn!("picker: removal of '{selected_output}' errored: {e:#}");
                 }
-                if removal_target_still_present(&repo, &result)
-                    && let Some((item, pos)) = removed
+                if removal_target_still_present(&repo, &result) {
+                    if let Some((item, pos)) = removed {
+                        restore_failed_removal(
+                            &items,
+                            &render_tx,
+                            &stashed_warnings,
+                            item,
+                            pos,
+                            &removal_label,
+                            removal_noun,
+                        );
+                    }
+                } else if let RemoveResult::RemovedWorktree {
+                    branch_name: Some(branch),
+                    target_branch,
+                    ..
+                } = &result
+                    && branch_retained_as_unmerged(&repo, branch, target_branch.as_deref())
                 {
-                    restore_failed_removal(
-                        &items,
-                        &render_tx,
-                        &stashed_warnings,
-                        item,
-                        pos,
-                        &removal_label,
-                        removal_noun,
-                    );
+                    // The worktree is gone but its unmerged branch was kept (data
+                    // safety), and the silent removal couldn't say so. Stash the
+                    // same "retained; unmerged" pair the branch-only keep path
+                    // shows, drained once the picker exits.
+                    stash_retained_unmerged_branch(&stashed_warnings, branch);
                 }
             });
 
@@ -493,19 +512,11 @@ impl PickerCollector {
     fn keep_unremovable_row(&self, selected_output: &str, branch_name: &str) {
         // The canonical "retained; unmerged" info + hint `wt remove` prints,
         // shared so the picker copy can't drift (see
-        // `retained_unmerged_branch_messages`). Taking the branch name (not the
-        // whole `RemoveResult`) makes it unrepresentable for this keep path to be
-        // handed a `RemovedWorktree`, which always removes — see the dispatch in
-        // `invoke` and [`removal_will_remove_target`].
-        let (info, hint) = crate::output::retained_unmerged_branch_messages(branch_name);
-        {
-            let mut stashed = self.stashed_warnings.lock().unwrap();
-            // Dedup on repeated alt-r of the same kept row.
-            if !stashed.contains(&info) {
-                stashed.push(info);
-                stashed.push(hint);
-            }
-        }
+        // `stash_retained_unmerged_branch`). Taking the branch name (not the whole
+        // `RemoveResult`) makes it unrepresentable for this keep path to be handed
+        // a `RemovedWorktree`, which always removes — see the dispatch in `invoke`
+        // and [`removal_will_remove_target`].
+        stash_retained_unmerged_branch(&self.stashed_warnings, branch_name);
 
         // The row never moved, so land the cursor back on it (alt-r's reload reset
         // it to the top).
@@ -741,6 +752,61 @@ fn removal_target_still_present(repo: &Repository, result: &RemoveResult) -> boo
             repo.branch(branch_name).exists_locally().unwrap_or(false)
         }
     }
+}
+
+/// Stash the canonical "retained; unmerged" info + hint pair (deduped), drained
+/// to stderr once the picker releases the terminal. Shared by
+/// [`PickerCollector::keep_unremovable_row`] (a branch-only row kept in place)
+/// and the background worktree removal (worktree removed, its unmerged branch
+/// kept) so the picker says the same thing however a branch came to be retained.
+/// The pair is the one `wt remove` itself prints — see
+/// [`crate::output::retained_unmerged_branch_messages`].
+fn stash_retained_unmerged_branch(stashed: &Mutex<Vec<String>>, branch_name: &str) {
+    let (info, hint) = crate::output::retained_unmerged_branch_messages(branch_name);
+    let mut stashed = stashed.lock().unwrap();
+    if !stashed.contains(&info) {
+        stashed.push(info);
+        stashed.push(hint);
+    }
+}
+
+/// Whether a just-removed worktree left its branch behind because it's unmerged.
+///
+/// The picker removes with `SafeDelete`: an integrated branch is deleted along
+/// with its worktree, but an unmerged one is kept (data safety). The worktree is
+/// gone either way, so the row drops regardless — this decides whether to tell
+/// the user the *branch* survived, which the silent removal couldn't (skim owned
+/// the terminal). It observes the branch directly after the removal (still
+/// present, and no integration reason against its target) rather than trusting
+/// `do_removal`'s `Result`, the same way [`removal_target_still_present`] does.
+/// An integrated branch whose `git branch -d` failed still has an integration
+/// reason, so it's excluded — that's a delete error, not an unmerged retain.
+///
+/// The integration target defaults to `HEAD` when none is configured, mirroring
+/// the silent removal's own `delete_branch_if_safe(..., target.unwrap_or("HEAD"))`
+/// fallback — otherwise `compute_integration_reason` short-circuits to "no reason"
+/// for a `None` target and the check never runs, so every surviving branch would
+/// read as unmerged.
+fn branch_retained_as_unmerged(
+    repo: &Repository,
+    branch_name: &str,
+    target_branch: Option<&str>,
+) -> bool {
+    if !repo.branch(branch_name).exists_locally().unwrap_or(false) {
+        return false;
+    }
+    let Ok(snapshot) = repo.capture_refs() else {
+        return false;
+    };
+    compute_integration_reason(
+        repo,
+        &snapshot,
+        Some(branch_name),
+        Some(target_branch.unwrap_or("HEAD")),
+        BranchDeletionMode::SafeDelete,
+    )
+    .0
+    .is_none()
 }
 
 /// Put a row back after its background removal didn't happen, closing the alt-r
@@ -2481,6 +2547,157 @@ pub mod tests {
         );
     }
 
+    /// End-to-end through `invoke`: removing a worktree whose branch is unmerged
+    /// removes the worktree (the row drops) but keeps the branch — `SafeDelete`
+    /// won't delete unmerged work. The silent removal can't print, so the
+    /// background thread stashes the same "retained; unmerged" info + hint the
+    /// branch-only keep path shows, drained once the picker exits.
+    #[test]
+    fn test_invoke_removes_worktree_and_keeps_unmerged_branch() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        let wt_dir = tempfile::tempdir().unwrap();
+        let wt_path = wt_dir.path().join("feature");
+        repo.run_command(&[
+            "worktree",
+            "add",
+            "-b",
+            "feature",
+            wt_path.to_str().unwrap(),
+        ])
+        .unwrap();
+
+        // Make `feature` unmerged: a commit on it that main doesn't have, so
+        // SafeDelete retains the branch when the worktree is removed.
+        fs::write(wt_path.join("new.txt"), "unmerged work").unwrap();
+        worktrunk::shell_exec::Cmd::new("git")
+            .args(["add", "."])
+            .current_dir(&wt_path)
+            .run()
+            .unwrap();
+        worktrunk::shell_exec::Cmd::new("git")
+            .args(["commit", "-m", "unmerged work"])
+            .current_dir(&wt_path)
+            .run()
+            .unwrap();
+
+        // Build the row from the git-reported path (macOS resolves the
+        // `/var`→`/private/var` symlink, which `prepare_removal`'s lookup matches).
+        let reported_path = repo
+            .list_worktrees()
+            .unwrap()
+            .iter()
+            .find(|wt| wt.branch.as_deref() == Some("feature"))
+            .map(|wt| wt.path.clone())
+            .expect("feature worktree is listed");
+        let item = branched_picker_item("feature", &reported_path);
+        let token = item.output().to_string();
+        let items = Arc::new(Mutex::new(vec![Arc::clone(&item)]));
+        let stashed: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let mut collector = PickerCollector {
+            items: Arc::clone(&items),
+            repo: repo.clone(),
+            approvals: Arc::new(Approvals::default()),
+            render_tx: Arc::new(OnceLock::new()),
+            stashed_warnings: Arc::clone(&stashed),
+        };
+
+        let cmd = format!("remove '{token}'");
+        let (_rx, _interrupt) = collector.invoke(&cmd, Arc::new(AtomicUsize::new(0)));
+
+        // The worktree removal runs on a background thread that stashes the
+        // "retained; unmerged" pair on success — poll on the stash as the sync
+        // point (the same pattern as the failed-removal test).
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while stashed.lock().unwrap().is_empty() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let warnings = stashed.lock().unwrap().clone();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("unmerged") && w.contains("retained")),
+            "a removed worktree with an unmerged branch stashes a `retained` info line: {warnings:?}"
+        );
+        assert!(
+            warnings.iter().any(|w| w.contains("wt remove -D feature")),
+            "the stash includes the actionable `-D` hint: {warnings:?}"
+        );
+
+        assert!(!reported_path.exists(), "the worktree is removed");
+        let branch_list = repo.run_command(&["branch", "--list", "feature"]).unwrap();
+        assert!(
+            !branch_list.is_empty(),
+            "the unmerged branch is retained after its worktree is removed"
+        );
+    }
+
+    /// The negative of the above, end-to-end through `invoke`: removing a worktree
+    /// whose branch is *integrated* deletes both the worktree and the branch, so
+    /// the `branch_retained_as_unmerged` guard must keep the keep-message path from
+    /// firing — nothing is stashed. Guards against a regression that drops the
+    /// guard and stashes a spurious "retained; unmerged" notice for every removal.
+    #[test]
+    fn test_invoke_removes_integrated_worktree_stashes_nothing() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        let wt_dir = tempfile::tempdir().unwrap();
+        let wt_path = wt_dir.path().join("feature");
+        // No extra commit → `feature` sits at main's commit (integrated), so
+        // SafeDelete deletes the branch along with the worktree.
+        repo.run_command(&[
+            "worktree",
+            "add",
+            "-b",
+            "feature",
+            wt_path.to_str().unwrap(),
+        ])
+        .unwrap();
+
+        let reported_path = repo
+            .list_worktrees()
+            .unwrap()
+            .iter()
+            .find(|wt| wt.branch.as_deref() == Some("feature"))
+            .map(|wt| wt.path.clone())
+            .expect("feature worktree is listed");
+        let item = branched_picker_item("feature", &reported_path);
+        let token = item.output().to_string();
+        let items = Arc::new(Mutex::new(vec![Arc::clone(&item)]));
+        let stashed: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let mut collector = PickerCollector {
+            items: Arc::clone(&items),
+            repo: repo.clone(),
+            approvals: Arc::new(Approvals::default()),
+            render_tx: Arc::new(OnceLock::new()),
+            stashed_warnings: Arc::clone(&stashed),
+        };
+
+        let cmd = format!("remove '{token}'");
+        let (_rx, _interrupt) = collector.invoke(&cmd, Arc::new(AtomicUsize::new(0)));
+
+        // Sync on the branch being gone: that proves `do_removal` ran its branch
+        // delete, after which the thread runs the (no-op) retained-branch guard
+        // and exits. The grace window covers that guard — it can only stash if the
+        // guard regressed, so an empty stash after it is the real assertion.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !repo
+            .run_command(&["branch", "--list", "feature"])
+            .unwrap()
+            .is_empty()
+            && Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(!reported_path.exists(), "the worktree is removed");
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(
+            stashed.lock().unwrap().is_empty(),
+            "an integrated worktree removal stashes no retained-branch message: {:?}",
+            stashed.lock().unwrap()
+        );
+    }
+
     /// `removal_target_still_present` observes reality: a worktree dir or a
     /// branch ref that's gone reads as removed; one still on disk / in the
     /// ref store reads as present (the restore trigger).
@@ -2527,6 +2744,56 @@ pub mod tests {
             integration_reason: None,
         };
         assert!(!super::removal_target_still_present(&repo, &gone_branch));
+    }
+
+    /// `branch_retained_as_unmerged` observes the post-removal branch directly: an
+    /// integrated branch (same commit as the target) reads as deletable, not
+    /// retained; an unmerged branch (a commit the target lacks) reads as a
+    /// data-safety retain; a branch that's already gone reads as nothing to
+    /// surface.
+    #[test]
+    fn test_branch_retained_as_unmerged() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+
+        // Integrated: a branch at main's commit — SafeDelete would delete it, so
+        // it isn't a retained-unmerged branch.
+        repo.run_command(&["branch", "integrated"]).unwrap();
+        assert!(!super::branch_retained_as_unmerged(
+            &repo,
+            "integrated",
+            Some("main")
+        ));
+
+        // Unmerged: a commit main doesn't have — SafeDelete keeps it.
+        repo.run_command(&["checkout", "-b", "unmerged"]).unwrap();
+        fs::write(test.path().join("new.txt"), "unmerged work").unwrap();
+        repo.run_command(&["add", "."]).unwrap();
+        repo.run_command(&["commit", "-m", "unmerged work"])
+            .unwrap();
+        repo.run_command(&["checkout", "main"]).unwrap();
+        assert!(super::branch_retained_as_unmerged(
+            &repo,
+            "unmerged",
+            Some("main")
+        ));
+
+        // A branch that no longer exists — nothing to surface.
+        assert!(!super::branch_retained_as_unmerged(
+            &repo,
+            "no-such-branch",
+            Some("main")
+        ));
+
+        // With no configured target the check falls back to HEAD (here `main`),
+        // matching the silent removal's own fallback — so it still distinguishes
+        // integrated from unmerged rather than reporting every survivor unmerged.
+        assert!(!super::branch_retained_as_unmerged(
+            &repo,
+            "integrated",
+            None
+        ));
+        assert!(super::branch_retained_as_unmerged(&repo, "unmerged", None));
     }
 
     /// `removal_will_remove_target` predicts removal from the prepared result

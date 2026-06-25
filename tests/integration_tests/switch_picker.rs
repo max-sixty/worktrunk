@@ -52,6 +52,15 @@ const READY_TIMEOUT: Duration = Duration::from_secs(30);
 /// in worst-case scenarios.
 const STABILIZE_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Maximum time to wait for the picker child to exit after the terminating
+/// keystroke (Enter to switch, Escape to abort) before force-killing it. A clean
+/// switch or abort exits in well under a second, but under heavy CI parallelism
+/// the final git work (or skim's Windows terminal teardown) can lag; killing a
+/// still-finishing child reports exit 1 on Windows, turning a successful-but-slow
+/// switch into a spurious failure. Generous like `READY_TIMEOUT`/`STABILIZE_TIMEOUT`
+/// for the same reason — fast polling means the common case still returns at once.
+const CHILD_EXIT_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// How long screen must be unchanged to consider it "stable".
 /// Must be long enough for preview content to load (preview commands run async).
 /// 500ms balances reliability (allows preview to complete) with speed.
@@ -245,7 +254,7 @@ fn exec_in_pty_with_input_expectations(
 
     // Poll for process exit (fast polling, long timeout for CI)
     let start = std::time::Instant::now();
-    let timeout = Duration::from_secs(5);
+    let timeout = CHILD_EXIT_TIMEOUT;
     while start.elapsed() < timeout {
         if child.try_wait().unwrap().is_some() {
             break;
@@ -361,7 +370,7 @@ fn exec_in_pty_capture_before_abort(
 
     // Drain remaining output WITHOUT feeding to parser — preserves pre-abort screen
     let start = Instant::now();
-    let timeout = Duration::from_secs(5);
+    let timeout = CHILD_EXIT_TIMEOUT;
     loop {
         while rx.try_recv().is_ok() {} // discard chunks
         if child.try_wait().unwrap().is_some() {
@@ -2042,8 +2051,11 @@ fn drive_alt_r_then_switch(
     send(&writer, b"\r");
     drop(writer);
 
+    // Let the switch finish and the process exit on its own; the kill is a
+    // hung-child backstop. The wait is generous because a slow-but-successful
+    // exit that gets killed reports exit 1 on Windows — see `CHILD_EXIT_TIMEOUT`.
     let start = Instant::now();
-    while start.elapsed() < Duration::from_secs(5) {
+    while start.elapsed() < CHILD_EXIT_TIMEOUT {
         if child.try_wait().unwrap().is_some() {
             break;
         }
