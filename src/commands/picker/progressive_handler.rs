@@ -40,6 +40,7 @@ use std::time::{Duration, Instant};
 
 use color_print::cformat;
 use skim::prelude::*;
+use worktrunk::git::Repository;
 use worktrunk::styling::{StyledLine, strip_osc8_hyperlinks};
 
 use super::super::list::ci_status::PrStatus;
@@ -108,6 +109,16 @@ pub(super) struct PickerHandler {
     /// their diff is known empty.
     pub(super) local_content_slots: OnceLock<Box<[LocalContentSlot]>>,
     pub(super) preview_cache: PreviewCache,
+    /// Fresh `Repository` for this spawn, used for the mutation-sensitive
+    /// `on_skeleton` reads (`list_worktrees`, `local_branches`). The
+    /// `orchestrator` carries its own startup-cloned repo shared across every
+    /// spawn — reading worktrees/branches through that re-probes a
+    /// `RepoCache.worktrees`/`local_branches` `OnceCell` primed at startup and
+    /// never invalidated, so after an in-picker removal it would yield the stale
+    /// pre-removal set. `spawn` rebuilds this repo per pass (same `spawn_repo`
+    /// the collect/prs threads use); read inventories through it, not through
+    /// `orchestrator.repo()`.
+    pub(super) repo: Repository,
     pub(super) orchestrator: Arc<PreviewOrchestrator>,
     pub(super) preview_dims: (usize, usize),
     pub(super) llm_command: Option<String>,
@@ -261,8 +272,7 @@ impl PickerProgressHandler for PickerHandler {
         // async `item.upstream`. A `local_branches()` failure yields the empty set
         // (every branch reads as no-upstream); preview rendering must not error.
         let upstream_branches: HashSet<String> = self
-            .orchestrator
-            .repo()
+            .repo
             .local_branches()
             .map(|branches| {
                 branches
@@ -286,8 +296,7 @@ impl PickerProgressHandler for PickerHandler {
         // shared sibling parent. Computed once; a worktree outside that parent
         // keeps its full path via the `strip_prefix` fallback.
         let path_base = self
-            .orchestrator
-            .repo()
+            .repo
             .list_worktrees()
             .ok()
             .and_then(|worktrees| worktrees.first())
@@ -397,6 +406,7 @@ impl PickerProgressHandler for PickerHandler {
                 summaries_enabled,
                 pr_status: pr_status_arc,
                 local_content: local_content_arc,
+                notifier: Arc::clone(self.orchestrator.notifier()),
             }) as Arc<dyn SkimItem>);
         }
 
@@ -480,6 +490,17 @@ impl PickerProgressHandler for PickerHandler {
         // `comments` background fetch (once per row) so the `comments` tab loads
         // the thread — the same fetch a `--prs` row makes.
         self.maybe_spawn_comments(idx, item.branch_name(), &item.pr_status);
+        // `request_render` sends `Event::Render`, which repaints the *list* row
+        // (its CI/status cells just changed) but does NOT re-run the preview.
+        // The slots just mirrored — `pr_status` (the `pr` / `comments` panes) and
+        // `local_content` (the diff tabs' dim state) — feed the preview, so if
+        // this is the selected row also poke a `RunPreview` to re-render it:
+        // that's what flips its `pr` tab from "Fetching PR status…" to the
+        // resolved PR without a keystroke. Scoped to the selected row, so
+        // off-screen updates don't thrash the preview (see `PreviewNotifier`).
+        self.orchestrator
+            .notifier()
+            .notify_row_changed(item.branch_name());
         self.request_render(false);
     }
 
@@ -522,23 +543,27 @@ mod tests {
     use crate::commands::list::model::ListItem;
     use worktrunk::testing::TestRepo;
 
-    fn make_handler() -> (PickerHandler, TestRepo, SkimItemReceiver) {
-        let test = TestRepo::with_initial_commit();
-        let (tx, rx): (SkimItemSender, SkimItemReceiver) = unbounded();
-        let shared_items = Arc::new(Mutex::new(Vec::new()));
-        let orchestrator = Arc::new(PreviewOrchestrator::new(test.repo.clone()));
+    /// Build a handler with explicit `repo` (the per-spawn inventory source)
+    /// and `orchestrator` (preview compute). Diverging the two lets a test
+    /// prove which one `on_skeleton`'s inventory reads consult.
+    fn handler_with(
+        repo: Repository,
+        orchestrator: Arc<PreviewOrchestrator>,
+        tx: SkimItemSender,
+    ) -> PickerHandler {
         let preview_cache: PreviewCache = Arc::clone(&orchestrator.cache);
-        let handler = PickerHandler {
+        PickerHandler {
             tx,
             render_tx: Arc::new(OnceLock::new()),
             last_render_poke: Mutex::new(Instant::now()),
-            shared_items,
+            shared_items: Arc::new(Mutex::new(Vec::new())),
             shortcut_table: Arc::new(Mutex::new(std::collections::HashMap::new())),
             rendered_slots: OnceLock::new(),
             pr_status_slots: OnceLock::new(),
             comments_fetched: OnceLock::new(),
             local_content_slots: OnceLock::new(),
             preview_cache,
+            repo,
             orchestrator,
             preview_dims: (80, 24),
             llm_command: None,
@@ -547,7 +572,17 @@ mod tests {
             deferred_items: OnceLock::new(),
             grid_slot: Arc::new(super::super::prs::GridSlot::new()),
             prs_loading: None,
-        };
+        }
+    }
+
+    fn make_handler() -> (PickerHandler, TestRepo, SkimItemReceiver) {
+        let test = TestRepo::with_initial_commit();
+        let (tx, rx): (SkimItemSender, SkimItemReceiver) = unbounded();
+        let orchestrator = Arc::new(PreviewOrchestrator::new(
+            test.repo.clone(),
+            Arc::new(OnceLock::new()),
+        ));
+        let handler = handler_with(test.repo.clone(), orchestrator, tx);
         (handler, test, rx)
     }
 
@@ -559,6 +594,56 @@ mod tests {
 
     fn grid() -> crate::commands::list::layout::ColumnGrid {
         crate::commands::list::layout::ColumnGrid::default()
+    }
+
+    /// `on_skeleton` reads the worktree/branch inventory through the handler's
+    /// own per-spawn `repo`, NOT the orchestrator's startup-cloned repo. `spawn`
+    /// rebuilds `repo` fresh each refresh; reading inventory through the
+    /// orchestrator's never-invalidated `RepoCache` would serve the stale
+    /// pre-removal snapshot after an in-picker removal. Here the two repos live
+    /// under different temp parents, so the matcher path-base
+    /// (`list_worktrees().first()`) differs — a row under the handler-repo's tree
+    /// strips to a relative tail only if `on_skeleton` consulted `self.repo`.
+    #[test]
+    fn on_skeleton_reads_inventory_from_handler_repo_not_orchestrator() {
+        use crate::commands::list::model::{ItemKind, WorktreeData};
+
+        let self_repo = TestRepo::with_initial_commit();
+        let orchestrator_repo = TestRepo::with_initial_commit();
+        let (tx, rx): (SkimItemSender, SkimItemReceiver) = unbounded();
+        let orchestrator = Arc::new(PreviewOrchestrator::new(
+            orchestrator_repo.repo.clone(),
+            Arc::new(OnceLock::new()),
+        ));
+        let handler = handler_with(self_repo.repo.clone(), orchestrator, tx);
+
+        // A worktree row under the handler-repo's tree. The shared parent strips
+        // only if path_base comes from self_repo (parent of `<temp>/repo`), not
+        // from orchestrator_repo (a different temp parent).
+        let mut item = ListItem::new_branch("abc".into(), "feature".into());
+        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
+            path: self_repo.path().join("feature"),
+            ..Default::default()
+        }));
+        handler.on_skeleton(vec![item], vec!["skel".into()], header("hdr"), grid());
+
+        let received = rx.recv().expect("skeleton batch");
+        // received[0] is the header; received[1] is the worktree row.
+        let matcher_text = received[1].text().into_owned();
+        // The stripped tail renders with the OS separator (`to_string_lossy`),
+        // so build the expected tail the same way rather than hardcoding `/`
+        // (the row path is `repo\feature` on Windows).
+        let expected_tail = Path::new("repo").join("feature");
+        assert!(
+            matcher_text.contains(expected_tail.to_string_lossy().as_ref()),
+            "row path should appear in the matcher text: {matcher_text:?}"
+        );
+        // The buggy orchestrator-repo path_base can't strip a self_repo path, so
+        // it would leave the absolute `<temp>/repo` prefix in the matcher text.
+        assert!(
+            !matcher_text.contains(self_repo.path().to_string_lossy().as_ref()),
+            "path_base from self.repo must strip the absolute prefix: {matcher_text:?}"
+        );
     }
 
     /// Skeleton → update → reveal: verifies that each event writes through

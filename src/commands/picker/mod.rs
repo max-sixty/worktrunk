@@ -97,6 +97,7 @@ mod pager;
 mod pr_pane;
 mod preview;
 pub(crate) mod preview_cache;
+mod preview_notify;
 mod preview_orchestrator;
 mod progressive_handler;
 mod prs;
@@ -826,7 +827,7 @@ impl CommandCollector for PickerCollector {
         // are kept alive by those threads, so let them drop here. On a spawn
         // failure we fall through and re-stream the current items unchanged.
         if cmd.trim() == "refresh" {
-            match self.factory.spawn() {
+            match self.factory.spawn(true) {
                 Ok(SpawnedPipeline { rx, .. }) => {
                     let (tx_interrupt, _rx_interrupt) = bounded(1);
                     return (rx, tx_interrupt);
@@ -970,13 +971,39 @@ impl PipelineFactory {
     /// once the spawned threads finish the channel closes and skim's reader sees
     /// EOF — the "background work done → picker idle" contract, which a refresh
     /// relies on to end its `reload`.
-    fn spawn(&self) -> anyhow::Result<SpawnedPipeline> {
+    /// `rebuild_repo` controls the worktree/branch inventory source. A refresh
+    /// (`alt-r`) passes `true` to rebuild a fresh `Repository`, re-enumerating
+    /// after an in-picker removal. The initial spawn passes `false` to reuse the
+    /// startup repo, whose cache the prelude already primed — nothing has mutated
+    /// yet, so reusing it is correct and avoids re-paying `git worktree list` /
+    /// `local_branches` on the first-paint hot path (doubling them there slows
+    /// the picker, worst on Windows).
+    fn spawn(&self, rebuild_repo: bool) -> anyhow::Result<SpawnedPipeline> {
         let (tx, rx): (SkimItemSender, SkimItemReceiver) = unbounded();
 
         // Fresh per spawn: the header shows a "loading…" marker keyed to this
         // flag while the forge call is in flight.
         let prs_loading: Option<Arc<AtomicBool>> =
             (self.show_prs && !self.is_preview_bench).then(|| Arc::new(AtomicBool::new(true)));
+
+        // Worktree/branch inventory source for this spawn. The factory's `repo`
+        // was primed with `git worktree list` / `local_branches` at picker
+        // startup, and those `RepoCache` cells are `OnceCell`s that are never
+        // invalidated. A refresh re-probing that shared cache would re-serve the
+        // startup list, so after an in-picker removal the removed worktrees would
+        // still appear and collect's per-worktree git ops would fail against the
+        // gone branches ("fatal: Needed a single revision"). So a refresh
+        // (`rebuild_repo`) builds a fresh `Repository::at` — the post-mutation
+        // discipline the `RepoCache` docs and `prepare_removal` already require.
+        // The initial spawn skips the rebuild: the primed cache is still valid,
+        // and rebuilding would re-pay both git calls on the first-paint path.
+        // The collect thread (`bg_repo`), the `--prs` thread (`prs_repo`), and
+        // the skeleton handler's inventory reads all share this one snapshot.
+        let spawn_repo = if rebuild_repo {
+            Repository::at(self.repo.discovery_path())?
+        } else {
+            self.repo.clone()
+        };
 
         // The skeleton→`--prs` handoff (column geometry + the branches already
         // shown for dedup). Fresh per spawn so an alt-r reload's `--prs` thread
@@ -999,6 +1026,7 @@ impl PipelineFactory {
                 comments_fetched: OnceLock::new(),
                 local_content_slots: OnceLock::new(),
                 preview_cache: Arc::clone(&self.preview_cache),
+                repo: spawn_repo.clone(),
                 orchestrator: Arc::clone(&self.orchestrator),
                 preview_dims: self.preview_dims,
                 llm_command: self.llm_command.clone(),
@@ -1010,7 +1038,7 @@ impl PipelineFactory {
             });
 
         let bg_handler: Arc<dyn collect::PickerProgressHandler> = handler.clone();
-        let bg_repo = self.repo.clone();
+        let bg_repo = spawn_repo.clone();
         let bg_skip_tasks = self.skip_tasks.clone();
         let show_branches = self.show_branches;
         let show_remotes = self.show_remotes;
@@ -1042,7 +1070,7 @@ impl PipelineFactory {
         // PR rows stream in (~1s) when the call returns.
         let prs_handle = if let Some(prs_loading) = prs_loading {
             let prs_tx = tx.clone();
-            let prs_repo = self.repo.clone();
+            let prs_repo = spawn_repo.clone();
             let prs_warnings = Arc::clone(&self.stashed_warnings);
             let prs_orchestrator = Arc::clone(&self.orchestrator);
             let prs_render_tx = Arc::clone(&self.render_tx);
@@ -1168,7 +1196,20 @@ pub fn handle_picker(
     // preview tasks share one inventory scan instead of each forking
     // `git rev-parse`. Read-only for the picker session — see the
     // accessor's docstring for the staleness contract.
-    let orchestrator = Arc::new(PreviewOrchestrator::new(repo.clone()));
+    //
+    // skim 4.x repaints on demand, so the orchestrator needs a handle to skim's
+    // event loop to surface a preview compute that lands after the keystroke that
+    // requested it. The picker fills this `OnceLock` once `Skim::init_tui` has run
+    // (inside `run_skim`); until then a fill simply doesn't poke (harmless — skim
+    // hasn't rendered a preview to strand yet). The progressive handler and alt-x
+    // collector share the same sender for their own `Event::Render` /
+    // reposition pokes. See `preview_notify` and the `progressive_handler` module
+    // docstring.
+    let render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>> = Arc::new(OnceLock::new());
+    let orchestrator = Arc::new(PreviewOrchestrator::new(
+        repo.clone(),
+        Arc::clone(&render_tx),
+    ));
     let preview_cache: PreviewCache = Arc::clone(&orchestrator.cache);
 
     // Speculative warm-up: the picker sorts the current worktree first, and
@@ -1300,14 +1341,6 @@ pub fn handle_picker(
     // Approvals snapshot for the session: alt-x removals consult it read-only
     // to filter the hook plan; see `approved_removal_plan`.
     let approvals = Arc::new(Approvals::load().context("Failed to load approvals")?);
-
-    // skim 4.x repaints on demand, so the collect handler needs a handle to
-    // skim's event loop to surface in-place row updates. The picker fills this
-    // once `Skim::init_tui` has run (inside `run_skim`); until then the handler
-    // simply skips its render pokes. The alt-x collector shares it too, to inject
-    // the cursor-reposition action after a removal. See `progressive_handler`
-    // module docstring.
-    let render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>> = Arc::new(OnceLock::new());
 
     // Shared between the bg-thread collect handler and a failed alt-x removal
     // (both push warnings while skim owns the terminal) and the main thread
@@ -1502,14 +1535,15 @@ pub fn handle_picker(
 
     // Spawn the collect pipeline (and the `--prs` thread when active). The
     // handler holds the only non-thread `tx` clone; when the bg threads exit,
-    // `tx` drops, skim's reader sees EOF, and the picker goes idle. Every alt-r
-    // refresh re-runs this same `factory.spawn()` — see `PipelineFactory`.
+    // `tx` drops, skim's reader sees EOF, and the picker goes idle. The initial
+    // spawn reuses the startup-primed inventory (`false`); every alt-r refresh
+    // re-runs `factory.spawn(true)` to re-enumerate — see `PipelineFactory`.
     let SpawnedPipeline {
         rx,
         handler,
         collect_handle,
         prs_handle,
-    } = factory.spawn()?;
+    } = factory.spawn(false)?;
     worktrunk::trace::instant("Picker collect spawned");
 
     // The dry run keeps the handler: skim never runs there, so the EOF contract
@@ -2371,6 +2405,7 @@ pub mod tests {
             summaries_enabled: false,
             pr_status,
             local_content: Arc::new(Mutex::new(LocalContent::default())),
+            notifier: super::preview_notify::PreviewNotifier::detached(),
         }) as Arc<dyn SkimItem>
     }
 
@@ -2409,13 +2444,15 @@ pub mod tests {
     /// tests don't exercise, so the minimal field set is enough to satisfy the
     /// type without standing up a full picker.
     fn test_factory(repo: worktrunk::git::Repository) -> std::rc::Rc<super::PipelineFactory> {
+        let render_tx = Arc::new(OnceLock::new());
         let orchestrator = Arc::new(super::preview_orchestrator::PreviewOrchestrator::new(
             repo.clone(),
+            Arc::clone(&render_tx),
         ));
         let preview_cache = Arc::clone(&orchestrator.cache);
         std::rc::Rc::new(super::PipelineFactory {
             repo,
-            render_tx: Arc::new(OnceLock::new()),
+            render_tx,
             shared_items: Arc::new(Mutex::new(Vec::new())),
             shortcut_table: Arc::new(Mutex::new(std::collections::HashMap::new())),
             preview_cache,
@@ -2530,6 +2567,82 @@ pub mod tests {
         assert!(
             !second_path.exists(),
             "selected detached worktree should be removed"
+        );
+    }
+
+    /// A refresh (`alt-r`) re-runs `factory.spawn()`. The factory carries the
+    /// `Repository` whose worktree-list cache was primed at picker startup and
+    /// is never invalidated, so after a worktree disappears `spawn` must rebuild
+    /// a fresh `Repository` rather than re-probe that stale cache — otherwise the
+    /// refresh streams a row for the gone worktree and collect's per-worktree git
+    /// ops fail against its deleted branch ("fatal: Needed a single revision").
+    #[test]
+    fn test_spawn_reenumerates_worktrees_after_removal() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        // The repo the factory carries; its cache is primed below, as the
+        // picker prelude primes it at startup.
+        let factory_repo = worktrunk::git::Repository::at(test.path()).unwrap();
+
+        let wt_dir = tempfile::tempdir().unwrap();
+        let doomed_path = wt_dir.path().join("doomed");
+        factory_repo
+            .run_command(&[
+                "worktree",
+                "add",
+                "-b",
+                "doomed",
+                doomed_path.to_str().unwrap(),
+            ])
+            .unwrap();
+        let primed_has_doomed = factory_repo
+            .list_worktrees()
+            .unwrap()
+            .iter()
+            .any(|wt| wt.branch.as_deref() == Some("doomed"));
+        assert!(primed_has_doomed, "cache primed while doomed still present");
+
+        // Remove the worktree through a separate fresh `Repository`, exactly as
+        // the picker's background removal does. `factory_repo`'s cache is now
+        // stale: it still lists `doomed`.
+        let removal_repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        removal_repo
+            .run_command(&[
+                "worktree",
+                "remove",
+                "--force",
+                doomed_path.to_str().unwrap(),
+            ])
+            .unwrap();
+        removal_repo
+            .run_command(&["branch", "-D", "doomed"])
+            .unwrap();
+
+        let factory = test_factory(factory_repo);
+        // `true` models the refresh path (`alt-r`), which rebuilds a fresh repo;
+        // the initial spawn (`false`) deliberately reuses the startup inventory.
+        let super::SpawnedPipeline {
+            rx,
+            handler,
+            collect_handle,
+            ..
+        } = factory.spawn(true).unwrap();
+        // Drop the returned handler's sender, then wait for the collect thread
+        // to finish (dropping its handler clone); the lone senders gone, `rx`
+        // hits EOF. The unbounded channel buffered every streamed row.
+        drop(handler);
+        collect_handle.join().unwrap();
+        let outputs: Vec<String> = std::iter::from_fn(|| rx.recv().ok())
+            .flatten()
+            .map(|item| item.output().into_owned())
+            .collect();
+
+        assert!(
+            !outputs.is_empty(),
+            "the surviving worktree should still stream a row"
+        );
+        assert!(
+            !outputs.iter().any(|out| out.contains("doomed")),
+            "refresh must not stream the removed worktree: {outputs:?}"
         );
     }
 

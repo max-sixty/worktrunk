@@ -55,15 +55,23 @@ exit_code: 0
 [107m [0m [2m# Check: wt config show | Uninstall: wt config shell uninstall[0m
 [107m [0m [0m
 [107m [0m [2m[0m[2m[35mfunction[0m[2m wt[0m
-[107m [0m [2m    command wt config shell init fish [0m[2m[36m|[0m[2m source[0m
+[107m [0m [2m    # Completion mode: let the binary emit completions directly. A stale[0m
+[107m [0m [2m    # third-party completion (e.g. an old Homebrew vendor_completions.d/wt.fish)[0m
+[107m [0m [2m    # may invoke the bare `wt` command with COMPLETE set; without this guard[0m
+[107m [0m [2m    # that lands back on this stub and recurses. Mirrors the bash/zsh guard.[0m
+[107m [0m [2m    [0m[2m[35mif[0m[2m [0m[2m[34mset[0m[2m [0m[2m[36m-q[0m[2m COMPLETE[0m
+[107m [0m [2m        [0m[2m[34mcommand[0m[2m wt [0m[2m[36m$[0m[2margv[0m
+[107m [0m [2m        [0m[2m[34mreturn[0m
+[107m [0m [2m    [0m[2m[34mend[0m
+[107m [0m [2m    [0m[2m[34mcommand[0m[2m wt config shell init fish [0m[2m[36m|[0m[2m [0m[2m[34msource[0m
 [107m [0m [2m    # Check both command exit code ($pipestatus[1]) and source exit code ($pipestatus[2])[0m
 [107m [0m [2m    # If source fails, the function isn't replaced and we'd infinite-loop calling ourselves[0m
-[107m [0m [2m    set -l wt_status [0m[2m[36m$[0m[2mpipestatus[1][0m
+[107m [0m [2m    [0m[2m[34mset[0m[2m [0m[2m[36m-l[0m[2m wt_status [0m[2m[36m$[0m[2mpipestatus[1][0m
 [107m [0m [2m    [0m[2m[34mset[0m[2m [0m[2m[36m-l[0m[2m source_status [0m[2m[36m$[0m[2mpipestatus[2][0m
 [107m [0m [2m    [0m[2m[34mtest[0m[2m [0m[2m[36m$[0m[2mwt_status [0m[2m[36m-eq[0m[2m 0; [0m[2m[34mor[0m[2m return [0m[2m[36m$[0m[2mwt_status[0m
 [107m [0m [2m    [0m[2m[34mtest[0m[2m [0m[2m[36m$[0m[2msource_status [0m[2m[36m-eq[0m[2m 0; [0m[2m[34mor[0m[2m return [0m[2m[36m$[0m[2msource_status[0m
 [107m [0m [2m    [0m[2m[34mwt[0m[2m [0m[2m[36m$[0m[2margv[0m
-[107m [0m [2m[0m[2m[34mend[0m
+[107m [0m [2mend[0m
 
 [2m○[22m Will create completions for [1mfish[0m @ [1m~/.config/fish/completions/wt.fish[0m
 [107m [0m [2m# worktrunk completions for fish[0m
