@@ -640,14 +640,22 @@ pub fn handle_picker(
     let show_prs = cli_prs;
     worktrunk::trace::instant("Picker config resolved");
 
-    // Read the terminal size once. Layout detection, the visible-row cap, the
-    // preview dimensions, and the half-page scroll all derive from this single
-    // snapshot, so the estimate cap and the actual layout can never observe
-    // different terminal sizes across a resize. (`crate::display::terminal_width`
-    // below is a separate, stderr-first width probe for the skim list column.)
-    let (term_width, term_height) = terminal_size::terminal_size()
-        .map(|(terminal_size::Width(w), terminal_size::Height(h))| (w as usize, h as usize))
-        .unwrap_or((80, 24));
+    // Read the terminal size once, from the canonical reader that
+    // `crate::display::terminal_width` also projects (stderr first, then stdout,
+    // then `COLUMNS`). Layout detection, the visible-row cap, the preview
+    // dimensions, the half-page scroll, and the skim list-column width
+    // (`skim_list_width` below) all derive from this single snapshot, so they
+    // can never observe different widths — whether across a resize or because
+    // stdout and stderr point to different terminals.
+    //
+    // `COLUMNS` supplies a width but no height, so height falls back to the
+    // 24-row default there; the picker requires a TTY, so that (and the full
+    // `(80, 24)` fallback) only bites the headless dry-run / preview-bench paths.
+    let term_dims = crate::display::terminal_dimensions();
+    let (term_width, term_height) = match term_dims {
+        Some((w, h)) => (w, h.unwrap_or(24)),
+        None => (80, 24),
+    };
 
     // Reset the preview tab to working-tree and select the layout from the
     // terminal size.
@@ -725,16 +733,18 @@ pub fn handle_picker(
     // (120s) fires.
 
     // List width depends on the preview position. Right splits the terminal
-    // ~50/50; Down gives the list the full width. Passed to `collect` so
-    // the skeleton layout matches the picker's actual render width.
-    // The picker requires a TTY, so detection essentially always succeeds;
-    // the unlimited-width fallback just keeps the math total. Skim
-    // prefixes every line with a 2-column cursor gutter ("> "), so rows that
-    // use the full width would otherwise spill into its ".." truncation.
-    let terminal_width = crate::display::terminal_width().unwrap_or(usize::MAX);
+    // ~50/50; Down gives the list the full width. Passed to `collect` so the
+    // skeleton layout matches the picker's actual render width. Derived from the
+    // same `term_dims` snapshot as the layout above; its fully-headless fallback
+    // is `usize::MAX` (vs. the layout's 80 width) to keep the column math total
+    // when no width is known at all — the picker requires a TTY, so that only
+    // applies to the headless paths. Skim prefixes every line with a 2-column
+    // cursor gutter ("> "), so rows that use the full width would otherwise
+    // spill into its ".." truncation.
+    let list_width_source = term_dims.map(|(w, _)| w).unwrap_or(usize::MAX);
     let skim_list_width = match state.initial_layout {
-        PreviewLayout::Right => terminal_width / 2,
-        PreviewLayout::Down => terminal_width,
+        PreviewLayout::Right => list_width_source / 2,
+        PreviewLayout::Down => list_width_source,
     }
     .saturating_sub(2);
 
