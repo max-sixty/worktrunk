@@ -183,7 +183,7 @@ fn execute_instant_removal_or_fallback(
                 )
             })
         {
-            log::debug!("Failed to delete branch {} synchronously: {}", branch, e);
+            tracing::debug!(branch = %branch, error = %e, "Failed to delete branch {} synchronously: {}", branch, e);
         }
         if changed_directory {
             // Create an empty placeholder at the original path so the shell's working
@@ -258,7 +258,7 @@ fn delete_branch_in_synchronous_fallback(
             deletion_mode.is_force(),
         )
     }) {
-        log::debug!("Failed to delete branch {branch} in synchronous fallback: {e}");
+        tracing::debug!(branch = %branch, error = %e, "Failed to delete branch {branch} in synchronous fallback: {e}");
     }
 }
 

@@ -1181,7 +1181,7 @@ impl Repository {
     pub fn start_fsmonitor_daemon_at(&self, path: &Path) {
         let context = path_to_logging_context(path);
         let cmd_str = "git fsmonitor--daemon start";
-        log::debug!("$ {cmd_str} [{context}]");
+        tracing::debug!(cmd = cmd_str, context = %context, "$ {cmd_str} [{context}]");
         let mut cmd = std::process::Command::new("git");
         cmd.args(["fsmonitor--daemon", "start"])
             .current_dir(path)
@@ -1198,12 +1198,12 @@ impl Repository {
             Ok(status) => {
                 trace.complete(status.success());
                 if !status.success() {
-                    log::debug!("fsmonitor daemon start exited {status} (usually fine)");
+                    tracing::debug!(status = %status, "fsmonitor daemon start exited {status} (usually fine)");
                 }
             }
             Err(e) => {
                 trace.fail(&e);
-                log::debug!("fsmonitor daemon start failed (usually fine): {e}");
+                tracing::debug!(error = %e, "fsmonitor daemon start failed (usually fine): {e}");
             }
         }
     }

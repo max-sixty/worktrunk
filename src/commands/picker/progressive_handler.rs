@@ -3,7 +3,7 @@
 //! Each event funnels into three places: skim's item stream (`tx`, alive
 //! while updates may arrive so the picker stays non-idle), each item's
 //! shared `rendered` mutex (in-place redraws), and `shared_items` used by
-//! `PickerCollector` for alt-r.
+//! `PickerCollector` for alt-x.
 //!
 //! # Why updates poke a render
 //!
@@ -32,7 +32,7 @@
 //!   that pool's injector while row tasks are still landing on
 //!   workers' local deques during drain.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -52,7 +52,7 @@ const RENDER_THROTTLE: Duration = Duration::from_millis(16);
 
 use super::items::{
     HeaderLoading, HeaderSkimItem, LocalContent, LocalContentSlot, PrStatusSlot, PreviewCache,
-    WorktreeSkimItem,
+    RowShortcutData, RowUrl, ShortcutTable, WorktreeSkimItem, worktree_output_token,
 };
 use super::preview::PreviewMode;
 use super::preview_orchestrator::PreviewOrchestrator;
@@ -80,6 +80,10 @@ pub(super) struct PickerHandler {
     /// Mirror of the skim item vec visible to `PickerCollector`. Populated
     /// atomically in `on_skeleton`.
     pub(super) shared_items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>>,
+    /// The `alt-y` / `alt-o` lookup table (token → branch + URL). Replaced
+    /// atomically in `on_skeleton` with this skeleton's worktree/branch rows;
+    /// the `--prs` thread extends it with PR/MR rows. See [`ShortcutTable`].
+    pub(super) shortcut_table: ShortcutTable,
     /// One `Arc<Mutex<String>>` per data row — same Arcs `WorktreeSkimItem`
     /// holds. Set once in `on_skeleton`, read lock-free thereafter.
     pub(super) rendered_slots: OnceLock<Box<[Arc<Mutex<String>>]>>,
@@ -213,6 +217,11 @@ impl PickerProgressHandler for PickerHandler {
         let mut local_content_slots: Vec<LocalContentSlot> = Vec::with_capacity(items.len());
         let mut skim_items: Vec<Arc<dyn SkimItem>> = Vec::with_capacity(items.len() + 1);
         let mut list_items: Vec<Arc<ListItem>> = Vec::with_capacity(items.len());
+        // `alt-y` / `alt-o` lookup entries for this skeleton's rows, keyed by the
+        // same `output()` token the rows carry. Replaces the table wholesale below
+        // (a refresh re-collect rebuilds it); the `--prs` thread extends it later.
+        let mut shortcut_map: HashMap<String, RowShortcutData> =
+            HashMap::with_capacity(items.len());
 
         // Synchronous skeleton-time tab-availability facts (see `TabAvailability`).
         // Branches with an upstream tracking ref drive the tab-4 (remote⇅) empty
@@ -326,6 +335,18 @@ impl PickerProgressHandler for PickerHandler {
                 Arc::new(Mutex::new(LocalContent::from_item(&item_arc)));
             local_content_slots.push(Arc::clone(&local_content_arc));
 
+            // Shortcut lookup for this row: `alt-y` copies `branch`, `alt-o`
+            // opens the URL once the live `pr_status` slot reports one. Carry the
+            // raw `Option` (not `branch_name()`'s `"(detached)"` fallback) so
+            // `alt-y` no-ops on a detached worktree instead of copying the label.
+            shortcut_map.insert(
+                worktree_output_token(&item_arc, &branch_name),
+                RowShortcutData {
+                    branch: item_arc.branch.clone(),
+                    url: RowUrl::Live(Arc::clone(&pr_status_arc)),
+                },
+            );
+
             skim_items.push(Arc::new(WorktreeSkimItem {
                 search_text,
                 rendered: rendered_arc,
@@ -339,7 +360,7 @@ impl PickerProgressHandler for PickerHandler {
             }) as Arc<dyn SkimItem>);
         }
 
-        // Publish slots + skim items before sending to skim so alt-r reload
+        // Publish slots + skim items before sending to skim so alt-x reload
         // (which reads `shared_items`) sees a populated list the moment
         // skim calls `CommandCollector::invoke`.
         let _ = self.rendered_slots.set(slots.into_boxed_slice());
@@ -349,6 +370,7 @@ impl PickerProgressHandler for PickerHandler {
             .local_content_slots
             .set(local_content_slots.into_boxed_slice());
         *self.shared_items.lock().unwrap() = skim_items.clone();
+        *self.shortcut_table.lock().unwrap() = shortcut_map;
 
         // skim 4.x's item channel carries Vec batches; the skeleton is a single
         // batch. This append wakes skim's reader (`items_available`) and drives
@@ -471,6 +493,7 @@ mod tests {
             render_tx: Arc::new(OnceLock::new()),
             last_render_poke: Mutex::new(Instant::now()),
             shared_items,
+            shortcut_table: Arc::new(Mutex::new(std::collections::HashMap::new())),
             rendered_slots: OnceLock::new(),
             pr_status_slots: OnceLock::new(),
             comments_fetched: OnceLock::new(),
@@ -686,6 +709,46 @@ mod tests {
         assert_eq!(shared.len(), 3);
         assert_eq!(shared[1].output().as_ref(), "feat-a");
         assert_eq!(shared[2].output().as_ref(), "feat-b");
+
+        // The shortcut table is keyed by each row's `output()` token (the branch
+        // name for these branch-only rows) and carries the branch for `alt-y`.
+        let table = handler.shortcut_table.lock().unwrap();
+        assert_eq!(table.len(), 2);
+        assert_eq!(
+            table.get("feat-a").and_then(|d| d.branch.as_deref()),
+            Some("feat-a")
+        );
+        assert_eq!(
+            table.get("feat-b").and_then(|d| d.branch.as_deref()),
+            Some("feat-b")
+        );
+    }
+
+    /// A detached worktree row has no branch, so its shortcut entry carries
+    /// `branch: None` — `alt-y` then no-ops rather than copying the
+    /// `"(detached)"` label `branch_name()` falls back to.
+    #[test]
+    fn shortcut_table_branch_is_none_for_detached_worktree() {
+        use crate::commands::list::model::{ItemKind, WorktreeData};
+
+        let (handler, _test, _rx) = make_handler();
+        let mut item = ListItem::new_branch("abc123".into(), "(detached)".into());
+        item.branch = None;
+        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
+            path: std::path::PathBuf::from("/tmp/wt-detached"),
+            detached: true,
+            ..Default::default()
+        }));
+
+        handler.on_skeleton(vec![item], vec!["skel".into()], header("hdr"), grid());
+
+        let table = handler.shortcut_table.lock().unwrap();
+        assert_eq!(table.len(), 1);
+        let entry = table.values().next().expect("one row in the table");
+        assert_eq!(
+            entry.branch, None,
+            "a detached worktree carries no branch, so alt-y no-ops"
+        );
     }
 
     /// `on_skeleton` folds each row's gutter glyph onto the end of the

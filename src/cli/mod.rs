@@ -665,12 +665,17 @@ The CI column shows each row's PR/MR CI and review status, the same as [`wt list
 | (type) | Filter worktrees |
 | `Enter` | Switch to selected worktree |
 | `Alt-c` | Create new worktree named as entered text |
+| `Alt-x` | Remove selected worktree/branch |
+| `Alt-y` | Copy selected branch name to the clipboard |
+| `Alt-o` | Open the selected row's PR/MR URL in the browser |
+| `Alt-r` | Refresh the list (pick up worktrees created elsewhere) |
 | `Esc` | Cancel |
 | `Alt-1`–`Alt-7` | Jump to a preview tab |
 | `Tab`/`Shift-Tab` | Cycle preview tabs forward/backward |
 | `Alt-p` | Toggle preview panel |
 | `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
-<!-- Alt-r (remove worktree) works but is omitted: cursor resets after skim reload (#1695). Add once fixed. See #1881. -->
+
+`Alt-o` is a no-op on a row with no PR/MR (or whose status hasn't loaded yet).
 
 Plain digits go to the filter, so a branch name containing a number can be typed directly; the preview tabs move to `Alt`.
 

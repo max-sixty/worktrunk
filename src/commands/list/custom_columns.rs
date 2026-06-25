@@ -113,7 +113,7 @@ pub fn expand_custom_columns(
             |(column, name)| match env.template_from_named_str(name, &column.template) {
                 Ok(template) => Some(template),
                 Err(e) => {
-                    log::debug!("[{name}] parse failed after validation: {e}");
+                    tracing::debug!(name = %name, error = %e, "[{name}] parse failed after validation: {e}");
                     None
                 }
             },
@@ -174,7 +174,7 @@ pub fn expand_custom_columns(
                 match template.render(&context) {
                     Ok(value) => sanitize_cell(&value),
                     Err(e) => {
-                        log::debug!("[{name}] render failed for row {branch:?}: {e}");
+                        tracing::debug!(name = %name, branch = ?branch, error = %e, "[{name}] render failed for row {branch:?}: {e}");
                         String::new()
                     }
                 }

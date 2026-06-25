@@ -235,7 +235,9 @@ pub(crate) fn prepare_diff(diff: String, stat: String) -> PreparedDiff {
         return PreparedDiff { diff, stat };
     }
 
-    log::debug!(
+    tracing::debug!(
+        count = diff.len(),
+        threshold = DIFF_SIZE_THRESHOLD,
         "Diff size ({} chars) exceeds threshold ({}), filtering",
         diff.len(),
         DIFF_SIZE_THRESHOLD
@@ -250,7 +252,11 @@ pub(crate) fn prepare_diff(diff: String, stat: String) -> PreparedDiff {
 
     let lock_files_removed = sections.len() - filtered_sections.len();
     if lock_files_removed > 0 {
-        log::debug!("Filtered out {} lock file(s)", lock_files_removed);
+        tracing::debug!(
+            count = lock_files_removed,
+            "Filtered out {} lock file(s)",
+            lock_files_removed
+        );
     }
 
     let filtered_diff: String = filtered_sections
@@ -267,7 +273,8 @@ pub(crate) fn prepare_diff(diff: String, stat: String) -> PreparedDiff {
     }
 
     // Step 2: Truncate each file and limit file count
-    log::debug!(
+    tracing::debug!(
+        count = filtered_diff.len(),
         "Still too large ({} chars), truncating to {} lines/file, {} files max",
         filtered_diff.len(),
         MAX_LINES_PER_FILE,

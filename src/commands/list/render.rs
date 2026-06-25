@@ -194,7 +194,11 @@ impl LayoutConfig {
 
             // Debug: Log if cell exceeds its allocated width
             if cell_width > column.width {
-                log::debug!(
+                tracing::debug!(
+                    column = ?column.kind,
+                    allocated = column.width,
+                    actual = cell_width,
+                    excess = cell_width - column.width,
                     "Cell overflow: column={:?} allocated={} actual={} excess={}",
                     column.kind,
                     column.width,
@@ -212,7 +216,7 @@ impl LayoutConfig {
         }
 
         let final_width = line.width();
-        log::debug!("Rendered line width: {}", final_width);
+        tracing::debug!(width = final_width, "Rendered line width: {}", final_width);
 
         line
     }

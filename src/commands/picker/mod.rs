@@ -92,6 +92,7 @@
 
 mod items;
 mod log_formatter;
+mod os;
 mod pager;
 mod pr_pane;
 mod preview;
@@ -132,7 +133,7 @@ use crate::cli::SwitchFormat;
 use crate::output::{BackgroundFallbackMode, handle_remove_output};
 use worktrunk::git::{BranchDeletionMode, delete_branch_if_safe};
 
-use items::{PreviewCache, WORKTREE_OUTPUT_PREFIX};
+use items::{PreviewCache, ShortcutTable, WORKTREE_OUTPUT_PREFIX};
 use preview::{PreviewLayout, PreviewMode, PreviewState, PreviewStateData};
 use preview_orchestrator::PreviewOrchestrator;
 
@@ -154,7 +155,7 @@ enum PickerAction {
     Create,
 }
 
-/// The alt-r removal target parsed back out of a row's `output()` token.
+/// The alt-x removal target parsed back out of a row's `output()` token.
 ///
 /// A worktree-backed row's token is `worktree-path:<path>` (paths are
 /// unique — detached worktrees would otherwise collide on the shared
@@ -202,10 +203,12 @@ fn picker_item_identifier(item: &dyn SkimItem) -> String {
 
 /// Custom command collector for skim's `reload` action.
 ///
-/// When alt-r is pressed, skim's `reload(remove {})` action expands `{}` to the
+/// When alt-x is pressed, skim's `reload(remove {})` action expands `{}` to the
 /// selected row's output() token and invokes this collector with it. The
 /// collector parses the token, removes that item from the list, and streams the
-/// remaining items back to skim — all without leaving the picker.
+/// remaining items back to skim — all without leaving the picker. (alt-r's
+/// `reload(refresh)` re-enters the same collector to re-run collect — see
+/// [`PickerCollector::invoke`].)
 ///
 /// The token rides the reload command itself rather than a side-channel file:
 /// skim 4.x's `execute-silent` is fire-and-forget, so the old
@@ -241,11 +244,16 @@ struct PickerCollector {
     /// [`approved_removal_plan`].
     approvals: Arc<Approvals>,
     /// skim's event sender, published once the TUI is initialized (same
-    /// `OnceLock` the progressive handler pushes `Event::Render` through). alt-r
+    /// `OnceLock` the progressive handler pushes `Event::Render` through). alt-x
     /// removals inject a [`reposition_cursor_action`] through it to restore the
     /// cursor after the reload. `None` until the TUI is up — but a reload can
     /// only fire after skim is showing rows, so it's always set by then.
     render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
+    /// Re-runs the collect pipeline for the `alt-r` refresh: `reload(refresh)`
+    /// routes here, and [`PipelineFactory::spawn`] streams a fresh item list
+    /// back. Shared (`Rc`) with `handle_picker`, which used it for the initial
+    /// spawn.
+    factory: Rc<PipelineFactory>,
     /// Same warning stash the progressive handler fills (drained to stderr once
     /// skim releases the terminal). A failed background removal pushes a
     /// `worktree kept` warning here so the user learns the row that flickered
@@ -372,7 +380,7 @@ impl PickerCollector {
                         // this is a genuine `git branch -D` failure. The row is
                         // restored anyway because the branch still exists (see
                         // `removal_target_still_present`) — surface the cause.
-                        log::warn!("picker: failed to delete branch '{branch_name}': {e:#}");
+                        tracing::warn!(branch = %branch_name, error = %e, "picker: failed to delete branch '{branch_name}': {e:#}");
                     }
                 }
             }
@@ -457,7 +465,7 @@ impl PickerCollector {
             .name(format!("picker-remove-{selected_output}"))
             .spawn(move || {
                 if let Err(e) = Self::do_removal(&repo, &result, &approvals) {
-                    log::warn!("picker: removal of '{selected_output}' errored: {e:#}");
+                    tracing::warn!(selected_output = %selected_output, error = %e, "picker: removal of '{selected_output}' errored: {e:#}");
                 }
                 if removal_target_still_present(&repo, &result) {
                     if let Some((item, pos)) = removed {
@@ -503,7 +511,7 @@ impl PickerCollector {
     /// which `SafeDelete` declines to delete (data safety). Deciding this up front
     /// from `prepare_removal`'s already-computed integration check means the row
     /// never drops (no flicker) and no background `do_removal` runs for a no-op.
-    /// alt-r's reload still resets the cursor to the top, so this lands it back on
+    /// alt-x's reload still resets the cursor to the top, so this lands it back on
     /// the kept row and stashes the canonical "retained; unmerged" info + hint pair
     /// `wt remove` itself prints (see `print_retained_unmerged_branch`), deduped
     /// and drained to stderr when the picker exits. (This is a by-design retain,
@@ -518,7 +526,7 @@ impl PickerCollector {
         // and [`removal_will_remove_target`].
         stash_retained_unmerged_branch(&self.stashed_warnings, branch_name);
 
-        // The row never moved, so land the cursor back on it (alt-r's reload reset
+        // The row never moved, so land the cursor back on it (alt-x's reload reset
         // it to the top).
         let reposition_target = {
             let items = self.items.lock().unwrap();
@@ -537,7 +545,7 @@ impl PickerCollector {
 }
 
 /// Pull the selected row's `output()` token out of the `remove <token>` reload
-/// command skim builds for alt-r. skim expands `{}` to `output()` and shell-
+/// command skim builds for alt-x. skim expands `{}` to `output()` and shell-
 /// quotes it via single quotes (`'…'`, with any embedded `'` written as
 /// `'\''`); this reverses exactly that. An empty selection yields `''` →
 /// empty string, which `from_signal` treats as "nothing to remove".
@@ -571,7 +579,7 @@ const REPOSITION_SETTLED_RENDERS: usize = 3;
 /// guards against an unforeseen state where the matcher never settles.
 const REPOSITION_MAX_ATTEMPTS: usize = 1000;
 
-/// The `item_list` row the cursor should land on after an alt-r removal, given
+/// The `item_list` row the cursor should land on after an alt-x removal, given
 /// the removed row's position in `shared_items` (header included) and how many
 /// data rows remain.
 ///
@@ -663,7 +671,7 @@ fn reposition_cursor_action(
 
 /// Inject a cursor reposition onto `target` through skim's event sender, with
 /// fresh attempt/streak counters (see [`reposition_cursor_action`]). The single
-/// path every alt-r outcome uses to move the cursor after its reload — the drop
+/// path every alt-x outcome uses to move the cursor after its reload — the drop
 /// (cursor onto the slide-up row), the keep (back onto the row), and the restore
 /// (back onto the re-inserted row). A no-op before `render_tx` is set or once the
 /// receiver is gone (teardown); the queued action is dropped if the channel is
@@ -809,10 +817,10 @@ fn branch_retained_as_unmerged(
     .is_none()
 }
 
-/// Put a row back after its background removal didn't happen, closing the alt-r
+/// Put a row back after its background removal didn't happen, closing the alt-x
 /// loop so the list never shows a removal that didn't occur.
 ///
-/// `invoke` drops a row optimistically once alt-r's validation passes, then
+/// `invoke` drops a row optimistically once alt-x's validation passes, then
 /// removes the target on a background thread. When the target unexpectedly
 /// survives (data safety: a clean-check race against `ensure_clean`, a locked
 /// directory, a failing `pre-remove` hook, or a `BranchOnly` delete that raced
@@ -821,13 +829,14 @@ fn branch_retained_as_unmerged(
 /// [`removal_will_remove_target`]), the row must reappear. This re-inserts it into
 /// `shared_items` at its original slot, stashes
 /// a `kept` warning (drained to stderr once skim releases the terminal; the full
-/// error, if any, is in the `log::warn!` the caller emits), then reloads the
+/// error, if any, is in the `tracing::warn!` the caller emits), then reloads the
 /// picker to re-stream the restored list and lands the cursor back on the row.
 ///
-/// The reload command is any string that isn't `remove <token>`: `invoke`
-/// re-streams `shared_items` without removing anything for those (see
-/// [`parse_reload_remove_token`]), so a plain `restore` reload repaints the
-/// re-inserted row — the same reload→reposition path the happy alt-r case uses.
+/// The reload command is any string that is neither `remove <token>` nor the
+/// `refresh` re-collect: `invoke` re-streams `shared_items` without removing
+/// anything for those (see [`parse_reload_remove_token`]), so a plain `restore`
+/// reload repaints the re-inserted row — the same reload→reposition path the
+/// happy alt-x case uses.
 fn restore_failed_removal(
     items: &Arc<Mutex<Vec<Arc<dyn SkimItem>>>>,
     render_tx: &Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
@@ -840,7 +849,7 @@ fn restore_failed_removal(
     let reposition_target = {
         let mut items = items.lock().unwrap();
         let token = removed_item.output().into_owned();
-        // A concurrent restore (rapid alt-r on the same row) may have already
+        // A concurrent restore (rapid alt-x on the same row) may have already
         // put it back; don't duplicate it.
         if items.iter().any(|item| item.output().as_ref() == token) {
             return;
@@ -875,6 +884,23 @@ impl CommandCollector for PickerCollector {
         cmd: &str,
         components_to_stop: Arc<AtomicUsize>,
     ) -> (SkimItemReceiver, Sender<i32>) {
+        let _ = components_to_stop;
+
+        // alt-r refresh: `reload(refresh)` re-runs collect and streams a fresh
+        // list. The new pipeline's threads feed `rx`; on completion their senders
+        // drop and skim's reload sees EOF. The returned handler and join handles
+        // are kept alive by those threads, so let them drop here. On a spawn
+        // failure we fall through and re-stream the current items unchanged.
+        if cmd.trim() == "refresh" {
+            match self.factory.spawn() {
+                Ok(SpawnedPipeline { rx, .. }) => {
+                    let (tx_interrupt, _rx_interrupt) = bounded(1);
+                    return (rx, tx_interrupt);
+                }
+                Err(e) => log::warn!("picker: refresh failed: {e:#}"),
+            }
+        }
+
         // skim's `reload(remove {})` expands `{}` to the selected row's
         // shell-quoted output() token; pull it back out (see
         // `parse_reload_remove_token`). No signal file — that raced the reader.
@@ -907,7 +933,7 @@ impl CommandCollector for PickerCollector {
                         }
                     }
                     Err(e) => {
-                        log::info!("picker: cannot remove '{selected_output}': {e:#}");
+                        tracing::info!(selected_output = %selected_output, error = %e, "picker: cannot remove '{selected_output}': {e:#}");
                     }
                 }
             }
@@ -923,9 +949,8 @@ impl CommandCollector for PickerCollector {
         drop(tx);
 
         // Dummy interrupt channel — no subprocess to kill.
-        // The reader's collect_item thread handles its own components_to_stop accounting;
-        // we just need a valid Sender to satisfy the trait signature.
-        let _ = components_to_stop;
+        // The reader's collect_item thread handles its own components_to_stop
+        // accounting; we just need a valid Sender to satisfy the trait signature.
         let (tx_interrupt, _rx_interrupt) = bounded(1);
         (rx, tx_interrupt)
     }
@@ -961,6 +986,166 @@ fn approved_removal_plan(
     builder.add(worktree_path, &[HookType::PreRemove, HookType::PostRemove]);
     builder.add(main_path, &[HookType::PostSwitch]);
     Ok(builder.finish().approve_readonly(approvals, pid))
+}
+
+/// Everything needed to (re)spawn the picker's collect pipeline. Used once at
+/// startup and again on every `alt-r` refresh — which re-runs `collect` so
+/// worktrees and branches created outside the session (a teammate's push, a
+/// parallel agent) appear without reopening the picker.
+///
+/// Each [`spawn`](Self::spawn) builds a *fresh* progressive handler (its
+/// `OnceLock` slots can't be reset) and item channel, but shares the
+/// session-long state — the orchestrator / preview cache (so previews stay
+/// warm), `shared_items` and `shortcut_table` (which `on_skeleton` overwrites),
+/// and skim's `render_tx`. Held by [`PickerCollector`] so a refresh can
+/// re-enter the pipeline.
+struct PipelineFactory {
+    repo: Repository,
+    render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
+    shared_items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>>,
+    shortcut_table: ShortcutTable,
+    preview_cache: PreviewCache,
+    orchestrator: Arc<PreviewOrchestrator>,
+    stashed_warnings: Arc<Mutex<Vec<String>>>,
+    grid_slot: Arc<prs::GridSlot>,
+    preview_dims: (usize, usize),
+    skim_list_width: usize,
+    command_timeout: Option<std::time::Duration>,
+    skip_tasks: std::collections::HashSet<collect::TaskKind>,
+    llm_command: Option<String>,
+    summary_hint: Option<String>,
+    show_branches: bool,
+    show_remotes: bool,
+    show_prs: bool,
+    is_preview_bench: bool,
+}
+
+/// The product of one [`PipelineFactory::spawn`]: skim's item receiver plus the
+/// handler and thread handles the caller manages (joined in the dry-run path,
+/// dropped — detaching the threads — in the interactive and refresh paths).
+struct SpawnedPipeline {
+    rx: SkimItemReceiver,
+    handler: Arc<progressive_handler::PickerHandler>,
+    collect_handle: std::thread::JoinHandle<()>,
+    prs_handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl PipelineFactory {
+    /// Build a fresh handler + item channel, start the `picker-collect` thread
+    /// (and the `picker-prs` thread when `--prs` is active), and hand back the
+    /// receiver skim reads. The handler holds the only non-thread `tx` clone, so
+    /// once the spawned threads finish the channel closes and skim's reader sees
+    /// EOF — the "background work done → picker idle" contract, which a refresh
+    /// relies on to end its `reload`.
+    fn spawn(&self) -> anyhow::Result<SpawnedPipeline> {
+        let (tx, rx): (SkimItemSender, SkimItemReceiver) = unbounded();
+
+        // Fresh per spawn: the header shows a "loading…" marker keyed to this
+        // flag while the forge call is in flight.
+        let prs_loading: Option<Arc<AtomicBool>> =
+            (self.show_prs && !self.is_preview_bench).then(|| Arc::new(AtomicBool::new(true)));
+
+        let handler: Arc<progressive_handler::PickerHandler> =
+            Arc::new(progressive_handler::PickerHandler {
+                tx: tx.clone(),
+                render_tx: Arc::clone(&self.render_tx),
+                last_render_poke: Mutex::new(Instant::now()),
+                shared_items: Arc::clone(&self.shared_items),
+                shortcut_table: Arc::clone(&self.shortcut_table),
+                rendered_slots: OnceLock::new(),
+                pr_status_slots: OnceLock::new(),
+                comments_fetched: OnceLock::new(),
+                local_content_slots: OnceLock::new(),
+                preview_cache: Arc::clone(&self.preview_cache),
+                orchestrator: Arc::clone(&self.orchestrator),
+                preview_dims: self.preview_dims,
+                llm_command: self.llm_command.clone(),
+                summary_hint: self.summary_hint.clone(),
+                stashed_warnings: Arc::clone(&self.stashed_warnings),
+                deferred_items: OnceLock::new(),
+                grid_slot: Arc::clone(&self.grid_slot),
+                prs_loading: prs_loading.clone(),
+            });
+
+        let bg_handler: Arc<dyn collect::PickerProgressHandler> = handler.clone();
+        let bg_repo = self.repo.clone();
+        let bg_skip_tasks = self.skip_tasks.clone();
+        let show_branches = self.show_branches;
+        let show_remotes = self.show_remotes;
+        let command_timeout = self.command_timeout;
+        let skim_list_width = self.skim_list_width;
+        let collect_handle = std::thread::Builder::new()
+            .name("picker-collect".into())
+            .spawn(move || {
+                let _ = collect::collect(
+                    &bg_repo,
+                    collect::ShowConfig::Resolved {
+                        show_branches,
+                        show_remotes,
+                        skip_tasks: bg_skip_tasks,
+                        command_timeout,
+                        collect_deadline: None,
+                        list_width: Some(skim_list_width),
+                        progressive_handler: Some(bg_handler),
+                    },
+                    // Picker renders its own UI through `progressive_handler`;
+                    // collect must not write to stdout.
+                    RenderTarget::Json,
+                );
+            })
+            .context("Failed to spawn picker-collect thread")?;
+
+        // PR/MR streaming (`--prs`). One forge call on its own thread holding
+        // another `tx` clone, so the frame paints from local data immediately and
+        // PR rows stream in (~1s) when the call returns.
+        let prs_handle = if let Some(prs_loading) = prs_loading {
+            let prs_tx = tx.clone();
+            let prs_repo = self.repo.clone();
+            let prs_warnings = Arc::clone(&self.stashed_warnings);
+            let prs_orchestrator = Arc::clone(&self.orchestrator);
+            let prs_render_tx = Arc::clone(&self.render_tx);
+            let prs_shared = prs::PrsShared {
+                grid_slot: Arc::clone(&self.grid_slot),
+                shortcut_table: Arc::clone(&self.shortcut_table),
+            };
+            let prs_layout = prs::PrsLayout {
+                list_width: self.skim_list_width,
+                preview_dims: self.preview_dims,
+            };
+            Some(
+                std::thread::Builder::new()
+                    .name("picker-prs".into())
+                    .spawn(move || {
+                        prs::stream_open_prs(
+                            &prs_repo,
+                            &prs_layout,
+                            &prs_tx,
+                            &prs_warnings,
+                            &prs_orchestrator,
+                            &prs_shared,
+                            &prs::PrsStreamSignal {
+                                pending: &prs_loading,
+                                render_tx: &prs_render_tx,
+                            },
+                        );
+                    })
+                    .context("Failed to spawn picker-prs thread")?,
+            )
+        } else {
+            None
+        };
+
+        // Drop the local `tx` so the handler's clone (and the threads' clones)
+        // are the only senders left — their drop is what signals EOF to skim.
+        drop(tx);
+
+        Ok(SpawnedPipeline {
+            rx,
+            handler,
+            collect_handle,
+            prs_handle,
+        })
+    }
 }
 
 pub fn handle_picker(
@@ -1158,34 +1343,65 @@ pub fn handle_picker(
         };
 
     // Shared items list: populated by the handler's `on_skeleton` and read
-    // by `PickerCollector` on alt-r reload. Starts empty — the collector's
+    // by `PickerCollector` on alt-x reload. Starts empty — the collector's
     // `invoke` only fires after skim has displayed items, by which time
     // the handler has already published them.
     let shared_items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>> = Arc::new(Mutex::new(Vec::new()));
 
-    // Approvals snapshot for the session: alt-r removals consult it read-only
+    // `alt-y` / `alt-o` lookup table (token → branch + URL). The collect handler
+    // fills it with worktree/branch rows and the `--prs` thread extends it; the
+    // shortcut keybinding callbacks read it. See `ShortcutTable`.
+    let shortcut_table: ShortcutTable = Arc::new(Mutex::new(std::collections::HashMap::new()));
+
+    // Approvals snapshot for the session: alt-x removals consult it read-only
     // to filter the hook plan; see `approved_removal_plan`.
     let approvals = Arc::new(Approvals::load().context("Failed to load approvals")?);
 
     // skim 4.x repaints on demand, so the collect handler needs a handle to
     // skim's event loop to surface in-place row updates. The picker fills this
     // once `Skim::init_tui` has run (inside `run_skim`); until then the handler
-    // simply skips its render pokes. The alt-r collector shares it too, to inject
+    // simply skips its render pokes. The alt-x collector shares it too, to inject
     // the cursor-reposition action after a removal. See `progressive_handler`
     // module docstring.
     let render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>> = Arc::new(OnceLock::new());
 
-    // Shared between the bg-thread collect handler and a failed alt-r removal
+    // Shared between the bg-thread collect handler and a failed alt-x removal
     // (both push warnings while skim owns the terminal) and the main thread
     // (which drains them after `Skim::run_with` returns and stderr is safe
     // again).
     let stashed_warnings: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+
+    // The collect pipeline, captured so the initial spawn below and every alt-r
+    // refresh build it the same way. See `PipelineFactory`.
+    let factory = Rc::new(PipelineFactory {
+        repo: repo.clone(),
+        render_tx: Arc::clone(&render_tx),
+        shared_items: Arc::clone(&shared_items),
+        shortcut_table: Arc::clone(&shortcut_table),
+        preview_cache: Arc::clone(&preview_cache),
+        orchestrator: Arc::clone(&orchestrator),
+        stashed_warnings: Arc::clone(&stashed_warnings),
+        // Column-geometry handoff: the collect thread fills it at skeleton time,
+        // the `--prs` thread reads it to align PR rows with the worktree rows.
+        grid_slot: Arc::new(prs::GridSlot::new()),
+        preview_dims,
+        skim_list_width,
+        command_timeout,
+        skip_tasks,
+        llm_command,
+        summary_hint,
+        show_branches,
+        show_remotes,
+        show_prs,
+        is_preview_bench,
+    });
 
     let collector = PickerCollector {
         items: Arc::clone(&shared_items),
         repo: repo.clone(),
         approvals,
         render_tx: Arc::clone(&render_tx),
+        factory: Rc::clone(&factory),
         stashed_warnings: Arc::clone(&stashed_warnings),
     };
 
@@ -1255,7 +1471,7 @@ pub fn handle_picker(
         // `no_info(true)` below hiding the matched/total counter.
         .scrollbar("▐".to_string())
         // First line (header) non-selectable. `PICKER_HEADER_ROWS` mirrors this
-        // count so the alt-r cursor-reposition math stays in sync — keep them one.
+        // count so the alt-x cursor-reposition math stays in sync — keep them one.
         .header_lines(PICKER_HEADER_ROWS)
         .multi(false)
         // The table is laid out at full terminal width (see `skim_list_width`
@@ -1304,7 +1520,15 @@ pub fn handle_picker(
             // which raced the reader and removed nothing. The collector also
             // re-positions the cursor onto the removed row's slot afterward —
             // reload otherwise snaps it back to the top (see PickerCollector).
-            "alt-r:reload(remove {})".to_string(),
+            // alt-x for "remove" — alt-r is the refresh key (below), and putting
+            // the destructive action on a less-reflexive key guards against a
+            // mis-hit, the safe direction being a stray refresh.
+            "alt-x:reload(remove {})".to_string(),
+            // Refresh the list (alt-r for "refresh"): `reload(refresh)` re-runs
+            // collect through PickerCollector, picking up worktrees/branches
+            // created outside the session (a teammate's push, a parallel agent)
+            // without reopening the picker.
+            "alt-r:reload(refresh)".to_string(),
             // Preview toggle (alt-p shows/hides preview)
             // Note: skim doesn't support change-preview-window like fzf, only toggle
             "alt-p:toggle-preview".to_string(),
@@ -1329,119 +1553,26 @@ pub fn handle_picker(
     // preview-tab switches on top as native `Action::Custom` callbacks (skim's
     // string bind API can't express a custom action).
     install_preview_tab_keybindings(&mut options.keymap);
+    // Row shortcuts (alt-y copy branch, alt-o open PR/MR URL) — native callbacks
+    // that read the selected row off skim's `App` and run the OS action on a
+    // background thread. Like the preview-tab keys, they can't be string binds.
+    install_shortcut_keybindings(&mut options.keymap, Arc::clone(&shortcut_table));
     worktrunk::trace::instant("Picker skim options built");
 
-    let (tx, rx): (SkimItemSender, SkimItemReceiver) = unbounded();
-
-    // Column-geometry handoff: the collect thread fills it at skeleton time,
-    // the `--prs` thread reads it to align PR rows with the worktree rows.
-    let grid_slot = Arc::new(prs::GridSlot::new());
-
-    // `--prs` loading flag, shared between the header (shows a "loading…"
-    // marker while true) and the `--prs` thread (clears it when the forge call
-    // resolves). `Some` exactly when that thread spawns below, so the marker
-    // tracks its lifetime.
-    let prs_loading: Option<Arc<AtomicBool>> =
-        (show_prs && !is_preview_bench).then(|| Arc::new(AtomicBool::new(true)));
-
-    // Concrete type so the dry-run dump can read the handler's rendered rows.
-    let handler: Arc<progressive_handler::PickerHandler> =
-        Arc::new(progressive_handler::PickerHandler {
-            tx: tx.clone(),
-            render_tx: Arc::clone(&render_tx),
-            last_render_poke: Mutex::new(Instant::now()),
-            shared_items: Arc::clone(&shared_items),
-            rendered_slots: std::sync::OnceLock::new(),
-            pr_status_slots: std::sync::OnceLock::new(),
-            comments_fetched: std::sync::OnceLock::new(),
-            local_content_slots: std::sync::OnceLock::new(),
-            preview_cache: Arc::clone(&preview_cache),
-            orchestrator: Arc::clone(&orchestrator),
-            preview_dims,
-            llm_command,
-            summary_hint,
-            stashed_warnings: Arc::clone(&stashed_warnings),
-            deferred_items: std::sync::OnceLock::new(),
-            grid_slot: Arc::clone(&grid_slot),
-            prs_loading: prs_loading.clone(),
-        });
-
-    // Spawn collect on a background thread. The handler holds the only
-    // remaining `tx` clone; when the bg thread exits, `tx` drops, skim's reader
-    // sees EOF, and the picker goes idle. Contract: background work done →
-    // picker idle.
-    let bg_handler: Arc<dyn collect::PickerProgressHandler> = handler.clone();
-    let bg_repo = repo.clone();
-    let bg_skip_tasks = skip_tasks.clone();
-    let bg_handle = std::thread::Builder::new()
-        .name("picker-collect".into())
-        .spawn(move || {
-            let _ = collect::collect(
-                &bg_repo,
-                collect::ShowConfig::Resolved {
-                    show_branches,
-                    show_remotes,
-                    skip_tasks: bg_skip_tasks,
-                    command_timeout,
-                    collect_deadline: None,
-                    list_width: Some(skim_list_width),
-                    progressive_handler: Some(bg_handler),
-                },
-                // Picker renders its own UI through `progressive_handler`;
-                // collect must not write to stdout.
-                RenderTarget::Json,
-            );
-        })
-        .context("Failed to spawn picker-collect thread")?;
+    // Spawn the collect pipeline (and the `--prs` thread when active). The
+    // handler holds the only non-thread `tx` clone; when the bg threads exit,
+    // `tx` drops, skim's reader sees EOF, and the picker goes idle. Every alt-r
+    // refresh re-runs this same `factory.spawn()` — see `PipelineFactory`.
+    let SpawnedPipeline {
+        rx,
+        handler,
+        collect_handle,
+        prs_handle,
+    } = factory.spawn()?;
     worktrunk::trace::instant("Picker collect spawned");
 
-    // PR/MR streaming (`--prs`). One forge call on its own thread that holds
-    // another `tx` clone, so the picker frame paints from local worktree data
-    // immediately and PR rows stream in (~1s) when the call returns. The
-    // clone defers EOF: skim's reader sees end-of-stream only once both this
-    // thread and the collect thread drop their senders. The dry-run runs it
-    // (joined below) so the fetch/render path is exercised headlessly — the only
-    // way it gets coverage, since the interactive picker's skim-abort exit never
-    // flushes a profile. Only the preview-bench skips it: that path measures the
-    // preview workload and must not reach the network.
-    let prs_handle = if let Some(prs_loading) = prs_loading.clone() {
-        let prs_tx = tx.clone();
-        let prs_repo = repo.clone();
-        let prs_warnings = Arc::clone(&stashed_warnings);
-        let prs_grid = Arc::clone(&grid_slot);
-        let prs_orchestrator = Arc::clone(&orchestrator);
-        let prs_render_tx = Arc::clone(&render_tx);
-        Some(
-            std::thread::Builder::new()
-                .name("picker-prs".into())
-                .spawn(move || {
-                    prs::stream_open_prs(
-                        &prs_repo,
-                        &prs::PrsLayout {
-                            list_width: skim_list_width,
-                            preview_dims,
-                        },
-                        &prs_tx,
-                        &prs_warnings,
-                        &prs_grid,
-                        &prs_orchestrator,
-                        &prs::PrsStreamSignal {
-                            pending: &prs_loading,
-                            render_tx: &prs_render_tx,
-                        },
-                    );
-                })
-                .context("Failed to spawn picker-prs thread")?,
-        )
-    } else {
-        None
-    };
-
-    // Drop main-thread copies so the bg threads' `tx` clones are the last
-    // senders (their drop is what signals EOF to skim's reader). The dry run
-    // keeps the handler: skim never runs there, so the EOF contract doesn't
-    // apply, and the dump below reads its rendered rows.
-    drop(tx);
+    // The dry run keeps the handler: skim never runs there, so the EOF contract
+    // doesn't apply, and the dump below reads its rendered rows.
     let dry_run_handler = is_dry_run.then_some(handler);
 
     // Dry-run / preview-bench: skim is bypassed. Wait for collect (which
@@ -1453,7 +1584,7 @@ pub fn handle_picker(
     // the hot path.
     if skip_tui {
         drop(rx);
-        let _ = bg_handle.join();
+        let _ = collect_handle.join();
         // Join the `--prs` thread (present only for the dry-run, not the bench)
         // so its forge fetch and row render run to completion before we dump
         // and exit — this normal-exit path is what gives the streaming code its
@@ -1486,18 +1617,18 @@ pub fn handle_picker(
         return Ok(());
     }
 
-    // Run skim (single invocation — alt-r uses reload, not re-launch).
+    // Run skim (single invocation — alt-x/alt-r use reload, not re-launch).
     // Skim receives items as the bg thread's handler sends them, and the
     // handler pushes repaints through `render_tx` (filled inside `run_skim`)
     // as it mutates rows in place.
     //
-    // Don't join `bg_handle` after skim exits: drain may still be running
+    // Don't join `collect_handle` after skim exits: drain may still be running
     // network tasks, and joining would block exit for up to DRAIN_TIMEOUT
     // (120s). Process exit terminates the bg thread; its git subprocesses
     // are read-only.
     let output = run_skim(options, rx, &render_tx);
-    drop(bg_handle);
-    // Same rationale as `bg_handle`: don't join — the forge call may still be
+    drop(collect_handle);
+    // Same rationale as `collect_handle`: don't join — the forge call may still be
     // in flight, and process exit terminates the thread (its `gh`/`glab`
     // subprocess is read-only).
     drop(prs_handle);
@@ -1621,6 +1752,97 @@ fn install_preview_tab_keybindings(keymap: &mut skim::binds::KeyMap) {
     }
 }
 
+/// The branch name `alt-y` copies for the row whose `output()` token is `token`:
+/// its `RowShortcutData.branch`. `None` when the token isn't in the table or the
+/// row has no branch (a detached worktree), so `alt-y` no-ops. Pulled out of the
+/// keybinding closure so the lookup — the part that doesn't need a live skim
+/// `App` — is unit-testable.
+fn resolve_shortcut_branch(table: &ShortcutTable, token: &str) -> Option<String> {
+    table
+        .lock()
+        .unwrap()
+        .get(token)
+        .and_then(|d| d.branch.clone())
+}
+
+/// The PR/MR URL `alt-o` opens for the row whose `output()` token is `token`.
+/// `None` when the token isn't in the table or the row has no URL (a worktree
+/// whose PR hasn't resolved, or has none), so `alt-o` no-ops. The counterpart to
+/// [`resolve_shortcut_branch`].
+fn resolve_shortcut_url(table: &ShortcutTable, token: &str) -> Option<String> {
+    table
+        .lock()
+        .unwrap()
+        .get(token)
+        .and_then(|d| d.url.resolve())
+}
+
+/// Install the `alt-y` (copy branch) and `alt-o` (open PR/MR URL) row shortcuts
+/// as native callbacks, alongside the preview-tab keys.
+///
+/// Both read the selected row off skim's `App` — its `output()` token, looked up
+/// in `shortcut_table` for the branch / URL — and run the OS action (clipboard,
+/// browser) on a background thread, so skim's event loop never blocks and a slow
+/// clipboard or opener can't freeze the frame. Neither touches the list, so
+/// there's no reload and the cursor stays put. Both no-op when the row lacks the
+/// thing they act on: `alt-y` on a detached worktree (no branch), `alt-o` on a
+/// row with no URL (a worktree whose PR hasn't resolved, or has none). Failures
+/// are logged, not surfaced — skim owns the terminal.
+fn install_shortcut_keybindings(keymap: &mut skim::binds::KeyMap, shortcut_table: ShortcutTable) {
+    use skim::binds::parse_key;
+
+    // alt-y: copy the selected row's branch name to the system clipboard.
+    if let Ok(key) = parse_key("alt-y") {
+        let table = Arc::clone(&shortcut_table);
+        keymap.insert(
+            key,
+            vec![Action::Custom(ActionCallback::new_sync(move |app| {
+                let branch = app
+                    .item_list
+                    .selected()
+                    .and_then(|m| resolve_shortcut_branch(&table, m.item.output().as_ref()));
+                if let Some(branch) = branch {
+                    spawn_shortcut("picker-copy", move || os::copy_to_clipboard(&branch));
+                }
+                Ok(Vec::new())
+            }))],
+        );
+    }
+
+    // alt-o: open the selected row's PR/MR URL in the browser.
+    if let Ok(key) = parse_key("alt-o") {
+        let table = Arc::clone(&shortcut_table);
+        keymap.insert(
+            key,
+            vec![Action::Custom(ActionCallback::new_sync(move |app| {
+                let url = app
+                    .item_list
+                    .selected()
+                    .and_then(|m| resolve_shortcut_url(&table, m.item.output().as_ref()));
+                if let Some(url) = url {
+                    spawn_shortcut("picker-open", move || os::open_url(&url));
+                }
+                Ok(Vec::new())
+            }))],
+        );
+    }
+}
+
+/// Run a row shortcut's OS action on a named background thread, logging any
+/// failure — the picker owns the terminal, so an error can't be shown inline.
+fn spawn_shortcut<F>(name: &str, action: F)
+where
+    F: FnOnce() -> anyhow::Result<()> + Send + 'static,
+{
+    let _ = std::thread::Builder::new()
+        .name(name.to_string())
+        .spawn(move || {
+            if let Err(e) = action() {
+                log::warn!("picker: {e:#}");
+            }
+        });
+}
+
 /// Run skim to completion, exposing its event sender for progressive repaints.
 ///
 /// This inlines what `Skim::run_with` does, plus one addition: after the TUI is
@@ -1707,8 +1929,8 @@ pub mod tests {
     use super::items::{LocalContent, WorktreeSkimItem};
     use super::{
         PickerAction, PickerCollector, PickerRemovalTarget, drain_stashed_warnings,
-        install_preview_tab_keybindings, parse_reload_remove_token, picker_item_identifier,
-        resolve_identifier,
+        install_preview_tab_keybindings, install_shortcut_keybindings, parse_reload_remove_token,
+        picker_item_identifier, resolve_identifier, resolve_shortcut_branch, resolve_shortcut_url,
     };
     use crate::commands::list::model::{ItemKind, ListItem, WorktreeData};
     use crate::commands::worktree::RemoveResult;
@@ -1769,6 +1991,75 @@ pub mod tests {
                 chain[0]
             );
         }
+    }
+
+    #[test]
+    fn test_install_shortcut_keybindings() {
+        use skim::binds::{KeyMap, parse_key};
+        use skim::prelude::Action;
+
+        // alt-y (copy branch) and alt-o (open URL) bind native custom actions
+        // that read the selected row off skim's `App` and look it up in the
+        // shortcut table — no shell binds, so they work cross-platform. The
+        // callback behavior (clipboard / browser) is driven by the `switch_picker`
+        // PTY tests; here we just assert the wiring, mirroring the tab test above.
+        let mut keymap = KeyMap::default();
+        let table = Arc::new(Mutex::new(std::collections::HashMap::new()));
+        install_shortcut_keybindings(&mut keymap, table);
+
+        for spec in ["alt-y", "alt-o"] {
+            let key = parse_key(spec).expect("known key spec parses");
+            let chain = keymap
+                .get(&key)
+                .unwrap_or_else(|| panic!("{spec} not bound"));
+            assert_eq!(chain.len(), 1, "{spec} should bind a single action");
+            assert!(
+                matches!(chain[0], Action::Custom(_)),
+                "{spec} should bind a native custom action, got {:?}",
+                chain[0]
+            );
+        }
+    }
+
+    /// The lookup the `alt-y` / `alt-o` closures delegate to — pure table logic,
+    /// no live skim `App`. Covers a row with a branch + URL, a detached row (no
+    /// branch, no URL — both shortcuts no-op), and a token absent from the table.
+    #[test]
+    fn resolve_shortcut_branch_and_url() {
+        use super::items::{RowShortcutData, RowUrl, ShortcutTable};
+
+        let table: ShortcutTable = Arc::new(Mutex::new(std::collections::HashMap::new()));
+        {
+            let mut t = table.lock().unwrap();
+            t.insert(
+                "feat".into(),
+                RowShortcutData {
+                    branch: Some("feat".into()),
+                    url: RowUrl::Static(Some("https://example.test/pr/1".into())),
+                },
+            );
+            t.insert(
+                "wt".into(),
+                RowShortcutData {
+                    branch: None,
+                    url: RowUrl::Static(None),
+                },
+            );
+        }
+
+        assert_eq!(
+            resolve_shortcut_branch(&table, "feat").as_deref(),
+            Some("feat")
+        );
+        assert_eq!(resolve_shortcut_branch(&table, "wt"), None); // detached: no branch
+        assert_eq!(resolve_shortcut_branch(&table, "missing"), None);
+
+        assert_eq!(
+            resolve_shortcut_url(&table, "feat").as_deref(),
+            Some("https://example.test/pr/1")
+        );
+        assert_eq!(resolve_shortcut_url(&table, "wt"), None); // no URL
+        assert_eq!(resolve_shortcut_url(&table, "missing"), None);
     }
 
     #[test]
@@ -2042,13 +2333,7 @@ pub mod tests {
         repo.run_command(&["branch", "branch-only-feature"])
             .unwrap();
 
-        let collector = PickerCollector {
-            items: Arc::new(Mutex::new(Vec::new())),
-            repo,
-            approvals: Arc::new(Approvals::default()),
-            render_tx: Arc::new(OnceLock::new()),
-            stashed_warnings: Arc::new(Mutex::new(Vec::new())),
-        };
+        let collector = test_collector(Arc::new(Mutex::new(Vec::new())), repo);
 
         let target = PickerRemovalTarget::from_signal("branch-only-feature").unwrap();
         let (_planning_repo, result) = collector.prepare_removal(&target).unwrap();
@@ -2066,13 +2351,7 @@ pub mod tests {
         let test = worktrunk::testing::TestRepo::with_initial_commit();
         let repo = worktrunk::git::Repository::at(test.path()).unwrap();
 
-        let collector = PickerCollector {
-            items: Arc::new(Mutex::new(Vec::new())),
-            repo,
-            approvals: Arc::new(Approvals::default()),
-            render_tx: Arc::new(OnceLock::new()),
-            stashed_warnings: Arc::new(Mutex::new(Vec::new())),
-        };
+        let collector = test_collector(Arc::new(Mutex::new(Vec::new())), repo);
 
         // `RemoveResult` isn't `Debug`; drop the Ok payload so `unwrap_err`
         // (which needs `T: Debug`) can report a failure cleanly.
@@ -2183,8 +2462,58 @@ pub mod tests {
         )
     }
 
+    /// A real [`PipelineFactory`] with empty config for the removal / `invoke`
+    /// tests. Its `spawn()` is only reached by the refresh verb, which these
+    /// tests don't exercise, so the minimal field set is enough to satisfy the
+    /// type without standing up a full picker.
+    fn test_factory(repo: worktrunk::git::Repository) -> std::rc::Rc<super::PipelineFactory> {
+        let orchestrator = Arc::new(super::preview_orchestrator::PreviewOrchestrator::new(
+            repo.clone(),
+        ));
+        let preview_cache = Arc::clone(&orchestrator.cache);
+        std::rc::Rc::new(super::PipelineFactory {
+            repo,
+            render_tx: Arc::new(OnceLock::new()),
+            shared_items: Arc::new(Mutex::new(Vec::new())),
+            shortcut_table: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            preview_cache,
+            orchestrator,
+            stashed_warnings: Arc::new(Mutex::new(Vec::new())),
+            grid_slot: Arc::new(super::prs::GridSlot::new()),
+            preview_dims: (80, 24),
+            skim_list_width: 80,
+            command_timeout: None,
+            skip_tasks: std::collections::HashSet::new(),
+            llm_command: None,
+            summary_hint: None,
+            show_branches: false,
+            show_remotes: false,
+            show_prs: false,
+            is_preview_bench: false,
+        })
+    }
+
+    /// A [`PickerCollector`] for the removal / `invoke` tests, wrapping the given
+    /// `items` and `repo`. Shares the factory's `stashed_warnings` so a test can
+    /// assert on warnings the collector stashes.
+    fn test_collector(
+        items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>>,
+        repo: worktrunk::git::Repository,
+    ) -> PickerCollector {
+        let factory = test_factory(repo.clone());
+        let stashed_warnings = Arc::clone(&factory.stashed_warnings);
+        PickerCollector {
+            items,
+            repo,
+            approvals: Arc::new(Approvals::default()),
+            render_tx: Arc::new(OnceLock::new()),
+            factory,
+            stashed_warnings,
+        }
+    }
+
     /// Two detached worktrees both render the branch label `(detached)`, but
-    /// each row's `output()` token carries its unique path. alt-r on the
+    /// each row's `output()` token carries its unique path. alt-x on the
     /// second row must remove exactly that worktree — not the first detached
     /// one a branch-name match would resolve to — and drop only its row.
     #[test]
@@ -2238,13 +2567,7 @@ pub mod tests {
             Arc::clone(&first_item),
             Arc::clone(&second_item),
         ]));
-        let mut collector = PickerCollector {
-            items: Arc::clone(&items),
-            repo: repo.clone(),
-            approvals: Arc::new(Approvals::default()),
-            render_tx: Arc::new(OnceLock::new()),
-            stashed_warnings: Arc::new(Mutex::new(Vec::new())),
-        };
+        let mut collector = test_collector(Arc::clone(&items), repo.clone());
 
         // skim's `reload(remove {})` hands invoke `remove <single-quoted token>`.
         let cmd = format!("remove '{second_output}'");
@@ -2269,7 +2592,7 @@ pub mod tests {
         );
     }
 
-    /// alt-r with nothing selectable under the cursor expands to `remove ''`;
+    /// alt-x with nothing selectable under the cursor expands to `remove ''`;
     /// `invoke` must treat the empty token as a no-op and leave the list intact.
     #[test]
     fn test_invoke_empty_selection_is_noop() {
@@ -2277,13 +2600,7 @@ pub mod tests {
         let repo = worktrunk::git::Repository::at(test.path()).unwrap();
         let item = branch_only_picker_item("some-branch");
         let items = Arc::new(Mutex::new(vec![Arc::clone(&item)]));
-        let mut collector = PickerCollector {
-            items: Arc::clone(&items),
-            repo,
-            approvals: Arc::new(Approvals::default()),
-            render_tx: Arc::new(OnceLock::new()),
-            stashed_warnings: Arc::new(Mutex::new(Vec::new())),
-        };
+        let mut collector = test_collector(Arc::clone(&items), repo);
         let (_rx, _interrupt) = collector.invoke("remove ''", Arc::new(AtomicUsize::new(0)));
         assert_eq!(
             items.lock().unwrap().len(),
@@ -2292,7 +2609,7 @@ pub mod tests {
         );
     }
 
-    /// alt-r on a target that fails validation (a branch with no worktree and no
+    /// alt-x on a target that fails validation (a branch with no worktree and no
     /// local ref) takes `invoke`'s error arm: it logs and leaves the list intact —
     /// no drop, no background work.
     #[test]
@@ -2302,13 +2619,7 @@ pub mod tests {
         let item = branch_only_picker_item("real-row");
         let token = item.output().to_string();
         let items = Arc::new(Mutex::new(vec![Arc::clone(&item)]));
-        let mut collector = PickerCollector {
-            items: Arc::clone(&items),
-            repo,
-            approvals: Arc::new(Approvals::default()),
-            render_tx: Arc::new(OnceLock::new()),
-            stashed_warnings: Arc::new(Mutex::new(Vec::new())),
-        };
+        let mut collector = test_collector(Arc::clone(&items), repo);
 
         // `no-such-branch` parses as a branch target but has no worktree and no
         // local ref, so `prepare_removal` errors before anything is dropped.
@@ -2330,7 +2641,7 @@ pub mod tests {
 
     /// `restore_failed_removal` puts a dropped row back at its original slot and
     /// stashes a `worktree kept` warning — the correction path that keeps the
-    /// alt-r list from showing a removal that didn't happen.
+    /// alt-x list from showing a removal that didn't happen.
     #[test]
     fn test_restore_failed_removal_reinserts_row_and_stashes_warning() {
         // The list as it stands after `dropped-b` (originally shared_items
@@ -2385,7 +2696,7 @@ pub mod tests {
     }
 
     /// Restoring a row that's already back is a no-op — no duplicate, no extra
-    /// warning. Guards rapid repeated alt-r racing on the same row.
+    /// warning. Guards rapid repeated alt-x racing on the same row.
     #[test]
     fn test_restore_failed_removal_skips_when_already_present() {
         let row = branch_only_picker_item("present");
@@ -2507,6 +2818,7 @@ pub mod tests {
         let items = Arc::new(Mutex::new(vec![Arc::clone(&item)]));
         let stashed: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let mut collector = PickerCollector {
+            factory: test_factory(repo.clone()),
             items: Arc::clone(&items),
             repo: repo.clone(),
             approvals: Arc::new(approvals),
@@ -2599,6 +2911,7 @@ pub mod tests {
             repo: repo.clone(),
             approvals: Arc::new(Approvals::default()),
             render_tx: Arc::new(OnceLock::new()),
+            factory: test_factory(repo.clone()),
             stashed_warnings: Arc::clone(&stashed),
         };
 
@@ -2670,6 +2983,7 @@ pub mod tests {
             repo: repo.clone(),
             approvals: Arc::new(Approvals::default()),
             render_tx: Arc::new(OnceLock::new()),
+            factory: test_factory(repo.clone()),
             stashed_warnings: Arc::clone(&stashed),
         };
 
@@ -2855,7 +3169,7 @@ pub mod tests {
         );
     }
 
-    /// alt-r on an unmerged branch-only row never drops it (no flicker): an
+    /// alt-x on an unmerged branch-only row never drops it (no flicker): an
     /// unmerged branch with no worktree resolves to `BranchOnly` with no
     /// integration reason, so `removal_will_remove_target` predicts `SafeDelete`
     /// keeps it. Decided synchronously in `invoke` — no background removal — so the
@@ -2879,6 +3193,7 @@ pub mod tests {
         let items = Arc::new(Mutex::new(vec![Arc::clone(&item)]));
         let stashed: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let mut collector = PickerCollector {
+            factory: test_factory(repo.clone()),
             items: Arc::clone(&items),
             repo: repo.clone(),
             approvals: Arc::new(Approvals::default()),
@@ -2914,12 +3229,12 @@ pub mod tests {
             "a kept unmerged branch stashes the actionable `-D` hint: {warnings:?}"
         );
 
-        // A second alt-r on the same kept row dedups — the stash doesn't grow.
+        // A second alt-x on the same kept row dedups — the stash doesn't grow.
         let (_rx, _interrupt) = collector.invoke(&cmd, Arc::new(AtomicUsize::new(0)));
         assert_eq!(
             stashed.lock().unwrap().clone(),
             warnings,
-            "repeated alt-r on the same kept row stashes the hint only once"
+            "repeated alt-x on the same kept row stashes the hint only once"
         );
 
         let branch_list = repo.run_command(&["branch", "--list", "unmerged"]).unwrap();
