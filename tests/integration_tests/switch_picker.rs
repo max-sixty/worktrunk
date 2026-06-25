@@ -148,21 +148,32 @@ fn is_skim_ready(screen_content: &str) -> bool {
     screen_content.starts_with("> ") || screen_content.contains("\n> ")
 }
 
+/// Live handles for a booted picker PTY session.
+///
+/// `_master` is held only to keep the pseudo-terminal open for the session's
+/// lifetime; it is never read. Dropping it tears down the Windows ConPTY, after
+/// which every write to `writer` fails with `BrokenPipe`. On Unix `take_writer()`
+/// hands back an independent fd, so the master's lifetime is irrelevant — which
+/// is exactly why dropping it early passes locally and on Linux/macOS CI yet
+/// wipes out every picker test on Windows.
+struct PickerSession {
+    child: Box<dyn portable_pty::Child + Send + Sync>,
+    _master: Box<dyn portable_pty::MasterPty + Send>,
+    writer: crate::common::pty::SharedPtyWriter,
+    rx: mpsc::Receiver<Vec<u8>>,
+    parser: vt100::Parser,
+}
+
 /// Spawn `command` in an isolated PTY, wait until skim is ready and the initial
-/// render has stabilized, and return the live handles `(child, writer, rx,
-/// parser)`. Every picker PTY helper shares this boot sequence; they differ
-/// only in how they drive the session and capture its frames.
+/// render has stabilized, and return the live session handles. Every picker PTY
+/// helper shares this boot sequence; they differ only in how they drive the
+/// session and capture its frames.
 fn boot_picker_pty(
     command: &str,
     args: &[&str],
     working_dir: &Path,
     env_vars: &[(String, String)],
-) -> (
-    Box<dyn portable_pty::Child + Send + Sync>,
-    crate::common::pty::SharedPtyWriter,
-    mpsc::Receiver<Vec<u8>>,
-    vt100::Parser,
-) {
+) -> PickerSession {
     let pair = crate::common::open_pty_with_size(TERM_ROWS, TERM_COLS);
 
     let mut cmd = CommandBuilder::new(command);
@@ -220,7 +231,13 @@ fn boot_picker_pty(
     // Wait for initial render to stabilize
     wait_for_stable(&rx, &mut parser);
 
-    (child, writer, rx, parser)
+    PickerSession {
+        child,
+        _master: pair.master,
+        writer,
+        rx,
+        parser,
+    }
 }
 
 /// Send Escape to abort the picker, then drain and discard remaining output —
@@ -284,7 +301,13 @@ fn exec_in_pty_with_input_expectations(
     env_vars: &[(String, String)],
     inputs: &[(&str, Option<&str>)],
 ) -> PtyResult {
-    let (mut child, writer, rx, mut parser) = boot_picker_pty(command, args, working_dir, env_vars);
+    let PickerSession {
+        mut child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(command, args, working_dir, env_vars);
 
     // Helper to drain available output from the channel (non-blocking)
     let drain_output = |rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser| {
@@ -341,7 +364,13 @@ fn exec_in_pty_capture_before_abort(
     env_vars: &[(String, String)],
     pre_abort_inputs: &[(&str, Option<&str>)],
 ) -> PtyResult {
-    let (child, writer, rx, mut parser) = boot_picker_pty(command, args, working_dir, env_vars);
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(command, args, working_dir, env_vars);
 
     // Send pre-abort inputs (filter text, panel switches, etc.)
     for (input, expected_content) in pre_abort_inputs {
@@ -374,7 +403,13 @@ fn exec_in_pty_capture_noop_probe(
     baseline_inputs: &[(&str, Option<&str>)],
     probe_inputs: &[(&str, Option<&str>)],
 ) -> (String, String, i32) {
-    let (child, writer, rx, mut parser) = boot_picker_pty(command, args, working_dir, env_vars);
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(command, args, working_dir, env_vars);
 
     // Settle to the baseline, then capture it.
     for (input, expected_content) in baseline_inputs {
