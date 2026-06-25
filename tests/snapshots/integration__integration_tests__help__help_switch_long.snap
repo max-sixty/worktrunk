@@ -178,17 +178,23 @@ The CI column shows each row's PR/MR CI and review status, the same as [2mwt li
 
 [1mKeybindings:[0m
 
-      Key                       Action                   
- ───────────── ───────────────────────────────────────── 
- [2m↑[0m/[2m↓[0m           Navigate worktree list                    
- (type)        Filter worktrees                          
- [2mEnter[0m         Switch to selected worktree               
- [2mAlt-c[0m         Create new worktree named as entered text 
- [2mEsc[0m           Cancel                                    
- [2mAlt-1[0m–[2mAlt-7[0m   Jump to a preview tab                     
- [2mTab[0m/[2mShift-Tab[0m Cycle preview tabs forward/backward       
- [2mAlt-p[0m         Toggle preview panel                      
- [2mCtrl-u[0m/[2mCtrl-d[0m Scroll preview up/down                    
+      Key                              Action                         
+ ───────────── ────────────────────────────────────────────────────── 
+ [2m↑[0m/[2m↓[0m           Navigate worktree list                                 
+ (type)        Filter worktrees                                       
+ [2mEnter[0m         Switch to selected worktree                            
+ [2mAlt-c[0m         Create new worktree named as entered text              
+ [2mAlt-x[0m         Remove selected worktree/branch                        
+ [2mAlt-y[0m         Copy selected branch name to the clipboard             
+ [2mAlt-o[0m         Open the selected row's PR/MR URL in the browser       
+ [2mAlt-r[0m         Refresh the list (pick up worktrees created elsewhere) 
+ [2mEsc[0m           Cancel                                                 
+ [2mAlt-1[0m–[2mAlt-7[0m   Jump to a preview tab                                  
+ [2mTab[0m/[2mShift-Tab[0m Cycle preview tabs forward/backward                    
+ [2mAlt-p[0m         Toggle preview panel                                   
+ [2mCtrl-u[0m/[2mCtrl-d[0m Scroll preview up/down                                 
+
+[2mAlt-o[0m is a no-op on a row with no PR/MR (or whose status hasn't loaded yet).
 
 Plain digits go to the filter, so a branch name containing a number can be typed directly; the preview tabs move to [2mAlt[0m.
 
@@ -210,8 +216,6 @@ On narrow previews the tab bar compacts to digits — only the active tab keeps 
 
 [107m [0m [2m[36m[switch.picker][0m
 [107m [0m [2mpager = [0m[2m[32m"delta --paging=never --width=$COLUMNS"[0m
-
-Available on Unix only (macOS, Linux). On Windows, use [2mwt list[0m or [2mwt switch <branch>[0m directly.
 
 [1m[32mPull requests and merge requests[0m
 

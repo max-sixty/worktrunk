@@ -1,9 +1,11 @@
-#![cfg(all(unix, feature = "shell-integration-tests"))]
+#![cfg(feature = "shell-integration-tests")]
 //! TUI snapshot tests for `wt switch` interactive picker
 //!
 //! These tests use PTY execution combined with vt100 terminal emulation to capture
 //! what the user actually sees on screen, enabling meaningful snapshot testing of
-//! the skim-based TUI interface.
+//! the skim-based TUI interface. They run on every platform — `portable_pty` uses a
+//! ConPTY on Windows (see `tests/common/pty.rs`), and capturing the vt100-emulated
+//! grid (not raw escape sequences) keeps the snapshots backend-agnostic.
 //!
 //! ## Capture-Before-Abort Pattern
 //!
@@ -25,7 +27,7 @@
 //! - **Content expectations** wait for async preview content to load (e.g., "diff --git")
 
 use crate::common::mock_commands::{MockConfig, MockResponse};
-use crate::common::{TestRepo, repo, wt_bin};
+use crate::common::{TEST_EPOCH, TestRepo, repo, wt_bin};
 use insta::assert_snapshot;
 use portable_pty::CommandBuilder;
 use rstest::rstest;
@@ -389,13 +391,6 @@ fn wait_for_stable(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser) {
 /// AND has stabilized. This is essential for async preview panels where the initial
 /// render may show placeholder content before the actual data loads.
 ///
-/// Handles a subtle race condition: skim may continuously redraw (cursor repositioning,
-/// border repaints) even after all meaningful content is rendered. These minor redraws
-/// reset the stability timer, preventing the "no changes for 500ms" condition from
-/// being met. To handle this, once expected content is found, we track how long it
-/// has been continuously present and accept stability after STABLE_DURATION even if
-/// the screen keeps changing cosmetically.
-///
 /// Tip: avoid including the panel border character (`│`) in `expected_content` —
 /// its rendering varies by platform and terminal, causing flaky assertions.
 fn wait_for_stable_with_content(
@@ -403,12 +398,72 @@ fn wait_for_stable_with_content(
     parser: &mut vt100::Parser,
     expected_content: Option<&str>,
 ) {
+    let describe = expected_content.map(|c| format!("expected content {c:?}"));
+    wait_for_stable_until(
+        rx,
+        parser,
+        |screen| expected_content.is_none_or(|c| screen.contains(c)),
+        describe.as_deref(),
+    );
+}
+
+/// Wait until the list-pane cursor pointer lands on the row for `name`, then
+/// settles.
+///
+/// skim draws its `> ` pointer on the selected row on every render of the item
+/// list, so the pointer is a race-free signal of cursor position. The preview
+/// pane is not: skim only repaints it on a selection-*change* event
+/// (`on_selection_changed` → `Event::RunPreview`), so a cursor move driven by a
+/// `Custom` action — the alt-x sticky reposition — leaves the preview showing
+/// the previous row until something else repaints it. Gating cursor-position
+/// assertions on the preview text therefore races the picker's async render;
+/// gating on the pointer does not.
+///
+/// The query line also starts with `> `, but these helpers navigate by cursor
+/// and never type, so the query stays empty — only the selected row both starts
+/// with `>` and carries a worktree `name`, which uniquely picks it out.
+fn wait_for_cursor_on_row(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser, name: &str) {
+    let describe = format!("the cursor (> pointer) on row {name:?}");
+    wait_for_stable_until(
+        rx,
+        parser,
+        |screen| {
+            screen
+                .lines()
+                .any(|line| line.starts_with('>') && line.contains(name))
+        },
+        Some(&describe),
+    );
+}
+
+/// Drive the PTY reader until the screen satisfies `ready` and then settles, or
+/// the stabilization timeout elapses.
+///
+/// `ready` is evaluated against the full screen contents. When `describe` is
+/// `Some`, a timeout that never saw `ready` panics with diagnostics (naming the
+/// awaited condition); when it is `None` the caller has no readiness condition
+/// (stability only) and `ready` is ignored.
+///
+/// Handles a subtle race: skim may keep redrawing cosmetically (cursor
+/// repositioning, border repaints) even after the meaningful content is on
+/// screen, which keeps resetting the "no changes for STABLE_DURATION" timer. So
+/// once `ready` holds, we track how long it has held continuously and accept
+/// stability after STABLE_DURATION even if the screen keeps churning. With no
+/// readiness condition there is nothing to find, so the screen must settle the
+/// hard way (the cosmetic-redraw fallback never engages).
+fn wait_for_stable_until(
+    rx: &mpsc::Receiver<Vec<u8>>,
+    parser: &mut vt100::Parser,
+    ready: impl Fn(&str) -> bool,
+    describe: Option<&str>,
+) {
     let start = Instant::now();
     let mut last_change = Instant::now();
     let mut last_content = parser.screen().contents();
-    // Tracks when expected content first appeared continuously on screen.
-    // Used as a fallback stability signal when skim keeps redrawing cosmetically.
-    let mut content_found_at: Option<Instant> = None;
+    // Tracks when `ready` first held continuously on screen. Used as a fallback
+    // stability signal when skim keeps redrawing cosmetically.
+    let mut ready_since: Option<Instant> = None;
+    let has_condition = describe.is_some();
 
     while start.elapsed() < STABILIZE_TIMEOUT {
         // Drain available output
@@ -422,19 +477,17 @@ fn wait_for_stable_with_content(
             last_change = Instant::now();
         }
 
-        // Check if expected content is present (if required)
-        let content_ready = match expected_content {
-            Some(expected) => {
-                let found = current_content.contains(expected);
-                if found {
-                    content_found_at.get_or_insert(Instant::now());
-                } else {
-                    // Content disappeared (e.g., skim full redraw) — reset
-                    content_found_at = None;
-                }
-                found
+        let content_ready = if has_condition {
+            let found = ready(&current_content);
+            if found {
+                ready_since.get_or_insert(Instant::now());
+            } else {
+                // Condition lost (e.g., skim full redraw) — reset
+                ready_since = None;
             }
-            None => true,
+            found
+        } else {
+            true
         };
 
         // Primary: screen hasn't changed for STABLE_DURATION and content is ready
@@ -442,11 +495,10 @@ fn wait_for_stable_with_content(
             return;
         }
 
-        // Fallback for content-expected case: if expected content has been continuously
-        // present for STABLE_DURATION, consider the screen stable even if skim keeps
-        // doing cosmetic redraws (cursor repositioning, border repaints). These minor
-        // changes don't affect snapshot correctness.
-        if let Some(found_time) = content_found_at
+        // Fallback (only with a readiness condition): if it has held continuously
+        // for STABLE_DURATION, consider the screen stable even while skim keeps
+        // doing cosmetic redraws (cursor repositioning, border repaints).
+        if let Some(found_time) = ready_since
             && found_time.elapsed() >= STABLE_DURATION
         {
             return;
@@ -455,19 +507,19 @@ fn wait_for_stable_with_content(
         std::thread::sleep(POLL_INTERVAL);
     }
 
-    // Timeout: if expected content was specified but not found, fail with diagnostics
-    // instead of proceeding to a guaranteed snapshot mismatch.
-    if let Some(expected) = expected_content
-        && !last_content.contains(expected)
+    // Timeout: if a condition was specified but never held, fail with diagnostics
+    // instead of proceeding to a guaranteed assertion mismatch.
+    if let Some(desc) = describe
+        && !ready(&last_content)
     {
         panic!(
-            "Timed out after {:?} waiting for expected content {:?} to appear on screen.\n\
+            "Timed out after {:?} waiting for {desc} to appear on screen.\n\
              Screen content:\n{}",
-            STABILIZE_TIMEOUT, expected, last_content
+            STABILIZE_TIMEOUT, last_content
         );
     }
 
-    // Stability-only timeout (no content expectation, or content present but unstable) —
+    // Stability-only timeout (no condition, or condition present but unstable) —
     // warn but proceed (test may still pass with current screen state)
     eprintln!(
         "Warning: Screen did not fully stabilize within {:?}",
@@ -1014,6 +1066,24 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
     });
 }
 
+/// Seed a fresh CI-status cache entry for `branch` so the picker primes the
+/// row's `pr_status` at skeleton time (`populate_from_cache`) — making the `pr`
+/// and `comments` tabs resolve deterministically with no dependence on the live
+/// forge fetch's timing. `status_json` is the cached `status` value: `"null"`
+/// for "CI checked, no PR", or a PR object (e.g.
+/// `{"ci_status":"passed","source":"pr","is_stale":false,"number":{"number":42,"sigil":"#"}}`).
+/// `branch` must be a checked-out worktree — its current HEAD is the cache key.
+fn seed_ci_status(repo: &TestRepo, branch: &str, status_json: &str) {
+    let head = repo.git_output(&["rev-parse", branch]);
+    let cache_dir = repo.path().join(".git/wt/cache/ci-status");
+    std::fs::create_dir_all(&cache_dir).unwrap();
+    let entry = format!(
+        r#"{{"status":{status_json},"checked_at":{TEST_EPOCH},"head":"{head}","branch":"{branch}"}}"#,
+        head = head.trim(),
+    );
+    std::fs::write(cache_dir.join(format!("{branch}.json")), entry).unwrap();
+}
+
 /// Install a mock forge CLI (`gh`/`glab`) that answers the `--prs` list call
 /// from a canned JSON file, and return env vars (mock on PATH + MOCK_CONFIG_DIR)
 /// for a `wt switch --prs` PTY run. No network is touched. `list_delay_ms`
@@ -1043,11 +1113,15 @@ fn mock_forge_env(
         "MOCK_CONFIG_DIR".to_string(),
         mock_bin.display().to_string(),
     ));
-    let base_path = std::env::var("PATH").unwrap_or_default();
-    env_vars.push((
-        "PATH".to_string(),
-        format!("{}:{base_path}", mock_bin.display()),
-    ));
+    // Prepend mock-bin to PATH using the OS separator (`;` on Windows, `:` on
+    // Unix) — a hardcoded `:` corrupts the PATH on Windows, so the mock
+    // `gh.exe`/`glab.exe` is never found and the `--prs` fetch silently no-ops.
+    // `configure_pty_command` sets `PATH` (uppercase), which this entry overrides.
+    let base_path = std::env::var_os("PATH").unwrap_or_default();
+    let mut paths = vec![mock_bin.clone()];
+    paths.extend(std::env::split_paths(&base_path));
+    let joined = std::env::join_paths(paths).expect("mock-bin joins into PATH");
+    env_vars.push(("PATH".to_string(), joined.to_string_lossy().into_owned()));
     env_vars
 }
 
@@ -1180,6 +1254,120 @@ fn test_switch_picker_prs_shows_loading_marker(mut repo: TestRepo) {
     assert!(!list.contains("#42"), "rows not yet streamed in:\n{list}");
 }
 
+/// A plain `wt switch` (no `--prs`) worktree row whose branch has an open PR
+/// shows the real comment thread in its `comments` tab — the same background
+/// `gh pr view <n> --json comments` fetch and render a `--prs` row makes. This
+/// is the crux of the unification: the comments tab no longer points a worktree
+/// row at `--prs`; it loads the thread directly. The PR is primed from a fresh
+/// CI cache so the row resolves to "has PR" at skeleton with no `gh pr list`,
+/// and the conversation comes from a mocked `gh pr view`.
+#[rstest]
+fn test_switch_picker_worktree_row_comments_tab_shows_thread(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    let feature_path = repo.add_worktree("feature");
+    // Commit a file, then leave an uncommitted edit so `feature`'s HEAD± tab
+    // shows a `diff --git` — a preview-only sync anchor (it never appears in the
+    // list) that confirms the cursor landed on `feature` before reading comments.
+    std::fs::write(feature_path.join("file.txt"), "content\n").unwrap();
+    let add = repo
+        .git_command()
+        .args(["-C", feature_path.to_str().unwrap(), "add", "."])
+        .run()
+        .unwrap();
+    assert!(add.status.success(), "Failed to add file");
+    let commit = repo
+        .git_command()
+        .args([
+            "-C",
+            feature_path.to_str().unwrap(),
+            "commit",
+            "-m",
+            "Commit for comments tab",
+        ])
+        .run()
+        .unwrap();
+    assert!(commit.status.success(), "Failed to commit");
+    std::fs::write(feature_path.join("file.txt"), "content\nmore\n").unwrap();
+
+    // Prime a fresh CI status carrying an open PR (#42) so the row resolves to
+    // "has PR" at skeleton — detect reads this same fresh entry, so no `gh pr
+    // list`. The comments thread still needs a live `gh pr view`, mocked below.
+    seed_ci_status(
+        &repo,
+        "feature",
+        r##"{"ci_status":"passed","source":"pr","is_stale":false,"number":{"number":42,"sigil":"#"}}"##,
+    );
+
+    // Mock the only forge call a worktree row makes — `gh pr view 42 --json
+    // comments` (the `log` tab is local; the `pr` tab rides the cached CI). Any
+    // other gh invocation falls through to `_default` exit 1.
+    let mock_bin = repo.root_path().join("mock-bin");
+    std::fs::create_dir_all(&mock_bin).unwrap();
+    let comments_json = r#"{"comments":[{"author":{"login":"octocat"},"body":"Looks solid, shipping it.","createdAt":"2024-12-01T00:00:00Z"}]}"#;
+    std::fs::write(mock_bin.join("comments.json"), comments_json).unwrap();
+    MockConfig::new("gh")
+        .version("gh version 1.0.0 (mock)")
+        .command("pr view", MockResponse::file("comments.json"))
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+    let mut env_vars = repo.test_env_vars();
+    env_vars.push((
+        "MOCK_CONFIG_DIR".to_string(),
+        mock_bin.display().to_string(),
+    ));
+    // Prepend mock-bin to PATH using the OS separator (`;` on Windows, `:` on
+    // Unix) — a hardcoded `:` corrupts the PATH on Windows, so the mock `gh.exe`
+    // is never found and the comments fetch fails ("Couldn't load comments").
+    let base_path = std::env::var_os("PATH").unwrap_or_default();
+    let mut paths = vec![mock_bin.clone()];
+    paths.extend(std::env::split_paths(&base_path));
+    let joined = std::env::join_paths(paths).expect("mock-bin joins into PATH");
+    env_vars.push(("PATH".to_string(), joined.to_string_lossy().into_owned()));
+
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
+            // for the matcher-lag rationale.
+            ("\x1b[B", None), // Down: move cursor to `feature`
+            // Alt-1: HEAD± panel. `feature`'s uncommitted diff (`diff --git`) is a
+            // preview-only anchor — it confirms the cursor landed on `feature`
+            // (not `main`) and gives the skeleton-spawned comments fetch time to
+            // land before we read its tab.
+            ("\x1b1", Some("diff --git")),
+            // Alt-7: jump to comments (7). The thread was fetched in the
+            // background at skeleton time (the PR was primed), so it's cached by
+            // now — wait for the comment body to confirm the real thread renders.
+            ("\x1b7", Some("Looks solid")),
+        ],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+    let (_list, preview) = result.panels();
+    assert!(
+        preview.contains("octocat"),
+        "comment author renders on a worktree row's comments tab:\n{preview}"
+    );
+    assert!(
+        preview.contains("Looks solid"),
+        "comment body renders on a worktree row's comments tab:\n{preview}"
+    );
+    // No `--prs` pointer — the worktree row loads the thread itself.
+    assert!(
+        !preview.contains("--prs"),
+        "comments tab must not point at --prs:\n{preview}"
+    );
+}
+
 #[rstest]
 fn test_switch_picker_preview_cycle_tab_forward(mut repo: TestRepo) {
     // Tab cycles the preview tab forward. From the default HEAD± tab (1), one
@@ -1267,6 +1455,8 @@ fn test_switch_picker_preview_cycle_tab_forward_wraps(mut repo: TestRepo) {
         .unwrap();
     assert!(commit.status.success(), "Failed to commit");
 
+    seed_ci_status(&repo, "feature", "null");
+
     let env_vars = repo.test_env_vars();
     let result = exec_in_pty_capture_before_abort(
         wt_bin().to_str().unwrap(),
@@ -1277,9 +1467,10 @@ fn test_switch_picker_preview_cycle_tab_forward_wraps(mut repo: TestRepo) {
             // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
             // for the matcher-lag rationale.
             ("\x1b[B", None), // Down: move cursor to `feature`
-            // Alt-7: jump to comments (7). On a worktree row the comments tab
-            // points at `--prs` rows (it's fetched only there).
-            ("\x1b7", Some("--prs")),
+            // Alt-7: jump to comments (7). The comments tab behaves the same on a
+            // worktree row as on a `--prs` row — with no PR (seeded above) it shows
+            // "has no PR", matching the `pr` tab.
+            ("\x1b7", Some("has no PR")),
             ("\t", Some("no uncommitted changes")), // Tab: wrap 7 → HEAD± (1)
         ],
     );
@@ -1322,6 +1513,8 @@ fn test_switch_picker_preview_cycle_shift_tab_wraps(mut repo: TestRepo) {
         .unwrap();
     assert!(commit.status.success(), "Failed to commit");
 
+    seed_ci_status(&repo, "feature", "null");
+
     let env_vars = repo.test_env_vars();
     let result = exec_in_pty_capture_before_abort(
         wt_bin().to_str().unwrap(),
@@ -1332,9 +1525,9 @@ fn test_switch_picker_preview_cycle_shift_tab_wraps(mut repo: TestRepo) {
             // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
             // for the matcher-lag rationale.
             ("\x1b[B", None), // Down: move cursor to `feature`
-            // Shift-Tab: HEAD± (1) → comments (7), the 1 → 7 wraparound. The
-            // comments tab on a worktree row points at `--prs` rows.
-            ("\x1b[Z", Some("--prs")),
+            // Shift-Tab: HEAD± (1) → comments (7), the 1 → 7 wraparound. With no PR
+            // (seeded above) the comments tab shows "has no PR", like the `pr` tab.
+            ("\x1b[Z", Some("has no PR")),
         ],
     );
 
@@ -1342,7 +1535,7 @@ fn test_switch_picker_preview_cycle_shift_tab_wraps(mut repo: TestRepo) {
 
     let (_list, preview) = result.panels();
     assert!(
-        preview.contains("Comments show on"),
+        preview.contains("has no PR"),
         "Shift-Tab should wrap to the comments tab; preview was:\n{preview}"
     );
 }
@@ -1733,7 +1926,14 @@ fn test_switch_picker_pre_switch_hook_requires_approval(mut repo: TestRepo) {
             // Preview-pane gate: see test_switch_picker_emits_cd_directive_by_default.
             ("target", Some("target-branch has no uncommitted changes")),
             ("\r", Some("needs approval")), // Enter; wait for the approval prompt
-            ("n\n", None),                  // decline
+            // Decline. The line terminator is CR, not LF: once skim releases the
+            // terminal, the approval prompt's `read_line` runs in the OS line
+            // discipline (cooked mode). Windows' console terminates a line on CR
+            // (the Enter key) and never on a bare LF, so "n\n" would leave the
+            // read blocked until the harness kills the hung process (exit 1). CR
+            // terminates on both platforms — Windows reads it as Enter, and on
+            // Unix the PTY's ICRNL maps it to LF.
+            ("n\r", None), // decline
         ],
     );
 
@@ -1749,12 +1949,12 @@ fn test_switch_picker_pre_switch_hook_requires_approval(mut repo: TestRepo) {
     assert!(!marker.exists(), "a declined pre-switch hook must not run");
 }
 
-/// Drive the picker to remove the first non-current worktree with alt-r, then
+/// Drive the picker to remove the first non-current worktree with alt-x, then
 /// switch — capturing the screen between steps so the assertion doesn't depend on
 /// the picker's commit-recency row order. Returns `(landing_branch, final_screen,
 /// exit_code)`, where `landing_branch` is the worktree that slid into the removed
 /// row's slot (the row the sticky cursor must land on).
-fn drive_alt_r_then_switch(
+fn drive_alt_x_then_switch(
     args: &[&str],
     working_dir: &Path,
     env_vars: &[(String, String)],
@@ -1809,7 +2009,7 @@ fn drive_alt_r_then_switch(
     wait_for_stable_with_content(&rx, &mut parser, Some(candidates[0]));
 
     // Learn the row order: the candidate on the earlier list line is row 1 — the
-    // one Down lands on and alt-r removes; the other is the sticky landing row.
+    // one Down lands on and alt-x removes; the other is the sticky landing row.
     let (row1, row2) = {
         let screen = parser.screen();
         let list = screen
@@ -1827,24 +2027,20 @@ fn drive_alt_r_then_switch(
         }
     };
 
-    // Down onto row 1, confirmed via its preview pane (cursor navigation never
-    // invokes the matcher, so this is deterministic regardless of load).
+    // Down onto row 1, confirmed via the list-pane cursor pointer (cursor
+    // navigation never invokes the matcher, and the pointer refreshes on every
+    // render, so this is deterministic regardless of load).
     send(&writer, b"\x1b[B");
-    wait_for_stable_with_content(
-        &rx,
-        &mut parser,
-        Some(&format!("{row1} has no uncommitted changes")),
-    );
+    wait_for_cursor_on_row(&rx, &mut parser, row1);
 
-    // alt-r removes row 1; the cursor must stick to its slot — now holding row 2.
-    // Gating on row 2's preview *is* the sticky assertion: a cursor reset to the
-    // top would show the current worktree's preview and time this out.
-    send(&writer, b"\x1br");
-    wait_for_stable_with_content(
-        &rx,
-        &mut parser,
-        Some(&format!("{row2} has no uncommitted changes")),
-    );
+    // alt-x removes row 1; the cursor must stick to its slot — now holding row 2.
+    // The pointer landing on row 2 *is* the sticky assertion: a cursor reset to
+    // the top would leave the pointer on the current worktree and time this out.
+    // We gate on the pointer, not row 2's preview pane, because the reposition is
+    // a `Custom` action and skim doesn't repaint the preview after one — see
+    // `wait_for_cursor_on_row`.
+    send(&writer, b"\x1bx");
+    wait_for_cursor_on_row(&rx, &mut parser, row2);
 
     // Enter switches to the cursor row (row 2).
     send(&writer, b"\r");
@@ -1864,19 +2060,19 @@ fn drive_alt_r_then_switch(
     (row2.to_string(), parser.screen().contents(), exit_code)
 }
 
-/// alt-r keeps the cursor on the removed row's slot. After removing the first
+/// alt-x keeps the cursor on the removed row's slot. After removing the first
 /// non-current worktree, the cursor stays on the row that slides up (the next
 /// worktree), so Enter switches there — not back to the current worktree at the
 /// top, which is where skim's reload would otherwise reset the cursor.
 #[rstest]
-fn test_switch_picker_alt_r_keeps_cursor_sticky(mut repo: TestRepo) {
+fn test_switch_picker_alt_x_keeps_cursor_sticky(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
     repo.add_worktree("wt-keep");
     repo.add_worktree("wt-drop");
 
     let env_vars = repo.test_env_vars();
-    let (landing, screen, exit_code) = drive_alt_r_then_switch(
+    let (landing, screen, exit_code) = drive_alt_x_then_switch(
         &["switch", "--no-cd", "--format=json"],
         repo.root_path(),
         &env_vars,
@@ -1885,7 +2081,7 @@ fn test_switch_picker_alt_r_keeps_cursor_sticky(mut repo: TestRepo) {
 
     assert_eq!(
         exit_code, 0,
-        "switch after alt-r should exit 0.\nScreen:\n{screen}"
+        "switch after alt-x should exit 0.\nScreen:\n{screen}"
     );
     // The structured result reaches stdout only after the switch pipeline ran;
     // it targets the sticky row, not the current worktree.
@@ -1904,7 +2100,7 @@ fn test_switch_picker_alt_r_keeps_cursor_sticky(mut repo: TestRepo) {
 /// spinning the event loop. The picker stays responsive — its screen stabilizes,
 /// then aborts cleanly.
 #[rstest]
-fn test_switch_picker_alt_r_no_match_stays_responsive(mut repo: TestRepo) {
+fn test_switch_picker_alt_x_no_match_stays_responsive(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
     repo.add_worktree("solo-wt");
@@ -1917,14 +2113,14 @@ fn test_switch_picker_alt_r_no_match_stays_responsive(mut repo: TestRepo) {
         &env_vars,
         &[
             ("solo-wt", Some("solo-wt")), // filter to the sole matching worktree
-            ("\x1br", None),              // alt-r removes it; query now matches nothing
+            ("\x1bx", None),              // alt-x removes it; query now matches nothing
         ],
     );
 
     assert_valid_abort_exit_code(result.exit_code);
 }
 
-/// alt-r on an unmerged branch-only row leaves the row present end-to-end through
+/// alt-x on an unmerged branch-only row leaves the row present end-to-end through
 /// real skim — `SafeDelete` refuses to delete an unmerged branch, so the row must
 /// not vanish. The inverse of `…_no_match_stays_responsive`, which removes a row
 /// and expects emptiness.
@@ -1936,7 +2132,7 @@ fn test_switch_picker_alt_r_no_match_stays_responsive(mut repo: TestRepo) {
 /// is unit-tested in `test_invoke_keeps_unmerged_branch_only_row`, which checks the
 /// synchronous `items` state before any backstop can run.
 #[rstest]
-fn test_switch_picker_alt_r_keeps_unmerged_branch_row(mut repo: TestRepo) {
+fn test_switch_picker_alt_x_keeps_unmerged_branch_row(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
 
@@ -1958,7 +2154,7 @@ fn test_switch_picker_alt_r_keeps_unmerged_branch_row(mut repo: TestRepo) {
         &env_vars,
         &[
             ("unmerged-orphan", Some("unmerged-orphan")), // filter to the branch
-            ("\x1br", Some("unmerged-orphan")),           // alt-r keeps it: still visible
+            ("\x1bx", Some("unmerged-orphan")),           // alt-x keeps it: still visible
         ],
     );
 
@@ -1973,7 +2169,7 @@ fn test_switch_picker_alt_r_keeps_unmerged_branch_row(mut repo: TestRepo) {
     let occurrences = list.matches("unmerged-orphan").count();
     assert!(
         occurrences >= 2,
-        "the unmerged branch-only row survives alt-r — expected the branch name in \
+        "the unmerged branch-only row survives alt-x — expected the branch name in \
          both the prompt echo and a data row, got {occurrences} occurrence(s).\nList:\n{list}"
     );
 }

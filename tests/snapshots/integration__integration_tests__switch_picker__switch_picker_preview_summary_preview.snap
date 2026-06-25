@@ -3,7 +3,7 @@ source: tests/integration_tests/switch_picker.rs
 expression: preview
 ---
 1 2 3 4 5: summary 6 7
-Enter: switch | Tab/alt-1…7: preview | alt-c: create | Esc:
+Enter: switch | alt-c: create | alt-x: remove | alt-y: copy
 
 Configure [commit.generation] command to enable LLM summari
 

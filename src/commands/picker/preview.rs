@@ -14,15 +14,17 @@ use std::sync::atomic::{AtomicU8, Ordering};
 /// 4. UpstreamDiff: Diff vs upstream tracking branch (ahead/behind)
 /// 5. Summary: LLM-generated branch summary (requires [commit.generation] config)
 /// 6. Pr: The selected row's PR/MR, rendered from already-fetched data (no network)
-/// 7. Comments: The PR/MR's comment thread (background forge fetch on `--prs` rows)
+/// 7. Comments: The PR/MR's comment thread (background forge fetch on any row
+///    whose branch has an open PR — worktree row or `--prs` row alike)
 ///
 /// A mode whose content is structurally absent for the current row is rendered
 /// de-emphasized in the tab bar (see `TabAvailability` / `render_preview_tabs`):
-/// tab 4 when the branch has no upstream, tab 5 when summaries are disabled,
-/// the working-tree/branch-diff/upstream/summary tabs on a `--prs` row (no
-/// local worktree), tab 6 on a worktree row (PR previews render only on `--prs`
-/// rows), and tab 7 (comments) on a worktree row (comments are fetched only for
-/// `--prs` rows).
+/// tab 4 when the branch has no upstream, tab 5 when summaries are disabled, the
+/// working-tree/branch-diff/upstream/summary tabs on a `--prs` row (no local
+/// worktree), and the PR-backed tabs 6 (pr) and 7 (comments) when the row's
+/// branch has no PR. The PR-backed tabs are available together, by the same
+/// rule, on every row — `--prs` only decides whether a PR row is listed, not how
+/// these tabs behave.
 ///
 /// Loosely aligned with `wt list` columns, though not a perfect match:
 /// - Tab 1 corresponds to "HEAD±" column

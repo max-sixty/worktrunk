@@ -58,7 +58,8 @@ use super::super::list::ci_status::{
 use super::super::list::columns::ColumnKind;
 use super::super::list::layout::ColumnGrid;
 use super::items::{
-    PreviewCache, TabAvailability, WorktreeSkimItem, ansi_to_line, render_preview_tabs,
+    PreviewCache, RowShortcutData, RowUrl, ShortcutTable, TabAvailability, WorktreeSkimItem,
+    ansi_to_line, render_preview_tabs,
 };
 use super::pr_pane;
 use super::preview::{PreviewMode, PreviewStateData};
@@ -195,6 +196,15 @@ pub(super) struct PrsLayout {
     pub preview_dims: (usize, usize),
 }
 
+/// The structures the `--prs` thread coordinates with the collect side: the
+/// column-geometry handoff that aligns PR rows with the worktree grid, and the
+/// `alt-y` / `alt-o` shortcut table it extends with PR/MR rows. Bundled so the
+/// streaming entry points stay within the argument budget.
+pub(super) struct PrsShared {
+    pub grid_slot: Arc<GridSlot>,
+    pub shortcut_table: ShortcutTable,
+}
+
 /// Stream the open PRs/MRs into the picker, then clear the header's "loading…"
 /// marker — whatever the outcome.
 ///
@@ -208,11 +218,11 @@ pub(super) fn stream_open_prs(
     layout: &PrsLayout,
     tx: &SkimItemSender,
     stashed_warnings: &Mutex<Vec<String>>,
-    grid_slot: &GridSlot,
     orchestrator: &PreviewOrchestrator,
+    shared: &PrsShared,
     signal: &PrsStreamSignal,
 ) {
-    fetch_and_stream(repo, layout, tx, stashed_warnings, grid_slot, orchestrator);
+    fetch_and_stream(repo, layout, tx, stashed_warnings, orchestrator, shared);
 
     signal.pending.store(false, Ordering::Relaxed);
     if let Some(tx) = signal.render_tx.get() {
@@ -230,8 +240,8 @@ fn fetch_and_stream(
     layout: &PrsLayout,
     tx: &SkimItemSender,
     stashed_warnings: &Mutex<Vec<String>>,
-    grid_slot: &GridSlot,
     orchestrator: &PreviewOrchestrator,
+    shared: &PrsShared,
 ) {
     let entries = match fetch_open_prs(repo) {
         Ok(entries) => entries,
@@ -256,7 +266,7 @@ fn fetch_and_stream(
     // The forge call above (~1s) almost always outlasts the skeleton
     // (~50ms), so this returns immediately; the wait covers a mocked forge
     // CLI winning the race.
-    let grid = grid_slot.wait(Duration::from_secs(5));
+    let grid = shared.grid_slot.wait(Duration::from_secs(5));
 
     // skim 4.x takes a batch per send; the forge call already returned every
     // row, so stream them in one shot. As each row is built, kick off its
@@ -267,6 +277,15 @@ fn fetch_and_stream(
         .into_iter()
         .map(|entry| {
             spawn_pr_previews(orchestrator, &entry, layout.preview_dims);
+            // Shortcut lookup for this row: `alt-y` copies the PR/MR head
+            // branch, `alt-o` opens its already-known web URL.
+            shared.shortcut_table.lock().unwrap().insert(
+                entry.output_token(),
+                RowShortcutData {
+                    branch: Some(entry.head_branch.clone()),
+                    url: RowUrl::Static(entry.url.clone()),
+                },
+            );
             Arc::new(PrSkimItem::new(
                 entry,
                 layout.list_width,
@@ -295,6 +314,11 @@ fn fetch_and_stream(
 /// a duplicate fetch on every repaint. `COLLECT_POOL` bounds how many run at once,
 /// and the picker's lifetime is user-bounded, so a slow forge call never blocks
 /// the command (see the "Network Access" notes in CLAUDE.md).
+///
+/// The comments fetch goes through [`spawn_comments_fetch`], the same entry point
+/// a worktree row uses once its CI fetch surfaces a PR — so the two row types
+/// fetch and cache comments identically. Only the `log` fetch is `--prs`-specific
+/// (a worktree row renders its `log` tab from the local object store instead).
 fn spawn_pr_previews(
     orchestrator: &PreviewOrchestrator,
     entry: &PrEntry,
@@ -319,12 +343,73 @@ fn spawn_pr_previews(
             .unwrap_or_else(|| pr_unavailable_pane("commit log")),
         )
     });
-    orchestrator.spawn_compute((token, PreviewMode::Comments), move |repo| {
+    spawn_comments_fetch(orchestrator, token, entry.kind, entry.number, width);
+}
+
+/// Spawn the background `comments` fetch keyed by `key_token`, fetching through
+/// the given forge `kind`.
+///
+/// The single comments-fetch path for both row types: a `--prs` row passes its
+/// `pr:{N}` / `mr:{N}` token and `entry.kind` (both already resolved from the
+/// forge in the listing call); a worktree row goes through
+/// [`spawn_worktree_comments_fetch`], which resolves `kind` from the repo's
+/// platform. Git forbids `:` in branch names, so the token-keyed and branch-keyed
+/// keyspaces can't collide. A failed fetch caches a terminal [`pr_unavailable_pane`]
+/// (not `None`), so the tab never strands on its loading placeholder — see
+/// [`spawn_pr_previews`] and [`PreviewOrchestrator::spawn_compute`].
+fn spawn_comments_fetch(
+    orchestrator: &PreviewOrchestrator,
+    key_token: String,
+    kind: RefKind,
+    number: u32,
+    width: usize,
+) {
+    orchestrator.spawn_compute((key_token, PreviewMode::Comments), move |repo| {
         Some(
             compute_pr_comments(repo, kind, number, width)
                 .unwrap_or_else(|| pr_unavailable_pane("comments")),
         )
     });
+}
+
+/// Spawn the `comments` fetch for a worktree row whose branch has an open PR,
+/// keyed by branch name.
+///
+/// The forge CLI is chosen from the repository's platform, NOT the PR
+/// reference's sigil — `#` is shared by GitHub, Gitea, and Azure DevOps, so the
+/// sigil can't pick `gh` vs `glab`. GitHub fetches via `gh`, GitLab via `glab`;
+/// on any other forge comments aren't listable (the same forges `--prs` declines
+/// in [`fetch_open_prs`]), so the tab caches a terminal "not available" pane
+/// rather than shelling out to the wrong CLI or spinning on a loading placeholder
+/// forever. `ci_platform` reads the cached remote URL — no network.
+pub(super) fn spawn_worktree_comments_fetch(
+    orchestrator: &PreviewOrchestrator,
+    branch: String,
+    number: u32,
+    width: usize,
+) {
+    let kind = match orchestrator.repo().ci_platform(None) {
+        Some(CiPlatform::GitHub) => RefKind::Pr,
+        Some(CiPlatform::GitLab) => RefKind::Mr,
+        _ => {
+            orchestrator.cache.insert(
+                (branch, PreviewMode::Comments),
+                comments_unsupported_forge_pane(),
+            );
+            return;
+        }
+    };
+    spawn_comments_fetch(orchestrator, branch, kind, number, width);
+}
+
+/// The `comments` tab pane for a worktree row whose branch has a PR on a forge
+/// with no comments-listing support (Gitea, Azure DevOps, or an unrecognized
+/// remote — the forges `--prs` declines). A terminal pane, so the tab shows a
+/// clear state instead of spinning on a loading placeholder or shelling out to
+/// the wrong forge CLI.
+fn comments_unsupported_forge_pane() -> String {
+    let reset = Reset;
+    cformat!("{INFO_SYMBOL}{reset} Comments aren't available for this repository's forge\n")
 }
 
 /// Plural noun for the forge's change-request — "PRs" on GitHub, "MRs" on
@@ -618,10 +703,10 @@ impl PrSkimItem {
         // shape as the worktree-row pane (see `items::render_worktree_pr`), so
         // the two read alike. They close each styled span with a full `{reset}`
         // (\x1b[0m) because skim's ANSI parser drops color_print's `</>` (SGR
-        // 22/39); the `draft` value below does the same.
+        // 22/24/39 — bold/underline/color); the `draft` value below does the same.
         let reset = Reset;
         let mut pr_pane = pr_pane::header(pr_ref, Some(&title));
-        pr_pane.push_str(&pr_pane::metadata_line("branch", &head_branch));
+        pr_pane.push_str(&pr_pane::branch_line(&head_branch));
         pr_pane.push_str(&pr_pane::metadata_line("author", &format!("@{author}")));
         if is_draft {
             pr_pane.push_str(&pr_pane::metadata_line(
@@ -630,7 +715,7 @@ impl PrSkimItem {
             ));
         }
         if let Some(url) = url {
-            pr_pane.push_str(&pr_pane::metadata_line("url", &url));
+            pr_pane.push_str(&pr_pane::url_line(&url));
         }
         pr_pane.push_str(&pr_pane::description(&body, list_width));
 
@@ -666,14 +751,16 @@ fn pr_row_empty_placeholder() -> String {
     )
 }
 
-/// Placeholder for a `--prs` row's deferred tab while its background fetch is
-/// still in flight. skim can't re-query a preview on its own, so the hint points
-/// at the accelerator that re-reads the cache once the fetch lands — the same
-/// contract as the worktree rows' `loading_placeholder`. Shown only during the
-/// in-flight window: once the fetch resolves, a terminal pane replaces it — the
-/// rendered content or [`pr_unavailable_pane`] on failure — so it never persists
-/// past the fetch.
-fn pr_deferred_loading(mode: PreviewMode) -> String {
+/// Placeholder for a deferred forge-fetch tab while its background fetch is still
+/// in flight. skim can't re-query a preview on its own, so the hint points at the
+/// accelerator that re-reads the cache once the fetch lands — the same contract
+/// as the worktree rows' `loading_placeholder`. Shown only during the in-flight
+/// window: once the fetch resolves, a terminal pane replaces it — the rendered
+/// content or [`pr_unavailable_pane`] on failure — so it never persists past the
+/// fetch. Shared with worktree rows' `comments` tab (see
+/// [`super::items::WorktreeSkimItem::render_comments_pane`]) so both row types
+/// show the identical in-flight pane.
+pub(super) fn pr_deferred_loading(mode: PreviewMode) -> String {
     let reset = Reset;
     let (label, key) = match mode {
         PreviewMode::Log => ("commit log", 2u8),
@@ -1121,7 +1208,7 @@ impl SkimItem for PrSkimItem {
         // show a placeholder. The active tab is the same global digit, so an
         // empty tab shows its placeholder until the user switches with alt-N / Tab.
         let mode = PreviewStateData::read_mode();
-        let mut result = render_preview_tabs(mode, TabAvailability::pull_request(), context.width);
+        let mut result = render_preview_tabs(mode, TabAvailability::listed_pr(), context.width);
         match mode {
             PreviewMode::Pr => result.push_str(&self.pr_pane),
             PreviewMode::Log | PreviewMode::Comments => result.push_str(&self.cached_pane(mode)),
@@ -1600,9 +1687,12 @@ mod tests {
         let test = worktrunk::testing::TestRepo::with_initial_commit();
         let (tx, _rx): (SkimItemSender, SkimItemReceiver) = unbounded();
         let warnings = Mutex::new(Vec::new());
-        let grid = GridSlot::new();
         let orchestrator = PreviewOrchestrator::new(test.repo.clone());
         let loading = AtomicBool::new(true);
+        let shared = PrsShared {
+            grid_slot: Arc::new(GridSlot::new()),
+            shortcut_table: Arc::new(Mutex::new(std::collections::HashMap::new())),
+        };
         let (rtx, mut rrx) = tokio::sync::mpsc::channel(8);
         let render_tx = OnceLock::new();
         render_tx.set(rtx).unwrap();
@@ -1615,8 +1705,8 @@ mod tests {
             },
             &tx,
             &warnings,
-            &grid,
             &orchestrator,
+            &shared,
             &PrsStreamSignal {
                 pending: &loading,
                 render_tx: &render_tx,

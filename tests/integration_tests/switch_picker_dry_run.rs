@@ -6,11 +6,8 @@
 //! preview-cache inventory as JSON, and exits. This exercises the non-TUI
 //! wiring inside `handle_picker` without needing a PTY.
 //!
-//! Unix-only: `wt switch` rejects the interactive picker on Windows
-//! ("Interactive picker is not available on Windows") before the dry-run
-//! bypass is consulted.
-
-#![cfg(unix)]
+//! Runs on every platform: the dry-run bypass is consulted before the
+//! interactive TTY path, so these exercise the picker pipeline on Windows too.
 
 use crate::common::{TEST_EPOCH, TestRepo, repo};
 use rstest::rstest;
@@ -124,6 +121,28 @@ fn test_picker_dry_run_shows_cached_pr_numbers(mut repo: TestRepo) {
         !other_row.contains('#'),
         "uncached branch renders an empty CI cell, got: {other_row}"
     );
+
+    // The worktree row with a PR spawns a `comments` background fetch keyed by
+    // its branch name (PreviewMode::Comments == 7) — the same fetch a `--prs`
+    // row makes, so the comments tab is no longer `--prs`-only. In this no-network
+    // test the entry holds a terminal pane (a "couldn't load" on a GitHub remote,
+    // or a "forge unsupported" note otherwise), but its presence proves the fetch
+    // fired and keyed by branch. The PR-less row spawns no such fetch.
+    let comments_branches: Vec<&str> = parsed["entries"]
+        .as_array()
+        .expect("top-level `entries` array")
+        .iter()
+        .filter(|e| e["mode"] == 7)
+        .map(|e| e["branch"].as_str().expect("branch is a string"))
+        .collect();
+    assert!(
+        comments_branches.contains(&"feature-a"),
+        "the PR-bearing worktree row spawns a branch-keyed comments fetch, got: {comments_branches:?}"
+    );
+    assert!(
+        !comments_branches.contains(&"feature-b"),
+        "the PR-less worktree row spawns no comments fetch, got: {comments_branches:?}"
+    );
 }
 
 /// Verifies that warnings collect emits while running on the picker's bg
@@ -164,8 +183,10 @@ fn test_picker_dry_run_drains_stashed_warnings(mut repo: TestRepo) {
 
 /// Same as above but with `list.summary=true` and a fake LLM command
 /// configured, to exercise the `spawn_summary` branch in `handle_picker`.
-/// Uses `/bin/cat` as the LLM: it reads stdin and writes it back, so the
-/// summary pipeline runs end-to-end without a real model.
+/// Uses `cat` as the LLM: it reads stdin and writes it back, so the
+/// summary pipeline runs end-to-end without a real model. The command runs
+/// via the platform shell (`sh` on Unix, Git Bash on Windows), so the bare
+/// name resolves on PATH on both.
 #[rstest]
 fn test_picker_dry_run_with_summary(mut repo: TestRepo) {
     repo.add_worktree("feature-a");
@@ -175,7 +196,7 @@ fn test_picker_dry_run_with_summary(mut repo: TestRepo) {
         .args(["switch"])
         .env("WORKTRUNK_PICKER_DRY_RUN", "1")
         .env("WORKTRUNK_LIST__SUMMARY", "true")
-        .env("WORKTRUNK_COMMIT__GENERATION__COMMAND", "/bin/cat")
+        .env("WORKTRUNK_COMMIT__GENERATION__COMMAND", "cat")
         .output()
         .unwrap();
 

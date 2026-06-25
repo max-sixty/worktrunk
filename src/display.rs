@@ -116,7 +116,7 @@ pub(crate) fn truncate_to_width(text: &str, max_width: usize) -> String {
 }
 
 // Re-export from styling for convenience
-pub(crate) use worktrunk::styling::{terminal_width, truncate_visible};
+pub(crate) use worktrunk::styling::{terminal_dimensions, terminal_width, truncate_visible};
 
 #[cfg(test)]
 mod tests {
