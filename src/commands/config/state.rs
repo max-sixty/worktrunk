@@ -61,8 +61,8 @@
 //! # Log layout invariant
 //!
 //! Inside `wt_logs_dir()`, top-level *files* are shared logs (`commands.jsonl*`,
-//! `internal-*.log`, `trace.log`, `subprocess.log`, `diagnostic.md`) and top-level
-//! *directories* are per-branch log trees
+//! `internal-*.log`, `trace.log`, `trace.jsonl`, `subprocess.log`,
+//! `diagnostic.md`) and top-level *directories* are per-branch log trees
 //! (`{branch}/{source|internal}/{hook-type}/{name}.log`).
 //! Categorization
 //! relies on this file-vs-directory distinction: new top-level shared entries
@@ -126,7 +126,12 @@ fn picker_preview_clear(repo: &Repository) -> anyhow::Result<usize> {
 // ==================== Log Management ====================
 
 /// Top-level files created by `-vv` under `wt_logs_dir()`.
-const DIAGNOSTIC_FILES: &[&str] = &["trace.log", "subprocess.log", "diagnostic.md"];
+const DIAGNOSTIC_FILES: &[&str] = &[
+    "trace.log",
+    "trace.jsonl",
+    "subprocess.log",
+    "diagnostic.md",
+];
 
 /// Whether a top-level file is a diagnostic log.
 ///
@@ -152,9 +157,13 @@ fn truncate_display(s: &str, max_chars: usize) -> String {
     format!("{truncated}...")
 }
 
-/// Check if a top-level file belongs to the command audit log (`.jsonl` / `.jsonl.old`).
+/// Check if a top-level file belongs to the command audit log
+/// (`commands.jsonl`, rotated to `commands.jsonl.old`).
+///
+/// Matched by exact name, not a `.jsonl` suffix: `trace.jsonl` is a diagnostic
+/// file (see [`DIAGNOSTIC_FILES`]), not part of the audit log.
 fn is_command_log_file(name: &str) -> bool {
-    name.ends_with(".jsonl") || name.ends_with(".jsonl.old")
+    name == "commands.jsonl" || name == "commands.jsonl.old"
 }
 
 /// A hook-output log file discovered by walking the per-branch subtree.
@@ -324,7 +333,7 @@ fn count_log_files_recursive(dir: &Path) -> anyhow::Result<usize> {
 ///
 /// Walks the two layers of log storage:
 ///
-/// 1. **Top-level files**: `commands.jsonl*`, `trace.log`, `subprocess.log`, `diagnostic.md`.
+/// 1. **Top-level files**: `commands.jsonl*`, `trace.log`, `trace.jsonl`, `subprocess.log`, `diagnostic.md`.
 ///    Also sweeps any legacy flat `.log` files left over from the pre-nested
 ///    layout so the transition is self-healing (no explicit migrator).
 /// 2. **Top-level directories**: per-branch log trees — counted recursively

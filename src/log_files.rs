@@ -1,10 +1,17 @@
 //! On-disk log file sinks for `-vv` debug output.
 //!
-//! At `-vv`, two files are written in the repo's `.git/wt/logs/` directory:
+//! At `-vv`, three files are written in the repo's `.git/wt/logs/` directory:
 //!
 //!   - [`TRACE`] → `trace.log`: structured records, `$ cmd [context]`
 //!     headers, and bounded subprocess previews. High-signal, bounded size —
 //!     safe to embed in `diagnostic.md` bug reports.
+//!   - [`TRACE_JSONL`] → `trace.jsonl`: the same event stream as `trace.log`
+//!     (minus the command output), but one JSON object per line instead of the
+//!     text grammar. Each event's fields serialize generically: a `[wt-trace]`
+//!     record comes through rich (`cmd`, `seq`, `dur_us`, …), a free-form
+//!     `log::*` line as `{"message":…}` until its call site is given fields.
+//!     Machine-first (agents, `jq`); written alongside `trace.log`, not in
+//!     place of it.
 //!   - [`SUBPROCESS`] → `subprocess.log`: raw, uncapped subprocess
 //!     stdout/stderr bodies captured by `shell_exec::Cmd`, each block
 //!     introduced by a `$ cmd … [seq=N tid=T]` header whose `seq` joins it to
@@ -98,6 +105,10 @@ pub(crate) static TRACE: LogSink = LogSink {
     file: OnceLock::new(),
     filename: "trace.log",
 };
+pub(crate) static TRACE_JSONL: LogSink = LogSink {
+    file: OnceLock::new(),
+    filename: "trace.jsonl",
+};
 pub(crate) static SUBPROCESS: LogSink = LogSink {
     file: OnceLock::new(),
     filename: "subprocess.log",
@@ -111,6 +122,7 @@ pub(crate) static SUBPROCESS: LogSink = LogSink {
 /// here doesn't emit records to a half-built pipeline.
 pub(crate) fn init() {
     TRACE.init();
+    TRACE_JSONL.init();
     SUBPROCESS.init();
 }
 
@@ -156,6 +168,16 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for TraceMakeWriter {
     type Writer = SinkWriter;
     fn make_writer(&'a self) -> SinkWriter {
         TRACE.writer()
+    }
+}
+
+/// `MakeWriter` for the trace.jsonl layer: always writes to `TRACE_JSONL`.
+pub(crate) struct TraceJsonlMakeWriter;
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for TraceJsonlMakeWriter {
+    type Writer = SinkWriter;
+    fn make_writer(&'a self) -> SinkWriter {
+        TRACE_JSONL.writer()
     }
 }
 
