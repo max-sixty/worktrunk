@@ -120,7 +120,7 @@ use worktrunk::HookType;
 use worktrunk::config::Approvals;
 use worktrunk::git::{Repository, current_or_recover};
 use worktrunk::path::format_path_for_display;
-use worktrunk::styling::{eprintln, hint_message, info_message, suggest_command, warning_message};
+use worktrunk::styling::{eprintln, warning_message};
 
 use super::hook_plan::{ApprovedHookPlan, HookPlanBuilder};
 use super::hooks::HookAnnouncer;
@@ -472,14 +472,8 @@ impl PickerCollector {
         // row's slot once the reloaded rows land (`render_tx` is skim's event
         // sender, set once the TUI is up — always present by the time a reload
         // fires).
-        if let Some(target) = reposition_target
-            && let Some(event_tx) = self.render_tx.get()
-        {
-            let _ = event_tx.try_send(Event::Action(reposition_cursor_action(
-                target,
-                Arc::new(AtomicUsize::new(0)),
-                Arc::new(AtomicUsize::new(0)),
-            )));
+        if let Some(target) = reposition_target {
+            send_reposition(&self.render_tx, target);
         }
     }
 
@@ -498,15 +492,10 @@ impl PickerCollector {
     /// not remove it` warning.)
     fn keep_unremovable_row(&self, selected_output: &str, result: &RemoveResult) {
         if let RemoveResult::BranchOnly { branch_name, .. } = result {
-            let info = info_message(cformat!(
-                "Branch <bold>{branch_name}</> retained; has unmerged changes"
-            ))
-            .to_string();
-            let cmd = suggest_command("remove", &[branch_name], &["-D"]);
-            let hint = hint_message(cformat!(
-                "To delete the unmerged branch, run <underline>{cmd}</>"
-            ))
-            .to_string();
+            // The canonical "retained; unmerged" info + hint `wt remove` prints,
+            // shared so the picker copy can't drift (see
+            // `retained_unmerged_branch_messages`).
+            let (info, hint) = crate::output::retained_unmerged_branch_messages(branch_name);
             let mut stashed = self.stashed_warnings.lock().unwrap();
             // Dedup on repeated alt-r of the same kept row.
             if !stashed.contains(&info) {
@@ -527,14 +516,8 @@ impl PickerCollector {
                     sticky_reposition_target(pos, remaining)
                 })
         };
-        if let Some(target) = reposition_target
-            && let Some(event_tx) = self.render_tx.get()
-        {
-            let _ = event_tx.try_send(Event::Action(reposition_cursor_action(
-                target,
-                Arc::new(AtomicUsize::new(0)),
-                Arc::new(AtomicUsize::new(0)),
-            )));
+        if let Some(target) = reposition_target {
+            send_reposition(&self.render_tx, target);
         }
     }
 }
@@ -654,6 +637,23 @@ fn reposition_cursor_action(
             ))])
         },
     ))
+}
+
+/// Inject a cursor reposition onto `target` through skim's event sender, with
+/// fresh attempt/streak counters (see [`reposition_cursor_action`]). The single
+/// path every alt-r outcome uses to move the cursor after its reload — the drop
+/// (cursor onto the slide-up row), the keep (back onto the row), and the restore
+/// (back onto the re-inserted row). A no-op before `render_tx` is set or once the
+/// receiver is gone (teardown); the queued action is dropped if the channel is
+/// full.
+fn send_reposition(render_tx: &OnceLock<tokio::sync::mpsc::Sender<Event>>, target: usize) {
+    if let Some(event_tx) = render_tx.get() {
+        let _ = event_tx.try_send(Event::Action(reposition_cursor_action(
+            target,
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicUsize::new(0)),
+        )));
+    }
 }
 
 /// A removal's user-facing subject for the `kept` warning: a `(label, noun)`
@@ -780,11 +780,7 @@ fn restore_failed_removal(
     // Re-stream the restored list, then land the cursor back on the row.
     let _ = event_tx.try_send(Event::Reload("restore".to_string()));
     if let Some(target) = reposition_target {
-        let _ = event_tx.try_send(Event::Action(reposition_cursor_action(
-            target,
-            Arc::new(AtomicUsize::new(0)),
-            Arc::new(AtomicUsize::new(0)),
-        )));
+        send_reposition(render_tx, target);
     }
 }
 
@@ -1692,6 +1688,26 @@ pub mod tests {
         assert_eq!(super::sticky_reposition_target(4, 3), Some(3));
     }
 
+    /// `send_reposition` (the single path the drop/keep/restore cursor moves
+    /// share) queues an `Event::Action` through skim's sender when the TUI is up,
+    /// and is a no-op before the sender is set.
+    #[test]
+    fn test_send_reposition_emits_action_when_render_tx_set() {
+        let render_tx: OnceLock<tokio::sync::mpsc::Sender<skim::prelude::Event>> = OnceLock::new();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        render_tx.set(tx).unwrap();
+
+        super::send_reposition(&render_tx, 2);
+        assert!(
+            matches!(rx.try_recv(), Ok(skim::prelude::Event::Action(_))),
+            "a set sender receives a reposition Action"
+        );
+
+        // No sender set → no panic, nothing emitted.
+        let empty: OnceLock<tokio::sync::mpsc::Sender<skim::prelude::Event>> = OnceLock::new();
+        super::send_reposition(&empty, 0);
+    }
+
     /// `from_signal` rejects tokens that carry no usable target: a blank or
     /// whitespace-only signal, and a bare `worktree-path:` prefix with no path
     /// after it. A non-empty branch token and a prefixed path both parse.
@@ -2121,6 +2137,42 @@ pub mod tests {
         );
     }
 
+    /// alt-r on a target that fails validation (a branch with no worktree and no
+    /// local ref) takes `invoke`'s error arm: it logs and leaves the list intact —
+    /// no drop, no background work.
+    #[test]
+    fn test_invoke_leaves_list_intact_when_prepare_fails() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        let item = branch_only_picker_item("real-row");
+        let token = item.output().to_string();
+        let items = Arc::new(Mutex::new(vec![Arc::clone(&item)]));
+        let mut collector = PickerCollector {
+            items: Arc::clone(&items),
+            repo,
+            approvals: Arc::new(Approvals::default()),
+            render_tx: Arc::new(OnceLock::new()),
+            stashed_warnings: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        // `no-such-branch` parses as a branch target but has no worktree and no
+        // local ref, so `prepare_removal` errors before anything is dropped.
+        let (_rx, _interrupt) =
+            collector.invoke("remove 'no-such-branch'", Arc::new(AtomicUsize::new(0)));
+
+        let outputs: Vec<String> = items
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|item| item.output().into_owned())
+            .collect();
+        assert_eq!(
+            outputs,
+            vec![token],
+            "a target that fails validation leaves the row untouched"
+        );
+    }
+
     /// `restore_failed_removal` puts a dropped row back at its original slot and
     /// stashes a `worktree kept` warning — the correction path that keeps the
     /// alt-r list from showing a removal that didn't happen.
@@ -2134,7 +2186,12 @@ pub mod tests {
             branch_only_picker_item("keep-a"),
             branch_only_picker_item("keep-c"),
         ]));
-        let render_tx = Arc::new(OnceLock::new());
+        // A live sender so the restore takes its reload + reposition path rather
+        // than the early return.
+        let render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<skim::prelude::Event>>> =
+            Arc::new(OnceLock::new());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        render_tx.set(tx).unwrap();
         let stashed = Arc::new(Mutex::new(Vec::new()));
 
         super::restore_failed_removal(
@@ -2164,6 +2221,11 @@ pub mod tests {
             warnings[0].contains("dropped-b") && warnings[0].contains("Kept"),
             "warning names the kept worktree: {}",
             warnings[0]
+        );
+        // The restore re-streams the list: a reload, then the cursor reposition.
+        assert!(
+            matches!(rx.try_recv(), Ok(skim::prelude::Event::Reload(_))),
+            "restore queues a reload when the sender is live"
         );
     }
 
@@ -2495,6 +2557,15 @@ pub mod tests {
             warnings.iter().any(|w| w.contains("wt remove -D unmerged")),
             "a kept unmerged branch stashes the actionable `-D` hint: {warnings:?}"
         );
+
+        // A second alt-r on the same kept row dedups — the stash doesn't grow.
+        let (_rx, _interrupt) = collector.invoke(&cmd, Arc::new(AtomicUsize::new(0)));
+        assert_eq!(
+            stashed.lock().unwrap().clone(),
+            warnings,
+            "repeated alt-r on the same kept row stashes the hint only once"
+        );
+
         let branch_list = repo.run_command(&["branch", "--list", "unmerged"]).unwrap();
         assert!(!branch_list.is_empty(), "the unmerged branch is preserved");
     }
