@@ -80,7 +80,7 @@ pub(super) fn diff_pager() -> Option<&'static String> {
 /// Returns the paged output, or the original text if the pager fails or times out.
 /// Sets `COLUMNS` environment variable for pagers like delta with side-by-side mode.
 pub(super) fn pipe_through_pager(text: &str, pager_cmd: &str, width: usize) -> String {
-    log::debug!("Piping through pager: {}", pager_cmd);
+    tracing::debug!(pager_cmd = %pager_cmd, "Piping through pager: {}", pager_cmd);
 
     // Spawn pager with stdin piped
     let mut cmd = Command::new("sh");
@@ -94,7 +94,7 @@ pub(super) fn pipe_through_pager(text: &str, pager_cmd: &str, width: usize) -> S
     let mut child = match cmd.spawn() {
         Ok(child) => child,
         Err(e) => {
-            log::debug!("Failed to spawn pager: {}", e);
+            tracing::debug!(error = %e, "Failed to spawn pager: {}", e);
             return text.to_string();
         }
     };
@@ -131,17 +131,17 @@ pub(super) fn pipe_through_pager(text: &str, pager_cmd: &str, width: usize) -> S
             {
                 return s;
             }
-            log::debug!("Pager exited with status: {}", status);
+            tracing::debug!(status = %status, "Pager exited with status: {}", status);
         }
         Ok(None) => {
             // Timed out - kill pager and clean up
-            log::debug!("Pager timed out after {:?}", PAGER_TIMEOUT);
+            tracing::debug!(timeout = ?PAGER_TIMEOUT, "Pager timed out after {:?}", PAGER_TIMEOUT);
             let _ = child.kill();
             let _ = child.wait();
             let _ = reader_thread.join();
         }
         Err(e) => {
-            log::debug!("Failed to wait for pager: {}", e);
+            tracing::debug!(error = %e, "Failed to wait for pager: {}", e);
             let _ = child.kill();
             let _ = child.wait();
             let _ = reader_thread.join();

@@ -487,16 +487,25 @@ pub(crate) fn init(verbose_level: u8) {
     // init: `LogTracer::enabled` consults the tracing dispatcher.
     //
     // The builder's `with_max_level` caps `log::max_level()` — the static
-    // gate `log_enabled!` checks before format args are evaluated. Mirror
-    // the env-wins-when-set semantics the layer filters use (PR #2901):
+    // gate `log_enabled!` checks before a `log::*` record evaluates its
+    // format args. Worktrunk's own emit sites are native `tracing::*`, so
+    // this now gates the `log::*` records forwarded from dependencies plus
+    // the `log::log_enabled!` deep-logging guard in `shell_exec::log_output`
+    // (which `tracing::enabled!` can't replace — see the comment there).
+    // Mirror the env-wins-when-set semantics the layer filters use (PR #2901):
     // if `RUST_LOG` is set, its level wins; otherwise the verbosity flag
     // baseline applies. Without an explicit cap, the default
     // `LevelFilter::max()` would always pass the static check, forcing
-    // every `log::debug!(…)` site to evaluate its format args — exposing
-    // arithmetic that's safe today only because the macro short-circuits
-    // (e.g. `now_secs - cached.checked_at` in `list/ci_status` is fine
-    // under monotonic-ish clocks but panics when args are evaluated
-    // against a clock-skewed fixture).
+    // every dependency `log::debug!(…)` to format its args even when no
+    // sink is active.
+    //
+    // This cap does NOT gate native `tracing::*` sites: the layered
+    // subscriber does not short-circuit Debug callsites at low verbosity, so
+    // a `tracing::debug!` evaluates its args even when no sink will record
+    // them. Debug args must therefore be panic-free at every level — see the
+    // `saturating_sub` in `CiStatus::detect`, which the old `log::debug!`
+    // there could leave as a raw subtraction only because the cap stopped it
+    // from evaluating at low verbosity.
     let _ = tracing_log::LogTracer::builder()
         .with_max_level(effective_log_max_level(verbose_level, rust_log_level()))
         .init();

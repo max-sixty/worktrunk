@@ -212,7 +212,7 @@ pub fn prompt_commit_generation(config: &mut UserConfig) -> anyhow::Result<bool>
             let save_result = require_config_path()
                 .and_then(|path| config.set_commit_generation_command(command.clone(), &path));
             if let Err(e) = save_result {
-                log::error!("Failed to save config: {}", e);
+                tracing::error!(error = %e, "Failed to save config: {}", e);
                 eprintln!(
                     "{}",
                     hint_message(cformat!(

@@ -971,7 +971,7 @@ fn format_command_error(error: &anyhow::Error) -> String {
                         false,
                         "Multiline error without CommandError or context: {msg}"
                     );
-                    log::warn!("Multiline error without CommandError or context: {msg}");
+                    tracing::warn!("Multiline error without CommandError or context: {msg}");
                     let normalized = msg.replace("\r\n", "\n").replace('\r', "\n");
                     let _ = writeln!(out, "{}", error_message("Command failed"));
                     let _ = writeln!(out, "{}", format_with_gutter(&normalized, None));

@@ -168,7 +168,7 @@ impl Repository {
                 None,
                 /* force_hint */ true,
             )?;
-            log::debug!("Using --force for worktree removal due to initialized submodules");
+            tracing::debug!("Using --force for worktree removal due to initialized submodules");
         }
         let mut args = vec!["worktree", "remove"];
         if use_force {

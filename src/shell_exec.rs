@@ -537,6 +537,12 @@ fn command_header(cmd: &str, context: Option<&str>) -> String {
 ///
 /// Below Debug both targets are disabled and this is a no-op.
 fn log_output(trace: &CommandTrace, stdin: Option<&[u8]>, output: Option<&std::process::Output>) {
+    // `log::max_level` (held at the verbosity/`RUST_LOG` ceiling by the
+    // `LogTracer` cap in `logging::init`) is the coarse "deep logging on?" gate
+    // that skips building the full/bounded output strings when nothing consumes
+    // them. Do NOT swap this for `tracing::enabled!`: the absent (`None`) file
+    // layers report `enabled() == true`, so it would never short-circuit and
+    // would format every command's output even at `-v0`.
     if !log::log_enabled!(log::Level::Debug) {
         return;
     }
@@ -547,7 +553,7 @@ fn log_output(trace: &CommandTrace, stdin: Option<&[u8]>, output: Option<&std::p
         .map(|o| (o.stdout.as_slice(), o.stderr.as_slice()))
         .unwrap_or_default();
     if !stdin.is_empty() || !stdout.is_empty() || !stderr.is_empty() {
-        log::debug!(
+        tracing::debug!(
             target: SUBPROCESS_FULL_TARGET,
             "{}  [seq={} tid={}]",
             command_header(trace.cmd(), trace.context()),
@@ -556,19 +562,19 @@ fn log_output(trace: &CommandTrace, stdin: Option<&[u8]>, output: Option<&std::p
         );
     }
     for line in format_stream_full(stdin, "  < ") {
-        log::debug!(target: SUBPROCESS_FULL_TARGET, "{}", line);
+        tracing::debug!(target: SUBPROCESS_FULL_TARGET, "{}", line);
     }
     for line in format_stream_full(stdout, "  ") {
-        log::debug!(target: SUBPROCESS_FULL_TARGET, "{}", line);
+        tracing::debug!(target: SUBPROCESS_FULL_TARGET, "{}", line);
     }
     for line in format_stream_full(stderr, "  ! ") {
-        log::debug!(target: SUBPROCESS_FULL_TARGET, "{}", line);
+        tracing::debug!(target: SUBPROCESS_FULL_TARGET, "{}", line);
     }
     for line in format_stream_bounded(stdout, "  ") {
-        log::debug!(target: SUBPROCESS_BOUNDED_TARGET, "{}", line);
+        tracing::debug!(target: SUBPROCESS_BOUNDED_TARGET, "{}", line);
     }
     for line in format_stream_bounded(stderr, "  ! ") {
-        log::debug!(target: SUBPROCESS_BOUNDED_TARGET, "{}", line);
+        tracing::debug!(target: SUBPROCESS_BOUNDED_TARGET, "{}", line);
     }
 }
 
@@ -991,11 +997,11 @@ impl Cmd {
     }
 
     fn log_run_start(&self, cmd_str: &str) {
-        log::debug!("{}", command_header(cmd_str, self.context.as_deref()));
+        tracing::debug!("{}", command_header(cmd_str, self.context.as_deref()));
     }
 
     fn log_stream_start(&self, cmd_str: &str, exec_mode: &str) {
-        log::debug!(
+        tracing::debug!(
             "{} (streaming, {})",
             command_header(cmd_str, self.context.as_deref()),
             exec_mode
@@ -1003,7 +1009,7 @@ impl Cmd {
     }
 
     fn log_delayed_stream_start(&self, cmd_str: &str, delay_ms: i64) {
-        log::debug!(
+        tracing::debug!(
             "{} (delayed stream, {}ms)",
             command_header(cmd_str, self.context.as_deref()),
             delay_ms

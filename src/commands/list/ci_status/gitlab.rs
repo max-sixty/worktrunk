@@ -78,7 +78,7 @@ pub(super) fn detect_gitlab(
     // Get current project ID for filtering
     let project_id = gitlab_project_id(repo);
     if project_id.is_none() {
-        log::debug!("Could not determine GitLab project ID");
+        tracing::debug!("Could not determine GitLab project ID");
     }
 
     // Fetch MRs with matching source branch.
@@ -101,7 +101,9 @@ pub(super) fn detect_gitlab(
     {
         Ok(output) => output,
         Err(e) => {
-            log::warn!(
+            tracing::warn!(
+                branch = %branch.full_name,
+                error = %e,
                 "glab mr list failed to execute for branch {}: {}",
                 branch.full_name,
                 e
@@ -131,7 +133,10 @@ pub(super) fn detect_gitlab(
             .iter()
             .find(|mr| mr.source_project_id == Some(proj_id));
         if matched.is_none() && !mr_list.is_empty() {
-            log::debug!(
+            tracing::debug!(
+                count = %mr_list.len(),
+                branch = %branch.full_name,
+                project_id = %proj_id,
                 "Found {} MRs for branch {} but none from project ID {}",
                 mr_list.len(),
                 branch.full_name,
@@ -148,7 +153,9 @@ pub(super) fn detect_gitlab(
     } else {
         // Multiple MRs exist but we can't determine which project we're in.
         // Don't guess - return None to avoid showing wrong project's CI status.
-        log::debug!(
+        tracing::debug!(
+            count = %mr_list.len(),
+            branch = %branch.full_name,
             "Found {} MRs for branch {} but no project ID to filter - skipping to avoid ambiguity",
             mr_list.len(),
             branch.full_name
@@ -178,7 +185,7 @@ pub(super) fn detect_gitlab(
         // (not NoCI, which would imply no MR exists). Carry the MR identity
         // already in hand: the ⚠ stays clickable and the iid still feeds the
         // CI column width ratchet.
-        log::debug!("Could not fetch MR details for !{}", mr_entry.iid);
+        tracing::debug!(iid = %mr_entry.iid, "Could not fetch MR details for !{}", mr_entry.iid);
         return Some(PrStatus {
             ci_status: CiStatus::Error,
             source: CiSource::PullRequest,
@@ -236,7 +243,9 @@ pub(super) fn detect_gitlab_pipeline(
     {
         Ok(output) => output,
         Err(e) => {
-            log::warn!(
+            tracing::warn!(
+                branch = %branch,
+                error = %e,
                 "glab ci list failed to execute for branch {}: {}",
                 branch,
                 e
@@ -371,7 +380,7 @@ fn fetch_mr_details(iid: u64, repo_root: &Path) -> Option<GitLabMrInfo> {
         .ok()?;
 
     if !output.status.success() {
-        log::debug!("glab mr view {} failed", iid);
+        tracing::debug!(iid = %iid, "glab mr view {} failed", iid);
         return None;
     }
 

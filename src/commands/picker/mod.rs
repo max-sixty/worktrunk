@@ -531,7 +531,9 @@ impl CommandCollector for PickerCollector {
                             .name(format!("picker-remove-{selected_output}"))
                             .spawn(move || {
                                 if let Err(e) = Self::do_removal(&repo, &result, &approvals) {
-                                    log::warn!(
+                                    tracing::warn!(
+                                        selected_output = %selected_output,
+                                        error = %e,
                                         "picker: failed to remove '{selected_output}': {e:#}"
                                     );
                                 }
@@ -553,7 +555,7 @@ impl CommandCollector for PickerCollector {
                         }
                     }
                     Err(e) => {
-                        log::info!("picker: cannot remove '{selected_output}': {e:#}");
+                        tracing::info!(selected_output = %selected_output, error = %e, "picker: cannot remove '{selected_output}': {e:#}");
                     }
                 }
             }
