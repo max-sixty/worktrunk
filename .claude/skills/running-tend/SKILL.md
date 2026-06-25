@@ -157,6 +157,14 @@ the issue gives us most of what we'd otherwise ask for piecemeal, so lead
 with this for unexplained failures rather than chaining version/config/repro
 questions across multiple round-trips.
 
+When the report is about a slow `wt` command, read its **Performance profile**
+section first. It renders the same breakdown as `wt config state logs profile`
+(subprocess time by command type, slowest calls, repeated `(command, context)`
+pairs) directly from the bundled `trace.log`, so you can spot redundant git
+calls and slow commands without parsing the raw trace by hand. The deeper
+per-render cache analysis is a separate tool — see **Weekly Maintenance:
+Statusline Cache-Check**.
+
 Reach for narrower asks only when the diagnostic is overkill:
 
 - `wt --version` — when the only question is whether a fix has landed.

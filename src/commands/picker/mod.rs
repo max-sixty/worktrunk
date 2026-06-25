@@ -21,13 +21,15 @@
 //! On the main thread, `handle_picker`:
 //!
 //! 1. `current_or_recover` + config resolution.
-//! 2. `PreviewState::new` — auto-detects Right vs Down layout.
+//! 2. Reads the terminal size once; `PreviewState::new` records the
+//!    Right-vs-Down layout detected from it. Every later sizing step (the
+//!    estimate cap, preview dimensions, half-page scroll) reuses that snapshot.
 //! 3. Allocates the `PreviewOrchestrator` and kicks off a *speculative*
 //!    `git diff HEAD` for the current worktree on `COLLECT_POOL`.
 //!    That bg work overlaps with everything below.
 //! 4. Computes `num_items_estimate` — `list_worktrees` plus (conditionally)
-//!    `local_branches` / `remote_branches`, capped at
-//!    `MAX_VISIBLE_ITEMS`. Only used to size skim's `preview_window`.
+//!    `local_branches` / `remote_branches`, capped at the Down layout's
+//!    `max_visible_items(available)`. Only used to size skim's `preview_window`.
 //! 5. Builds `SkimOptions` (immutable after this — which is why steps 1-4 have
 //!    to run first).
 //! 6. Spawns the `picker-collect` bg thread, which calls `collect::collect`.
@@ -105,13 +107,14 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use ansi_str::AnsiStr;
 use anyhow::Context;
 // bounded/unbounded/Sender are re-exported by skim::prelude
 use skim::prelude::*;
 use skim::reader::CommandCollector;
+use skim::tui::event::ActionCallback;
 use worktrunk::HookType;
 use worktrunk::config::Approvals;
 use worktrunk::git::{Repository, current_or_recover};
@@ -128,7 +131,7 @@ use crate::output::{BackgroundFallbackMode, handle_remove_output};
 use worktrunk::git::{BranchDeletionMode, delete_branch_if_safe};
 
 use items::{PreviewCache, WORKTREE_OUTPUT_PREFIX};
-use preview::{PreviewLayout, PreviewMode, PreviewState};
+use preview::{PreviewLayout, PreviewMode, PreviewState, PreviewStateData};
 use preview_orchestrator::PreviewOrchestrator;
 
 /// Drain stashed warnings to stderr. Called after skim has released the
@@ -212,8 +215,11 @@ fn picker_item_identifier(item: &dyn SkimItem) -> String {
 /// thread because skim calls `invoke()` on the main event loop thread.
 /// Blocking it freezes the TUI.
 ///
-/// Cursor position resets to the first item after reload (skim limitation,
-/// tracked in #1695).
+/// skim resets the cursor to the top on every reload (`handle_reload` clears
+/// `item_list` before the new rows stream in — skim #1695). To keep the cursor
+/// sticky, `invoke` injects a [`reposition_cursor_action`] Custom action that
+/// moves the cursor back to the slot the removed row occupied once the reloaded
+/// rows land.
 struct PickerCollector {
     items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>>,
     repo: Repository,
@@ -223,6 +229,12 @@ struct PickerCollector {
     /// unapproved project commands are skipped, never run. See
     /// [`approved_removal_plan`].
     approvals: Arc<Approvals>,
+    /// skim's event sender, published once the TUI is initialized (same
+    /// `OnceLock` the progressive handler pushes `Event::Render` through). alt-r
+    /// removals inject a [`reposition_cursor_action`] through it to restore the
+    /// cursor after the reload. `None` until the TUI is up — but a reload can
+    /// only fire after skim is showing rows, so it's always set by then.
+    render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
 }
 
 impl PickerCollector {
@@ -350,6 +362,109 @@ fn parse_reload_remove_token(cmd: &str) -> String {
     unquoted.replace("'\\''", "'")
 }
 
+/// Number of leading non-selectable header rows the picker streams (the single
+/// `HeaderSkimItem`). The skim options pass this to `.header_lines(...)`: skim
+/// reserves these from the item pool into its own Header widget, so `item_list`
+/// — what the cursor moves over — holds data rows only, indexed from 0.
+const PICKER_HEADER_ROWS: usize = 1;
+
+/// Consecutive "matcher settled but list still empty" observations
+/// [`reposition_cursor_action`] waits out before concluding the reloaded list is
+/// genuinely empty (no row to land on). `item_list.count()` lags the matcher by
+/// one render — the matcher writes its result, then a later `Event::Render`
+/// applies it — so a bare `settled && count() == 0` could give up while matches
+/// are still one render away. Each re-arm queues a Render (skim appends one after
+/// every action), so three consecutive settled observations guarantee the
+/// matcher's result has been applied before giving up.
+const REPOSITION_SETTLED_RENDERS: usize = 3;
+
+/// Hard backstop on [`reposition_cursor_action`] re-arms, far above the handful a
+/// normal reload needs. The `settled` check is the real stop condition; this only
+/// guards against an unforeseen state where the matcher never settles.
+const REPOSITION_MAX_ATTEMPTS: usize = 1000;
+
+/// The `item_list` row the cursor should land on after an alt-r removal, given
+/// the removed row's position in `shared_items` (header included) and how many
+/// data rows remain.
+///
+/// The removed row sat at `removed_pos`; the row that slides up into its slot is
+/// the next one, which lands at the same `item_list` index once the header is
+/// subtracted. Returns `None` when there's nothing to land on (the list is now
+/// header-only) or the position was the header itself. The caller clamps to the
+/// list's last row via `scroll_by`, so a removed-last-row target just overshoots
+/// and snaps back to the new last row.
+fn sticky_reposition_target(removed_pos: usize, remaining_data_rows: usize) -> Option<usize> {
+    if remaining_data_rows == 0 {
+        return None;
+    }
+    removed_pos.checked_sub(PICKER_HEADER_ROWS)
+}
+
+/// A skim `Custom` action that moves the cursor to `target` once the reloaded
+/// item list is populated.
+///
+/// skim has no "set cursor to index N" action and resets the cursor to the top
+/// on reload, so this drives the move through `ItemList`'s public cursor API
+/// with `&mut App` in hand: `jump_to_first` + `scroll_by(target)` lands on
+/// `target`, clamped to the last row.
+///
+/// The reload repopulates `item_list` asynchronously — the reader refills
+/// `item_pool`, then the matcher filters it into `item_list` — so the first
+/// invocation usually runs before the rows exist. It re-arms (returns another
+/// copy of itself; skim queues a Render after each) until the rows land. Stopping
+/// is gated on the matcher, not a blind count: once it has settled on an empty
+/// result (a removal that emptied the list, or an active query now matching
+/// nothing) for [`REPOSITION_SETTLED_RENDERS`] checks, there's nothing to land
+/// on. Sleeping instead of re-arming would hold `&mut App` across the await and
+/// starve the render that loads the rows.
+///
+/// `target` is an `item_list` index (data rows only — see [`PICKER_HEADER_ROWS`])
+/// from [`sticky_reposition_target`]. Under an active fuzzy query the displayed
+/// order diverges from `shared_items` order, so the landing row is approximate
+/// (a valid nearby row) rather than the exact next row.
+fn reposition_cursor_action(
+    target: usize,
+    attempts: Arc<AtomicUsize>,
+    settled_streak: Arc<AtomicUsize>,
+) -> Action {
+    Action::Custom(ActionCallback::new_sync(
+        move |app| -> Result<Vec<Event>, Box<dyn std::error::Error + Send + Sync>> {
+            // Rows are in: land the cursor on the removed row's slot.
+            if app.item_list.count() > 0 {
+                app.item_list.jump_to_first();
+                app.item_list
+                    .scroll_by(i32::try_from(target).unwrap_or(i32::MAX));
+                return Ok(Vec::new());
+            }
+            // No rows yet. The matcher has "settled" once it has stopped with the
+            // reloaded items taken and a non-empty pool (the empty pool is the
+            // pre-refill transient). A settled-but-empty `item_list` means the
+            // reload produced no matchable rows — wait out the count() render lag,
+            // then give up. `attempts` is a hard backstop for an unforeseen
+            // never-settles state.
+            let matcher_settled = app.matcher_control.stopped()
+                && !app.item_pool.is_empty()
+                && app.item_pool.num_not_taken() == 0;
+            let streak = if matcher_settled {
+                settled_streak.fetch_add(1, Ordering::Relaxed) + 1
+            } else {
+                settled_streak.store(0, Ordering::Relaxed);
+                0
+            };
+            if streak >= REPOSITION_SETTLED_RENDERS
+                || attempts.fetch_add(1, Ordering::Relaxed) >= REPOSITION_MAX_ATTEMPTS
+            {
+                return Ok(Vec::new());
+            }
+            Ok(vec![Event::Action(reposition_cursor_action(
+                target,
+                Arc::clone(&attempts),
+                Arc::clone(&settled_streak),
+            ))])
+        },
+    ))
+}
+
 impl CommandCollector for PickerCollector {
     fn invoke(
         &mut self,
@@ -376,10 +491,21 @@ impl CommandCollector for PickerCollector {
                         // fail at runtime (TypeId mismatch between reader thread and main
                         // thread compilation units). All item lookups use output()
                         // matching instead.
-                        {
+                        //
+                        // Capture the removed row's position before dropping it so
+                        // the cursor can be restored to that slot (the row that
+                        // slides up) after the reload — see `reposition_cursor_action`.
+                        let reposition_target = {
                             let mut items = self.items.lock().unwrap();
+                            let removed_pos = items
+                                .iter()
+                                .position(|item| item.output().as_ref() == selected_output);
                             items.retain(|item| item.output().as_ref() != selected_output);
-                        }
+                            let remaining_data_rows =
+                                items.len().saturating_sub(PICKER_HEADER_ROWS);
+                            removed_pos
+                                .and_then(|pos| sticky_reposition_target(pos, remaining_data_rows))
+                        };
 
                         // If removing the current worktree, cd to home so skim and git
                         // commands continue to work after the directory disappears.
@@ -410,6 +536,21 @@ impl CommandCollector for PickerCollector {
                                     );
                                 }
                             });
+
+                        // Restore the cursor near the removed row. skim resets it
+                        // to the top on every reload; inject a Custom action that
+                        // moves it back to the removed row's slot once the reloaded
+                        // rows land (`render_tx` is skim's event sender, set once
+                        // the TUI is up — always present by the time a reload fires).
+                        if let Some(target) = reposition_target
+                            && let Some(event_tx) = self.render_tx.get()
+                        {
+                            let _ = event_tx.try_send(Event::Action(reposition_cursor_action(
+                                target,
+                                Arc::new(AtomicUsize::new(0)),
+                                Arc::new(AtomicUsize::new(0)),
+                            )));
+                        }
                     }
                     Err(e) => {
                         log::info!("picker: cannot remove '{selected_output}': {e:#}");
@@ -499,8 +640,21 @@ pub fn handle_picker(
     let show_prs = cli_prs;
     worktrunk::trace::instant("Picker config resolved");
 
-    // Initialize preview mode state file (auto-cleanup on drop)
-    let state = PreviewState::new();
+    // Read the terminal size once. Layout detection, the visible-row cap, the
+    // preview dimensions, and the half-page scroll all derive from this single
+    // snapshot, so the estimate cap and the actual layout can never observe
+    // different terminal sizes across a resize. (`crate::display::terminal_width`
+    // below is a separate, stderr-first width probe for the skim list column.)
+    let (term_width, term_height) = terminal_size::terminal_size()
+        .map(|(terminal_size::Width(w), terminal_size::Height(h))| (w as usize, h as usize))
+        .unwrap_or((80, 24));
+
+    // Reset the preview tab to working-tree and select the layout from the
+    // terminal size.
+    let state = PreviewState::new(PreviewLayout::for_dimensions(
+        term_width as f64,
+        term_height as f64,
+    ));
     worktrunk::trace::instant("Picker layout detected");
 
     // Prime the current worktree's root / git-dir / branch caches with one
@@ -543,7 +697,9 @@ pub fn handle_picker(
         }));
         // num_items doesn't matter for Right (dims independent of it); for
         // Down it only affects height, which doesn't alter pager wrapping.
-        let dims = state.initial_layout.preview_dimensions(0);
+        let dims = state
+            .initial_layout
+            .dimensions_for(term_width, term_height, 0);
         orchestrator.spawn_preview(Arc::new(item), PreviewMode::WorkingTree, dims);
     }
 
@@ -583,11 +739,12 @@ pub fn handle_picker(
     .saturating_sub(2);
 
     // Estimate item count for the preview window spec (only the Down
-    // layout depends on it). Every row over MAX_VISIBLE_ITEMS is a no-op
-    // for the height computation, so we short-circuit once we know the
-    // list already fills the cap.
+    // layout depends on it). The Down layout caps visible rows at
+    // `max_visible_items(available)`; every row past that cap is a no-op
+    // for the height computation, so we short-circuit once the estimate
+    // reaches it.
     let num_items_estimate = {
-        let cap = preview::MAX_VISIBLE_ITEMS;
+        let cap = preview::max_visible_items(preview::available_height(term_height));
         let mut estimate = repo.list_worktrees().map(|w| w.len()).unwrap_or(cap);
         if estimate < cap && show_branches {
             // Local branches are a superset of worktree branches (each
@@ -603,10 +760,13 @@ pub fn handle_picker(
         estimate
     };
     worktrunk::trace::instant("Picker estimate computed");
-    let preview_window_spec = state
-        .initial_layout
-        .to_preview_window_spec(num_items_estimate);
-    let preview_dims = state.initial_layout.preview_dimensions(num_items_estimate);
+    // Compute the dimensions once; the skim preview-window spec is formatted
+    // from them rather than recomputed.
+    let preview_dims =
+        state
+            .initial_layout
+            .dimensions_for(term_width, term_height, num_items_estimate);
+    let preview_window_spec = state.initial_layout.spec_for(preview_dims);
 
     // Summary hint: when summaries are disabled, prime the Summary cache
     // with config guidance instead of showing a perpetual "Generating…"
@@ -640,32 +800,89 @@ pub fn handle_picker(
     // to filter the hook plan; see `approved_removal_plan`.
     let approvals = Arc::new(Approvals::load().context("Failed to load approvals")?);
 
+    // skim 4.x repaints on demand, so the collect handler needs a handle to
+    // skim's event loop to surface in-place row updates. The picker fills this
+    // once `Skim::init_tui` has run (inside `run_skim`); until then the handler
+    // simply skips its render pokes. The alt-r collector shares it too, to inject
+    // the cursor-reposition action after a removal. See `progressive_handler`
+    // module docstring.
+    let render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>> = Arc::new(OnceLock::new());
+
     let collector = PickerCollector {
         items: Arc::clone(&shared_items),
         repo: repo.clone(),
         approvals,
+        render_tx: Arc::clone(&render_tx),
     };
 
-    // Get state path for key bindings (shell-escaped for safety)
-    let state_path_display = state.path.display().to_string();
-    let state_path_str = shell_escape::unix::escape(state_path_display.into()).into_owned();
-
-    // Calculate half-page scroll: skim uses 90% of terminal height, half of that = 45%
-    let half_page = terminal_size::terminal_size()
-        .map(|(_, terminal_size::Height(h))| (h as usize * 45 / 100).max(5))
-        .unwrap_or(10);
+    // Half-page preview scroll: half of skim's usable height.
+    let half_page = (preview::available_height(term_height) / 2).max(5);
 
     // Configure skim options with Rust-based preview and mode switching keybindings
-    let options = SkimOptionsBuilder::default()
+    let mut options = SkimOptionsBuilder::default()
         .height("90%".to_string())
         .reverse(true)
+        // Rank matches by a row's *distinguishing* tail, not the shared
+        // `~/workspace/` prefix every worktree path carries. `last_match` makes
+        // the matcher prefer the query's rightmost occurrence, and front-loading
+        // `PathName` in the tiebreak ranks leaf-segment matches (at/after the
+        // last `/`) above parent-directory ones — so `feature/auth` ranks on
+        // `auth`, and the worktree folder name ranks on its tail. This is skim's
+        // `Path` scheme spelled out as its two underlying knobs: a
+        // `.scheme(MatchScheme::Path)` call would also expand here (the builder's
+        // `build()` runs `SkimOptions::build`, which expands the scheme — unlike
+        // the clap-only `scrollbar` default), but it injects a duplicate `Score`
+        // criterion, so setting the knobs directly is the same effect without the
+        // artifact. (Default tiebreak is `[Score, Begin, End]`.) Paired with the
+        // distinct-path `search_text` built in `progressive_handler::on_skeleton`.
+        //
+        // `PathName` reads the whole `search_text`, including the trailing gutter
+        // glyph. Local-branch rows fold in `/` as that glyph (the gutter sigil),
+        // which `PathName` then reads as a path separator, so on a *score tie* a
+        // local-branch row sorts just under a worktree/remote row whose glyph
+        // (`+`/`@`/`^`/`|`) isn't a separator. The effect is confined to exact
+        // ties (`PathName` is the 2nd criterion) and only reorders rows, so it
+        // rides along rather than warranting a change to the gutter sigils.
+        .last_match(true)
+        .tiebreak(vec![
+            RankCriteria::Score,
+            RankCriteria::PathName,
+            RankCriteria::Begin,
+            RankCriteria::End,
+        ])
         // Fill the whole selected row with the `current` background (set via
         // `current_bg` in `.color(...)` below). skim 4.x applies the current-row
         // style at the line level only when this is on; without it the selection
         // shows just the `>` pointer (the row's own `display()` ANSI spans carry
         // no background). skim 0.20's tuikit backend highlighted the row for free.
         .highlight_line(true)
-        .header_lines(1usize) // Make first line (header) non-selectable
+        // Each row's `display()` owns its layout: a leading gutter sigil
+        // (`+`/`@`/`^`/`/`/`|`), then columns, right-truncated to the list width
+        // with a trailing `…`. skim's horizontal scroll is a second, conflicting
+        // layout authority over the same row — on a query match it scrolls the row
+        // left to bring the matched char into view, deriving the offset from that
+        // char's *position* in the match text (`search_text` = branch + full path +
+        // glyph), which is far longer than the visible row, while clamping against
+        // the rendered line's own width. Any row whose rendered width exceeds skim's
+        // container (e.g. a long branch name, or a width-count disagreement on wide
+        // glyphs) then gets shifted left far enough to clip its leading gutter sigil
+        // — typing a few chars made the sigil vanish from every overflowing row.
+        // Disabling hscroll leaves worktrunk as the sole row-layout
+        // authority: overflow truncates on the right (gutter kept) instead of
+        // scrolling left. The picker doesn't reveal matches by scrolling anyway —
+        // `display()` ignores the match context and renders its own ANSI.
+        .no_hscroll(true)
+        // Draw a scrollbar thumb on the item list when it overflows the view.
+        // skim's `▐` default is the clap `default_value`, gated on skim's `cli`
+        // feature; with `default-features = false` the library `Default` for
+        // this `String` field is empty, which skim reads as "no scrollbar".
+        // Setting it explicitly restores the thumb — without it a long worktree
+        // (or `--prs`) list scrolls with no position cue, made worse by
+        // `no_info(true)` below hiding the matched/total counter.
+        .scrollbar("▐".to_string())
+        // First line (header) non-selectable. `PICKER_HEADER_ROWS` mirrors this
+        // count so the alt-r cursor-reposition math stays in sync — keep them one.
+        .header_lines(PICKER_HEADER_ROWS)
         .multi(false)
         .no_info(true) // Hide info line (matched/total counter)
         .preview("") // Enable preview (empty string means use SkimItem::preview())
@@ -686,81 +903,12 @@ pub fn handle_picker(
         .color("fg:-1,bg:-1,header:-1,matched:108,current:237,current_bg:251,current_match:108")
         .cmd_collector(Rc::new(RefCell::new(collector)) as Rc<RefCell<dyn CommandCollector>>)
         .bind(vec![
-            // Preview-tab switching. Bare digits 1-6 are intentionally NOT
-            // bound — they flow to the query input so a number can be typed
-            // (a PR number, or digits within a branch name). Two ways to
-            // switch tabs remain:
-            //   * alt-1..alt-6 jump straight to a tab. skim 4.x parses
-            //     `alt-<digit>` natively via crossterm; an unparsable bind is
-            //     just logged and dropped.
-            //   * tab / shift-tab cycle forward / backward (below).
-            format!(
-                "alt-1:execute-silent(echo 1 > {0})+refresh-preview",
-                state_path_str
-            ),
-            format!(
-                "alt-2:execute-silent(echo 2 > {0})+refresh-preview",
-                state_path_str
-            ),
-            format!(
-                "alt-3:execute-silent(echo 3 > {0})+refresh-preview",
-                state_path_str
-            ),
-            format!(
-                "alt-4:execute-silent(echo 4 > {0})+refresh-preview",
-                state_path_str
-            ),
-            format!(
-                "alt-5:execute-silent(echo 5 > {0})+refresh-preview",
-                state_path_str
-            ),
-            format!(
-                "alt-6:execute-silent(echo 6 > {0})+refresh-preview",
-                state_path_str
-            ),
-            // Cycle tabs with tab / shift-tab. The state file holds the current
-            // digit; `tr` rotates it (1→2→3→4→5→6→1 forward, the reverse for
-            // btab) with wraparound, via a temp file + rename so the read and
-            // write don't race on one path. Two hard constraints shape this:
-            //   * Paren-free — skim 4.x parses an `execute-silent(…)` body by
-            //     splitting at the first `(` and trimming the trailing `)`, and
-            //     splits the action chain on `+`. So the body must contain no
-            //     `+` and must not end in `)`; `$(...)` / `$(( ))` would do both.
-            //     Keeping it paren-free entirely (the embedded `{0}` temp path
-            //     is — `std::env::temp_dir()` paths have none) satisfies this,
-            //     which the alt-r/alt-N bindings share.
-            //   * Shell-agnostic — skim runs it under the user's $SHELL
-            //     (fish/zsh/sh), so no shell-specific syntax: `tr` + `mv` are
-            //     external and behave identically everywhere.
-            // This overrides skim's default Tab (toggle-select + cursor down)
-            // and Shift-Tab (toggle-select + cursor up); `bind` replaces the
-            // chain wholesale, and both are inert in this single-select picker.
+            // Preview-tab switching (alt-1..alt-7 jump to a tab; tab / shift-tab
+            // cycle) is installed natively below via `install_preview_tab_keybindings`
+            // rather than here — those keys run Rust callbacks, not shell commands.
+            // Bare digits 1-7 stay unbound so they flow to the query input (a PR
+            // number, or digits within a branch name).
             //
-            // Shift-Tab needs three bindings, not one. skim parses `btab` to
-            // `KeyEvent{BackTab, NONE}`, but crossterm delivers Shift-Tab with
-            // the SHIFT modifier set, so that lone bind never matches and skim's
-            // built-in Shift-Tab (cursor up) wins — a back-cycle that silently
-            // moved the selection instead. skim's own default keymap hedges the
-            // same ambiguity across `BackTab+SHIFT`, `Tab+SHIFT`, and
-            // `BackTab+all()`; we bind every representation crossterm might
-            // report (`btab` / `shift-btab` / `shift-tab`) so the override holds
-            // regardless of terminal. (Plain Tab is unambiguous — `Tab+NONE`.)
-            format!(
-                "tab:execute-silent(tr 123456 234561 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
-                state_path_str
-            ),
-            format!(
-                "btab:execute-silent(tr 123456 612345 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
-                state_path_str
-            ),
-            format!(
-                "shift-btab:execute-silent(tr 123456 612345 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
-                state_path_str
-            ),
-            format!(
-                "shift-tab:execute-silent(tr 123456 612345 < {0} > {0}.tmp; mv {0}.tmp {0})+refresh-preview",
-                state_path_str
-            ),
             // Create new worktree with query as branch name (alt-c for "create")
             "alt-c:accept(create)".to_string(),
             // Remove selected worktree: `reload(remove {})` hands the selected
@@ -768,7 +916,9 @@ pub fn handle_picker(
             // and streams updated items back — all without leaving the picker.
             // Passing the token through the reload cmd (not an execute-silent +
             // file write) sidesteps skim 4.x's fire-and-forget execute-silent,
-            // which raced the reader and removed nothing.
+            // which raced the reader and removed nothing. The collector also
+            // re-positions the cursor onto the removed row's slot afterward —
+            // reload otherwise snaps it back to the top (see PickerCollector).
             "alt-r:reload(remove {})".to_string(),
             // Preview toggle (alt-p shows/hides preview)
             // Note: skim doesn't support change-preview-window like fzf, only toggle
@@ -780,6 +930,10 @@ pub fn handle_picker(
         // Legend/controls moved to preview window tabs (render_preview_tabs)
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to build skim options: {}", e))?;
+    // `.build()` parsed the string binds above into `options.keymap`; layer the
+    // preview-tab switches on top as native `Action::Custom` callbacks (skim's
+    // string bind API can't express a custom action).
+    install_preview_tab_keybindings(&mut options.keymap);
     worktrunk::trace::instant("Picker skim options built");
 
     let (tx, rx): (SkimItemSender, SkimItemReceiver) = unbounded();
@@ -792,12 +946,6 @@ pub fn handle_picker(
     // Column-geometry handoff: the collect thread fills it at skeleton time,
     // the `--prs` thread reads it to align PR rows with the worktree rows.
     let grid_slot = Arc::new(prs::GridSlot::new());
-
-    // skim 4.x repaints on demand, so the collect handler needs a handle to
-    // skim's event loop to surface in-place row updates. The picker fills this
-    // once `Skim::init_tui` has run (inside `run_skim`); until then the handler
-    // simply skips its render pokes. See `progressive_handler` module docstring.
-    let render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>> = Arc::new(OnceLock::new());
 
     // `--prs` loading flag, shared between the header (shows a "loading…"
     // marker while true) and the `--prs` thread (clears it when the forge call
@@ -869,6 +1017,7 @@ pub fn handle_picker(
         let prs_repo = repo.clone();
         let prs_warnings = Arc::clone(&stashed_warnings);
         let prs_grid = Arc::clone(&grid_slot);
+        let prs_orchestrator = Arc::clone(&orchestrator);
         let prs_render_tx = Arc::clone(&render_tx);
         Some(
             std::thread::Builder::new()
@@ -876,12 +1025,18 @@ pub fn handle_picker(
                 .spawn(move || {
                     prs::stream_open_prs(
                         &prs_repo,
-                        skim_list_width,
+                        &prs::PrsLayout {
+                            list_width: skim_list_width,
+                            preview_dims,
+                        },
                         &prs_tx,
                         &prs_warnings,
                         &prs_grid,
-                        &prs_loading,
-                        &prs_render_tx,
+                        &prs_orchestrator,
+                        &prs::PrsStreamSignal {
+                            pending: &prs_loading,
+                            render_tx: &prs_render_tx,
+                        },
                     );
                 })
                 .context("Failed to spawn picker-prs thread")?,
@@ -948,7 +1103,7 @@ pub fn handle_picker(
     // network tasks, and joining would block exit for up to DRAIN_TIMEOUT
     // (120s). Process exit terminates the bg thread; its git subprocesses
     // are read-only.
-    let output = run_skim(options, rx, &render_tx, &state.path);
+    let output = run_skim(options, rx, &render_tx);
     drop(bg_handle);
     // Same rationale as `bg_handle`: don't join — the forge call may still be
     // in flight, and process exit terminates the thread (its `gh`/`glab`
@@ -965,7 +1120,7 @@ pub fn handle_picker(
     // a user cancel is `Ok` with `is_abort` set. Surface a real failure.
     let out = output?;
 
-    // Handle selection (signal file cleaned up by PreviewState::Drop)
+    // Handle selection
     if !out.is_abort {
         // Determine action: create (alt-c) or switch (enter)
         // Remove is handled inline via reload — it never reaches accept.
@@ -1026,75 +1181,77 @@ pub fn handle_picker(
     Ok(())
 }
 
-/// Background poller that nudges skim to re-run its preview when the
-/// preview-mode state file changes. See [`run_skim`] for why; it lives only for
-/// one picker session and stops when [`ModeWatcher::stop`] is called.
-struct ModeWatcher {
-    stop: Arc<AtomicBool>,
-    handle: Option<std::thread::JoinHandle<()>>,
-}
+/// Install the preview-tab switches into skim's keymap: alt-1…alt-7 jump to a
+/// tab, tab / shift-tab cycle forward / backward.
+///
+/// skim's string bind API only maps keys to its built-in actions, so these go
+/// in as `Action::Custom` callbacks that set the process-wide
+/// [`PreviewStateData`] mode and return `Event::RunPreview` to repaint. They're
+/// native rather than `execute-silent` shell commands, so they behave
+/// identically everywhere — the previous `echo`/`tr`/`mv` keybind bodies ran
+/// through skim's shell, which on Windows is cmd.exe and has neither `tr` nor
+/// `mv`. This is also what lets `wt switch` run its picker on Windows at all.
+///
+/// Keys are resolved with skim's own `parse_key` so they match exactly what its
+/// keymap lookup expects (`KeyMap` is keyed by the crossterm `KeyEvent`
+/// `parse_key` produces). Shift-Tab is bound under every spelling crossterm
+/// might report (`btab` / `shift-btab` / `shift-tab`), mirroring skim's default
+/// keymap, so the cycle-back override holds regardless of terminal.
+fn install_preview_tab_keybindings(keymap: &mut skim::binds::KeyMap) {
+    use skim::binds::parse_key;
 
-impl ModeWatcher {
-    fn spawn(event_tx: tokio::sync::mpsc::Sender<Event>, path: PathBuf) -> Self {
-        let stop = Arc::new(AtomicBool::new(false));
-        let stop_thread = Arc::clone(&stop);
-        let handle = std::thread::Builder::new()
-            .name("picker-mode-watcher".into())
-            .spawn(move || {
-                // Seed with the current contents so the initial mode isn't
-                // treated as a change.
-                let mut last = std::fs::read(&path).ok();
-                while !stop_thread.load(Ordering::Relaxed) {
-                    std::thread::sleep(Duration::from_millis(20));
-                    let current = std::fs::read(&path).ok();
-                    if current != last {
-                        last = current;
-                        // Channel closed (skim exited) just makes this a no-op;
-                        // the loop then ends on the next `stop` check.
-                        let _ = event_tx.try_send(Event::RunPreview);
-                    }
-                }
-            })
-            .ok();
-        Self { stop, handle }
+    // alt-N jumps to tab N (1-indexed, matching PreviewMode's discriminant).
+    let switch_to = |mode: PreviewMode| {
+        Action::Custom(ActionCallback::new_sync(move |_app| {
+            PreviewStateData::set_mode(mode);
+            Ok(vec![Event::RunPreview])
+        }))
+    };
+    for digit in 1..=7u8 {
+        if let Ok(key) = parse_key(&format!("alt-{digit}")) {
+            keymap.insert(key, vec![switch_to(PreviewMode::from_u8(digit))]);
+        }
     }
 
-    fn stop(mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+    let cycle = |forward: bool| {
+        Action::Custom(ActionCallback::new_sync(move |_app| {
+            PreviewStateData::rotate(forward);
+            Ok(vec![Event::RunPreview])
+        }))
+    };
+    if let Ok(key) = parse_key("tab") {
+        keymap.insert(key, vec![cycle(true)]);
+    }
+    for back in ["btab", "shift-btab", "shift-tab"] {
+        if let Ok(key) = parse_key(back) {
+            keymap.insert(key, vec![cycle(false)]);
         }
     }
 }
 
 /// Run skim to completion, exposing its event sender for progressive repaints.
 ///
-/// This inlines what `Skim::run_with` does, with two additions: after the TUI is
-/// initialized we publish `Skim::event_sender()` into `render_tx`, and we start
-/// a [`ModeWatcher`]. skim 4.x renders on demand, so the background collect
-/// thread's in-place row mutations stay invisible until something wakes the
-/// event loop — the handler pushes `Event::Render` through that sender (see
-/// `progressive_handler`).
-///
-/// `preview_mode_path` is the file the alt-1…5 / tab keybinds rewrite to switch
-/// preview tabs; `ModeWatcher` re-runs the preview once the write lands, fixing
-/// the one-step tab lag skim 0.20's heartbeat used to mask.
+/// This inlines what `Skim::run_with` does, plus one addition: after the TUI is
+/// initialized we publish `Skim::event_sender()` into `render_tx`. skim 4.x
+/// renders on demand, so the background collect thread's in-place row mutations
+/// stay invisible until something wakes the event loop — the handler pushes
+/// `Event::Render` through that sender (see `progressive_handler`), and the
+/// preview-tab keybindings return `Event::RunPreview` from their callbacks.
 ///
 /// `wt` runs no outer tokio runtime, so skim's event loop runs on a fresh
 /// multi-thread `Runtime` — the same one `run_with` builds in that case. A user
 /// cancel is `Ok(SkimOutput)` with `is_abort` set; only a genuine init /
 /// event-loop failure is an `Err`.
 ///
-/// Injecting `Event::Render` / `Event::RunPreview` from the handler and the
-/// watcher is safe against clobbering the recorded selection: skim's `Accept` /
-/// `Abort` set `should_quit` in the same `tick` that records them as
-/// `final_event`, and `run()` breaks before the next `tick`, so a trailing
-/// injected event is never processed after the terminal action.
+/// Injecting `Event::Render` / `Event::RunPreview` is safe against clobbering
+/// the recorded selection: skim's `Accept` / `Abort` set `should_quit` in the
+/// same `tick` that records them as `final_event`, and `run()` breaks before
+/// the next `tick`, so a trailing injected event is never processed after the
+/// terminal action.
 fn run_skim(
     options: SkimOptions,
     rx: SkimItemReceiver,
     render_tx: &Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
-    preview_mode_path: &Path,
 ) -> anyhow::Result<SkimOutput> {
     let mut skim: Skim = Skim::init(options, Some(rx))
         .map_err(|e| anyhow::anyhow!("failed to initialize picker: {e}"))?;
@@ -1109,21 +1266,14 @@ fn run_skim(
             .map_err(|e| anyhow::anyhow!("failed to initialize picker TUI: {e}"))?;
         // event_sender() requires init_tui(); publish it before entering the
         // loop so the handler's in-place updates can request repaints.
-        let event_tx = skim.event_sender();
-        let _ = render_tx.set(event_tx.clone());
+        let _ = render_tx.set(skim.event_sender());
 
-        // Build the runtime before spawning the watcher: it's the only fallible
-        // step here, and ordering it first keeps the infallible spawn paired
-        // with the unconditional `watcher.stop()` below (no early return can
-        // leak the watcher thread).
         let runtime =
             tokio::runtime::Runtime::new().context("failed to start picker event-loop runtime")?;
-        let watcher = ModeWatcher::spawn(event_tx, preview_mode_path.to_path_buf());
         let result = runtime.block_on(async {
             skim.enter().await?;
             skim.run().await
         });
-        watcher.stop();
         result.map_err(|e| anyhow::anyhow!("interactive picker failed: {e}"))?;
     }
 
@@ -1163,10 +1313,10 @@ fn resolve_identifier(
 #[cfg(test)]
 pub mod tests {
     use super::items::WorktreeSkimItem;
-    use super::preview::{PreviewLayout, PreviewMode, PreviewStateData};
     use super::{
         PickerAction, PickerCollector, PickerRemovalTarget, drain_stashed_warnings,
-        parse_reload_remove_token, picker_item_identifier, resolve_identifier,
+        install_preview_tab_keybindings, parse_reload_remove_token, picker_item_identifier,
+        resolve_identifier,
     };
     use crate::commands::list::model::{ItemKind, ListItem, WorktreeData};
     use crate::commands::worktree::RemoveResult;
@@ -1175,7 +1325,7 @@ pub mod tests {
     use std::fs;
     use std::path::Path;
     use std::sync::atomic::AtomicUsize;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, OnceLock};
     use std::time::{Duration, Instant};
     use worktrunk::config::Approvals;
     use worktrunk::git::BranchDeletionMode;
@@ -1199,38 +1349,34 @@ pub mod tests {
     }
 
     #[test]
-    fn test_preview_state_data_roundtrip() {
-        let state_path = PreviewStateData::state_path();
+    fn test_install_preview_tab_keybindings() {
+        use skim::binds::{KeyMap, parse_key};
+        use skim::prelude::Action;
 
-        // Write and read back various modes
-        let _ = fs::write(&state_path, "1");
-        assert_eq!(PreviewStateData::read_mode(), PreviewMode::WorkingTree);
+        // The native preview-tab switches replace skim's default bindings for
+        // these keys with exactly one custom action each. This asserts the
+        // wiring (keyed via skim's own `parse_key` so the lookup matches its
+        // event loop). Which tab each callback selects can't be asserted here
+        // (`Action::Custom` has no `Eq`), but the callbacks are built by a
+        // uniform `from_u8` loop — `from_u8`/`next`/`prev` are unit-tested in
+        // `preview`, and the `switch_picker` PTY tests drive the keys end-to-end.
+        let mut keymap = KeyMap::default();
+        install_preview_tab_keybindings(&mut keymap);
 
-        let _ = fs::write(&state_path, "2");
-        assert_eq!(PreviewStateData::read_mode(), PreviewMode::Log);
-
-        let _ = fs::write(&state_path, "3");
-        assert_eq!(PreviewStateData::read_mode(), PreviewMode::BranchDiff);
-
-        let _ = fs::write(&state_path, "4");
-        assert_eq!(PreviewStateData::read_mode(), PreviewMode::UpstreamDiff);
-
-        let _ = fs::write(&state_path, "5");
-        assert_eq!(PreviewStateData::read_mode(), PreviewMode::Summary);
-
-        // Cleanup
-        let _ = fs::remove_file(&state_path);
-    }
-
-    #[test]
-    fn test_preview_layout() {
-        // Right uses absolute width derived from terminal size
-        let spec = PreviewLayout::Right.to_preview_window_spec(10);
-        assert!(spec.starts_with("right:"));
-
-        // Down calculates based on item count
-        let spec = PreviewLayout::Down.to_preview_window_spec(5);
-        assert!(spec.starts_with("down:"));
+        let mut specs: Vec<String> = (1..=7).map(|d| format!("alt-{d}")).collect();
+        specs.extend(["tab", "btab", "shift-btab", "shift-tab"].map(String::from));
+        for spec in specs {
+            let key = parse_key(&spec).expect("known key spec parses");
+            let chain = keymap
+                .get(&key)
+                .unwrap_or_else(|| panic!("{spec} not bound"));
+            assert_eq!(chain.len(), 1, "{spec} should bind a single action");
+            assert!(
+                matches!(chain[0], Action::Custom(_)),
+                "{spec} should bind a native custom action, got {:?}",
+                chain[0]
+            );
+        }
     }
 
     #[test]
@@ -1282,6 +1428,26 @@ pub mod tests {
         assert_eq!(parse_reload_remove_token("remove 'it'\\''s'"), "it's");
         // missing verb / unquoted fall back to the trimmed remainder
         assert_eq!(parse_reload_remove_token("remove plain"), "plain");
+    }
+
+    /// `sticky_reposition_target` maps a removed row's `shared_items` position
+    /// (header at index 0) to the `item_list` index the cursor should land on —
+    /// the data-row index of the slot the removed row vacated. It declines when
+    /// the list is now header-only (nothing to land on); `scroll_by` clamps the
+    /// removed-last-row overshoot, so the helper itself never caps the target.
+    #[test]
+    fn test_sticky_reposition_target() {
+        // First data row (shared_items index 1) → item_list index 0.
+        assert_eq!(super::sticky_reposition_target(1, 3), Some(0));
+        // Third data row (index 3) → item_list index 2, with rows remaining.
+        assert_eq!(super::sticky_reposition_target(3, 2), Some(2));
+        // Removed the only data row → header-only list, nothing to land on.
+        assert_eq!(super::sticky_reposition_target(1, 0), None);
+        // The header position itself never repositions.
+        assert_eq!(super::sticky_reposition_target(0, 2), None);
+        // Removed-last-row target may exceed the remaining rows; the helper
+        // returns it verbatim and leaves clamping to `scroll_by`.
+        assert_eq!(super::sticky_reposition_target(4, 3), Some(3));
     }
 
     /// `from_signal` rejects tokens that carry no usable target: a blank or
@@ -1468,6 +1634,7 @@ pub mod tests {
             items: Arc::new(Mutex::new(Vec::new())),
             repo,
             approvals: Arc::new(Approvals::default()),
+            render_tx: Arc::new(OnceLock::new()),
         };
 
         let target = PickerRemovalTarget::from_signal("branch-only-feature").unwrap();
@@ -1490,6 +1657,7 @@ pub mod tests {
             items: Arc::new(Mutex::new(Vec::new())),
             repo,
             approvals: Arc::new(Approvals::default()),
+            render_tx: Arc::new(OnceLock::new()),
         };
 
         // `RemoveResult` isn't `Debug`; drop the Ok payload so `unwrap_err`
@@ -1659,6 +1827,7 @@ pub mod tests {
             items: Arc::clone(&items),
             repo: repo.clone(),
             approvals: Arc::new(Approvals::default()),
+            render_tx: Arc::new(OnceLock::new()),
         };
 
         // skim's `reload(remove {})` hands invoke `remove <single-quoted token>`.
@@ -1696,6 +1865,7 @@ pub mod tests {
             items: Arc::clone(&items),
             repo,
             approvals: Arc::new(Approvals::default()),
+            render_tx: Arc::new(OnceLock::new()),
         };
         let (_rx, _interrupt) = collector.invoke("remove ''", Arc::new(AtomicUsize::new(0)));
         assert_eq!(

@@ -81,6 +81,7 @@ pub use repository::{
 };
 pub use url::parse_owner_repo;
 pub use url::{GitRemoteUrl, GitRepoInfo, GitRepoProvider};
+pub(crate) use url::{canonical_url_path_segment, url_path_segments_eq};
 /// Why branch content is considered integrated into the target branch.
 ///
 /// Used by both `wt list` (for status symbols) and `wt remove` (for messages).

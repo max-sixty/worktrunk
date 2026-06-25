@@ -2,8 +2,8 @@
 source: tests/integration_tests/switch_picker.rs
 expression: preview
 ---
-1: HEAD± | 2: log | 3: main…± | 4: remote⇅ | 5: summary | 6: pr [N/M]
-Enter: switch | Tab/alt-1…6: preview | alt-c: create | Esc:
+1: HEAD± 2 3 4 5 6 7
+Enter: switch | Tab/alt-1…7: preview | alt-c: create | Esc:
 
  tracked.txt | 4 +++-
  1 file changed, 3 insertions(+), 1 deletion(-)

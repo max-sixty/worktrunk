@@ -609,6 +609,48 @@ fn test_switch_picker_with_branches(mut repo: TestRepo) {
     });
 }
 
+/// A list taller than the viewport renders skim's scrollbar thumb (`▐`) down
+/// the right edge of the item pane. The thumb only appears because the picker
+/// sets `.scrollbar("▐")` explicitly: skim's `▐` default lives in its clap
+/// `default_value`, gated on the `cli` feature we disable, so the library
+/// `Default` for the field is the empty string ("no scrollbar"). Without the
+/// explicit setting a long worktree/`--prs` list scrolls with no position cue.
+/// `--branches` overflows the 30-row test terminal cheaply (one `git branch`
+/// per row, no `git worktree add`).
+#[rstest]
+fn test_switch_picker_scrollbar_on_overflow(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // Far more branches than the ~24 item rows the 30-row terminal can show, so
+    // the list is guaranteed to overflow and skim paints the scrollbar.
+    for i in 0..50 {
+        let name = format!("scroll-{i:02}");
+        repo.run_git(&["branch", name.as_str()]);
+    }
+
+    let env_vars = repo.test_env_vars();
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--branches"],
+        repo.root_path(),
+        &env_vars,
+        // `@ main` is the current worktree, always the top row of the list:
+        // gating on it confirms the item rows rendered before capture, and a
+        // regression fails fast with the list shown rather than via a 30s
+        // stabilize timeout (the role `orphan-branch` plays above).
+        &[("", Some("@ main"))],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+
+    let (list, _preview) = result.panels();
+    assert!(
+        list.contains('▐'),
+        "scrollbar thumb (▐) should render when the list overflows the viewport:\n{list}"
+    );
+}
+
 /// Typing a gutter glyph filters the picker by row kind. `+` is the linked-
 /// worktree glyph, so it narrows to linked worktrees — excluding the current
 /// worktree (`@`) and branch rows (`/`). This is the end-to-end answer to "why
@@ -1099,9 +1141,9 @@ fn test_switch_picker_prs_shows_loading_marker(mut repo: TestRepo) {
 #[rstest]
 fn test_switch_picker_preview_cycle_tab_forward(mut repo: TestRepo) {
     // Tab cycles the preview tab forward. From the default HEAD± tab (1), one
-    // Tab lands on the log tab (2), proving the `tr 123456 234561` rotation in
-    // the keybinding runs under the real shell. (alt-1..alt-6 jump directly; the
-    // panel tests above cover those — this covers the cycle path.)
+    // Tab lands on the log tab (2), exercising the native `PreviewMode::next`
+    // rotation behind the tab key's `Action::Custom` binding. (alt-1..alt-7 jump
+    // directly; the panel tests above cover those — this covers the cycle path.)
     repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
     let feature_path = repo.add_worktree("feature");
@@ -1153,9 +1195,9 @@ fn test_switch_picker_preview_cycle_tab_forward(mut repo: TestRepo) {
 
 #[rstest]
 fn test_switch_picker_preview_cycle_tab_forward_wraps(mut repo: TestRepo) {
-    // Forward cycling wraps 6 → 1: from the pr tab (reached via Alt-6), one Tab
-    // returns to the HEAD± tab. This covers the `6 → 1` end of the
-    // `tr 123456 234561` map, the half most easily typo'd away.
+    // Forward cycling wraps 7 → 1: from the comments tab (reached via Alt-7), one
+    // Tab returns to the HEAD± tab. This covers the `7 → 1` wraparound in
+    // `PreviewMode::next`, the half most easily typo'd away.
     repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
     let feature_path = repo.add_worktree("feature");
@@ -1192,9 +1234,11 @@ fn test_switch_picker_preview_cycle_tab_forward_wraps(mut repo: TestRepo) {
         &[
             // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
             // for the matcher-lag rationale.
-            ("\x1b[B", None),                       // Down: move cursor to `feature`
-            ("\x1b6", Some("PR")), // Alt-6: jump to pr (6); "Fetching PR status"/"has no PR"
-            ("\t", Some("no uncommitted changes")), // Tab: wrap 6 → HEAD± (1)
+            ("\x1b[B", None), // Down: move cursor to `feature`
+            // Alt-7: jump to comments (7). On a worktree row the comments tab
+            // points at `--prs` rows (it's fetched only there).
+            ("\x1b7", Some("--prs")),
+            ("\t", Some("no uncommitted changes")), // Tab: wrap 7 → HEAD± (1)
         ],
     );
 
@@ -1203,15 +1247,15 @@ fn test_switch_picker_preview_cycle_tab_forward_wraps(mut repo: TestRepo) {
     let (_list, preview) = result.panels();
     assert!(
         preview.contains("no uncommitted changes"),
-        "Tab from the pr tab should wrap to the HEAD± tab; preview was:\n{preview}"
+        "Tab from the comments tab should wrap to the HEAD± tab; preview was:\n{preview}"
     );
 }
 
 #[rstest]
 fn test_switch_picker_preview_cycle_shift_tab_wraps(mut repo: TestRepo) {
     // Shift-Tab cycles backward and wraps: from the default HEAD± tab (1), one
-    // Shift-Tab lands on the pr tab (6), exercising the reverse rotation
-    // `tr 123456 612345` including the 1 → 6 wraparound.
+    // Shift-Tab lands on the comments tab (7), exercising the reverse rotation
+    // `PreviewMode::prev` including the 1 → 7 wraparound.
     repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
     let feature_path = repo.add_worktree("feature");
@@ -1245,21 +1289,19 @@ fn test_switch_picker_preview_cycle_shift_tab_wraps(mut repo: TestRepo) {
         &[
             // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
             // for the matcher-lag rationale.
-            ("\x1b[B", None),       // Down: move cursor to `feature`
-            ("\x1b[Z", Some("PR")), // Shift-Tab: HEAD± → pr (wrap); "Fetching PR status"/"has no PR"
+            ("\x1b[B", None), // Down: move cursor to `feature`
+            // Shift-Tab: HEAD± (1) → comments (7), the 1 → 7 wraparound. The
+            // comments tab on a worktree row points at `--prs` rows.
+            ("\x1b[Z", Some("--prs")),
         ],
     );
 
     assert_valid_abort_exit_code(result.exit_code);
 
     let (_list, preview) = result.panels();
-    // The worktree row has no remote and no CI cache, so its `pr` pane is either
-    // "Fetching PR status …" (the live fetch hasn't reported yet) or "feature
-    // has no PR" (it reported nothing) — both confirm Shift-Tab wrapped to the
-    // pr tab.
     assert!(
-        preview.contains("Fetching PR status") || preview.contains("has no PR"),
-        "Shift-Tab should wrap to the pr tab; preview was:\n{preview}"
+        preview.contains("Comments show on"),
+        "Shift-Tab should wrap to the comments tab; preview was:\n{preview}"
     );
 }
 
@@ -1663,4 +1705,179 @@ fn test_switch_picker_pre_switch_hook_requires_approval(mut repo: TestRepo) {
         "picker must prompt before running a project pre-switch hook.\nScreen:\n{screen}"
     );
     assert!(!marker.exists(), "a declined pre-switch hook must not run");
+}
+
+/// Drive the picker to remove the first non-current worktree with alt-r, then
+/// switch — capturing the screen between steps so the assertion doesn't depend on
+/// the picker's commit-recency row order. Returns `(landing_branch, final_screen,
+/// exit_code)`, where `landing_branch` is the worktree that slid into the removed
+/// row's slot (the row the sticky cursor must land on).
+fn drive_alt_r_then_switch(
+    args: &[&str],
+    working_dir: &Path,
+    env_vars: &[(String, String)],
+    candidates: [&str; 2],
+) -> (String, String, i32) {
+    let pair = crate::common::open_pty_with_size(TERM_ROWS, TERM_COLS);
+
+    let mut cmd = CommandBuilder::new(wt_bin().to_str().unwrap());
+    for arg in args {
+        cmd.arg(arg);
+    }
+    cmd.cwd(working_dir);
+    crate::common::configure_pty_command(&mut cmd);
+    cmd.env("CLICOLOR_FORCE", "1");
+    cmd.env("TERM", "xterm-256color");
+    for (key, value) in env_vars {
+        cmd.env(key, value);
+    }
+
+    let mut child = pair.slave.spawn_command(cmd).unwrap();
+    drop(pair.slave);
+
+    let reader = pair.master.try_clone_reader().unwrap();
+    let writer: crate::common::pty::SharedPtyWriter =
+        Arc::new(Mutex::new(pair.master.take_writer().unwrap()));
+    let rx = crate::common::pty::spawn_pty_reader_answering_queries(reader, Arc::clone(&writer));
+
+    let mut parser = vt100::Parser::new(TERM_ROWS, TERM_COLS, 0);
+    let drain = |rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser| {
+        while let Ok(chunk) = rx.try_recv() {
+            parser.process(&chunk);
+        }
+    };
+    let send = |writer: &crate::common::pty::SharedPtyWriter, bytes: &[u8]| {
+        let mut w = writer.lock().unwrap();
+        w.write_all(bytes).unwrap();
+        w.flush().unwrap();
+    };
+
+    // Wait for skim to be ready.
+    let start = Instant::now();
+    loop {
+        drain(&rx, &mut parser);
+        if is_skim_ready(&parser.screen().contents()) || start.elapsed() > READY_TIMEOUT {
+            break;
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+
+    // Both worktree rows land in one skeleton batch, so waiting for the first
+    // candidate implies the second is present too.
+    wait_for_stable_with_content(&rx, &mut parser, Some(candidates[0]));
+
+    // Learn the row order: the candidate on the earlier list line is row 1 — the
+    // one Down lands on and alt-r removes; the other is the sticky landing row.
+    let (row1, row2) = {
+        let screen = parser.screen();
+        let list = screen
+            .rows(0, LIST_WIDTH)
+            .map(|row| row.trim_end().to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let line_of = |name: &str| list.lines().position(|l| l.contains(name));
+        let a = line_of(candidates[0]).expect("candidate 0 in list");
+        let b = line_of(candidates[1]).expect("candidate 1 in list");
+        if a < b {
+            (candidates[0], candidates[1])
+        } else {
+            (candidates[1], candidates[0])
+        }
+    };
+
+    // Down onto row 1, confirmed via its preview pane (cursor navigation never
+    // invokes the matcher, so this is deterministic regardless of load).
+    send(&writer, b"\x1b[B");
+    wait_for_stable_with_content(
+        &rx,
+        &mut parser,
+        Some(&format!("{row1} has no uncommitted changes")),
+    );
+
+    // alt-r removes row 1; the cursor must stick to its slot — now holding row 2.
+    // Gating on row 2's preview *is* the sticky assertion: a cursor reset to the
+    // top would show the current worktree's preview and time this out.
+    send(&writer, b"\x1br");
+    wait_for_stable_with_content(
+        &rx,
+        &mut parser,
+        Some(&format!("{row2} has no uncommitted changes")),
+    );
+
+    // Enter switches to the cursor row (row 2).
+    send(&writer, b"\r");
+    drop(writer);
+
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(5) {
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let _ = child.kill();
+    drain(&rx, &mut parser);
+    let exit_code = child.wait().unwrap().exit_code() as i32;
+
+    (row2.to_string(), parser.screen().contents(), exit_code)
+}
+
+/// alt-r keeps the cursor on the removed row's slot. After removing the first
+/// non-current worktree, the cursor stays on the row that slides up (the next
+/// worktree), so Enter switches there — not back to the current worktree at the
+/// top, which is where skim's reload would otherwise reset the cursor.
+#[rstest]
+fn test_switch_picker_alt_r_keeps_cursor_sticky(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.add_worktree("wt-keep");
+    repo.add_worktree("wt-drop");
+
+    let env_vars = repo.test_env_vars();
+    let (landing, screen, exit_code) = drive_alt_r_then_switch(
+        &["switch", "--no-cd", "--format=json"],
+        repo.root_path(),
+        &env_vars,
+        ["wt-keep", "wt-drop"],
+    );
+
+    assert_eq!(
+        exit_code, 0,
+        "switch after alt-r should exit 0.\nScreen:\n{screen}"
+    );
+    // The structured result reaches stdout only after the switch pipeline ran;
+    // it targets the sticky row, not the current worktree.
+    assert!(
+        screen.contains("\"action\""),
+        "switch emitted its --format=json result.\nScreen:\n{screen}"
+    );
+    assert!(
+        screen.contains(&landing),
+        "switch targeted the sticky row `{landing}`.\nScreen:\n{screen}"
+    );
+}
+
+/// Removing the sole row matching an active query leaves the filtered list empty,
+/// so the cursor-reposition gives up once the matcher settles empty rather than
+/// spinning the event loop. The picker stays responsive — its screen stabilizes,
+/// then aborts cleanly.
+#[rstest]
+fn test_switch_picker_alt_r_no_match_stays_responsive(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.add_worktree("solo-wt");
+
+    let env_vars = repo.test_env_vars();
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            ("solo-wt", Some("solo-wt")), // filter to the sole matching worktree
+            ("\x1br", None),              // alt-r removes it; query now matches nothing
+        ],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
 }

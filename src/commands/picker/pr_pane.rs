@@ -64,10 +64,19 @@ pub(super) fn description(body: &str, width: usize) -> String {
         return String::new();
     }
     let reset = Reset;
+    format!("\n{reset}{}\n", markdown_in_gutter(body, width))
+}
+
+/// Render `body` as markdown and quote it in the house gutter, returning no
+/// leading/trailing newline — the shared inner form behind [`description`] and
+/// the `--prs` comments pane (`prs::render_comment_blocks`), so the PR/MR body
+/// and each comment read alike. The markdown wraps to the gutter's inner width
+/// (the bar plus its pad take two columns) so the gutter's own wrap is a no-op
+/// rather than re-breaking the already-styled lines.
+pub(super) fn markdown_in_gutter(body: &str, width: usize) -> String {
     let rendered =
         crate::md_help::render_markdown_in_help_with_width(body, Some(width.saturating_sub(2)));
-    let gutter = format_with_gutter(&rendered, Some(width));
-    format!("\n{reset}{gutter}\n")
+    format_with_gutter(&rendered, Some(width))
 }
 
 #[cfg(test)]

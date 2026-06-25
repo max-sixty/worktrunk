@@ -1,0 +1,20 @@
+---
+source: src/trace/profile.rs
+expression: "plain(profile.render_text(\"trace.log\"))"
+---
+PERFORMANCE PROFILE @ trace.log
+  0 subprocesses · 0.00ms subprocess time · parallelism n/a · peak n/a · 8.00ms traced
+
+CACHE
+  no commands re-run with the same context
+
+KEY INTERVALS
+  parallel phase  6.00ms
+  collect total   8.00ms
+  skeleton/first-result not recorded — these need an interactive terminal; re-run in a terminal, or use wt-perf timeline -- list --progressive
+
+PHASES
+  0.00ms           List collect started
+  1.00ms  +1.00ms  Parallel execution started
+  7.00ms  +6.00ms  All results drained
+  8.00ms  +1.00ms  List collect complete

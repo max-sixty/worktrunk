@@ -23,7 +23,7 @@ use std::time::Duration;
 use dashmap::DashMap;
 use worktrunk::git::Repository;
 
-use super::items::{PreviewCache, WorktreeSkimItem};
+use super::items::{PreviewCache, PreviewCacheKey, WorktreeSkimItem};
 use super::preview::PreviewMode;
 use super::summary;
 use crate::commands::list::collect::COLLECT_POOL;
@@ -143,6 +143,44 @@ impl PreviewOrchestrator {
         let cache = Arc::clone(&self.cache);
         self.spawn_task(move || {
             summary::generate_and_cache_summary(&item, &llm_command, &cache, &repo);
+        });
+    }
+
+    /// Spawn a preview-compute task whose value comes from a caller-supplied
+    /// closure. Returns immediately.
+    ///
+    /// The general-purpose companion to [`Self::spawn_preview`]: that method
+    /// computes a worktree `ListItem`'s preview via the local-git
+    /// `compute_and_page_preview`, whereas `--prs` rows (`PrSkimItem`) have no
+    /// local worktree, so they fetch their `log` / `comments` panes through a
+    /// forge CLI and pass that work in as `compute`. Both share the same
+    /// [`PreviewCache`], the same `COLLECT_POOL` routing, and the same
+    /// pending-counter accounting (so the dry-run path's `wait_for_idle` and
+    /// the cache dump cover PR-row fetches too).
+    ///
+    /// Idempotent on `key` (short-circuits on a cache hit) and runs `compute`
+    /// outside any DashMap lock, like `spawn_preview`. A `None` or empty result
+    /// is deliberately NOT cached: the slot stays empty (read as "still
+    /// loading"), so a later `spawn_compute` with the same key recomputes. The
+    /// `--prs` callers spawn once per row and never re-invoke, so they convert a
+    /// failed fetch into a terminal "couldn't load" pane and hand that back as
+    /// `Some(..)` rather than `None` — an uncached `None` would strand the tab on
+    /// its loading placeholder until the picker reopens.
+    pub(super) fn spawn_compute<F>(&self, key: PreviewCacheKey, compute: F)
+    where
+        F: FnOnce(&Repository) -> Option<String> + Send + 'static,
+    {
+        let cache = Arc::clone(&self.cache);
+        let repo = self.repo.clone();
+        self.spawn_task(move || {
+            if cache.contains_key(&key) {
+                return;
+            }
+            if let Some(value) = compute(&repo)
+                && !value.is_empty()
+            {
+                cache.insert(key, value);
+            }
         });
     }
 
@@ -457,6 +495,61 @@ mod tests {
         assert_eq!(
             disk.raw_log, "STALE_MARKER\n",
             "non-Log spawn must not trigger Log refresh"
+        );
+    }
+
+    /// `spawn_compute` fills the shared cache from a closure, short-circuits a
+    /// duplicate key, and refuses to cache a `None` or empty result (so a
+    /// transient forge failure doesn't pin a blank pane). One test covers the
+    /// belief "the generic spawn path behaves like spawn_preview's caching".
+    #[test]
+    fn spawn_compute_fills_caches_once_and_skips_empty() {
+        let t = TestRepo::new();
+        let orch = orch_for(&t);
+
+        // A populated value lands in the cache under its key.
+        orch.spawn_compute(("pr:7".to_string(), PreviewMode::Log), |_| {
+            Some("commit list".to_string())
+        });
+        orch.wait_for_idle();
+        assert_eq!(
+            orch.cache
+                .get(&("pr:7".to_string(), PreviewMode::Log))
+                .map(|v| v.clone()),
+            Some("commit list".to_string())
+        );
+
+        // A second spawn for the same key short-circuits on `contains_key`, so
+        // the original value survives even though this closure would overwrite.
+        orch.spawn_compute(("pr:7".to_string(), PreviewMode::Log), |_| {
+            Some("REPLACED".to_string())
+        });
+        orch.wait_for_idle();
+        assert_eq!(
+            orch.cache
+                .get(&("pr:7".to_string(), PreviewMode::Log))
+                .map(|v| v.clone()),
+            Some("commit list".to_string()),
+            "duplicate key short-circuits"
+        );
+
+        // `None` (forge failure) and `Some("")` both leave the slot empty.
+        orch.spawn_compute(("pr:9".to_string(), PreviewMode::Log), |_| None);
+        orch.spawn_compute(("pr:8".to_string(), PreviewMode::Log), |_| {
+            Some(String::new())
+        });
+        orch.wait_for_idle();
+        assert!(
+            !orch
+                .cache
+                .contains_key(&("pr:9".to_string(), PreviewMode::Log)),
+            "None is not cached"
+        );
+        assert!(
+            !orch
+                .cache
+                .contains_key(&("pr:8".to_string(), PreviewMode::Log)),
+            "empty string is not cached"
         );
     }
 

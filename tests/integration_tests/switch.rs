@@ -1,8 +1,8 @@
 use crate::common::{
-    TestRepo, configure_directive_files, directive_files, make_snapshot_cmd,
-    make_snapshot_cmd_with_global_flags, repo, repo_with_remote, set_temp_home_env,
-    setup_home_snapshot_settings, setup_snapshot_settings, temp_home, wait_for_file_content,
-    wt_command,
+    SLEEP_FOR_ABSENCE_CHECK, TestRepo, configure_directive_files, directive_files,
+    make_snapshot_cmd, make_snapshot_cmd_with_global_flags, repo, repo_with_remote,
+    set_temp_home_env, setup_home_snapshot_settings, setup_snapshot_settings, temp_home,
+    wait_for_file_content, wt_command,
 };
 use ansi_str::AnsiStr;
 use insta_cmd::assert_cmd_snapshot;
@@ -1120,7 +1120,7 @@ approved-commands = ["{}"]
     // post-start runs in the background; with --no-hooks it is never spawned,
     // but sleep briefly so a regression that incorrectly spawns it has time to
     // create the marker (per tests/CLAUDE.md "Testing absence").
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     let repo_name = repo.root_path().file_name().unwrap().to_str().unwrap();
     let worktree = repo
         .root_path()
@@ -1176,7 +1176,7 @@ fn test_switch_no_config_commands_with_yes(repo: TestRepo) {
     // post-start runs in the background; with --no-hooks it is never spawned,
     // but sleep briefly so a regression that incorrectly spawns it has time to
     // create the marker (per tests/CLAUDE.md "Testing absence").
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     let repo_name = repo.root_path().file_name().unwrap().to_str().unwrap();
     let worktree = repo
         .root_path()
@@ -1250,7 +1250,7 @@ post-start = "echo post-start-from-invoking > {{ repo_path }}/post-start-marker.
     );
 
     // The base branch's committed hook must never run.
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     assert!(
         !repo.root_path().join("base-branch-marker.txt").exists(),
         "the base branch's committed config must not be consulted for `--create`"
@@ -1295,7 +1295,7 @@ fn test_switch_existing_reads_invoking_worktree_config(mut repo: TestRepo) {
     );
 
     // The destination worktree's own hook must never run.
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     assert!(
         !repo.root_path().join("dest-marker.txt").exists(),
         "the destination worktree's config must not be consulted"
@@ -1375,7 +1375,7 @@ fn test_switch_create_honors_project_config_path_override(mut repo: TestRepo) {
     wait_for_file_content(&right);
     assert_eq!(fs::read_to_string(&right).unwrap().trim(), "OVERRIDE-HOOK");
     // The base ref's committed hook must never have run.
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     assert!(
         !repo.root_path().join("wrong-marker.txt").exists(),
         "the base ref's committed hook must not run when the config path is overridden"
@@ -2370,6 +2370,245 @@ fn test_switch_prs_dry_run_github(repo: TestRepo) {
     );
 }
 
+/// The `log` tab on a `--prs` row loads its commits in the background: as each
+/// PR row streams in, `spawn_pr_previews` kicks off `gh pr view <n> --json
+/// commits` on `COLLECT_POOL`, keyed by the row's `pr:{N}` token. The dry-run
+/// path joins that work and dumps the preview cache, so a `{branch:"pr:42",
+/// mode:2}` (Log) entry with non-empty bytes proves the whole mechanism end to
+/// end: `spawn_compute` → `compute_pr_log` → `render_github_commits` → cache.
+///
+/// `headRefOid` here is a SHA that isn't in the test repo's object store, so
+/// `compute_pr_log`'s local-`git log` fast path misses and falls back to the
+/// forge API — exercising that branch (the present-head fast path has its own
+/// test, `test_switch_prs_dry_run_github_log_tab_local`).
+#[cfg(unix)]
+#[rstest]
+fn test_switch_prs_dry_run_github_log_tab(repo: TestRepo) {
+    repo.write_project_config("[forge]\nplatform = \"github\"\n");
+    let pr_json = r#"[{"number":42,"title":"Retry the flaky test","headRefName":"fix/flaky","headRefOid":"1111111111111111111111111111111111111111","author":{"login":"octocat"},"isDraft":false,"url":"https://github.com/owner/test-repo/pull/42"}]"#;
+    let commits_json = r#"{"commits":[{"oid":"abc1234500000000000000000000000000000000","messageHeadline":"Wrap the request in a retry"}]}"#;
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    fs::write(mock_bin.join("list.json"), pr_json).unwrap();
+    fs::write(mock_bin.join("commits.json"), commits_json).unwrap();
+    MockConfig::new("gh")
+        .version("gh version 1.0.0 (mock)")
+        .command("pr list", MockResponse::file("list.json"))
+        // `gh pr view 42 --json commits` matches the "pr view" compound key.
+        .command("pr view", MockResponse::file("commits.json"))
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "--prs"]);
+    cmd.env("WORKTRUNK_PICKER_DRY_RUN", "1");
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "dry-run --prs log tab failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
+    let entries = parsed["entries"].as_array().expect("entries array");
+    // Mode 2 is Log (see `PreviewMode`); the row keys its cache by `pr:42`.
+    let log_entry = entries
+        .iter()
+        .find(|e| e["branch"] == "pr:42" && e["mode"] == 2)
+        .unwrap_or_else(|| panic!("no pr:42 Log cache entry in dump:\n{stdout}"));
+    assert!(
+        log_entry["bytes"].as_u64().unwrap_or(0) > 0,
+        "log pane rendered non-empty: {log_entry}"
+    );
+}
+
+/// When a `--prs` row's head commit is already in the local object store, the
+/// `log` tab renders the rich local `git log` instead of fetching from the
+/// forge. Here `gh pr list` reports the repo's own HEAD as `headRefOid` and the
+/// mocked `gh pr view` is rigged to fail — so a non-empty `pr:42` Log cache
+/// entry can only have come from the local-`git log` fast path, proving the
+/// `headRefOid` → `spawn_pr_previews` → `compute_pr_log` wiring short-circuits
+/// the API when the commit is present.
+///
+/// The same run pins the deferred-fetch failure contract: the `comments` tab has
+/// no local path, so its forge fetch fails here (`pr view` → exit 1), and the
+/// closure caches a terminal "couldn't load" pane rather than leaving the slot
+/// empty — so the present Log entry (local fast path) and the present, non-empty
+/// Comments entry (failure pane) both prove the row streamed and resolved. The
+/// tab shows a clear failure for the session, never a perpetual loading spinner.
+#[cfg(unix)]
+#[rstest]
+fn test_switch_prs_dry_run_github_log_tab_local(repo: TestRepo) {
+    repo.write_project_config("[forge]\nplatform = \"github\"\n");
+    let head = repo.head_sha();
+    let pr_json = format!(
+        r#"[{{"number":42,"title":"Local head","headRefName":"fix/flaky","headRefOid":"{head}","author":{{"login":"octocat"}},"isDraft":false,"url":"https://github.com/owner/test-repo/pull/42"}}]"#
+    );
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    fs::write(mock_bin.join("list.json"), &pr_json).unwrap();
+    MockConfig::new("gh")
+        .version("gh version 1.0.0 (mock)")
+        .command("pr list", MockResponse::file("list.json"))
+        // The local fast path must win: a forge `pr view` would fail here, so a
+        // non-empty Log entry proves the commits came from the local `git log`.
+        .command("pr view", MockResponse::exit(1))
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "--prs"]);
+    cmd.env("WORKTRUNK_PICKER_DRY_RUN", "1");
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "dry-run --prs local log tab failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
+    let entries = parsed["entries"].as_array().expect("entries array");
+    let log_entry = entries
+        .iter()
+        .find(|e| e["branch"] == "pr:42" && e["mode"] == 2)
+        .unwrap_or_else(|| panic!("no pr:42 Log cache entry in dump:\n{stdout}"));
+    assert!(
+        log_entry["bytes"].as_u64().unwrap_or(0) > 0,
+        "local log pane rendered non-empty: {log_entry}"
+    );
+
+    // The comments tab has no local path, so its forge fetch failed (pr view →
+    // exit 1); the closure caches a terminal "couldn't load" pane rather than
+    // leaving the slot empty. Mode 7 is Comments. A non-empty entry here can only
+    // be that failure pane — a successful comments fetch is impossible with
+    // `pr view` rigged to exit 1.
+    let comments_entry = entries
+        .iter()
+        .find(|e| e["branch"] == "pr:42" && e["mode"] == 7)
+        .unwrap_or_else(|| {
+            panic!("failed comments fetch must cache a couldn't-load pane:\n{stdout}")
+        });
+    assert!(
+        comments_entry["bytes"].as_u64().unwrap_or(0) > 0,
+        "couldn't-load pane rendered non-empty: {comments_entry}"
+    );
+}
+
+/// A `--prs` row whose deferred fetches all fail caches a terminal "couldn't
+/// load" pane for each tab rather than leaving the slot empty (which would
+/// strand the tab on its loading spinner for the session — there's no in-session
+/// retry). Here the PR carries no `headRefOid`, so the `log` tab can't take the
+/// local fast path and must hit the forge API, and `gh pr view` is rigged to
+/// exit 1 — so both the `log` (mode 2) and `comments` (mode 7) cache entries are
+/// present and non-empty, each the couldn't-load pane.
+#[cfg(unix)]
+#[rstest]
+fn test_switch_prs_dry_run_github_deferred_fetch_failure(repo: TestRepo) {
+    repo.write_project_config("[forge]\nplatform = \"github\"\n");
+    // No headRefOid → the log tab can't render locally and must hit the forge.
+    let pr_json = r#"[{"number":42,"title":"No local head","headRefName":"fix/flaky","author":{"login":"octocat"},"isDraft":false,"url":"https://github.com/owner/test-repo/pull/42"}]"#;
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    fs::write(mock_bin.join("list.json"), pr_json).unwrap();
+    MockConfig::new("gh")
+        .version("gh version 1.0.0 (mock)")
+        .command("pr list", MockResponse::file("list.json"))
+        // Both deferred fetches (`pr view --json commits` / `--json comments`)
+        // fail, so each tab falls back to the couldn't-load pane.
+        .command("pr view", MockResponse::exit(1))
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "--prs"]);
+    cmd.env("WORKTRUNK_PICKER_DRY_RUN", "1");
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "dry-run --prs deferred-failure run failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
+    let entries = parsed["entries"].as_array().expect("entries array");
+    // Both deferred tabs cached a terminal couldn't-load pane (non-empty), never
+    // an empty slot. Modes: 2 = Log, 7 = Comments.
+    for (mode, tab) in [(2, "log"), (7, "comments")] {
+        let entry = entries
+            .iter()
+            .find(|e| e["branch"] == "pr:42" && e["mode"] == mode)
+            .unwrap_or_else(|| panic!("no pr:42 {tab} cache entry in dump:\n{stdout}"));
+        assert!(
+            entry["bytes"].as_u64().unwrap_or(0) > 0,
+            "{tab} couldn't-load pane rendered non-empty: {entry}"
+        );
+    }
+}
+
+/// The `comments` tab (7) loads the PR discussion in the background, the same
+/// way the `log` tab loads commits: `spawn_pr_previews` fires `gh pr view <n>
+/// --json comments` keyed by the row's `pr:{N}` token. A `{branch:"pr:42",
+/// mode:7}` entry in the dry-run cache dump proves `compute_pr_comments` →
+/// `render_github_comments` → cache ran end to end. (`gh pr view --json
+/// commits` and `--json comments` both match the mock's `pr view` key, so the
+/// canned response carries both arrays; serde ignores the one each renderer
+/// doesn't read.)
+#[cfg(unix)]
+#[rstest]
+fn test_switch_prs_dry_run_github_comments_tab(repo: TestRepo) {
+    repo.write_project_config("[forge]\nplatform = \"github\"\n");
+    let pr_json = r#"[{"number":42,"title":"Retry the flaky test","headRefName":"fix/flaky","author":{"login":"octocat"},"isDraft":false,"url":"https://github.com/owner/test-repo/pull/42"}]"#;
+    let view_json = r#"{"commits":[{"oid":"abc1234500000000000000000000000000000000","messageHeadline":"Wrap the request in a retry"}],"comments":[{"author":{"login":"reviewer"},"body":"Nice fix.","createdAt":"2024-12-01T00:00:00Z"}]}"#;
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    fs::write(mock_bin.join("list.json"), pr_json).unwrap();
+    fs::write(mock_bin.join("view.json"), view_json).unwrap();
+    MockConfig::new("gh")
+        .version("gh version 1.0.0 (mock)")
+        .command("pr list", MockResponse::file("list.json"))
+        .command("pr view", MockResponse::file("view.json"))
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "--prs"]);
+    cmd.env("WORKTRUNK_PICKER_DRY_RUN", "1");
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "dry-run --prs comments tab failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
+    let entries = parsed["entries"].as_array().expect("entries array");
+    // Mode 7 is Comments; the row keys its cache by `pr:42`.
+    let comments_entry = entries
+        .iter()
+        .find(|e| e["branch"] == "pr:42" && e["mode"] == 7)
+        .unwrap_or_else(|| panic!("no pr:42 Comments cache entry in dump:\n{stdout}"));
+    assert!(
+        comments_entry["bytes"].as_u64().unwrap_or(0) > 0,
+        "comments pane rendered non-empty: {comments_entry}"
+    );
+}
+
 /// GitLab counterpart of [`test_switch_prs_dry_run_github`], covering the
 /// `fetch_gitlab` / `parse_gitlab_mrs` / `gitlab_mr_status` path via a mocked
 /// `glab mr list`.
@@ -2391,6 +2630,65 @@ fn test_switch_prs_dry_run_gitlab(repo: TestRepo) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
+}
+
+/// GitLab counterpart of the GitHub `_log_tab` / `_comments_tab` dry-run tests:
+/// an MR row's deferred `log` and `comments` tabs load via background `glab api
+/// --paginate projects/:fullpath/merge_requests/<n>/commits` / `…/notes?sort=asc`
+/// calls keyed by the row's `mr:{N}` token. Both `mode:2` (Log) and `mode:7`
+/// (Comments) cache entries with non-empty bytes prove `compute_pr_log` /
+/// `compute_pr_comments` → `render_gitlab_commits` / `render_gitlab_notes` →
+/// cache for the GitLab forge — the half the unit tests (canned JSON straight
+/// into the renderers) can't reach, pinning the endpoint/arg construction.
+///
+/// Both `glab api …/commits` and `…/notes` match the mock's `api --paginate`
+/// compound key, so one canned response carries all fields each renderer reads
+/// (`short_id`/`title` for commits; `body`/`author`/`created_at`/`system` for
+/// notes) — serde ignores the rest.
+#[cfg(unix)]
+#[rstest]
+fn test_switch_prs_dry_run_gitlab_deferred_tabs(repo: TestRepo) {
+    repo.write_project_config("[forge]\nplatform = \"gitlab\"\n");
+    let mr_json = r#"[{"iid":7,"title":"Cache the dependency graph","source_branch":"feat/cache","author":{"username":"alice"},"draft":false,"web_url":"https://gitlab.com/owner/test-repo/-/merge_requests/7"}]"#;
+    let api_json = r#"[{"short_id":"abc12345","title":"Cache deps between jobs","body":"Looks good.","author":{"username":"reviewer"},"created_at":"2024-12-01T00:00:00Z","system":false}]"#;
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    fs::write(mock_bin.join("list.json"), mr_json).unwrap();
+    fs::write(mock_bin.join("api.json"), api_json).unwrap();
+    MockConfig::new("glab")
+        .version("glab version 1.0.0 (mock)")
+        .command("mr list", MockResponse::file("list.json"))
+        // `glab api --paginate <endpoint>` for both commits and notes.
+        .command("api --paginate", MockResponse::file("api.json"))
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "--prs"]);
+    cmd.env("WORKTRUNK_PICKER_DRY_RUN", "1");
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "dry-run --prs gitlab deferred tabs failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
+    let entries = parsed["entries"].as_array().expect("entries array");
+    for (mode, label) in [(2, "Log"), (7, "Comments")] {
+        let entry = entries
+            .iter()
+            .find(|e| e["branch"] == "mr:7" && e["mode"] == mode)
+            .unwrap_or_else(|| panic!("no mr:7 {label} cache entry in dump:\n{stdout}"));
+        assert!(
+            entry["bytes"].as_u64().unwrap_or(0) > 0,
+            "{label} pane rendered non-empty: {entry}"
+        );
+    }
 }
 
 /// An empty forge list still runs `stream_open_prs` to completion, exercising
@@ -3018,7 +3316,7 @@ fn test_switch_pr_reads_invoking_worktree_config(#[from(repo_with_remote)] repo:
         "INVOKING-HOOK-RAN",
         "post-start should run from the invoking worktree's config"
     );
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     assert!(
         !repo.root_path().join("pr-hook-marker.txt").exists(),
         "the PR ref's committed config must not be consulted"
@@ -5180,6 +5478,40 @@ fn test_switch_pr_azure_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) 
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_azure_same_repo", cmd);
+    });
+}
+
+#[rstest]
+fn test_switch_pr_azure_project_name_with_spaces(#[from(repo_with_remote)] mut repo: TestRepo) {
+    repo.add_worktree("feature-auth");
+    repo.run_git(&["push", "origin", "feature-auth"]);
+
+    set_azure_remote_url(
+        &repo,
+        "https://dev.azure.com/myorg/project%20with%20spaces/_git/test-repo",
+    );
+
+    let az_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "createdBy": {"uniqueName": "alice@example.com"},
+        "status": "active",
+        "isDraft": false,
+        "sourceRefName": "refs/heads/feature-auth",
+        "repository": {
+            "name": "test-repo",
+            "project": {"name": "project with spaces"},
+            "webUrl": "https://dev.azure.com/myorg/project%20with%20spaces/_git/test-repo"
+        },
+        "forkSource": null
+    }"#;
+
+    let mock_bin = setup_mock_az(&repo, Some(az_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_azure_project_name_with_spaces", cmd);
     });
 }
 

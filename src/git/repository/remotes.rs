@@ -93,6 +93,7 @@ use anyhow::Context;
 
 use super::{GitRemoteUrl, GitRepoInfo, Repository};
 use crate::git::error::RefType;
+use crate::git::url_path_segments_eq;
 
 impl Repository {
     /// Get the primary remote name for this repository.
@@ -234,8 +235,8 @@ impl Repository {
                 .is_some_and(|o| o.eq_ignore_ascii_case(organization))
                 && parsed
                     .azure_project()
-                    .is_some_and(|p| p.eq_ignore_ascii_case(project))
-                && parsed.repo().eq_ignore_ascii_case(repo_name)
+                    .is_some_and(|p| url_path_segments_eq(p, project))
+                && url_path_segments_eq(parsed.repo(), repo_name)
         })
     }
 

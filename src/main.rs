@@ -36,7 +36,6 @@ pub(crate) use invocation::{
 pub(crate) use crate::cli::{OutputFormat, StatuslineFormat};
 
 use commands::commit::HookGate;
-#[cfg(unix)]
 use commands::handle_picker;
 use commands::worktree::{PushKind, PushOutcome, PushResult, handle_no_ff_merge, handle_push};
 use commands::{
@@ -46,7 +45,7 @@ use commands::{
     handle_claude_uninstall, handle_codex_install, handle_codex_uninstall, handle_completions,
     handle_config_create, handle_config_show, handle_config_update, handle_configure_shell,
     handle_custom_command, handle_hints_clear, handle_hints_get, handle_hook_show, handle_init,
-    handle_list, handle_logs_list, handle_merge, handle_opencode_install,
+    handle_list, handle_logs_list, handle_logs_profile, handle_merge, handle_opencode_install,
     handle_opencode_uninstall, handle_promote, handle_rebase, handle_remove_command,
     handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get,
     handle_state_set, handle_state_show, handle_switch_command, handle_unconfigure_shell,
@@ -509,6 +508,7 @@ fn handle_state_command(action: StateCommand, yes: bool) -> anyhow::Result<()> {
             }
             match action {
                 Some(LogsAction::Get) | None => handle_logs_list(format),
+                Some(LogsAction::Profile { file }) => handle_logs_profile(file, format),
                 Some(LogsAction::Clear) => handle_state_clear("logs", None, false),
             }
         }
@@ -667,20 +667,11 @@ fn handle_list_command(args: ListArgs) -> anyhow::Result<()> {
     }
 }
 
-#[cfg(unix)]
 fn handle_select_command(branches: bool, remotes: bool) -> anyhow::Result<()> {
     // Deprecated: show warning and delegate to handle_picker
     warn_select_deprecated();
     worktrunk::config::suppress_warnings();
     handle_picker(branches, remotes, false, None, SwitchFormat::Text)
-}
-
-#[cfg(not(unix))]
-fn handle_select_command(_branches: bool, _remotes: bool) -> anyhow::Result<()> {
-    use worktrunk::git::WorktrunkError;
-    warn_select_deprecated();
-    commands::print_windows_picker_unavailable();
-    Err(WorktrunkError::AlreadyDisplayed { exit_code: 1 }.into())
 }
 
 /// Rayon thread count sized for mixed git+network I/O workloads.

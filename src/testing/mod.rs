@@ -2731,6 +2731,28 @@ fn exponential_sleep(attempt: u32) {
     ExponentialBackoff::default().sleep(attempt);
 }
 
+/// Fixed window for an **absence** assertion, proving that something did
+/// *not* happen (a hook that must not fire, a marker that must not appear).
+///
+/// The polarity of the assertion decides the tool. A **presence** assertion
+/// waits for an event that *will* happen: poll with [`wait_for_file`] and
+/// friends, which return the instant the event lands and tolerate a slow CI
+/// runner via a generous timeout. An **absence** assertion has no event to
+/// wait for, so polling can't help: the only option is to wait long enough
+/// that the thing would have happened if it were going to, then assert it
+/// didn't. 500ms is the floor; a starved background process needs a wide
+/// margin for the window to be conclusive.
+///
+/// Use this constant rather than a bare `Duration::from_millis(500)` so
+/// absence sleeps are greppable and self-documenting. Never pair it with a
+/// presence assertion in the same test: a fixed sleep before a "did happen"
+/// check is the flaky pattern this constant exists to keep out of the
+/// assertion path. When the absence is *structural* (the event is gated on a
+/// condition the test never sets up, so it can't fire at all), no window is
+/// needed: poll the positive precondition instead and the absence holds by
+/// construction.
+pub const SLEEP_FOR_ABSENCE_CHECK: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// True when a worktree's contents have been removed — either the path
 /// is gone, or it's an empty placeholder directory.
 ///

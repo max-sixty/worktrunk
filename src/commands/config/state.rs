@@ -70,8 +70,9 @@
 //! under a single reserved subdirectory rather than adding sibling top-level dirs.
 
 use std::fmt::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use crate::commands::picker::preview_cache;
 use anyhow::Context;
 use color_print::cformat;
 use path_slash::PathExt as _;
@@ -90,38 +91,6 @@ use super::super::list::ci_status::{CachedCiStatus, CiBranchName, MaxPrNumber};
 use crate::display::format_relative_time_short;
 use crate::help_pager::show_help_in_pager;
 use crate::summary::CachedSummary;
-
-// ==================== Picker preview cache shims ====================
-//
-// `commands::picker` is gated `#[cfg(unix)]` (see `commands/mod.rs`), so its
-// preview cache module disappears entirely on Windows. The bundled "git
-// commands cache" category still needs to compile and report consistent
-// counts on every platform — these shims forward to the picker cache on
-// unix and return 0 / `Ok(0)` elsewhere so call sites stay platform-agnostic.
-
-fn picker_preview_count(repo: &Repository) -> usize {
-    #[cfg(unix)]
-    {
-        crate::commands::picker::preview_cache::count_all(repo)
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = repo;
-        0
-    }
-}
-
-fn picker_preview_clear(repo: &Repository) -> anyhow::Result<usize> {
-    #[cfg(unix)]
-    {
-        crate::commands::picker::preview_cache::clear_all(repo)
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = repo;
-        Ok(0)
-    }
-}
 
 // ==================== Log Management ====================
 
@@ -676,6 +645,56 @@ pub fn handle_logs_list(format: SwitchFormat) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `wt config state logs profile [FILE]` — summarize where a `-vv` run spent its
+/// time, from the `[wt-trace]` records in `trace.log` (or a given file / stdin).
+pub fn handle_logs_profile(file: Option<PathBuf>, format: SwitchFormat) -> anyhow::Result<()> {
+    let (input, source) = match file {
+        Some(ref p) if p.as_os_str() == "-" => {
+            let mut buf = String::new();
+            std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)
+                .context("read trace from stdin")?;
+            (buf, "stdin".to_string())
+        }
+        Some(p) => {
+            let content = std::fs::read_to_string(&p).with_context(|| {
+                format!("Failed to read trace log {}", format_path_for_display(&p))
+            })?;
+            (content, format_path_for_display(&p).to_string())
+        }
+        None => {
+            let repo = Repository::current().map_err(|_| {
+                anyhow::anyhow!(cformat!(
+                    "Not inside a git repository, so there's no default <bold>.git/wt/logs/trace.log</> to read; pass a trace log path or <bold>-</> for stdin"
+                ))
+            })?;
+            let path = repo.wt_logs_dir().join("trace.log");
+            let content = std::fs::read_to_string(&path).map_err(|_| {
+                anyhow::anyhow!(cformat!(
+                    "No trace log at <bold>{}</>; run a command with <bold>-vv</> to capture one",
+                    format_path_for_display(&path)
+                ))
+            })?;
+            (content, format_path_for_display(&path).to_string())
+        }
+    };
+
+    let entries = worktrunk::trace::parse_lines(&input);
+    if entries.is_empty() {
+        anyhow::bail!(cformat!(
+            "No [wt-trace] records in {source}; run a command with <bold>-vv</> to capture a trace"
+        ));
+    }
+
+    let profile = worktrunk::trace::Profile::from_entries(&entries);
+
+    if format == SwitchFormat::Json {
+        println!("{}", serde_json::to_string_pretty(&profile)?);
+    } else {
+        show_help_in_pager(&profile.render_text(&source), true);
+    }
+    Ok(())
+}
+
 // ==================== State Get/Set/Clear Commands ====================
 
 /// Handle the state get command
@@ -1109,7 +1128,7 @@ fn clear_summary_reported(repo: &Repository) -> anyhow::Result<bool> {
 /// upstream-diff). Surfaced as one user-facing category — see the parity
 /// docstring at the top of this file.
 fn clear_git_commands_reported(repo: &Repository) -> anyhow::Result<bool> {
-    let cleared = sha_cache::clear_all(repo)? + picker_preview_clear(repo)?;
+    let cleared = sha_cache::clear_all(repo)? + preview_cache::clear_all(repo)?;
     if cleared > 0 {
         eprintln!(
             "{}",
@@ -1265,7 +1284,7 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         "ci_status": ci_status,
         "max_pr_number": MaxPrNumber::read(repo),
         "summaries": summaries,
-        "git_commands_cache": sha_cache::count_all(repo) + picker_preview_count(repo),
+        "git_commands_cache": sha_cache::count_all(repo) + preview_cache::count_all(repo),
         "vars": vars_data,
         "command_log": command_log,
         "hook_output": hook_output,
@@ -1430,7 +1449,7 @@ fn handle_cache_get_json(repo: &Repository) -> anyhow::Result<()> {
         "ci_status": ci_status_json(repo),
         "max_pr_number": MaxPrNumber::read(repo),
         "summaries": summaries_json(repo),
-        "git_commands_cache": sha_cache::count_all(repo) + picker_preview_count(repo),
+        "git_commands_cache": sha_cache::count_all(repo) + preview_cache::count_all(repo),
         "hints": repo.list_shown_hints(),
     });
 
@@ -1513,7 +1532,7 @@ fn render_summary_section(out: &mut String, repo: &Repository) -> anyhow::Result
 /// regardless of which module owns the entries.
 fn render_git_commands_section(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
     writeln!(out, "{}", format_heading("GIT COMMANDS CACHE", None))?;
-    let cache_count = sha_cache::count_all(repo) + picker_preview_count(repo);
+    let cache_count = sha_cache::count_all(repo) + preview_cache::count_all(repo);
     if cache_count == 0 {
         writeln!(out, "{}", format_with_gutter("(none)", None))?;
     } else {

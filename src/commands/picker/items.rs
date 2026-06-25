@@ -14,7 +14,7 @@ use dashmap::DashMap;
 use ratatui::text::{Line, Span};
 use skim::prelude::*;
 use worktrunk::git::Repository;
-use worktrunk::styling::INFO_SYMBOL;
+use worktrunk::styling::{INFO_SYMBOL, visual_width};
 
 use super::super::list::ci_status::{PrRef, PrStatus};
 use super::super::list::model::ListItem;
@@ -264,13 +264,15 @@ pub(super) struct TabAvailability {
     upstream: bool,
     summary: bool,
     pr: bool,
+    comments: bool,
 }
 
 impl TabAvailability {
     /// A worktree-backed row: working-tree/log/branch-diff always render; the
     /// upstream and summary tabs depend on synchronous skeleton-time facts; the
     /// `pr` tab is available unless the live fetch has reported no PR for this
-    /// branch (see [`WorktreeSkimItem::pr_preview`]).
+    /// branch (see [`WorktreeSkimItem::pr_preview`]). The `comments` tab is
+    /// always empty here — comments are fetched only for `--prs` rows.
     pub(super) fn worktree(has_upstream: bool, summaries_enabled: bool, pr: bool) -> Self {
         Self {
             working_tree: true,
@@ -279,107 +281,203 @@ impl TabAvailability {
             upstream: has_upstream,
             summary: summaries_enabled,
             pr,
+            comments: false,
         }
     }
 
-    /// A `--prs` row: it carries no local worktree, so only the PR tab has
-    /// content; tabs 1-5 are empty.
+    /// A `--prs` row: it carries no local worktree, so the working-tree,
+    /// branch-diff, upstream, and summary tabs are empty. The `pr` tab is built
+    /// at construction; the `log` and `comments` tabs load in the background
+    /// (see `prs::compute_pr_log` / `prs::compute_pr_comments`), so all three
+    /// are available.
     pub(super) fn pull_request() -> Self {
         Self {
             working_tree: false,
-            log: false,
+            log: true,
             branch_diff: false,
             upstream: false,
             summary: false,
             pr: true,
+            comments: true,
         }
     }
 }
 
+/// One preview tab's identity: its `alt-N` digit, label, and whether it's the
+/// active mode / has content for the current row. Built once, then rendered
+/// full or compact depending on the pane width.
+struct Tab {
+    number: u8,
+    label: &'static str,
+    is_active: bool,
+    has_content: bool,
+}
+
 /// Render the preview tab bar, shared by worktree rows and `--prs` rows.
 ///
-/// Every tab always keeps its `N: label` text — only the formatting varies, so
-/// the accelerators stay discoverable. Two **orthogonal** signals carry through
-/// the styling: the **number's** brightness says whether the tab is selectable
-/// (normal = has content, dim = empty for this row — see `TabAvailability`),
-/// and the **label's** weight says whether it's the active mode (bold = active,
-/// dim = inactive). The two compose independently: an empty tab dims its number
-/// whether or not it's selected, but the active tab's label still bolds — so an
-/// active-but-empty tab (dim number, bold label) stays distinct from an
-/// inactive-empty one (dim number, dim label), and the selected tab is always
-/// identifiable even when it has nothing to show (its pane, e.g. "… has no PR",
-/// says the rest).
-pub(super) fn render_preview_tabs(mode: PreviewMode, avail: TabAvailability) -> String {
-    // Full SGR reset (\x1b[0m) after each styled span. color_print's `</>`
-    // emits only \x1b[22m (intensity reset); pairing it with an explicit [0m
-    // keeps dim/bold from bleeding across the dividers and into the rest of the
-    // line in the list and preview panels. Same reason the `compute_*_preview`
-    // helpers below scatter `{reset}` after each styled span.
+/// Every full-form tab keeps its `N: label` text — only the formatting varies,
+/// so the accelerators stay discoverable. Two **orthogonal** signals carry
+/// through the styling: the **number's** brightness says whether the tab is
+/// selectable (normal = has content, dim = empty for this row — see
+/// `TabAvailability`), and the **label's** weight says whether it's the active
+/// mode (bold = active, dim = inactive). The two compose independently: an empty
+/// tab dims its number whether or not it's selected, but the active tab's label
+/// still bolds — so an active-but-empty tab (dim number, bold label) stays
+/// distinct from an inactive-empty one (dim number, dim label), and the selected
+/// tab is always identifiable even when it has nothing to show (its pane, e.g.
+/// "… has no PR", says the rest).
+///
+/// **Width adaptation.** skim renders previews with wrapping off (its default),
+/// so a tab bar wider than `width` would truncate on the right — and the `pr` /
+/// `comments` tabs, exactly the ones with content on a `--prs` row, sit at that
+/// end. When the seven full-form tabs don't fit, the bar falls back to a compact
+/// form (`1 2: log 3 …`): every accelerator digit stays visible, but only the
+/// active tab keeps its label. The two style signals survive — empty digits dim,
+/// the active digit+label bolds — so navigation works at any width. `width` is
+/// the preview pane width skim reports.
+pub(super) fn render_preview_tabs(
+    mode: PreviewMode,
+    avail: TabAvailability,
+    width: usize,
+) -> String {
     let reset = Reset;
 
-    /// Format one tab, keeping the `N: label` text in every state so the
-    /// accelerator never disappears. The number and label carry the two
-    /// orthogonal signals independently: the number dims when the tab is empty
-    /// (not selectable), and the label bolds on the active tab. They compose,
-    /// so an active-but-empty tab is dim-number + bold-label — distinct from an
-    /// inactive-empty one (dim-number + dim-label).
-    fn format_tab(number: u8, label: &str, is_active: bool, has_content: bool) -> String {
-        let number = if has_content {
-            format!("{number}:")
-        } else {
-            cformat!("<dim>{number}:</>")
-        };
-        let label = if is_active {
-            cformat!("<bold>{label}</>")
-        } else {
-            cformat!("<dim>{label}</>")
-        };
-        format!("{number} {label}")
-    }
+    let tabs = [
+        Tab {
+            number: 1,
+            label: "HEAD±",
+            is_active: mode == PreviewMode::WorkingTree,
+            has_content: avail.working_tree,
+        },
+        Tab {
+            number: 2,
+            label: "log",
+            is_active: mode == PreviewMode::Log,
+            has_content: avail.log,
+        },
+        Tab {
+            number: 3,
+            label: "main…±",
+            is_active: mode == PreviewMode::BranchDiff,
+            has_content: avail.branch_diff,
+        },
+        Tab {
+            number: 4,
+            label: "remote⇅",
+            is_active: mode == PreviewMode::UpstreamDiff,
+            has_content: avail.upstream,
+        },
+        Tab {
+            number: 5,
+            label: "summary",
+            is_active: mode == PreviewMode::Summary,
+            has_content: avail.summary,
+        },
+        Tab {
+            number: 6,
+            label: "pr",
+            is_active: mode == PreviewMode::Pr,
+            has_content: avail.pr,
+        },
+        Tab {
+            number: 7,
+            label: "comments",
+            is_active: mode == PreviewMode::Comments,
+            has_content: avail.comments,
+        },
+    ];
 
-    let tab1 = format_tab(
-        1,
-        "HEAD±",
-        mode == PreviewMode::WorkingTree,
-        avail.working_tree,
-    );
-    let tab2 = format_tab(2, "log", mode == PreviewMode::Log, avail.log);
-    let tab3 = format_tab(
-        3,
-        "main…±",
-        mode == PreviewMode::BranchDiff,
-        avail.branch_diff,
-    );
-    let tab4 = format_tab(
-        4,
-        "remote⇅",
-        mode == PreviewMode::UpstreamDiff,
-        avail.upstream,
-    );
-    let tab5 = format_tab(5, "summary", mode == PreviewMode::Summary, avail.summary);
-    let tab6 = format_tab(6, "pr", mode == PreviewMode::Pr, avail.pr);
+    // Prefer the full bar; fall back to compact only when it would overflow the
+    // pane (`visual_width` measures the styled string with ANSI stripped).
+    let full = render_tab_row_full(&tabs, reset);
+    let bar = if visual_width(&full) <= width {
+        full
+    } else {
+        render_tab_row_compact(&tabs, reset)
+    };
 
     // Controls use dim yellow to distinguish from dimmed (white) tabs.
     // The tab numbers above are the alt-N accelerators (bare digits type
     // into the query); Tab/shift-tab cycle the same tabs.
+    //
+    // The controls line is intentionally NOT width-managed: skim clips it on the
+    // right on a narrow pane, but it's only a reminder — the accelerators it
+    // names live in the tab bar above, which IS width-managed, so nothing
+    // navigable is lost when the tail clips.
     let controls = cformat!(
-        "<dim,yellow>Enter: switch | Tab/alt-1…6: preview | alt-c: create | Esc: cancel | ctrl-u/d: scroll | alt-p: toggle</>"
+        "<dim,yellow>Enter: switch | Tab/alt-1…7: preview | alt-c: create | Esc: cancel | ctrl-u/d: scroll | alt-p: toggle</>"
     );
 
-    // End each tab and controls with full reset to prevent style bleeding
-    // into dividers and preview content
-    format!(
-        "{tab1}{reset} | {tab2}{reset} | {tab3}{reset} | {tab4}{reset} | {tab5}{reset} | {tab6}{reset}\n{controls}{reset}\n\n"
-    )
+    // Each tab/segment already ends with a full reset (so styling never bleeds
+    // into the dividers or preview content); `{reset}` here only closes the
+    // controls line's dim-yellow span.
+    format!("{bar}\n{controls}{reset}\n\n")
+}
+
+/// Full tab bar: `N: label` per tab, ` | `-separated. The number dims when the
+/// tab is empty (not selectable), and the label bolds on the active tab — two
+/// orthogonal signals that compose (see [`render_preview_tabs`]).
+fn render_tab_row_full(tabs: &[Tab], reset: Reset) -> String {
+    tabs.iter()
+        .map(|t| {
+            let number = if t.has_content {
+                format!("{}:", t.number)
+            } else {
+                cformat!("<dim>{}:</>", t.number)
+            };
+            let label = if t.is_active {
+                cformat!("<bold>{}</>", t.label)
+            } else {
+                cformat!("<dim>{}</>", t.label)
+            };
+            format!("{number} {label}{reset}")
+        })
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+/// Compact tab bar for narrow panes: just the digits, space-separated, with the
+/// active tab keeping its label (`1 2: log 3 …`). The number still dims when
+/// empty and the active digit+label bolds, so both style signals survive and
+/// every accelerator stays visible — only the inactive labels drop.
+fn render_tab_row_compact(tabs: &[Tab], reset: Reset) -> String {
+    tabs.iter()
+        .map(|t| {
+            if t.is_active {
+                // Active: `N: label`, with the number bold (and dim too when empty).
+                let number = if t.has_content {
+                    cformat!("<bold>{}:</>", t.number)
+                } else {
+                    cformat!("<dim,bold>{}:</>", t.number)
+                };
+                format!("{number} {}{reset}", cformat!("<bold>{}</>", t.label))
+            } else {
+                // Inactive: just the digit, dim when empty.
+                let number = if t.has_content {
+                    t.number.to_string()
+                } else {
+                    cformat!("<dim>{}</>", t.number)
+                };
+                format!("{number}{reset}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The `pr` pane for a worktree row whose branch has a PR/MR. Renders the same
 /// shape as the `--prs` rows' pane (`PrSkimItem::pr_pane`) — reference + title
 /// header, dim-labeled metadata, and the description as markdown — via the
-/// shared [`pr_pane`] helpers, so the two read alike. The title and body ride
-/// the same CI fetch the column already makes (see [`PrStatus`]); a status
-/// without them (an older cache entry, a forge that doesn't expose them) falls
-/// back to a reference-only header and skips the description.
+/// shared [`pr_pane`] helpers, so the two read alike. The title, body, and
+/// comment count ride the same CI fetch the column already makes (see
+/// [`PrStatus`]); a status without them (an older cache entry, a forge that
+/// doesn't expose them) falls back to a reference-only header and skips the
+/// missing lines.
+///
+/// The `comments` line shows only the count — the full thread is a `--prs`-only
+/// fetch (see [`WorktreeSkimItem::comments_unavailable_pane`]). A PR with no
+/// comments carries `None` (zero is flattened at the mapping boundary), so the
+/// line is skipped.
 ///
 /// `width` is the live preview-pane width, used to wrap the markdown body.
 fn render_worktree_pr(branch: &str, pr_ref: PrRef, status: &PrStatus, width: usize) -> String {
@@ -388,6 +486,9 @@ fn render_worktree_pr(branch: &str, pr_ref: PrRef, status: &PrStatus, width: usi
     out.push_str(&pr_pane::metadata_line("branch", branch));
     if let Some(url) = &status.url {
         out.push_str(&pr_pane::metadata_line("url", url));
+    }
+    if let Some(count) = status.comment_count {
+        out.push_str(&pr_pane::metadata_line("comments", &count.to_string()));
     }
     if let Some(body) = status.body.as_deref() {
         out.push_str(&pr_pane::description(body, width));
@@ -399,7 +500,7 @@ impl WorktreeSkimItem {
     /// Render the full preview pane (tab bar + mode content) for an explicit
     /// `mode`. Split out of [`SkimItem::preview`] so the dispatch — including
     /// the `pr` tab's `render_pr_pane` call — is testable with a given mode
-    /// rather than the per-process picker-state file.
+    /// rather than the process-wide picker mode.
     fn render_preview(&self, mode: PreviewMode, width: usize, height: usize) -> String {
         // Build preview: tabs header + content. `has_upstream` and
         // `summaries_enabled` are synchronous skeleton-time facts (see
@@ -414,9 +515,12 @@ impl WorktreeSkimItem {
             self.summaries_enabled,
             self.pr_tab_available(),
         );
-        let mut result = render_preview_tabs(mode, avail);
+        let mut result = render_preview_tabs(mode, avail, width);
         result.push_str(&match mode {
             PreviewMode::Pr => self.render_pr_pane_cached(width),
+            // The `comments` tab (7) is `--prs`-only — worktree rows don't fetch
+            // PR discussion — so it shows a pointer rather than the cache path.
+            PreviewMode::Comments => Self::comments_unavailable_pane(),
             _ => self.preview_for_mode(mode, width, height),
         });
         result
@@ -485,6 +589,15 @@ impl WorktreeSkimItem {
         }
     }
 
+    /// The `comments` tab's pane on a worktree row. The discussion thread is
+    /// fetched only for `--prs` rows (a worktree row has no PR number until its
+    /// `pr` tab resolves one, and no background comments fetch wired to it), so
+    /// the tab dims and points at where comments live.
+    fn comments_unavailable_pane() -> String {
+        let reset = Reset;
+        cformat!("{INFO_SYMBOL}{reset} Comments show on <bold>wt switch --prs</>{reset} rows\n")
+    }
+
     /// Render preview for the given mode with specified dimensions.
     ///
     /// Pure cache read: skim invokes `preview()` synchronously while drawing
@@ -521,9 +634,14 @@ impl WorktreeSkimItem {
             PreviewMode::BranchDiff => ("Loading", "branch diff"),
             PreviewMode::UpstreamDiff => ("Loading", "upstream diff"),
             PreviewMode::Summary => ("Generating", "summary"),
-            // The `pr` tab has no background task — `preview()` renders it from
-            // the row's cached `pr_status` via `render_pr_pane`, never here.
+            // The `pr` and `comments` tabs have no worktree-row background task —
+            // `preview()` renders `pr` from the cached `pr_status` via
+            // `render_pr_pane` and routes `comments` to `comments_unavailable_pane`,
+            // never here.
             PreviewMode::Pr => unreachable!("pr tab renders via render_pr_pane"),
+            PreviewMode::Comments => {
+                unreachable!("comments tab renders via comments_unavailable_pane")
+            }
         };
         let key = mode as u8;
         format!("○ {verb} {label}. Press alt-{key} again to refresh.\n")
@@ -562,10 +680,12 @@ impl WorktreeSkimItem {
                 false,
             ),
             PreviewMode::Summary => (Self::loading_placeholder(PreviewMode::Summary), false),
-            // PR previews never precompute (no git/LLM work) — the orchestrator
-            // never spawns this mode, and `preview()` renders the `pr` pane from
-            // the row's cached `pr_status`.
+            // PR and comments previews never precompute on worktree rows (no
+            // git/LLM work) — the orchestrator never spawns these modes, and
+            // `preview()` renders them directly (cached `pr_status` / the
+            // `--prs`-only pointer).
             PreviewMode::Pr => unreachable!("pr tab is never precomputed"),
+            PreviewMode::Comments => unreachable!("comments tab is never precomputed"),
         }
     }
 
@@ -764,7 +884,7 @@ impl WorktreeSkimItem {
         width: usize,
         height: usize,
     ) -> (String, bool) {
-        Self::compute_log_preview_inner(repo, item, width, height, false)
+        Self::compute_log_preview_inner(repo, item.head(), item.branch_name(), width, height, false)
     }
 
     /// Force-recompute the Log preview, bypassing the disk-cache read but
@@ -777,12 +897,31 @@ impl WorktreeSkimItem {
         width: usize,
         height: usize,
     ) -> String {
-        Self::compute_log_preview_inner(repo, item, width, height, true).0
+        Self::compute_log_preview_inner(repo, item.head(), item.branch_name(), width, height, true)
+            .0
+    }
+
+    /// Render the rich local `git log` for an arbitrary `(head, branch)` pair —
+    /// the same graph + dim/bright merge-base split + timestamps the worktree
+    /// rows show. Used by the `--prs` `log` tab for a row whose head commit is
+    /// already in the local object store (a same-repo PR off a fetched
+    /// `origin`); see `prs::compute_pr_log`. Discards the disk-hit flag — a
+    /// `--prs` row's preview renders once with no background-refresh loop, so
+    /// there's nothing to reschedule.
+    pub(super) fn compute_log_for_head(
+        repo: &Repository,
+        head: &str,
+        branch: &str,
+        width: usize,
+        height: usize,
+    ) -> String {
+        Self::compute_log_preview_inner(repo, head, branch, width, height, false).0
     }
 
     fn compute_log_preview_inner(
         repo: &Repository,
-        item: &ListItem,
+        head: &str,
+        branch: &str,
         width: usize,
         height: usize,
         force_recompute: bool,
@@ -796,8 +935,6 @@ impl WorktreeSkimItem {
         let show_timestamps = width >= TIMESTAMP_WIDTH_THRESHOLD;
         // Calculate how many log lines fit in preview (height minus header)
         let log_limit = height.saturating_sub(HEADER_LINES).max(1);
-        let head = item.head();
-        let branch = item.branch_name();
         let reset = Reset;
         let Some(default_branch) = repo.default_branch() else {
             return (
@@ -958,13 +1095,18 @@ impl WorktreeSkimItem {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ansi_str::AnsiStr;
     use insta::assert_snapshot;
+
+    /// Width at which all seven full-form tabs fit, so the snapshots capture the
+    /// full bar (the compact fallback has its own test).
+    const WIDE: usize = 200;
 
     #[test]
     fn test_render_preview_tabs() {
-        // Each mode active, on a worktree row with upstream + summaries
-        // enabled but no PR (tabs 1-5 available; tab 6 dim). The active
-        // mode's label is bold, inactive available labels dim, and on the
+        // Each mode active, on a worktree row with upstream + summaries enabled
+        // but no PR (tabs 1-5 available; tabs 6 pr and 7 comments dim). The
+        // active mode's label is bold, inactive available labels dim, and on the
         // `pr` iteration tab 6 is active-but-empty — exercising the rule that
         // emptiness dims even the active tab. Verifies labels and structure.
         let wt = TabAvailability::worktree(true, true, false);
@@ -976,21 +1118,73 @@ mod tests {
             ("summary", PreviewMode::Summary),
             ("pr", PreviewMode::Pr),
         ] {
-            assert_snapshot!(name, render_preview_tabs(mode, wt));
+            assert_snapshot!(name, render_preview_tabs(mode, wt, WIDE));
         }
 
         // Empty states: a worktree row with no upstream and summaries disabled
-        // dims tabs 4 and 5 (number dim too); a --prs row dims tabs 1-5.
+        // dims tabs 4 and 5 (number dim too); a --prs row dims the
+        // working-tree/branch-diff/upstream/summary tabs but keeps log/pr/comments.
         assert_snapshot!(
             "empty_upstream_and_summary",
             render_preview_tabs(
                 PreviewMode::WorkingTree,
-                TabAvailability::worktree(false, false, false)
+                TabAvailability::worktree(false, false, false),
+                WIDE,
             )
         );
         assert_snapshot!(
             "pr_row",
-            render_preview_tabs(PreviewMode::Pr, TabAvailability::pull_request())
+            render_preview_tabs(PreviewMode::Pr, TabAvailability::pull_request(), WIDE)
+        );
+    }
+
+    /// Narrow panes can't fit the full bar (skim renders previews with wrapping
+    /// off, so it would truncate the `pr` / `comments` tabs — exactly the ones
+    /// with content on a `--prs` row). The compact fallback keeps every
+    /// accelerator digit visible and labels only the active tab.
+    #[test]
+    fn render_preview_tabs_compacts_when_narrow() {
+        // A --prs row with the `pr` tab active, in a narrow pane.
+        let compact = render_preview_tabs(PreviewMode::Pr, TabAvailability::pull_request(), 40);
+        let plain = compact.lines().next().unwrap().ansi_strip().to_string();
+        // Every digit 1-7 is present; only the active tab keeps its label.
+        for n in 1..=7 {
+            assert!(
+                plain.contains(&n.to_string()),
+                "digit {n} present: {plain:?}"
+            );
+        }
+        assert!(plain.contains("6: pr"), "active tab labeled: {plain:?}");
+        assert!(
+            !plain.contains("comments"),
+            "inactive label dropped: {plain:?}"
+        );
+        assert!(!plain.contains("HEAD"), "inactive label dropped: {plain:?}");
+        // The compact bar fits a narrow pane where the full bar would not.
+        assert!(visual_width(&plain) <= 40, "fits the pane: {plain:?}");
+
+        // The same row in a wide pane uses the full bar (labels for all tabs).
+        let full = render_preview_tabs(PreviewMode::Pr, TabAvailability::pull_request(), WIDE);
+        assert!(
+            full.contains("7: ") && full.contains("comments"),
+            "wide pane keeps full labels"
+        );
+
+        // Boundary: the switch is `visual_width(full) <= width`. Measure the full
+        // bar's own width, then check that exactly that width stays full while one
+        // column narrower compacts (the `pr` tab is active, so only the full bar
+        // carries the inactive `comments` label).
+        let avail = TabAvailability::pull_request();
+        let full_w = visual_width(full.lines().next().unwrap());
+        let at_fit = render_preview_tabs(PreviewMode::Pr, avail, full_w);
+        assert!(
+            at_fit.contains("comments"),
+            "full bar at exact-fit width: {at_fit:?}"
+        );
+        let one_under = render_preview_tabs(PreviewMode::Pr, avail, full_w - 1);
+        assert!(
+            !one_under.contains("comments"),
+            "compacts one column under: {one_under:?}"
         );
     }
 
@@ -1120,6 +1314,7 @@ mod tests {
             review_state: Some(ReviewState::Approved),
             title: title.map(String::from),
             body: body.map(String::from),
+            comment_count: None,
         };
         // Build a row whose live `pr_status` slot carries a given state — what
         // the picker primes from the cache and then overwrites as the fetch lands.
@@ -1197,6 +1392,44 @@ mod tests {
     }
 
     #[test]
+    fn worktree_pr_pane_shows_comment_count() {
+        use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef};
+
+        let status = |comment_count: Option<u32>| PrStatus {
+            ci_status: CiStatus::Passed,
+            source: CiSource::PullRequest,
+            is_stale: false,
+            is_priming: false,
+            url: Some("https://github.com/o/r/pull/7".into()),
+            number: Some(PrRef::pr(7)),
+            review_state: None,
+            title: Some("Fix the flaky retry".into()),
+            body: None,
+            comment_count,
+        };
+
+        // A PR with comments adds a `comments` metadata line carrying the count.
+        let with = render_worktree_pr("feature", PrRef::pr(7), &status(Some(3)), 80)
+            .ansi_strip()
+            .to_string();
+        assert!(
+            with.lines()
+                .any(|l| l.contains("comments") && l.contains('3')),
+            "comments line with count: {with:?}"
+        );
+
+        // No comments (zero is flattened to `None` at the mapping boundary, and an
+        // older cache entry carries `None` too) → the line is skipped entirely.
+        let without = render_worktree_pr("feature", PrRef::pr(7), &status(None), 80)
+            .ansi_strip()
+            .to_string();
+        assert!(
+            !without.contains("comments"),
+            "no comments line when absent: {without:?}"
+        );
+    }
+
+    #[test]
     fn preview_assembles_tab_bar_and_pr_pane() {
         use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef, ReviewState};
 
@@ -1220,6 +1453,7 @@ mod tests {
                 review_state: Some(ReviewState::Approved),
                 title: Some("Fix the flaky retry".into()),
                 body: Some("Adds a **bounded** retry.".into()),
+                comment_count: None,
             })))),
         };
 
@@ -1227,7 +1461,12 @@ mod tests {
         // pane — the dispatch arm `SkimItem::preview` reaches once the picker-state
         // file selects mode 6. The pane shows the title and the markdown body.
         let pr_pane = row.render_preview(PreviewMode::Pr, 80, 24);
-        assert!(pr_pane.contains("6: pr"), "tab bar: {pr_pane:?}");
+        // Strip ANSI before checking the tab labels: the active `pr` tab is bold,
+        // so `6: pr` is split by an SGR escape in the raw string (the bar's own
+        // test, `test_render_preview_tabs`, snapshots the styled form).
+        let bar = pr_pane.ansi_strip().to_string();
+        assert!(bar.contains("6: pr"), "pr tab: {bar:?}");
+        assert!(bar.contains("7: comments"), "comments tab: {bar:?}");
         assert!(
             pr_pane.contains("Fix the flaky retry"),
             "title: {pr_pane:?}"
@@ -1237,9 +1476,10 @@ mod tests {
             "description gutter: {pr_pane:?}"
         );
 
-        // `SkimItem::preview` reads the default mode (no per-process state file in
-        // tests → WorkingTree) and delegates to `render_preview`, exercising the
-        // wrapper and the non-pr dispatch arm (cache miss → loading placeholder).
+        // `SkimItem::preview` reads the default in-memory mode (WorkingTree, since
+        // no tab switch happens in this test) and delegates to `render_preview`,
+        // exercising the wrapper and the non-pr dispatch arm (cache miss → loading
+        // placeholder).
         let ctx = PreviewContext {
             query: "",
             cmd_query: "",
@@ -1275,6 +1515,7 @@ mod tests {
                 review_state: Some(ReviewState::Approved),
                 title: Some(title.into()),
                 body: Some("body".into()),
+                comment_count: None,
             }))
         };
         // Share the cache and slot Arcs so the test can mutate the slot and
@@ -1617,13 +1858,15 @@ mod tests {
     #[test]
     fn test_render_preview_tabs_ansi_codes() {
         // Test that ANSI escape sequences properly reset to prevent style bleeding.
-        // The per-tab `{reset}` is appended in the outer format regardless of a
+        // The per-tab `{reset}` is appended in the full bar regardless of a
         // tab's internal styling, so the reset/divider counts hold whether a tab
         // is active (bold label), inactive-available (dim label), or empty (dim
-        // number + label — here tab 6, pr).
+        // number + label — here tabs 6 pr and 7 comments). WIDE forces the full
+        // (not compact) bar.
         let output = render_preview_tabs(
             PreviewMode::WorkingTree,
             TabAvailability::worktree(true, true, false),
+            WIDE,
         );
 
         let first_line = output.lines().next().unwrap();
@@ -1633,13 +1876,13 @@ mod tests {
         // This prevents bold/dim from bleeding into the " | " dividers
         let full_reset = "\x1b[0m";
 
-        // Count resets - should have one after each of the 6 tabs
-        assert_eq!(first_line.matches(full_reset).count(), 6);
+        // Count resets - should have one after each of the 7 tabs
+        assert_eq!(first_line.matches(full_reset).count(), 7);
 
         // The sequence should be: style + text + [22m + [0m + divider
         // Check that dividers come after full resets
         let parts: Vec<&str> = first_line.split(" | ").collect();
-        assert_eq!(parts.len(), 6);
+        assert_eq!(parts.len(), 7);
         assert!(parts.iter().all(|part| part.ends_with(full_reset)));
 
         // Controls line should end with full reset to ensure clean state for preview content
