@@ -189,7 +189,7 @@ closed in error, they can let us know and we'll reopen it.
 
 ### Suggesting Aliases for Niche Feature Requests
 
-Deflect narrow feature requests to [worktrunk aliases](https://worktrunk.dev/step/#aliases)
+Deflect narrow feature requests to [worktrunk aliases](https://worktrunk.dev/extending/#aliases)
 rather than native flags — this keeps the CLI surface small while giving users
 the behavior immediately. Suggest an alias when:
 
@@ -208,7 +208,7 @@ the alias, not a shell func.
 2. Test it in a scratch worktree — verify it works for the happy path and edge
    cases (e.g., branch already exists, dirty worktree, missing remote)
 3. Post the tested alias in the issue with usage examples
-4. Link to the [aliases docs](https://worktrunk.dev/step/#aliases) and
+4. Link to the [aliases docs](https://worktrunk.dev/extending/#aliases) and
    [tips & patterns](https://worktrunk.dev/tips-patterns/) for further recipes
 
 ### Don't fix tests by adding skip guards
