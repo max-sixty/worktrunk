@@ -1230,6 +1230,7 @@ pub fn handle_picker(
             rendered_slots: std::sync::OnceLock::new(),
             pr_status_slots: std::sync::OnceLock::new(),
             comments_fetched: std::sync::OnceLock::new(),
+            local_content_slots: std::sync::OnceLock::new(),
             preview_cache: Arc::clone(&preview_cache),
             orchestrator: Arc::clone(&orchestrator),
             preview_dims,
@@ -1579,7 +1580,7 @@ fn resolve_identifier(
 
 #[cfg(test)]
 pub mod tests {
-    use super::items::WorktreeSkimItem;
+    use super::items::{LocalContent, WorktreeSkimItem};
     use super::{
         PickerAction, PickerCollector, PickerRemovalTarget, drain_stashed_warnings,
         install_preview_tab_keybindings, parse_reload_remove_token, picker_item_identifier,
@@ -2024,6 +2025,7 @@ pub mod tests {
             has_upstream: false,
             summaries_enabled: false,
             pr_status,
+            local_content: Arc::new(Mutex::new(LocalContent::default())),
         }) as Arc<dyn SkimItem>
     }
 

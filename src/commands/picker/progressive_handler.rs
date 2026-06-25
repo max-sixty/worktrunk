@@ -50,7 +50,10 @@ use super::super::list::ci_status::PrStatus;
 /// `Event::Render` bypasses skim's own frame-rate cap, so we cap it here.
 const RENDER_THROTTLE: Duration = Duration::from_millis(16);
 
-use super::items::{HeaderLoading, HeaderSkimItem, PrStatusSlot, PreviewCache, WorktreeSkimItem};
+use super::items::{
+    HeaderLoading, HeaderSkimItem, LocalContent, LocalContentSlot, PrStatusSlot, PreviewCache,
+    WorktreeSkimItem,
+};
 use super::preview::PreviewMode;
 use super::preview_orchestrator::PreviewOrchestrator;
 use crate::commands::list::collect::PickerProgressHandler;
@@ -94,6 +97,12 @@ pub(super) struct PickerHandler {
     /// reused branch, a stale prime) re-fetches and keeps the `comments` tab
     /// consistent with the `pr` tab. See [`Self::maybe_spawn_comments`].
     pub(super) comments_fetched: OnceLock<Box<[Arc<AtomicU64>]>>,
+    /// One live `LocalContent` slot per data row — same Arcs the
+    /// `WorktreeSkimItem`s hold. Set once in `on_skeleton` (all-loading), then
+    /// overwritten by `on_update` from the row's `ListItem` as the list pipeline
+    /// lands, so the `working_tree` / `branch_diff` / `upstream` tabs dim once
+    /// their diff is known empty.
+    pub(super) local_content_slots: OnceLock<Box<[LocalContentSlot]>>,
     pub(super) preview_cache: PreviewCache,
     pub(super) orchestrator: Arc<PreviewOrchestrator>,
     pub(super) preview_dims: (usize, usize),
@@ -201,6 +210,7 @@ impl PickerProgressHandler for PickerHandler {
         let mut slots: Vec<Arc<Mutex<String>>> = Vec::with_capacity(items.len());
         let mut pr_slots: Vec<PrStatusSlot> = Vec::with_capacity(items.len());
         let mut comments_slots: Vec<Arc<AtomicU64>> = Vec::with_capacity(items.len());
+        let mut local_content_slots: Vec<LocalContentSlot> = Vec::with_capacity(items.len());
         let mut skim_items: Vec<Arc<dyn SkimItem>> = Vec::with_capacity(items.len() + 1);
         let mut list_items: Vec<Arc<ListItem>> = Vec::with_capacity(items.len());
 
@@ -307,6 +317,15 @@ impl PickerProgressHandler for PickerHandler {
             pr_slots.push(Arc::clone(&pr_status_arc));
             comments_slots.push(Arc::new(AtomicU64::new(0)));
 
+            // Prime the diff-content slot from the skeleton snapshot. Its async
+            // fields are still `None` here (every diff tab reads as loading →
+            // available), except a branch-only row, which has no working tree and
+            // so resolves `working_tree` to empty immediately. `on_update`
+            // overwrites it as the pipeline lands.
+            let local_content_arc: LocalContentSlot =
+                Arc::new(Mutex::new(LocalContent::from_item(&item_arc)));
+            local_content_slots.push(Arc::clone(&local_content_arc));
+
             skim_items.push(Arc::new(WorktreeSkimItem {
                 search_text,
                 rendered: rendered_arc,
@@ -316,6 +335,7 @@ impl PickerProgressHandler for PickerHandler {
                 has_upstream,
                 summaries_enabled,
                 pr_status: pr_status_arc,
+                local_content: local_content_arc,
             }) as Arc<dyn SkimItem>);
         }
 
@@ -325,6 +345,9 @@ impl PickerProgressHandler for PickerHandler {
         let _ = self.rendered_slots.set(slots.into_boxed_slice());
         let _ = self.pr_status_slots.set(pr_slots.into_boxed_slice());
         let _ = self.comments_fetched.set(comments_slots.into_boxed_slice());
+        let _ = self
+            .local_content_slots
+            .set(local_content_slots.into_boxed_slice());
         *self.shared_items.lock().unwrap() = skim_items.clone();
 
         // skim 4.x's item channel carries Vec batches; the skeleton is a single
@@ -381,6 +404,15 @@ impl PickerProgressHandler for PickerHandler {
             // `WorktreeSkimItem::render_pr_pane_cached`.
             self.preview_cache
                 .remove(&(item.branch_name().to_string(), PreviewMode::Pr));
+        }
+        // Mirror the row's live diff-content signals so the `working_tree` /
+        // `branch_diff` / `upstream` tabs dim once their diff is known empty.
+        // Cheap copy; the snapshot starts all-loading and resolves field-by-field
+        // as the pipeline lands.
+        if let Some(slots) = self.local_content_slots.get()
+            && let Some(slot) = slots.get(idx)
+        {
+            *slot.lock().unwrap() = LocalContent::from_item(item);
         }
         // If this update is where the row's PR first surfaced, kick off its
         // `comments` background fetch (once per row) so the `comments` tab loads
@@ -442,6 +474,7 @@ mod tests {
             rendered_slots: OnceLock::new(),
             pr_status_slots: OnceLock::new(),
             comments_fetched: OnceLock::new(),
+            local_content_slots: OnceLock::new(),
             preview_cache,
             orchestrator,
             preview_dims: (80, 24),
@@ -494,10 +527,20 @@ mod tests {
         assert!(pr_slots[0].lock().unwrap().is_none());
         assert!(pr_slots[1].lock().unwrap().is_none());
 
+        // local_content slots start primed from the skeleton snapshots — these are
+        // branch-only rows (no worktree), so `working_tree` already resolves empty
+        // while the rest stays loading.
+        let lc_slots = handler.local_content_slots.get().unwrap();
+        let skeleton_lc =
+            LocalContent::from_item(&ListItem::new_branch("aaa".into(), "one".into()));
+        assert_eq!(*lc_slots[0].lock().unwrap(), skeleton_lc);
+        assert_eq!(*lc_slots[1].lock().unwrap(), skeleton_lc);
+
         // on_update rewrites a single render slot (the second item here) and
-        // mirrors that item's CI status into its pr_status slot.
+        // mirrors that item's CI status and diff-content into its live slots.
         let mut updated = ListItem::new_branch("bbb".into(), "two".into());
         updated.pr_status = Some(None);
+        updated.has_file_changes = Some(true);
         handler.on_update(1, "updated-two".into(), &updated);
         assert_eq!(*slots[0].lock().unwrap(), "skel-one", "row 0 untouched");
         assert_eq!(*slots[1].lock().unwrap(), "updated-two");
@@ -508,6 +551,16 @@ mod tests {
         assert!(
             pr_slots[0].lock().unwrap().is_none(),
             "row 0 pr status untouched"
+        );
+        assert_eq!(
+            *lc_slots[1].lock().unwrap(),
+            LocalContent::from_item(&updated),
+            "row 1 diff-content mirrored from the updated item"
+        );
+        assert_eq!(
+            *lc_slots[0].lock().unwrap(),
+            skeleton_lc,
+            "row 0 diff-content untouched"
         );
 
         // on_reveal rewrites every slot — slot writes are idempotent
