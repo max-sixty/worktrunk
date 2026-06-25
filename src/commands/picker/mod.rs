@@ -988,19 +988,20 @@ pub fn handle_picker(
     // until its results channel closes or the fallback DRAIN_TIMEOUT
     // (120s) fires.
 
-    // List width depends on the preview position. Right splits the terminal
-    // ~50/50; Down gives the list the full width. Passed to `collect` so
-    // the skeleton layout matches the picker's actual render width.
-    // The picker requires a TTY, so detection essentially always succeeds;
-    // the unlimited-width fallback just keeps the math total. Skim
-    // prefixes every line with a 2-column cursor gutter ("> "), so rows that
-    // use the full width would otherwise spill into its ".." truncation.
+    // Lay the table out at full terminal width regardless of the preview
+    // layout. With the preview shown (Right), skim splits the screen and renders
+    // this full-width row into the left pane, clipping the overflow at the
+    // boundary; `no_hscroll` plus an empty ellipsis (set on the builder below)
+    // make that a clean left-anchored cut. Toggling the preview off with alt-p
+    // widens skim's list pane to full width and the SAME rows reveal their
+    // right-hand columns — no reload, no re-layout, so no column ever moves.
+    // (The Down layout already used full width, so this is a no-op there.)
+    //
+    // The picker requires a TTY, so detection essentially always succeeds; the
+    // unlimited-width fallback just keeps the math total. Skim prefixes every
+    // line with a 2-column cursor gutter ("> "), so the full width loses 2.
     let terminal_width = crate::display::terminal_width().unwrap_or(usize::MAX);
-    let skim_list_width = match state.initial_layout {
-        PreviewLayout::Right => terminal_width / 2,
-        PreviewLayout::Down => terminal_width,
-    }
-    .saturating_sub(2);
+    let skim_list_width = terminal_width.saturating_sub(2);
 
     // Estimate item count for the preview window spec (only the Down
     // layout depends on it). The Down layout caps visible rows at
@@ -1155,6 +1156,17 @@ pub fn handle_picker(
         // count so the alt-r cursor-reposition math stays in sync — keep them one.
         .header_lines(PICKER_HEADER_ROWS)
         .multi(false)
+        // The table is laid out at full terminal width (see `skim_list_width`
+        // above), so while the preview is shown the rows overflow skim's
+        // half-width list pane. Disable horizontal scroll so a fuzzy match deep
+        // in the search key can never shift the leading columns out of view — the
+        // row always clips left-anchored at the pane boundary. An empty ellipsis
+        // makes that a clean cut with no "..": it is the library default under
+        // `default-features = false` (the `..` default is gated on skim's `cli`
+        // feature, off here), pinned explicitly because the clean clip is
+        // load-bearing for the overflow.
+        .no_hscroll(true)
+        .ellipsis(String::new())
         .no_info(true) // Hide info line (matched/total counter)
         .preview("") // Enable preview (empty string means use SkimItem::preview())
         .preview_window(preview_window_spec.as_str())
@@ -1194,6 +1206,16 @@ pub fn handle_picker(
             // Preview toggle (alt-p shows/hides preview)
             // Note: skim doesn't support change-preview-window like fzf, only toggle
             "alt-p:toggle-preview".to_string(),
+            // Suppress skim's default manual horizontal scroll (alt-h / alt-l map to
+            // ScrollLeft / ScrollRight in its built-in keymap). `no_hscroll(true)`
+            // above only zeros the *automatic* match-following shift; it doesn't gate
+            // the manual `manual_hscroll` offset these keys push, so they still slide
+            // each row's `display()` left under the fixed gutter — clipping the leading
+            // worktree-status sigil (`+`/`@`/`^`/`/`/`|`) and the branch name with no
+            // ellipsis. The row table is laid out to fit the pane, so there is nothing
+            // to scroll to; ignore both.
+            "alt-h:ignore".to_string(),
+            "alt-l:ignore".to_string(),
             // Preview scrolling (half-page based on terminal height)
             format!("ctrl-u:preview-up({half_page})"),
             format!("ctrl-d:preview-down({half_page})"),

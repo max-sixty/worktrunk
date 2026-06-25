@@ -4275,6 +4275,73 @@ fn test_plugins_claude_install_statusline_honors_claude_config_dir(
     );
 }
 
+#[rstest]
+fn test_plugins_claude_install_statusline_expands_tilde_in_claude_config_dir(
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
+    // A literal `~/` in CLAUDE_CONFIG_DIR (which only reaches us when the
+    // variable is set outside a shell) is expanded against the home directory,
+    // not treated as a relative path under the cwd.
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["config", "plugins", "claude", "install-statusline", "--yes"])
+        .current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("CLAUDE_CONFIG_DIR", "~/custom-claude");
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "install-statusline failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // `~/custom-claude` expanded to <home>/custom-claude.
+    let settings_path = temp_home.path().join("custom-claude/settings.json");
+    let content = fs::read_to_string(&settings_path).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+    assert_eq!(
+        parsed["statusLine"]["command"],
+        "wt list statusline --format=claude-code"
+    );
+
+    // The tilde was not left literal: no `~` directory under the cwd.
+    assert!(
+        !repo.root_path().join("~").exists(),
+        "tilde must be expanded, not treated as a literal relative path"
+    );
+}
+
+#[rstest]
+fn test_plugins_claude_install_statusline_falls_back_to_dot_claude(
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
+    // With CLAUDE_CONFIG_DIR unset, paths fall back to the default ~/.claude.
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["config", "plugins", "claude", "install-statusline", "--yes"])
+        .current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env_remove("CLAUDE_CONFIG_DIR");
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "install-statusline failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let settings_path = temp_home.path().join(".claude/settings.json");
+    let content = fs::read_to_string(&settings_path).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+    assert_eq!(
+        parsed["statusLine"]["command"],
+        "wt list statusline --format=claude-code"
+    );
+}
+
 // ==================== Plugin Command Failure Tests ====================
 
 #[rstest]
