@@ -1045,13 +1045,15 @@ mod tests {
                 ok = true,
             );
             // The escaping win: a literal `"` in the command, where the
-            // `key="value"` text grammar would truncate the parse.
+            // `key="value"` text grammar would truncate the parse. The
+            // negative `exit` also drives `JsonFieldVisitor::record_i64`.
             tracing::debug!(
                 target: WT_TRACE_TARGET,
                 kind = "cmd_completed",
                 ts = 100u64,
                 tid = 3u64,
                 seq = 5u64,
+                exit = -1i64,
                 cmd = r#"git commit -m "wip""#,
                 dur_us = 1u64,
                 ok = true,
@@ -1071,6 +1073,7 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&lines[1]).expect("valid JSON");
         assert_eq!(parsed["cmd"], r#"git commit -m "wip""#);
         assert_eq!(parsed["seq"], 5);
+        assert_eq!(parsed["exit"], -1); // exercises record_i64
 
         // Free-form message: falls through as `{"message":...}`, with `level`
         // stamped and ts/tid injected from the runtime (so present, any value).
