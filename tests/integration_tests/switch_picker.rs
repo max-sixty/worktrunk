@@ -1077,25 +1077,27 @@ fn test_switch_picker_prs_github_list(mut repo: TestRepo) {
         &["switch", "--prs"],
         repo.root_path(),
         &env_vars,
-        // Wait for the PR row to stream into the list (the `#42` content gate),
-        // then assert on the row itself — deterministic, with no dependency on
-        // selecting an async-arrived row.
-        &[("", Some("#42"))],
+        // `main…±` now occupies the preview-shown list pane, clipping the CI
+        // column (`#42`) past skim's split. Toggle the preview off (alt-p) so
+        // the list spans full width and renders the number, then gate on it —
+        // deterministic, no dependency on selecting an async-arrived row.
+        &[("\x1bp", Some("#42"))],
     );
 
     assert_valid_abort_exit_code(result.exit_code);
-    let (list, _preview) = result.panels();
-    // `#42` in the CI column; the head branch is truncated in the narrow list.
-    assert!(list.contains("#42"), "PR number in list:\n{list}");
-    // The title is NOT on the row — it lives in the preview so columns align.
+    // Preview off → full-width list renders the CI column; assert on the whole
+    // screen since `#42` sits past the panel split column.
+    let screen = result.screen();
+    assert!(screen.contains("#42"), "PR number on screen:\n{screen}");
+    // The title lives in the preview (now hidden), never on the row itself.
     assert!(
-        !list.contains("Retry the flaky network test"),
-        "PR title should stay off the row:\n{list}"
+        !screen.contains("Retry the flaky network test"),
+        "PR title should stay off the row:\n{screen}"
     );
     // The header's loading marker is gone once the rows have streamed in.
     assert!(
-        !list.contains("loading open PRs"),
-        "loading marker cleared once rows arrived:\n{list}"
+        !screen.contains("loading open PRs"),
+        "loading marker cleared once rows arrived:\n{screen}"
     );
 }
 
@@ -1119,18 +1121,20 @@ fn test_switch_picker_prs_gitlab_list(mut repo: TestRepo) {
         &["switch", "--prs"],
         repo.root_path(),
         &env_vars,
-        // `!7` (GitLab MR ref) is the row's stable substring; the title lives in
-        // the preview, not the row.
-        &[("", Some("!7"))],
+        // `main…±` clips the CI column (`!7`) past skim's split in the
+        // preview-shown pane. Toggle the preview off (alt-p) so the full-width
+        // list renders the ref, then gate on it.
+        &[("\x1bp", Some("!7"))],
     );
 
     assert_valid_abort_exit_code(result.exit_code);
-    let (list, _preview) = result.panels();
-    // `!7` (GitLab MR ref) in the CI column; source branch truncates.
-    assert!(list.contains("!7"), "MR number in list:\n{list}");
+    // Preview off → full-width list renders the CI column; assert on the whole
+    // screen since `!7` sits past the panel split column.
+    let screen = result.screen();
+    assert!(screen.contains("!7"), "MR number on screen:\n{screen}");
     assert!(
-        !list.contains("Cache the dependency graph"),
-        "MR title should stay off the row:\n{list}"
+        !screen.contains("Cache the dependency graph"),
+        "MR title should stay off the row:\n{screen}"
     );
 }
 

@@ -105,12 +105,15 @@
 //!
 //! Some columns have non-standard behavior that extends beyond the basic two-tier model:
 //!
-//! 1. **BranchDiff** and **CiStatus** - Visibility gate (`show_full` flag)
-//!    - Both require `show_full=true` (hidden by default as too noisy for typical usage)
-//!    - Gated via `skip_tasks`: when `show_full=false`, their `TaskKind` is in `skip_tasks`
-//!      and the column is filtered out entirely (bypasses the tier system)
-//!    - Within the visibility gate, follows normal two-tier priority
-//!      (BranchDiff: 6/16, CiStatus: 5/15)
+//! 1. **CiStatus** and **Summary** - Visibility gate (`show_full` flag)
+//!    - Both require `show_full=true` — they reach off-machine (CI status over
+//!      the network, branch summaries via the LLM), so they're hidden by default
+//!    - Gated via `skip_tasks`: when `show_full=false`, their `TaskKind` is in
+//!      `skip_tasks` and the column is filtered out entirely (bypasses the tier
+//!      system)
+//!    - **BranchDiff** (`main…±`) is pure local git, so it is *not* gated — it
+//!      shows by default and follows the normal two-tier priority (6/16);
+//!      CiStatus is 5/15
 //!
 //! 2. **Low-priority columns** yield to Summary
 //!    - Columns with effective priority > Summary's (10) are dropped to reclaim
@@ -1787,15 +1790,12 @@ mod tests {
         )
     }
 
-    /// Default skip_tasks for non-full mode (Summary, BranchDiff, CI skipped).
+    /// Default skip_tasks for non-full mode (CI and Summary skipped; BranchDiff
+    /// runs and the `main…±` column shows by default).
     fn non_full_skip_tasks() -> HashSet<TaskKind> {
-        [
-            TaskKind::BranchDiff,
-            TaskKind::CiStatus,
-            TaskKind::SummaryGenerate,
-        ]
-        .into_iter()
-        .collect()
+        [TaskKind::CiStatus, TaskKind::SummaryGenerate]
+            .into_iter()
+            .collect()
     }
 
     /// Full mode skip_tasks (nothing skipped).

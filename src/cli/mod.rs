@@ -450,7 +450,7 @@ pub(crate) struct ListArgs {
     #[arg(long)]
     pub(crate) remotes: bool,
 
-    /// Show CI, diff analysis, and LLM summaries
+    /// Show CI status and LLM summaries
     #[arg(long)]
     pub(crate) full: bool,
 
@@ -743,7 +743,7 @@ The table renders progressively: branch names, paths, and commit hashes appear i
 
 ## Full mode
 
-`--full` adds columns that require network access or LLM calls: [CI status](#ci-status) (GitHub/GitLab pipeline pass/fail), line diffs since the merge-base, and [LLM-generated summaries](#llm-summaries) of each branch's changes.
+`--full` adds the two columns that reach off-machine: [CI status](#ci-status) (GitHub/GitLab pipeline pass/fail, over the network) and [LLM-generated summaries](#llm-summaries) of each branch's changes. The `main…±` line diffs are local git, so they show by default.
 
 ## Examples
 
@@ -752,16 +752,16 @@ List all worktrees:
 <!-- wt list -->
 ```console
 $ wt list
-  Branch       Status        HEAD±    main↕  Remote⇅  Commit    Age   Message
-@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1   ⇡3      6814f02a  30m   Add API tests
-^ main             ^⇅                         ⇡1  ⇣1  41ee0834  4d    Merge fix-auth: hardened to…
-+ fix-auth         ↕|                ↑2  ↓1     |     b772e68b  5h    Add secure token storage
-+ fix-typos        _|                           |     41ee0834  4d    Merge fix-auth: hardened to…
+  Branch       Status        HEAD±    main↕     main…±  Remote⇅  Commit    Age   Message
+@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24   ⇡3      6814f02a  30m   Add API tests
+^ main             ^⇅                                    ⇡1  ⇣1  41ee0834  4d    Merge fix-auth:…
++ fix-auth         ↕|                ↑2  ↓1   +25  -11     |     b772e68b  5h    Add secure token…
++ fix-typos        _|                                      |     41ee0834  4d    Merge fix-auth:…
 
 ○ Showing 4 worktrees, 1 with changes, 2 ahead, 1 column hidden
 ```
 
-Include CI status, line diffs, and LLM summaries:
+Include CI status and LLM summaries:
 
 <!-- wt list --full -->
 ```console
@@ -805,7 +805,7 @@ $ wt list --format=json
 | Status | Compact symbols (see below) |
 | HEAD± | Uncommitted changes: +added -deleted lines |
 | main↕ | Commits ahead/behind default branch |
-| main…± | Line diffs since the merge-base (three-dot) with the default branch; `--full` only |
+| main…± | Line diffs since the merge-base (three-dot) with the default branch |
 | Summary | LLM-generated branch summary; requires `--full`, `summary = true`, and [`commit.generation`](@/config.md#commit) [experimental] |
 | Remote⇅ | Commits ahead/behind tracking branch |
 | CI | PR/MR number colored by pipeline status; `--full` only |
@@ -1023,7 +1023,7 @@ The five change flags map to the [Working tree](#working-tree) symbols (`renamed
 |-------|------|-------------|
 | `ahead` | number | Commits ahead of the default branch |
 | `behind` | number | Commits behind the default branch |
-| `diff` | object | Lines changed vs the default branch: `{added, deleted}`; `--full` only |
+| `diff` | object | Lines changed vs the default branch: `{added, deleted}` |
 
 ### remote object
 
@@ -1901,7 +1901,7 @@ Persistent flag values for `wt list`. Override on command line as needed.
 [list]
 summary = false    # Enable LLM branch summaries (requires [commit.generation])
 
-full = false       # Show CI, main…± diffstat, and LLM summaries (--full)
+full = false       # Show CI status and LLM summaries (--full)
 branches = false   # Include branches without worktrees (--branches)
 remotes = false    # Include remote-only branches (--remotes)
 

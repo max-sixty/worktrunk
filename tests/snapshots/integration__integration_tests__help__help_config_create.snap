@@ -161,7 +161,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# [list][0m
 [107m [0m [2m# summary = false    # Enable LLM branch summaries (requires [commit.generation])[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# full = false       # Show CI, main…± diffstat, and LLM summaries (--full)[0m
+[107m [0m [2m# full = false       # Show CI status and LLM summaries (--full)[0m
 [107m [0m [2m# branches = false   # Include branches without worktrees (--branches)[0m
 [107m [0m [2m# remotes = false    # Include remote-only branches (--remotes)[0m
 [107m [0m [2m#[0m
