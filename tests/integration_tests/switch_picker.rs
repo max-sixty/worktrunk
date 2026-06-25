@@ -1317,11 +1317,14 @@ fn test_switch_picker_worktree_row_comments_tab_shows_thread(mut repo: TestRepo)
         "MOCK_CONFIG_DIR".to_string(),
         mock_bin.display().to_string(),
     ));
-    let base_path = std::env::var("PATH").unwrap_or_default();
-    env_vars.push((
-        "PATH".to_string(),
-        format!("{}:{base_path}", mock_bin.display()),
-    ));
+    // Prepend mock-bin to PATH using the OS separator (`;` on Windows, `:` on
+    // Unix) — a hardcoded `:` corrupts the PATH on Windows, so the mock `gh.exe`
+    // is never found and the comments fetch fails ("Couldn't load comments").
+    let base_path = std::env::var_os("PATH").unwrap_or_default();
+    let mut paths = vec![mock_bin.clone()];
+    paths.extend(std::env::split_paths(&base_path));
+    let joined = std::env::join_paths(paths).expect("mock-bin joins into PATH");
+    env_vars.push(("PATH".to_string(), joined.to_string_lossy().into_owned()));
 
     let result = exec_in_pty_capture_before_abort(
         wt_bin().to_str().unwrap(),
