@@ -189,17 +189,22 @@ closed in error, they can let us know and we'll reopen it.
 
 ### Suggesting Aliases for Niche Feature Requests
 
-Deflect narrow feature requests to aliases rather than native flags — this
-keeps the CLI surface small while giving users the behavior immediately.
-Suggest an alias when:
+Deflect narrow feature requests to [worktrunk aliases](https://worktrunk.dev/step/#aliases)
+rather than native flags — this keeps the CLI surface small while giving users
+the behavior immediately. Suggest an alias when:
 
 - The request benefits a small subset of users or a single reporter's workflow
   (e.g., idempotent create-or-switch, auto-push after merge)
-- The behavior can be composed from existing `wt` commands or shell primitives
-- A shell one-liner or `wt step` alias covers the use case
+- The behavior can be composed from existing `wt` commands
+- A `wt step` alias covers the use case
+
+**Lead with a worktrunk `[aliases]` entry — don't reach for a shell function.**
+An alias runs as `wt <name>`, lives in the user's config, and works across every
+shell; a shell function is per-shell boilerplate the user has to maintain. Show
+the alias, not a shell func.
 
 **How to respond:**
-1. Draft the alias (shell function or `wt step` alias, whichever fits better)
+1. Draft the `[aliases]` entry (a `wt step` alias)
 2. Test it in a scratch worktree — verify it works for the happy path and edge
    cases (e.g., branch already exists, dirty worktree, missing remote)
 3. Post the tested alias in the issue with usage examples
