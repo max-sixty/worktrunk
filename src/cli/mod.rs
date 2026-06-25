@@ -989,12 +989,12 @@ $ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 | `is_main` | boolean | Is the main worktree |
 | `is_current` | boolean | Is the current worktree |
 | `is_previous` | boolean | Previous worktree from wt switch |
-| `ci` | object | CI status (see below); absent when no CI |
+| `ci` | object | CI status (see below); `--full` only, then absent when no PR/MR or branch workflow |
 | `repo_url` | string | Repository web URL derived from the primary remote; absent when the remote URL cannot be parsed |
 | `repo` | object | Structured repository metadata (see below); includes `remote` |
 | `url` | string | Dev server URL from project config; absent when not configured |
 | `url_active` | boolean | Whether the URL's port is listening; absent when not configured |
-| `summary` | string | LLM-generated branch summary; absent when not configured or no summary |
+| `summary` | string | LLM-generated branch summary; `--full` only, then absent when not configured or no summary |
 | `statusline` | string | Pre-formatted status with ANSI colors |
 | `symbols` | string | Raw status symbols without colors (e.g., `"!?↓"`) |
 | `vars` | object | Per-branch variables from [`wt config state vars`](@/config.md#wt-config-state-vars) (absent when empty) |
@@ -1028,7 +1028,7 @@ The five change flags map to the [Working tree](#working-tree) symbols (`renamed
 |-------|------|-------------|
 | `ahead` | number | Commits ahead of the default branch |
 | `behind` | number | Commits behind the default branch |
-| `diff` | object | Lines changed vs the default branch: `{added, deleted}` |
+| `diff` | object | Lines changed vs the default branch: `{added, deleted}`; `--full` only |
 
 ### remote object
 

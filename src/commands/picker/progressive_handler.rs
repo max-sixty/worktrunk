@@ -3,7 +3,7 @@
 //! Each event funnels into three places: skim's item stream (`tx`, alive
 //! while updates may arrive so the picker stays non-idle), each item's
 //! shared `rendered` mutex (in-place redraws), and `shared_items` used by
-//! `PickerCollector` for alt-r.
+//! `PickerCollector` for alt-x.
 //!
 //! # Why updates poke a render
 //!
@@ -282,7 +282,7 @@ impl PickerProgressHandler for PickerHandler {
             }) as Arc<dyn SkimItem>);
         }
 
-        // Publish slots + skim items before sending to skim so alt-r reload
+        // Publish slots + skim items before sending to skim so alt-x reload
         // (which reads `shared_items`) sees a populated list the moment
         // skim calls `CommandCollector::invoke`.
         let _ = self.rendered_slots.set(slots.into_boxed_slice());

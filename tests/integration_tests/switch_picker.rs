@@ -1881,3 +1881,57 @@ fn test_switch_picker_alt_x_no_match_stays_responsive(mut repo: TestRepo) {
 
     assert_valid_abort_exit_code(result.exit_code);
 }
+
+/// alt-x on an unmerged branch-only row leaves the row present end-to-end through
+/// real skim — `SafeDelete` refuses to delete an unmerged branch, so the row must
+/// not vanish. The inverse of `…_no_match_stays_responsive`, which removes a row
+/// and expects emptiness.
+///
+/// This guards the integration outcome (the real reload re-renders the row, the
+/// list doesn't empty), not the no-flicker mechanism specifically: a regression in
+/// the up-front keep would be masked here by the background restore backstop, which
+/// re-inserts the row. The keep-path-specific "never dropped, no flicker" property
+/// is unit-tested in `test_invoke_keeps_unmerged_branch_only_row`, which checks the
+/// synchronous `items` state before any backstop can run.
+#[rstest]
+fn test_switch_picker_alt_x_keeps_unmerged_branch_row(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // An unmerged branch — a commit off the default branch — with no worktree.
+    // Use the branch wt itself resolves as the default, so the picker's
+    // integration check and this checkout key off the same ref.
+    let default_branch = repo.git_output(&["symbolic-ref", "--short", "HEAD"]);
+    repo.run_git(&["checkout", "-b", "unmerged-orphan"]);
+    std::fs::write(repo.root_path().join("orphan.txt"), "unmerged work").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "unmerged work"]);
+    repo.run_git(&["checkout", &default_branch]);
+
+    let env_vars = repo.test_env_vars();
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--branches"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            ("unmerged-orphan", Some("unmerged-orphan")), // filter to the branch
+            ("\x1bx", Some("unmerged-orphan")),           // alt-x keeps it: still visible
+        ],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+    let (list, _preview) = result.panels();
+    // `list` (cols 0..LIST_WIDTH of every row) includes skim's query-echo prompt
+    // line `> unmerged-orphan`, which holds the branch name whether or not the row
+    // survives. So `contains` alone is tautological — assert the name appears at
+    // least twice (the prompt echo PLUS the data row). A regression that dropped
+    // the row optimistically would empty the filtered list, leaving only the
+    // prompt's single occurrence, and fail here.
+    let occurrences = list.matches("unmerged-orphan").count();
+    assert!(
+        occurrences >= 2,
+        "the unmerged branch-only row survives alt-x — expected the branch name in \
+         both the prompt echo and a data row, got {occurrences} occurrence(s).\nList:\n{list}"
+    );
+}
