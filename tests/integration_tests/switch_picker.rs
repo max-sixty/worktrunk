@@ -1759,16 +1759,6 @@ fn test_switch_picker_no_cd_switches_without_cd_directive(mut repo: TestRepo) {
 /// without a prompt — inconsistent with every other hook the picker gates, and
 /// a hole in "Project Commands Run Only After Approval". Here the hook is
 /// declined at the prompt; it must not run, and the switch must still succeed.
-// TODO(windows-picker): on Windows this exits 1 instead of 0. Declining the
-// hook returns Ok on both platforms, so the failure is in the interactive
-// approval prompt's stdin handoff after skim releases the ConPTY — not yet
-// reproduced or fixed (needs a Windows box). The other accept-path picker
-// tests, which switch without an approval prompt, pass on Windows. Ignored on
-// Windows so it still compiles there; runs everywhere else.
-#[cfg_attr(
-    windows,
-    ignore = "pre-switch hook decline exits 1 on Windows; needs investigation"
-)]
 #[rstest]
 fn test_switch_picker_pre_switch_hook_requires_approval(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
@@ -1795,7 +1785,14 @@ fn test_switch_picker_pre_switch_hook_requires_approval(mut repo: TestRepo) {
             // Preview-pane gate: see test_switch_picker_emits_cd_directive_by_default.
             ("target", Some("target-branch has no uncommitted changes")),
             ("\r", Some("needs approval")), // Enter; wait for the approval prompt
-            ("n\n", None),                  // decline
+            // Decline. The line terminator is CR, not LF: once skim releases the
+            // terminal, the approval prompt's `read_line` runs in the OS line
+            // discipline (cooked mode). Windows' console terminates a line on CR
+            // (the Enter key) and never on a bare LF, so "n\n" would leave the
+            // read blocked until the harness kills the hung process (exit 1). CR
+            // terminates on both platforms — Windows reads it as Enter, and on
+            // Unix the PTY's ICRNL maps it to LF.
+            ("n\r", None), // decline
         ],
     );
 

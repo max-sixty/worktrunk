@@ -43,7 +43,7 @@ Load relevant skills before starting; reload when scope changes mid-session. Pro
 
 ## Documentation
 
-Behavior changes require doc updates. `src/cli/mod.rs` (`after_long_help` plus clap attributes) is the PRIMARY SOURCE for command pages; never hand-edit the generated mirrors under `docs/content/` or `skills/worktrunk/reference/`. Ask: "does `--help` still describe what the code does?" After any doc change run `cargo test --test integration test_docs_are_in_sync`. Sync taxonomy, help-text authoring (three render contexts, link text, config-TOML blocks): `docs/CLAUDE.md`.
+Behavior changes require doc updates. `src/cli/mod.rs` (`after_long_help` plus clap attributes) is the PRIMARY SOURCE for command pages; never hand-edit the generated mirrors under `docs/content/` or `skills/worktrunk/reference/`. Ask: "does `--help` still describe what the code does?" After any doc change run `cargo test --test integration test_docs_are_in_sync`; editing help text (`after_long_help`, `about`, arg docs) also changes the rendered `--help` snapshots, which that test leaves untouched — regenerate them with `cargo insta test --accept -- --test integration "test_help"` (the pre-merge hook runs both). Sync taxonomy, help-text authoring (three render contexts, link text, config-TOML blocks): `docs/CLAUDE.md`.
 
 ## Plugin Layout
 
