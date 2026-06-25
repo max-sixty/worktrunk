@@ -2181,3 +2181,66 @@ fn test_switch_picker_alt_x_keeps_unmerged_branch_row(mut repo: TestRepo) {
          both the prompt echo and a data row, got {occurrences} occurrence(s).\nList:\n{list}"
     );
 }
+
+/// alt-x on a *worktree* row whose branch is unmerged removes the worktree but
+/// transforms the row in place: the worktree is gone, the local branch remains,
+/// so the row returns as a `/ branch` branch-only row (gutter `+` → `/`) instead
+/// of vanishing. End-to-end through real skim — the background removal pins the
+/// surviving branch and fires a `refresh` reload, and the re-collect re-includes
+/// it even though `show_branches` is off (the default picker). This covers the
+/// integration seam the unit tests can't reach: the `Event::Reload("refresh")`
+/// send and the live re-render.
+#[rstest]
+fn test_switch_picker_alt_x_transforms_removed_worktree_to_branch_row(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // A worktree on a branch with a commit the default branch lacks, so
+    // `SafeDelete` keeps the branch when the worktree is removed.
+    let wt_path = repo.add_worktree("transform-me");
+    std::fs::write(wt_path.join("new.txt"), "unmerged work").unwrap();
+    repo.git_command()
+        .args(["-C", wt_path.to_str().unwrap(), "add", "new.txt"])
+        .run()
+        .unwrap();
+    repo.git_command()
+        .args([
+            "-C",
+            wt_path.to_str().unwrap(),
+            "commit",
+            "-m",
+            "unmerged work",
+        ])
+        .run()
+        .unwrap();
+
+    let env_vars = repo.test_env_vars();
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            // Filter to the worktree row (`> + transform-me`), then alt-x. The
+            // removal runs on a background thread (drop → pin → refresh →
+            // re-collect), so wait on the *post-transform* marker `/ transform-me`
+            // — the branch gutter that only appears once the row has transformed.
+            // Waiting on the bare name would match the pre-removal `+ ` row and
+            // capture before the transform rendered.
+            ("transform-me", Some("transform-me")),
+            ("\x1bx", Some("/ transform-me")),
+        ],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+    let (list, _preview) = result.panels();
+    // `+ transform-me` (worktree) becomes `/ transform-me` (branch-only). The
+    // gutter glyph renders immediately before the branch name, so the `/ ` form
+    // appears only once the row has transformed — a worktree row (`+ `) or the
+    // prompt echo (`> transform-me`, no slash) never produces it.
+    assert!(
+        list.contains("/ transform-me"),
+        "after alt-x the removed worktree's row returns as a `/ transform-me` \
+         branch-only row.\nList:\n{list}"
+    );
+}

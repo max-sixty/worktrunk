@@ -127,7 +127,7 @@ use super::hook_plan::{ApprovedHookPlan, HookPlanBuilder};
 use super::hooks::HookAnnouncer;
 use super::list::collect;
 use super::list::progressive::RenderTarget;
-use super::repository_ext::{RemoveTarget, RepositoryCliExt, compute_integration_reason};
+use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::worktree::{RemoveResult, SwitchPipeline};
 use crate::cli::SwitchFormat;
 use crate::output::{BackgroundFallbackMode, handle_remove_output};
@@ -259,6 +259,13 @@ struct PickerCollector {
     /// `worktree kept` warning here so the user learns the row that flickered
     /// back didn't actually go away. See [`restore_failed_removal`].
     stashed_warnings: Arc<Mutex<Vec<String>>>,
+    /// Branches whose worktree an `alt-x` removal removed while keeping the
+    /// (unmerged) branch. Shared (`Arc`) with [`PipelineFactory`]: the
+    /// background removal inserts the branch here and triggers a refresh, which
+    /// re-collects with these pinned into `collect`'s `pinned_branches` so the
+    /// row returns as a `/ branch` row (`+` worktree → `/` branch) instead of
+    /// vanishing. See [`PickerCollector::drop_and_remove_in_background`].
+    orphaned_branches: Arc<Mutex<std::collections::HashSet<String>>>,
 }
 
 impl PickerCollector {
@@ -405,12 +412,13 @@ impl PickerCollector {
     /// from showing a removal that didn't happen without ever resurrecting a row
     /// for a target that's actually gone.
     ///
-    /// When a worktree removal *succeeds* but leaves its unmerged branch behind
-    /// (`SafeDelete` won't delete unmerged work), the thread stashes the same
-    /// "retained; unmerged" message the branch-only keep path shows
-    /// ([`branch_retained_as_unmerged`] / [`stash_retained_unmerged_branch`]) —
-    /// the silent removal printed nothing, so this is the only place the user
-    /// learns the branch survived.
+    /// When a worktree removal *succeeds* but leaves its branch behind
+    /// (`SafeDelete` won't delete unmerged work), the thread pins the branch in
+    /// [`orphaned_branches`](PickerCollector::orphaned_branches) and sends a
+    /// `refresh` reload. The re-collect re-includes the now-worktree-less branch
+    /// (via `collect`'s `pinned_branches`), so the dropped row returns as a
+    /// `/ branch` row — the worktree is gone, the branch remains. This replaces
+    /// the silent removal's missing feedback with a live, accurate row.
     fn drop_and_remove_in_background(
         &mut self,
         selected_output: String,
@@ -461,6 +469,7 @@ impl PickerCollector {
         let items = Arc::clone(&self.items);
         let render_tx = Arc::clone(&self.render_tx);
         let stashed_warnings = Arc::clone(&self.stashed_warnings);
+        let orphaned_branches = Arc::clone(&self.orphaned_branches);
         let _ = std::thread::Builder::new()
             .name(format!("picker-remove-{selected_output}"))
             .spawn(move || {
@@ -481,16 +490,20 @@ impl PickerCollector {
                     }
                 } else if let RemoveResult::RemovedWorktree {
                     branch_name: Some(branch),
-                    target_branch,
                     ..
                 } = &result
-                    && branch_retained_as_unmerged(&repo, branch, target_branch.as_deref())
+                    && repo.branch(branch).exists_locally().unwrap_or(false)
                 {
-                    // The worktree is gone but its unmerged branch was kept (data
-                    // safety), and the silent removal couldn't say so. Stash the
-                    // same "retained; unmerged" pair the branch-only keep path
-                    // shows, drained once the picker exits.
-                    stash_retained_unmerged_branch(&stashed_warnings, branch);
+                    // The worktree is gone but its branch survived the removal
+                    // (`SafeDelete` keeps unmerged work). Pin the branch and
+                    // refresh so the dropped row returns as a `/ branch` row —
+                    // the worktree was removed, the branch remains. An integrated
+                    // branch `do_removal` already deleted fails `exists_locally`
+                    // here, so its row stays gone.
+                    orphaned_branches.lock().unwrap().insert(branch.clone());
+                    if let Some(event_tx) = render_tx.get() {
+                        let _ = event_tx.try_send(Event::Reload("refresh".to_string()));
+                    }
                 }
             });
 
@@ -763,12 +776,13 @@ fn removal_target_still_present(repo: &Repository, result: &RemoveResult) -> boo
 }
 
 /// Stash the canonical "retained; unmerged" info + hint pair (deduped), drained
-/// to stderr once the picker releases the terminal. Shared by
-/// [`PickerCollector::keep_unremovable_row`] (a branch-only row kept in place)
-/// and the background worktree removal (worktree removed, its unmerged branch
-/// kept) so the picker says the same thing however a branch came to be retained.
-/// The pair is the one `wt remove` itself prints — see
-/// [`crate::output::retained_unmerged_branch_messages`].
+/// to stderr once the picker releases the terminal. Used by
+/// [`PickerCollector::keep_unremovable_row`] — a branch-only row whose unmerged
+/// branch `SafeDelete` declines to delete stays put, and this explains the
+/// no-op. (A worktree removal that keeps its branch instead transforms the row
+/// to `/ branch` live — see [`PickerCollector::drop_and_remove_in_background`] —
+/// so it needs no stashed message.) The pair is the one `wt remove` itself
+/// prints — see [`crate::output::retained_unmerged_branch_messages`].
 fn stash_retained_unmerged_branch(stashed: &Mutex<Vec<String>>, branch_name: &str) {
     let (info, hint) = crate::output::retained_unmerged_branch_messages(branch_name);
     let mut stashed = stashed.lock().unwrap();
@@ -776,45 +790,6 @@ fn stash_retained_unmerged_branch(stashed: &Mutex<Vec<String>>, branch_name: &st
         stashed.push(info);
         stashed.push(hint);
     }
-}
-
-/// Whether a just-removed worktree left its branch behind because it's unmerged.
-///
-/// The picker removes with `SafeDelete`: an integrated branch is deleted along
-/// with its worktree, but an unmerged one is kept (data safety). The worktree is
-/// gone either way, so the row drops regardless — this decides whether to tell
-/// the user the *branch* survived, which the silent removal couldn't (skim owned
-/// the terminal). It observes the branch directly after the removal (still
-/// present, and no integration reason against its target) rather than trusting
-/// `do_removal`'s `Result`, the same way [`removal_target_still_present`] does.
-/// An integrated branch whose `git branch -d` failed still has an integration
-/// reason, so it's excluded — that's a delete error, not an unmerged retain.
-///
-/// The integration target defaults to `HEAD` when none is configured, mirroring
-/// the silent removal's own `delete_branch_if_safe(..., target.unwrap_or("HEAD"))`
-/// fallback — otherwise `compute_integration_reason` short-circuits to "no reason"
-/// for a `None` target and the check never runs, so every surviving branch would
-/// read as unmerged.
-fn branch_retained_as_unmerged(
-    repo: &Repository,
-    branch_name: &str,
-    target_branch: Option<&str>,
-) -> bool {
-    if !repo.branch(branch_name).exists_locally().unwrap_or(false) {
-        return false;
-    }
-    let Ok(snapshot) = repo.capture_refs() else {
-        return false;
-    };
-    compute_integration_reason(
-        repo,
-        &snapshot,
-        Some(branch_name),
-        Some(target_branch.unwrap_or("HEAD")),
-        BranchDeletionMode::SafeDelete,
-    )
-    .0
-    .is_none()
 }
 
 /// Put a row back after its background removal didn't happen, closing the alt-x
@@ -892,7 +867,7 @@ impl CommandCollector for PickerCollector {
         // are kept alive by those threads, so let them drop here. On a spawn
         // failure we fall through and re-stream the current items unchanged.
         if cmd.trim() == "refresh" {
-            match self.factory.spawn() {
+            match self.factory.spawn(true) {
                 Ok(SpawnedPipeline { rx, .. }) => {
                     let (tx_interrupt, _rx_interrupt) = bounded(1);
                     return (rx, tx_interrupt);
@@ -1007,6 +982,13 @@ struct PipelineFactory {
     preview_cache: PreviewCache,
     orchestrator: Arc<PreviewOrchestrator>,
     stashed_warnings: Arc<Mutex<Vec<String>>>,
+    /// Branches orphaned by an `alt-x` worktree removal that kept the (unmerged)
+    /// branch. Shared (`Arc`) with [`PickerCollector`], which inserts into it on
+    /// such a removal and triggers a refresh; [`spawn`](Self::spawn) reads it
+    /// into `collect`'s `pinned_branches` so the row returns as a `/ branch` row
+    /// instead of vanishing. Persists for the session, so it survives later
+    /// refreshes too.
+    orphaned_branches: Arc<Mutex<std::collections::HashSet<String>>>,
     grid_slot: Arc<prs::GridSlot>,
     preview_dims: (usize, usize),
     skim_list_width: usize,
@@ -1037,8 +1019,27 @@ impl PipelineFactory {
     /// once the spawned threads finish the channel closes and skim's reader sees
     /// EOF — the "background work done → picker idle" contract, which a refresh
     /// relies on to end its `reload`.
-    fn spawn(&self) -> anyhow::Result<SpawnedPipeline> {
+    ///
+    /// `fresh` controls the `Repository` the collect reads from. The initial
+    /// spawn passes `false` to reuse the prewarmed `self.repo` (its
+    /// `list_worktrees` / config caches are already warm, so the skeleton paints
+    /// fast). A refresh passes `true` to build a fresh `Repository::at(...)`:
+    /// `RepoCache` never invalidates (see the repository module's `# Caching`
+    /// spec — a post-mutation probe needs a fresh handle), so reusing `self.repo`
+    /// after an `alt-x` removal would re-collect a stale worktree list — the
+    /// removed worktree's branch would still read as "has a worktree" and never
+    /// surface as the `/ branch` row the pin intends. A fresh handle also lets a
+    /// refresh pick up worktrees added or removed outside the session.
+    fn spawn(&self, fresh: bool) -> anyhow::Result<SpawnedPipeline> {
         let (tx, rx): (SkimItemSender, SkimItemReceiver) = unbounded();
+
+        // The repo the collect (and `--prs`) thread reads from. Fresh on a
+        // refresh so post-removal worktree state is current (see the doc above).
+        let collect_repo = if fresh {
+            Repository::at(self.repo.discovery_path())?
+        } else {
+            self.repo.clone()
+        };
 
         // Fresh per spawn: the header shows a "loading…" marker keyed to this
         // flag while the forge call is in flight.
@@ -1068,10 +1069,15 @@ impl PipelineFactory {
             });
 
         let bg_handler: Arc<dyn collect::PickerProgressHandler> = handler.clone();
-        let bg_repo = self.repo.clone();
+        let bg_repo = collect_repo.clone();
         let bg_skip_tasks = self.skip_tasks.clone();
         let show_branches = self.show_branches;
         let show_remotes = self.show_remotes;
+        // Snapshot the branches orphaned by `alt-x` removals so this collect
+        // re-includes them as `/ branch` rows even with `show_branches` off
+        // (see `orphaned_branches`). Cloned per spawn: a later removal mutates
+        // the shared set and triggers another refresh.
+        let pinned_branches = self.orphaned_branches.lock().unwrap().clone();
         let command_timeout = self.command_timeout;
         let skim_list_width = self.skim_list_width;
         let collect_handle = std::thread::Builder::new()
@@ -1082,6 +1088,7 @@ impl PipelineFactory {
                     collect::ShowConfig::Resolved {
                         show_branches,
                         show_remotes,
+                        pinned_branches,
                         skip_tasks: bg_skip_tasks,
                         command_timeout,
                         collect_deadline: None,
@@ -1100,7 +1107,7 @@ impl PipelineFactory {
         // PR rows stream in (~1s) when the call returns.
         let prs_handle = if let Some(prs_loading) = prs_loading {
             let prs_tx = tx.clone();
-            let prs_repo = self.repo.clone();
+            let prs_repo = collect_repo.clone();
             let prs_warnings = Arc::clone(&self.stashed_warnings);
             let prs_orchestrator = Arc::clone(&self.orchestrator);
             let prs_render_tx = Arc::clone(&self.render_tx);
@@ -1371,6 +1378,13 @@ pub fn handle_picker(
     // again).
     let stashed_warnings: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
 
+    // Branches an alt-x removal orphaned (worktree gone, branch kept). Shared
+    // between the collector (which inserts on such a removal and refreshes) and
+    // the factory (which re-includes them on every collect). See
+    // `PickerCollector::orphaned_branches`.
+    let orphaned_branches: Arc<Mutex<std::collections::HashSet<String>>> =
+        Arc::new(Mutex::new(std::collections::HashSet::new()));
+
     // The collect pipeline, captured so the initial spawn below and every alt-r
     // refresh build it the same way. See `PipelineFactory`.
     let factory = Rc::new(PipelineFactory {
@@ -1381,6 +1395,7 @@ pub fn handle_picker(
         preview_cache: Arc::clone(&preview_cache),
         orchestrator: Arc::clone(&orchestrator),
         stashed_warnings: Arc::clone(&stashed_warnings),
+        orphaned_branches: Arc::clone(&orphaned_branches),
         // Column-geometry handoff: the collect thread fills it at skeleton time,
         // the `--prs` thread reads it to align PR rows with the worktree rows.
         grid_slot: Arc::new(prs::GridSlot::new()),
@@ -1403,6 +1418,7 @@ pub fn handle_picker(
         render_tx: Arc::clone(&render_tx),
         factory: Rc::clone(&factory),
         stashed_warnings: Arc::clone(&stashed_warnings),
+        orphaned_branches: Arc::clone(&orphaned_branches),
     };
 
     // Half-page preview scroll: half of skim's usable height.
@@ -1562,13 +1578,15 @@ pub fn handle_picker(
     // Spawn the collect pipeline (and the `--prs` thread when active). The
     // handler holds the only non-thread `tx` clone; when the bg threads exit,
     // `tx` drops, skim's reader sees EOF, and the picker goes idle. Every alt-r
-    // refresh re-runs this same `factory.spawn()` — see `PipelineFactory`.
+    // refresh re-runs this same `factory.spawn()` — see `PipelineFactory`. The
+    // initial spawn passes `fresh = false` to reuse the prewarmed repo caches;
+    // refreshes pass `true` for a fresh worktree view.
     let SpawnedPipeline {
         rx,
         handler,
         collect_handle,
         prs_handle,
-    } = factory.spawn()?;
+    } = factory.spawn(false)?;
     worktrunk::trace::instant("Picker collect spawned");
 
     // The dry run keeps the handler: skim never runs there, so the EOF contract
@@ -2479,6 +2497,7 @@ pub mod tests {
             preview_cache,
             orchestrator,
             stashed_warnings: Arc::new(Mutex::new(Vec::new())),
+            orphaned_branches: Arc::new(Mutex::new(std::collections::HashSet::new())),
             grid_slot: Arc::new(super::prs::GridSlot::new()),
             preview_dims: (80, 24),
             skim_list_width: 80,
@@ -2502,6 +2521,7 @@ pub mod tests {
     ) -> PickerCollector {
         let factory = test_factory(repo.clone());
         let stashed_warnings = Arc::clone(&factory.stashed_warnings);
+        let orphaned_branches = Arc::clone(&factory.orphaned_branches);
         PickerCollector {
             items,
             repo,
@@ -2509,6 +2529,7 @@ pub mod tests {
             render_tx: Arc::new(OnceLock::new()),
             factory,
             stashed_warnings,
+            orphaned_branches,
         }
     }
 
@@ -2824,6 +2845,7 @@ pub mod tests {
             approvals: Arc::new(approvals),
             render_tx: Arc::new(OnceLock::new()),
             stashed_warnings: Arc::clone(&stashed),
+            orphaned_branches: Arc::new(Mutex::new(std::collections::HashSet::new())),
         };
 
         let cmd = format!("remove '{token}'");
@@ -2861,9 +2883,9 @@ pub mod tests {
 
     /// End-to-end through `invoke`: removing a worktree whose branch is unmerged
     /// removes the worktree (the row drops) but keeps the branch — `SafeDelete`
-    /// won't delete unmerged work. The silent removal can't print, so the
-    /// background thread stashes the same "retained; unmerged" info + hint the
-    /// branch-only keep path shows, drained once the picker exits.
+    /// won't delete unmerged work. The background thread pins the surviving
+    /// branch in `orphaned_branches` and fires a refresh, so the next collect
+    /// re-includes it as a `/ branch` row instead of letting it vanish.
     #[test]
     fn test_invoke_removes_worktree_and_keeps_unmerged_branch() {
         let test = worktrunk::testing::TestRepo::with_initial_commit();
@@ -2905,36 +2927,23 @@ pub mod tests {
         let item = branched_picker_item("feature", &reported_path);
         let token = item.output().to_string();
         let items = Arc::new(Mutex::new(vec![Arc::clone(&item)]));
-        let stashed: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-        let mut collector = PickerCollector {
-            items: Arc::clone(&items),
-            repo: repo.clone(),
-            approvals: Arc::new(Approvals::default()),
-            render_tx: Arc::new(OnceLock::new()),
-            factory: test_factory(repo.clone()),
-            stashed_warnings: Arc::clone(&stashed),
-        };
+        let mut collector = test_collector(Arc::clone(&items), repo.clone());
+        let orphaned = Arc::clone(&collector.orphaned_branches);
 
         let cmd = format!("remove '{token}'");
         let (_rx, _interrupt) = collector.invoke(&cmd, Arc::new(AtomicUsize::new(0)));
 
-        // The worktree removal runs on a background thread that stashes the
-        // "retained; unmerged" pair on success — poll on the stash as the sync
-        // point (the same pattern as the failed-removal test).
+        // The worktree removal runs on a background thread that pins the
+        // surviving branch on success — poll on the pin as the sync point (the
+        // same pattern the failed-removal test uses for its stash).
         let deadline = Instant::now() + Duration::from_secs(5);
-        while stashed.lock().unwrap().is_empty() && Instant::now() < deadline {
+        while orphaned.lock().unwrap().is_empty() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(20));
         }
-        let warnings = stashed.lock().unwrap().clone();
         assert!(
-            warnings
-                .iter()
-                .any(|w| w.contains("unmerged") && w.contains("retained")),
-            "a removed worktree with an unmerged branch stashes a `retained` info line: {warnings:?}"
-        );
-        assert!(
-            warnings.iter().any(|w| w.contains("wt remove -D feature")),
-            "the stash includes the actionable `-D` hint: {warnings:?}"
+            orphaned.lock().unwrap().contains("feature"),
+            "the surviving branch is pinned so a refresh re-includes it as a `/ branch` row: {:?}",
+            orphaned.lock().unwrap()
         );
 
         assert!(!reported_path.exists(), "the worktree is removed");
@@ -2947,11 +2956,11 @@ pub mod tests {
 
     /// The negative of the above, end-to-end through `invoke`: removing a worktree
     /// whose branch is *integrated* deletes both the worktree and the branch, so
-    /// the `branch_retained_as_unmerged` guard must keep the keep-message path from
-    /// firing — nothing is stashed. Guards against a regression that drops the
-    /// guard and stashes a spurious "retained; unmerged" notice for every removal.
+    /// the `exists_locally` check finds no survivor and pins nothing — the row
+    /// stays gone instead of reappearing as a `/ branch` row. Guards against a
+    /// regression that pins (and resurrects) every removed branch.
     #[test]
-    fn test_invoke_removes_integrated_worktree_stashes_nothing() {
+    fn test_invoke_removes_integrated_worktree_pins_nothing() {
         let test = worktrunk::testing::TestRepo::with_initial_commit();
         let repo = worktrunk::git::Repository::at(test.path()).unwrap();
         let wt_dir = tempfile::tempdir().unwrap();
@@ -2977,23 +2986,16 @@ pub mod tests {
         let item = branched_picker_item("feature", &reported_path);
         let token = item.output().to_string();
         let items = Arc::new(Mutex::new(vec![Arc::clone(&item)]));
-        let stashed: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-        let mut collector = PickerCollector {
-            items: Arc::clone(&items),
-            repo: repo.clone(),
-            approvals: Arc::new(Approvals::default()),
-            render_tx: Arc::new(OnceLock::new()),
-            factory: test_factory(repo.clone()),
-            stashed_warnings: Arc::clone(&stashed),
-        };
+        let mut collector = test_collector(Arc::clone(&items), repo.clone());
+        let orphaned = Arc::clone(&collector.orphaned_branches);
 
         let cmd = format!("remove '{token}'");
         let (_rx, _interrupt) = collector.invoke(&cmd, Arc::new(AtomicUsize::new(0)));
 
         // Sync on the branch being gone: that proves `do_removal` ran its branch
-        // delete, after which the thread runs the (no-op) retained-branch guard
-        // and exits. The grace window covers that guard — it can only stash if the
-        // guard regressed, so an empty stash after it is the real assertion.
+        // delete, after which the thread runs the (no-op) `exists_locally` check
+        // and exits. The grace window covers that check — it can only pin if the
+        // check regressed, so an empty pin set after it is the real assertion.
         let deadline = Instant::now() + Duration::from_secs(5);
         while !repo
             .run_command(&["branch", "--list", "feature"])
@@ -3006,9 +3008,9 @@ pub mod tests {
         assert!(!reported_path.exists(), "the worktree is removed");
         std::thread::sleep(Duration::from_millis(300));
         assert!(
-            stashed.lock().unwrap().is_empty(),
-            "an integrated worktree removal stashes no retained-branch message: {:?}",
-            stashed.lock().unwrap()
+            orphaned.lock().unwrap().is_empty(),
+            "an integrated worktree removal pins no branch (the row stays gone): {:?}",
+            orphaned.lock().unwrap()
         );
     }
 
@@ -3058,56 +3060,6 @@ pub mod tests {
             integration_reason: None,
         };
         assert!(!super::removal_target_still_present(&repo, &gone_branch));
-    }
-
-    /// `branch_retained_as_unmerged` observes the post-removal branch directly: an
-    /// integrated branch (same commit as the target) reads as deletable, not
-    /// retained; an unmerged branch (a commit the target lacks) reads as a
-    /// data-safety retain; a branch that's already gone reads as nothing to
-    /// surface.
-    #[test]
-    fn test_branch_retained_as_unmerged() {
-        let test = worktrunk::testing::TestRepo::with_initial_commit();
-        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
-
-        // Integrated: a branch at main's commit — SafeDelete would delete it, so
-        // it isn't a retained-unmerged branch.
-        repo.run_command(&["branch", "integrated"]).unwrap();
-        assert!(!super::branch_retained_as_unmerged(
-            &repo,
-            "integrated",
-            Some("main")
-        ));
-
-        // Unmerged: a commit main doesn't have — SafeDelete keeps it.
-        repo.run_command(&["checkout", "-b", "unmerged"]).unwrap();
-        fs::write(test.path().join("new.txt"), "unmerged work").unwrap();
-        repo.run_command(&["add", "."]).unwrap();
-        repo.run_command(&["commit", "-m", "unmerged work"])
-            .unwrap();
-        repo.run_command(&["checkout", "main"]).unwrap();
-        assert!(super::branch_retained_as_unmerged(
-            &repo,
-            "unmerged",
-            Some("main")
-        ));
-
-        // A branch that no longer exists — nothing to surface.
-        assert!(!super::branch_retained_as_unmerged(
-            &repo,
-            "no-such-branch",
-            Some("main")
-        ));
-
-        // With no configured target the check falls back to HEAD (here `main`),
-        // matching the silent removal's own fallback — so it still distinguishes
-        // integrated from unmerged rather than reporting every survivor unmerged.
-        assert!(!super::branch_retained_as_unmerged(
-            &repo,
-            "integrated",
-            None
-        ));
-        assert!(super::branch_retained_as_unmerged(&repo, "unmerged", None));
     }
 
     /// `removal_will_remove_target` predicts removal from the prepared result
@@ -3199,6 +3151,7 @@ pub mod tests {
             approvals: Arc::new(Approvals::default()),
             render_tx: Arc::new(OnceLock::new()),
             stashed_warnings: Arc::clone(&stashed),
+            orphaned_branches: Arc::new(Mutex::new(std::collections::HashSet::new())),
         };
 
         let cmd = format!("remove '{token}'");
