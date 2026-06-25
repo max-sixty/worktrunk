@@ -935,6 +935,7 @@ pub fn handle_picker(
             shared_items: Arc::clone(&shared_items),
             rendered_slots: std::sync::OnceLock::new(),
             pr_status_slots: std::sync::OnceLock::new(),
+            comments_fetched: std::sync::OnceLock::new(),
             preview_cache: Arc::clone(&preview_cache),
             orchestrator: Arc::clone(&orchestrator),
             preview_dims,

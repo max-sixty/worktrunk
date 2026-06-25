@@ -25,7 +25,7 @@
 //! - **Content expectations** wait for async preview content to load (e.g., "diff --git")
 
 use crate::common::mock_commands::{MockConfig, MockResponse};
-use crate::common::{TestRepo, repo, wt_bin};
+use crate::common::{TEST_EPOCH, TestRepo, repo, wt_bin};
 use insta::assert_snapshot;
 use portable_pty::CommandBuilder;
 use rstest::rstest;
@@ -976,6 +976,24 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
     });
 }
 
+/// Seed a fresh CI-status cache entry for `branch` so the picker primes the
+/// row's `pr_status` at skeleton time (`populate_from_cache`) — making the `pr`
+/// and `comments` tabs resolve deterministically with no dependence on the live
+/// forge fetch's timing. `status_json` is the cached `status` value: `"null"`
+/// for "CI checked, no PR", or a PR object (e.g.
+/// `{"ci_status":"passed","source":"pr","is_stale":false,"number":{"number":42,"sigil":"#"}}`).
+/// `branch` must be a checked-out worktree — its current HEAD is the cache key.
+fn seed_ci_status(repo: &TestRepo, branch: &str, status_json: &str) {
+    let head = repo.git_output(&["rev-parse", branch]);
+    let cache_dir = repo.path().join(".git/wt/cache/ci-status");
+    std::fs::create_dir_all(&cache_dir).unwrap();
+    let entry = format!(
+        r#"{{"status":{status_json},"checked_at":{TEST_EPOCH},"head":"{head}","branch":"{branch}"}}"#,
+        head = head.trim(),
+    );
+    std::fs::write(cache_dir.join(format!("{branch}.json")), entry).unwrap();
+}
+
 /// Install a mock forge CLI (`gh`/`glab`) that answers the `--prs` list call
 /// from a canned JSON file, and return env vars (mock on PATH + MOCK_CONFIG_DIR)
 /// for a `wt switch --prs` PTY run. No network is touched. `list_delay_ms`
@@ -1138,6 +1156,117 @@ fn test_switch_picker_prs_shows_loading_marker(mut repo: TestRepo) {
     assert!(!list.contains("#42"), "rows not yet streamed in:\n{list}");
 }
 
+/// A plain `wt switch` (no `--prs`) worktree row whose branch has an open PR
+/// shows the real comment thread in its `comments` tab — the same background
+/// `gh pr view <n> --json comments` fetch and render a `--prs` row makes. This
+/// is the crux of the unification: the comments tab no longer points a worktree
+/// row at `--prs`; it loads the thread directly. The PR is primed from a fresh
+/// CI cache so the row resolves to "has PR" at skeleton with no `gh pr list`,
+/// and the conversation comes from a mocked `gh pr view`.
+#[rstest]
+fn test_switch_picker_worktree_row_comments_tab_shows_thread(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    let feature_path = repo.add_worktree("feature");
+    // Commit a file, then leave an uncommitted edit so `feature`'s HEAD± tab
+    // shows a `diff --git` — a preview-only sync anchor (it never appears in the
+    // list) that confirms the cursor landed on `feature` before reading comments.
+    std::fs::write(feature_path.join("file.txt"), "content\n").unwrap();
+    let add = repo
+        .git_command()
+        .args(["-C", feature_path.to_str().unwrap(), "add", "."])
+        .run()
+        .unwrap();
+    assert!(add.status.success(), "Failed to add file");
+    let commit = repo
+        .git_command()
+        .args([
+            "-C",
+            feature_path.to_str().unwrap(),
+            "commit",
+            "-m",
+            "Commit for comments tab",
+        ])
+        .run()
+        .unwrap();
+    assert!(commit.status.success(), "Failed to commit");
+    std::fs::write(feature_path.join("file.txt"), "content\nmore\n").unwrap();
+
+    // Prime a fresh CI status carrying an open PR (#42) so the row resolves to
+    // "has PR" at skeleton — detect reads this same fresh entry, so no `gh pr
+    // list`. The comments thread still needs a live `gh pr view`, mocked below.
+    seed_ci_status(
+        &repo,
+        "feature",
+        r##"{"ci_status":"passed","source":"pr","is_stale":false,"number":{"number":42,"sigil":"#"}}"##,
+    );
+
+    // Mock the only forge call a worktree row makes — `gh pr view 42 --json
+    // comments` (the `log` tab is local; the `pr` tab rides the cached CI). Any
+    // other gh invocation falls through to `_default` exit 1.
+    let mock_bin = repo.root_path().join("mock-bin");
+    std::fs::create_dir_all(&mock_bin).unwrap();
+    let comments_json = r#"{"comments":[{"author":{"login":"octocat"},"body":"Looks solid, shipping it.","createdAt":"2024-12-01T00:00:00Z"}]}"#;
+    std::fs::write(mock_bin.join("comments.json"), comments_json).unwrap();
+    MockConfig::new("gh")
+        .version("gh version 1.0.0 (mock)")
+        .command("pr view", MockResponse::file("comments.json"))
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+    let mut env_vars = repo.test_env_vars();
+    env_vars.push((
+        "MOCK_CONFIG_DIR".to_string(),
+        mock_bin.display().to_string(),
+    ));
+    let base_path = std::env::var("PATH").unwrap_or_default();
+    env_vars.push((
+        "PATH".to_string(),
+        format!("{}:{base_path}", mock_bin.display()),
+    ));
+
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
+            // for the matcher-lag rationale.
+            ("\x1b[B", None), // Down: move cursor to `feature`
+            // Alt-1: HEAD± panel. `feature`'s uncommitted diff (`diff --git`) is a
+            // preview-only anchor — it confirms the cursor landed on `feature`
+            // (not `main`) and gives the skeleton-spawned comments fetch time to
+            // land before we read its tab.
+            ("\x1b1", Some("diff --git")),
+            // Alt-7: jump to comments (7). The thread was fetched in the
+            // background at skeleton time (the PR was primed), so it's cached by
+            // now — wait for the comment body to confirm the real thread renders.
+            ("\x1b7", Some("Looks solid")),
+        ],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+    let (_list, preview) = result.panels();
+    assert!(
+        preview.contains("octocat"),
+        "comment author renders on a worktree row's comments tab:\n{preview}"
+    );
+    assert!(
+        preview.contains("Looks solid"),
+        "comment body renders on a worktree row's comments tab:\n{preview}"
+    );
+    // No `--prs` pointer — the worktree row loads the thread itself.
+    assert!(
+        !preview.contains("--prs"),
+        "comments tab must not point at --prs:\n{preview}"
+    );
+}
+
 #[rstest]
 fn test_switch_picker_preview_cycle_tab_forward(mut repo: TestRepo) {
     // Tab cycles the preview tab forward. From the default HEAD± tab (1), one
@@ -1225,6 +1354,8 @@ fn test_switch_picker_preview_cycle_tab_forward_wraps(mut repo: TestRepo) {
         .unwrap();
     assert!(commit.status.success(), "Failed to commit");
 
+    seed_ci_status(&repo, "feature", "null");
+
     let env_vars = repo.test_env_vars();
     let result = exec_in_pty_capture_before_abort(
         wt_bin().to_str().unwrap(),
@@ -1235,9 +1366,10 @@ fn test_switch_picker_preview_cycle_tab_forward_wraps(mut repo: TestRepo) {
             // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
             // for the matcher-lag rationale.
             ("\x1b[B", None), // Down: move cursor to `feature`
-            // Alt-7: jump to comments (7). On a worktree row the comments tab
-            // points at `--prs` rows (it's fetched only there).
-            ("\x1b7", Some("--prs")),
+            // Alt-7: jump to comments (7). The comments tab behaves the same on a
+            // worktree row as on a `--prs` row — with no PR (seeded above) it shows
+            // "has no PR", matching the `pr` tab.
+            ("\x1b7", Some("has no PR")),
             ("\t", Some("no uncommitted changes")), // Tab: wrap 7 → HEAD± (1)
         ],
     );
@@ -1280,6 +1412,8 @@ fn test_switch_picker_preview_cycle_shift_tab_wraps(mut repo: TestRepo) {
         .unwrap();
     assert!(commit.status.success(), "Failed to commit");
 
+    seed_ci_status(&repo, "feature", "null");
+
     let env_vars = repo.test_env_vars();
     let result = exec_in_pty_capture_before_abort(
         wt_bin().to_str().unwrap(),
@@ -1290,9 +1424,9 @@ fn test_switch_picker_preview_cycle_shift_tab_wraps(mut repo: TestRepo) {
             // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
             // for the matcher-lag rationale.
             ("\x1b[B", None), // Down: move cursor to `feature`
-            // Shift-Tab: HEAD± (1) → comments (7), the 1 → 7 wraparound. The
-            // comments tab on a worktree row points at `--prs` rows.
-            ("\x1b[Z", Some("--prs")),
+            // Shift-Tab: HEAD± (1) → comments (7), the 1 → 7 wraparound. With no PR
+            // (seeded above) the comments tab shows "has no PR", like the `pr` tab.
+            ("\x1b[Z", Some("has no PR")),
         ],
     );
 
@@ -1300,7 +1434,7 @@ fn test_switch_picker_preview_cycle_shift_tab_wraps(mut repo: TestRepo) {
 
     let (_list, preview) = result.panels();
     assert!(
-        preview.contains("Comments show on"),
+        preview.contains("has no PR"),
         "Shift-Tab should wrap to the comments tab; preview was:\n{preview}"
     );
 }

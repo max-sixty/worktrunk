@@ -33,13 +33,15 @@
 //!   workers' local deques during drain.
 
 use std::collections::HashSet;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use color_print::cformat;
 use skim::prelude::*;
 use worktrunk::styling::{StyledLine, strip_osc8_hyperlinks};
+
+use super::super::list::ci_status::PrStatus;
 
 /// Minimum gap between repaint pokes during collection. Holds the redraw rate
 /// at ~60fps so a burst of task results can't flood skim's (effectively
@@ -82,6 +84,15 @@ pub(super) struct PickerHandler {
     /// cache-filled snapshot), then written by `on_update` as the `CiStatus`
     /// task reports, so the `pr` tab reflects the live fetch.
     pub(super) pr_status_slots: OnceLock<Box<[PrStatusSlot]>>,
+    /// Per data row, the PR/MR number whose `comments` thread was last fetched
+    /// (`0` = none yet). Set once in `on_skeleton`. The `comments` tab's
+    /// background forge fetch must fire at most once per PR, but the PR surfaces
+    /// asynchronously (a cache prime at skeleton, or the live `CiStatus` task via
+    /// `on_update`) and `on_update` fires repeatedly — so a fetch fires only when
+    /// the observed number differs from this slot, and a corrected number (a
+    /// reused branch, a stale prime) re-fetches and keeps the `comments` tab
+    /// consistent with the `pr` tab. See [`Self::maybe_spawn_comments`].
+    pub(super) comments_fetched: OnceLock<Box<[Arc<AtomicU64>]>>,
     pub(super) preview_cache: PreviewCache,
     pub(super) orchestrator: Arc<PreviewOrchestrator>,
     pub(super) preview_dims: (usize, usize),
@@ -127,6 +138,52 @@ impl PickerHandler {
         }
         let _ = tx.try_send(Event::Render);
     }
+
+    /// Spawn row `idx`'s `comments` background fetch if its branch has an open
+    /// PR and that PR's thread hasn't been fetched yet. The `comments` tab on a
+    /// worktree row shows the same forge-fetched thread a `--prs` row's tab does
+    /// (see `items::WorktreeSkimItem::render_comments_pane`); the PR number comes
+    /// from the row's live status, which arrives asynchronously, so this fires
+    /// from both the skeleton prime and `on_update`. The per-row
+    /// [`Self::comments_fetched`] slot records which PR number was fetched, so
+    /// repeated `on_update`s short-circuit — and a *changed* number (a reused
+    /// branch, a stale prime corrected by the live fetch) drops the now-wrong
+    /// cached thread and re-fetches, keeping the `comments` tab consistent with
+    /// the `pr` tab. Keyed by branch name — `--prs` rows key by their `pr:{N}`
+    /// token, and git forbids `:` in branch names, so the two keyspaces never
+    /// collide.
+    fn maybe_spawn_comments(
+        &self,
+        idx: usize,
+        branch_name: &str,
+        pr_status: &Option<Option<PrStatus>>,
+    ) {
+        let Some(Some(status)) = pr_status else {
+            return;
+        };
+        let Some(pr_ref) = status.number else { return };
+        let Some(slots) = self.comments_fetched.get() else {
+            return;
+        };
+        let Some(slot) = slots.get(idx) else { return };
+        let number = pr_ref.number;
+        let previous = slot.swap(number, Ordering::Relaxed);
+        if previous == number {
+            return; // this PR's comments are already fetched (or in flight)
+        }
+        if previous != 0 {
+            // The live fetch corrected the PR number — drop the stale thread so
+            // the re-fetch (below) replaces it rather than serving the old PR.
+            self.preview_cache
+                .remove(&(branch_name.to_string(), PreviewMode::Comments));
+        }
+        super::prs::spawn_worktree_comments_fetch(
+            &self.orchestrator,
+            branch_name.to_string(),
+            number as u32,
+            self.preview_dims.0,
+        );
+    }
 }
 
 impl PickerProgressHandler for PickerHandler {
@@ -142,6 +199,7 @@ impl PickerProgressHandler for PickerHandler {
 
         let mut slots: Vec<Arc<Mutex<String>>> = Vec::with_capacity(items.len());
         let mut pr_slots: Vec<PrStatusSlot> = Vec::with_capacity(items.len());
+        let mut comments_slots: Vec<Arc<AtomicU64>> = Vec::with_capacity(items.len());
         let mut skim_items: Vec<Arc<dyn SkimItem>> = Vec::with_capacity(items.len() + 1);
         let mut list_items: Vec<Arc<ListItem>> = Vec::with_capacity(items.len());
 
@@ -215,6 +273,7 @@ impl PickerProgressHandler for PickerHandler {
             // task reports.
             let pr_status_arc: PrStatusSlot = Arc::new(Mutex::new(item_arc.pr_status.clone()));
             pr_slots.push(Arc::clone(&pr_status_arc));
+            comments_slots.push(Arc::new(AtomicU64::new(0)));
 
             skim_items.push(Arc::new(WorktreeSkimItem {
                 search_text,
@@ -233,6 +292,7 @@ impl PickerProgressHandler for PickerHandler {
         // skim calls `CommandCollector::invoke`.
         let _ = self.rendered_slots.set(slots.into_boxed_slice());
         let _ = self.pr_status_slots.set(pr_slots.into_boxed_slice());
+        let _ = self.comments_fetched.set(comments_slots.into_boxed_slice());
         *self.shared_items.lock().unwrap() = skim_items.clone();
 
         // skim 4.x's item channel carries Vec batches; the skeleton is a single
@@ -254,6 +314,12 @@ impl PickerProgressHandler for PickerHandler {
             self.preview_dims,
             self.llm_command.as_deref(),
         );
+        // A row whose CI status was primed from cache already knows its PR at
+        // skeleton time — kick off its `comments` fetch now so the tab is warm.
+        // Rows whose PR only surfaces later get theirs from `on_update`.
+        for (idx, item) in list_items.iter().enumerate() {
+            self.maybe_spawn_comments(idx, item.branch_name(), &item.pr_status);
+        }
         // Static Summary hint is a synchronous in-memory insert, no
         // contention concern. Pre-fill every row at skeleton time so the
         // Summary tab is usable for any selection immediately.
@@ -284,6 +350,10 @@ impl PickerProgressHandler for PickerHandler {
             self.preview_cache
                 .remove(&(item.branch_name().to_string(), PreviewMode::Pr));
         }
+        // If this update is where the row's PR first surfaced, kick off its
+        // `comments` background fetch (once per row) so the `comments` tab loads
+        // the thread — the same fetch a `--prs` row makes.
+        self.maybe_spawn_comments(idx, item.branch_name(), &item.pr_status);
         self.request_render(false);
     }
 
@@ -339,6 +409,7 @@ mod tests {
             shared_items,
             rendered_slots: OnceLock::new(),
             pr_status_slots: OnceLock::new(),
+            comments_fetched: OnceLock::new(),
             preview_cache,
             orchestrator,
             preview_dims: (80, 24),
@@ -412,6 +483,88 @@ mod tests {
         handler.on_reveal(vec!["rev-one".into(), "rev-two".into()]);
         assert_eq!(*slots[0].lock().unwrap(), "rev-one");
         assert_eq!(*slots[1].lock().unwrap(), "rev-two");
+    }
+
+    /// A row's `comments` fetch is once-per-PR, keyed by branch name — but if the
+    /// live CI fetch corrects the PR number (a stale prime, a reused branch), the
+    /// now-wrong cached thread is dropped and re-fetched, so the `comments` tab
+    /// can't keep serving the old PR's thread under the new number. The
+    /// `make_handler` repo has no forge, so the fetch caches a terminal pane
+    /// synchronously; the test watches the cache key being invalidated and
+    /// repopulated across the number change.
+    #[test]
+    fn comments_refetch_on_pr_number_change() {
+        use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef, PrStatus};
+
+        let (handler, _test, rx) = make_handler();
+        handler.on_skeleton(
+            vec![ListItem::new_branch("aaa".into(), "feature".into())],
+            vec!["s".into()],
+            header("hdr"),
+            grid(),
+        );
+        let _ = rx.recv();
+
+        let with_pr = |number: u64| {
+            let mut item = ListItem::new_branch("aaa".into(), "feature".into());
+            item.pr_status = Some(Some(PrStatus {
+                ci_status: CiStatus::Passed,
+                source: CiSource::PullRequest,
+                is_stale: false,
+                is_priming: false,
+                url: None,
+                number: Some(PrRef::pr(number)),
+                review_state: None,
+                title: None,
+                body: None,
+                comment_count: None,
+            }));
+            item
+        };
+        let key = ("feature".to_string(), PreviewMode::Comments);
+
+        // First the row resolves to PR #41 → its comments fetch fires and caches.
+        handler.on_update(0, "r".into(), &with_pr(41));
+        handler.orchestrator.wait_for_idle();
+        assert!(
+            handler.preview_cache.contains_key(&key),
+            "PR #41's comments fetch populated the branch-keyed cache"
+        );
+
+        // A repeat update with the SAME number must not re-fetch: overwrite with a
+        // sentinel and confirm it survives.
+        handler
+            .preview_cache
+            .insert(key.clone(), "SENTINEL-41".into());
+        handler.on_update(0, "r".into(), &with_pr(41));
+        handler.orchestrator.wait_for_idle();
+        assert_eq!(
+            handler
+                .preview_cache
+                .get(&key)
+                .map(|v| v.clone())
+                .as_deref(),
+            Some("SENTINEL-41"),
+            "same PR number short-circuits — no re-fetch"
+        );
+
+        // The live fetch corrects the number to #42 → the stale #41 thread is
+        // dropped and a fresh fetch repopulates the key.
+        handler.on_update(0, "r".into(), &with_pr(42));
+        handler.orchestrator.wait_for_idle();
+        assert_ne!(
+            handler
+                .preview_cache
+                .get(&key)
+                .map(|v| v.clone())
+                .as_deref(),
+            Some("SENTINEL-41"),
+            "a corrected PR number drops the stale thread and re-fetches"
+        );
+        assert!(
+            handler.preview_cache.contains_key(&key),
+            "the re-fetch repopulated the comments cache for #42"
+        );
     }
 
     /// Header + items get published in order. `output()` of the

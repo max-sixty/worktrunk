@@ -124,6 +124,28 @@ fn test_picker_dry_run_shows_cached_pr_numbers(mut repo: TestRepo) {
         !other_row.contains('#'),
         "uncached branch renders an empty CI cell, got: {other_row}"
     );
+
+    // The worktree row with a PR spawns a `comments` background fetch keyed by
+    // its branch name (PreviewMode::Comments == 7) — the same fetch a `--prs`
+    // row makes, so the comments tab is no longer `--prs`-only. In this no-network
+    // test the entry holds a terminal pane (a "couldn't load" on a GitHub remote,
+    // or a "forge unsupported" note otherwise), but its presence proves the fetch
+    // fired and keyed by branch. The PR-less row spawns no such fetch.
+    let comments_branches: Vec<&str> = parsed["entries"]
+        .as_array()
+        .expect("top-level `entries` array")
+        .iter()
+        .filter(|e| e["mode"] == 7)
+        .map(|e| e["branch"].as_str().expect("branch is a string"))
+        .collect();
+    assert!(
+        comments_branches.contains(&"feature-a"),
+        "the PR-bearing worktree row spawns a branch-keyed comments fetch, got: {comments_branches:?}"
+    );
+    assert!(
+        !comments_branches.contains(&"feature-b"),
+        "the PR-less worktree row spawns no comments fetch, got: {comments_branches:?}"
+    );
 }
 
 /// Verifies that warnings collect emits while running on the picker's bg
