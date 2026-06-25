@@ -1677,7 +1677,10 @@ fn test_switch_picker_no_cd_switches_without_cd_directive(mut repo: TestRepo) {
 // reproduced or fixed (needs a Windows box). The other accept-path picker
 // tests, which switch without an approval prompt, pass on Windows. Ignored on
 // Windows so it still compiles there; runs everywhere else.
-#[cfg_attr(windows, ignore = "pre-switch hook decline exits 1 on Windows; needs investigation")]
+#[cfg_attr(
+    windows,
+    ignore = "pre-switch hook decline exits 1 on Windows; needs investigation"
+)]
 #[rstest]
 fn test_switch_picker_pre_switch_hook_requires_approval(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
