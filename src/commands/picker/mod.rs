@@ -1002,7 +1002,18 @@ impl PipelineFactory {
             });
 
         let bg_handler: Arc<dyn collect::PickerProgressHandler> = handler.clone();
-        let bg_repo = self.repo.clone();
+        // Fresh `Repository` per spawn so a refresh re-enumerates worktrees.
+        // The factory's `repo` was primed with `git worktree list` at picker
+        // startup, and `RepoCache.worktrees` is a `OnceCell` that is never
+        // invalidated; cloning would re-probe that stale list through the same
+        // cache. After an in-picker removal the removed worktrees would still
+        // appear, and collect's per-worktree git ops would fail against the
+        // gone branches ("fatal: Needed a single revision"). `Repository::at`
+        // rebuilds the cache, which is exactly the post-mutation discipline the
+        // `RepoCache` docs and `prepare_removal` already require. `bg_repo` and
+        // `prs_repo` share this one fresh inventory via clone.
+        let spawn_repo = Repository::at(self.repo.discovery_path())?;
+        let bg_repo = spawn_repo.clone();
         let bg_skip_tasks = self.skip_tasks.clone();
         let show_branches = self.show_branches;
         let show_remotes = self.show_remotes;
@@ -1034,7 +1045,7 @@ impl PipelineFactory {
         // PR rows stream in (~1s) when the call returns.
         let prs_handle = if let Some(prs_loading) = prs_loading {
             let prs_tx = tx.clone();
-            let prs_repo = self.repo.clone();
+            let prs_repo = spawn_repo.clone();
             let prs_warnings = Arc::clone(&self.stashed_warnings);
             let prs_orchestrator = Arc::clone(&self.orchestrator);
             let prs_render_tx = Arc::clone(&self.render_tx);
@@ -2523,6 +2534,80 @@ pub mod tests {
         assert!(
             !second_path.exists(),
             "selected detached worktree should be removed"
+        );
+    }
+
+    /// A refresh (`alt-r`) re-runs `factory.spawn()`. The factory carries the
+    /// `Repository` whose worktree-list cache was primed at picker startup and
+    /// is never invalidated, so after a worktree disappears `spawn` must rebuild
+    /// a fresh `Repository` rather than re-probe that stale cache — otherwise the
+    /// refresh streams a row for the gone worktree and collect's per-worktree git
+    /// ops fail against its deleted branch ("fatal: Needed a single revision").
+    #[test]
+    fn test_spawn_reenumerates_worktrees_after_removal() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        // The repo the factory carries; its cache is primed below, as the
+        // picker prelude primes it at startup.
+        let factory_repo = worktrunk::git::Repository::at(test.path()).unwrap();
+
+        let wt_dir = tempfile::tempdir().unwrap();
+        let doomed_path = wt_dir.path().join("doomed");
+        factory_repo
+            .run_command(&[
+                "worktree",
+                "add",
+                "-b",
+                "doomed",
+                doomed_path.to_str().unwrap(),
+            ])
+            .unwrap();
+        let primed_has_doomed = factory_repo
+            .list_worktrees()
+            .unwrap()
+            .iter()
+            .any(|wt| wt.branch.as_deref() == Some("doomed"));
+        assert!(primed_has_doomed, "cache primed while doomed still present");
+
+        // Remove the worktree through a separate fresh `Repository`, exactly as
+        // the picker's background removal does. `factory_repo`'s cache is now
+        // stale: it still lists `doomed`.
+        let removal_repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        removal_repo
+            .run_command(&[
+                "worktree",
+                "remove",
+                "--force",
+                doomed_path.to_str().unwrap(),
+            ])
+            .unwrap();
+        removal_repo
+            .run_command(&["branch", "-D", "doomed"])
+            .unwrap();
+
+        let factory = test_factory(factory_repo);
+        let super::SpawnedPipeline {
+            rx,
+            handler,
+            collect_handle,
+            ..
+        } = factory.spawn().unwrap();
+        // Drop the returned handler's sender, then wait for the collect thread
+        // to finish (dropping its handler clone); the lone senders gone, `rx`
+        // hits EOF. The unbounded channel buffered every streamed row.
+        drop(handler);
+        collect_handle.join().unwrap();
+        let outputs: Vec<String> = std::iter::from_fn(|| rx.recv().ok())
+            .flatten()
+            .map(|item| item.output().into_owned())
+            .collect();
+
+        assert!(
+            !outputs.is_empty(),
+            "the surviving worktree should still stream a row"
+        );
+        assert!(
+            !outputs.iter().any(|out| out.contains("doomed")),
+            "refresh must not stream the removed worktree: {outputs:?}"
         );
     }
 
