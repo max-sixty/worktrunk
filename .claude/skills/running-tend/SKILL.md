@@ -191,21 +191,35 @@ closed in error, they can let us know and we'll reopen it.
 
 Deflect narrow feature requests to aliases rather than native flags — this
 keeps the CLI surface small while giving users the behavior immediately.
-Suggest an alias when:
+worktrunk is deliberately slowing flag and config inflation, so an alias is
+the standing answer for a workflow tweak one reporter wants. Suggest one when:
 
 - The request benefits a small subset of users or a single reporter's workflow
   (e.g., idempotent create-or-switch, auto-push after merge)
-- The behavior can be composed from existing `wt` commands or shell primitives
-- A shell one-liner or `wt step` alias covers the use case
+- The behavior can be composed from existing `wt` commands
+- A `wt` alias covers the use case
+
+**Lead with a `wt` alias — don't suggest a shell function.** The `[aliases]`
+mechanism resolves `wt <name>` to an alias when there's no matching built-in,
+so it works across every repo from user config and is the project's preferred
+extension point. Show the `[aliases]` entry as *the* answer; don't offer a
+shell function or `alias` one-liner alongside it, even as a fallback.
 
 **How to respond:**
-1. Draft the alias (shell function or `wt step` alias, whichever fits better)
-2. Test it in a scratch worktree — verify it works for the happy path and edge
-   cases (e.g., branch already exists, dirty worktree, missing remote)
-3. Post the tested alias in the issue with usage examples
-4. Link to the [aliases docs](https://worktrunk.dev/step/#aliases) and
-   [tips & patterns](https://worktrunk.dev/tips-patterns/) for further recipes
-
+1. Search closed and open issues for prior discussion of the same request and
+   link it in the reply — these asks recur (create-or-switch alone spans #518,
+   #1726, #3005, #3244), and surfacing the earlier thread shows the user the
+   decision has context rather than reading as a fresh brush-off.
+2. Draft a `wt` alias.
+3. Test it in a scratch worktree — verify the happy path and edge cases
+   (branch already exists, dirty worktree). Don't engineer surprising edge
+   cases into the alias to look complete: a create-or-switch wrapper that
+   silently materializes a *remote* branch of the same name (what plain
+   `wt switch <name>` does) is exactly the foothole to call out in prose, not
+   to bake in.
+4. Post the tested alias in the issue with usage examples.
+5. Link to the [aliases docs](https://worktrunk.dev/step/#aliases) and
+   [tips & patterns](https://worktrunk.dev/tips-patterns/) for further recipes.
 ### Don't fix tests by adding skip guards
 
 When a test fails because production code or test setup can't handle some
