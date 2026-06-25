@@ -1421,13 +1421,14 @@ mod tests {
             comment_count,
         };
 
-        // A PR with comments adds a `comments` metadata line carrying the count.
+        // A PR with comments adds a cyan all-caps `COMMENTS` metadata line
+        // carrying the count (same `field_label` styling as BRANCH/URL).
         let with = render_worktree_pr("feature", PrRef::pr(7), &status(Some(3)), 80)
             .ansi_strip()
             .to_string();
         assert!(
             with.lines()
-                .any(|l| l.contains("comments") && l.contains('3')),
+                .any(|l| l.contains("COMMENTS") && l.contains('3')),
             "comments line with count: {with:?}"
         );
 
@@ -1437,7 +1438,7 @@ mod tests {
             .ansi_strip()
             .to_string();
         assert!(
-            !without.contains("comments"),
+            !without.contains("COMMENTS"),
             "no comments line when absent: {without:?}"
         );
     }
