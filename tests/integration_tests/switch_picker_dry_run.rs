@@ -336,3 +336,67 @@ template = "{{ branhc }}"
         "rows still render without the broken column, got: {stdout}"
     );
 }
+
+/// With no TTY and no `COLUMNS`, terminal detection returns nothing and the
+/// picker falls back to its `(80, 24)` default dimensions, still rendering its
+/// rows. The other dry-run tests can't reach this arm because the harness sets
+/// `COLUMNS=150`, so detection always yields a width.
+#[rstest]
+fn test_picker_dry_run_no_terminal_uses_default_dims(mut repo: TestRepo) {
+    repo.add_worktree("feature-a");
+
+    let output = repo
+        .wt_command()
+        .args(["switch"])
+        .env("WORKTRUNK_PICKER_DRY_RUN", "1")
+        .env_remove("COLUMNS")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "dry-run should exit 0; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
+    let rows = parsed["rows"].as_array().expect("top-level `rows` array");
+    assert!(
+        rows.iter()
+            .any(|r| r.as_str().unwrap_or("").contains("feature-a")),
+        "rows still render with the default fallback dimensions, got: {stdout}"
+    );
+}
+
+/// A narrow terminal (`COLUMNS` below the side-by-side threshold) selects the
+/// stacked (Down) preview layout, where the list spans the full width. The
+/// other dry-run tests can't reach this arm because the harness's `COLUMNS=150`
+/// always selects the side-by-side (Right) layout.
+#[rstest]
+fn test_picker_dry_run_narrow_terminal_uses_down_layout(mut repo: TestRepo) {
+    repo.add_worktree("feature-a");
+
+    let output = repo
+        .wt_command()
+        .args(["switch"])
+        .env("WORKTRUNK_PICKER_DRY_RUN", "1")
+        .env("COLUMNS", "40")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "dry-run should exit 0; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
+    let rows = parsed["rows"].as_array().expect("top-level `rows` array");
+    assert!(
+        rows.iter()
+            .any(|r| r.as_str().unwrap_or("").contains("feature-a")),
+        "rows still render in the Down layout, got: {stdout}"
+    );
+}
