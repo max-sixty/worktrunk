@@ -25,6 +25,7 @@ use super::pager::{diff_pager, pipe_through_pager};
 use super::pr_pane;
 use super::preview::{PreviewMode, PreviewStateData};
 use super::preview_cache;
+use super::preview_notify::PreviewNotifier;
 
 /// Parse a pre-rendered ANSI string into a single ratatui `Line` for skim's
 /// item list. skim's `DisplayContext::to_line` only applies match-highlight
@@ -270,6 +271,11 @@ pub(super) struct WorktreeSkimItem {
     /// handler mirrors them here as the pipeline lands — letting those tabs dim
     /// once their diff is known empty (see [`LocalContent`]).
     pub local_content: LocalContentSlot,
+    /// Surfaces a background preview fill without a keystroke. `preview()`
+    /// records the row's awaited `(branch, mode)` here on every render; the
+    /// orchestrator pokes a repaint when that key's compute lands (see
+    /// [`PreviewNotifier`]).
+    pub notifier: Arc<PreviewNotifier>,
 }
 
 impl SkimItem for WorktreeSkimItem {
@@ -294,6 +300,10 @@ impl SkimItem for WorktreeSkimItem {
         // `render_preview`, which takes the mode explicitly so it's testable
         // without touching that global state.
         let mode = PreviewStateData::read_mode();
+        // Record what this (selected) row is showing *before* reading the cache,
+        // so a background fill that lands right after a miss still finds the key
+        // set and pokes a repaint (see `PreviewNotifier`).
+        self.notifier.note_awaiting(&self.branch_name, mode);
         ItemPreview::AnsiText(self.render_preview(mode, context.width, context.height))
     }
 }
@@ -584,22 +594,26 @@ pub(super) fn render_preview_tabs(
         render_tab_row_compact(&tabs, reset)
     };
 
-    // Controls use dim yellow to distinguish from dimmed (white) tabs.
+    // Controls use dim cyan to distinguish from the dimmed (white) tabs above.
     // The tab numbers above are the alt-N accelerators (bare digits type
     // into the query); Tab/shift-tab cycle the same tabs.
     //
+    // Order: primary action (Enter), preview navigation (ctrl-u/d scroll, then
+    // the Tab/alt-1…7 accelerators), then row actions, with Esc last.
+    //
     // The controls line is intentionally NOT width-managed: skim clips it on the
-    // right on a narrow pane, but it's only a reminder — the accelerators it
-    // names live in the tab bar above, which IS width-managed, so nothing
-    // navigable is lost when the tail clips. Row actions lead so they survive a
-    // narrow-pane clip; the preview controls and Esc trail.
+    // right on a narrow pane, but it's only a reminder. Note the trade-off of
+    // this order: the row actions (alt-c/x/y/o/r/p) now trail and clip first, and
+    // unlike the preview accelerators they are not duplicated in the (width-
+    // managed) tab bar above — so on a narrow pane the only on-screen reminder of
+    // them can clip away.
     let controls = cformat!(
-        "<dim,yellow>Enter: switch | alt-c: create | alt-x: remove | alt-y: copy | alt-o: open | alt-r: refresh | alt-p: toggle | Tab/alt-1…7: preview | ctrl-u/d: scroll | Esc: cancel</>"
+        "<dim,cyan>Enter: switch | ctrl-u/d: scroll | Tab/alt-1…7: preview | alt-c: create | alt-x: remove | alt-y: copy | alt-o: open | alt-r: refresh | alt-p: toggle | Esc: cancel</>"
     );
 
     // Each tab/segment already ends with a full reset (so styling never bleeds
     // into the dividers or preview content); `{reset}` here only closes the
-    // controls line's dim-yellow span.
+    // controls line's dim-cyan span.
     format!("{bar}\n{controls}{reset}\n\n")
 }
 
@@ -780,9 +794,9 @@ impl WorktreeSkimItem {
         let reset = Reset;
         let branch = self.item.branch_name();
         match pr {
-            PrPreview::Loading => cformat!(
-                "○ Fetching PR status for <bold>{branch}</>{reset}… press <bold>alt-6</>{reset} to refresh\n"
-            ),
+            PrPreview::Loading => {
+                cformat!("○ Fetching PR status for <bold>{branch}</>{reset}…\n")
+            }
             PrPreview::NoPr => {
                 cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no PR\n")
             }
@@ -805,11 +819,10 @@ impl WorktreeSkimItem {
         let branch = self.item.branch_name();
         match self.pr_preview() {
             // The CI fetch hasn't reported yet — we don't know whether there's a
-            // PR to fetch comments for. Mirror the `pr` tab's loading state,
-            // pointing at this tab's accelerator.
-            PrPreview::Loading => cformat!(
-                "○ Fetching PR status for <bold>{branch}</>{reset}… press <bold>alt-7</>{reset} to refresh\n"
-            ),
+            // PR to fetch comments for. Mirror the `pr` tab's loading state.
+            PrPreview::Loading => {
+                cformat!("○ Fetching PR status for <bold>{branch}</>{reset}…\n")
+            }
             PrPreview::NoPr => {
                 cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no PR\n")
             }
@@ -826,7 +839,8 @@ impl WorktreeSkimItem {
     /// Pure cache read: skim invokes `preview()` synchronously while drawing
     /// the preview pane, so any blocking here gates the render. Background
     /// tasks populate the cache out-of-band; a miss returns a placeholder, and
-    /// skim re-queries on the next selection/query change.
+    /// the orchestrator pokes a repaint for the awaited key once the fill lands
+    /// (see [`PreviewNotifier`]).
     fn preview_for_mode(&self, mode: PreviewMode, width: usize, _height: usize) -> String {
         let cache_key = (self.branch_name.clone(), mode);
         let content = self
@@ -837,19 +851,17 @@ impl WorktreeSkimItem {
 
         match mode {
             // Summary post-processing is cheap (string formatting, no subprocess).
-            // Applied at display time because generate_and_cache_summary() inserts
+            // Applied at display time because `generate_summary_for_item` produces
             // raw LLM output.
             PreviewMode::Summary => super::summary::render_summary(&content, width),
             _ => content,
         }
     }
 
-    /// Placeholder shown while a background task is still computing the
-    /// preview for this mode. Skim has no API to re-query the preview from
-    /// outside user interaction, so the hint tells the user to press the mode
-    /// key again to refresh once the background fill lands. `alt-N`
-    /// re-runs the same `echo N + refresh-preview` chain, re-reading the
-    /// now-populated cache.
+    /// Placeholder shown while a background task is still computing the preview
+    /// for this mode. The pane fills in on its own once the compute lands — the
+    /// orchestrator pokes a repaint for the awaited key (see [`PreviewNotifier`])
+    /// — so the placeholder just states what's loading.
     pub(super) fn loading_placeholder(mode: PreviewMode) -> String {
         let (verb, label) = match mode {
             PreviewMode::WorkingTree => ("Loading", "working-tree diff"),
@@ -867,8 +879,7 @@ impl WorktreeSkimItem {
                 unreachable!("comments tab renders via render_comments_pane")
             }
         };
-        let key = mode as u8;
-        format!("○ {verb} {label}. Press alt-{key} again to refresh.\n")
+        format!("○ {verb} {label}…\n")
     }
 
     /// Compute preview and apply pager for diff modes. Returns the
@@ -1668,6 +1679,7 @@ mod tests {
                 summaries_enabled: false,
                 pr_status: Arc::new(Mutex::new(None)),
                 local_content: Arc::new(Mutex::new(LocalContent::default())),
+                notifier: PreviewNotifier::detached(),
             }
         };
 
@@ -1683,6 +1695,7 @@ mod tests {
                 summaries_enabled: false,
                 pr_status: Arc::new(Mutex::new(None)),
                 local_content: Arc::new(Mutex::new(LocalContent::default())),
+                notifier: PreviewNotifier::detached(),
             }
         };
 
@@ -1769,6 +1782,7 @@ mod tests {
                 summaries_enabled: false,
                 pr_status: Arc::new(Mutex::new(pr_status)),
                 local_content: Arc::new(Mutex::new(LocalContent::default())),
+                notifier: PreviewNotifier::detached(),
             }
         };
 
@@ -1876,13 +1890,14 @@ mod tests {
             summaries_enabled: false,
             pr_status: Arc::new(Mutex::new(slot)),
             local_content: Arc::new(Mutex::new(LocalContent::default())),
+            notifier: PreviewNotifier::detached(),
         };
 
-        // CI hasn't reported (None) → fetching hint pointing at this tab's key.
+        // CI hasn't reported (None) → the shared "Fetching PR status…" hint (it
+        // auto-resolves once the live status lands; see `PreviewNotifier`).
         let loading = row(None, Arc::new(DashMap::new()));
         let pane = loading.render_comments_pane();
         assert!(pane.contains("Fetching PR status"), "loading: {pane:?}");
-        assert!(pane.contains("alt-7"), "loading points at alt-7: {pane:?}");
 
         // No PR (Some(None)) → "has no PR", matching the `pr` tab.
         let no_pr = row(Some(None), Arc::new(DashMap::new()));
@@ -1980,6 +1995,7 @@ mod tests {
                 comment_count: None,
             })))),
             local_content: Arc::new(Mutex::new(LocalContent::default())),
+            notifier: PreviewNotifier::detached(),
         };
 
         // In Pr mode, `render_preview` assembles the tab bar plus the worktree PR
@@ -2062,6 +2078,7 @@ mod tests {
             summaries_enabled: false,
             pr_status: Arc::clone(&slot),
             local_content: Arc::new(Mutex::new(LocalContent::default())),
+            notifier: PreviewNotifier::detached(),
         };
 
         // First render populates the shared cache.

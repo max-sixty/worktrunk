@@ -16,7 +16,7 @@
 //!
 //! // Create a test repo with 8 worktrees
 //! let temp = create_repo(&RepoConfig::typical(8));
-//! let repo_path = temp.path().join("main");
+//! let repo_path = temp.path().join("repo");
 //!
 //! // Invalidate caches for cold benchmark
 //! invalidate_caches_auto(&repo_path);
@@ -99,7 +99,7 @@ impl RepoConfig {
         Self {
             commits_on_main: 3,
             files: 3,
-            branches: 2, // no-worktree-1, no-worktree-2
+            branches: 2, // feature-000, feature-001 (no worktree)
             commits_per_branch: 0,
             worktrees: 6,
             worktree_commits_ahead: 15, // feature worktree has many commits
@@ -503,7 +503,10 @@ pub fn add_history_spread_branches(repo_path: &Path, count: usize) {
         .output()
         .unwrap();
     let log_str = String::from_utf8_lossy(&log_output.stdout);
-    let step = 5000 / count;
+    // Guard the degenerate inputs: `count == 0` would divide by zero, and
+    // `count > 5000` would yield `step == 0`, which panics `step_by`. Both
+    // `max(1)`s preserve the spread for every in-range count.
+    let step = (5000 / count.max(1)).max(1);
     let commits: Vec<&str> = log_str.lines().step_by(step).take(count).collect();
 
     for (i, commit) in commits.iter().enumerate() {
@@ -599,5 +602,27 @@ mod tests {
             String::from_utf8_lossy(&after.stderr)
         );
         assert_eq!(before.stdout, after.stdout);
+    }
+
+    /// Regression: degenerate `count` values must not panic. `count == 0`
+    /// divided into `5000`, and `count > 5000` flooring `step` to 0 for
+    /// `step_by`, both panicked before the `max(1)` guards.
+    #[test]
+    fn history_spread_handles_degenerate_counts() {
+        let temp = create_repo(&RepoConfig {
+            commits_on_main: 3,
+            files: 1,
+            branches: 0,
+            commits_per_branch: 0,
+            worktrees: 1,
+            worktree_commits_ahead: 0,
+            worktree_uncommitted_files: 0,
+        });
+        let repo_path = temp.path().join("repo");
+
+        // count == 0: no branches created, no divide-by-zero.
+        add_history_spread_branches(&repo_path, 0);
+        // count far above the 5000 log cap: step floors to 0 without the guard.
+        add_history_spread_branches(&repo_path, 6000);
     }
 }

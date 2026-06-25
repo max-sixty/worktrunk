@@ -107,13 +107,7 @@ impl PtyResult {
     /// Avoids the │ border character that causes cross-platform rendering issues.
     fn panels(&self) -> (String, String) {
         let screen = self.parser.screen();
-        let list = screen
-            .rows(0, LIST_WIDTH)
-            .map(|row| row.trim_end().to_string())
-            .collect::<Vec<_>>()
-            .join("\n")
-            .trim_end()
-            .to_string();
+        let list = list_pane_text(screen);
         let preview = screen
             .rows(PREVIEW_START_COL, TERM_COLS - PREVIEW_START_COL)
             .map(|row| row.trim_end().to_string())
@@ -123,6 +117,19 @@ impl PtyResult {
             .to_string();
         (list, preview)
     }
+}
+
+/// The list pane: screen columns left of the skim border, trailing whitespace
+/// trimmed (vt100 pads rows to the full width; that padding is buffer fill, not
+/// content, and varies across platforms).
+fn list_pane_text(screen: &vt100::Screen) -> String {
+    screen
+        .rows(0, LIST_WIDTH)
+        .map(|row| row.trim_end().to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim_end()
+        .to_string()
 }
 
 /// Assert that exit code is valid for skim abort (0, 1, or 130)
@@ -142,6 +149,132 @@ fn assert_valid_abort_exit_code(exit_code: i32) {
 fn is_skim_ready(screen_content: &str) -> bool {
     // Skim shows "> " at the start of the prompt line when accepting input.
     screen_content.starts_with("> ") || screen_content.contains("\n> ")
+}
+
+/// Live handles for a booted picker PTY session.
+///
+/// `_master` is held only to keep the pseudo-terminal open for the session's
+/// lifetime; it is never read. Dropping it tears down the Windows ConPTY, after
+/// which every write to `writer` fails with `BrokenPipe`. On Unix `take_writer()`
+/// hands back an independent fd, so the master's lifetime is irrelevant — which
+/// is exactly why dropping it early passes locally and on Linux/macOS CI yet
+/// wipes out every picker test on Windows.
+struct PickerSession {
+    child: Box<dyn portable_pty::Child + Send + Sync>,
+    _master: Box<dyn portable_pty::MasterPty + Send>,
+    writer: crate::common::pty::SharedPtyWriter,
+    rx: mpsc::Receiver<Vec<u8>>,
+    parser: vt100::Parser,
+}
+
+/// Spawn `command` in an isolated PTY, wait until skim is ready and the initial
+/// render has stabilized, and return the live session handles. Every picker PTY
+/// helper shares this boot sequence; they differ only in how they drive the
+/// session and capture its frames.
+fn boot_picker_pty(
+    command: &str,
+    args: &[&str],
+    working_dir: &Path,
+    env_vars: &[(String, String)],
+) -> PickerSession {
+    let pair = crate::common::open_pty_with_size(TERM_ROWS, TERM_COLS);
+
+    let mut cmd = CommandBuilder::new(command);
+    for arg in args {
+        cmd.arg(arg);
+    }
+    cmd.cwd(working_dir);
+
+    // Isolated environment with coverage passthrough
+    crate::common::configure_pty_command(&mut cmd);
+    cmd.env("CLICOLOR_FORCE", "1");
+    cmd.env("TERM", "xterm-256color");
+
+    // Test-specific environment variables
+    for (key, value) in env_vars {
+        cmd.env(key, value);
+    }
+
+    let child = pair.slave.spawn_command(cmd).unwrap();
+    drop(pair.slave);
+
+    let reader = pair.master.try_clone_reader().unwrap();
+    let writer: crate::common::pty::SharedPtyWriter =
+        Arc::new(Mutex::new(pair.master.take_writer().unwrap()));
+
+    // Drain PTY output into a channel; the reader thread also answers skim's
+    // startup cursor-position query (see `spawn_pty_reader_answering_queries`).
+    let rx = crate::common::pty::spawn_pty_reader_answering_queries(reader, Arc::clone(&writer));
+
+    let mut parser = vt100::Parser::new(TERM_ROWS, TERM_COLS, 0);
+
+    // Wait for skim to be ready (show "> " prompt)
+    let start = Instant::now();
+    loop {
+        while let Ok(chunk) = rx.try_recv() {
+            parser.process(&chunk);
+        }
+
+        let screen_content = parser.screen().contents();
+        if is_skim_ready(&screen_content) {
+            break;
+        }
+
+        if start.elapsed() > READY_TIMEOUT {
+            eprintln!(
+                "Warning: Timed out waiting for skim ready state. Screen content:\n{}",
+                screen_content
+            );
+            break;
+        }
+
+        std::thread::sleep(POLL_INTERVAL);
+    }
+
+    // Wait for initial render to stabilize
+    wait_for_stable(&rx, &mut parser);
+
+    PickerSession {
+        child,
+        _master: pair.master,
+        writer,
+        rx,
+        parser,
+    }
+}
+
+/// Send Escape to abort the picker, then drain and discard remaining output —
+/// the caller has already captured the frame it wants, so teardown bytes must
+/// not reach its parser. Consumes the handles and returns the exit code.
+fn abort_and_exit_code(
+    mut child: Box<dyn portable_pty::Child + Send + Sync>,
+    writer: crate::common::pty::SharedPtyWriter,
+    rx: mpsc::Receiver<Vec<u8>>,
+) -> i32 {
+    {
+        let mut w = writer.lock().unwrap();
+        w.write_all(b"\x1b").unwrap();
+        w.flush().unwrap();
+    }
+    drop(writer);
+
+    let start = Instant::now();
+    // Generous like the keystroke-driven helpers: a slow-but-successful exit that
+    // gets killed reports exit 1 on Windows — see `CHILD_EXIT_TIMEOUT`.
+    let timeout = CHILD_EXIT_TIMEOUT;
+    loop {
+        while rx.try_recv().is_ok() {} // discard chunks
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        if start.elapsed() >= timeout {
+            let _ = child.kill();
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    child.wait().unwrap().exit_code() as i32
 }
 
 /// Execute a command in a PTY and return the parsed terminal state.
@@ -173,36 +306,13 @@ fn exec_in_pty_with_input_expectations(
     env_vars: &[(String, String)],
     inputs: &[(&str, Option<&str>)],
 ) -> PtyResult {
-    let pair = crate::common::open_pty_with_size(TERM_ROWS, TERM_COLS);
-
-    let mut cmd = CommandBuilder::new(command);
-    for arg in args {
-        cmd.arg(arg);
-    }
-    cmd.cwd(working_dir);
-
-    // Set up isolated environment with coverage passthrough
-    crate::common::configure_pty_command(&mut cmd);
-    cmd.env("CLICOLOR_FORCE", "1");
-    cmd.env("TERM", "xterm-256color");
-
-    // Add test-specific environment variables
-    for (key, value) in env_vars {
-        cmd.env(key, value);
-    }
-
-    let mut child = pair.slave.spawn_command(cmd).unwrap();
-    drop(pair.slave);
-
-    let reader = pair.master.try_clone_reader().unwrap();
-    let writer: crate::common::pty::SharedPtyWriter =
-        Arc::new(Mutex::new(pair.master.take_writer().unwrap()));
-
-    // Drain PTY output into a channel; the reader thread also answers skim's
-    // startup cursor-position query (see `spawn_pty_reader_answering_queries`).
-    let rx = crate::common::pty::spawn_pty_reader_answering_queries(reader, Arc::clone(&writer));
-
-    let mut parser = vt100::Parser::new(TERM_ROWS, TERM_COLS, 0);
+    let PickerSession {
+        mut child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(command, args, working_dir, env_vars);
 
     // Helper to drain available output from the channel (non-blocking)
     let drain_output = |rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser| {
@@ -211,40 +321,9 @@ fn exec_in_pty_with_input_expectations(
         }
     };
 
-    // Wait for skim to be ready (show "> " prompt)
-    let start = Instant::now();
-    loop {
-        drain_output(&rx, &mut parser);
-
-        let screen_content = parser.screen().contents();
-        if is_skim_ready(&screen_content) {
-            break;
-        }
-
-        if start.elapsed() > READY_TIMEOUT {
-            eprintln!(
-                "Warning: Timed out waiting for skim ready state. Screen content:\n{}",
-                screen_content
-            );
-            break;
-        }
-
-        std::thread::sleep(POLL_INTERVAL);
-    }
-
-    // Wait for initial render to stabilize
-    wait_for_stable(&rx, &mut parser);
-
     // Send each input and wait for screen to stabilize after each
     for (input, expected_content) in inputs {
-        {
-            let mut w = writer.lock().unwrap();
-            w.write_all(input.as_bytes()).unwrap();
-            w.flush().unwrap();
-        }
-
-        // Wait for screen to stabilize after this input, optionally requiring specific content
-        wait_for_stable_with_content(&rx, &mut parser, *expected_content);
+        send_input_awaiting_content(&writer, &rx, &mut parser, input, *expected_content);
     }
 
     // Release the main thread's writer handle. The reader thread holds the
@@ -290,103 +369,67 @@ fn exec_in_pty_capture_before_abort(
     env_vars: &[(String, String)],
     pre_abort_inputs: &[(&str, Option<&str>)],
 ) -> PtyResult {
-    let pair = crate::common::open_pty_with_size(TERM_ROWS, TERM_COLS);
-
-    let mut cmd = CommandBuilder::new(command);
-    for arg in args {
-        cmd.arg(arg);
-    }
-    cmd.cwd(working_dir);
-
-    crate::common::configure_pty_command(&mut cmd);
-    cmd.env("CLICOLOR_FORCE", "1");
-    cmd.env("TERM", "xterm-256color");
-
-    for (key, value) in env_vars {
-        cmd.env(key, value);
-    }
-
-    let mut child = pair.slave.spawn_command(cmd).unwrap();
-    drop(pair.slave);
-
-    let reader = pair.master.try_clone_reader().unwrap();
-    let writer: crate::common::pty::SharedPtyWriter =
-        Arc::new(Mutex::new(pair.master.take_writer().unwrap()));
-
-    let rx = crate::common::pty::spawn_pty_reader_answering_queries(reader, Arc::clone(&writer));
-
-    let mut parser = vt100::Parser::new(TERM_ROWS, TERM_COLS, 0);
-
-    let drain_output = |rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser| {
-        while let Ok(chunk) = rx.try_recv() {
-            parser.process(&chunk);
-        }
-    };
-
-    // Wait for skim to be ready
-    let start = Instant::now();
-    loop {
-        drain_output(&rx, &mut parser);
-
-        let screen_content = parser.screen().contents();
-        if is_skim_ready(&screen_content) {
-            break;
-        }
-
-        if start.elapsed() > READY_TIMEOUT {
-            eprintln!(
-                "Warning: Timed out waiting for skim ready state. Screen content:\n{}",
-                screen_content
-            );
-            break;
-        }
-
-        std::thread::sleep(POLL_INTERVAL);
-    }
-
-    // Wait for initial render to stabilize
-    wait_for_stable(&rx, &mut parser);
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(command, args, working_dir, env_vars);
 
     // Send pre-abort inputs (filter text, panel switches, etc.)
     for (input, expected_content) in pre_abort_inputs {
-        {
-            let mut w = writer.lock().unwrap();
-            w.write_all(input.as_bytes()).unwrap();
-            w.flush().unwrap();
-        }
-        wait_for_stable_with_content(&rx, &mut parser, *expected_content);
+        send_input_awaiting_content(&writer, &rx, &mut parser, input, *expected_content);
     }
 
     // === CAPTURE: screen state is now stable — snapshot BEFORE aborting ===
     // The parser retains this state because we stop feeding output to it.
-
-    // Send Escape to abort
-    {
-        let mut w = writer.lock().unwrap();
-        w.write_all(b"\x1b").unwrap();
-        w.flush().unwrap();
-    }
-    drop(writer);
-
-    // Drain remaining output WITHOUT feeding to parser — preserves pre-abort screen
-    let start = Instant::now();
-    let timeout = CHILD_EXIT_TIMEOUT;
-    loop {
-        while rx.try_recv().is_ok() {} // discard chunks
-        if child.try_wait().unwrap().is_some() {
-            break;
-        }
-        if start.elapsed() >= timeout {
-            let _ = child.kill();
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-
-    let exit_status = child.wait().unwrap();
-    let exit_code = exit_status.exit_code() as i32;
+    let exit_code = abort_and_exit_code(child, writer, rx);
 
     PtyResult { parser, exit_code }
+}
+
+/// Drive the picker to a settled baseline, capture the list pane, send a
+/// sequence of keys, capture the list pane again, then abort. Returns
+/// `(baseline, after, exit_code)` so the caller can assert the keys left the
+/// list byte-for-byte unchanged.
+///
+/// This is the invariant form of a "this key is a visual no-op" test. It
+/// commits no frame, so picker column-layout changes never touch it, and there
+/// is no frozen baseline that can capture a different async-render frame than a
+/// sibling snapshot test — the failure mode the old committed snapshot hit.
+/// Both captures bracket only the probe keys and are each taken once the screen
+/// has settled, so a genuine no-op yields byte-identical frames.
+fn exec_in_pty_capture_noop_probe(
+    command: &str,
+    args: &[&str],
+    working_dir: &Path,
+    env_vars: &[(String, String)],
+    baseline_inputs: &[(&str, Option<&str>)],
+    probe_inputs: &[(&str, Option<&str>)],
+) -> (String, String, i32) {
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(command, args, working_dir, env_vars);
+
+    // Settle to the baseline, then capture it.
+    for (input, expected_content) in baseline_inputs {
+        send_input_awaiting_content(&writer, &rx, &mut parser, input, *expected_content);
+    }
+    let baseline = list_pane_text(parser.screen());
+
+    // Send the probe keys, then capture again.
+    for (input, expected_content) in probe_inputs {
+        send_input_awaiting_content(&writer, &rx, &mut parser, input, *expected_content);
+    }
+    let after = list_pane_text(parser.screen());
+
+    let exit_code = abort_and_exit_code(child, writer, rx);
+    (baseline, after, exit_code)
 }
 
 /// Wait for screen content to stabilize (no changes for STABLE_DURATION)
@@ -460,6 +503,10 @@ fn wait_for_cursor_on_row(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Pars
 /// stability after STABLE_DURATION even if the screen keeps churning. With no
 /// readiness condition there is nothing to find, so the screen must settle the
 /// hard way (the cosmetic-redraw fallback never engages).
+///
+/// No keystroke re-issue is needed to surface late preview content: the picker
+/// repaints a preview on its own once its background compute lands (see
+/// `PreviewNotifier`), so the poll just waits for `ready` to hold.
 fn wait_for_stable_until(
     rx: &mpsc::Receiver<Vec<u8>>,
     parser: &mut vt100::Parser,
@@ -534,6 +581,29 @@ fn wait_for_stable_until(
         "Warning: Screen did not fully stabilize within {:?}",
         STABILIZE_TIMEOUT
     );
+}
+
+/// Send `input`, then wait for the screen to satisfy the per-input expectation
+/// and settle.
+///
+/// `expected_content`, when set, is a substring the screen must show before the
+/// input is considered processed. Late preview content needs no special handling:
+/// the picker repaints a preview on its own once its background compute lands
+/// (see `PreviewNotifier`), so a diff or forge fetch that finishes after the
+/// keystroke surfaces without a re-issue — the poll just waits for it.
+fn send_input_awaiting_content(
+    writer: &crate::common::pty::SharedPtyWriter,
+    rx: &mpsc::Receiver<Vec<u8>>,
+    parser: &mut vt100::Parser,
+    input: &str,
+    expected_content: Option<&str>,
+) {
+    {
+        let mut w = writer.lock().unwrap();
+        w.write_all(input.as_bytes()).unwrap();
+        w.flush().unwrap();
+    }
+    wait_for_stable_with_content(rx, parser, expected_content);
 }
 
 /// Create insta settings with filters for switch picker snapshot stability.
@@ -639,37 +709,39 @@ fn test_switch_picker_with_multiple_worktrees(mut repo: TestRepo) {
 /// owns its layout with a leading worktree-status sigil; an unbound alt-l slides
 /// every row left, clipping that sigil gutter (`no_hscroll(true)` only gates the
 /// automatic match-following shift, not the manual offset these keys push).
-/// Pressing alt-l here must leave the list byte-for-byte unscrolled — the same
-/// frame `test_switch_picker_with_multiple_worktrees` snapshots.
+///
+/// The belief is narrow — "alt-l/alt-h change nothing" — so the test asserts it
+/// directly: capture the settled list, press the keys, capture again, require
+/// the two byte-for-byte equal. No committed frame, so picker column-layout
+/// changes never touch this test and the equality can't drift on async-column
+/// render timing the way a frozen snapshot can.
 #[rstest]
 fn test_switch_picker_alt_l_does_not_hscroll(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
-    // Remove origin so snapshots don't show origin/main
+    // Remove origin so the list doesn't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
     repo.add_worktree("feature-one");
     repo.add_worktree("feature-two");
 
     let env_vars = repo.test_env_vars();
-    let result = exec_in_pty_capture_before_abort(
+    let (baseline, after, exit_code) = exec_in_pty_capture_noop_probe(
         wt_bin().to_str().unwrap(),
         &["switch"],
         repo.root_path(),
         &env_vars,
+        &[("", Some("feature-two"))], // settle: wait for items to render
         &[
-            ("", Some("feature-two")), // wait for items to render
-            ("\x1bl", None),           // Alt-l: ignored, must not scroll
-            ("\x1bl", None),           // a second press, still ignored
-            ("\x1bh", None),           // Alt-h: ignored too
+            ("\x1bl", None), // Alt-l: ignored, must not scroll
+            ("\x1bl", None), // a second press, still ignored
+            ("\x1bh", None), // Alt-h: ignored too
         ],
     );
 
-    assert_valid_abort_exit_code(result.exit_code);
-
-    let (list, _preview) = result.panels();
-    let settings = switch_picker_settings(&repo);
-    settings.bind(|| {
-        assert_snapshot!("switch_picker_alt_l_ignored_list", list);
-    });
+    assert_valid_abort_exit_code(exit_code);
+    assert_eq!(
+        baseline, after,
+        "alt-l/alt-h must leave the list unscrolled (left = before keys, right = after)"
+    );
 }
 
 #[rstest]
@@ -1117,6 +1189,14 @@ fn mock_forge_env(
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
 
+    forge_mock_env_vars(repo, &mock_bin)
+}
+
+/// Env vars (mock-bin on PATH + `MOCK_CONFIG_DIR`) for a PTY `wt` run that should
+/// resolve `gh`/`glab` to a mock written into `mock_bin`. Shared by
+/// [`mock_forge_env`] and tests that build a richer mock (extra `pr view`
+/// responses) directly.
+fn forge_mock_env_vars(repo: &TestRepo, mock_bin: &Path) -> Vec<(String, String)> {
     let mut env_vars = repo.test_env_vars();
     env_vars.push((
         "MOCK_CONFIG_DIR".to_string(),
@@ -1127,7 +1207,7 @@ fn mock_forge_env(
     // `gh.exe`/`glab.exe` is never found and the `--prs` fetch silently no-ops.
     // `configure_pty_command` sets `PATH` (uppercase), which this entry overrides.
     let base_path = std::env::var_os("PATH").unwrap_or_default();
-    let mut paths = vec![mock_bin.clone()];
+    let mut paths = vec![mock_bin.to_path_buf()];
     paths.extend(std::env::split_paths(&base_path));
     let joined = std::env::join_paths(paths).expect("mock-bin joins into PATH");
     env_vars.push(("PATH".to_string(), joined.to_string_lossy().into_owned()));
@@ -1160,25 +1240,27 @@ fn test_switch_picker_prs_github_list(mut repo: TestRepo) {
         &["switch", "--prs"],
         repo.root_path(),
         &env_vars,
-        // Wait for the PR row to stream into the list (the `#42` content gate),
-        // then assert on the row itself — deterministic, with no dependency on
-        // selecting an async-arrived row.
-        &[("", Some("#42"))],
+        // `main…±` now occupies the preview-shown list pane, clipping the CI
+        // column (`#42`) past skim's split. Toggle the preview off (alt-p) so
+        // the list spans full width and renders the number, then gate on it —
+        // deterministic, no dependency on selecting an async-arrived row.
+        &[("\x1bp", Some("#42"))],
     );
 
     assert_valid_abort_exit_code(result.exit_code);
-    let (list, _preview) = result.panels();
-    // `#42` in the CI column; the head branch is truncated in the narrow list.
-    assert!(list.contains("#42"), "PR number in list:\n{list}");
-    // The title is NOT on the row — it lives in the preview so columns align.
+    // Preview off → full-width list renders the CI column; assert on the whole
+    // screen since `#42` sits past the panel split column.
+    let screen = result.screen();
+    assert!(screen.contains("#42"), "PR number on screen:\n{screen}");
+    // The title lives in the preview (now hidden), never on the row itself.
     assert!(
-        !list.contains("Retry the flaky network test"),
-        "PR title should stay off the row:\n{list}"
+        !screen.contains("Retry the flaky network test"),
+        "PR title should stay off the row:\n{screen}"
     );
     // The header's loading marker is gone once the rows have streamed in.
     assert!(
-        !list.contains("loading open PRs"),
-        "loading marker cleared once rows arrived:\n{list}"
+        !screen.contains("loading open PRs"),
+        "loading marker cleared once rows arrived:\n{screen}"
     );
 }
 
@@ -1202,18 +1284,87 @@ fn test_switch_picker_prs_gitlab_list(mut repo: TestRepo) {
         &["switch", "--prs"],
         repo.root_path(),
         &env_vars,
-        // `!7` (GitLab MR ref) is the row's stable substring; the title lives in
-        // the preview, not the row.
-        &[("", Some("!7"))],
+        // `main…±` clips the CI column (`!7`) past skim's split in the
+        // preview-shown pane. Toggle the preview off (alt-p) so the full-width
+        // list renders the ref, then gate on it.
+        &[("\x1bp", Some("!7"))],
     );
 
     assert_valid_abort_exit_code(result.exit_code);
-    let (list, _preview) = result.panels();
-    // `!7` (GitLab MR ref) in the CI column; source branch truncates.
-    assert!(list.contains("!7"), "MR number in list:\n{list}");
+    // Preview off → full-width list renders the CI column; assert on the whole
+    // screen since `!7` sits past the panel split column.
+    let screen = result.screen();
+    assert!(screen.contains("!7"), "MR number on screen:\n{screen}");
     assert!(
-        !list.contains("Cache the dependency graph"),
-        "MR title should stay off the row:\n{list}"
+        !screen.contains("Cache the dependency graph"),
+        "MR title should stay off the row:\n{screen}"
+    );
+}
+
+/// A preview pane fills in on its own once its background compute lands — no
+/// keystroke needed. The deterministic vehicle is a `--prs` row's `comments`
+/// tab: the comment fetch (`gh pr view <n> --json comments`) is mocked behind a
+/// delay, so when the row is selected and the comments tab is opened the pane is
+/// still on its "Loading comments…" placeholder. The comment then surfaces with
+/// no further input once the delayed fetch resolves and the orchestrator pokes a
+/// repaint (`PreviewNotifier`). Before that product-side poke the placeholder
+/// would strand until the next keystroke — the gap the picker's test harness
+/// used to paper over by re-issuing the tab key.
+#[rstest]
+fn test_switch_picker_preview_auto_refreshes_when_compute_lands(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    // The mock holds `gh pr view` (the comments / log fetch) long enough that the
+    // tab is reliably opened before the fetch resolves — so the pane is observed
+    // mid-load and the appearance of the comment proves the auto-refresh, not a
+    // cache hit. `pr list` is instant so the row lands promptly.
+    let mock_bin = repo.root_path().join("mock-bin");
+    std::fs::create_dir_all(&mock_bin).unwrap();
+    // A short head branch so it isn't truncated in the narrow (preview-shown)
+    // list pane — the test gates on its full text to confirm the row rendered.
+    let pr_json = r#"[{"number":42,"title":"Retry the flaky network test","headRefName":"flaky","author":{"login":"octocat"},"isDraft":false,"url":"https://github.com/owner/test-repo/pull/42","body":"body"}]"#;
+    std::fs::write(mock_bin.join("pr_list.json"), pr_json).unwrap();
+    let comments_json = r#"{"comments":[{"author":{"login":"octocat"},"body":"AUTOREFRESHMARK","createdAt":"2025-01-01T00:00:00Z"}]}"#;
+    MockConfig::new("gh")
+        .version("gh version 1.0.0 (mock)")
+        .command("pr list", MockResponse::file("pr_list.json"))
+        .command(
+            "pr view",
+            MockResponse::output(comments_json).with_delay_ms(3000),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+    let env_vars = forge_mock_env_vars(&repo, &mock_bin);
+
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--prs"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            // Wait for the PR row to stream into the list (its head branch shows
+            // in the Branch column), then move the cursor onto it (its preview is
+            // the "not checked out locally" pane), then open the comments tab.
+            ("", Some("flaky")),
+            ("\x1b[B", Some("Not checked out")),
+            // alt-7: comments tab. The fetch is still in flight, so the pane shows
+            // "Loading comments…"; the comment appears with NO further input once
+            // the delayed fetch lands and the picker repaints on its own.
+            ("\x1b7", Some("AUTOREFRESHMARK")),
+        ],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+    let (_list, preview) = result.panels();
+    assert!(
+        preview.contains("AUTOREFRESHMARK"),
+        "comment surfaced on its own once the delayed fetch landed:\n{preview}"
     );
 }
 
@@ -1370,6 +1521,63 @@ fn test_switch_picker_worktree_row_comments_tab_shows_thread(mut repo: TestRepo)
     assert!(
         !preview.contains("--prs"),
         "comments tab must not point at --prs:\n{preview}"
+    );
+}
+
+/// The `pr` tab auto-resolves from "Fetching PR status…" to the live PR with no
+/// keystroke. A worktree row's CI status is fetched live (`gh pr list --head`),
+/// mocked behind a delay and left UNSEEDED so the tab is observed mid-fetch; when
+/// the status lands, `on_update` pokes a `RunPreview` (`PreviewNotifier`) and the
+/// pane re-renders. Distinct producer from
+/// `test_switch_picker_preview_auto_refreshes_when_compute_lands` (an orchestrator
+/// cache fill): here it's the CI fetch surfaced through `on_update`.
+#[rstest]
+fn test_switch_picker_pr_tab_auto_resolves_from_fetching(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    std::fs::create_dir_all(&mock_bin).unwrap();
+    // The per-row CI fetch (`gh pr list --head <branch>`), delayed so the `pr`
+    // tab is opened while still "Fetching PR status…"; unseeded, so it starts
+    // there rather than resolving at skeleton from the cache.
+    let pr_list_json = r#"[{"number":654,"title":"PRTABMARK auto-resolve","body":"","comments":[],"statusCheckRollup":[],"url":"https://github.com/owner/test-repo/pull/654","isDraft":false}]"#;
+    std::fs::write(mock_bin.join("pr_list.json"), pr_list_json).unwrap();
+    MockConfig::new("gh")
+        .version("gh version 1.0.0 (mock)")
+        .command(
+            "pr list",
+            MockResponse::file("pr_list.json").with_delay_ms(3000),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+    let env_vars = forge_mock_env_vars(&repo, &mock_bin);
+
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            // alt-6: the `pr` tab. The CI fetch is still in flight (delayed), so
+            // the pane shows the fetching hint.
+            ("\x1b6", Some("Fetching PR status")),
+            // No further input: the resolved PR title appears on its own once the
+            // delayed CI fetch lands and the picker repaints.
+            ("", Some("PRTABMARK")),
+        ],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+    let (_list, preview) = result.panels();
+    assert!(
+        preview.contains("PRTABMARK"),
+        "pr tab resolved from 'Fetching' on its own:\n{preview}"
     );
 }
 

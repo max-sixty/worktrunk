@@ -63,6 +63,7 @@ use super::items::{
 };
 use super::pr_pane;
 use super::preview::{PreviewMode, PreviewStateData};
+use super::preview_notify::PreviewNotifier;
 use super::preview_orchestrator::PreviewOrchestrator;
 
 /// One-shot handoff of the picker's column geometry from the collect thread
@@ -291,6 +292,7 @@ fn fetch_and_stream(
                 layout.list_width,
                 grid.as_ref(),
                 &orchestrator.cache,
+                orchestrator.notifier(),
             )) as Arc<dyn SkimItem>
         })
         .collect();
@@ -392,7 +394,7 @@ pub(super) fn spawn_worktree_comments_fetch(
         Some(CiPlatform::GitHub) => RefKind::Pr,
         Some(CiPlatform::GitLab) => RefKind::Mr,
         _ => {
-            orchestrator.cache.insert(
+            orchestrator.fill_external(
                 (branch, PreviewMode::Comments),
                 comments_unsupported_forge_pane(),
             );
@@ -660,9 +662,13 @@ pub(super) struct PrSkimItem {
     /// Shared preview cache (same map the worktree rows use), read by the
     /// deferred `log` tab. Keyed by `(output_token, mode)`; the background
     /// fetch spawned in [`spawn_pr_previews`] populates it off-thread, and a
-    /// miss falls back to a loading placeholder (skim re-queries on the next
-    /// selection/tab change).
+    /// miss falls back to a loading placeholder (auto-surfaced once the fetch
+    /// lands — see `notifier`).
     preview_cache: PreviewCache,
+    /// Surfaces a deferred-tab fetch without a keystroke. `preview()` records
+    /// the row's awaited `(output_token, mode)` here; the orchestrator pokes a
+    /// repaint when that tab's background fetch lands (see [`PreviewNotifier`]).
+    notifier: Arc<PreviewNotifier>,
 }
 
 impl PrSkimItem {
@@ -671,6 +677,7 @@ impl PrSkimItem {
         list_width: usize,
         grid: Option<&ColumnGrid>,
         preview_cache: &PreviewCache,
+        notifier: &Arc<PreviewNotifier>,
     ) -> Self {
         let label = entry.kind.shortcut();
         let output_token = entry.output_token();
@@ -725,6 +732,7 @@ impl PrSkimItem {
             output_token,
             pr_pane,
             preview_cache: Arc::clone(preview_cache),
+            notifier: Arc::clone(notifier),
         }
     }
 
@@ -752,25 +760,24 @@ fn pr_row_empty_placeholder() -> String {
 }
 
 /// Placeholder for a deferred forge-fetch tab while its background fetch is still
-/// in flight. skim can't re-query a preview on its own, so the hint points at the
-/// accelerator that re-reads the cache once the fetch lands — the same contract
-/// as the worktree rows' `loading_placeholder`. Shown only during the in-flight
-/// window: once the fetch resolves, a terminal pane replaces it — the rendered
-/// content or [`pr_unavailable_pane`] on failure — so it never persists past the
-/// fetch. Shared with worktree rows' `comments` tab (see
+/// in flight. The pane fills in on its own once the fetch lands — the orchestrator
+/// pokes a repaint for the awaited tab (see [`PreviewNotifier`]) — so the
+/// placeholder just states what's loading, the same contract as the worktree
+/// rows' `loading_placeholder`. Shown only during the in-flight window: once the
+/// fetch resolves, a terminal pane replaces it — the rendered content or
+/// [`pr_unavailable_pane`] on failure — so it never persists past the fetch.
+/// Shared with worktree rows' `comments` tab (see
 /// [`super::items::WorktreeSkimItem::render_comments_pane`]) so both row types
 /// show the identical in-flight pane.
 pub(super) fn pr_deferred_loading(mode: PreviewMode) -> String {
     let reset = Reset;
-    let (label, key) = match mode {
-        PreviewMode::Log => ("commit log", 2u8),
-        PreviewMode::Comments => ("comments", 7u8),
+    let label = match mode {
+        PreviewMode::Log => "commit log",
+        PreviewMode::Comments => "comments",
         // Only the deferred tabs reach here; other modes render synchronously.
-        _ => ("preview", mode as u8),
+        _ => "preview",
     };
-    cformat!(
-        "{INFO_SYMBOL}{reset} Loading {label}… press <bold>alt-{key}</>{reset} again to refresh\n"
-    )
+    cformat!("{INFO_SYMBOL}{reset} Loading {label}…\n")
 }
 
 /// Terminal pane for a `--prs` deferred tab whose background fetch failed (forge
@@ -1208,6 +1215,11 @@ impl SkimItem for PrSkimItem {
         // show a placeholder. The active tab is the same global digit, so an
         // empty tab shows its placeholder until the user switches with alt-N / Tab.
         let mode = PreviewStateData::read_mode();
+        // Record what this (selected) row is showing before reading the cache, so
+        // a deferred-tab fetch that lands after a miss pokes a repaint (see
+        // `PreviewNotifier`). Keyed by the row's `output_token`, matching the
+        // cache key the fetch fills.
+        self.notifier.note_awaiting(&self.output_token, mode);
         let mut result = render_preview_tabs(mode, TabAvailability::listed_pr(), context.width);
         match mode {
             PreviewMode::Pr => result.push_str(&self.pr_pane),
@@ -1226,7 +1238,13 @@ mod tests {
     /// Build a `PrSkimItem` with a throwaway empty preview cache — the deferred
     /// `log` tab is exercised separately (see `log_tab_reads_cache_then_placeholder`).
     fn pr_item(entry: PrEntry, list_width: usize, grid: Option<&ColumnGrid>) -> PrSkimItem {
-        PrSkimItem::new(entry, list_width, grid, &Arc::new(DashMap::new()))
+        PrSkimItem::new(
+            entry,
+            list_width,
+            grid,
+            &Arc::new(DashMap::new()),
+            &PreviewNotifier::detached(),
+        )
     }
 
     fn entry(kind: RefKind, number: u32, title: &str) -> PrEntry {
@@ -1687,7 +1705,7 @@ mod tests {
         let test = worktrunk::testing::TestRepo::with_initial_commit();
         let (tx, _rx): (SkimItemSender, SkimItemReceiver) = unbounded();
         let warnings = Mutex::new(Vec::new());
-        let orchestrator = PreviewOrchestrator::new(test.repo.clone());
+        let orchestrator = PreviewOrchestrator::new(test.repo.clone(), Arc::new(OnceLock::new()));
         let loading = AtomicBool::new(true);
         let shared = PrsShared {
             grid_slot: Arc::new(GridSlot::new()),
@@ -1832,11 +1850,16 @@ mod tests {
         // alt-2); once the background fetch lands a value under that key, the
         // pane shows it.
         let cache: PreviewCache = Arc::new(DashMap::new());
-        let pr = PrSkimItem::new(entry(RefKind::Pr, 42, "t"), 120, None, &cache);
+        let pr = PrSkimItem::new(
+            entry(RefKind::Pr, 42, "t"),
+            120,
+            None,
+            &cache,
+            &PreviewNotifier::detached(),
+        );
 
         let miss = pr.cached_pane(PreviewMode::Log);
         assert!(miss.contains("Loading commit log"), "miss: {miss:?}");
-        assert!(miss.contains("alt-2"), "refresh hint: {miss:?}");
 
         cache.insert(
             ("pr:42".to_string(), PreviewMode::Log),
@@ -1954,11 +1977,16 @@ mod tests {
         // keyed by the row's output token, with a loading placeholder (pointing
         // at alt-7) on a miss.
         let cache: PreviewCache = Arc::new(DashMap::new());
-        let pr = PrSkimItem::new(entry(RefKind::Mr, 7, "t"), 120, None, &cache);
+        let pr = PrSkimItem::new(
+            entry(RefKind::Mr, 7, "t"),
+            120,
+            None,
+            &cache,
+            &PreviewNotifier::detached(),
+        );
 
         let miss = pr.cached_pane(PreviewMode::Comments);
         assert!(miss.contains("Loading comments"), "miss: {miss:?}");
-        assert!(miss.contains("alt-7"), "refresh hint: {miss:?}");
 
         cache.insert(
             ("mr:7".to_string(), PreviewMode::Comments),
@@ -1971,10 +1999,10 @@ mod tests {
     fn unavailable_pane_reads_as_a_clear_failure() {
         // A failed deferred fetch caches this terminal pane instead of leaving
         // the slot empty, so the tab shows a clear "couldn't load" rather than
-        // `pr_deferred_loading`'s spinner forever. It names the tab, drops the
-        // "press alt-N again" refresh hint (there's no in-session retry — only
-        // reopening the picker re-fetches), and carries the warning glyph that
-        // sets it apart from the benign info states ("No commits"/"No comments").
+        // `pr_deferred_loading`'s "Loading…" forever (there's no in-session retry
+        // — only reopening the picker re-fetches). It names the tab and carries
+        // the warning glyph that sets it apart from the benign info states
+        // ("No commits"/"No comments").
         let pane = pr_unavailable_pane("commit log");
         let stripped = plain(&pane);
         assert!(
