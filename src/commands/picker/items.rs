@@ -584,22 +584,26 @@ pub(super) fn render_preview_tabs(
         render_tab_row_compact(&tabs, reset)
     };
 
-    // Controls use dim yellow to distinguish from dimmed (white) tabs.
+    // Controls use dim cyan to distinguish from the dimmed (white) tabs above.
     // The tab numbers above are the alt-N accelerators (bare digits type
     // into the query); Tab/shift-tab cycle the same tabs.
     //
+    // Order: primary action (Enter), preview navigation (ctrl-u/d scroll, then
+    // the Tab/alt-1…7 accelerators), then row actions, with Esc last.
+    //
     // The controls line is intentionally NOT width-managed: skim clips it on the
-    // right on a narrow pane, but it's only a reminder — the accelerators it
-    // names live in the tab bar above, which IS width-managed, so nothing
-    // navigable is lost when the tail clips. Row actions lead so they survive a
-    // narrow-pane clip; the preview controls and Esc trail.
+    // right on a narrow pane, but it's only a reminder. Note the trade-off of
+    // this order: the row actions (alt-c/x/y/o/r/p) now trail and clip first, and
+    // unlike the preview accelerators they are not duplicated in the (width-
+    // managed) tab bar above — so on a narrow pane the only on-screen reminder of
+    // them can clip away.
     let controls = cformat!(
-        "<dim,yellow>Enter: switch | alt-c: create | alt-x: remove | alt-y: copy | alt-o: open | alt-r: refresh | alt-p: toggle | Tab/alt-1…7: preview | ctrl-u/d: scroll | Esc: cancel</>"
+        "<dim,cyan>Enter: switch | ctrl-u/d: scroll | Tab/alt-1…7: preview | alt-c: create | alt-x: remove | alt-y: copy | alt-o: open | alt-r: refresh | alt-p: toggle | Esc: cancel</>"
     );
 
     // Each tab/segment already ends with a full reset (so styling never bleeds
     // into the dividers or preview content); `{reset}` here only closes the
-    // controls line's dim-yellow span.
+    // controls line's dim-cyan span.
     format!("{bar}\n{controls}{reset}\n\n")
 }
 
