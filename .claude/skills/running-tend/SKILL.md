@@ -220,6 +220,7 @@ shell function or `alias` one-liner alongside it, even as a fallback.
 4. Post the tested alias in the issue with usage examples.
 5. Link to the [aliases docs](https://worktrunk.dev/step/#aliases) and
    [tips & patterns](https://worktrunk.dev/tips-patterns/) for further recipes.
+
 ### Don't fix tests by adding skip guards
 
 When a test fails because production code or test setup can't handle some
