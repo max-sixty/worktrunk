@@ -2,7 +2,11 @@
 # Copy target/ from main worktree using CoW (~3s vs ~68s full rebuild)
 deps = "wt step copy-ignored"
 assets = "task fetch-assets"
-docs = "cd docs && zola serve -p {{ branch | hash_port }}"
+# `zola serve` runs forever; tether kills its whole process tree when the
+# worktree is removed (any path — `wt remove`, `git worktree remove`, `rm -rf`),
+# so no `pre-remove`/`post-remove` cleanup is needed. `-C docs` runs zola in the
+# docs subdir; the worktree root is still what teardown watches.
+docs = "wt step tether -C docs -- zola serve -p {{ branch | hash_port }}"
 
 [post-merge]
 clippy = "pre-commit run clippy --all-files || true"
@@ -24,6 +28,3 @@ doc = "RUSTDOCFLAGS='-Dwarnings' cargo doc --no-deps --document-private-items"
 
 [list]
 url = "http://127.0.0.1:{{ branch | hash_port }}"
-
-[post-remove]
-docs = "lsof -ti :{{ branch | hash_port }} -sTCP:LISTEN | xargs kill 2>/dev/null || true"

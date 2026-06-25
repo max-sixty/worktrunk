@@ -4220,6 +4220,61 @@ fn test_plugins_claude_install_statusline_empty_file(repo: TestRepo, temp_home: 
     });
 }
 
+#[rstest]
+fn test_plugins_claude_install_statusline_honors_claude_config_dir(
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
+    // Claude Code relocates its entire config tree under CLAUDE_CONFIG_DIR, so
+    // the statusline must land at $CLAUDE_CONFIG_DIR/settings.json, not
+    // ~/.claude/settings.json.
+    let config_dir = temp_home.path().join("custom-claude");
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["config", "plugins", "claude", "install-statusline", "--yes"])
+        .current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("CLAUDE_CONFIG_DIR", &config_dir);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "install-statusline failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Written under CLAUDE_CONFIG_DIR...
+    let settings_path = config_dir.join("settings.json");
+    let content = fs::read_to_string(&settings_path).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+    assert_eq!(
+        parsed["statusLine"]["command"],
+        "wt list statusline --format=claude-code"
+    );
+
+    // ...and NOT under the default ~/.claude.
+    assert!(
+        !temp_home.path().join(".claude/settings.json").exists(),
+        "settings.json must not be written to ~/.claude when CLAUDE_CONFIG_DIR is set"
+    );
+
+    // Detection reads the same relocated path: a second run sees it as configured.
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["config", "plugins", "claude", "install-statusline", "--yes"])
+        .current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("CLAUDE_CONFIG_DIR", &config_dir);
+
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("already configured"),
+        "second run should detect the relocated statusline as already configured"
+    );
+}
+
 // ==================== Plugin Command Failure Tests ====================
 
 #[rstest]
