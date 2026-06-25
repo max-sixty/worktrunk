@@ -1,6 +1,15 @@
 [files]
 extend-exclude = ["docs/demos/vhs-keystrokes/", "*.snap", "vendor/", "*.log"]
 
+[default]
+# Generated `wt list` doc embeds (README, docs/content, skills mirrors) truncate
+# long commit messages with a trailing … . The cut leaves a word fragment glued
+# to the ellipsis (e.g. "authenticat…"), which typos would "correct" to the full
+# word — re-breaking the doc-sync test on every run. A token immediately followed
+# by … is a truncation, not a typo; *.snap is already excluded, this covers the
+# rendered mirrors that embed the same output.
+extend-ignore-re = ['\w+…']
+
 [default.extend-identifiers]
 # "PNGs" is correct (Portable Network Graphics plural). The plural form
 # tokenizes to the word "PN", which typos would otherwise correct to "ON";

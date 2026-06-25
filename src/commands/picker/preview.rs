@@ -29,7 +29,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 /// Loosely aligned with `wt list` columns, though not a perfect match:
 /// - Tab 1 corresponds to "HEAD±" column
 /// - Tab 2 shows commits (related to "main↕" counts)
-/// - Tab 3 corresponds to "main…± (--full)" column
+/// - Tab 3 corresponds to "main…±" column
 /// - Tab 4 corresponds to "Remote⇅" column
 /// - Tab 6 corresponds to the "CI" column's PR/MR
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

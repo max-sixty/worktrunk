@@ -111,7 +111,7 @@ Keep the first line of flag and argument descriptions brief—aim for 3-6 words.
 
 **Good examples:**
 - `/// Skip approval prompts`
-- `/// Show CI and \`main\` diffstat`
+- `/// Show CI status and LLM summaries`
 - `/// Target branch (defaults to default branch)`
 
 **Bad examples (too verbose):**

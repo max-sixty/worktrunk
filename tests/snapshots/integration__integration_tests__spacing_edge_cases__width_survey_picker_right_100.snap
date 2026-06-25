@@ -6,6 +6,7 @@ info:
     - list
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
+    CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
     CLICOLOR_FORCE: "1"
     COLUMNS: "50"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
@@ -52,6 +53,6 @@ exit_code: 0
 + feature-c                  [2m↑[22m                [2m16h[0m
 + [2mfix/login-timeout[0m          [2m_[22m                [2m16h[0m
 
-[2m○[22m [2mShowing 7 worktrees, 1 with changes, 3 ahead, 5 columns hidden[0m
+[2m○[22m [2mShowing 7 worktrees, 1 with changes, 3 ahead, 6 columns hidden[0m
 
 ----- stderr -----

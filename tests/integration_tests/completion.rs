@@ -1566,6 +1566,23 @@ fn test_completions_for_all_shells() {
                     !stdout.contains("__fish_"),
                     "{shell}: should not contain static __fish_ predicate boilerplate, got:\n{stdout}"
                 );
+                // Regression for #3240: the registration must resolve the real
+                // binary (via `type -P`) rather than calling the bare `wt`
+                // command. When worktrunk's lazy-load wrapper function shadows
+                // the binary, a bare `COMPLETE=fish wt -- …` re-enters the
+                // wrapper. fish has already set `COMPLETE=fish`, so the wrapper's
+                // `command wt config shell init fish | source` emits completions
+                // instead of the init script — the real function is never
+                // defined — and the wrapper's trailing `wt $argv` recurses to
+                // fish's call-stack limit.
+                assert!(
+                    stdout.contains("type -P wt") && stdout.contains("WORKTRUNK_BIN"),
+                    "{shell}: completion must resolve the binary path to bypass the wrapper function (#3240), got:\n{stdout}"
+                );
+                assert!(
+                    !stdout.contains("COMPLETE=fish wt "),
+                    "{shell}: completion must not call the bare `wt` command — it recurses through the lazy-load wrapper (#3240), got:\n{stdout}"
+                );
             }
             "zsh" => {
                 assert!(

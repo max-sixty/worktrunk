@@ -816,13 +816,14 @@ pub fn collect(
             let skip_tasks: HashSet<TaskKind> = if show_full {
                 HashSet::new()
             } else {
-                [
-                    TaskKind::BranchDiff,
-                    TaskKind::CiStatus,
-                    TaskKind::SummaryGenerate,
-                ]
-                .into_iter()
-                .collect()
+                // BranchDiff (the `main…±` column) is pure local git — a cached
+                // `git diff --shortstat` against the merge-base — so it always
+                // runs, under the non-`--full` timeout below as a backstop.
+                // `--full` gates only the off-machine columns: CI status
+                // (network) and LLM branch summaries.
+                [TaskKind::CiStatus, TaskKind::SummaryGenerate]
+                    .into_iter()
+                    .collect()
             };
             // Resolve timeouts from merged config (--full disables both)
             let (command_timeout, collect_deadline) = if show_full {

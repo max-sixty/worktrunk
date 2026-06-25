@@ -1213,17 +1213,19 @@ pub fn handle_picker(
         orchestrator.spawn_preview(Arc::new(item), PreviewMode::WorkingTree, dims);
     }
 
-    // Skip BranchDiff — it walks history per item for a column the picker
-    // doesn't surface. Keep the CiStatus task: the picker primes its CI cells
-    // from the local cache so the first frame shows cached status (see
-    // `populate_from_cache`), then this task fetches live and streams each row's
-    // status in behind the frame — the same 30–60s-TTL cache plus live fetch as
-    // `wt list --full`. The picker's lifetime is bounded by the user, so a slow forge call
-    // never blocks anything (see the "Network Access" notes in CLAUDE.md). The
-    // `pr` preview tab reads the same live status. `--prs` rows carry their own
-    // number from the explicit `--prs` forge call.
-    let skip_tasks: std::collections::HashSet<collect::TaskKind> =
-        [collect::TaskKind::BranchDiff].into_iter().collect();
+    // Run every task — the picker is `wt list --full`. `main…±` (BranchDiff) is
+    // now a default `wt list` column, so the picker surfaces it too; it's local
+    // git keyed by a persistent content-addressed cache, so warm rows are instant
+    // and a cold row computes once in the background (its merge-base walk streams
+    // in behind the frame, never blocking the picker). CiStatus is primed from
+    // the local cache so the first frame shows cached status (see
+    // `populate_from_cache`), then fetched live and streamed in — the same
+    // 30–60s-TTL cache plus live fetch as `wt list --full`. The picker's lifetime
+    // is bounded by the user, so a slow forge call never blocks anything (see the
+    // "Network Access" notes in CLAUDE.md). The `pr` preview tab reads the same
+    // live status. `--prs` rows carry their own number from the explicit `--prs`
+    // forge call.
+    let skip_tasks: std::collections::HashSet<collect::TaskKind> = std::collections::HashSet::new();
 
     // Per-task command timeout (bounds any single git invocation) from
     // shared `[list]` config. Still applies in progressive mode.
