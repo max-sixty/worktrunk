@@ -1375,6 +1375,10 @@ mod tests {
         assert!(pane.contains("Fix the flaky retry"), "title: {pane:?}");
         assert!(pane.contains("\n\n\x1b[0m"), "description block: {pane:?}");
         assert!(
+            pane.contains("DESCRIPTION"),
+            "cyan `DESCRIPTION` label heads the block: {pane:?}"
+        );
+        assert!(
             !pane.contains("\x1b[107m"),
             "renders flush, no gutter: {pane:?}"
         );

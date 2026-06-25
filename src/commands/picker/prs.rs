@@ -1668,12 +1668,24 @@ mod tests {
             pr.pr_pane.contains("\n\n\x1b[0m"),
             "description block present"
         );
+        // The block is headed by a cyan `DESCRIPTION` label, matching branch/url.
+        assert!(
+            pr.pr_pane.contains("DESCRIPTION"),
+            "DESCRIPTION label present: {:?}",
+            pr.pr_pane
+        );
 
-        // The base fixture has an empty body — the description block is skipped.
+        // The base fixture has an empty body — the description block is skipped,
+        // label and all.
         let plain_pr = pr_item(entry(RefKind::Pr, 2, "t"), 120, Some(&grid()));
         assert!(
             !plain_pr.pr_pane.contains("\n\n\x1b[0m"),
             "no description block when empty"
+        );
+        assert!(
+            !plain_pr.pr_pane.contains("DESCRIPTION"),
+            "no DESCRIPTION label when empty: {:?}",
+            plain_pr.pr_pane
         );
     }
 
