@@ -49,7 +49,7 @@ use serde::Deserialize;
 use skim::prelude::*;
 use unicode_width::UnicodeWidthStr;
 use worktrunk::git::{CiPlatform, Repository};
-use worktrunk::styling::{INFO_SYMBOL, StyledLine, warning_message};
+use worktrunk::styling::{INFO_SYMBOL, StyledLine, WARNING_SYMBOL, warning_message};
 
 use super::super::list::ci_status::{
     CiSource, CiStatus, GitHubPrInfo, PrRef, PrStatus, ReviewState, non_interactive_cmd,
@@ -281,9 +281,11 @@ fn fetch_and_stream(
 /// Spawn the deferred per-row preview fetches for one `--prs` row, keyed by the
 /// row's `pr:{N}` / `mr:{N}` token so [`PrSkimItem::preview`] reads them back.
 /// Each is fire-and-forget on `COLLECT_POOL`, spawned once per row. `preview()`
-/// only reads the cache, so a forge failure leaves the slot empty and the tab
-/// keeps its loading placeholder until the picker reopens — there's no in-session
-/// retry (see [`PreviewOrchestrator::spawn_compute`]).
+/// only reads the cache, and the fetch runs once per row with no in-session
+/// retry, so each closure resolves to a terminal pane: the rendered content, or
+/// [`pr_unavailable_pane`] when the forge fetch fails. A failure therefore shows
+/// a "couldn't load" pane (cleared on the next picker open), never a perpetual
+/// loading placeholder (see [`PreviewOrchestrator::spawn_compute`]).
 ///
 /// Both tabs are spawned eagerly, once per row, for all rows — so a `--prs` open
 /// queues up to `2 × MAX_PRS` (~100) per-PR forge calls. This is deliberate and
@@ -304,18 +306,24 @@ fn spawn_pr_previews(
     let head_oid = entry.head_oid.clone();
     let head_branch = entry.head_branch.clone();
     orchestrator.spawn_compute((token.clone(), PreviewMode::Log), move |repo| {
-        compute_pr_log(
-            repo,
-            kind,
-            number,
-            head_oid.as_deref(),
-            &head_branch,
-            width,
-            height,
+        Some(
+            compute_pr_log(
+                repo,
+                kind,
+                number,
+                head_oid.as_deref(),
+                &head_branch,
+                width,
+                height,
+            )
+            .unwrap_or_else(|| pr_unavailable_pane("commit log")),
         )
     });
     orchestrator.spawn_compute((token, PreviewMode::Comments), move |repo| {
-        compute_pr_comments(repo, kind, number, width)
+        Some(
+            compute_pr_comments(repo, kind, number, width)
+                .unwrap_or_else(|| pr_unavailable_pane("comments")),
+        )
     });
 }
 
@@ -543,6 +551,7 @@ fn gitlab_mr_status(
         // (which feeds only the CI column), so they stay absent here.
         title: None,
         body: None,
+        comment_count: None,
     }
 }
 
@@ -660,9 +669,10 @@ fn pr_row_empty_placeholder() -> String {
 /// Placeholder for a `--prs` row's deferred tab while its background fetch is
 /// still in flight. skim can't re-query a preview on its own, so the hint points
 /// at the accelerator that re-reads the cache once the fetch lands — the same
-/// contract as the worktree rows' `loading_placeholder`. A failed fetch (spawned
-/// once per row) leaves the slot empty, so this placeholder persists until the
-/// picker reopens; the refresh hint is a no-op then.
+/// contract as the worktree rows' `loading_placeholder`. Shown only during the
+/// in-flight window: once the fetch resolves, a terminal pane replaces it — the
+/// rendered content or [`pr_unavailable_pane`] on failure — so it never persists
+/// past the fetch.
 fn pr_deferred_loading(mode: PreviewMode) -> String {
     let reset = Reset;
     let (label, key) = match mode {
@@ -676,12 +686,26 @@ fn pr_deferred_loading(mode: PreviewMode) -> String {
     )
 }
 
+/// Terminal pane for a `--prs` deferred tab whose background fetch failed (forge
+/// CLI missing/unauthenticated, network error, unparsable JSON). The deferred
+/// closures cache this in place of an empty slot, so the tab shows a clear
+/// "couldn't load" rather than [`pr_deferred_loading`]'s spinner forever: the
+/// fetch is spawned once per row and never retried in-session (see
+/// [`spawn_pr_previews`]), so a `None` left uncached would strand the tab on
+/// "Loading…". The warning glyph distinguishes it from the benign info states
+/// (`No commits` / `No comments`); reopening the picker starts a fresh cache and
+/// re-fetches.
+fn pr_unavailable_pane(label: &str) -> String {
+    let reset = Reset;
+    cformat!("{WARNING_SYMBOL}{reset} Couldn't load {label} — reopen the picker to retry\n")
+}
+
 /// Run a forge CLI and return its stdout, or `None` on any failure (root
 /// unresolvable, spawn error, non-zero exit). Shared by the deferred `log` /
 /// `comments` fetches: a PR runs `gh <gh_args>`, an MR runs `glab <glab_args>`.
 /// Runs off-thread on `COLLECT_POOL`, never on skim's UI thread; a `None` result
-/// leaves the cache slot empty so the tab keeps its loading placeholder (see
-/// [`PreviewOrchestrator::spawn_compute`]).
+/// signals a failed fetch, which the deferred-preview closures turn into a
+/// terminal [`pr_unavailable_pane`] (see [`spawn_pr_previews`]).
 fn fetch_forge_json(
     repo: &Repository,
     kind: RefKind,
@@ -849,8 +873,8 @@ fn render_commit_lines(commits: &[(String, String)], width: usize) -> String {
 /// `glab api …/merge_requests/<n>/notes?sort=asc` (GitLab, human notes). `sort=asc`
 /// matches GitHub's oldest-first order (GitLab defaults to newest-first), and
 /// `--paginate` follows every page so a long thread isn't capped at GitLab's
-/// default page size. Returns `None` on any failure, leaving the slot empty so
-/// the tab keeps its loading placeholder.
+/// default page size. Returns `None` on any failure; the caller maps that to a
+/// terminal [`pr_unavailable_pane`] (see [`spawn_pr_previews`]).
 fn compute_pr_comments(
     repo: &Repository,
     kind: RefKind,
@@ -1076,18 +1100,6 @@ fn render_freeform_row(entry: &PrEntry, list_width: usize) -> String {
 // summary would feed those commits (or the PR body) through the same
 // `[commit.generation]` LLM path the worktree `summary` tab uses, keyed and
 // cached the same way via `spawn_pr_previews`.
-//
-// TODO(pr-preview-fetch-error): on a forge-fetch failure the deferred `log` /
-// `comments` slot stays empty (`spawn_compute` drops a `None`), and since the
-// fetch is spawned once per row and `preview()` only reads the cache, the tab
-// shows the "Loading…" placeholder for the rest of the session — there's no
-// in-session retry, so the hint to press the key again is a no-op. Cache a
-// terminal "couldn't load" pane on failure instead, so the tab distinguishes
-// in-flight from failed; this needs the PR-row closures (or `spawn_compute`) to
-// signal failure vs. a genuinely-empty result. The same terminal-pane path
-// would also give the orphan-root local-head case (a present head sharing no
-// merge-base with the default branch, which `compute_log_for_head` renders as
-// "has no commits") a clear outcome rather than a misleading one.
 impl SkimItem for PrSkimItem {
     fn text(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.search_text)
@@ -1155,6 +1167,7 @@ mod tests {
                 review_state: None,
                 title: None,
                 body: None,
+                comment_count: None,
             }),
         }
     }
@@ -1691,7 +1704,7 @@ mod tests {
 
     #[test]
     fn preview_renders_tabs_and_placeholder_off_the_pr_tab() {
-        // With no per-process preview-state file, `read_mode()` returns the
+        // No tab switch happens here, so the in-memory `read_mode()` is its
         // default (WorkingTree) — empty on a --prs row — so `preview()` renders
         // the shared tab bar plus the "not checked out" placeholder. Drives the
         // real `SkimItem::preview` (the `--prs` streaming path is too async to
@@ -1796,8 +1809,9 @@ mod tests {
 
     #[test]
     fn render_commits_invalid_json_is_none() {
-        // A forge that returns junk yields `None`, so `spawn_compute` leaves the
-        // slot empty rather than caching garbage.
+        // A forge that returns junk yields `None` from the renderer; the deferred
+        // closure maps that to a couldn't-load pane (`pr_unavailable_pane`) rather
+        // than caching garbage.
         assert!(render_github_commits(b"not json", 80).is_none());
         assert!(render_gitlab_commits(b"not json", 80).is_none());
     }
@@ -1861,6 +1875,31 @@ mod tests {
             "rendered thread".to_string(),
         );
         assert_eq!(pr.cached_pane(PreviewMode::Comments), "rendered thread");
+    }
+
+    #[test]
+    fn unavailable_pane_reads_as_a_clear_failure() {
+        // A failed deferred fetch caches this terminal pane instead of leaving
+        // the slot empty, so the tab shows a clear "couldn't load" rather than
+        // `pr_deferred_loading`'s spinner forever. It names the tab, drops the
+        // "press alt-N again" refresh hint (there's no in-session retry — only
+        // reopening the picker re-fetches), and carries the warning glyph that
+        // sets it apart from the benign info states ("No commits"/"No comments").
+        let pane = pr_unavailable_pane("commit log");
+        let stripped = plain(&pane);
+        assert!(
+            stripped.contains("Couldn't load commit log"),
+            "names the tab: {stripped:?}"
+        );
+        assert!(
+            !stripped.contains("Loading"),
+            "not a loading state: {stripped:?}"
+        );
+        assert!(
+            stripped.contains("reopen the picker"),
+            "points at the only retry: {stripped:?}"
+        );
+        assert!(stripped.contains('▲'), "warning glyph: {stripped:?}");
     }
 
     #[test]

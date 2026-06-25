@@ -714,8 +714,16 @@ mod imp {
         #[test]
         fn test_watchdog_fast_command_leaves_no_trace() {
             // A command that finishes before the startup delay must never draw a
-            // block — so Drop has nothing to clear and leaves no escape in output.
-            let w = Watchdog::enabled("the commit message", None);
+            // block — so Drop has nothing to clear and leaves no escape in
+            // output. The startup delay sits far in the future so the assertion
+            // can't race the ticker into rendering under load; finish() wakes the
+            // parked thread immediately regardless.
+            let w = Watchdog::enabled_with_delays(
+                "the commit message",
+                None,
+                Duration::from_secs(3600),
+                WATCHDOG_ESCALATE_DELAY,
+            );
             assert_eq!(w.shared.rendered_rows.load(Ordering::Relaxed), 0);
             w.finish();
         }
@@ -753,14 +761,24 @@ mod imp {
         #[test]
         fn test_watchdog_no_escalation_without_command() {
             // No command → the gutter never appears, however long it runs, so the
-            // block stays a single status row.
+            // block stays a single status row. Poll for that first render rather
+            // than sleeping a fixed window the ticker could be starved past under
+            // load; escalation is gated on `command.is_some()`, so `!escalated`
+            // holds at any instant no matter how long the loop runs.
             let w = Watchdog::enabled_with_delays(
                 "the commit message",
                 None,
                 Duration::from_millis(10),
                 Duration::from_millis(30),
             );
-            std::thread::sleep(Duration::from_millis(150));
+            let timeout = Duration::from_secs(5);
+            let start = Instant::now();
+            while start.elapsed() < timeout {
+                if w.shared.rendered_rows.load(Ordering::Relaxed) >= 1 {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
             assert_eq!(w.shared.rendered_rows.load(Ordering::Relaxed), 1);
             assert!(!w.shared.escalated.load(Ordering::Relaxed));
             w.finish();

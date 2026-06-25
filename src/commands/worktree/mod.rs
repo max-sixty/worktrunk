@@ -95,7 +95,6 @@ pub use resolve::{
     compute_worktree_path, is_worktree_at_expected_path, path_mismatch, resolve_worktree_arg,
     worktree_display_name,
 };
-#[cfg(unix)]
 pub(crate) use switch::SwitchPipeline;
 pub use switch::handle_switch_command;
 pub use types::{MergeOperations, RemoveResult, SwitchBranchInfo, SwitchResult};

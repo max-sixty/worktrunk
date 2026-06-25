@@ -468,10 +468,16 @@ fn render_tab_row_compact(tabs: &[Tab], reset: Reset) -> String {
 /// The `pr` pane for a worktree row whose branch has a PR/MR. Renders the same
 /// shape as the `--prs` rows' pane (`PrSkimItem::pr_pane`) — reference + title
 /// header, dim-labeled metadata, and the description as markdown — via the
-/// shared [`pr_pane`] helpers, so the two read alike. The title and body ride
-/// the same CI fetch the column already makes (see [`PrStatus`]); a status
-/// without them (an older cache entry, a forge that doesn't expose them) falls
-/// back to a reference-only header and skips the description.
+/// shared [`pr_pane`] helpers, so the two read alike. The title, body, and
+/// comment count ride the same CI fetch the column already makes (see
+/// [`PrStatus`]); a status without them (an older cache entry, a forge that
+/// doesn't expose them) falls back to a reference-only header and skips the
+/// missing lines.
+///
+/// The `comments` line shows only the count — the full thread is a `--prs`-only
+/// fetch (see [`WorktreeSkimItem::comments_unavailable_pane`]). A PR with no
+/// comments carries `None` (zero is flattened at the mapping boundary), so the
+/// line is skipped.
 ///
 /// `width` is the live preview-pane width, used to wrap the markdown body.
 fn render_worktree_pr(branch: &str, pr_ref: PrRef, status: &PrStatus, width: usize) -> String {
@@ -480,6 +486,9 @@ fn render_worktree_pr(branch: &str, pr_ref: PrRef, status: &PrStatus, width: usi
     out.push_str(&pr_pane::metadata_line("branch", branch));
     if let Some(url) = &status.url {
         out.push_str(&pr_pane::metadata_line("url", url));
+    }
+    if let Some(count) = status.comment_count {
+        out.push_str(&pr_pane::metadata_line("comments", &count.to_string()));
     }
     if let Some(body) = status.body.as_deref() {
         out.push_str(&pr_pane::description(body, width));
@@ -491,7 +500,7 @@ impl WorktreeSkimItem {
     /// Render the full preview pane (tab bar + mode content) for an explicit
     /// `mode`. Split out of [`SkimItem::preview`] so the dispatch — including
     /// the `pr` tab's `render_pr_pane` call — is testable with a given mode
-    /// rather than the per-process picker-state file.
+    /// rather than the process-wide picker mode.
     fn render_preview(&self, mode: PreviewMode, width: usize, height: usize) -> String {
         // Build preview: tabs header + content. `has_upstream` and
         // `summaries_enabled` are synchronous skeleton-time facts (see
@@ -1305,6 +1314,7 @@ mod tests {
             review_state: Some(ReviewState::Approved),
             title: title.map(String::from),
             body: body.map(String::from),
+            comment_count: None,
         };
         // Build a row whose live `pr_status` slot carries a given state — what
         // the picker primes from the cache and then overwrites as the fetch lands.
@@ -1395,6 +1405,44 @@ mod tests {
     }
 
     #[test]
+    fn worktree_pr_pane_shows_comment_count() {
+        use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef};
+
+        let status = |comment_count: Option<u32>| PrStatus {
+            ci_status: CiStatus::Passed,
+            source: CiSource::PullRequest,
+            is_stale: false,
+            is_priming: false,
+            url: Some("https://github.com/o/r/pull/7".into()),
+            number: Some(PrRef::pr(7)),
+            review_state: None,
+            title: Some("Fix the flaky retry".into()),
+            body: None,
+            comment_count,
+        };
+
+        // A PR with comments adds a `comments` metadata line carrying the count.
+        let with = render_worktree_pr("feature", PrRef::pr(7), &status(Some(3)), 80)
+            .ansi_strip()
+            .to_string();
+        assert!(
+            with.lines()
+                .any(|l| l.contains("comments") && l.contains('3')),
+            "comments line with count: {with:?}"
+        );
+
+        // No comments (zero is flattened to `None` at the mapping boundary, and an
+        // older cache entry carries `None` too) → the line is skipped entirely.
+        let without = render_worktree_pr("feature", PrRef::pr(7), &status(None), 80)
+            .ansi_strip()
+            .to_string();
+        assert!(
+            !without.contains("comments"),
+            "no comments line when absent: {without:?}"
+        );
+    }
+
+    #[test]
     fn preview_assembles_tab_bar_and_pr_pane() {
         use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef, ReviewState};
 
@@ -1418,6 +1466,7 @@ mod tests {
                 review_state: Some(ReviewState::Approved),
                 title: Some("Fix the flaky retry".into()),
                 body: Some("Adds a **bounded** retry.".into()),
+                comment_count: None,
             })))),
         };
 
@@ -1444,9 +1493,10 @@ mod tests {
             "description body rendered: {pr_pane:?}"
         );
 
-        // `SkimItem::preview` reads the default mode (no per-process state file in
-        // tests → WorkingTree) and delegates to `render_preview`, exercising the
-        // wrapper and the non-pr dispatch arm (cache miss → loading placeholder).
+        // `SkimItem::preview` reads the default in-memory mode (WorkingTree, since
+        // no tab switch happens in this test) and delegates to `render_preview`,
+        // exercising the wrapper and the non-pr dispatch arm (cache miss → loading
+        // placeholder).
         let ctx = PreviewContext {
             query: "",
             cmd_query: "",
@@ -1482,6 +1532,7 @@ mod tests {
                 review_state: Some(ReviewState::Approved),
                 title: Some(title.into()),
                 body: Some("body".into()),
+                comment_count: None,
             }))
         };
         // Share the cache and slot Arcs so the test can mutate the slot and

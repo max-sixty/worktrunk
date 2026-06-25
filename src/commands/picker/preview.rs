@@ -1,9 +1,9 @@
 //! Preview mode and layout management.
 //!
-//! Handles preview state persistence and layout auto-detection for the interactive selector.
+//! Tracks the active preview tab (in process memory) and selects the preview
+//! layout for the interactive selector.
 
-use std::fs;
-use std::path::PathBuf;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 /// Preview modes for the interactive selector
 ///
@@ -53,6 +53,16 @@ impl PreviewMode {
             _ => Self::WorkingTree,
         }
     }
+
+    /// The next tab, wrapping `Comments` → `WorkingTree` (tab key).
+    pub(super) fn next(self) -> Self {
+        Self::from_u8(if self as u8 >= 7 { 1 } else { self as u8 + 1 })
+    }
+
+    /// The previous tab, wrapping `WorkingTree` → `Comments` (shift-tab key).
+    pub(super) fn prev(self) -> Self {
+        Self::from_u8(if self as u8 <= 1 { 7 } else { self as u8 - 1 })
+    }
 }
 
 /// Typical terminal character aspect ratio (width/height).
@@ -64,14 +74,14 @@ const CHAR_ASPECT_RATIO: f64 = 0.5;
 /// Skim uses this percentage of terminal height.
 pub(super) const SKIM_HEIGHT_PERCENT: usize = 90;
 
-/// Maximum number of list items visible in down layout before scrolling.
-pub(super) const MAX_VISIBLE_ITEMS: usize = 12;
-
 /// Lines reserved for skim chrome (header + prompt/margins).
 pub(super) const LIST_CHROME_LINES: usize = 4;
 
 /// Minimum preview lines to keep usable even with many items.
 pub(super) const MIN_PREVIEW_LINES: usize = 5;
+
+/// Minimum list rows to keep selectable even on a short terminal.
+pub(super) const MIN_VISIBLE_ITEMS: usize = 3;
 
 /// Preview width as percentage of terminal width (for Right layout).
 const PREVIEW_WIDTH_PERCENT: usize = 50;
@@ -82,9 +92,36 @@ const PREVIEW_WIDTH_PERCENT: usize = 50;
 /// for branch names to be readable. Fall back to Down layout instead.
 const MIN_COLS_FOR_RIGHT_LAYOUT: f64 = 80.0;
 
+/// Skim's usable height: the share of the terminal it actually paints
+/// (`SkimOptions::height("90%")`).
+///
+/// The single home for the `SKIM_HEIGHT_PERCENT` conversion. Every site that
+/// needs the available row budget — both layout arms in `dimensions_for`, the
+/// picker's `num_items_estimate` cap, and the preview half-page scroll — derives
+/// it here, so the definition can't drift between them.
+pub(super) fn available_height(term_height: usize) -> usize {
+    term_height * SKIM_HEIGHT_PERCENT / 100
+}
+
+/// Maximum list rows the Down layout shows before scrolling.
+///
+/// The list may claim up to half of skim's area (`available / 2`); the preview
+/// keeps the other half, so visible rows scale with terminal height instead of a
+/// fixed ceiling. Integer division truncates the list's half toward the preview —
+/// a deliberate preview-favoring tie-break. Floored at `MIN_VISIBLE_ITEMS` so the
+/// cap stays usable on a short terminal; on a terminal too short to fit both this
+/// floor and `MIN_PREVIEW_LINES`, `dimensions_for` lets the preview floor win and
+/// skim clamps the remainder. The single source of truth for the cap: both
+/// `dimensions_for` and the picker's `num_items_estimate` short-circuit gate on it,
+/// applying one formula at both sites.
+pub(super) fn max_visible_items(available: usize) -> usize {
+    let rows = (available / 2).saturating_sub(LIST_CHROME_LINES);
+    rows.max(MIN_VISIBLE_ITEMS)
+}
+
 /// Preview layout orientation for the interactive selector
 ///
-/// Preview window position (auto-detected at startup based on terminal dimensions)
+/// Preview window position, selected from the terminal dimensions read once at startup
 ///
 /// - Right: Preview on the right side (50% width) - better for wide terminals
 /// - Down: Preview below the list - better for tall/vertical monitors
@@ -96,7 +133,7 @@ pub(super) enum PreviewLayout {
 }
 
 impl PreviewLayout {
-    /// Auto-detect layout based on terminal dimensions.
+    /// Determine the layout for the given terminal dimensions (cols × rows).
     ///
     /// Terminal dimensions are in characters, not pixels. Since characters are
     /// typically twice as tall as wide (~0.5 aspect ratio), we correct for this
@@ -109,16 +146,10 @@ impl PreviewLayout {
     /// Returns Down for portrait (effective ratio < 1.0), Right for landscape.
     /// Also returns Down when the terminal is too narrow for side-by-side layout,
     /// even if the aspect ratio suggests landscape (e.g. 60×24 on a phone).
-    pub(super) fn auto_detect() -> Self {
-        let (cols, rows) = terminal_size::terminal_size()
-            .map(|(terminal_size::Width(w), terminal_size::Height(h))| (w as f64, h as f64))
-            .unwrap_or((80.0, 24.0));
-
-        Self::for_dimensions(cols, rows)
-    }
-
-    /// Determine layout for given terminal dimensions (cols × rows).
-    fn for_dimensions(cols: f64, rows: f64) -> Self {
+    ///
+    /// The terminal is read once in `handle_picker`; both layout detection here
+    /// and the preview sizing below are threaded that single snapshot.
+    pub(super) fn for_dimensions(cols: f64, rows: f64) -> Self {
         // Too narrow for side-by-side — branch names won't fit in half the width
         if cols < MIN_COLS_FOR_RIGHT_LAYOUT {
             return Self::Down;
@@ -134,34 +165,41 @@ impl PreviewLayout {
         }
     }
 
-    /// Calculate the preview window spec for skim.
-    /// Derives dimensions from `preview_dimensions` to ensure consistency.
-    pub(super) fn to_preview_window_spec(self, num_items: usize) -> String {
-        let (width, height) = self.preview_dimensions(num_items);
+    /// Format the skim preview-window spec from already-computed dimensions.
+    /// Right positions the preview by width, Down by height.
+    pub(super) fn spec_for(self, (width, height): (usize, usize)) -> String {
         match self {
-            Self::Right => format!("right:{}", width),
-            Self::Down => format!("down:{}", height),
+            Self::Right => format!("right:{width}"),
+            Self::Down => format!("down:{height}"),
         }
     }
 
-    /// Calculate preview dimensions (width, height) in characters.
-    /// Single source of truth for preview sizing — used by both skim config
-    /// and background pre-computation.
-    pub(super) fn preview_dimensions(self, num_items: usize) -> (usize, usize) {
-        let (term_width, term_height) = terminal_size::terminal_size()
-            .map(|(terminal_size::Width(w), terminal_size::Height(h))| (w as usize, h as usize))
-            .unwrap_or((80, 24));
-
+    /// Compute preview dimensions (width, height) in characters for a terminal
+    /// size. Single source of truth for preview sizing — the picker reads the
+    /// terminal once and calls this for both the skim preview-window spec (via
+    /// `spec_for`) and background pre-computation. Pure, so it's testable
+    /// without a live TTY.
+    ///
+    /// Right keeps a fixed 50%/90% split independent of `num_items`. Down lets
+    /// the list grow to `max_visible_items(available)` rows (half of skim's
+    /// area) and hands the rest to the preview, floored at `MIN_PREVIEW_LINES`
+    /// and clamped to never exceed `available`.
+    pub(super) fn dimensions_for(
+        self,
+        term_width: usize,
+        term_height: usize,
+        num_items: usize,
+    ) -> (usize, usize) {
         match self {
             Self::Right => {
                 let width = term_width * PREVIEW_WIDTH_PERCENT / 100;
-                let height = term_height * SKIM_HEIGHT_PERCENT / 100;
+                let height = available_height(term_height);
                 (width, height)
             }
             Self::Down => {
                 let width = term_width;
-                let available = term_height * SKIM_HEIGHT_PERCENT / 100;
-                let list_lines = LIST_CHROME_LINES + num_items.min(MAX_VISIBLE_ITEMS);
+                let available = available_height(term_height);
+                let list_lines = LIST_CHROME_LINES + num_items.min(max_visible_items(available));
                 let remaining = available.saturating_sub(list_lines);
                 let height = remaining.max(MIN_PREVIEW_LINES).min(available);
                 (width, height)
@@ -170,61 +208,60 @@ impl PreviewLayout {
     }
 }
 
-/// Preview state persistence (mode only, layout auto-detected)
+/// The active preview tab, shared across the picker session.
 ///
-/// State file format: Single digit representing preview mode (1-6)
+/// One picker runs per process, so a single process-wide value is the source of
+/// truth: `WorktreeSkimItem::preview` / `PrSkimItem::preview` read it to choose
+/// what to render, and the keymap's `Action::Custom` callbacks (installed in
+/// `super::install_preview_tab_keybindings`) write it on alt-1…alt-7 / tab /
+/// shift-tab, then re-run the preview.
+///
+/// It lives in memory rather than on disk. Tab switching used to write a digit
+/// to a per-process temp file via `echo`/`tr`/`mv` keybind commands, because
+/// skim runs keybind commands through a shell and a shell command was the only
+/// way to react to a keypress. The native `Action::Custom` path removes that
+/// constraint — and with it the file, whose `tr`/`mv` commands skim's Windows
+/// shell (cmd.exe) cannot run.
+static PREVIEW_MODE: AtomicU8 = AtomicU8::new(PreviewMode::WorkingTree as u8);
+
 pub(super) struct PreviewStateData;
 
 impl PreviewStateData {
-    pub(super) fn state_path() -> PathBuf {
-        // Use per-process temp file to avoid race conditions when running multiple instances.
-        // The leaf stays dot-free (the pid is numeric), so the sibling `.tmp`
-        // file (tab/btab rotate scratch) derived via `with_extension(...)`
-        // appends rather than replaces an extension, matching the shell
-        // `{0}.tmp` the keybindings write.
-        std::env::temp_dir().join(format!("wt-picker-state-{}", std::process::id()))
-    }
-
-    /// Read current preview mode from state file
+    /// The active preview tab.
     pub(super) fn read_mode() -> PreviewMode {
-        let state_path = Self::state_path();
-        fs::read_to_string(&state_path)
-            .ok()
-            .and_then(|s| s.trim().parse::<u8>().ok())
-            .map(PreviewMode::from_u8)
-            .unwrap_or(PreviewMode::WorkingTree)
+        PreviewMode::from_u8(PREVIEW_MODE.load(Ordering::Relaxed))
     }
 
-    pub(super) fn write_mode(mode: PreviewMode) {
-        let state_path = Self::state_path();
-        let _ = fs::write(&state_path, format!("{}", mode as u8));
+    /// Jump to a specific tab (alt-1…alt-7).
+    pub(super) fn set_mode(mode: PreviewMode) {
+        PREVIEW_MODE.store(mode as u8, Ordering::Relaxed);
+    }
+
+    /// Cycle to the next (`forward`) / previous tab, wrapping around (tab /
+    /// shift-tab). Runs on skim's single event-loop thread, so the
+    /// load-then-store needs no compare-and-swap.
+    pub(super) fn rotate(forward: bool) {
+        let current = Self::read_mode();
+        Self::set_mode(if forward {
+            current.next()
+        } else {
+            current.prev()
+        });
     }
 }
 
-/// RAII wrapper for preview state file lifecycle management
+/// Per-session preview state: the initial layout (selected once from the
+/// terminal size in `handle_picker`). Constructing it also resets
+/// [`PreviewStateData`] to the working-tree tab so every picker opens on the
+/// same tab.
 pub(super) struct PreviewState {
-    pub(super) path: PathBuf,
     pub(super) initial_layout: PreviewLayout,
 }
 
 impl PreviewState {
-    pub(super) fn new() -> Self {
-        let path = PreviewStateData::state_path();
-        PreviewStateData::write_mode(PreviewMode::WorkingTree);
-        Self {
-            path,
-            initial_layout: PreviewLayout::auto_detect(),
-        }
-    }
-}
-
-impl Drop for PreviewState {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
-        // Clean up the rotate scratch file used by tab/shift-tab cycling
-        // (`tr … > {path}.tmp; mv …` in the keybindings); normally already
-        // renamed away, but a failed `mv` could leave it behind.
-        let _ = fs::remove_file(self.path.with_extension("tmp"));
+    pub(super) fn new(initial_layout: PreviewLayout) -> Self {
+        PreviewStateData::set_mode(PreviewMode::WorkingTree);
+        Self { initial_layout }
     }
 }
 
@@ -247,79 +284,175 @@ mod tests {
     }
 
     #[test]
-    fn test_preview_layout_to_preview_window_spec() {
-        // Right uses absolute width derived from terminal size
-        let spec = PreviewLayout::Right.to_preview_window_spec(10);
-        assert!(spec.starts_with("right:"));
-
-        // Down calculates based on item count
-        let spec = PreviewLayout::Down.to_preview_window_spec(5);
-        assert!(spec.starts_with("down:"));
+    fn test_preview_layout_spec_for() {
+        // Right positions by width, Down by height.
+        assert_eq!(PreviewLayout::Right.spec_for((40, 21)), "right:40");
+        assert_eq!(PreviewLayout::Down.spec_for((80, 15)), "down:15");
     }
 
     #[test]
-    fn test_preview_state_data_read_default() {
-        // Use unique path to avoid interference from parallel tests
-        let state_path = std::env::temp_dir().join("wt-test-read-default");
-        let _ = fs::remove_file(&state_path);
-
-        // When state file doesn't exist, read returns default
-        let mode = fs::read_to_string(&state_path)
-            .ok()
-            .and_then(|s| s.trim().parse::<u8>().ok())
-            .map(PreviewMode::from_u8)
-            .unwrap_or(PreviewMode::WorkingTree);
-        assert_eq!(mode, PreviewMode::WorkingTree);
+    fn test_available_height_is_skim_height_percent() {
+        // The single home for skim's 90%-of-terminal conversion.
+        assert_eq!(available_height(0), 0);
+        assert_eq!(available_height(24), 21); // 24 * 90 / 100
+        assert_eq!(available_height(50), 45);
+        assert_eq!(available_height(100), 90);
     }
 
     #[test]
-    fn test_preview_state_data_roundtrip() {
-        // Use unique path to avoid interference from parallel tests
-        let state_path = std::env::temp_dir().join("wt-test-roundtrip");
+    fn test_max_visible_items_scales_with_height() {
+        // available -> cap. The list claims half of skim's area minus chrome,
+        // floored at MIN_VISIBLE_ITEMS(3). The floor binds until available/2
+        // exceeds chrome by 3 (available >= 14); above that the cap grows
+        // linearly with the terminal instead of the former fixed 12.
+        let cases = [
+            (0, 3),
+            (8, 3),    // 4 - 4 = 0 -> floor
+            (12, 3),   // 6 - 4 = 2 -> floor
+            (14, 3),   // 7 - 4 = 3 -> floor boundary
+            (16, 4),   // 8 - 4 = 4 -> floor releases
+            (24, 8),   // 12 - 4
+            (28, 10),  // 14 - 4
+            (36, 14),  // 18 - 4
+            (72, 32),  // 36 - 4
+            (100, 46), // 50 - 4
+            (216, 104),
+        ];
+        for (available, expected) in cases {
+            assert_eq!(
+                max_visible_items(available),
+                expected,
+                "max_visible_items({available})"
+            );
+        }
+    }
 
-        // Write and read back various modes
-        let _ = fs::write(&state_path, "1");
-        let mode = fs::read_to_string(&state_path)
-            .ok()
-            .and_then(|s| s.trim().parse::<u8>().ok())
-            .map(PreviewMode::from_u8)
-            .unwrap_or(PreviewMode::WorkingTree);
-        assert_eq!(mode, PreviewMode::WorkingTree);
+    #[test]
+    fn test_down_preview_dimensions_scenarios() {
+        // (term_height, num_items) -> preview lines, for the balanced 50/50
+        // split. Width is irrelevant to the Down height, so pass a fixed 80.
+        // Mirrors the design's scenario grid: visible rows scale with height
+        // (h=80/n=30 -> 30 rows, h=120/n=100 -> 50 rows) while the preview
+        // keeps ~half and never collapses to its floor on a roomy terminal.
+        let cases = [
+            (20, 3, 11),
+            (20, 12, 9),
+            (20, 30, 9),
+            (20, 100, 9),
+            (24, 3, 14),
+            (24, 12, 11),
+            (24, 30, 11),
+            (24, 100, 11),
+            (40, 3, 29),
+            (40, 12, 20),
+            (40, 30, 18),
+            (40, 100, 18),
+            (50, 3, 38),
+            (50, 12, 29),
+            (50, 30, 23),
+            (50, 100, 23),
+            (80, 3, 65),
+            (80, 12, 56),
+            (80, 30, 38),
+            (80, 100, 36),
+            (120, 3, 101),
+            (120, 12, 92),
+            (120, 30, 74),
+            (120, 100, 54),
+        ];
+        for (term_height, num_items, expected_preview) in cases {
+            let (width, preview) = PreviewLayout::Down.dimensions_for(80, term_height, num_items);
+            assert_eq!(width, 80, "Down width is the full terminal width");
+            assert_eq!(
+                preview, expected_preview,
+                "Down preview height for {term_height}h x {num_items} items"
+            );
+            // The list region is whatever skim has left after the preview.
+            // It must hold the chrome plus exactly the visible rows we sized
+            // for, never more than there are items, and never overflow skim.
+            let available = term_height * SKIM_HEIGHT_PERCENT / 100;
+            assert!(preview <= available, "preview must fit skim's area");
+            let list_region = available - preview;
+            let visible = list_region.saturating_sub(LIST_CHROME_LINES);
+            assert!(visible <= num_items, "never show more rows than items");
+        }
+    }
 
-        let _ = fs::write(&state_path, "2");
-        let mode = fs::read_to_string(&state_path)
-            .ok()
-            .and_then(|s| s.trim().parse::<u8>().ok())
-            .map(PreviewMode::from_u8)
-            .unwrap_or(PreviewMode::WorkingTree);
-        assert_eq!(mode, PreviewMode::Log);
+    #[test]
+    fn test_down_preview_no_phantom_rows_when_empty() {
+        // With no worktrees yet, the list reserves only its chrome — the
+        // MIN_VISIBLE_ITEMS floor must not invent rows that don't exist.
+        let term_height = 50;
+        let available = term_height * SKIM_HEIGHT_PERCENT / 100;
+        let (_, preview) = PreviewLayout::Down.dimensions_for(80, term_height, 0);
+        assert_eq!(available - preview, LIST_CHROME_LINES);
+    }
 
-        let _ = fs::write(&state_path, "3");
-        let mode = fs::read_to_string(&state_path)
-            .ok()
-            .and_then(|s| s.trim().parse::<u8>().ok())
-            .map(PreviewMode::from_u8)
-            .unwrap_or(PreviewMode::WorkingTree);
-        assert_eq!(mode, PreviewMode::BranchDiff);
+    #[test]
+    fn test_down_preview_dimensions_never_panic_on_tiny_terminals() {
+        // Saturating math must hold for degenerate terminals and absurd item
+        // counts: the preview band always fits within skim's area.
+        for term_height in [0, 1, 2, 3, 8, 10, 12, 14] {
+            for num_items in [0, 1, 1000] {
+                let available = term_height * SKIM_HEIGHT_PERCENT / 100;
+                let (_, preview) = PreviewLayout::Down.dimensions_for(80, term_height, num_items);
+                assert!(
+                    preview <= available,
+                    "preview {preview} exceeds available {available} at {term_height}h"
+                );
+            }
+        }
+    }
 
-        let _ = fs::write(&state_path, "4");
-        let mode = fs::read_to_string(&state_path)
-            .ok()
-            .and_then(|s| s.trim().parse::<u8>().ok())
-            .map(PreviewMode::from_u8)
-            .unwrap_or(PreviewMode::WorkingTree);
-        assert_eq!(mode, PreviewMode::UpstreamDiff);
+    #[test]
+    fn test_down_preview_saturates_at_cap() {
+        // The picker's num_items_estimate short-circuit stops counting at
+        // max_visible_items(available). This is sound only if any item count
+        // at or above the cap yields the same preview spec as the cap itself.
+        for term_height in [24, 40, 80, 120] {
+            let available = term_height * SKIM_HEIGHT_PERCENT / 100;
+            let cap = max_visible_items(available);
+            let at_cap = PreviewLayout::Down.dimensions_for(80, term_height, cap);
+            assert_eq!(
+                at_cap,
+                PreviewLayout::Down.dimensions_for(80, term_height, cap + 1),
+                "cap+1 must match cap at {term_height}h"
+            );
+            assert_eq!(
+                at_cap,
+                PreviewLayout::Down.dimensions_for(80, term_height, 100_000),
+                "a huge count must match cap at {term_height}h"
+            );
+        }
+    }
 
-        let _ = fs::write(&state_path, "5");
-        let mode = fs::read_to_string(&state_path)
-            .ok()
-            .and_then(|s| s.trim().parse::<u8>().ok())
-            .map(PreviewMode::from_u8)
-            .unwrap_or(PreviewMode::WorkingTree);
-        assert_eq!(mode, PreviewMode::Summary);
-
-        // Cleanup
-        let _ = fs::remove_file(&state_path);
+    #[test]
+    fn test_preview_mode_rotation() {
+        // tab cycles forward through all seven tabs and wraps; shift-tab is the
+        // exact inverse. These drive the tab / shift-tab keybindings.
+        let forward: Vec<PreviewMode> =
+            std::iter::successors(Some(PreviewMode::WorkingTree), |m| {
+                let next = m.next();
+                (next != PreviewMode::WorkingTree).then_some(next)
+            })
+            .collect();
+        assert_eq!(
+            forward,
+            vec![
+                PreviewMode::WorkingTree,
+                PreviewMode::Log,
+                PreviewMode::BranchDiff,
+                PreviewMode::UpstreamDiff,
+                PreviewMode::Summary,
+                PreviewMode::Pr,
+                PreviewMode::Comments,
+            ]
+        );
+        assert_eq!(PreviewMode::Comments.next(), PreviewMode::WorkingTree);
+        assert_eq!(PreviewMode::WorkingTree.prev(), PreviewMode::Comments);
+        for mode in forward {
+            assert_eq!(mode.next().prev(), mode);
+        }
     }
 
     #[test]
