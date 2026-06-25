@@ -618,10 +618,10 @@ impl PrSkimItem {
         // shape as the worktree-row pane (see `items::render_worktree_pr`), so
         // the two read alike. They close each styled span with a full `{reset}`
         // (\x1b[0m) because skim's ANSI parser drops color_print's `</>` (SGR
-        // 22/39); the `draft` value below does the same.
+        // 22/24/39 — bold/underline/color); the `draft` value below does the same.
         let reset = Reset;
         let mut pr_pane = pr_pane::header(pr_ref, Some(&title));
-        pr_pane.push_str(&pr_pane::metadata_line("branch", &head_branch));
+        pr_pane.push_str(&pr_pane::branch_line(&head_branch));
         pr_pane.push_str(&pr_pane::metadata_line("author", &format!("@{author}")));
         if is_draft {
             pr_pane.push_str(&pr_pane::metadata_line(
@@ -630,7 +630,7 @@ impl PrSkimItem {
             ));
         }
         if let Some(url) = url {
-            pr_pane.push_str(&pr_pane::metadata_line("url", &url));
+            pr_pane.push_str(&pr_pane::url_line(&url));
         }
         pr_pane.push_str(&pr_pane::description(&body, list_width));
 

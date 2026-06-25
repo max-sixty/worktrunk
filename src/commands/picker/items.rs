@@ -467,8 +467,9 @@ fn render_tab_row_compact(tabs: &[Tab], reset: Reset) -> String {
 
 /// The `pr` pane for a worktree row whose branch has a PR/MR. Renders the same
 /// shape as the `--prs` rows' pane (`PrSkimItem::pr_pane`) — reference + title
-/// header, dim-labeled metadata, and the description as markdown — via the
-/// shared [`pr_pane`] helpers, so the two read alike. The title, body, and
+/// header, cyan all-caps labeled metadata (the branch bold, the url underlined),
+/// and the description as markdown — via the shared [`pr_pane`] helpers, so the
+/// two read alike. The title, body, and
 /// comment count ride the same CI fetch the column already makes (see
 /// [`PrStatus`]); a status without them (an older cache entry, a forge that
 /// doesn't expose them) falls back to a reference-only header and skips the
@@ -483,9 +484,9 @@ fn render_tab_row_compact(tabs: &[Tab], reset: Reset) -> String {
 fn render_worktree_pr(branch: &str, pr_ref: PrRef, status: &PrStatus, width: usize) -> String {
     let title = status.title.as_deref().filter(|t| !t.is_empty());
     let mut out = pr_pane::header(pr_ref, title);
-    out.push_str(&pr_pane::metadata_line("branch", branch));
+    out.push_str(&pr_pane::branch_line(branch));
     if let Some(url) = &status.url {
-        out.push_str(&pr_pane::metadata_line("url", url));
+        out.push_str(&pr_pane::url_line(url));
     }
     if let Some(count) = status.comment_count {
         out.push_str(&pr_pane::metadata_line("comments", &count.to_string()));

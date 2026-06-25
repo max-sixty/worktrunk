@@ -10,6 +10,9 @@
 //! Every label (`BRANCH`, `URL`, `DESCRIPTION`, …) goes through [`field_label`],
 //! which renders the app's cyan all-caps title style, so they all match the
 //! headings elsewhere in the CLI (`wt config show`, `wt step`, …).
+//! The values carry the app's own conventions in turn: the branch name bold and
+//! the url underlined (via [`branch_line`]/[`url_line`]), the same way branches
+//! and links render across the rest of the CLI.
 
 use anstyle::Reset;
 use color_print::cformat;
@@ -53,6 +56,27 @@ fn field_label(text: &str) -> String {
 pub(super) fn metadata_line(label: &str, value: &str) -> String {
     let pad = " ".repeat(VALUE_COLUMN.saturating_sub(label.len()));
     format!("{}{pad}{value}\n", field_label(label))
+}
+
+/// The `BRANCH` metadata line, with the branch name bold — the app convention
+/// for branch identifiers (git and error messages throughout the CLI, the
+/// branch summary in `src/summary.rs`). Both panes build
+/// the line through here so the styling can't drift between them. The trailing
+/// full `{reset}` closes the bold span: skim's ANSI parser drops the SGR 22 that
+/// color_print's `</>` emits, exactly as the `DESCRIPTION` label and the `draft`
+/// state value handle their own closers.
+pub(super) fn branch_line(branch: &str) -> String {
+    let reset = Reset;
+    metadata_line("branch", &cformat!("<bold>{branch}</>{reset}"))
+}
+
+/// The `URL` metadata line, with the url underlined — the app convention for
+/// inline links and references (hints, the fork-push notice). Both panes build
+/// the line through here so the styling can't drift. The trailing full `{reset}`
+/// closes the underline span (skim drops the SGR 24 that `</>` emits).
+pub(super) fn url_line(url: &str) -> String {
+    let reset = Reset;
+    metadata_line("url", &cformat!("<underline>{url}</>{reset}"))
 }
 
 /// The description block: a cyan all-caps `DESCRIPTION` label (via
@@ -143,6 +167,43 @@ mod tests {
             branch.find("feature"),
             Some(VALUE_COLUMN),
             "branch value at the shared column: {branch:?}"
+        );
+    }
+
+    #[test]
+    fn branch_line_bolds_the_value() {
+        use ansi_str::AnsiStr;
+        let out = branch_line("feature/auth");
+        // Bold (SGR 1) wraps the value — the app convention for branch
+        // identifiers — closed by a full reset so it doesn't bleed past the
+        // value (skim drops color_print's `</>`).
+        assert!(out.contains("\x1b[1m"), "bold value: {out:?}");
+        assert!(
+            out.contains("\x1b[0m"),
+            "full reset closes the span: {out:?}"
+        );
+        // The value still lands at the shared column behind the cyan label.
+        let stripped = out.ansi_strip();
+        assert_eq!(
+            stripped.find("feature"),
+            Some(VALUE_COLUMN),
+            "value aligned behind the label: {stripped:?}"
+        );
+    }
+
+    #[test]
+    fn url_line_underlines_the_value() {
+        let out = url_line("https://github.com/o/r/pull/7");
+        // Underline (SGR 4) wraps the value — the app convention for inline
+        // links — closed by a full reset.
+        assert!(out.contains("\x1b[4m"), "underline value: {out:?}");
+        assert!(
+            out.contains("\x1b[0m"),
+            "full reset closes the span: {out:?}"
+        );
+        assert!(
+            out.contains("https://github.com/o/r/pull/7"),
+            "url preserved intact: {out:?}"
         );
     }
 
