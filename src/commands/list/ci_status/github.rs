@@ -68,9 +68,11 @@ pub(super) fn detect_github(
             "--limit",
             &MAX_PRS_TO_FETCH.to_string(),
             "--json",
-            // title,body ride this existing call so the picker's `pr` preview
-            // pane can show them — no extra round-trip.
-            "number,title,body,headRefOid,mergeStateStatus,statusCheckRollup,url,headRepositoryOwner,reviewDecision,isDraft",
+            // title,body and the comments array ride this existing call so the
+            // picker's `pr` preview pane can show them — no extra round-trip.
+            // `gh pr list` has no comment-count field, so we request the array and
+            // count it; for a `--head <branch>` call that's typically one PR.
+            "number,title,body,comments,headRefOid,mergeStateStatus,statusCheckRollup,url,headRepositoryOwner,reviewDecision,isDraft",
         ])
         .current_dir(&repo_root)
         .run()
@@ -135,6 +137,7 @@ pub(super) fn detect_github(
         review_state: pr_info.review_state(),
         title: pr_info.title.clone(),
         body: pr_info.body.clone(),
+        comment_count: pr_info.comment_count(),
     })
 }
 
@@ -205,6 +208,7 @@ pub(super) fn detect_github_commit_checks(
         review_state: None,
         title: None,
         body: None,
+        comment_count: None,
     })
 }
 
@@ -221,6 +225,13 @@ pub(crate) struct GitHubPrInfo {
     pub title: Option<String>,
     /// PR description; shown in the `pr` preview pane. Rides this call.
     pub body: Option<String>,
+    /// Conversation comments on the PR. Requested only on the worktree-row
+    /// [`detect_github`] call to count them for the `pr` pane; the `--prs` call
+    /// omits `comments` to keep its 50-PR payload light, so this stays empty
+    /// there (`#[serde(default)]`). Only the count is needed, so each element
+    /// deserializes as [`serde::de::IgnoredAny`] rather than a comment struct.
+    #[serde(default)]
+    pub comments: Vec<serde::de::IgnoredAny>,
     #[serde(rename = "headRefOid")]
     pub head_ref_oid: Option<String>,
     #[serde(rename = "mergeStateStatus")]
@@ -296,13 +307,19 @@ impl GitHubPrInfo {
         }
     }
 
+    /// The conversation-comment count for [`PrStatus::comment_count`], or `None`
+    /// when there are none — zero is flattened so a PR with no comments shows
+    /// nothing in the `pr` pane.
+    pub fn comment_count(&self) -> Option<u32> {
+        u32::try_from(self.comments.len()).ok().filter(|&n| n > 0)
+    }
+
     /// Build a [`PrStatus`] from this open-PR entry, for callers that already
     /// hold the open-PR list (the `--prs` picker) and want the same CI-column
     /// treatment [`detect_github`] produces per branch. PR rows have no local
     /// checkout to diff against, so the result is never marked stale.
     ///
-    /// Only the `--prs` picker calls this, and the picker is unix-only.
-    #[cfg(unix)]
+    /// Only the `--prs` picker calls this.
     pub(crate) fn open_pr_status(&self) -> PrStatus {
         let ci_status = if self.merge_state_status.as_deref() == Some("DIRTY") {
             CiStatus::Conflicts
@@ -318,9 +335,12 @@ impl GitHubPrInfo {
             number: self.number.map(PrRef::pr),
             review_state: self.review_state(),
             // The `--prs` pane reads title/body from the `PrEntry`, not this status
-            // (which feeds only the CI column), so they stay absent here.
+            // (which feeds only the CI column), so they stay absent here. Likewise
+            // the comment count: the `--prs` rows surface comments in their own
+            // background-fetched comments tab, and the list call omits `comments`.
             title: None,
             body: None,
+            comment_count: None,
         }
     }
 }
@@ -392,7 +412,6 @@ mod tests {
 
     /// A `DIRTY` merge state (merge conflicts) reports `Conflicts` regardless of
     /// the check rollup — the `--prs` picker's CI column treatment.
-    #[cfg(unix)]
     #[test]
     fn open_pr_status_dirty_merge_state_reports_conflicts() {
         let pr = GitHubPrInfo {
@@ -404,6 +423,7 @@ mod tests {
             head_repository_owner: None,
             title: None,
             body: None,
+            comments: Vec::new(),
             review_decision: None,
             is_draft: None,
         };
@@ -422,6 +442,7 @@ mod tests {
             head_repository_owner: None,
             title: None,
             body: None,
+            comments: Vec::new(),
             review_decision: None,
             is_draft: None,
         };
@@ -437,6 +458,7 @@ mod tests {
             head_repository_owner: None,
             title: None,
             body: None,
+            comments: Vec::new(),
             review_decision: None,
             is_draft: None,
         };
@@ -457,6 +479,7 @@ mod tests {
                 head_repository_owner: None,
                 title: None,
                 body: None,
+                comments: Vec::new(),
                 review_decision: None,
                 is_draft: None,
             };
@@ -477,6 +500,7 @@ mod tests {
             head_repository_owner: None,
             title: None,
             body: None,
+            comments: Vec::new(),
             review_decision: None,
             is_draft: None,
         };
@@ -497,6 +521,7 @@ mod tests {
                 head_repository_owner: None,
                 title: None,
                 body: None,
+                comments: Vec::new(),
                 review_decision: None,
                 is_draft: None,
             };
@@ -518,6 +543,7 @@ mod tests {
                 head_repository_owner: None,
                 title: None,
                 body: None,
+                comments: Vec::new(),
                 review_decision: None,
                 is_draft: None,
             };
@@ -538,6 +564,7 @@ mod tests {
             head_repository_owner: None,
             title: None,
             body: None,
+            comments: Vec::new(),
             review_decision: None,
             is_draft: None,
         };
@@ -555,6 +582,7 @@ mod tests {
             head_repository_owner: None,
             title: None,
             body: None,
+            comments: Vec::new(),
             review_decision: review_decision.map(Into::into),
             is_draft,
         };
@@ -579,6 +607,31 @@ mod tests {
             pr(Some("APPROVED"), Some(true)).review_state(),
             Some(ReviewState::Draft)
         );
+    }
+
+    #[test]
+    fn test_github_pr_info_comment_count() {
+        // The count comes from the length of the requested `comments` array.
+        let with = |n: usize| GitHubPrInfo {
+            number: None,
+            head_ref_oid: None,
+            merge_state_status: None,
+            status_check_rollup: None,
+            url: None,
+            head_repository_owner: None,
+            title: None,
+            body: None,
+            comments: std::iter::repeat_with(|| serde::de::IgnoredAny)
+                .take(n)
+                .collect(),
+            review_decision: None,
+            is_draft: None,
+        };
+
+        // Zero comments flatten to None so a PR with no comments shows nothing.
+        assert_eq!(with(0).comment_count(), None);
+        assert_eq!(with(1).comment_count(), Some(1));
+        assert_eq!(with(4).comment_count(), Some(4));
     }
 
     #[test]

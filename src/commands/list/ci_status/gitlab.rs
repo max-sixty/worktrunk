@@ -189,6 +189,7 @@ pub(super) fn detect_gitlab(
             review_state: mr_entry.review_state(),
             title: mr_entry.title.clone(),
             body: mr_entry.description.clone(),
+            comment_count: mr_entry.comment_count(),
         });
     };
 
@@ -204,6 +205,7 @@ pub(super) fn detect_gitlab(
         review_state: mr_entry.review_state(),
         title: mr_entry.title.clone(),
         body: mr_entry.description.clone(),
+        comment_count: mr_entry.comment_count(),
     })
 }
 
@@ -275,6 +277,7 @@ pub(super) fn detect_gitlab_pipeline(
         review_state: None,
         title: None,
         body: None,
+        comment_count: None,
     })
 }
 
@@ -304,6 +307,11 @@ struct GitLabMrListEntry {
     /// MR description; rendered as markdown in the `pr` preview pane.
     #[serde(default)]
     pub description: Option<String>,
+    /// Count of user (non-system) notes on the MR. GitLab's MR-list response
+    /// carries this directly, so the `comments` line in the `pr` pane rides the
+    /// same call with no extra round-trip.
+    #[serde(default)]
+    pub user_notes_count: Option<u32>,
 }
 
 impl GitLabMrListEntry {
@@ -321,6 +329,12 @@ impl GitLabMrListEntry {
             return Some(ReviewState::Pending);
         }
         None
+    }
+
+    /// Comment count for [`PrStatus::comment_count`], zero flattened to `None`
+    /// so an MR with no notes shows nothing in the `pr` pane.
+    fn comment_count(&self) -> Option<u32> {
+        self.user_notes_count.filter(|&n| n > 0)
     }
 }
 
@@ -416,6 +430,7 @@ mod tests {
             draft,
             title: None,
             description: None,
+            user_notes_count: None,
         };
 
         // Draft wins over the approval gap
@@ -430,6 +445,28 @@ mod tests {
         // Other merge statuses carry no review signal
         assert_eq!(entry(Some(false), Some("mergeable")).review_state(), None);
         assert_eq!(entry(None, None).review_state(), None);
+    }
+
+    #[test]
+    fn test_mr_list_entry_comment_count() {
+        let entry = |count: Option<u32>| GitLabMrListEntry {
+            iid: 1,
+            sha: "abc".into(),
+            has_conflicts: false,
+            detailed_merge_status: None,
+            source_project_id: None,
+            web_url: None,
+            draft: None,
+            title: None,
+            description: None,
+            user_notes_count: count,
+        };
+
+        // Zero (or a missing count) flattens to None so an MR with no notes
+        // shows nothing in the `pr` pane; a positive count carries through.
+        assert_eq!(entry(Some(0)).comment_count(), None);
+        assert_eq!(entry(None).comment_count(), None);
+        assert_eq!(entry(Some(3)).comment_count(), Some(3));
     }
 
     #[test]

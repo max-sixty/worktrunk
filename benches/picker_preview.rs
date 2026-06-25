@@ -1,10 +1,10 @@
 // Benchmarks for the `wt switch` picker's preview pre-compute workload
 //
-// Unix-only: `wt switch` (no branch arg) only routes to the interactive
-// picker on Unix; on Windows it prints "interactive picker unavailable"
-// and exits with code 2 before `WORKTRUNK_PREVIEW_BENCH` is consulted.
-// Gating with `cfg(unix)` keeps `cargo bench` runnable on Windows by
-// emitting an empty `main` there.
+// Unix-gated by choice, not capability: the picker now runs on Windows too
+// (the `WORKTRUNK_PREVIEW_BENCH` path bypasses skim's TTY check on every
+// platform), but standing up the `wt_perf` fixtures and subprocess harness
+// below on Windows isn't worth it for a non-required bench. `cfg(unix)` emits
+// an empty `main` there so `cargo bench` still builds.
 //
 // What this measures
 // ------------------

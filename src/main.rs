@@ -36,7 +36,6 @@ pub(crate) use invocation::{
 pub(crate) use crate::cli::{OutputFormat, StatuslineFormat};
 
 use commands::commit::HookGate;
-#[cfg(unix)]
 use commands::handle_picker;
 use commands::worktree::{PushKind, PushOutcome, PushResult, handle_no_ff_merge, handle_push};
 use commands::{
@@ -668,20 +667,11 @@ fn handle_list_command(args: ListArgs) -> anyhow::Result<()> {
     }
 }
 
-#[cfg(unix)]
 fn handle_select_command(branches: bool, remotes: bool) -> anyhow::Result<()> {
     // Deprecated: show warning and delegate to handle_picker
     warn_select_deprecated();
     worktrunk::config::suppress_warnings();
     handle_picker(branches, remotes, false, None, SwitchFormat::Text)
-}
-
-#[cfg(not(unix))]
-fn handle_select_command(_branches: bool, _remotes: bool) -> anyhow::Result<()> {
-    use worktrunk::git::WorktrunkError;
-    warn_select_deprecated();
-    commands::print_windows_picker_unavailable();
-    Err(WorktrunkError::AlreadyDisplayed { exit_code: 1 }.into())
 }
 
 /// Rayon thread count sized for mixed git+network I/O workloads.
