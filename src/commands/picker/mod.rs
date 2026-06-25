@@ -723,13 +723,14 @@ pub fn handle_picker(
     // until its results channel closes or the fallback DRAIN_TIMEOUT
     // (120s) fires.
 
-    // PROTOTYPE (design/picker-preview-toggle-width, Option 3): always lay the
-    // table out at full terminal width, regardless of Right/Down. When the
-    // preview is shown (Right), skim's split renders this full-width row into the
-    // left half and clips the overflow at the boundary (no_hscroll + empty
-    // ellipsis give a clean left-anchored cut). Hiding the preview with alt-p
+    // Lay the table out at full terminal width regardless of the preview
+    // layout. With the preview shown (Right), skim splits the screen and renders
+    // this full-width row into the left pane, clipping the overflow at the
+    // boundary; `no_hscroll` plus an empty ellipsis (set on the builder below)
+    // make that a clean left-anchored cut. Toggling the preview off with alt-p
     // widens skim's list pane to full width and the SAME rows reveal their
-    // right-hand columns: no reload, no re-layout, columns never move.
+    // right-hand columns — no reload, no re-layout, so no column ever moves.
+    // (The Down layout already used full width, so this is a no-op there.)
     //
     // The picker requires a TTY, so detection essentially always succeeds; the
     // unlimited-width fallback just keeps the math total. Skim prefixes every
@@ -843,12 +844,15 @@ pub fn handle_picker(
         // count so the alt-r cursor-reposition math stays in sync — keep them one.
         .header_lines(PICKER_HEADER_ROWS)
         .multi(false)
-        // PROTOTYPE (Option 3): the table is rendered at full width but the list
-        // pane is only half-width while the preview is shown, so rows overflow the
-        // pane. Disable horizontal scroll so a fuzzy match deep in the search key
-        // can never shift the leading columns out of view — the row always clips
-        // left-anchored at the pane boundary. Empty ellipsis (skim's library
-        // default with default-features=false) makes that a clean cut, no "..".
+        // The table is laid out at full terminal width (see `skim_list_width`
+        // above), so while the preview is shown the rows overflow skim's
+        // half-width list pane. Disable horizontal scroll so a fuzzy match deep
+        // in the search key can never shift the leading columns out of view — the
+        // row always clips left-anchored at the pane boundary. An empty ellipsis
+        // makes that a clean cut with no "..": it is the library default under
+        // `default-features = false` (the `..` default is gated on skim's `cli`
+        // feature, off here), pinned explicitly because the clean clip is
+        // load-bearing for the overflow.
         .no_hscroll(true)
         .ellipsis(String::new())
         .no_info(true) // Hide info line (matched/total counter)
