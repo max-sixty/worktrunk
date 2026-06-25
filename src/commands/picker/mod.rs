@@ -826,7 +826,7 @@ impl CommandCollector for PickerCollector {
         // are kept alive by those threads, so let them drop here. On a spawn
         // failure we fall through and re-stream the current items unchanged.
         if cmd.trim() == "refresh" {
-            match self.factory.spawn() {
+            match self.factory.spawn(true) {
                 Ok(SpawnedPipeline { rx, .. }) => {
                     let (tx_interrupt, _rx_interrupt) = bounded(1);
                     return (rx, tx_interrupt);
@@ -971,7 +971,14 @@ impl PipelineFactory {
     /// once the spawned threads finish the channel closes and skim's reader sees
     /// EOF — the "background work done → picker idle" contract, which a refresh
     /// relies on to end its `reload`.
-    fn spawn(&self) -> anyhow::Result<SpawnedPipeline> {
+    /// `rebuild_repo` controls the worktree/branch inventory source. A refresh
+    /// (`alt-r`) passes `true` to rebuild a fresh `Repository`, re-enumerating
+    /// after an in-picker removal. The initial spawn passes `false` to reuse the
+    /// startup repo, whose cache the prelude already primed — nothing has mutated
+    /// yet, so reusing it is correct and avoids re-paying `git worktree list` /
+    /// `local_branches` on the first-paint hot path (doubling them there slows
+    /// the picker, worst on Windows).
+    fn spawn(&self, rebuild_repo: bool) -> anyhow::Result<SpawnedPipeline> {
         let (tx, rx): (SkimItemSender, SkimItemReceiver) = unbounded();
 
         // Fresh per spawn: the header shows a "loading…" marker keyed to this
@@ -1002,17 +1009,23 @@ impl PipelineFactory {
             });
 
         let bg_handler: Arc<dyn collect::PickerProgressHandler> = handler.clone();
-        // Fresh `Repository` per spawn so a refresh re-enumerates worktrees.
-        // The factory's `repo` was primed with `git worktree list` at picker
-        // startup, and `RepoCache.worktrees` is a `OnceCell` that is never
-        // invalidated; cloning would re-probe that stale list through the same
-        // cache. After an in-picker removal the removed worktrees would still
-        // appear, and collect's per-worktree git ops would fail against the
-        // gone branches ("fatal: Needed a single revision"). `Repository::at`
-        // rebuilds the cache, which is exactly the post-mutation discipline the
-        // `RepoCache` docs and `prepare_removal` already require. `bg_repo` and
-        // `prs_repo` share this one fresh inventory via clone.
-        let spawn_repo = Repository::at(self.repo.discovery_path())?;
+        // The factory's `repo` was primed with `git worktree list` /
+        // `local_branches` at picker startup, and those `RepoCache` cells are
+        // `OnceCell`s that are never invalidated. A refresh re-probing that
+        // shared cache would re-serve the startup list, so after an in-picker
+        // removal the removed worktrees would still appear and collect's
+        // per-worktree git ops would fail against the gone branches ("fatal:
+        // Needed a single revision"). `Repository::at` rebuilds the cache —
+        // exactly the post-mutation discipline the `RepoCache` docs and
+        // `prepare_removal` already require. The initial spawn skips the rebuild
+        // (the primed cache is still valid and the rebuild would re-pay both git
+        // calls on the first-paint path). `bg_repo` and `prs_repo` share this
+        // one snapshot via clone.
+        let spawn_repo = if rebuild_repo {
+            Repository::at(self.repo.discovery_path())?
+        } else {
+            self.repo.clone()
+        };
         let bg_repo = spawn_repo.clone();
         let bg_skip_tasks = self.skip_tasks.clone();
         let show_branches = self.show_branches;
@@ -1506,14 +1519,15 @@ pub fn handle_picker(
 
     // Spawn the collect pipeline (and the `--prs` thread when active). The
     // handler holds the only non-thread `tx` clone; when the bg threads exit,
-    // `tx` drops, skim's reader sees EOF, and the picker goes idle. Every alt-r
-    // refresh re-runs this same `factory.spawn()` — see `PipelineFactory`.
+    // `tx` drops, skim's reader sees EOF, and the picker goes idle. The initial
+    // spawn reuses the startup-primed inventory (`false`); every alt-r refresh
+    // re-runs `factory.spawn(true)` to re-enumerate — see `PipelineFactory`.
     let SpawnedPipeline {
         rx,
         handler,
         collect_handle,
         prs_handle,
-    } = factory.spawn()?;
+    } = factory.spawn(false)?;
     worktrunk::trace::instant("Picker collect spawned");
 
     // The dry run keeps the handler: skim never runs there, so the EOF contract
@@ -2585,12 +2599,14 @@ pub mod tests {
             .unwrap();
 
         let factory = test_factory(factory_repo);
+        // `true` models the refresh path (`alt-r`), which rebuilds a fresh repo;
+        // the initial spawn (`false`) deliberately reuses the startup inventory.
         let super::SpawnedPipeline {
             rx,
             handler,
             collect_handle,
             ..
-        } = factory.spawn().unwrap();
+        } = factory.spawn(true).unwrap();
         // Drop the returned handler's sender, then wait for the collect thread
         // to finish (dropping its handler clone); the lone senders gone, `rx`
         // hits EOF. The unbounded channel buffered every streamed row.
