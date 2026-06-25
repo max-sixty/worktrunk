@@ -573,6 +573,44 @@ fn test_switch_picker_with_multiple_worktrees(mut repo: TestRepo) {
     });
 }
 
+/// Alt-l / alt-h are skim's built-in horizontal-scroll keys (ScrollRight /
+/// ScrollLeft). The picker binds both to `ignore` because each row's `display()`
+/// owns its layout with a leading worktree-status sigil; an unbound alt-l slides
+/// every row left, clipping that sigil gutter (`no_hscroll(true)` only gates the
+/// automatic match-following shift, not the manual offset these keys push).
+/// Pressing alt-l here must leave the list byte-for-byte unscrolled — the same
+/// frame `test_switch_picker_with_multiple_worktrees` snapshots.
+#[rstest]
+fn test_switch_picker_alt_l_does_not_hscroll(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    // Remove origin so snapshots don't show origin/main
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.add_worktree("feature-one");
+    repo.add_worktree("feature-two");
+
+    let env_vars = repo.test_env_vars();
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            ("", Some("feature-two")), // wait for items to render
+            ("\x1bl", None),           // Alt-l: ignored, must not scroll
+            ("\x1bl", None),           // a second press, still ignored
+            ("\x1bh", None),           // Alt-h: ignored too
+        ],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+
+    let (list, _preview) = result.panels();
+    let settings = switch_picker_settings(&repo);
+    settings.bind(|| {
+        assert_snapshot!("switch_picker_alt_l_ignored_list", list);
+    });
+}
+
 #[rstest]
 fn test_switch_picker_with_branches(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();

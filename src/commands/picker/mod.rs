@@ -1194,6 +1194,16 @@ pub fn handle_picker(
             // Preview toggle (alt-p shows/hides preview)
             // Note: skim doesn't support change-preview-window like fzf, only toggle
             "alt-p:toggle-preview".to_string(),
+            // Suppress skim's default manual horizontal scroll (alt-h / alt-l map to
+            // ScrollLeft / ScrollRight in its built-in keymap). `no_hscroll(true)`
+            // above only zeros the *automatic* match-following shift; it doesn't gate
+            // the manual `manual_hscroll` offset these keys push, so they still slide
+            // each row's `display()` left under the fixed gutter — clipping the leading
+            // worktree-status sigil (`+`/`@`/`^`/`/`/`|`) and the branch name with no
+            // ellipsis. The row table is laid out to fit the pane, so there is nothing
+            // to scroll to; ignore both.
+            "alt-h:ignore".to_string(),
+            "alt-l:ignore".to_string(),
             // Preview scrolling (half-page based on terminal height)
             format!("ctrl-u:preview-up({half_page})"),
             format!("ctrl-d:preview-down({half_page})"),
