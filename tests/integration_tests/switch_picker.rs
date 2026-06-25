@@ -422,14 +422,23 @@ fn wait_for_cursor_on_row(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Pars
     wait_for_stable_until(
         rx,
         parser,
-        |screen| {
-            screen
-                .lines()
-                .any(|line| line.starts_with('>') && line.contains(name))
-        },
+        |screen| cursor_points_at(screen, name),
         Some(&describe),
         None,
     );
+}
+
+/// True when the list-pane `>` pointer is on the row for `name`.
+///
+/// skim draws its pointer at the start of the selected row's line on every
+/// item-list render. The query line also starts with `> `, but the helpers that
+/// rely on this navigate by cursor and never type, so the query stays empty —
+/// only the selected row both starts with `>` and carries a worktree `name`,
+/// which uniquely picks it out.
+fn cursor_points_at(screen: &str, name: &str) -> bool {
+    screen
+        .lines()
+        .any(|line| line.starts_with('>') && line.contains(name))
 }
 
 /// Drive the PTY reader until the screen satisfies `ready` and then settles, or
@@ -552,6 +561,13 @@ fn is_alt_digit_tab(input: &str) -> bool {
     b.len() == 2 && b[0] == 0x1b && b[1].is_ascii_digit()
 }
 
+/// True for a Up/Down cursor arrow (`ESC [ A` / `ESC [ B`). Arrow navigation
+/// clamps at the list ends, so re-issuing one is idempotent there — safe to
+/// repeat while waiting for the cursor to reach a target row.
+fn is_cursor_arrow(input: &str) -> bool {
+    matches!(input.as_bytes(), [0x1b, b'[', b'A' | b'B'])
+}
+
 /// Send `input`, then wait for the screen to satisfy the per-input expectation
 /// and settle.
 ///
@@ -568,7 +584,20 @@ fn is_alt_digit_tab(input: &str) -> bool {
 /// tab keystroke forces a fresh `RunPreview` against the now-warm cache,
 /// mirroring the placeholder's own "Press alt-N again to refresh" instruction.
 ///
-/// Inputs without an Alt-<digit> shape fall back to a plain
+/// For a Up/Down cursor arrow carrying `expected_content`, the content names the
+/// target row and the wait re-issues the arrow every [`PREVIEW_REISSUE_INTERVAL`]
+/// until the list `>` pointer lands on it. A single arrow is unreliable on rows
+/// that decorate asynchronously (CI status / PR markers): when the background
+/// resolution lands it refreshes skim's item list, which resets the cursor to the
+/// top, stranding the pointer on the primary worktree. That is a Windows-CI flake
+/// — observed as `test_switch_picker_worktree_row_comments_tab_shows_thread`
+/// timing out with the cursor stuck on `main`, so the HEAD± tab showed the
+/// primary's (empty) diff and the awaited `diff --git` never appeared. Re-issuing
+/// the idempotent arrow drives the cursor back down after any reset; the wait
+/// returns only once the pointer holds on the target through [`STABLE_DURATION`],
+/// by which point the list has stopped refreshing.
+///
+/// Inputs without an Alt-<digit> or cursor-arrow shape fall back to a plain
 /// [`wait_for_stable_with_content`]: list content (rows streaming in, filter
 /// matches) repaints on every `Event::Render` and never strands, and the
 /// non-idempotent inputs (Tab, filter text, Enter) must not be repeated.
@@ -593,6 +622,16 @@ fn send_input_awaiting_content(
                 rx,
                 parser,
                 |screen| screen.contains(content),
+                Some(&describe),
+                Some(&send),
+            );
+        }
+        Some(name) if is_cursor_arrow(input) => {
+            let describe = format!("the cursor (> pointer) on row {name:?}");
+            wait_for_stable_until(
+                rx,
+                parser,
+                |screen| cursor_points_at(screen, name),
                 Some(&describe),
                 Some(&send),
             );
@@ -1411,12 +1450,15 @@ fn test_switch_picker_worktree_row_comments_tab_shows_thread(mut repo: TestRepo)
         &env_vars,
         &[
             // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
-            // for the matcher-lag rationale.
-            ("\x1b[B", None), // Down: move cursor to `feature`
+            // for the matcher-lag rationale. Gate on the row name so the Down is
+            // re-issued until the `>` pointer lands on `feature` — this row
+            // decorates asynchronously (primed CI status → "has PR"), and that
+            // background refresh resets skim's cursor to the top, which stranded
+            // the pointer on `main` and timed this test out on Windows CI.
+            ("\x1b[B", Some("feature")), // Down: move cursor to `feature`
             // Alt-1: HEAD± panel. `feature`'s uncommitted diff (`diff --git`) is a
-            // preview-only anchor — it confirms the cursor landed on `feature`
-            // (not `main`) and gives the skeleton-spawned comments fetch time to
-            // land before we read its tab.
+            // preview-only anchor that gives the skeleton-spawned comments fetch
+            // time to land before we read its tab.
             ("\x1b1", Some("diff --git")),
             // Alt-7: jump to comments (7). The thread was fetched in the
             // background at skeleton time (the PR was primed), so it's cached by
