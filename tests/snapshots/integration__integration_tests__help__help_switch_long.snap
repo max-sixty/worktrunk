@@ -194,7 +194,7 @@ The CI column shows each row's PR/MR CI and review status, the same as [2mwt li
  [2mAlt-p[0m         Toggle preview panel                                   
  [2mCtrl-u[0m/[2mCtrl-d[0m Scroll preview up/down                                 
 
-Discrete actions live on [2mAlt[0m. [2mAlt-y[0m and [2mAlt-o[0m run in the background — the picker stays open — and [2mAlt-o[0m is a no-op on a row with no PR/MR (or whose status hasn't loaded yet).
+[2mAlt-o[0m is a no-op on a row with no PR/MR (or whose status hasn't loaded yet).
 
 Plain digits go to the filter, so a branch name containing a number can be typed directly; the preview tabs move to [2mAlt[0m.
 

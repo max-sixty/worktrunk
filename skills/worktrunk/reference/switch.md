@@ -81,7 +81,7 @@ The CI column shows each row's PR/MR CI and review status, the same as [`wt list
 | `Alt-p` | Toggle preview panel |
 | `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
 
-Discrete actions live on `Alt`. `Alt-y` and `Alt-o` run in the background — the picker stays open — and `Alt-o` is a no-op on a row with no PR/MR (or whose status hasn't loaded yet).
+`Alt-o` is a no-op on a row with no PR/MR (or whose status hasn't loaded yet).
 
 Plain digits go to the filter, so a branch name containing a number can be typed directly; the preview tabs move to `Alt`.
 
