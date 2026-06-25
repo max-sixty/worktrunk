@@ -832,13 +832,12 @@ impl CommandCollector for PickerCollector {
                                 result,
                             );
                         } else if let RemoveResult::BranchOnly { branch_name, .. } = &result {
+                            // The only non-removing outcome: `removal_will_remove_target`
+                            // returns false solely for an unmerged `BranchOnly` row (a
+                            // `RemovedWorktree` always removes, so it never reaches here).
+                            // `keep_unremovable_row` taking the branch name — not the whole
+                            // result — keeps that narrowing at the type level.
                             self.keep_unremovable_row(&selected_output, branch_name);
-                        } else {
-                            // Unreachable: `removal_will_remove_target` returns false
-                            // only for an unmerged `BranchOnly` row — a
-                            // `RemovedWorktree` always removes. Pin the invariant
-                            // (fail tests) rather than silently leave the row.
-                            debug_assert!(false, "keep path reached for a RemovedWorktree result");
                         }
                     }
                     Err(e) => {
