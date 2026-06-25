@@ -986,6 +986,25 @@ impl PipelineFactory {
         let prs_loading: Option<Arc<AtomicBool>> =
             (self.show_prs && !self.is_preview_bench).then(|| Arc::new(AtomicBool::new(true)));
 
+        // Worktree/branch inventory source for this spawn. The factory's `repo`
+        // was primed with `git worktree list` / `local_branches` at picker
+        // startup, and those `RepoCache` cells are `OnceCell`s that are never
+        // invalidated. A refresh re-probing that shared cache would re-serve the
+        // startup list, so after an in-picker removal the removed worktrees would
+        // still appear and collect's per-worktree git ops would fail against the
+        // gone branches ("fatal: Needed a single revision"). So a refresh
+        // (`rebuild_repo`) builds a fresh `Repository::at` — the post-mutation
+        // discipline the `RepoCache` docs and `prepare_removal` already require.
+        // The initial spawn skips the rebuild: the primed cache is still valid,
+        // and rebuilding would re-pay both git calls on the first-paint path.
+        // The collect thread (`bg_repo`), the `--prs` thread (`prs_repo`), and
+        // the skeleton handler's inventory reads all share this one snapshot.
+        let spawn_repo = if rebuild_repo {
+            Repository::at(self.repo.discovery_path())?
+        } else {
+            self.repo.clone()
+        };
+
         let handler: Arc<progressive_handler::PickerHandler> =
             Arc::new(progressive_handler::PickerHandler {
                 tx: tx.clone(),
@@ -998,6 +1017,7 @@ impl PipelineFactory {
                 comments_fetched: OnceLock::new(),
                 local_content_slots: OnceLock::new(),
                 preview_cache: Arc::clone(&self.preview_cache),
+                repo: spawn_repo.clone(),
                 orchestrator: Arc::clone(&self.orchestrator),
                 preview_dims: self.preview_dims,
                 llm_command: self.llm_command.clone(),
@@ -1009,23 +1029,6 @@ impl PipelineFactory {
             });
 
         let bg_handler: Arc<dyn collect::PickerProgressHandler> = handler.clone();
-        // The factory's `repo` was primed with `git worktree list` /
-        // `local_branches` at picker startup, and those `RepoCache` cells are
-        // `OnceCell`s that are never invalidated. A refresh re-probing that
-        // shared cache would re-serve the startup list, so after an in-picker
-        // removal the removed worktrees would still appear and collect's
-        // per-worktree git ops would fail against the gone branches ("fatal:
-        // Needed a single revision"). `Repository::at` rebuilds the cache —
-        // exactly the post-mutation discipline the `RepoCache` docs and
-        // `prepare_removal` already require. The initial spawn skips the rebuild
-        // (the primed cache is still valid and the rebuild would re-pay both git
-        // calls on the first-paint path). `bg_repo` and `prs_repo` share this
-        // one snapshot via clone.
-        let spawn_repo = if rebuild_repo {
-            Repository::at(self.repo.discovery_path())?
-        } else {
-            self.repo.clone()
-        };
         let bg_repo = spawn_repo.clone();
         let bg_skip_tasks = self.skip_tasks.clone();
         let show_branches = self.show_branches;
