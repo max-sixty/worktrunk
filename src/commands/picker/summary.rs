@@ -3,12 +3,9 @@
 //! Thin adapter over `crate::summary` that adds TUI-specific rendering
 //! and integrates with the selector's preview cache.
 
-use dashmap::DashMap;
 use worktrunk::git::Repository;
 
 use super::super::list::model::ListItem;
-use super::items::PreviewCacheKey;
-use super::preview::PreviewMode;
 
 /// Render LLM summary for terminal display using the project's markdown theme.
 ///
@@ -34,21 +31,23 @@ pub(super) fn render_summary(text: &str, width: usize) -> String {
     crate::md_help::render_markdown_in_help_with_width(&markdown, Some(width))
 }
 
-/// Generate a summary for one item and insert it into the preview cache.
+/// Generate the Summary-tab pane for one item.
+///
+/// The caller (`PreviewOrchestrator::spawn_summary`) inserts the result into the
+/// shared preview cache through the orchestrator's one fill path, so a finished
+/// summary surfaces in the picker without a keystroke like any other background
+/// preview.
 ///
 /// `generate_summary_core` acquires `LLM_SEMAPHORE` internally, so the
 /// no-changes and cache-hit fast paths return without contending.
-pub(super) fn generate_and_cache_summary(
+pub(super) fn generate_summary_for_item(
     item: &ListItem,
     llm_command: &str,
-    preview_cache: &DashMap<PreviewCacheKey, String>,
     repo: &Repository,
-) {
+) -> String {
     let branch = item.branch_name();
     let worktree_path = item.worktree_data().map(|d| d.path.as_path());
-    let summary =
-        crate::summary::generate_summary(branch, item.head(), worktree_path, llm_command, repo);
-    preview_cache.insert((branch.to_string(), PreviewMode::Summary), summary);
+    crate::summary::generate_summary(branch, item.head(), worktree_path, llm_command, repo)
 }
 
 #[cfg(test)]
@@ -611,20 +610,13 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_and_cache_summary_populates_cache() {
+    fn test_generate_summary_for_item_renders_llm_output() {
         let (t, repo, head) = temp_repo_with_feature();
         let item = feature_item(&head, t.path());
-        let cache: DashMap<PreviewCacheKey, String> = DashMap::new();
 
-        generate_and_cache_summary(
-            &item,
-            "cat >/dev/null && echo 'Add new file'",
-            &cache,
-            &repo,
-        );
+        let summary =
+            generate_summary_for_item(&item, "cat >/dev/null && echo 'Add new file'", &repo);
 
-        let key = ("feature".to_string(), PreviewMode::Summary);
-        assert!(cache.contains_key(&key));
-        assert_eq!(cache.get(&key).unwrap().value(), "Add new file");
+        assert_eq!(summary, "Add new file");
     }
 }

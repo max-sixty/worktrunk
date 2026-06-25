@@ -357,6 +357,7 @@ impl PickerProgressHandler for PickerHandler {
                 summaries_enabled,
                 pr_status: pr_status_arc,
                 local_content: local_content_arc,
+                notifier: Arc::clone(self.orchestrator.notifier()),
             }) as Arc<dyn SkimItem>);
         }
 
@@ -440,6 +441,13 @@ impl PickerProgressHandler for PickerHandler {
         // `comments` background fetch (once per row) so the `comments` tab loads
         // the thread — the same fetch a `--prs` row makes.
         self.maybe_spawn_comments(idx, item.branch_name(), &item.pr_status);
+        // `Event::Render` repaints the list but does NOT re-run the preview (only
+        // `Event::RunPreview` does — see `PreviewNotifier`), so the live slots
+        // just mirrored surface in the preview pane on the next selection/tab
+        // change. The orchestrator-computed panes (diff/log/comments/summary)
+        // auto-surface via the notifier when their compute lands; the
+        // `pr_status`-driven `pr`/`comments` panes are left keystroke-driven on
+        // purpose — their "press alt-6/7 to refresh" hint covers that path.
         self.request_render(false);
     }
 
@@ -486,7 +494,10 @@ mod tests {
         let test = TestRepo::with_initial_commit();
         let (tx, rx): (SkimItemSender, SkimItemReceiver) = unbounded();
         let shared_items = Arc::new(Mutex::new(Vec::new()));
-        let orchestrator = Arc::new(PreviewOrchestrator::new(test.repo.clone()));
+        let orchestrator = Arc::new(PreviewOrchestrator::new(
+            test.repo.clone(),
+            Arc::new(OnceLock::new()),
+        ));
         let preview_cache: PreviewCache = Arc::clone(&orchestrator.cache);
         let handler = PickerHandler {
             tx,

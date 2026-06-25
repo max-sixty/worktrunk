@@ -25,6 +25,7 @@ use super::pager::{diff_pager, pipe_through_pager};
 use super::pr_pane;
 use super::preview::{PreviewMode, PreviewStateData};
 use super::preview_cache;
+use super::preview_notify::PreviewNotifier;
 
 /// Parse a pre-rendered ANSI string into a single ratatui `Line` for skim's
 /// item list. skim's `DisplayContext::to_line` only applies match-highlight
@@ -270,6 +271,11 @@ pub(super) struct WorktreeSkimItem {
     /// handler mirrors them here as the pipeline lands — letting those tabs dim
     /// once their diff is known empty (see [`LocalContent`]).
     pub local_content: LocalContentSlot,
+    /// Surfaces a background preview fill without a keystroke. `preview()`
+    /// records the row's awaited `(branch, mode)` here on every render; the
+    /// orchestrator pokes a repaint when that key's compute lands (see
+    /// [`PreviewNotifier`]).
+    pub notifier: Arc<PreviewNotifier>,
 }
 
 impl SkimItem for WorktreeSkimItem {
@@ -294,6 +300,10 @@ impl SkimItem for WorktreeSkimItem {
         // `render_preview`, which takes the mode explicitly so it's testable
         // without touching that global state.
         let mode = PreviewStateData::read_mode();
+        // Record what this (selected) row is showing *before* reading the cache,
+        // so a background fill that lands right after a miss still finds the key
+        // set and pokes a repaint (see `PreviewNotifier`).
+        self.notifier.note_awaiting(&self.branch_name, mode);
         ItemPreview::AnsiText(self.render_preview(mode, context.width, context.height))
     }
 }
@@ -830,7 +840,8 @@ impl WorktreeSkimItem {
     /// Pure cache read: skim invokes `preview()` synchronously while drawing
     /// the preview pane, so any blocking here gates the render. Background
     /// tasks populate the cache out-of-band; a miss returns a placeholder, and
-    /// skim re-queries on the next selection/query change.
+    /// the orchestrator pokes a repaint for the awaited key once the fill lands
+    /// (see [`PreviewNotifier`]).
     fn preview_for_mode(&self, mode: PreviewMode, width: usize, _height: usize) -> String {
         let cache_key = (self.branch_name.clone(), mode);
         let content = self
@@ -841,19 +852,17 @@ impl WorktreeSkimItem {
 
         match mode {
             // Summary post-processing is cheap (string formatting, no subprocess).
-            // Applied at display time because generate_and_cache_summary() inserts
+            // Applied at display time because `generate_summary_for_item` produces
             // raw LLM output.
             PreviewMode::Summary => super::summary::render_summary(&content, width),
             _ => content,
         }
     }
 
-    /// Placeholder shown while a background task is still computing the
-    /// preview for this mode. Skim has no API to re-query the preview from
-    /// outside user interaction, so the hint tells the user to press the mode
-    /// key again to refresh once the background fill lands. `alt-N`
-    /// re-runs the same `echo N + refresh-preview` chain, re-reading the
-    /// now-populated cache.
+    /// Placeholder shown while a background task is still computing the preview
+    /// for this mode. The pane fills in on its own once the compute lands — the
+    /// orchestrator pokes a repaint for the awaited key (see [`PreviewNotifier`])
+    /// — so the placeholder just states what's loading.
     pub(super) fn loading_placeholder(mode: PreviewMode) -> String {
         let (verb, label) = match mode {
             PreviewMode::WorkingTree => ("Loading", "working-tree diff"),
@@ -871,8 +880,7 @@ impl WorktreeSkimItem {
                 unreachable!("comments tab renders via render_comments_pane")
             }
         };
-        let key = mode as u8;
-        format!("○ {verb} {label}. Press alt-{key} again to refresh.\n")
+        format!("○ {verb} {label}…\n")
     }
 
     /// Compute preview and apply pager for diff modes. Returns the
@@ -1672,6 +1680,7 @@ mod tests {
                 summaries_enabled: false,
                 pr_status: Arc::new(Mutex::new(None)),
                 local_content: Arc::new(Mutex::new(LocalContent::default())),
+                notifier: PreviewNotifier::detached(),
             }
         };
 
@@ -1687,6 +1696,7 @@ mod tests {
                 summaries_enabled: false,
                 pr_status: Arc::new(Mutex::new(None)),
                 local_content: Arc::new(Mutex::new(LocalContent::default())),
+                notifier: PreviewNotifier::detached(),
             }
         };
 
@@ -1773,6 +1783,7 @@ mod tests {
                 summaries_enabled: false,
                 pr_status: Arc::new(Mutex::new(pr_status)),
                 local_content: Arc::new(Mutex::new(LocalContent::default())),
+                notifier: PreviewNotifier::detached(),
             }
         };
 
@@ -1880,6 +1891,7 @@ mod tests {
             summaries_enabled: false,
             pr_status: Arc::new(Mutex::new(slot)),
             local_content: Arc::new(Mutex::new(LocalContent::default())),
+            notifier: PreviewNotifier::detached(),
         };
 
         // CI hasn't reported (None) → fetching hint pointing at this tab's key.
@@ -1984,6 +1996,7 @@ mod tests {
                 comment_count: None,
             })))),
             local_content: Arc::new(Mutex::new(LocalContent::default())),
+            notifier: PreviewNotifier::detached(),
         };
 
         // In Pr mode, `render_preview` assembles the tab bar plus the worktree PR
@@ -2066,6 +2079,7 @@ mod tests {
             summaries_enabled: false,
             pr_status: Arc::clone(&slot),
             local_content: Arc::new(Mutex::new(LocalContent::default())),
+            notifier: PreviewNotifier::detached(),
         };
 
         // First render populates the shared cache.
