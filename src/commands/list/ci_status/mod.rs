@@ -397,6 +397,15 @@ pub struct PrStatus {
     /// rendered as markdown in the `pr` preview pane. Absent as for `title`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body: Option<String>,
+    /// Number of conversation comments on the PR/MR — GitHub issue comments,
+    /// GitLab user notes, Gitea PR comments — shown as a `comments` line in the
+    /// picker's `pr` preview pane. Rides the same forge list call as
+    /// `title`/`body`. Zero is flattened to `None` at the mapping boundary so a
+    /// PR with no comments shows nothing; also `None` for branch workflows (no
+    /// PR), for Azure DevOps (its PR-list call carries no comment count), and
+    /// for cache entries written before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment_count: Option<u32>,
 }
 
 impl CiStatus {
@@ -518,6 +527,7 @@ impl PrStatus {
             review_state: None,
             title: None,
             body: None,
+            comment_count: None,
         }
     }
 
@@ -726,6 +736,7 @@ mod tests {
             review_state: None,
             title: None,
             body: None,
+            comment_count: None,
         };
         assert_eq!(pr_passed.indicator(), "#");
 
@@ -739,6 +750,7 @@ mod tests {
             review_state: None,
             title: None,
             body: None,
+            comment_count: None,
         };
         assert_eq!(branch_running.indicator(), "#");
 
@@ -752,6 +764,7 @@ mod tests {
             review_state: None,
             title: None,
             body: None,
+            comment_count: None,
         };
         assert_eq!(error_status.indicator(), "⚠");
     }
@@ -770,6 +783,7 @@ mod tests {
             review_state: None,
             title: None,
             body: None,
+            comment_count: None,
         };
 
         // Number fits → PR reference, hyperlinked when supported
@@ -865,6 +879,7 @@ mod tests {
             review_state: None,
             title: None,
             body: None,
+            comment_count: None,
         };
         let green = "\u{1b}[32m";
         let dim = "\u{1b}[2m";
@@ -905,6 +920,7 @@ mod tests {
             review_state,
             title: None,
             body: None,
+            comment_count: None,
         };
 
         // Changes-requested outranks running and passed — waiting can't clear it
@@ -1018,6 +1034,7 @@ mod tests {
             review_state: None,
             title: None,
             body: None,
+            comment_count: None,
         }
     }
 

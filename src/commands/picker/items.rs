@@ -468,10 +468,16 @@ fn render_tab_row_compact(tabs: &[Tab], reset: Reset) -> String {
 /// The `pr` pane for a worktree row whose branch has a PR/MR. Renders the same
 /// shape as the `--prs` rows' pane (`PrSkimItem::pr_pane`) — reference + title
 /// header, dim-labeled metadata, and the description as markdown — via the
-/// shared [`pr_pane`] helpers, so the two read alike. The title and body ride
-/// the same CI fetch the column already makes (see [`PrStatus`]); a status
-/// without them (an older cache entry, a forge that doesn't expose them) falls
-/// back to a reference-only header and skips the description.
+/// shared [`pr_pane`] helpers, so the two read alike. The title, body, and
+/// comment count ride the same CI fetch the column already makes (see
+/// [`PrStatus`]); a status without them (an older cache entry, a forge that
+/// doesn't expose them) falls back to a reference-only header and skips the
+/// missing lines.
+///
+/// The `comments` line shows only the count — the full thread is a `--prs`-only
+/// fetch (see [`WorktreeSkimItem::comments_unavailable_pane`]). A PR with no
+/// comments carries `None` (zero is flattened at the mapping boundary), so the
+/// line is skipped.
 ///
 /// `width` is the live preview-pane width, used to wrap the markdown body.
 fn render_worktree_pr(branch: &str, pr_ref: PrRef, status: &PrStatus, width: usize) -> String {
@@ -480,6 +486,9 @@ fn render_worktree_pr(branch: &str, pr_ref: PrRef, status: &PrStatus, width: usi
     out.push_str(&pr_pane::metadata_line("branch", branch));
     if let Some(url) = &status.url {
         out.push_str(&pr_pane::metadata_line("url", url));
+    }
+    if let Some(count) = status.comment_count {
+        out.push_str(&pr_pane::metadata_line("comments", &count.to_string()));
     }
     if let Some(body) = status.body.as_deref() {
         out.push_str(&pr_pane::description(body, width));
@@ -1305,6 +1314,7 @@ mod tests {
             review_state: Some(ReviewState::Approved),
             title: title.map(String::from),
             body: body.map(String::from),
+            comment_count: None,
         };
         // Build a row whose live `pr_status` slot carries a given state — what
         // the picker primes from the cache and then overwrites as the fetch lands.
@@ -1356,13 +1366,14 @@ mod tests {
             pane.contains("https://github.com/o/r/pull/42"),
             "url: {pane:?}"
         );
+        // No body → no description block (it prefixes a blank line + reset).
         assert!(
-            !pane.contains("\x1b[107m"),
-            "no description gutter without a body: {pane:?}"
+            !pane.contains("\n\n\x1b[0m"),
+            "no description block without a body: {pane:?}"
         );
 
         // A PR carrying title + body → the title rides the header and the body
-        // renders as markdown in the house gutter, matching the `--prs` pane.
+        // renders flush as markdown, matching the `--prs` pane.
         let full = row(Some(Some(status(
             Some(PrRef::pr(7)),
             Some("https://github.com/o/r/pull/7"),
@@ -1372,13 +1383,64 @@ mod tests {
         let pane = full.render_pr_pane(full.pr_preview(), 80);
         assert!(pane.contains("#7"), "reference: {pane:?}");
         assert!(pane.contains("Fix the flaky retry"), "title: {pane:?}");
-        assert!(pane.contains("\x1b[107m"), "description gutter: {pane:?}");
+        assert!(pane.contains("\n\n\x1b[0m"), "description block: {pane:?}");
+        assert!(
+            pane.contains("DESCRIPTION"),
+            "cyan `DESCRIPTION` label heads the block: {pane:?}"
+        );
+        assert!(
+            !pane.contains("\x1b[107m"),
+            "renders flush, no gutter: {pane:?}"
+        );
+        assert!(
+            pane.contains("bounded"),
+            "description body rendered: {pane:?}"
+        );
         assert!(pane.contains("\x1b[1m"), "markdown bold rendered: {pane:?}");
         assert!(!pane.contains("**"), "markdown markers consumed: {pane:?}");
 
         // Cached branch CI with no PR `number` → NoPr.
         let branch_ci = row(Some(Some(status(None, None, None, None))));
         assert!(matches!(branch_ci.pr_preview(), PrPreview::NoPr));
+    }
+
+    #[test]
+    fn worktree_pr_pane_shows_comment_count() {
+        use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef};
+
+        let status = |comment_count: Option<u32>| PrStatus {
+            ci_status: CiStatus::Passed,
+            source: CiSource::PullRequest,
+            is_stale: false,
+            is_priming: false,
+            url: Some("https://github.com/o/r/pull/7".into()),
+            number: Some(PrRef::pr(7)),
+            review_state: None,
+            title: Some("Fix the flaky retry".into()),
+            body: None,
+            comment_count,
+        };
+
+        // A PR with comments adds a cyan all-caps `COMMENTS` metadata line
+        // carrying the count (same `field_label` styling as BRANCH/URL).
+        let with = render_worktree_pr("feature", PrRef::pr(7), &status(Some(3)), 80)
+            .ansi_strip()
+            .to_string();
+        assert!(
+            with.lines()
+                .any(|l| l.contains("COMMENTS") && l.contains('3')),
+            "comments line with count: {with:?}"
+        );
+
+        // No comments (zero is flattened to `None` at the mapping boundary, and an
+        // older cache entry carries `None` too) → the line is skipped entirely.
+        let without = render_worktree_pr("feature", PrRef::pr(7), &status(None), 80)
+            .ansi_strip()
+            .to_string();
+        assert!(
+            !without.contains("COMMENTS"),
+            "no comments line when absent: {without:?}"
+        );
     }
 
     #[test]
@@ -1405,6 +1467,7 @@ mod tests {
                 review_state: Some(ReviewState::Approved),
                 title: Some("Fix the flaky retry".into()),
                 body: Some("Adds a **bounded** retry.".into()),
+                comment_count: None,
             })))),
         };
 
@@ -1423,8 +1486,12 @@ mod tests {
             "title: {pr_pane:?}"
         );
         assert!(
-            pr_pane.contains("\x1b[107m"),
-            "description gutter: {pr_pane:?}"
+            !pr_pane.contains("\x1b[107m"),
+            "description renders flush, no gutter: {pr_pane:?}"
+        );
+        assert!(
+            pr_pane.contains("bounded"),
+            "description body rendered: {pr_pane:?}"
         );
 
         // `SkimItem::preview` reads the default in-memory mode (WorkingTree, since
@@ -1466,6 +1533,7 @@ mod tests {
                 review_state: Some(ReviewState::Approved),
                 title: Some(title.into()),
                 body: Some("body".into()),
+                comment_count: None,
             }))
         };
         // Share the cache and slot Arcs so the test can mutate the slot and

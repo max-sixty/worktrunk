@@ -124,6 +124,7 @@ pub(super) fn detect_gitea_pr(
         review_state: None,
         title: pr.title.clone(),
         body: pr.body.clone(),
+        comment_count: pr.comment_count(),
     })
 }
 
@@ -148,6 +149,7 @@ pub(super) fn detect_gitea_commit_status(
         review_state: None,
         title: None,
         body: None,
+        comment_count: None,
     })
 }
 
@@ -191,6 +193,18 @@ struct GiteaPr {
     /// PR description; rendered as markdown in the `pr` preview pane.
     #[serde(default)]
     body: Option<String>,
+    /// Comment count. Gitea's PR object carries it directly, so the `comments`
+    /// line in the `pr` pane rides this call with no extra round-trip.
+    #[serde(default)]
+    comments: Option<u32>,
+}
+
+impl GiteaPr {
+    /// Comment count for [`PrStatus::comment_count`], zero flattened to `None`
+    /// so a PR with no comments shows nothing in the `pr` pane.
+    fn comment_count(&self) -> Option<u32> {
+        self.comments.filter(|&n| n > 0)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -217,6 +231,28 @@ struct GiteaOwner {
 mod tests {
     use super::*;
     use worktrunk::testing::TestRepo;
+
+    #[test]
+    fn test_gitea_pr_comment_count() {
+        let pr = |comments: Option<u32>| GiteaPr {
+            number: Some(1),
+            mergeable: None,
+            html_url: String::new(),
+            head: GiteaPrBranch {
+                ref_name: String::new(),
+                sha: None,
+                repo: None,
+            },
+            title: None,
+            body: None,
+            comments,
+        };
+
+        // Zero (or a missing count) flattens to None; a positive count carries through.
+        assert_eq!(pr(Some(0)).comment_count(), None);
+        assert_eq!(pr(None).comment_count(), None);
+        assert_eq!(pr(Some(2)).comment_count(), Some(2));
+    }
 
     #[test]
     fn test_parse_gitea_status_state() {

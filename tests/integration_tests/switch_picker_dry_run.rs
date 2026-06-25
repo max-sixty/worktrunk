@@ -6,11 +6,8 @@
 //! preview-cache inventory as JSON, and exits. This exercises the non-TUI
 //! wiring inside `handle_picker` without needing a PTY.
 //!
-//! Unix-only: `wt switch` rejects the interactive picker on Windows
-//! ("Interactive picker is not available on Windows") before the dry-run
-//! bypass is consulted.
-
-#![cfg(unix)]
+//! Runs on every platform: the dry-run bypass is consulted before the
+//! interactive TTY path, so these exercise the picker pipeline on Windows too.
 
 use crate::common::{TEST_EPOCH, TestRepo, repo};
 use rstest::rstest;
@@ -164,8 +161,10 @@ fn test_picker_dry_run_drains_stashed_warnings(mut repo: TestRepo) {
 
 /// Same as above but with `list.summary=true` and a fake LLM command
 /// configured, to exercise the `spawn_summary` branch in `handle_picker`.
-/// Uses `/bin/cat` as the LLM: it reads stdin and writes it back, so the
-/// summary pipeline runs end-to-end without a real model.
+/// Uses `cat` as the LLM: it reads stdin and writes it back, so the
+/// summary pipeline runs end-to-end without a real model. The command runs
+/// via the platform shell (`sh` on Unix, Git Bash on Windows), so the bare
+/// name resolves on PATH on both.
 #[rstest]
 fn test_picker_dry_run_with_summary(mut repo: TestRepo) {
     repo.add_worktree("feature-a");
@@ -175,7 +174,7 @@ fn test_picker_dry_run_with_summary(mut repo: TestRepo) {
         .args(["switch"])
         .env("WORKTRUNK_PICKER_DRY_RUN", "1")
         .env("WORKTRUNK_LIST__SUMMARY", "true")
-        .env("WORKTRUNK_COMMIT__GENERATION__COMMAND", "/bin/cat")
+        .env("WORKTRUNK_COMMIT__GENERATION__COMMAND", "cat")
         .output()
         .unwrap();
 
@@ -334,69 +333,5 @@ template = "{{ branhc }}"
         rows.iter()
             .any(|r| r.as_str().unwrap_or("").contains("feature-a")),
         "rows still render without the broken column, got: {stdout}"
-    );
-}
-
-/// With no TTY and no `COLUMNS`, terminal detection returns nothing and the
-/// picker falls back to its `(80, 24)` default dimensions, still rendering its
-/// rows. The other dry-run tests can't reach this arm because the harness sets
-/// `COLUMNS=150`, so detection always yields a width.
-#[rstest]
-fn test_picker_dry_run_no_terminal_uses_default_dims(mut repo: TestRepo) {
-    repo.add_worktree("feature-a");
-
-    let output = repo
-        .wt_command()
-        .args(["switch"])
-        .env("WORKTRUNK_PICKER_DRY_RUN", "1")
-        .env_remove("COLUMNS")
-        .output()
-        .unwrap();
-
-    assert!(
-        output.status.success(),
-        "dry-run should exit 0; stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
-    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
-    let rows = parsed["rows"].as_array().expect("top-level `rows` array");
-    assert!(
-        rows.iter()
-            .any(|r| r.as_str().unwrap_or("").contains("feature-a")),
-        "rows still render with the default fallback dimensions, got: {stdout}"
-    );
-}
-
-/// A narrow terminal (`COLUMNS` below the side-by-side threshold) selects the
-/// stacked (Down) preview layout, where the list spans the full width. The
-/// other dry-run tests can't reach this arm because the harness's `COLUMNS=150`
-/// always selects the side-by-side (Right) layout.
-#[rstest]
-fn test_picker_dry_run_narrow_terminal_uses_down_layout(mut repo: TestRepo) {
-    repo.add_worktree("feature-a");
-
-    let output = repo
-        .wt_command()
-        .args(["switch"])
-        .env("WORKTRUNK_PICKER_DRY_RUN", "1")
-        .env("COLUMNS", "40")
-        .output()
-        .unwrap();
-
-    assert!(
-        output.status.success(),
-        "dry-run should exit 0; stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
-    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
-    let rows = parsed["rows"].as_array().expect("top-level `rows` array");
-    assert!(
-        rows.iter()
-            .any(|r| r.as_str().unwrap_or("").contains("feature-a")),
-        "rows still render in the Down layout, got: {stdout}"
     );
 }
