@@ -623,7 +623,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)] // format_aligned is unix-only
     fn test_format_aligned_produces_fixed_width_output() {
         use super::super::columns::DiffVariant;
 
@@ -668,7 +667,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)] // format_aligned is unix-only
     fn test_format_aligned_handles_single_side() {
         use super::super::columns::DiffVariant;
 

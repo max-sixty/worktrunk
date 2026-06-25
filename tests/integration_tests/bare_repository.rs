@@ -1,7 +1,8 @@
 use crate::common::{
-    BareRepoTest, TestRepo, TestRepoBase, canonicalize, configure_directive_files,
-    configure_git_cmd, configure_git_env, directive_files, repo, setup_temp_snapshot_settings,
-    wait_for_file, wait_for_file_content, wait_for_worktree_removed, wt_command,
+    BareRepoTest, SLEEP_FOR_ABSENCE_CHECK, TestRepo, TestRepoBase, canonicalize,
+    configure_directive_files, configure_git_cmd, configure_git_env, directive_files, repo,
+    setup_temp_snapshot_settings, wait_for_file, wait_for_file_content, wait_for_worktree_removed,
+    wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -9,7 +10,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
-use std::time::Duration;
 use worktrunk::shell_exec::Cmd;
 
 #[test]
@@ -910,7 +910,7 @@ fn test_bare_repo_ignores_config_in_bare_root() {
     );
 
     // The hook from the bare root config should NOT have executed
-    thread::sleep(Duration::from_millis(500));
+    thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     assert!(
         !marker_path.exists(),
         "Config in bare repo root should be ignored — only primary worktree config should be used"

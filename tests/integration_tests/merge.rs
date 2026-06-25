@@ -1,5 +1,5 @@
 use crate::common::{
-    TestRepo, make_snapshot_cmd, merge_scenario,
+    SLEEP_FOR_ABSENCE_CHECK, TestRepo, make_snapshot_cmd, merge_scenario,
     mock_commands::{create_mock_cargo, create_mock_llm_auth},
     repo, repo_with_alternate_primary, repo_with_feature_worktree, repo_with_main_worktree,
     repo_with_multi_commit_feature, repo_with_remote, setup_snapshot_settings, wait_for_file,
@@ -4062,10 +4062,10 @@ fn test_post_merge_hook_from_rebased_in_config_does_not_run(merge_scenario: (Tes
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Wait for the control (post-merge ran), then a short grace for the sibling
-    // pipeline.
+    // Wait for the control (post-merge ran), then hold the absence window for
+    // the sibling pipeline before asserting it never ran.
     wait_for_file(&control);
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     assert!(
         !injected.exists(),
         "a post-merge that entered the invoking worktree's config only via the \
