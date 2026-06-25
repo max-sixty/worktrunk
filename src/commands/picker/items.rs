@@ -72,6 +72,66 @@ pub(super) type PrStatusSlot = Arc<Mutex<Option<Option<PrStatus>>>>;
 /// worktree path (which is unique) behind this prefix instead.
 pub(super) const WORKTREE_OUTPUT_PREFIX: &str = "worktree-path:";
 
+/// Per-row data the picker's `alt-y` (copy branch) and `alt-o` (open PR/MR URL)
+/// shortcuts need at key-press time, looked up by the row's `output()` token.
+///
+/// The shortcut callbacks read the *selected* `Arc<dyn SkimItem>` straight off
+/// skim's `App`, but skim's cross-thread `downcast_ref` is unreliable (see
+/// `picker_item_identifier`), so the row's typed fields aren't reachable that
+/// way. This table carries them instead, keyed by the same `output()` token
+/// both sides already share. It's filled where the rows are built —
+/// `progressive_handler::on_skeleton` for worktree/branch rows,
+/// `prs::stream_open_prs` for `--prs` rows — and read by the keybinding
+/// callbacks in `picker::install_shortcut_keybindings`.
+pub(super) struct RowShortcutData {
+    /// The row's branch name — what `alt-y` copies. For a `--prs` row this is
+    /// the PR/MR's head branch.
+    pub branch: String,
+    /// Where `alt-o` finds the row's PR/MR URL.
+    pub url: RowUrl,
+}
+
+/// Source of a row's PR/MR URL for the `alt-o` shortcut.
+pub(super) enum RowUrl {
+    /// Worktree/branch row: the URL (if any) lives in the live `pr_status`
+    /// slot, populated only once the CI fetch reports — so `alt-o` is a no-op
+    /// until the row's PR resolves.
+    Live(PrStatusSlot),
+    /// `--prs` row: the URL is known when the row is built.
+    Static(Option<String>),
+}
+
+impl RowUrl {
+    /// The row's URL, if one is known right now.
+    pub(super) fn resolve(&self) -> Option<String> {
+        match self {
+            RowUrl::Live(slot) => match &*slot.lock().unwrap() {
+                Some(Some(status)) => status.url.clone(),
+                _ => None,
+            },
+            RowUrl::Static(url) => url.clone(),
+        }
+    }
+}
+
+/// The `alt-y` / `alt-o` lookup table, keyed by `output()` token. Shared between
+/// the collect handler and `--prs` thread (which fill it) and the keybinding
+/// callbacks (which read it). Rebuilt on every skeleton, so a refresh re-collect
+/// repopulates it.
+pub(super) type ShortcutTable = Arc<Mutex<std::collections::HashMap<String, RowShortcutData>>>;
+
+/// The `output()` token for a worktree/branch row: the unique worktree path
+/// (behind [`WORKTREE_OUTPUT_PREFIX`]) for any worktree-backed row, else the
+/// bare branch name. Shared by [`WorktreeSkimItem::output`] and the shortcut
+/// table fill in `progressive_handler::on_skeleton`, so the selection token and
+/// the lookup key can't drift.
+pub(super) fn worktree_output_token(item: &ListItem, branch_name: &str) -> String {
+    match item.worktree_path() {
+        Some(path) => format!("{WORKTREE_OUTPUT_PREFIX}{}", path.to_string_lossy()),
+        None => branch_name.to_string(),
+    }
+}
+
 /// A `--prs` picker's header shows a dim "loading…" line while the forge call
 /// is still in flight, since its rows arrive (~1s) after the local rows. The
 /// `--prs` thread clears `pending` and repaints once the fetch resolves (rows
@@ -208,13 +268,7 @@ impl SkimItem for WorktreeSkimItem {
     }
 
     fn output(&self) -> Cow<'_, str> {
-        match self.item.worktree_path() {
-            Some(path) => Cow::Owned(format!(
-                "{WORKTREE_OUTPUT_PREFIX}{}",
-                path.to_string_lossy()
-            )),
-            None => Cow::Borrowed(&self.branch_name),
-        }
+        Cow::Owned(worktree_output_token(&self.item, &self.branch_name))
     }
 
     fn preview(&self, context: PreviewContext<'_>) -> ItemPreview {
@@ -403,9 +457,10 @@ pub(super) fn render_preview_tabs(
     // The controls line is intentionally NOT width-managed: skim clips it on the
     // right on a narrow pane, but it's only a reminder — the accelerators it
     // names live in the tab bar above, which IS width-managed, so nothing
-    // navigable is lost when the tail clips.
+    // navigable is lost when the tail clips. Row actions lead so they survive a
+    // narrow-pane clip; the preview controls and Esc trail.
     let controls = cformat!(
-        "<dim,yellow>Enter: switch | Tab/alt-1…7: preview | alt-c: create | Esc: cancel | ctrl-u/d: scroll | alt-p: toggle</>"
+        "<dim,yellow>Enter: switch | alt-c: create | alt-x: remove | alt-y: copy | alt-o: open | alt-r: refresh | alt-p: toggle | Tab/alt-1…7: preview | ctrl-u/d: scroll | Esc: cancel</>"
     );
 
     // Each tab/segment already ends with a full reset (so styling never bleeds
@@ -1294,6 +1349,46 @@ mod tests {
         assert_snapshot!(
             "cache_miss",
             cache_miss.preview_for_mode(PreviewMode::Summary, 80, 40)
+        );
+    }
+
+    #[test]
+    fn row_url_resolve() {
+        use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef, ReviewState};
+
+        // Static URL (a `--prs` row): resolves directly.
+        assert_eq!(
+            RowUrl::Static(Some("https://x/pull/1".into()))
+                .resolve()
+                .as_deref(),
+            Some("https://x/pull/1")
+        );
+        assert_eq!(RowUrl::Static(None).resolve(), None);
+
+        // Live slot (a worktree row): `None` (still fetching) and `Some(None)`
+        // (no PR) both resolve to no URL — alt-o is a no-op until a PR lands.
+        let loading: PrStatusSlot = Arc::new(Mutex::new(None));
+        assert_eq!(RowUrl::Live(loading).resolve(), None);
+        let no_pr: PrStatusSlot = Arc::new(Mutex::new(Some(None)));
+        assert_eq!(RowUrl::Live(no_pr).resolve(), None);
+
+        // A live status carrying a URL resolves to it.
+        let status = PrStatus {
+            ci_status: CiStatus::Passed,
+            source: CiSource::PullRequest,
+            is_stale: false,
+            is_priming: false,
+            url: Some("https://x/pull/2".into()),
+            number: Some(PrRef::pr(2)),
+            review_state: Some(ReviewState::Approved),
+            title: None,
+            body: None,
+            comment_count: None,
+        };
+        let with_url: PrStatusSlot = Arc::new(Mutex::new(Some(Some(status))));
+        assert_eq!(
+            RowUrl::Live(with_url).resolve().as_deref(),
+            Some("https://x/pull/2")
         );
     }
 

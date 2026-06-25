@@ -3,7 +3,7 @@ source: tests/integration_tests/switch_picker.rs
 expression: preview
 ---
 1 2: log 3 4 5 6 7
-Enter: switch | Tab/alt-1…7: preview | alt-c: create | Esc:
+Enter: switch | alt-c: create | alt-x: remove | alt-y: copy
 
 * [HASH]   +1        [TIME] (feature) Add file 5 with content
 * [HASH]   +1        [TIME] Add file 4 with content

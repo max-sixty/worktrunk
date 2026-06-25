@@ -1707,12 +1707,12 @@ fn test_switch_picker_pre_switch_hook_requires_approval(mut repo: TestRepo) {
     assert!(!marker.exists(), "a declined pre-switch hook must not run");
 }
 
-/// Drive the picker to remove the first non-current worktree with alt-r, then
+/// Drive the picker to remove the first non-current worktree with alt-x, then
 /// switch — capturing the screen between steps so the assertion doesn't depend on
 /// the picker's commit-recency row order. Returns `(landing_branch, final_screen,
 /// exit_code)`, where `landing_branch` is the worktree that slid into the removed
 /// row's slot (the row the sticky cursor must land on).
-fn drive_alt_r_then_switch(
+fn drive_alt_x_then_switch(
     args: &[&str],
     working_dir: &Path,
     env_vars: &[(String, String)],
@@ -1767,7 +1767,7 @@ fn drive_alt_r_then_switch(
     wait_for_stable_with_content(&rx, &mut parser, Some(candidates[0]));
 
     // Learn the row order: the candidate on the earlier list line is row 1 — the
-    // one Down lands on and alt-r removes; the other is the sticky landing row.
+    // one Down lands on and alt-x removes; the other is the sticky landing row.
     let (row1, row2) = {
         let screen = parser.screen();
         let list = screen
@@ -1794,10 +1794,10 @@ fn drive_alt_r_then_switch(
         Some(&format!("{row1} has no uncommitted changes")),
     );
 
-    // alt-r removes row 1; the cursor must stick to its slot — now holding row 2.
+    // alt-x removes row 1; the cursor must stick to its slot — now holding row 2.
     // Gating on row 2's preview *is* the sticky assertion: a cursor reset to the
     // top would show the current worktree's preview and time this out.
-    send(&writer, b"\x1br");
+    send(&writer, b"\x1bx");
     wait_for_stable_with_content(
         &rx,
         &mut parser,
@@ -1822,19 +1822,19 @@ fn drive_alt_r_then_switch(
     (row2.to_string(), parser.screen().contents(), exit_code)
 }
 
-/// alt-r keeps the cursor on the removed row's slot. After removing the first
+/// alt-x keeps the cursor on the removed row's slot. After removing the first
 /// non-current worktree, the cursor stays on the row that slides up (the next
 /// worktree), so Enter switches there — not back to the current worktree at the
 /// top, which is where skim's reload would otherwise reset the cursor.
 #[rstest]
-fn test_switch_picker_alt_r_keeps_cursor_sticky(mut repo: TestRepo) {
+fn test_switch_picker_alt_x_keeps_cursor_sticky(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
     repo.add_worktree("wt-keep");
     repo.add_worktree("wt-drop");
 
     let env_vars = repo.test_env_vars();
-    let (landing, screen, exit_code) = drive_alt_r_then_switch(
+    let (landing, screen, exit_code) = drive_alt_x_then_switch(
         &["switch", "--no-cd", "--format=json"],
         repo.root_path(),
         &env_vars,
@@ -1843,7 +1843,7 @@ fn test_switch_picker_alt_r_keeps_cursor_sticky(mut repo: TestRepo) {
 
     assert_eq!(
         exit_code, 0,
-        "switch after alt-r should exit 0.\nScreen:\n{screen}"
+        "switch after alt-x should exit 0.\nScreen:\n{screen}"
     );
     // The structured result reaches stdout only after the switch pipeline ran;
     // it targets the sticky row, not the current worktree.
@@ -1862,7 +1862,7 @@ fn test_switch_picker_alt_r_keeps_cursor_sticky(mut repo: TestRepo) {
 /// spinning the event loop. The picker stays responsive — its screen stabilizes,
 /// then aborts cleanly.
 #[rstest]
-fn test_switch_picker_alt_r_no_match_stays_responsive(mut repo: TestRepo) {
+fn test_switch_picker_alt_x_no_match_stays_responsive(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
     repo.add_worktree("solo-wt");
@@ -1875,7 +1875,7 @@ fn test_switch_picker_alt_r_no_match_stays_responsive(mut repo: TestRepo) {
         &env_vars,
         &[
             ("solo-wt", Some("solo-wt")), // filter to the sole matching worktree
-            ("\x1br", None),              // alt-r removes it; query now matches nothing
+            ("\x1bx", None),              // alt-x removes it; query now matches nothing
         ],
     );
 

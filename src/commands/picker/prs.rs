@@ -58,7 +58,8 @@ use super::super::list::ci_status::{
 use super::super::list::columns::ColumnKind;
 use super::super::list::layout::ColumnGrid;
 use super::items::{
-    PreviewCache, TabAvailability, WorktreeSkimItem, ansi_to_line, render_preview_tabs,
+    PreviewCache, RowShortcutData, RowUrl, ShortcutTable, TabAvailability, WorktreeSkimItem,
+    ansi_to_line, render_preview_tabs,
 };
 use super::pr_pane;
 use super::preview::{PreviewMode, PreviewStateData};
@@ -195,6 +196,15 @@ pub(super) struct PrsLayout {
     pub preview_dims: (usize, usize),
 }
 
+/// The structures the `--prs` thread coordinates with the collect side: the
+/// column-geometry handoff that aligns PR rows with the worktree grid, and the
+/// `alt-y` / `alt-o` shortcut table it extends with PR/MR rows. Bundled so the
+/// streaming entry points stay within the argument budget.
+pub(super) struct PrsShared {
+    pub grid_slot: Arc<GridSlot>,
+    pub shortcut_table: ShortcutTable,
+}
+
 /// Stream the open PRs/MRs into the picker, then clear the header's "loading…"
 /// marker — whatever the outcome.
 ///
@@ -208,11 +218,11 @@ pub(super) fn stream_open_prs(
     layout: &PrsLayout,
     tx: &SkimItemSender,
     stashed_warnings: &Mutex<Vec<String>>,
-    grid_slot: &GridSlot,
     orchestrator: &PreviewOrchestrator,
+    shared: &PrsShared,
     signal: &PrsStreamSignal,
 ) {
-    fetch_and_stream(repo, layout, tx, stashed_warnings, grid_slot, orchestrator);
+    fetch_and_stream(repo, layout, tx, stashed_warnings, orchestrator, shared);
 
     signal.pending.store(false, Ordering::Relaxed);
     if let Some(tx) = signal.render_tx.get() {
@@ -230,8 +240,8 @@ fn fetch_and_stream(
     layout: &PrsLayout,
     tx: &SkimItemSender,
     stashed_warnings: &Mutex<Vec<String>>,
-    grid_slot: &GridSlot,
     orchestrator: &PreviewOrchestrator,
+    shared: &PrsShared,
 ) {
     let entries = match fetch_open_prs(repo) {
         Ok(entries) => entries,
@@ -256,7 +266,7 @@ fn fetch_and_stream(
     // The forge call above (~1s) almost always outlasts the skeleton
     // (~50ms), so this returns immediately; the wait covers a mocked forge
     // CLI winning the race.
-    let grid = grid_slot.wait(Duration::from_secs(5));
+    let grid = shared.grid_slot.wait(Duration::from_secs(5));
 
     // skim 4.x takes a batch per send; the forge call already returned every
     // row, so stream them in one shot. As each row is built, kick off its
@@ -267,6 +277,15 @@ fn fetch_and_stream(
         .into_iter()
         .map(|entry| {
             spawn_pr_previews(orchestrator, &entry, layout.preview_dims);
+            // Shortcut lookup for this row: `alt-y` copies the PR/MR head
+            // branch, `alt-o` opens its already-known web URL.
+            shared.shortcut_table.lock().unwrap().insert(
+                entry.output_token(),
+                RowShortcutData {
+                    branch: entry.head_branch.clone(),
+                    url: RowUrl::Static(entry.url.clone()),
+                },
+            );
             Arc::new(PrSkimItem::new(
                 entry,
                 layout.list_width,
@@ -1600,9 +1619,12 @@ mod tests {
         let test = worktrunk::testing::TestRepo::with_initial_commit();
         let (tx, _rx): (SkimItemSender, SkimItemReceiver) = unbounded();
         let warnings = Mutex::new(Vec::new());
-        let grid = GridSlot::new();
         let orchestrator = PreviewOrchestrator::new(test.repo.clone());
         let loading = AtomicBool::new(true);
+        let shared = PrsShared {
+            grid_slot: Arc::new(GridSlot::new()),
+            shortcut_table: Arc::new(Mutex::new(std::collections::HashMap::new())),
+        };
         let (rtx, mut rrx) = tokio::sync::mpsc::channel(8);
         let render_tx = OnceLock::new();
         render_tx.set(rtx).unwrap();
@@ -1615,8 +1637,8 @@ mod tests {
             },
             &tx,
             &warnings,
-            &grid,
             &orchestrator,
+            &shared,
             &PrsStreamSignal {
                 pending: &loading,
                 render_tx: &render_tx,

@@ -32,7 +32,7 @@
 //!   that pool's injector while row tasks are still landing on
 //!   workers' local deques during drain.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -48,7 +48,10 @@ use worktrunk::styling::{StyledLine, strip_osc8_hyperlinks};
 /// `Event::Render` bypasses skim's own frame-rate cap, so we cap it here.
 const RENDER_THROTTLE: Duration = Duration::from_millis(16);
 
-use super::items::{HeaderLoading, HeaderSkimItem, PrStatusSlot, PreviewCache, WorktreeSkimItem};
+use super::items::{
+    HeaderLoading, HeaderSkimItem, PrStatusSlot, PreviewCache, RowShortcutData, RowUrl,
+    ShortcutTable, WorktreeSkimItem, worktree_output_token,
+};
 use super::preview::PreviewMode;
 use super::preview_orchestrator::PreviewOrchestrator;
 use crate::commands::list::collect::PickerProgressHandler;
@@ -75,6 +78,10 @@ pub(super) struct PickerHandler {
     /// Mirror of the skim item vec visible to `PickerCollector`. Populated
     /// atomically in `on_skeleton`.
     pub(super) shared_items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>>,
+    /// The `alt-y` / `alt-o` lookup table (token → branch + URL). Replaced
+    /// atomically in `on_skeleton` with this skeleton's worktree/branch rows;
+    /// the `--prs` thread extends it with PR/MR rows. See [`ShortcutTable`].
+    pub(super) shortcut_table: ShortcutTable,
     /// One `Arc<Mutex<String>>` per data row — same Arcs `WorktreeSkimItem`
     /// holds. Set once in `on_skeleton`, read lock-free thereafter.
     pub(super) rendered_slots: OnceLock<Box<[Arc<Mutex<String>>]>>,
@@ -145,6 +152,11 @@ impl PickerProgressHandler for PickerHandler {
         let mut pr_slots: Vec<PrStatusSlot> = Vec::with_capacity(items.len());
         let mut skim_items: Vec<Arc<dyn SkimItem>> = Vec::with_capacity(items.len() + 1);
         let mut list_items: Vec<Arc<ListItem>> = Vec::with_capacity(items.len());
+        // `alt-y` / `alt-o` lookup entries for this skeleton's rows, keyed by the
+        // same `output()` token the rows carry. Replaces the table wholesale below
+        // (a refresh re-collect rebuilds it); the `--prs` thread extends it later.
+        let mut shortcut_map: HashMap<String, RowShortcutData> =
+            HashMap::with_capacity(items.len());
 
         // Synchronous skeleton-time tab-availability facts (see `TabAvailability`).
         // Branches with an upstream tracking ref drive the tab-4 (remote⇅) empty
@@ -248,6 +260,16 @@ impl PickerProgressHandler for PickerHandler {
             let pr_status_arc: PrStatusSlot = Arc::new(Mutex::new(item_arc.pr_status.clone()));
             pr_slots.push(Arc::clone(&pr_status_arc));
 
+            // Shortcut lookup for this row: `alt-y` copies `branch`, `alt-o`
+            // opens the URL once the live `pr_status` slot reports one.
+            shortcut_map.insert(
+                worktree_output_token(&item_arc, &branch_name),
+                RowShortcutData {
+                    branch: branch_name.clone(),
+                    url: RowUrl::Live(Arc::clone(&pr_status_arc)),
+                },
+            );
+
             skim_items.push(Arc::new(WorktreeSkimItem {
                 search_text,
                 rendered: rendered_arc,
@@ -266,6 +288,7 @@ impl PickerProgressHandler for PickerHandler {
         let _ = self.rendered_slots.set(slots.into_boxed_slice());
         let _ = self.pr_status_slots.set(pr_slots.into_boxed_slice());
         *self.shared_items.lock().unwrap() = skim_items.clone();
+        *self.shortcut_table.lock().unwrap() = shortcut_map;
 
         // skim 4.x's item channel carries Vec batches; the skeleton is a single
         // batch. This append wakes skim's reader (`items_available`) and drives
@@ -369,6 +392,7 @@ mod tests {
             render_tx: Arc::new(OnceLock::new()),
             last_render_poke: Mutex::new(Instant::now()),
             shared_items,
+            shortcut_table: Arc::new(Mutex::new(std::collections::HashMap::new())),
             rendered_slots: OnceLock::new(),
             pr_status_slots: OnceLock::new(),
             preview_cache,
@@ -477,6 +501,19 @@ mod tests {
         assert_eq!(shared.len(), 3);
         assert_eq!(shared[1].output().as_ref(), "feat-a");
         assert_eq!(shared[2].output().as_ref(), "feat-b");
+
+        // The shortcut table is keyed by each row's `output()` token (the branch
+        // name for these branch-only rows) and carries the branch for `alt-y`.
+        let table = handler.shortcut_table.lock().unwrap();
+        assert_eq!(table.len(), 2);
+        assert_eq!(
+            table.get("feat-a").map(|d| d.branch.as_str()),
+            Some("feat-a")
+        );
+        assert_eq!(
+            table.get("feat-b").map(|d| d.branch.as_str()),
+            Some("feat-b")
+        );
     }
 
     /// `on_skeleton` folds each row's gutter glyph onto the end of the

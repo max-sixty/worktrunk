@@ -86,6 +86,8 @@ cli = [
     "dep:ratatui",
     "dep:ansi-to-tui",
     "dep:tokio",
+    "dep:arboard",
+    "dep:open",
     "dep:termimad",
     "dep:tracing-log",
     "dep:tracing-subscriber",
@@ -267,6 +269,14 @@ ansi-to-tui = { version = "8.0.1", optional = true }
 # collect mutates rows in place — skim 4.x renders on demand, not on a heartbeat.
 # `Runtime::new()` needs `rt-multi-thread`; `event_sender()` is a `sync::mpsc`.
 tokio = { version = "1.52.3", optional = true, default-features = false, features = ["rt-multi-thread", "sync"] }
+# Picker row shortcuts: `alt-y` copies the selected branch to the system
+# clipboard, `alt-o` opens its PR/MR URL in the browser. Both are cross-platform
+# (so they sit in the main table alongside the picker stack, not under
+# `[target.'cfg(unix)']`). `arboard` drops `default-features` to skip the `image`
+# crate — the picker only copies text — while keeping `wayland-data-control` so
+# Linux Wayland clipboards work alongside X11 and macOS.
+arboard = { version = "3.4", optional = true, default-features = false, features = ["wayland-data-control"] }
+open = { version = "5.3", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 # Unix-only syscall crates: `nix` (process/signal) backs the fsmonitor reap and
