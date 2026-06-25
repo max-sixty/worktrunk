@@ -794,9 +794,9 @@ impl WorktreeSkimItem {
         let reset = Reset;
         let branch = self.item.branch_name();
         match pr {
-            PrPreview::Loading => cformat!(
-                "○ Fetching PR status for <bold>{branch}</>{reset}… press <bold>alt-6</>{reset} to refresh\n"
-            ),
+            PrPreview::Loading => {
+                cformat!("○ Fetching PR status for <bold>{branch}</>{reset}…\n")
+            }
             PrPreview::NoPr => {
                 cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no PR\n")
             }
@@ -819,11 +819,10 @@ impl WorktreeSkimItem {
         let branch = self.item.branch_name();
         match self.pr_preview() {
             // The CI fetch hasn't reported yet — we don't know whether there's a
-            // PR to fetch comments for. Mirror the `pr` tab's loading state,
-            // pointing at this tab's accelerator.
-            PrPreview::Loading => cformat!(
-                "○ Fetching PR status for <bold>{branch}</>{reset}… press <bold>alt-7</>{reset} to refresh\n"
-            ),
+            // PR to fetch comments for. Mirror the `pr` tab's loading state.
+            PrPreview::Loading => {
+                cformat!("○ Fetching PR status for <bold>{branch}</>{reset}…\n")
+            }
             PrPreview::NoPr => {
                 cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no PR\n")
             }
@@ -1894,11 +1893,11 @@ mod tests {
             notifier: PreviewNotifier::detached(),
         };
 
-        // CI hasn't reported (None) → fetching hint pointing at this tab's key.
+        // CI hasn't reported (None) → the shared "Fetching PR status…" hint (it
+        // auto-resolves once the live status lands; see `PreviewNotifier`).
         let loading = row(None, Arc::new(DashMap::new()));
         let pane = loading.render_comments_pane();
         assert!(pane.contains("Fetching PR status"), "loading: {pane:?}");
-        assert!(pane.contains("alt-7"), "loading points at alt-7: {pane:?}");
 
         // No PR (Some(None)) → "has no PR", matching the `pr` tab.
         let no_pr = row(Some(None), Arc::new(DashMap::new()));

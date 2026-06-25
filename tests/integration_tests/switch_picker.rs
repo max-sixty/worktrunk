@@ -1458,6 +1458,63 @@ fn test_switch_picker_worktree_row_comments_tab_shows_thread(mut repo: TestRepo)
     );
 }
 
+/// The `pr` tab auto-resolves from "Fetching PR status…" to the live PR with no
+/// keystroke. A worktree row's CI status is fetched live (`gh pr list --head`),
+/// mocked behind a delay and left UNSEEDED so the tab is observed mid-fetch; when
+/// the status lands, `on_update` pokes a `RunPreview` (`PreviewNotifier`) and the
+/// pane re-renders. Distinct producer from
+/// `test_switch_picker_preview_auto_refreshes_when_compute_lands` (an orchestrator
+/// cache fill): here it's the CI fetch surfaced through `on_update`.
+#[rstest]
+fn test_switch_picker_pr_tab_auto_resolves_from_fetching(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    std::fs::create_dir_all(&mock_bin).unwrap();
+    // The per-row CI fetch (`gh pr list --head <branch>`), delayed so the `pr`
+    // tab is opened while still "Fetching PR status…"; unseeded, so it starts
+    // there rather than resolving at skeleton from the cache.
+    let pr_list_json = r#"[{"number":654,"title":"PRTABMARK auto-resolve","body":"","comments":[],"statusCheckRollup":[],"url":"https://github.com/owner/test-repo/pull/654","isDraft":false}]"#;
+    std::fs::write(mock_bin.join("pr_list.json"), pr_list_json).unwrap();
+    MockConfig::new("gh")
+        .version("gh version 1.0.0 (mock)")
+        .command(
+            "pr list",
+            MockResponse::file("pr_list.json").with_delay_ms(3000),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+    let env_vars = forge_mock_env_vars(&repo, &mock_bin);
+
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            // alt-6: the `pr` tab. The CI fetch is still in flight (delayed), so
+            // the pane shows the fetching hint.
+            ("\x1b6", Some("Fetching PR status")),
+            // No further input: the resolved PR title appears on its own once the
+            // delayed CI fetch lands and the picker repaints.
+            ("", Some("PRTABMARK")),
+        ],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+    let (_list, preview) = result.panels();
+    assert!(
+        preview.contains("PRTABMARK"),
+        "pr tab resolved from 'Fetching' on its own:\n{preview}"
+    );
+}
+
 #[rstest]
 fn test_switch_picker_preview_cycle_tab_forward(mut repo: TestRepo) {
     // Tab cycles the preview tab forward. From the default HEAD± tab (1), one

@@ -441,13 +441,17 @@ impl PickerProgressHandler for PickerHandler {
         // `comments` background fetch (once per row) so the `comments` tab loads
         // the thread — the same fetch a `--prs` row makes.
         self.maybe_spawn_comments(idx, item.branch_name(), &item.pr_status);
-        // `Event::Render` repaints the list but does NOT re-run the preview (only
-        // `Event::RunPreview` does — see `PreviewNotifier`), so the live slots
-        // just mirrored surface in the preview pane on the next selection/tab
-        // change. The orchestrator-computed panes (diff/log/comments/summary)
-        // auto-surface via the notifier when their compute lands; the
-        // `pr_status`-driven `pr`/`comments` panes are left keystroke-driven on
-        // purpose — their "press alt-6/7 to refresh" hint covers that path.
+        // `request_render` sends `Event::Render`, which repaints the *list* row
+        // (its CI/status cells just changed) but does NOT re-run the preview.
+        // The slots just mirrored — `pr_status` (the `pr` / `comments` panes) and
+        // `local_content` (the diff tabs' dim state) — feed the preview, so if
+        // this is the selected row also poke a `RunPreview` to re-render it:
+        // that's what flips its `pr` tab from "Fetching PR status…" to the
+        // resolved PR without a keystroke. Scoped to the selected row, so
+        // off-screen updates don't thrash the preview (see `PreviewNotifier`).
+        self.orchestrator
+            .notifier()
+            .notify_row_changed(item.branch_name());
         self.request_render(false);
     }
 
