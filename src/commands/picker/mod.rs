@@ -380,7 +380,7 @@ impl PickerCollector {
                         // this is a genuine `git branch -D` failure. The row is
                         // restored anyway because the branch still exists (see
                         // `removal_target_still_present`) — surface the cause.
-                        log::warn!("picker: failed to delete branch '{branch_name}': {e:#}");
+                        tracing::warn!(branch = %branch_name, error = %e, "picker: failed to delete branch '{branch_name}': {e:#}");
                     }
                 }
             }
@@ -458,7 +458,7 @@ impl PickerCollector {
             .name(format!("picker-remove-{selected_output}"))
             .spawn(move || {
                 if let Err(e) = Self::do_removal(&repo, &result, &approvals) {
-                    log::warn!("picker: removal of '{selected_output}' errored: {e:#}");
+                    tracing::warn!(selected_output = %selected_output, error = %e, "picker: removal of '{selected_output}' errored: {e:#}");
                 }
                 if removal_target_still_present(&repo, &result)
                     && let Some((item, pos)) = removed
@@ -763,7 +763,7 @@ fn removal_target_still_present(repo: &Repository, result: &RemoveResult) -> boo
 /// [`removal_will_remove_target`]), the row must reappear. This re-inserts it into
 /// `shared_items` at its original slot, stashes
 /// a `kept` warning (drained to stderr once skim releases the terminal; the full
-/// error, if any, is in the `log::warn!` the caller emits), then reloads the
+/// error, if any, is in the `tracing::warn!` the caller emits), then reloads the
 /// picker to re-stream the restored list and lands the cursor back on the row.
 ///
 /// The reload command is any string that is neither `remove <token>` nor the
@@ -867,7 +867,7 @@ impl CommandCollector for PickerCollector {
                         }
                     }
                     Err(e) => {
-                        log::info!("picker: cannot remove '{selected_output}': {e:#}");
+                        tracing::info!(selected_output = %selected_output, error = %e, "picker: cannot remove '{selected_output}': {e:#}");
                     }
                 }
             }
@@ -1186,17 +1186,19 @@ pub fn handle_picker(
         orchestrator.spawn_preview(Arc::new(item), PreviewMode::WorkingTree, dims);
     }
 
-    // Skip BranchDiff — it walks history per item for a column the picker
-    // doesn't surface. Keep the CiStatus task: the picker primes its CI cells
-    // from the local cache so the first frame shows cached status (see
-    // `populate_from_cache`), then this task fetches live and streams each row's
-    // status in behind the frame — the same 30–60s-TTL cache plus live fetch as
-    // `wt list --full`. The picker's lifetime is bounded by the user, so a slow forge call
-    // never blocks anything (see the "Network Access" notes in CLAUDE.md). The
-    // `pr` preview tab reads the same live status. `--prs` rows carry their own
-    // number from the explicit `--prs` forge call.
-    let skip_tasks: std::collections::HashSet<collect::TaskKind> =
-        [collect::TaskKind::BranchDiff].into_iter().collect();
+    // Run every task — the picker is `wt list --full`. `main…±` (BranchDiff) is
+    // now a default `wt list` column, so the picker surfaces it too; it's local
+    // git keyed by a persistent content-addressed cache, so warm rows are instant
+    // and a cold row computes once in the background (its merge-base walk streams
+    // in behind the frame, never blocking the picker). CiStatus is primed from
+    // the local cache so the first frame shows cached status (see
+    // `populate_from_cache`), then fetched live and streamed in — the same
+    // 30–60s-TTL cache plus live fetch as `wt list --full`. The picker's lifetime
+    // is bounded by the user, so a slow forge call never blocks anything (see the
+    // "Network Access" notes in CLAUDE.md). The `pr` preview tab reads the same
+    // live status. `--prs` rows carry their own number from the explicit `--prs`
+    // forge call.
+    let skip_tasks: std::collections::HashSet<collect::TaskKind> = std::collections::HashSet::new();
 
     // Per-task command timeout (bounds any single git invocation) from
     // shared `[list]` config. Still applies in progressive mode.

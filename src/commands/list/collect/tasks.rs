@@ -82,7 +82,7 @@ impl TaskContext {
             let sha = &self.branch_ref.commit_sha;
             let short_sha = &sha[..sha.len().min(8)];
             let branch = self.branch_ref.short_name().unwrap_or(short_sha);
-            log::debug!("Task {} timed out for {}", kind_str, branch);
+            tracing::debug!(kind = %kind_str, branch = %branch, "Task {} timed out for {}", kind_str, branch);
             ErrorCause::Timeout
         } else {
             ErrorCause::Other

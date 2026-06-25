@@ -254,8 +254,8 @@ fn parse_rate_limits(v: &serde_json::Value) -> Vec<RateLimitReading> {
     // distinguishes "no rate_limits key" from "stdin context never parsed"
     // (which logs nothing at all).
     match v.get("rate_limits") {
-        Some(rl) => log::debug!("rate_limits input: {rl}"),
-        None => log::debug!("rate_limits input: absent"),
+        Some(rl) => tracing::debug!(rate_limits = %rl, "rate_limits input: {rl}"),
+        None => tracing::debug!("rate_limits input: absent"),
     }
     let mut out = Vec::new();
     for (key, window_secs, priors) in [
@@ -620,7 +620,7 @@ fn select_binding_window(
             let t = elapsed.clamp(0.0, 1.0);
             let p = p_over(u, t, r.priors);
             let lockout = expected_lockout(u, t.max(0.001), r.priors);
-            log::debug!(
+            tracing::debug!(
                 "rate-limit {} window: used={:.1}% elapsed={:.1}% pace={:.2}× P(over)={p:.3} lockout={lockout:.3} cost={:.3} (show threshold {RATE_LIMIT_P_THRESHOLD})",
                 r.name,
                 u * 100.0,
@@ -1517,18 +1517,25 @@ mod tests {
 
     #[test]
     fn test_select_binding_window_logs_at_debug() {
-        // The per-window debug line's format args are lazily skipped at
-        // default verbosity; enabling Debug evaluates them. The
-        // not-yet-started window (negative elapsed, clamped to 0) is the
-        // case the `t.max(0.001)` division guard exists for.
-        log::set_max_level(log::LevelFilter::Debug);
+        use tracing::Subscriber;
+        use tracing_subscriber::Registry;
+        use tracing_subscriber::layer::{Layer, SubscriberExt};
+
+        // The per-window debug line's format args are lazily skipped unless a
+        // DEBUG-level subscriber is active; installing one forces them to
+        // evaluate. The not-yet-started window (negative elapsed, clamped to
+        // 0) is the case the `t.max(0.001)` division guard exists for.
+        struct Sink;
+        impl<S: Subscriber> Layer<S> for Sink {}
+
         let now = 1_700_000_000_i64;
         let readings = [
             make_reading(80.0, 0.60, &FIVE_HOUR_PRIORS, now, FIVE_HOUR_SECS),
             make_reading(5.0, -0.10, &SEVEN_DAY_PRIORS, now, SEVEN_DAY_SECS),
         ];
-        let sel = select_binding_window(&readings, now);
-        log::set_max_level(log::LevelFilter::Off);
+        let subscriber = Registry::default().with(Sink);
+        let sel =
+            tracing::subscriber::with_default(subscriber, || select_binding_window(&readings, now));
         assert_eq!(sel.unwrap().used_percentage, 80.0);
     }
 

@@ -93,7 +93,9 @@ pub(super) fn detect_azure_pr(
     {
         Ok(output) => output,
         Err(e) => {
-            log::warn!(
+            tracing::warn!(
+                branch = %branch.full_name,
+                error = %e,
                 "az repos pr list failed to execute for branch {}: {}",
                 branch.full_name,
                 e
@@ -182,7 +184,9 @@ pub(super) fn detect_azure_pipeline(
     {
         Ok(output) => output,
         Err(e) => {
-            log::warn!(
+            tracing::warn!(
+                branch = %branch.full_name,
+                error = %e,
                 "az pipelines runs list failed to execute for branch {}: {}",
                 branch.full_name,
                 e

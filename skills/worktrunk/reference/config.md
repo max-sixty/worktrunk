@@ -181,7 +181,7 @@ Persistent flag values for `wt list`. Override on command line as needed.
 [list]
 summary = false    # Enable LLM branch summaries (requires [commit.generation])
 
-full = false       # Show CI, main…± diffstat, and LLM summaries (--full)
+full = false       # Show CI status and LLM summaries (--full)
 branches = false   # Include branches without worktrees (--branches)
 remotes = false    # Include remote-only branches (--remotes)
 
@@ -1276,11 +1276,11 @@ Markers appear at the end of the Status column, after git symbols:
 
 ```
 $ wt list
-  Branch       Status        HEAD±    main↕  Remote⇅  Commit    Age   Message
-@ main             ^⇡                         ⇡1      33323bc1  1d    Initial commit
-+ feature-api      ↑ 🤖              ↑1               70343f03  1d    Add REST API endpoints
-+ review-ui      ? ↑ 💬              ↑1               a585d6ed  1d    Add dashboard component
-+ wip-docs       ? –                                  33323bc1  1d    Initial commit
+  Branch       Status        HEAD±    main↕     main…±  Remote⇅  Commit    Age   Message
+@ main             ^⇡                                    ⇡1      33323bc1  1d    Initial commit
++ feature-api      ↑ 🤖              ↑1        +1                70343f03  1d    Add REST API end…
++ review-ui      ? ↑ 💬              ↑1        +1                a585d6ed  1d    Add dashboard co…
++ wip-docs       ? –                                             33323bc1  1d    Initial commit
 
 ○ Showing 4 worktrees, 2 with changes, 2 ahead, 1 column hidden
 ```

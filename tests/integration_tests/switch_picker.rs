@@ -62,6 +62,12 @@ const STABLE_DURATION: Duration = Duration::from_millis(500);
 /// Fast polling ensures tests complete quickly when ready.
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
+/// How often [`send_input_awaiting_content`] re-issues a preview-tab keystroke
+/// while its expected content is still absent. Long enough to clear skim's 50ms
+/// preview debounce and give a background preview compute time to land in the
+/// cache; short enough to retry many times within [`STABILIZE_TIMEOUT`].
+const PREVIEW_REISSUE_INTERVAL: Duration = Duration::from_secs(1);
+
 /// Columns that split the list and preview panels in the 120-col test terminal.
 /// skim 4.x draws the │ separator at col 59, with the list to its left (cols
 /// 0..59) and the preview interior to its right (cols 60..120). Slicing around
@@ -289,14 +295,7 @@ fn exec_in_pty_with_input_expectations(
 
     // Send each input and wait for screen to stabilize after each
     for (input, expected_content) in inputs {
-        {
-            let mut w = writer.lock().unwrap();
-            w.write_all(input.as_bytes()).unwrap();
-            w.flush().unwrap();
-        }
-
-        // Wait for screen to stabilize after this input, optionally requiring specific content
-        wait_for_stable_with_content(&rx, &mut parser, *expected_content);
+        send_input_awaiting_content(&writer, &rx, &mut parser, input, *expected_content);
     }
 
     // Release the main thread's writer handle. The reader thread holds the
@@ -346,12 +345,7 @@ fn exec_in_pty_capture_before_abort(
 
     // Send pre-abort inputs (filter text, panel switches, etc.)
     for (input, expected_content) in pre_abort_inputs {
-        {
-            let mut w = writer.lock().unwrap();
-            w.write_all(input.as_bytes()).unwrap();
-            w.flush().unwrap();
-        }
-        wait_for_stable_with_content(&rx, &mut parser, *expected_content);
+        send_input_awaiting_content(&writer, &rx, &mut parser, input, *expected_content);
     }
 
     // === CAPTURE: screen state is now stable — snapshot BEFORE aborting ===
@@ -382,26 +376,16 @@ fn exec_in_pty_capture_noop_probe(
 ) -> (String, String, i32) {
     let (child, writer, rx, mut parser) = boot_picker_pty(command, args, working_dir, env_vars);
 
-    let send_inputs = |inputs: &[(&str, Option<&str>)],
-                       writer: &crate::common::pty::SharedPtyWriter,
-                       rx: &mpsc::Receiver<Vec<u8>>,
-                       parser: &mut vt100::Parser| {
-        for (input, expected_content) in inputs {
-            {
-                let mut w = writer.lock().unwrap();
-                w.write_all(input.as_bytes()).unwrap();
-                w.flush().unwrap();
-            }
-            wait_for_stable_with_content(rx, parser, *expected_content);
-        }
-    };
-
     // Settle to the baseline, then capture it.
-    send_inputs(baseline_inputs, &writer, &rx, &mut parser);
+    for (input, expected_content) in baseline_inputs {
+        send_input_awaiting_content(&writer, &rx, &mut parser, input, *expected_content);
+    }
     let baseline = list_pane_text(parser.screen());
 
     // Send the probe keys, then capture again.
-    send_inputs(probe_inputs, &writer, &rx, &mut parser);
+    for (input, expected_content) in probe_inputs {
+        send_input_awaiting_content(&writer, &rx, &mut parser, input, *expected_content);
+    }
     let after = list_pane_text(parser.screen());
 
     let exit_code = abort_and_exit_code(child, writer, rx);
@@ -432,6 +416,7 @@ fn wait_for_stable_with_content(
         parser,
         |screen| expected_content.is_none_or(|c| screen.contains(c)),
         describe.as_deref(),
+        None,
     );
 }
 
@@ -461,6 +446,7 @@ fn wait_for_cursor_on_row(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Pars
                 .any(|line| line.starts_with('>') && line.contains(name))
         },
         Some(&describe),
+        None,
     );
 }
 
@@ -479,11 +465,17 @@ fn wait_for_cursor_on_row(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Pars
 /// stability after STABLE_DURATION even if the screen keeps churning. With no
 /// readiness condition there is nothing to find, so the screen must settle the
 /// hard way (the cosmetic-redraw fallback never engages).
+///
+/// `nudge`, when `Some`, is invoked every [`PREVIEW_REISSUE_INTERVAL`] while
+/// `ready` is unmet — used to re-issue a `RunPreview` trigger so a preview that
+/// finished computing after the initial keystroke gets surfaced (see
+/// [`send_input_awaiting_content`]).
 fn wait_for_stable_until(
     rx: &mpsc::Receiver<Vec<u8>>,
     parser: &mut vt100::Parser,
     ready: impl Fn(&str) -> bool,
     describe: Option<&str>,
+    nudge: Option<&dyn Fn()>,
 ) {
     let start = Instant::now();
     let mut last_change = Instant::now();
@@ -491,6 +483,7 @@ fn wait_for_stable_until(
     // Tracks when `ready` first held continuously on screen. Used as a fallback
     // stability signal when skim keeps redrawing cosmetically.
     let mut ready_since: Option<Instant> = None;
+    let mut last_nudge = Instant::now();
     let has_condition = describe.is_some();
 
     while start.elapsed() < STABILIZE_TIMEOUT {
@@ -532,6 +525,19 @@ fn wait_for_stable_until(
             return;
         }
 
+        // While the readiness condition is still unmet, periodically re-issue the
+        // RunPreview trigger. skim reads the preview cache only when it runs a
+        // preview, so a diff that finished computing after the initial keystroke
+        // would otherwise stay stranded behind a "Loading…" placeholder with no
+        // event to surface it.
+        if !content_ready
+            && let Some(nudge) = nudge
+            && last_nudge.elapsed() >= PREVIEW_REISSUE_INTERVAL
+        {
+            nudge();
+            last_nudge = Instant::now();
+        }
+
         std::thread::sleep(POLL_INTERVAL);
     }
 
@@ -553,6 +559,64 @@ fn wait_for_stable_until(
         "Warning: Screen did not fully stabilize within {:?}",
         STABILIZE_TIMEOUT
     );
+}
+
+/// True for an Alt-<digit> preview-tab switch (`ESC` + one ASCII digit) — the
+/// only inputs safe to re-issue while waiting for preview content. Switching to
+/// the tab you're already on is idempotent, whereas Tab / Shift-Tab cycle and
+/// typed filter text accumulates, so neither may be repeated.
+fn is_alt_digit_tab(input: &str) -> bool {
+    let b = input.as_bytes();
+    b.len() == 2 && b[0] == 0x1b && b[1].is_ascii_digit()
+}
+
+/// Send `input`, then wait for the screen to satisfy the per-input expectation
+/// and settle.
+///
+/// For an Alt-<digit> preview-tab switch carrying `expected_content`, the wait
+/// re-issues the keystroke every [`PREVIEW_REISSUE_INTERVAL`] until the content
+/// appears. The picker's preview pane is served from a cache populated by
+/// background workers and is re-read only when skim runs a preview, which a
+/// keystroke triggers exactly once (`Event::RunPreview`). If the row's preview
+/// hasn't finished computing, skim paints a "Loading…" placeholder and never
+/// re-queries — the finished preview lands in the cache with no event to surface
+/// it, stranding the placeholder. That is a Windows-CI flake under load, where
+/// the `git diff` / forge compute loses the race against the keystroke (the
+/// surrounding background subprocesses make it worse). Re-issuing the idempotent
+/// tab keystroke forces a fresh `RunPreview` against the now-warm cache,
+/// mirroring the placeholder's own "Press alt-N again to refresh" instruction.
+///
+/// Inputs without an Alt-<digit> shape fall back to a plain
+/// [`wait_for_stable_with_content`]: list content (rows streaming in, filter
+/// matches) repaints on every `Event::Render` and never strands, and the
+/// non-idempotent inputs (Tab, filter text, Enter) must not be repeated.
+fn send_input_awaiting_content(
+    writer: &crate::common::pty::SharedPtyWriter,
+    rx: &mpsc::Receiver<Vec<u8>>,
+    parser: &mut vt100::Parser,
+    input: &str,
+    expected_content: Option<&str>,
+) {
+    let send = || {
+        let mut w = writer.lock().unwrap();
+        w.write_all(input.as_bytes()).unwrap();
+        w.flush().unwrap();
+    };
+    send();
+
+    match expected_content {
+        Some(content) if is_alt_digit_tab(input) => {
+            let describe = format!("expected content {content:?}");
+            wait_for_stable_until(
+                rx,
+                parser,
+                |screen| screen.contains(content),
+                Some(&describe),
+                Some(&send),
+            );
+        }
+        _ => wait_for_stable_with_content(rx, parser, expected_content),
+    }
 }
 
 /// Create insta settings with filters for switch picker snapshot stability.
@@ -1181,25 +1245,27 @@ fn test_switch_picker_prs_github_list(mut repo: TestRepo) {
         &["switch", "--prs"],
         repo.root_path(),
         &env_vars,
-        // Wait for the PR row to stream into the list (the `#42` content gate),
-        // then assert on the row itself — deterministic, with no dependency on
-        // selecting an async-arrived row.
-        &[("", Some("#42"))],
+        // `main…±` now occupies the preview-shown list pane, clipping the CI
+        // column (`#42`) past skim's split. Toggle the preview off (alt-p) so
+        // the list spans full width and renders the number, then gate on it —
+        // deterministic, no dependency on selecting an async-arrived row.
+        &[("\x1bp", Some("#42"))],
     );
 
     assert_valid_abort_exit_code(result.exit_code);
-    let (list, _preview) = result.panels();
-    // `#42` in the CI column; the head branch is truncated in the narrow list.
-    assert!(list.contains("#42"), "PR number in list:\n{list}");
-    // The title is NOT on the row — it lives in the preview so columns align.
+    // Preview off → full-width list renders the CI column; assert on the whole
+    // screen since `#42` sits past the panel split column.
+    let screen = result.screen();
+    assert!(screen.contains("#42"), "PR number on screen:\n{screen}");
+    // The title lives in the preview (now hidden), never on the row itself.
     assert!(
-        !list.contains("Retry the flaky network test"),
-        "PR title should stay off the row:\n{list}"
+        !screen.contains("Retry the flaky network test"),
+        "PR title should stay off the row:\n{screen}"
     );
     // The header's loading marker is gone once the rows have streamed in.
     assert!(
-        !list.contains("loading open PRs"),
-        "loading marker cleared once rows arrived:\n{list}"
+        !screen.contains("loading open PRs"),
+        "loading marker cleared once rows arrived:\n{screen}"
     );
 }
 
@@ -1223,18 +1289,20 @@ fn test_switch_picker_prs_gitlab_list(mut repo: TestRepo) {
         &["switch", "--prs"],
         repo.root_path(),
         &env_vars,
-        // `!7` (GitLab MR ref) is the row's stable substring; the title lives in
-        // the preview, not the row.
-        &[("", Some("!7"))],
+        // `main…±` clips the CI column (`!7`) past skim's split in the
+        // preview-shown pane. Toggle the preview off (alt-p) so the full-width
+        // list renders the ref, then gate on it.
+        &[("\x1bp", Some("!7"))],
     );
 
     assert_valid_abort_exit_code(result.exit_code);
-    let (list, _preview) = result.panels();
-    // `!7` (GitLab MR ref) in the CI column; source branch truncates.
-    assert!(list.contains("!7"), "MR number in list:\n{list}");
+    // Preview off → full-width list renders the CI column; assert on the whole
+    // screen since `!7` sits past the panel split column.
+    let screen = result.screen();
+    assert!(screen.contains("!7"), "MR number on screen:\n{screen}");
     assert!(
-        !list.contains("Cache the dependency graph"),
-        "MR title should stay off the row:\n{list}"
+        !screen.contains("Cache the dependency graph"),
+        "MR title should stay off the row:\n{screen}"
     );
 }
 

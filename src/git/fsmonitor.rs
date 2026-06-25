@@ -422,13 +422,16 @@ pub fn reap_orphan_fsmonitor_daemons(repo: &Repository) {
             return;
         }
 
-        log::debug!(
+        tracing::debug!(
+            count = orphans.len(),
             "Reaping {} orphaned fsmonitor daemon(s): {:?}",
             orphans.len(),
             orphans
         );
         let gone = escalate_terminate(&NixSignaller, &orphans, REAP_KILL_DEADLINE);
-        log::debug!(
+        tracing::debug!(
+            gone = %gone,
+            count = orphans.len(),
             "Orphaned fsmonitor reap: {gone}/{} terminated",
             orphans.len()
         );

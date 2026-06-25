@@ -748,8 +748,14 @@ mod tests {
 
     #[test]
     fn test_drain_results_does_not_fire_stall_when_results_flow() {
-        // Results arrive faster than the stall threshold, so no Stall event
-        // should fire. last_result_time is reset on each received result.
+        // The result is already queued and tx is dropped before draining, so
+        // the drain processes the result and then exits on channel disconnect
+        // without ever hitting a recv timeout — the stall path is never taken.
+        // The deadline is just a guard that must never win the race against the
+        // already-available work, so use the generous DRAIN_TIMEOUT (like the
+        // sibling Complete tests) rather than a tight wall-clock bound: a slow
+        // runner's scheduling delay before the first recv could otherwise let
+        // an undersized deadline fire first and flip the outcome to TimedOut.
         let (tx, rx) = crossbeam_channel::unbounded();
         let mut items = vec![ListItem::new_branch("abc123".into(), "feat".into())];
         let mut errors = Vec::new();
@@ -770,10 +776,10 @@ mod tests {
             &mut items,
             &mut errors,
             &expected,
-            Instant::now() + Duration::from_millis(50),
+            Instant::now() + DRAIN_TIMEOUT,
             None,
             StallTimings {
-                threshold: Duration::from_secs(10), // far exceeds deadline
+                threshold: Duration::from_secs(10),
                 tick: Duration::from_millis(20),
             },
             |event| {

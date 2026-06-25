@@ -516,7 +516,7 @@ fn scan_ahead_behind(
     let output = match repo.run_command(&args) {
         Ok(out) => out,
         Err(e) => {
-            log::debug!("RefSnapshot ahead/behind batch failed for base {base}: {e}");
+            tracing::debug!(base = %base, error = %e, "RefSnapshot ahead/behind batch failed for base {base}: {e}");
             return HashMap::new();
         }
     };

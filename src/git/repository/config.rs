@@ -372,7 +372,7 @@ impl Repository {
                 // Detect: try remote, then local inference
                 let detected = self.detect_from_remote().or_else(|| {
                     self.infer_default_branch_locally()
-                        .inspect_err(|e| log::debug!("Local inference failed: {e}"))
+                        .inspect_err(|e| tracing::debug!(error = %e, "Local inference failed: {e}"))
                         .ok()
                 });
 
@@ -380,7 +380,7 @@ impl Repository {
                 if let Some(ref branch) = detected
                     && let Err(e) = self.set_config_value("worktrunk.default-branch", branch)
                 {
-                    log::debug!("Failed to persist default-branch cache: {e}");
+                    tracing::debug!(error = %e, "Failed to persist default-branch cache: {e}");
                 }
 
                 detected

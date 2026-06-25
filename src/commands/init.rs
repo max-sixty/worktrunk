@@ -1,6 +1,6 @@
 use anyhow::Context;
 use clap_complete::env::{
-    Bash as EnvBash, EnvCompleter, Fish as EnvFish, Powershell as EnvPowershell, Zsh as EnvZsh,
+    Bash as EnvBash, EnvCompleter, Powershell as EnvPowershell, Zsh as EnvZsh,
 };
 use std::io::{self, Write};
 use worktrunk::shell;
@@ -25,14 +25,22 @@ pub fn handle_init(shell: shell::Shell, cmd: String) -> Result<(), String> {
 /// scripts suitable for package manager integration (e.g., Homebrew's
 /// `generate_completions_from_executable`).
 ///
-/// Bash, Zsh, Fish, and PowerShell all emit a *dynamic* registration: the same
-/// script `COMPLETE=<shell> wt` prints, which calls the binary at TAB time. This
-/// means a plain package install gets live branch and worktree name completion with
-/// no `wt config shell install`. Zsh additionally needs a thin transform so the
-/// script works when autoloaded from `fpath` (Homebrew installs it as
-/// `site-functions/_wt`). See `make_zsh_autoload_safe`. The other three need no
-/// transform: Homebrew sources bash files, autoloads fish completion files by
-/// command name, and PowerShell registrations are sourced into the profile.
+/// Bash, Zsh, Fish, and PowerShell all emit a *dynamic* registration that calls
+/// the binary at TAB time. This means a plain package install gets live branch and
+/// worktree name completion with no `wt config shell install`.
+///
+/// Two shells need a transform on top of clap's raw registration:
+/// - **Zsh** needs the script to work when autoloaded from `fpath` (Homebrew installs
+///   it as `site-functions/_wt`). See `make_zsh_autoload_safe`.
+/// - **Fish** must resolve the real binary (via `type -P`, with a `WORKTRUNK_BIN`
+///   override) rather than calling the bare `wt` command. clap's raw output invokes
+///   `COMPLETE=fish wt -- …`; when worktrunk's lazy-load wrapper function shadows the
+///   binary, that bare call recurses into the wrapper to fish's call-stack limit
+///   (#3240). So fish reuses `configure_shell::fish_completion_content`, the same
+///   binary-resolving registration `wt config shell install` writes.
+///
+/// Bash and PowerShell need no transform: Homebrew sources bash files and PowerShell
+/// registrations are sourced into the profile.
 ///
 /// Nushell uses template-based integration (the shell wrapper and completer in one
 /// file), which is already dynamic, so its output is the full `init` template.
@@ -61,9 +69,17 @@ pub fn handle_completions(shell: shell::Shell) -> anyhow::Result<()> {
             write!(stdout, "{}", script).context("failed to write to stdout")?;
         }
         shell::Shell::Fish => {
-            EnvFish
-                .write_registration("COMPLETE", &cmd_name, &cmd_name, &cmd_name, &mut stdout)
-                .context("failed to write fish completion registration")?;
+            // clap's fish registration calls the bare command (`COMPLETE=fish wt -- …`).
+            // When worktrunk's lazy-load wrapper function shadows the binary, that bare
+            // call re-enters the wrapper: fish has already exported `COMPLETE=fish`, so
+            // the wrapper's `command wt config shell init fish | source` emits completions
+            // instead of the init script — the real function is never defined — and the
+            // wrapper's trailing `wt $argv` recurses to fish's call-stack limit (#3240).
+            // Emit the same binary-resolving registration as `wt config shell install`,
+            // which goes through `type -P` (with `WORKTRUNK_BIN` override) to bypass the
+            // wrapper.
+            let registration = super::configure_shell::fish_completion_content(&cmd_name);
+            write!(stdout, "{}", registration).context("failed to write to stdout")?;
         }
         shell::Shell::Nushell => {
             // Nushell uses template-based integration (shell wrapper + completions in one)
