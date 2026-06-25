@@ -490,12 +490,15 @@ impl PickerCollector {
     /// and drained to stderr when the picker exits. (This is a by-design retain,
     /// not a failure — distinct from [`restore_failed_removal`]'s `kept … could
     /// not remove it` warning.)
-    fn keep_unremovable_row(&self, selected_output: &str, result: &RemoveResult) {
-        if let RemoveResult::BranchOnly { branch_name, .. } = result {
-            // The canonical "retained; unmerged" info + hint `wt remove` prints,
-            // shared so the picker copy can't drift (see
-            // `retained_unmerged_branch_messages`).
-            let (info, hint) = crate::output::retained_unmerged_branch_messages(branch_name);
+    fn keep_unremovable_row(&self, selected_output: &str, branch_name: &str) {
+        // The canonical "retained; unmerged" info + hint `wt remove` prints,
+        // shared so the picker copy can't drift (see
+        // `retained_unmerged_branch_messages`). Taking the branch name (not the
+        // whole `RemoveResult`) makes it unrepresentable for this keep path to be
+        // handed a `RemovedWorktree`, which always removes — see the dispatch in
+        // `invoke` and [`removal_will_remove_target`].
+        let (info, hint) = crate::output::retained_unmerged_branch_messages(branch_name);
+        {
             let mut stashed = self.stashed_warnings.lock().unwrap();
             // Dedup on repeated alt-r of the same kept row.
             if !stashed.contains(&info) {
@@ -654,6 +657,14 @@ fn reposition_cursor_action(
 /// (back onto the re-inserted row). A no-op before `render_tx` is set or once the
 /// receiver is gone (teardown); the queued action is dropped if the channel is
 /// full.
+///
+/// Rapid alt-r (or a background restore overtaking the optimistic drop) can leave
+/// more than one chain in flight. Each carries its own counters and self-terminates
+/// once the rows land, so the last to run wins — under a burst the cursor may
+/// briefly sit on a superseded (but valid) row's slot, corrected on the next
+/// render. Bounding this to only the newest reposition would take a generation
+/// token threaded through every chain (and every `PickerCollector` construction
+/// site); the self-correcting transient isn't worth that cross-chain state.
 fn send_reposition(render_tx: &OnceLock<tokio::sync::mpsc::Sender<Event>>, target: usize) {
     if let Some(event_tx) = render_tx.get() {
         let _ = event_tx.try_send(Event::Action(reposition_cursor_action(
@@ -820,8 +831,13 @@ impl CommandCollector for PickerCollector {
                                 planning_repo,
                                 result,
                             );
-                        } else {
-                            self.keep_unremovable_row(&selected_output, &result);
+                        } else if let RemoveResult::BranchOnly { branch_name, .. } = &result {
+                            // The only non-removing outcome: `removal_will_remove_target`
+                            // returns false solely for an unmerged `BranchOnly` row (a
+                            // `RemovedWorktree` always removes, so it never reaches here).
+                            // `keep_unremovable_row` taking the branch name — not the whole
+                            // result — keeps that narrowing at the type level.
+                            self.keep_unremovable_row(&selected_output, branch_name);
                         }
                     }
                     Err(e) => {
