@@ -217,8 +217,6 @@ On narrow previews the tab bar compacts to digits — only the active tab keeps 
 [107m [0m [2m[36m[switch.picker][0m
 [107m [0m [2mpager = [0m[2m[32m"delta --paging=never --width=$COLUMNS"[0m
 
-Available on Unix only (macOS, Linux). On Windows, use [2mwt list[0m or [2mwt switch <branch>[0m directly.
-
 [1m[32mPull requests and merge requests[0m
 
 The [2mpr:<number>[0m / [2mmr:<number>[0m shortcut and the PR/MR's web URL both resolve to its branch. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref ([2mrefs/pull/N/head[0m or [2mrefs/merge-requests/N/head[0m) and configures [2mpushRemote[0m to the fork URL.
