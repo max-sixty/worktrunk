@@ -540,7 +540,10 @@ mod tests {
         // mirrors that item's CI status and diff-content into its live slots.
         let mut updated = ListItem::new_branch("bbb".into(), "two".into());
         updated.pr_status = Some(None);
-        updated.has_file_changes = Some(true);
+        updated.counts = Some(crate::commands::list::model::AheadBehind {
+            ahead: 1,
+            behind: 0,
+        });
         handler.on_update(1, "updated-two".into(), &updated);
         assert_eq!(*slots[0].lock().unwrap(), "skel-one", "row 0 untouched");
         assert_eq!(*slots[1].lock().unwrap(), "updated-two");

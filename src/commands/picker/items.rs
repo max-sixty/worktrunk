@@ -277,8 +277,14 @@ pub(super) struct LocalContent {
     /// `git diff HEAD` doesn't show). `Some(false)` for a branch-only row (no
     /// working tree to diff).
     working_tree: Option<bool>,
-    /// `branch_diff`: the three-dot diff vs the integration target is non-empty
-    /// ([`ListItem::has_file_changes`] — `false` when that diff is empty).
+    /// `branch_diff`: the branch has commits ahead of the **local** default
+    /// branch — the same base `compute_branch_diff_preview`'s pane diffs against
+    /// (`default_branch_sha()`). Deliberately NOT `has_file_changes`, which
+    /// measures against the *integration target*: when the local default is
+    /// behind or diverged from its upstream, that target is the upstream, so a
+    /// branch already integrated upstream resolves `has_file_changes = false`
+    /// while the pane (vs the stale local default) still shows a diff — dimming
+    /// over a non-empty pane, the one case the invariant rules out.
     branch_diff: Option<bool>,
     /// `upstream`: the branch is ahead of or behind its tracking ref. Combined
     /// with the synchronous `has_upstream` floor (no tracking ref dims the tab
@@ -302,7 +308,14 @@ impl LocalContent {
         };
         Self {
             working_tree,
-            branch_diff: item.has_file_changes,
+            // Commits ahead of the local default (matching the pane's base). An
+            // orphan has no merge base with the default, so its three-dot diff is
+            // ill-defined — keep the tab available rather than dim a pane that may
+            // show content. `counts` and `is_orphan` land together (one task), so
+            // when `counts` is known `is_orphan` is too.
+            branch_diff: item
+                .counts
+                .map(|c| c.ahead > 0 || item.is_orphan == Some(true)),
             upstream_diverged: item
                 .upstream
                 .as_ref()
@@ -1337,21 +1350,38 @@ mod tests {
         let branch = ListItem::new_branch("abc".into(), "feature".into());
         let c = LocalContent::from_item(&branch);
         assert_eq!(c.working_tree, Some(false), "branch-only: no working tree");
-        assert_eq!(
-            c.branch_diff, None,
-            "branch_diff loads from has_file_changes"
-        );
+        assert_eq!(c.branch_diff, None, "branch_diff loads from item.counts");
         assert_eq!(
             c.upstream_diverged, None,
             "upstream loads from item.upstream"
         );
 
-        // `branch_diff` follows `has_file_changes`.
+        // `branch_diff` follows the commits-ahead count vs the local default (the
+        // pane's base), not `has_file_changes` (integration target).
+        use crate::commands::list::model::AheadBehind;
         let mut ahead = ListItem::new_branch("abc".into(), "feature".into());
-        ahead.has_file_changes = Some(true);
+        ahead.counts = Some(AheadBehind {
+            ahead: 2,
+            behind: 0,
+        });
         assert_eq!(LocalContent::from_item(&ahead).branch_diff, Some(true));
-        ahead.has_file_changes = Some(false);
-        assert_eq!(LocalContent::from_item(&ahead).branch_diff, Some(false));
+        ahead.counts = Some(AheadBehind {
+            ahead: 0,
+            behind: 3,
+        });
+        assert_eq!(
+            LocalContent::from_item(&ahead).branch_diff,
+            Some(false),
+            "behind-only (no commits ahead) is empty"
+        );
+        // An orphan has an ill-defined three-dot diff — stays available even with
+        // a zero ahead count.
+        ahead.is_orphan = Some(true);
+        assert_eq!(
+            LocalContent::from_item(&ahead).branch_diff,
+            Some(true),
+            "orphan keeps branch_diff available"
+        );
 
         // `upstream_diverged` is true only when a *present* upstream is ahead or
         // behind; a configured-but-even upstream, and no remote at all, are empty.
