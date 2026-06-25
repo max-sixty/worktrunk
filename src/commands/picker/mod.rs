@@ -97,6 +97,7 @@ mod pager;
 mod pr_pane;
 mod preview;
 pub(crate) mod preview_cache;
+mod preview_notify;
 mod preview_orchestrator;
 mod progressive_handler;
 mod prs;
@@ -1187,7 +1188,20 @@ pub fn handle_picker(
     // preview tasks share one inventory scan instead of each forking
     // `git rev-parse`. Read-only for the picker session — see the
     // accessor's docstring for the staleness contract.
-    let orchestrator = Arc::new(PreviewOrchestrator::new(repo.clone()));
+    //
+    // skim 4.x repaints on demand, so the orchestrator needs a handle to skim's
+    // event loop to surface a preview compute that lands after the keystroke that
+    // requested it. The picker fills this `OnceLock` once `Skim::init_tui` has run
+    // (inside `run_skim`); until then a fill simply doesn't poke (harmless — skim
+    // hasn't rendered a preview to strand yet). The progressive handler and alt-x
+    // collector share the same sender for their own `Event::Render` /
+    // reposition pokes. See `preview_notify` and the `progressive_handler` module
+    // docstring.
+    let render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>> = Arc::new(OnceLock::new());
+    let orchestrator = Arc::new(PreviewOrchestrator::new(
+        repo.clone(),
+        Arc::clone(&render_tx),
+    ));
     let preview_cache: PreviewCache = Arc::clone(&orchestrator.cache);
 
     // Speculative warm-up: the picker sorts the current worktree first, and
@@ -1319,14 +1333,6 @@ pub fn handle_picker(
     // Approvals snapshot for the session: alt-x removals consult it read-only
     // to filter the hook plan; see `approved_removal_plan`.
     let approvals = Arc::new(Approvals::load().context("Failed to load approvals")?);
-
-    // skim 4.x repaints on demand, so the collect handler needs a handle to
-    // skim's event loop to surface in-place row updates. The picker fills this
-    // once `Skim::init_tui` has run (inside `run_skim`); until then the handler
-    // simply skips its render pokes. The alt-x collector shares it too, to inject
-    // the cursor-reposition action after a removal. See `progressive_handler`
-    // module docstring.
-    let render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>> = Arc::new(OnceLock::new());
 
     // Shared between the bg-thread collect handler and a failed alt-x removal
     // (both push warnings while skim owns the terminal) and the main thread
@@ -2393,6 +2399,7 @@ pub mod tests {
             summaries_enabled: false,
             pr_status,
             local_content: Arc::new(Mutex::new(LocalContent::default())),
+            notifier: super::preview_notify::PreviewNotifier::detached(),
         }) as Arc<dyn SkimItem>
     }
 
@@ -2431,13 +2438,15 @@ pub mod tests {
     /// tests don't exercise, so the minimal field set is enough to satisfy the
     /// type without standing up a full picker.
     fn test_factory(repo: worktrunk::git::Repository) -> std::rc::Rc<super::PipelineFactory> {
+        let render_tx = Arc::new(OnceLock::new());
         let orchestrator = Arc::new(super::preview_orchestrator::PreviewOrchestrator::new(
             repo.clone(),
+            Arc::clone(&render_tx),
         ));
         let preview_cache = Arc::clone(&orchestrator.cache);
         std::rc::Rc::new(super::PipelineFactory {
             repo,
-            render_tx: Arc::new(OnceLock::new()),
+            render_tx,
             shared_items: Arc::new(Mutex::new(Vec::new())),
             shortcut_table: Arc::new(Mutex::new(std::collections::HashMap::new())),
             preview_cache,
