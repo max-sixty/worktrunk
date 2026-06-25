@@ -246,7 +246,7 @@ $ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 | `is_main` | boolean | Is the main worktree |
 | `is_current` | boolean | Is the current worktree |
 | `is_previous` | boolean | Previous worktree from wt switch |
-| `ci` | object | CI status (see below); absent when no CI |
+| `ci` | object | CI status (see below); `--full` only, then absent when no PR/MR or branch workflow |
 | `repo_url` | string | Repository web URL derived from the primary remote; absent when the remote URL cannot be parsed |
 | `repo` | object | Structured repository metadata (see below); includes `remote` |
 | `url` | string | Dev server URL from project config; absent when not configured |

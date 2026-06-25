@@ -313,7 +313,7 @@ Query structured data with [2m--format=json[0m:
  [2mis_main[0m            boolean     Is the main worktree                                                                             
  [2mis_current[0m         boolean     Is the current worktree                                                                          
  [2mis_previous[0m        boolean     Previous worktree from wt switch                                                                 
- [2mci[0m                 object      CI status (see below); absent when no CI                                                         
+ [2mci[0m                 object      CI status (see below); [2m--full[0m only, then absent when no PR/MR or branch workflow                 
  [2mrepo_url[0m           string      Repository web URL derived from the primary remote; absent when the remote URL cannot be parsed  
  [2mrepo[0m               object      Structured repository metadata (see below); includes [2mremote[0m                                      
  [2murl[0m                string      Dev server URL from project config; absent when not configured                                   
