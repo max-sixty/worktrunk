@@ -83,8 +83,7 @@ impl CiBranchName {
 
 // Re-export public types
 pub(crate) use cache::{CachedCiStatus, MaxPrNumber};
-// Only the `--prs` picker consumes this re-export, and the picker is unix-only.
-#[cfg(unix)]
+// Only the `--prs` picker consumes this re-export.
 pub(crate) use github::GitHubPrInfo;
 
 /// Maximum number of PRs/MRs to fetch when filtering by source repository.

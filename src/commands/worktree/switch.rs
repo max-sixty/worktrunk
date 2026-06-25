@@ -1865,26 +1865,14 @@ pub fn handle_switch_command(args: SwitchArgs, yes: bool) -> anyhow::Result<()> 
             let change_dir_flag = flag_pair(args.cd, args.no_cd);
 
             let Some(branch) = args.branch else {
-                #[cfg(unix)]
-                {
-                    return crate::commands::handle_picker(
-                        args.branches,
-                        args.remotes,
-                        args.prs,
-                        change_dir_flag,
-                        args.format,
-                    );
-                }
-
-                #[cfg(not(unix))]
-                {
-                    use worktrunk::git::WorktrunkError;
-                    // Suppress unused variable warnings on Windows
-                    let _ = (args.branches, args.remotes, args.prs, change_dir_flag);
-
-                    crate::commands::print_windows_picker_unavailable();
-                    return Err(WorktrunkError::AlreadyDisplayed { exit_code: 2 }.into());
-                }
+                // No branch argument: open the interactive picker.
+                return crate::commands::handle_picker(
+                    args.branches,
+                    args.remotes,
+                    args.prs,
+                    change_dir_flag,
+                    args.format,
+                );
             };
 
             run_switch(

@@ -1680,7 +1680,7 @@ mod tests {
 
     #[test]
     fn preview_renders_tabs_and_placeholder_off_the_pr_tab() {
-        // With no per-process preview-state file, `read_mode()` returns the
+        // No tab switch happens here, so the in-memory `read_mode()` is its
         // default (WorkingTree) — empty on a --prs row — so `preview()` renders
         // the shared tab bar plus the "not checked out" placeholder. Drives the
         // real `SkimItem::preview` (the `--prs` streaming path is too async to

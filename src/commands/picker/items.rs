@@ -491,7 +491,7 @@ impl WorktreeSkimItem {
     /// Render the full preview pane (tab bar + mode content) for an explicit
     /// `mode`. Split out of [`SkimItem::preview`] so the dispatch — including
     /// the `pr` tab's `render_pr_pane` call — is testable with a given mode
-    /// rather than the per-process picker-state file.
+    /// rather than the process-wide picker mode.
     fn render_preview(&self, mode: PreviewMode, width: usize, height: usize) -> String {
         // Build preview: tabs header + content. `has_upstream` and
         // `summaries_enabled` are synchronous skeleton-time facts (see
@@ -1427,9 +1427,10 @@ mod tests {
             "description gutter: {pr_pane:?}"
         );
 
-        // `SkimItem::preview` reads the default mode (no per-process state file in
-        // tests → WorkingTree) and delegates to `render_preview`, exercising the
-        // wrapper and the non-pr dispatch arm (cache miss → loading placeholder).
+        // `SkimItem::preview` reads the default in-memory mode (WorkingTree, since
+        // no tab switch happens in this test) and delegates to `render_preview`,
+        // exercising the wrapper and the non-pr dispatch arm (cache miss → loading
+        // placeholder).
         let ctx = PreviewContext {
             query: "",
             cmd_query: "",
