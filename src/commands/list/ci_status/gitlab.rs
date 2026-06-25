@@ -196,6 +196,7 @@ pub(super) fn detect_gitlab(
             review_state: mr_entry.review_state(),
             title: mr_entry.title.clone(),
             body: mr_entry.description.clone(),
+            author: mr_entry.author.as_ref().map(|a| a.username.clone()),
             comment_count: mr_entry.comment_count(),
         });
     };
@@ -212,6 +213,7 @@ pub(super) fn detect_gitlab(
         review_state: mr_entry.review_state(),
         title: mr_entry.title.clone(),
         body: mr_entry.description.clone(),
+        author: mr_entry.author.as_ref().map(|a| a.username.clone()),
         comment_count: mr_entry.comment_count(),
     })
 }
@@ -286,6 +288,7 @@ pub(super) fn detect_gitlab_pipeline(
         review_state: None,
         title: None,
         body: None,
+        author: None,
         comment_count: None,
     })
 }
@@ -297,6 +300,12 @@ pub(super) fn detect_gitlab_pipeline(
 ///
 /// We include `source_project_id` for client-side filtering by source project.
 /// See `parse_owner_repo()` for why we filter by source, not by author.
+#[derive(Debug, Default, Deserialize)]
+struct GitLabMrAuthor {
+    #[serde(default)]
+    username: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct GitLabMrListEntry {
     /// The internal MR ID (used to fetch full details via `glab mr view <iid>`)
@@ -313,6 +322,9 @@ struct GitLabMrListEntry {
     /// MR title; shown in the picker's `pr` preview pane. Rides this call.
     #[serde(default)]
     pub title: Option<String>,
+    /// MR author; folded into the row's matcher text. Rides this call.
+    #[serde(default)]
+    pub author: Option<GitLabMrAuthor>,
     /// MR description; rendered as markdown in the `pr` preview pane.
     #[serde(default)]
     pub description: Option<String>,
@@ -433,6 +445,7 @@ mod tests {
             iid: 1,
             sha: "abc".into(),
             has_conflicts: false,
+            author: None,
             detailed_merge_status: status.map(Into::into),
             source_project_id: None,
             web_url: None,
@@ -462,6 +475,7 @@ mod tests {
             iid: 1,
             sha: "abc".into(),
             has_conflicts: false,
+            author: None,
             detailed_merge_status: None,
             source_project_id: None,
             web_url: None,

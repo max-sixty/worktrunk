@@ -227,13 +227,53 @@ fn compute_diff_preview(
 /// mutation (see `progressive_handler`); skim then re-reads `display()` and the
 /// new value surfaces — no re-send through the item channel.
 ///
-/// `search_text` (what the matcher sees) stays based on fast-only fields
-/// so cached ranks don't need to re-compute when a slow field lands.
+/// Append the PR/MR fields a row filters on — reference (`#123`/`!7`), title,
+/// author — to `text`, space-separated, in the order shared by worktree rows
+/// and listed `--prs` rows. A PR thus filters identically however it's shown,
+/// the rule the picker holds to. Empty title/author are skipped; the caller
+/// owns the trailing gutter glyph (which must stay last). `text` is assumed
+/// non-empty (it starts with the branch), so every token is space-prefixed.
+pub(super) fn push_pr_search_tokens(
+    text: &mut String,
+    reference: PrRef,
+    title: Option<&str>,
+    author: Option<&str>,
+) {
+    for token in [
+        Some(reference.to_string()),
+        title
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(str::to_owned),
+        author
+            .map(str::trim)
+            .filter(|a| !a.is_empty())
+            .map(str::to_owned),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        text.push(' ');
+        text.push_str(&token);
+    }
+}
+
+/// The matcher text (`text()`) is assembled live from `search_base` + the
+/// `gutter` glyph + the current `pr_status` slot, so a PR's reference, title,
+/// and author become filterable the moment the CI fetch lands them — the same
+/// fields a listed `--prs` row filters on (see [`push_pr_search_tokens`]). skim
+/// re-reads `text()` on each query keystroke, so the live PR data folds in
+/// without a re-send; the row may re-rank as that data streams in during the
+/// first frame.
 pub(super) struct WorktreeSkimItem {
-    /// Stable text used for fuzzy matching — branch name + path. Keeping
-    /// this independent of the rendered display means skim's matcher
-    /// cache survives progressive updates.
-    pub search_text: String,
+    /// The stable, skeleton-time head of the matcher text: branch name + the
+    /// distinct worktree path. The PR tokens and trailing gutter glyph are
+    /// appended live in `text()`.
+    pub search_base: String,
+    /// Trailing gutter glyph (`@`/`^`/`+`/`/`/`|`), kept last in `text()` so a
+    /// typed sigil filters by row kind. A skeleton-time fact from
+    /// `ItemKind::gutter_glyph`.
+    pub gutter: char,
     /// Current ANSI-colored display line. Starts as the skeleton render;
     /// replaced in place as data arrives.
     pub rendered: Arc<Mutex<String>>,
@@ -274,7 +314,24 @@ pub(super) struct WorktreeSkimItem {
 
 impl SkimItem for WorktreeSkimItem {
     fn text(&self) -> Cow<'_, str> {
-        Cow::Borrowed(&self.search_text)
+        // branch + path (stable), then the live PR/MR tokens (reference, title,
+        // author) from the current `pr_status` slot, then the gutter glyph last.
+        // Read live so a PR filters by number/title/author as soon as the CI
+        // fetch lands them — the same fields a `--prs` row carries.
+        let mut text = self.search_base.clone();
+        if let Some(Some(status)) = &*self.pr_status.lock().unwrap()
+            && let Some(reference) = status.number
+        {
+            push_pr_search_tokens(
+                &mut text,
+                reference,
+                status.title.as_deref(),
+                status.author.as_deref(),
+            );
+        }
+        text.push(' ');
+        text.push(self.gutter);
+        Cow::Owned(text)
     }
 
     fn display(&self, _context: DisplayContext) -> Line<'_> {
@@ -660,13 +717,12 @@ fn render_tab_row_compact(tabs: &[Tab], reset: Reset) -> String {
 
 /// The `pr` pane for a worktree row whose branch has a PR/MR. Renders the same
 /// shape as the `--prs` rows' pane (`PrSkimItem::pr_pane`) — reference + title
-/// header, cyan all-caps labeled metadata (the branch bold, the url underlined),
-/// and the description as markdown — via the shared [`pr_pane`] helpers, so the
-/// two read alike. The title, body, and
-/// comment count ride the same CI fetch the column already makes (see
-/// [`PrStatus`]); a status without them (an older cache entry, a forge that
-/// doesn't expose them) falls back to a reference-only header and skips the
-/// missing lines.
+/// header, cyan all-caps labeled metadata (the branch bold, the author, the url
+/// underlined), and the description as markdown — via the shared [`pr_pane`]
+/// helpers, so the two read alike. The title, author, body, and comment count
+/// ride the same CI fetch the column already makes (see [`PrStatus`]); a status
+/// without them (an older cache entry, a forge that doesn't expose them) falls
+/// back to a reference-only header and skips the missing lines.
 ///
 /// The `comments` line shows only the count; the full thread is the `comments`
 /// tab's own background fetch (see [`WorktreeSkimItem::render_comments_pane`]).
@@ -678,6 +734,9 @@ fn render_worktree_pr(branch: &str, pr_ref: PrRef, status: &PrStatus, width: usi
     let title = status.title.as_deref().filter(|t| !t.is_empty());
     let mut out = pr_pane::header(pr_ref, title);
     out.push_str(&pr_pane::branch_line(branch));
+    if let Some(author) = status.author.as_deref().filter(|a| !a.is_empty()) {
+        out.push_str(&pr_pane::metadata_line("author", &format!("@{author}")));
+    }
     if let Some(url) = &status.url {
         out.push_str(&pr_pane::url_line(url));
     }
@@ -1663,7 +1722,8 @@ mod tests {
                 "Add auth module\n\nImplements JWT-based authentication.".to_string(),
             );
             WorktreeSkimItem {
-                search_text: String::new(),
+                search_base: String::new(),
+                gutter: '@',
                 rendered: Arc::new(Mutex::new(String::new())),
                 branch_name: "feature".to_string(),
                 item: Arc::clone(&item),
@@ -1678,7 +1738,8 @@ mod tests {
         let cache_miss = {
             let preview_cache: PreviewCache = Arc::new(DashMap::new());
             WorktreeSkimItem {
-                search_text: String::new(),
+                search_base: String::new(),
+                gutter: '@',
                 rendered: Arc::new(Mutex::new(String::new())),
                 branch_name: "feature".to_string(),
                 item: Arc::clone(&item),
@@ -1731,6 +1792,7 @@ mod tests {
             review_state: Some(ReviewState::Approved),
             title: None,
             body: None,
+            author: None,
             comment_count: None,
         };
         let with_url: PrStatusSlot = Arc::new(Mutex::new(Some(Some(status))));
@@ -1757,6 +1819,7 @@ mod tests {
             review_state: Some(ReviewState::Approved),
             title: title.map(String::from),
             body: body.map(String::from),
+            author: None,
             comment_count: None,
         };
         // Build a row whose live `pr_status` slot carries a given state — what
@@ -1764,7 +1827,8 @@ mod tests {
         let row = |pr_status: Option<Option<PrStatus>>| {
             let item = ListItem::new_branch("abc".into(), "feature".into());
             WorktreeSkimItem {
-                search_text: String::new(),
+                search_base: String::new(),
+                gutter: '@',
                 rendered: Arc::new(Mutex::new(String::new())),
                 branch_name: "feature".into(),
                 item: Arc::new(item),
@@ -1867,11 +1931,13 @@ mod tests {
                 review_state: None,
                 title: None,
                 body: None,
+                author: None,
                 comment_count: None,
             }))
         };
         let row = |slot: Option<Option<PrStatus>>, cache: PreviewCache| WorktreeSkimItem {
-            search_text: String::new(),
+            search_base: String::new(),
+            gutter: '@',
             rendered: Arc::new(Mutex::new(String::new())),
             branch_name: "feature".into(),
             item: Arc::new(ListItem::new_branch("abc".into(), "feature".into())),
@@ -1932,6 +1998,7 @@ mod tests {
             review_state: None,
             title: Some("Fix the flaky retry".into()),
             body: None,
+            author: None,
             comment_count,
         };
 
@@ -1957,6 +2024,45 @@ mod tests {
         );
     }
 
+    /// The worktree-row `pr` pane shows the PR author, the same as a `--prs`
+    /// row's pane — `PrStatus` now carries it from the CI fetch. Absent author
+    /// (older cache entry, forge without the field) skips the line.
+    #[test]
+    fn worktree_pr_pane_shows_author() {
+        use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef};
+
+        let status = |author: Option<&str>| PrStatus {
+            ci_status: CiStatus::Passed,
+            source: CiSource::PullRequest,
+            is_stale: false,
+            is_priming: false,
+            url: None,
+            number: Some(PrRef::pr(7)),
+            review_state: None,
+            title: Some("Fix the flaky retry".into()),
+            body: None,
+            author: author.map(str::to_owned),
+            comment_count: None,
+        };
+
+        let with = render_worktree_pr("feature", PrRef::pr(7), &status(Some("bob")), 80)
+            .ansi_strip()
+            .to_string();
+        assert!(
+            with.lines()
+                .any(|l| l.contains("AUTHOR") && l.contains("@bob")),
+            "author line: {with:?}"
+        );
+
+        let without = render_worktree_pr("feature", PrRef::pr(7), &status(None), 80)
+            .ansi_strip()
+            .to_string();
+        assert!(
+            !without.contains("AUTHOR"),
+            "no author line when absent: {without:?}"
+        );
+    }
+
     #[test]
     fn preview_assembles_tab_bar_and_pr_pane() {
         use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef, ReviewState};
@@ -1964,7 +2070,8 @@ mod tests {
         // A worktree row whose live status carries a PR with title + body.
         let item = ListItem::new_branch("abc".into(), "feature".into());
         let row = WorktreeSkimItem {
-            search_text: String::new(),
+            search_base: String::new(),
+            gutter: '@',
             rendered: Arc::new(Mutex::new(String::new())),
             branch_name: "feature".into(),
             item: Arc::new(item),
@@ -1981,6 +2088,7 @@ mod tests {
                 review_state: Some(ReviewState::Approved),
                 title: Some("Fix the flaky retry".into()),
                 body: Some("Adds a **bounded** retry.".into()),
+                author: None,
                 comment_count: None,
             })))),
             local_content: Arc::new(Mutex::new(LocalContent::default())),
@@ -2048,6 +2156,7 @@ mod tests {
                 review_state: Some(ReviewState::Approved),
                 title: Some(title.into()),
                 body: Some("body".into()),
+                author: None,
                 comment_count: None,
             }))
         };
@@ -2057,7 +2166,8 @@ mod tests {
         let slot: PrStatusSlot = Arc::new(Mutex::new(status("First title")));
         let key = ("feature".to_string(), PreviewMode::Pr);
         let row = WorktreeSkimItem {
-            search_text: String::new(),
+            search_base: String::new(),
+            gutter: '@',
             rendered: Arc::new(Mutex::new(String::new())),
             branch_name: "feature".into(),
             item: Arc::new(ListItem::new_branch("abc".into(), "feature".into())),

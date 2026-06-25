@@ -36,6 +36,7 @@
 //! single known number but have no listing path here yet.
 
 use std::borrow::Cow;
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
@@ -59,45 +60,57 @@ use super::super::list::columns::ColumnKind;
 use super::super::list::layout::ColumnGrid;
 use super::items::{
     PreviewCache, RowShortcutData, RowUrl, ShortcutTable, TabAvailability, WorktreeSkimItem,
-    ansi_to_line, render_preview_tabs,
+    ansi_to_line, push_pr_search_tokens, render_preview_tabs,
 };
 use super::pr_pane;
 use super::preview::{PreviewMode, PreviewStateData};
 use super::preview_orchestrator::PreviewOrchestrator;
 
-/// One-shot handoff of the picker's column geometry from the collect thread
-/// (which computes the layout at skeleton time) to the `--prs` thread (which
-/// renders rows once the forge call returns). First write wins — an alt-r
-/// reload re-fires the skeleton at the same width, so later grids are
-/// identical.
+/// One-shot handoff from the collect thread (which builds the skeleton) to the
+/// `--prs` thread: the picker's column geometry, so PR rows align to the
+/// worktree grid, plus the branch names already shown, so `--prs` skips PRs
+/// already represented by a worktree/branch row — the rule that the two pickers
+/// differ only by the extra PR rows. Created fresh per `spawn()`, so an alt-r
+/// reload's `--prs` thread reads that reload's branch set (not a stale one); the
+/// skeleton fires once per spawn, so the first-write-wins guard is just defense.
 pub(super) struct GridSlot {
-    grid: Mutex<Option<ColumnGrid>>,
+    slot: Mutex<Option<Skeleton>>,
     ready: Condvar,
+}
+
+/// What the `--prs` thread takes from the skeleton (see [`GridSlot`]).
+#[derive(Clone)]
+pub(super) struct Skeleton {
+    pub grid: ColumnGrid,
+    /// Branch names of every worktree/branch row the skeleton showed. A PR whose
+    /// head branch is here is already on screen, so `--prs` drops its row.
+    pub shown_branches: HashSet<String>,
 }
 
 impl GridSlot {
     pub(super) fn new() -> Self {
         Self {
-            grid: Mutex::new(None),
+            slot: Mutex::new(None),
             ready: Condvar::new(),
         }
     }
 
-    pub(super) fn set(&self, grid: ColumnGrid) {
-        let mut slot = self.grid.lock().unwrap();
+    pub(super) fn set(&self, skeleton: Skeleton) {
+        let mut slot = self.slot.lock().unwrap();
         if slot.is_none() {
-            *slot = Some(grid);
+            *slot = Some(skeleton);
         }
         self.ready.notify_all();
     }
 
-    /// Block until the grid is set or `timeout` elapses. The timeout covers
-    /// collect exiting without a skeleton (zero items, error) — the rows
-    /// then render freeform rather than never.
-    fn wait(&self, timeout: Duration) -> Option<ColumnGrid> {
+    /// Block until the skeleton is set or `timeout` elapses. The timeout covers
+    /// collect exiting without a skeleton (zero items, error) — the rows then
+    /// render freeform rather than never, and with no shown-branch set every PR
+    /// lists (nothing to dedup against).
+    fn wait(&self, timeout: Duration) -> Option<Skeleton> {
         let (slot, _) = self
             .ready
-            .wait_timeout_while(self.grid.lock().unwrap(), timeout, |grid| grid.is_none())
+            .wait_timeout_while(self.slot.lock().unwrap(), timeout, |s| s.is_none())
             .unwrap();
         slot.clone()
     }
@@ -230,6 +243,27 @@ pub(super) fn stream_open_prs(
     }
 }
 
+/// Keep only PRs not already shown as a worktree/branch row. `shown_branches`
+/// is `None` when no skeleton arrived (collect errored / zero rows) — then every
+/// PR lists, there being nothing to dedup against.
+///
+/// Matching is by bare head-branch name, so a fork PR whose head name collides
+/// with a shown branch (e.g. a fork's `patch-1` while you have a local `patch-1`)
+/// is dropped even though the shown row's own CI fetch — filtered to the origin
+/// owner — won't surface that fork PR. Rare; the alternative (PR-identity-aware
+/// dedup) needs each shown row's PR number, which isn't known until its async CI
+/// fetch lands. Filtering by the bare name there too (`gh pr list --head`) is the
+/// same owner-scoped behavior, so this stays consistent rather than special-cased.
+fn additional_prs(entries: Vec<PrEntry>, shown_branches: Option<&HashSet<String>>) -> Vec<PrEntry> {
+    match shown_branches {
+        Some(shown) => entries
+            .into_iter()
+            .filter(|entry| !shown.contains(&entry.head_branch))
+            .collect(),
+        None => entries,
+    }
+}
+
 /// Fetch open PRs/MRs, build picker rows, and stream them into skim.
 ///
 /// On failure (forge unsupported, CLI missing/unauthenticated, network error)
@@ -265,8 +299,24 @@ fn fetch_and_stream(
 
     // The forge call above (~1s) almost always outlasts the skeleton
     // (~50ms), so this returns immediately; the wait covers a mocked forge
-    // CLI winning the race.
-    let grid = shared.grid_slot.wait(Duration::from_secs(5));
+    // CLI winning the race. A `None` (collect errored / zero rows) leaves both
+    // the grid and the dedup set empty: rows render freeform and every PR lists.
+    let (grid, shown_branches) = match shared.grid_slot.wait(Duration::from_secs(5)) {
+        Some(skeleton) => (Some(skeleton.grid), Some(skeleton.shown_branches)),
+        None => (None, None),
+    };
+
+    // Drop PRs already on screen as a worktree/branch row, so `--prs` only adds
+    // PRs not already represented — the two pickers differ solely by the extra
+    // rows. A worktree row folds the same number/title/author into its matcher
+    // text (see `WorktreeSkimItem::text`), so the dropped PR stays just as
+    // filterable under its worktree row.
+    let entries = additional_prs(entries, shown_branches.as_ref());
+    if entries.is_empty() {
+        // Every open PR already has a worktree/branch row — nothing to add. Not
+        // the "no open PRs" case, so no warning: the PRs are on screen already.
+        return;
+    }
 
     // skim 4.x takes a batch per send; the forge call already returned every
     // row, so stream them in one shot. As each row is built, kick off its
@@ -446,14 +496,13 @@ struct GhPr {
     /// Head commit SHA; lets the `log` tab use a local `git log` when present.
     #[serde(rename = "headRefOid", default)]
     head_ref_oid: String,
-    #[serde(default)]
-    author: GhAuthor,
     /// CI/review and display fields reused via the shared `gh pr list` mapping:
-    /// number, `title`, `body`, `isDraft`, `url`, `statusCheckRollup`,
+    /// number, `title`, `body`, `author`, `isDraft`, `url`, `statusCheckRollup`,
     /// `reviewDecision`, `mergeStateStatus`. Flattened so one parse feeds the
     /// row display, the `pr` preview pane, and the CI-column status. `title`/
-    /// `body` live on [`GitHubPrInfo`] (not here) so the worktree-row fetch,
-    /// which parses `GitHubPrInfo` directly, gets them from the same widened call.
+    /// `body`/`author` live on [`GitHubPrInfo`] (not here) so the worktree-row
+    /// fetch, which parses `GitHubPrInfo` directly, gets them from the same
+    /// widened call.
     #[serde(flatten)]
     info: GitHubPrInfo,
 }
@@ -505,7 +554,12 @@ fn parse_github_prs(stdout: &[u8]) -> anyhow::Result<Vec<PrEntry>> {
             title: pr.info.title.clone().unwrap_or_default(),
             head_branch: pr.head_ref_name,
             head_oid: Some(pr.head_ref_oid).filter(|s| !s.is_empty()),
-            author: pr.author.login,
+            author: pr
+                .info
+                .author
+                .as_ref()
+                .map(|a| a.login.clone())
+                .unwrap_or_default(),
             is_draft: pr.info.is_draft == Some(true),
             url: pr.info.url.clone(),
             kind: RefKind::Pr,
@@ -636,6 +690,7 @@ fn gitlab_mr_status(
         // (which feeds only the CI column), so they stay absent here.
         title: None,
         body: None,
+        author: None,
         comment_count: None,
     }
 }
@@ -644,7 +699,8 @@ fn gitlab_mr_status(
 /// carries no `ListItem` and resolves to a `pr:`/`mr:` shortcut rather than a
 /// branch or worktree path.
 pub(super) struct PrSkimItem {
-    /// What skim's fuzzy matcher sees: kind, number, title, branch, author.
+    /// What skim's fuzzy matcher sees: head branch, then the PR/MR reference,
+    /// title, and author — the same fields a worktree row folds in.
     search_text: String,
     /// ANSI-colored display line — cells on the worktree rows' column grid,
     /// or a freeform line when no grid is available.
@@ -672,17 +728,24 @@ impl PrSkimItem {
         grid: Option<&ColumnGrid>,
         preview_cache: &PreviewCache,
     ) -> Self {
-        let label = entry.kind.shortcut();
         let output_token = entry.output_token();
 
-        // Trailing gutter glyph (the `#` from `PR_GUTTER_SIGIL`, sans pad) so
-        // typing `#` filters to PR/MR rows, matching how the worktree/branch
-        // rows fold their sigil in (see `progressive_handler` `on_skeleton`).
+        // Same matcher text a worktree row builds (see `WorktreeSkimItem::text`
+        // and `push_pr_search_tokens`): head branch, then the PR/MR reference,
+        // title, and author, so a PR filters identically however it's shown.
+        // The trailing gutter glyph (`#` from `PR_GUTTER_SIGIL`, sans pad) stays
+        // last so typing `#` filters to PR/MR rows, matching the worktree/branch
+        // rows' folded sigils.
         let gutter = PR_GUTTER_SIGIL.trim_end();
-        let search_text = format!(
-            "{label} {} {} {} {} {gutter}",
-            entry.number, entry.title, entry.head_branch, entry.author
+        let mut search_text = entry.head_branch.clone();
+        push_pr_search_tokens(
+            &mut search_text,
+            entry.pr_ref(),
+            Some(&entry.title),
+            Some(&entry.author),
         );
+        search_text.push(' ');
+        search_text.push_str(gutter);
 
         let rendered = match grid {
             Some(grid) => render_grid_row(&entry, grid, list_width),
@@ -1254,9 +1317,30 @@ mod tests {
                 review_state: None,
                 title: None,
                 body: None,
+                author: None,
                 comment_count: None,
             }),
         }
+    }
+
+    /// `--prs` drops a PR already shown as a worktree/branch row (so the two
+    /// pickers differ only by the extra rows); with no skeleton every PR lists.
+    #[test]
+    fn additional_prs_drops_already_shown_branches() {
+        let pr = |number, head: &str| {
+            let mut e = entry(RefKind::Pr, number, "t");
+            e.head_branch = head.to_string();
+            e
+        };
+        let shown: HashSet<String> = ["checked-out".to_string()].into_iter().collect();
+
+        let kept = additional_prs(vec![pr(1, "checked-out"), pr(2, "not-local")], Some(&shown));
+        assert_eq!(kept.len(), 1, "the already-shown PR is dropped");
+        assert_eq!(kept[0].head_branch, "not-local");
+
+        // No skeleton (None) → nothing to dedup against, every PR lists.
+        let all = additional_prs(vec![pr(1, "checked-out"), pr(2, "x")], None);
+        assert_eq!(all.len(), 2);
     }
 
     /// Grid that includes a CI column (the picker's layout once CiStatus is no

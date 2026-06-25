@@ -645,6 +645,7 @@ mod tests {
                 review_state: None,
                 title: None,
                 body: None,
+                author: None,
                 comment_count: None,
             },
             None,
@@ -686,6 +687,7 @@ mod tests {
                 review_state: None,
                 title: None,
                 body: None,
+                author: None,
                 comment_count: None,
             },
             None,
@@ -717,6 +719,7 @@ mod tests {
                     review_state: None,
                     title: None,
                     body: None,
+                    author: None,
                     comment_count: None,
                 },
                 None,
@@ -740,6 +743,7 @@ mod tests {
             review_state: None,
             title: None,
             body: None,
+            author: None,
             comment_count: None,
         };
 

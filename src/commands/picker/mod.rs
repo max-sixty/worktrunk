@@ -941,7 +941,6 @@ struct PipelineFactory {
     preview_cache: PreviewCache,
     orchestrator: Arc<PreviewOrchestrator>,
     stashed_warnings: Arc<Mutex<Vec<String>>>,
-    grid_slot: Arc<prs::GridSlot>,
     preview_dims: (usize, usize),
     skim_list_width: usize,
     command_timeout: Option<std::time::Duration>,
@@ -979,6 +978,15 @@ impl PipelineFactory {
         let prs_loading: Option<Arc<AtomicBool>> =
             (self.show_prs && !self.is_preview_bench).then(|| Arc::new(AtomicBool::new(true)));
 
+        // The skeleton→`--prs` handoff (column geometry + the branches already
+        // shown for dedup). Fresh per spawn so an alt-r reload's `--prs` thread
+        // reads *this* reload's branch set — a session-shared first-write-wins
+        // slot would feed it the original skeleton's stale set, double-listing or
+        // dropping a PR whose worktree was created/removed since (see
+        // `prs::Skeleton`). The grid is width-stable, so per-spawn grids are
+        // identical anyway.
+        let grid_slot = Arc::new(prs::GridSlot::new());
+
         let handler: Arc<progressive_handler::PickerHandler> =
             Arc::new(progressive_handler::PickerHandler {
                 tx: tx.clone(),
@@ -997,7 +1005,7 @@ impl PipelineFactory {
                 summary_hint: self.summary_hint.clone(),
                 stashed_warnings: Arc::clone(&self.stashed_warnings),
                 deferred_items: OnceLock::new(),
-                grid_slot: Arc::clone(&self.grid_slot),
+                grid_slot: Arc::clone(&grid_slot),
                 prs_loading: prs_loading.clone(),
             });
 
@@ -1039,7 +1047,7 @@ impl PipelineFactory {
             let prs_orchestrator = Arc::clone(&self.orchestrator);
             let prs_render_tx = Arc::clone(&self.render_tx);
             let prs_shared = prs::PrsShared {
-                grid_slot: Arc::clone(&self.grid_slot),
+                grid_slot: Arc::clone(&grid_slot),
                 shortcut_table: Arc::clone(&self.shortcut_table),
             };
             let prs_layout = prs::PrsLayout {
@@ -1317,9 +1325,6 @@ pub fn handle_picker(
         preview_cache: Arc::clone(&preview_cache),
         orchestrator: Arc::clone(&orchestrator),
         stashed_warnings: Arc::clone(&stashed_warnings),
-        // Column-geometry handoff: the collect thread fills it at skeleton time,
-        // the `--prs` thread reads it to align PR rows with the worktree rows.
-        grid_slot: Arc::new(prs::GridSlot::new()),
         preview_dims,
         skim_list_width,
         command_timeout,
@@ -2356,7 +2361,8 @@ pub mod tests {
     fn picker_item(branch_name: &str, item: ListItem) -> Arc<dyn SkimItem> {
         let pr_status = Arc::new(Mutex::new(item.pr_status.clone()));
         Arc::new(WorktreeSkimItem {
-            search_text: branch_name.to_string(),
+            search_base: branch_name.to_string(),
+            gutter: '@',
             rendered: Arc::new(Mutex::new(String::new())),
             branch_name: branch_name.to_string(),
             item: Arc::new(item),
@@ -2415,7 +2421,6 @@ pub mod tests {
             preview_cache,
             orchestrator,
             stashed_warnings: Arc::new(Mutex::new(Vec::new())),
-            grid_slot: Arc::new(super::prs::GridSlot::new()),
             preview_dims: (80, 24),
             skim_list_width: 80,
             command_timeout: None,
