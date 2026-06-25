@@ -596,6 +596,13 @@ fn sticky_reposition_target(removed_pos: usize, remaining_data_rows: usize) -> O
 /// from [`sticky_reposition_target`]. Under an active fuzzy query the displayed
 /// order diverges from `shared_items` order, so the landing row is approximate
 /// (a valid nearby row) rather than the exact next row.
+///
+/// On landing, it returns [`Event::RunPreview`] so the preview pane repaints for
+/// the row the cursor settled on. skim only repaints the preview on a
+/// selection-*change* event (`on_selection_changed`), and moving the cursor
+/// through the `ItemList` API here is not one — without this, the pane keeps
+/// showing the row skim last previewed (the current worktree, which the reload
+/// briefly reset the cursor to) until the next keystroke.
 fn reposition_cursor_action(
     target: usize,
     attempts: Arc<AtomicUsize>,
@@ -603,12 +610,13 @@ fn reposition_cursor_action(
 ) -> Action {
     Action::Custom(ActionCallback::new_sync(
         move |app| -> Result<Vec<Event>, Box<dyn std::error::Error + Send + Sync>> {
-            // Rows are in: land the cursor on the removed row's slot.
+            // Rows are in: land the cursor on the removed row's slot, then
+            // repaint the preview for it (the cursor move alone doesn't).
             if app.item_list.count() > 0 {
                 app.item_list.jump_to_first();
                 app.item_list
                     .scroll_by(i32::try_from(target).unwrap_or(i32::MAX));
-                return Ok(Vec::new());
+                return Ok(vec![Event::RunPreview]);
             }
             // No rows yet. The matcher has "settled" once it has stopped with the
             // reloaded items taken and a non-empty pool (the empty pool is the
