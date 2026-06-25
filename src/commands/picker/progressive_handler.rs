@@ -590,8 +590,12 @@ mod tests {
         let received = rx.recv().expect("skeleton batch");
         // received[0] is the header; received[1] is the worktree row.
         let matcher_text = received[1].text().into_owned();
+        // The stripped tail renders with the OS separator (`to_string_lossy`),
+        // so build the expected tail the same way rather than hardcoding `/`
+        // (the row path is `repo\feature` on Windows).
+        let expected_tail = Path::new("repo").join("feature");
         assert!(
-            matcher_text.contains("repo/feature"),
+            matcher_text.contains(expected_tail.to_string_lossy().as_ref()),
             "row path should appear in the matcher text: {matcher_text:?}"
         );
         // The buggy orchestrator-repo path_base can't strip a self_repo path, so
