@@ -1,9 +1,11 @@
-#![cfg(all(unix, feature = "shell-integration-tests"))]
+#![cfg(feature = "shell-integration-tests")]
 //! TUI snapshot tests for `wt switch` interactive picker
 //!
 //! These tests use PTY execution combined with vt100 terminal emulation to capture
 //! what the user actually sees on screen, enabling meaningful snapshot testing of
-//! the skim-based TUI interface.
+//! the skim-based TUI interface. They run on every platform — `portable_pty` uses a
+//! ConPTY on Windows (see `tests/common/pty.rs`), and capturing the vt100-emulated
+//! grid (not raw escape sequences) keeps the snapshots backend-agnostic.
 //!
 //! ## Capture-Before-Abort Pattern
 //!
@@ -389,13 +391,6 @@ fn wait_for_stable(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser) {
 /// AND has stabilized. This is essential for async preview panels where the initial
 /// render may show placeholder content before the actual data loads.
 ///
-/// Handles a subtle race condition: skim may continuously redraw (cursor repositioning,
-/// border repaints) even after all meaningful content is rendered. These minor redraws
-/// reset the stability timer, preventing the "no changes for 500ms" condition from
-/// being met. To handle this, once expected content is found, we track how long it
-/// has been continuously present and accept stability after STABLE_DURATION even if
-/// the screen keeps changing cosmetically.
-///
 /// Tip: avoid including the panel border character (`│`) in `expected_content` —
 /// its rendering varies by platform and terminal, causing flaky assertions.
 fn wait_for_stable_with_content(
@@ -403,12 +398,72 @@ fn wait_for_stable_with_content(
     parser: &mut vt100::Parser,
     expected_content: Option<&str>,
 ) {
+    let describe = expected_content.map(|c| format!("expected content {c:?}"));
+    wait_for_stable_until(
+        rx,
+        parser,
+        |screen| expected_content.is_none_or(|c| screen.contains(c)),
+        describe.as_deref(),
+    );
+}
+
+/// Wait until the list-pane cursor pointer lands on the row for `name`, then
+/// settles.
+///
+/// skim draws its `> ` pointer on the selected row on every render of the item
+/// list, so the pointer is a race-free signal of cursor position. The preview
+/// pane is not: skim only repaints it on a selection-*change* event
+/// (`on_selection_changed` → `Event::RunPreview`), so a cursor move driven by a
+/// `Custom` action — the alt-r sticky reposition — leaves the preview showing
+/// the previous row until something else repaints it. Gating cursor-position
+/// assertions on the preview text therefore races the picker's async render;
+/// gating on the pointer does not.
+///
+/// The query line also starts with `> `, but these helpers navigate by cursor
+/// and never type, so the query stays empty — only the selected row both starts
+/// with `>` and carries a worktree `name`, which uniquely picks it out.
+fn wait_for_cursor_on_row(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser, name: &str) {
+    let describe = format!("the cursor (> pointer) on row {name:?}");
+    wait_for_stable_until(
+        rx,
+        parser,
+        |screen| {
+            screen
+                .lines()
+                .any(|line| line.starts_with('>') && line.contains(name))
+        },
+        Some(&describe),
+    );
+}
+
+/// Drive the PTY reader until the screen satisfies `ready` and then settles, or
+/// the stabilization timeout elapses.
+///
+/// `ready` is evaluated against the full screen contents. When `describe` is
+/// `Some`, a timeout that never saw `ready` panics with diagnostics (naming the
+/// awaited condition); when it is `None` the caller has no readiness condition
+/// (stability only) and `ready` is ignored.
+///
+/// Handles a subtle race: skim may keep redrawing cosmetically (cursor
+/// repositioning, border repaints) even after the meaningful content is on
+/// screen, which keeps resetting the "no changes for STABLE_DURATION" timer. So
+/// once `ready` holds, we track how long it has held continuously and accept
+/// stability after STABLE_DURATION even if the screen keeps churning. With no
+/// readiness condition there is nothing to find, so the screen must settle the
+/// hard way (the cosmetic-redraw fallback never engages).
+fn wait_for_stable_until(
+    rx: &mpsc::Receiver<Vec<u8>>,
+    parser: &mut vt100::Parser,
+    ready: impl Fn(&str) -> bool,
+    describe: Option<&str>,
+) {
     let start = Instant::now();
     let mut last_change = Instant::now();
     let mut last_content = parser.screen().contents();
-    // Tracks when expected content first appeared continuously on screen.
-    // Used as a fallback stability signal when skim keeps redrawing cosmetically.
-    let mut content_found_at: Option<Instant> = None;
+    // Tracks when `ready` first held continuously on screen. Used as a fallback
+    // stability signal when skim keeps redrawing cosmetically.
+    let mut ready_since: Option<Instant> = None;
+    let has_condition = describe.is_some();
 
     while start.elapsed() < STABILIZE_TIMEOUT {
         // Drain available output
@@ -422,19 +477,17 @@ fn wait_for_stable_with_content(
             last_change = Instant::now();
         }
 
-        // Check if expected content is present (if required)
-        let content_ready = match expected_content {
-            Some(expected) => {
-                let found = current_content.contains(expected);
-                if found {
-                    content_found_at.get_or_insert(Instant::now());
-                } else {
-                    // Content disappeared (e.g., skim full redraw) — reset
-                    content_found_at = None;
-                }
-                found
+        let content_ready = if has_condition {
+            let found = ready(&current_content);
+            if found {
+                ready_since.get_or_insert(Instant::now());
+            } else {
+                // Condition lost (e.g., skim full redraw) — reset
+                ready_since = None;
             }
-            None => true,
+            found
+        } else {
+            true
         };
 
         // Primary: screen hasn't changed for STABLE_DURATION and content is ready
@@ -442,11 +495,10 @@ fn wait_for_stable_with_content(
             return;
         }
 
-        // Fallback for content-expected case: if expected content has been continuously
-        // present for STABLE_DURATION, consider the screen stable even if skim keeps
-        // doing cosmetic redraws (cursor repositioning, border repaints). These minor
-        // changes don't affect snapshot correctness.
-        if let Some(found_time) = content_found_at
+        // Fallback (only with a readiness condition): if it has held continuously
+        // for STABLE_DURATION, consider the screen stable even while skim keeps
+        // doing cosmetic redraws (cursor repositioning, border repaints).
+        if let Some(found_time) = ready_since
             && found_time.elapsed() >= STABLE_DURATION
         {
             return;
@@ -455,19 +507,19 @@ fn wait_for_stable_with_content(
         std::thread::sleep(POLL_INTERVAL);
     }
 
-    // Timeout: if expected content was specified but not found, fail with diagnostics
-    // instead of proceeding to a guaranteed snapshot mismatch.
-    if let Some(expected) = expected_content
-        && !last_content.contains(expected)
+    // Timeout: if a condition was specified but never held, fail with diagnostics
+    // instead of proceeding to a guaranteed assertion mismatch.
+    if let Some(desc) = describe
+        && !ready(&last_content)
     {
         panic!(
-            "Timed out after {:?} waiting for expected content {:?} to appear on screen.\n\
+            "Timed out after {:?} waiting for {desc} to appear on screen.\n\
              Screen content:\n{}",
-            STABILIZE_TIMEOUT, expected, last_content
+            STABILIZE_TIMEOUT, last_content
         );
     }
 
-    // Stability-only timeout (no content expectation, or content present but unstable) —
+    // Stability-only timeout (no condition, or condition present but unstable) —
     // warn but proceed (test may still pass with current screen state)
     eprintln!(
         "Warning: Screen did not fully stabilize within {:?}",
@@ -570,6 +622,44 @@ fn test_switch_picker_with_multiple_worktrees(mut repo: TestRepo) {
     settings.bind(|| {
         assert_snapshot!("switch_picker_multiple_worktrees_list", list);
         assert_snapshot!("switch_picker_multiple_worktrees_preview", preview);
+    });
+}
+
+/// Alt-l / alt-h are skim's built-in horizontal-scroll keys (ScrollRight /
+/// ScrollLeft). The picker binds both to `ignore` because each row's `display()`
+/// owns its layout with a leading worktree-status sigil; an unbound alt-l slides
+/// every row left, clipping that sigil gutter (`no_hscroll(true)` only gates the
+/// automatic match-following shift, not the manual offset these keys push).
+/// Pressing alt-l here must leave the list byte-for-byte unscrolled — the same
+/// frame `test_switch_picker_with_multiple_worktrees` snapshots.
+#[rstest]
+fn test_switch_picker_alt_l_does_not_hscroll(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    // Remove origin so snapshots don't show origin/main
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.add_worktree("feature-one");
+    repo.add_worktree("feature-two");
+
+    let env_vars = repo.test_env_vars();
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            ("", Some("feature-two")), // wait for items to render
+            ("\x1bl", None),           // Alt-l: ignored, must not scroll
+            ("\x1bl", None),           // a second press, still ignored
+            ("\x1bh", None),           // Alt-h: ignored too
+        ],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+
+    let (list, _preview) = result.panels();
+    let settings = switch_picker_settings(&repo);
+    settings.bind(|| {
+        assert_snapshot!("switch_picker_alt_l_ignored_list", list);
     });
 }
 
@@ -1005,11 +1095,15 @@ fn mock_forge_env(
         "MOCK_CONFIG_DIR".to_string(),
         mock_bin.display().to_string(),
     ));
-    let base_path = std::env::var("PATH").unwrap_or_default();
-    env_vars.push((
-        "PATH".to_string(),
-        format!("{}:{base_path}", mock_bin.display()),
-    ));
+    // Prepend mock-bin to PATH using the OS separator (`;` on Windows, `:` on
+    // Unix) — a hardcoded `:` corrupts the PATH on Windows, so the mock
+    // `gh.exe`/`glab.exe` is never found and the `--prs` fetch silently no-ops.
+    // `configure_pty_command` sets `PATH` (uppercase), which this entry overrides.
+    let base_path = std::env::var_os("PATH").unwrap_or_default();
+    let mut paths = vec![mock_bin.clone()];
+    paths.extend(std::env::split_paths(&base_path));
+    let joined = std::env::join_paths(paths).expect("mock-bin joins into PATH");
+    env_vars.push(("PATH".to_string(), joined.to_string_lossy().into_owned()));
     env_vars
 }
 
@@ -1665,6 +1759,16 @@ fn test_switch_picker_no_cd_switches_without_cd_directive(mut repo: TestRepo) {
 /// without a prompt — inconsistent with every other hook the picker gates, and
 /// a hole in "Project Commands Run Only After Approval". Here the hook is
 /// declined at the prompt; it must not run, and the switch must still succeed.
+// TODO(windows-picker): on Windows this exits 1 instead of 0. Declining the
+// hook returns Ok on both platforms, so the failure is in the interactive
+// approval prompt's stdin handoff after skim releases the ConPTY — not yet
+// reproduced or fixed (needs a Windows box). The other accept-path picker
+// tests, which switch without an approval prompt, pass on Windows. Ignored on
+// Windows so it still compiles there; runs everywhere else.
+#[cfg_attr(
+    windows,
+    ignore = "pre-switch hook decline exits 1 on Windows; needs investigation"
+)]
 #[rstest]
 fn test_switch_picker_pre_switch_hook_requires_approval(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
@@ -1785,24 +1889,20 @@ fn drive_alt_r_then_switch(
         }
     };
 
-    // Down onto row 1, confirmed via its preview pane (cursor navigation never
-    // invokes the matcher, so this is deterministic regardless of load).
+    // Down onto row 1, confirmed via the list-pane cursor pointer (cursor
+    // navigation never invokes the matcher, and the pointer refreshes on every
+    // render, so this is deterministic regardless of load).
     send(&writer, b"\x1b[B");
-    wait_for_stable_with_content(
-        &rx,
-        &mut parser,
-        Some(&format!("{row1} has no uncommitted changes")),
-    );
+    wait_for_cursor_on_row(&rx, &mut parser, row1);
 
     // alt-r removes row 1; the cursor must stick to its slot — now holding row 2.
-    // Gating on row 2's preview *is* the sticky assertion: a cursor reset to the
-    // top would show the current worktree's preview and time this out.
+    // The pointer landing on row 2 *is* the sticky assertion: a cursor reset to
+    // the top would leave the pointer on the current worktree and time this out.
+    // We gate on the pointer, not row 2's preview pane, because the reposition is
+    // a `Custom` action and skim doesn't repaint the preview after one — see
+    // `wait_for_cursor_on_row`.
     send(&writer, b"\x1br");
-    wait_for_stable_with_content(
-        &rx,
-        &mut parser,
-        Some(&format!("{row2} has no uncommitted changes")),
-    );
+    wait_for_cursor_on_row(&rx, &mut parser, row2);
 
     // Enter switches to the cursor row (row 2).
     send(&writer, b"\r");
@@ -1880,4 +1980,58 @@ fn test_switch_picker_alt_r_no_match_stays_responsive(mut repo: TestRepo) {
     );
 
     assert_valid_abort_exit_code(result.exit_code);
+}
+
+/// alt-r on an unmerged branch-only row leaves the row present end-to-end through
+/// real skim — `SafeDelete` refuses to delete an unmerged branch, so the row must
+/// not vanish. The inverse of `…_no_match_stays_responsive`, which removes a row
+/// and expects emptiness.
+///
+/// This guards the integration outcome (the real reload re-renders the row, the
+/// list doesn't empty), not the no-flicker mechanism specifically: a regression in
+/// the up-front keep would be masked here by the background restore backstop, which
+/// re-inserts the row. The keep-path-specific "never dropped, no flicker" property
+/// is unit-tested in `test_invoke_keeps_unmerged_branch_only_row`, which checks the
+/// synchronous `items` state before any backstop can run.
+#[rstest]
+fn test_switch_picker_alt_r_keeps_unmerged_branch_row(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // An unmerged branch — a commit off the default branch — with no worktree.
+    // Use the branch wt itself resolves as the default, so the picker's
+    // integration check and this checkout key off the same ref.
+    let default_branch = repo.git_output(&["symbolic-ref", "--short", "HEAD"]);
+    repo.run_git(&["checkout", "-b", "unmerged-orphan"]);
+    std::fs::write(repo.root_path().join("orphan.txt"), "unmerged work").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "unmerged work"]);
+    repo.run_git(&["checkout", &default_branch]);
+
+    let env_vars = repo.test_env_vars();
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--branches"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            ("unmerged-orphan", Some("unmerged-orphan")), // filter to the branch
+            ("\x1br", Some("unmerged-orphan")),           // alt-r keeps it: still visible
+        ],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+    let (list, _preview) = result.panels();
+    // `list` (cols 0..LIST_WIDTH of every row) includes skim's query-echo prompt
+    // line `> unmerged-orphan`, which holds the branch name whether or not the row
+    // survives. So `contains` alone is tautological — assert the name appears at
+    // least twice (the prompt echo PLUS the data row). A regression that dropped
+    // the row optimistically would empty the filtered list, leaving only the
+    // prompt's single occurrence, and fail here.
+    let occurrences = list.matches("unmerged-orphan").count();
+    assert!(
+        occurrences >= 2,
+        "the unmerged branch-only row survives alt-r — expected the branch name in \
+         both the prompt echo and a data row, got {occurrences} occurrence(s).\nList:\n{list}"
+    );
 }

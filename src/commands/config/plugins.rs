@@ -7,7 +7,9 @@ use color_print::cformat;
 use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{eprintln, info_message, progress_message, success_message};
 
-use super::show::{home_dir, is_claude_available, is_plugin_installed, is_statusline_configured};
+use super::show::{
+    claude_config_dir, is_claude_available, is_plugin_installed, is_statusline_configured,
+};
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
 
 /// Handle `wt config plugins claude install`
@@ -135,7 +137,7 @@ pub fn handle_claude_install_statusline(yes: bool) -> anyhow::Result<()> {
 
     // Ensure parent directory exists
     if let Some(parent) = settings_path.parent() {
-        std::fs::create_dir_all(parent).context("Failed to create .claude directory")?;
+        std::fs::create_dir_all(parent).context("Failed to create Claude Code config directory")?;
     }
 
     // Read existing settings or start with empty object
@@ -168,12 +170,13 @@ pub fn handle_claude_install_statusline(yes: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Get the path to `~/.claude/settings.json`, or bail if home dir is unavailable
+/// Get the path to Claude Code's `settings.json` (under `CLAUDE_CONFIG_DIR` or
+/// `~/.claude`), or bail if the config directory can't be determined
 fn require_settings_path() -> anyhow::Result<PathBuf> {
-    let Some(home) = home_dir() else {
-        bail!("Could not determine home directory");
+    let Some(config_dir) = claude_config_dir() else {
+        bail!("Could not determine Claude Code config directory");
     };
-    Ok(home.join(".claude/settings.json"))
+    Ok(config_dir.join("settings.json"))
 }
 
 /// Bail if `claude` CLI is not available
