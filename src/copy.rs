@@ -180,7 +180,7 @@ pub fn copy_dir_recursive(
                     dest: dest_path,
                 });
             } else {
-                log::debug!("skipping non-regular file: {}", src_path.display());
+                tracing::debug!(path = %src_path.display(), "skipping non-regular file: {}", src_path.display());
             }
         }
     }

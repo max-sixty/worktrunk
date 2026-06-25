@@ -316,7 +316,10 @@ impl Repository {
             .parse()
             .unwrap_or(0);
         if target_commit_count > PATCH_ID_SCAN_MAX_COMMITS {
-            log::debug!(
+            tracing::debug!(
+                target_commit_count,
+                merge_base = %merge_base,
+                target = %target,
                 "skipping patch-id squash-merge check: {target_commit_count} commits in {merge_base}..{target} exceeds cap of {PATCH_ID_SCAN_MAX_COMMITS}"
             );
             return Ok(false);

@@ -130,7 +130,7 @@ pub(crate) fn tool_available(tool: &str, args: &[&str]) -> bool {
 /// Parse JSON output from CLI tools
 fn parse_json<T: DeserializeOwned>(stdout: &[u8], command: &str, branch: &str) -> Option<T> {
     serde_json::from_slice(stdout)
-        .map_err(|e| log::warn!("Failed to parse {} JSON for {}: {}", command, branch, e))
+        .map_err(|e| tracing::warn!(command = %command, branch = %branch, error = %e, "Failed to parse {} JSON for {}: {}", command, branch, e))
         .ok()
 }
 
@@ -557,12 +557,20 @@ impl PrStatus {
         // Use full_name as cache key to distinguish local "feature" from remote "origin/feature"
         let now_secs = epoch_now();
 
+        // `age` saturates: under a pinned test clock (or real clock skew)
+        // `now_secs` can predate `checked_at`, so a raw subtraction would
+        // underflow-panic when this `debug!` fires (its args build at `-vv`).
+        // `saturating_sub` clamps to 0, matching `CachedCiStatus::is_valid`.
         let status = match CachedCiStatus::read(repo, &branch.full_name) {
             Some(cached) if cached.is_valid(local_head, now_secs, &repo_path) => {
-                log::debug!(
+                tracing::debug!(
+                    branch = %branch.full_name,
+                    age = %(now_secs.saturating_sub(cached.checked_at)),
+                    ttl = %CachedCiStatus::ttl_for_repo(&repo_path),
+                    status = ?cached.status.as_ref().map(|s| &s.ci_status),
                     "Using cached CI status for {} (age={}s, ttl={}s, status={:?})",
                     branch.full_name,
-                    now_secs - cached.checked_at,
+                    now_secs.saturating_sub(cached.checked_at),
                     CachedCiStatus::ttl_for_repo(&repo_path),
                     cached.status.as_ref().map(|s| &s.ci_status)
                 );
@@ -570,10 +578,14 @@ impl PrStatus {
             }
             cached => {
                 if let Some(cached) = cached {
-                    log::debug!(
+                    tracing::debug!(
+                        branch = %branch.full_name,
+                        age = %(now_secs.saturating_sub(cached.checked_at)),
+                        ttl = %CachedCiStatus::ttl_for_repo(&repo_path),
+                        head_match = %(cached.head == local_head),
                         "Cache expired for {} (age={}s, ttl={}s, head_match={})",
                         branch.full_name,
-                        now_secs - cached.checked_at,
+                        now_secs.saturating_sub(cached.checked_at),
                         CachedCiStatus::ttl_for_repo(&repo_path),
                         cached.head == local_head
                     );
@@ -621,7 +633,7 @@ impl PrStatus {
             Some(p) => platform::detect_ci(p, repo, branch, local_head, has_upstream),
             None => {
                 // Unknown platform — user should set forge.platform in project config
-                log::debug!(
+                tracing::debug!(
                     "Could not detect CI platform from remote URL; \
                      set forge.platform in .config/wt.toml for CI status"
                 );

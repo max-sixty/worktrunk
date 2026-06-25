@@ -274,7 +274,7 @@ fn resolve_fork_ref(
     let expected_remote = match remote_ref::find_remote(repo, info) {
         Ok(remote) => Some(remote),
         Err(e) => {
-            log::debug!("Could not resolve remote for {}: {e:#}", ref_type.name());
+            tracing::debug!(name = %ref_type.name(), error = %e, "Could not resolve remote for {}: {e:#}", ref_type.name());
             None
         }
     };

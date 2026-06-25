@@ -380,7 +380,7 @@ impl PickerCollector {
                         // this is a genuine `git branch -D` failure. The row is
                         // restored anyway because the branch still exists (see
                         // `removal_target_still_present`) — surface the cause.
-                        log::warn!("picker: failed to delete branch '{branch_name}': {e:#}");
+                        tracing::warn!(branch = %branch_name, error = %e, "picker: failed to delete branch '{branch_name}': {e:#}");
                     }
                 }
             }
@@ -458,7 +458,7 @@ impl PickerCollector {
             .name(format!("picker-remove-{selected_output}"))
             .spawn(move || {
                 if let Err(e) = Self::do_removal(&repo, &result, &approvals) {
-                    log::warn!("picker: removal of '{selected_output}' errored: {e:#}");
+                    tracing::warn!(selected_output = %selected_output, error = %e, "picker: removal of '{selected_output}' errored: {e:#}");
                 }
                 if removal_target_still_present(&repo, &result)
                     && let Some((item, pos)) = removed
@@ -763,7 +763,7 @@ fn removal_target_still_present(repo: &Repository, result: &RemoveResult) -> boo
 /// [`removal_will_remove_target`]), the row must reappear. This re-inserts it into
 /// `shared_items` at its original slot, stashes
 /// a `kept` warning (drained to stderr once skim releases the terminal; the full
-/// error, if any, is in the `log::warn!` the caller emits), then reloads the
+/// error, if any, is in the `tracing::warn!` the caller emits), then reloads the
 /// picker to re-stream the restored list and lands the cursor back on the row.
 ///
 /// The reload command is any string that is neither `remove <token>` nor the
@@ -867,7 +867,7 @@ impl CommandCollector for PickerCollector {
                         }
                     }
                     Err(e) => {
-                        log::info!("picker: cannot remove '{selected_output}': {e:#}");
+                        tracing::info!(selected_output = %selected_output, error = %e, "picker: cannot remove '{selected_output}': {e:#}");
                     }
                 }
             }

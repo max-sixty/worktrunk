@@ -310,7 +310,9 @@ fn spawn_child(
         command.process_group(0);
     }
 
-    log::debug!(
+    tracing::debug!(
+        command = %cmd.expanded,
+        shell = %shell.name,
         "$ {} (concurrent #{index}, shell: {})",
         cmd.expanded,
         shell.name

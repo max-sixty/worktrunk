@@ -58,7 +58,7 @@ fn detect_help_pager() -> Option<String> {
     if shell.is_posix {
         Some("less".to_string())
     } else {
-        log::debug!("No POSIX shell available, skipping pager (less not available)");
+        tracing::debug!("No POSIX shell available, skipping pager (less not available)");
         None
     }
 }
@@ -84,13 +84,13 @@ fn detect_help_pager() -> Option<String> {
 pub(crate) fn show_help_in_pager(help_text: &str, use_pager: bool) {
     // Short help (-h) never uses a pager
     if !use_pager {
-        log::debug!("Short help (-h) requested, printing directly to stdout");
+        tracing::debug!("Short help (-h) requested, printing directly to stdout");
         print!("{}", help_text);
         return;
     }
 
     let Some(pager_cmd) = detect_help_pager() else {
-        log::debug!("No pager configured, printing help directly to stdout");
+        tracing::debug!("No pager configured, printing help directly to stdout");
         print!("{}", help_text);
         return;
     };
@@ -98,14 +98,14 @@ pub(crate) fn show_help_in_pager(help_text: &str, use_pager: bool) {
     // Only page when our output destination is a terminal.
     // If stdout is piped/redirected (e.g., `wt --help | grep foo`), print directly.
     if !std::io::stdout().is_terminal() {
-        log::debug!("stdout is not a TTY, skipping pager");
+        tracing::debug!("stdout is not a TTY, skipping pager");
         print!("{}", help_text);
         return;
     }
 
-    log::debug!("Invoking pager: {}", pager_cmd);
+    tracing::debug!(pager_cmd = %pager_cmd, "Invoking pager: {}", pager_cmd);
     if let Err(e) = pipe_through_pager(&pager_cmd, help_text) {
-        log::debug!("Pager failed, falling back to stdout: {}", e);
+        tracing::debug!(error = %e, "Pager failed, falling back to stdout: {}", e);
         print!("{}", help_text);
     }
 }
@@ -119,7 +119,7 @@ pub(crate) fn show_help_in_pager(help_text: &str, use_pager: bool) {
 fn pipe_through_pager(pager_cmd: &str, help_text: &str) -> std::io::Result<()> {
     let less_flags = compute_less_flags(std::env::var("LESS").ok().as_deref());
     let shell = ShellConfig::get().map_err(std::io::Error::other)?;
-    log::debug!("$ {} (pager)", pager_cmd);
+    tracing::debug!(pager_cmd = %pager_cmd, "$ {} (pager)", pager_cmd);
     let mut cmd = shell.command(pager_cmd);
     worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
     let mut child = cmd.stdin(Stdio::piped()).env("LESS", &less_flags).spawn()?;

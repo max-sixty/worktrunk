@@ -199,7 +199,8 @@ pub fn spawn_detached(
 ) -> anyhow::Result<std::path::PathBuf> {
     let (log_path, log_file) = create_detach_log(repo, branch, hook_log)?;
 
-    log::debug!(
+    tracing::debug!(
+        command = %command,
         "$ {} (detached, logging to {})",
         command,
         log_path.file_name().unwrap_or_default().to_string_lossy()
@@ -356,7 +357,8 @@ pub fn spawn_detached_exec(
 ) -> anyhow::Result<std::path::PathBuf> {
     let (log_path, log_file) = create_detach_log(repo, branch, hook_log)?;
 
-    log::debug!(
+    tracing::debug!(
+        program = %program.display(),
         "$ {} {} (detached, logging to {})",
         program.display(),
         args.join(" "),
@@ -539,7 +541,7 @@ pub fn sweep_stale_trash(repo: &Repository) {
         &HookLog::shared(InternalOp::TrashSweep),
         None,
     ) {
-        log::debug!("Failed to spawn stale trash sweep: {e}");
+        tracing::debug!(error = %e, "Failed to spawn stale trash sweep: {e}");
     }
 }
 

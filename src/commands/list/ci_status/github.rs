@@ -41,7 +41,8 @@ pub(super) fn detect_github(
     let branch_owner = branch_owner_repo(repo, branch).map(|(owner, _)| owner);
 
     let Some(branch_owner) = branch_owner else {
-        log::debug!(
+        tracing::debug!(
+            branch = %branch.full_name,
             "Branch {} has no resolvable push remote; skipping PR-based CI detection",
             branch.full_name
         );
@@ -79,7 +80,9 @@ pub(super) fn detect_github(
     {
         Ok(output) => output,
         Err(e) => {
-            log::warn!(
+            tracing::warn!(
+                branch = %branch.full_name,
+                error = %e,
                 "gh pr list failed to execute for branch {}: {}",
                 branch.full_name,
                 e
@@ -105,7 +108,10 @@ pub(super) fn detect_github(
             .unwrap_or(true) // Missing owner field = potential match
     });
     if pr_info.is_none() && !pr_list.is_empty() {
-        log::debug!(
+        tracing::debug!(
+            count = %pr_list.len(),
+            branch = %branch.full_name,
+            owner = %branch_owner,
             "Found {} PRs for branch {} but none from owner {}",
             pr_list.len(),
             branch.full_name,
@@ -176,7 +182,9 @@ pub(super) fn detect_github_commit_checks(
     {
         Ok(output) => output,
         Err(e) => {
-            log::warn!(
+            tracing::warn!(
+                head = %local_head,
+                error = %e,
                 "gh api check-runs failed to execute for {}: {}",
                 local_head,
                 e

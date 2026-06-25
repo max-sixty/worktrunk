@@ -1674,7 +1674,7 @@ pub fn collect(
                         s.table.update_row(item_idx, rendered.clone());
 
                         if let Err(e) = s.table.flush() {
-                            log::debug!("Progressive table flush failed: {}", e);
+                            tracing::debug!(error = %e, "Progressive table flush failed: {}", e);
                         }
                     }
 
@@ -1692,7 +1692,7 @@ pub fn collect(
                             s.table.update_row(idx, line.clone());
                         }
                         if let Err(e) = s.table.flush() {
-                            log::debug!("Progressive table reveal flush failed: {}", e);
+                            tracing::debug!(error = %e, "Progressive table reveal flush failed: {}", e);
                         }
                     }
 
@@ -1722,7 +1722,7 @@ pub fn collect(
                         if s.table.update_footer(footer_msg)
                             && let Err(e) = s.table.flush()
                         {
-                            log::debug!("Progressive table flush failed: {}", e);
+                            tracing::debug!(error = %e, "Progressive table flush failed: {}", e);
                         }
                     }
                     // Picker has no stall UI; per-update repaints keep it
@@ -2103,7 +2103,8 @@ pub fn populate_item(
 
     // Handle timeout (silent for statusline - just log it)
     if let DrainOutcome::TimedOut { received_count, .. } = drain_outcome {
-        log::warn!(
+        tracing::warn!(
+            count = received_count,
             "populate_item timed out after {}s ({received_count} results received)",
             results::DRAIN_TIMEOUT.as_secs()
         );
@@ -2111,10 +2112,17 @@ pub fn populate_item(
 
     // Log errors silently (statusline shouldn't spam warnings)
     if !errors.is_empty() {
-        log::warn!("populate_item had {} task errors", errors.len());
+        tracing::warn!(
+            count = errors.len(),
+            "populate_item had {} task errors",
+            errors.len()
+        );
         for error in &errors {
             let kind_str: &'static str = error.kind.into();
-            log::debug!(
+            tracing::debug!(
+                item = error.item_idx,
+                kind = %kind_str,
+                error = %error.message,
                 "  - item {}: {} ({})",
                 error.item_idx,
                 kind_str,

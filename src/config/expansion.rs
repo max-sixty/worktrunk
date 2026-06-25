@@ -988,11 +988,12 @@ pub fn expand_template(
     // -vv: Full debug logging with vars
     // Redact credentials from values to prevent leaking tokens in logs
     if verbose >= 2 {
-        log::debug!("[template:{name}] template={template:?}");
+        tracing::debug!(name = %name, template = ?template, "[template:{name}] template={template:?}");
         // Sort keys for deterministic output in tests
         let mut sorted_vars: Vec<_> = vars.iter().collect();
         sorted_vars.sort_by_key(|(k, _)| *k);
-        log::debug!(
+        tracing::debug!(
+            name = %name,
             "[template:{name}] vars={{{}}}",
             sorted_vars
                 .iter()
@@ -1033,7 +1034,7 @@ pub fn expand_template(
     // -vv: Full debug logging with result
     // Redact credentials from result to prevent leaking tokens in logs
     if verbose >= 2 {
-        log::debug!("[template:{name}] result={:?}", redact_credentials(&result));
+        tracing::debug!(name = %name, "[template:{name}] result={:?}", redact_credentials(&result));
     }
 
     // -v: Nice styled output showing template expansion. The source template
