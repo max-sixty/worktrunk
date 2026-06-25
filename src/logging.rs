@@ -15,6 +15,15 @@
 //! superset of `-v`, with Debug-level records (the noisy ones, including
 //! the bounded subprocess preview) routed to the file layers only.
 //!
+//! Each layer's target filter carries an explicit TRACE `max_level_hint`
+//! (see [`target_filter`]) so the `EnvFilter`'s level bound survives the
+//! `Filter::and` and reaches the global `LevelFilter`. That keeps the native
+//! `tracing::*` macros cheap: below the active verbosity a `debug!` is gated
+//! out before it builds its fields, exactly as `log::debug!` short-circuits
+//! on `log::max_level`. Without the hint, `And`'s `cmp::min` (where a `None`
+//! hint sorts below any `Some`) would erase the bound, pin the global level
+//! at TRACE, and force every `debug!` to format its args even at `-v0`.
+//!
 //! The `log` crate calls (used throughout the codebase) are bridged into
 //! `tracing` by [`tracing_log::LogTracer::init`] — every layer above sees
 //! both native `tracing::*` events and forwarded `log::*` records.
@@ -25,7 +34,7 @@ use std::fmt::{self, Write as _};
 use color_print::cformat;
 use tracing::{Event, Subscriber};
 use tracing_subscriber::Layer;
-use tracing_subscriber::filter::{EnvFilter, FilterExt, LevelFilter, filter_fn};
+use tracing_subscriber::filter::{EnvFilter, FilterExt, FilterFn, LevelFilter, filter_fn};
 use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields, format::Writer};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::LookupSpan;
@@ -488,24 +497,19 @@ pub(crate) fn init(verbose_level: u8) {
     //
     // The builder's `with_max_level` caps `log::max_level()` — the static
     // gate `log_enabled!` checks before a `log::*` record evaluates its
-    // format args. Worktrunk's own emit sites are native `tracing::*`, so
-    // this now gates the `log::*` records forwarded from dependencies plus
-    // the `log::log_enabled!` deep-logging guard in `shell_exec::log_output`
-    // (which `tracing::enabled!` can't replace — see the comment there).
+    // format args. Worktrunk's own emit sites are native `tracing::*`, gated
+    // by the global level hint the layer filters now expose (see
+    // `target_filter`), so this cap is specifically for the two `log`-API
+    // consumers that hint can't reach: the `log::*` records forwarded from
+    // dependencies, and the `log::log_enabled!` deep-logging guard in
+    // `shell_exec::log_output`.
+    //
     // Mirror the env-wins-when-set semantics the layer filters use (PR #2901):
     // if `RUST_LOG` is set, its level wins; otherwise the verbosity flag
     // baseline applies. Without an explicit cap, the default
     // `LevelFilter::max()` would always pass the static check, forcing
     // every dependency `log::debug!(…)` to format its args even when no
     // sink is active.
-    //
-    // This cap does NOT gate native `tracing::*` sites: the layered
-    // subscriber does not short-circuit Debug callsites at low verbosity, so
-    // a `tracing::debug!` evaluates its args even when no sink will record
-    // them. Debug args must therefore be panic-free at every level — see the
-    // `saturating_sub` in `CiStatus::detect`, which the old `log::debug!`
-    // there could leave as a raw subtraction only because the cap stopped it
-    // from evaluating at low verbosity.
     let _ = tracing_log::LogTracer::builder()
         .with_max_level(effective_log_max_level(verbose_level, rust_log_level()))
         .init();
@@ -574,6 +578,25 @@ fn parse_verbose_level(raw: Option<&str>) -> u8 {
     raw.and_then(|v| v.trim().parse::<u8>().ok()).unwrap_or(0)
 }
 
+/// Wrap a target predicate as a `Filter` that bounds by callsite *target*,
+/// never by level — and says so via an explicit TRACE `max_level_hint`.
+///
+/// A bare [`filter_fn`] reports no hint (`None`). [`FilterExt::and`] returns
+/// `None` if *either* side lacks one (`cmp::min`, and a `None` hint sorts
+/// below any `Some`), so ANDing a hintless target filter onto an `EnvFilter`
+/// erases its level bound. That `None` then propagates through the layered
+/// subscriber's `pick_level_hint` up to the global `LevelFilter::current()`,
+/// pinning it at TRACE — at which point the `tracing::*` macros stop
+/// short-circuiting and build their fields at every verbosity, even `-v0`
+/// where nothing records them. Tagging the target filter with TRACE (honest:
+/// it really does pass all levels) lets the `EnvFilter`'s real bound survive.
+fn target_filter<F>(predicate: F) -> FilterFn<F>
+where
+    F: Fn(&tracing::Metadata<'_>) -> bool,
+{
+    filter_fn(predicate).with_max_level_hint(LevelFilter::TRACE)
+}
+
 /// Stderr layer: the flag sets a baseline (`Off` / `Info` / `Info`) and
 /// `RUST_LOG`, when set, overrides via the standard directive grammar —
 /// matching the env-wins-when-set convention (see PR #2901). At `-vv`
@@ -592,7 +615,7 @@ where
     let env_filter = EnvFilter::builder()
         .with_default_directive(baseline.into())
         .from_env_lossy();
-    let exclude_full = filter_fn(|meta| meta.target() != SUBPROCESS_FULL_TARGET);
+    let exclude_full = target_filter(|meta| meta.target() != SUBPROCESS_FULL_TARGET);
     let layer = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stderr)
         .with_ansi(true)
@@ -615,7 +638,7 @@ where
     let env_filter = EnvFilter::builder()
         .with_default_directive(LevelFilter::DEBUG.into())
         .from_env_lossy();
-    let exclude_full = filter_fn(|meta| meta.target() != SUBPROCESS_FULL_TARGET);
+    let exclude_full = target_filter(|meta| meta.target() != SUBPROCESS_FULL_TARGET);
     let layer = tracing_subscriber::fmt::layer()
         .with_writer(TraceMakeWriter)
         .with_ansi(false)
@@ -644,7 +667,7 @@ where
     let env_filter = EnvFilter::builder()
         .with_default_directive(LevelFilter::DEBUG.into())
         .from_env_lossy();
-    let exclude_output = filter_fn(|meta| {
+    let exclude_output = target_filter(|meta| {
         meta.target() != SUBPROCESS_FULL_TARGET && meta.target() != SUBPROCESS_BOUNDED_TARGET
     });
     let layer = tracing_subscriber::fmt::layer()
@@ -664,7 +687,7 @@ where
     if verbose_level < 2 || !log_files::SUBPROCESS.is_active() {
         return None;
     }
-    let only_full = filter_fn(|meta| meta.target() == SUBPROCESS_FULL_TARGET);
+    let only_full = target_filter(|meta| meta.target() == SUBPROCESS_FULL_TARGET);
     let layer = tracing_subscriber::fmt::layer()
         .with_writer(SubprocessMakeWriter)
         .with_ansi(false)
@@ -730,6 +753,45 @@ mod tests {
         WT_TRACE_TARGET, WtTraceFields, effective_log_max_level, event_json, format_wt_trace,
         label_for_thread_index, parse_verbose_level, style_stderr_line,
     };
+
+    /// The level-hint footgun this module's `target_filter` exists to dodge:
+    /// a bare `filter_fn` reports no `max_level_hint`, and `Filter::and`
+    /// collapses to `None` (its `cmp::min` sorts `None` below any `Some`),
+    /// erasing the level bound. A `None` hint propagates to the global
+    /// `LevelFilter`, pinning it at TRACE so every `tracing::debug!` builds
+    /// its fields even at `-v0`. `target_filter` tags the predicate with a
+    /// TRACE hint so the `LevelFilter`/`EnvFilter` side survives the `and`.
+    #[test]
+    fn target_filter_preserves_level_bound_through_and() {
+        use tracing::level_filters::LevelFilter;
+        use tracing_subscriber::Registry;
+        use tracing_subscriber::filter::{FilterExt, filter_fn};
+        use tracing_subscriber::layer::Filter;
+
+        // The tagged target filter passes all levels (TRACE), but ANDing it
+        // onto an `OFF` level filter keeps the `OFF` bound.
+        let target = super::target_filter(|meta| meta.target() != "x");
+        assert_eq!(
+            Filter::<Registry>::max_level_hint(&target),
+            Some(LevelFilter::TRACE)
+        );
+        let bounded = LevelFilter::OFF.and(target);
+        assert_eq!(
+            Filter::<Registry>::max_level_hint(&bounded),
+            Some(LevelFilter::OFF),
+            "the OFF bound must survive ANDing with the target filter"
+        );
+
+        // Regression guard: the bare `filter_fn` form collapses the AND hint
+        // to `None` — the exact behavior that pinned the global level at TRACE.
+        let bare = filter_fn(|meta| meta.target() != "x");
+        let collapsed = LevelFilter::OFF.and(bare);
+        assert_eq!(
+            Filter::<Registry>::max_level_hint(&collapsed),
+            None,
+            "documents the footgun target_filter fixes"
+        );
+    }
 
     /// Branch coverage for `label_for_thread_index` — `thread_label` never
     /// hands it `n == 0` or `n > 52` in practice (Rust's `ThreadId`

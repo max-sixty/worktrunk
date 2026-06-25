@@ -538,11 +538,14 @@ fn command_header(cmd: &str, context: Option<&str>) -> String {
 /// Below Debug both targets are disabled and this is a no-op.
 fn log_output(trace: &CommandTrace, stdin: Option<&[u8]>, output: Option<&std::process::Output>) {
     // `log::max_level` (held at the verbosity/`RUST_LOG` ceiling by the
-    // `LogTracer` cap in `logging::init`) is the coarse "deep logging on?" gate
-    // that skips building the full/bounded output strings when nothing consumes
-    // them. Do NOT swap this for `tracing::enabled!`: the absent (`None`) file
-    // layers report `enabled() == true`, so it would never short-circuit and
-    // would format every command's output even at `-v0`.
+    // `LogTracer` cap in `logging::init`) is the coarse "deep logging on at
+    // all?" gate that skips building the full *and* bounded output strings
+    // when nothing consumes them. It stays a `log::*` check on purpose: this
+    // body feeds both `SUBPROCESS_FULL_TARGET` and `SUBPROCESS_BOUNDED_TARGET`,
+    // so the gate must fire whenever *either* deep sink is live — exactly the
+    // verbosity cap. A per-target `tracing::enabled!(SUBPROCESS_FULL_TARGET …)`
+    // would wrongly skip the bounded preview in the rare case where `-vv`
+    // opened `trace.log` but `subprocess.log` failed to open.
     if !log::log_enabled!(log::Level::Debug) {
         return;
     }

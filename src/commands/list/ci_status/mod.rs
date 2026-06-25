@@ -557,10 +557,10 @@ impl PrStatus {
         // Use full_name as cache key to distinguish local "feature" from remote "origin/feature"
         let now_secs = epoch_now();
 
-        // `age` saturates: under a pinned test clock (or real skew) `now_secs`
-        // can predate `checked_at`, and a `tracing::debug!` arg evaluates
-        // regardless of verbosity (see `logging::init`), so a raw subtraction
-        // would underflow-panic.
+        // `age` saturates: under a pinned test clock (or real clock skew)
+        // `now_secs` can predate `checked_at`, so a raw subtraction would
+        // underflow-panic when this `debug!` fires (its args build at `-vv`).
+        // `saturating_sub` clamps to 0, matching `CachedCiStatus::is_valid`.
         let status = match CachedCiStatus::read(repo, &branch.full_name) {
             Some(cached) if cached.is_valid(local_head, now_secs, &repo_path) => {
                 tracing::debug!(
