@@ -1367,7 +1367,7 @@ fn forge_mock_env_vars(repo: &TestRepo, mock_bin: &Path) -> Vec<(String, String)
 /// via a mocked `gh pr list`. Asserts the PR row reaches the list (the `#42`
 /// reference in the CI column), which deterministically exercises the whole
 /// fetch → stream → render path (`fetch_open_prs`, `fetch_github`,
-/// `parse_github_prs`, `stream_open_prs`, `PrSkimItem::new`, `render_grid_row`,
+/// `parse_github_prs`, `stream_open_prs`, `PrEntry::display_status`, `render_grid_row`,
 /// `render_pr_description`). The title isn't on the row — it lives in the `pr`
 /// preview tab so the columns align — so the row's stable substring is `#42`.
 /// The full list isn't snapshotted because the worktree rows' CI cells fill

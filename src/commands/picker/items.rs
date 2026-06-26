@@ -1,6 +1,8 @@
 //! Skim item implementations.
 //!
-//! Wrappers for ListItem and header row that implement SkimItem for the interactive selector.
+//! The unified [`PickerRow`] (a branch/worktree row or a listed `--prs` row,
+//! distinguished by `local: Option<LocalCheckout>`) and the header row, both
+//! implementing `SkimItem` for the interactive selector.
 
 use std::borrow::Cow;
 use std::collections::HashSet;
@@ -16,7 +18,7 @@ use skim::prelude::*;
 use worktrunk::git::Repository;
 use worktrunk::styling::{HINT_SYMBOL, INFO_SYMBOL, visual_width};
 
-use super::super::list::ci_status::{PrRef, PrStatus};
+use super::super::list::ci_status::{PrRef, PrStatus, ReviewState};
 use super::super::list::model::ListItem;
 use super::log_formatter::{
     FIELD_DELIM, batch_fetch_stats, format_log_output, process_log_with_dimming, strip_hash_markers,
@@ -54,11 +56,13 @@ pub(super) fn ansi_to_line(s: &str) -> Line<'static> {
     }
 }
 
-/// Cache key for pre-computed previews: (branch_name, mode).
+/// Cache key for pre-computed previews: `(row-key, mode)`, where the row-key is
+/// the row's [`PickerRow::preview_key`] — a branch for a worktree row, the
+/// `pr:N` / `mr:N` token for a listed `--prs` row.
 pub(super) type PreviewCacheKey = (String, PreviewMode);
 
-/// Cache for pre-computed previews, keyed by (branch_name, mode).
-/// Shared across all WorktreeSkimItems for background pre-computation.
+/// Cache for pre-computed previews, keyed by [`PreviewCacheKey`].
+/// Shared across all PickerRows for background pre-computation.
 pub(super) type PreviewCache = Arc<DashMap<PreviewCacheKey, String>>;
 
 /// Per-row live `pr_status` for the `pr` tab, shared with the collect handler.
@@ -72,7 +76,7 @@ pub(super) type PrStatusSlot = Arc<Mutex<Option<Option<PrStatus>>>>;
 /// collect handler. Like [`PrStatusSlot`], the frozen `item` snapshot can't
 /// carry these (its `counts` / `upstream` / `working_tree_status` are `None` at
 /// skeleton and never update), so the handler mirrors them here as the list
-/// pipeline lands (`on_update`). Read live by [`WorktreeSkimItem::render_preview`]
+/// pipeline lands (`on_update`). Read live by [`PickerRow::render_preview`]
 /// to dim a tab once its diff is known empty.
 pub(super) type LocalContentSlot = Arc<Mutex<LocalContent>>;
 
@@ -133,7 +137,7 @@ pub(super) type ShortcutTable = Arc<Mutex<std::collections::HashMap<String, RowS
 
 /// The `output()` token for a worktree/branch row: the unique worktree path
 /// (behind [`WORKTREE_OUTPUT_PREFIX`]) for any worktree-backed row, else the
-/// bare branch name. Shared by [`WorktreeSkimItem::output`] and the shortcut
+/// bare branch name. Shared by [`PickerRow::output`] and the shortcut
 /// table fill in `progressive_handler::on_skeleton`, so the selection token and
 /// the lookup key can't drift.
 pub(super) fn worktree_output_token(item: &ListItem, branch_name: &str) -> String {
@@ -266,30 +270,55 @@ pub(super) fn push_pr_search_tokens(
 /// re-reads `text()` on each query keystroke, so the live PR data folds in
 /// without a re-send; the row may re-rank as that data streams in during the
 /// first frame.
-pub(super) struct WorktreeSkimItem {
-    /// The stable, skeleton-time head of the matcher text: branch name + the
-    /// distinct worktree path. The PR tokens and trailing gutter glyph are
-    /// appended live in `text()`.
+pub(super) struct PickerRow {
+    /// The stable, skeleton-time head of the matcher text: branch name plus —
+    /// for a worktree row — the distinct worktree path. The PR tokens and
+    /// trailing gutter glyph are appended live in `text()`.
     pub search_base: String,
-    /// Trailing gutter glyph (`@`/`^`/`+`/`/`/`|`), kept last in `text()` so a
-    /// typed sigil filters by row kind. A skeleton-time fact from
-    /// `ItemKind::gutter_glyph`.
+    /// Trailing gutter glyph (`@`/`^`/`+`/`/`/`|`, or `#` for a listed `--prs`
+    /// row), kept last in `text()` so a typed sigil filters by row kind. A
+    /// skeleton-time fact from `ItemKind::gutter_glyph`.
     pub gutter: char,
-    /// Current ANSI-colored display line. Starts as the skeleton render;
-    /// replaced in place as data arrives.
+    /// Current ANSI-colored display line. For a worktree row it starts as the
+    /// skeleton render and is replaced in place as data arrives; for a `--prs`
+    /// row it's built once and never mutated.
     pub rendered: Arc<Mutex<String>>,
-    /// Branch name used by switch selection and preview cache keys.
+    /// Branch name (the head branch for a `--prs` row). Used by switch
+    /// selection, the `pr` pane's branch line, and — for a worktree row — the
+    /// preview cache key (see [`Self::preview_key`]).
     pub branch_name: String,
-    /// Skeleton-snapshot of the underlying ListItem. Preview computation
-    /// reads only skeleton-time fields (`branch_name`, `head`,
-    /// `worktree_data`) and runs git directly for anything else — see
-    /// `compute_*_preview` in this file — so the snapshot staying frozen
-    /// while slow fields (`counts`, `upstream`) arrive via the list-row
-    /// task pipeline (see `commands::list::collect`) is intentional and
-    /// correct.
-    pub item: Arc<ListItem>,
+    /// Selection result returned by `output()`, and the `shortcut_table` key.
+    /// `worktree_output_token` (`worktree-path:<path>` or `<branch>`) for a
+    /// worktree row; `pr:N` / `mr:N` for a `--prs` row. Distinct from the
+    /// *preview* key (see [`Self::preview_key`]): for a worktree row the two
+    /// differ (path-token vs branch).
+    pub output_token: String,
     /// Shared cache for pre-computed previews (all modes)
     pub preview_cache: PreviewCache,
+    /// PR/MR status for the `pr`/`comments` tabs and the folded matcher tokens.
+    /// LIVE for a worktree row — primed from the CI cache and overwritten as the
+    /// `CiStatus` task streams in (so the `pr` tab reflects the live fetch);
+    /// PRE-FILLED and STATIC for a `--prs` row (from `PrEntry::display_status`,
+    /// never mutated within a row's life; a rebuild re-renders the `(pr:N, Pr)`
+    /// memo — see `prs::listed_pr_row`).
+    pub pr_status: PrStatusSlot,
+    /// Surfaces a background preview fill without a keystroke. `preview()`
+    /// records the row's awaited `(preview_key, mode)` here on every render; the
+    /// orchestrator pokes a repaint when that key's compute lands (see
+    /// [`PreviewNotifier`]).
+    pub notifier: Arc<PreviewNotifier>,
+    /// Local-checkout data — `Some` for a worktree row, `None` for a listed
+    /// `--prs` row (whose head branch isn't checked out, so it has no working
+    /// tree, diffs, or local `ListItem`). Its presence is the single axis the
+    /// preview/output paths branch on.
+    pub local: Option<LocalCheckout>,
+}
+
+/// The worktree-backed half of a [`PickerRow`]: present only when the row's
+/// branch is checked out locally. A listed `--prs` row carries `None` and
+/// renders its local-checkout tabs (working-tree, branch-diff, upstream,
+/// summary) as placeholders.
+pub(super) struct LocalCheckout {
     /// Whether this branch has an upstream tracking ref, for the tab-4
     /// (remote⇅) empty state. A SYNCHRONOUS skeleton-time fact read from
     /// `Repository::local_branches()` at construction — never from the async
@@ -299,11 +328,6 @@ pub(super) struct WorktreeSkimItem {
     /// Whether `[commit.generation]` summaries are configured, for the tab-5
     /// (summary) empty state. A process-wide static fact (`llm_command.is_some()`).
     pub summaries_enabled: bool,
-    /// Live CI status for the `pr` tab, shared with the collect handler. Unlike
-    /// the frozen `item` snapshot (whose `pr_status` never updates after
-    /// skeleton), this slot is primed from the cache and then overwritten as the
-    /// `CiStatus` task streams in — so the `pr` tab reflects the live fetch.
-    pub pr_status: PrStatusSlot,
     /// Live diff-content signals for the `working_tree` / `branch_diff` /
     /// `upstream` tabs, shared with the collect handler. The frozen `item`
     /// snapshot can't carry these (its `counts` / `upstream` /
@@ -311,14 +335,25 @@ pub(super) struct WorktreeSkimItem {
     /// handler mirrors them here as the pipeline lands — letting those tabs dim
     /// once their diff is known empty (see [`LocalContent`]).
     pub local_content: LocalContentSlot,
-    /// Surfaces a background preview fill without a keystroke. `preview()`
-    /// records the row's awaited `(branch, mode)` here on every render; the
-    /// orchestrator pokes a repaint when that key's compute lands (see
-    /// [`PreviewNotifier`]).
-    pub notifier: Arc<PreviewNotifier>,
 }
 
-impl SkimItem for WorktreeSkimItem {
+impl PickerRow {
+    /// Key for every preview-cache read, the `pr`-pane memo, and the
+    /// `PreviewNotifier` `awaiting` record: the branch name for a worktree row
+    /// (its local previews are computed and cached by branch), the `pr:N` /
+    /// `mr:N` token for a `--prs` row (its deferred `log`/`comments` fetches key
+    /// by that token — see the `prs` module). Git forbids `:` in branch names,
+    /// so the two keyspaces never collide.
+    fn preview_key(&self) -> &str {
+        if self.local.is_some() {
+            &self.branch_name
+        } else {
+            &self.output_token
+        }
+    }
+}
+
+impl SkimItem for PickerRow {
     fn text(&self) -> Cow<'_, str> {
         // branch + path (stable), then the live PR/MR tokens (reference, title,
         // author) from the current `pr_status` slot, then the gutter glyph last.
@@ -348,7 +383,9 @@ impl SkimItem for WorktreeSkimItem {
     }
 
     fn output(&self) -> Cow<'_, str> {
-        Cow::Owned(worktree_output_token(&self.item, &self.branch_name))
+        // Precomputed at construction (a worktree-path/branch token, or `pr:N`);
+        // see `output_token`. Distinct from `preview_key`.
+        Cow::Borrowed(&self.output_token)
     }
 
     fn preview(&self, context: PreviewContext<'_>) -> ItemPreview {
@@ -359,14 +396,16 @@ impl SkimItem for WorktreeSkimItem {
         let mode = PreviewStateData::read_mode();
         // Record what this (selected) row is showing *before* reading the cache,
         // so a background fill that lands right after a miss still finds the key
-        // set and pokes a repaint (see `PreviewNotifier`).
-        self.notifier.note_awaiting(&self.branch_name, mode);
+        // set and pokes a repaint (see `PreviewNotifier`). Keyed by `preview_key`
+        // (branch for a worktree row, `pr:N` for a `--prs` row) so the awaited
+        // key matches the one the background fill writes.
+        self.notifier.note_awaiting(self.preview_key(), mode);
         ItemPreview::AnsiText(self.render_preview(mode, context.width, context.height))
     }
 }
 
 /// The `pr` tab's state for a worktree row, derived from the row's live CI
-/// status slot ([`WorktreeSkimItem::pr_status`]).
+/// status slot ([`PickerRow::pr_status`]).
 enum PrPreview {
     /// The live CI fetch hasn't reported for this branch yet, and no cache
     /// primed it — the tab shows a "fetching" hint rather than claiming the
@@ -377,14 +416,14 @@ enum PrPreview {
     NoPr,
     /// The branch has a PR/MR. The `PrRef` rides alongside the status so the
     /// reference is structurally guaranteed (a status with no `number` is
-    /// `NoPr`, not `HasPr`) — `render_worktree_pr` needs no fallback.
+    /// `NoPr`, not `HasPr`) — `render_pr_pane_body` needs no fallback.
     HasPr(PrRef, PrStatus),
 }
 
 /// Live, content-aware availability for the local-checkout tabs whose pane is a
 /// diff — `working_tree`, `branch_diff`, and `upstream`. Each tab dims once its
 /// diff is *known* empty, the same way the `pr` tab dims once the fetch reports
-/// no PR (see [`WorktreeSkimItem::pr_tab_available`]).
+/// no PR (see [`PickerRow::pr_tab_available`]).
 ///
 /// The diff emptiness is async (the `counts` / `upstream` / `working_tree_status`
 /// fields are `None` at skeleton and land via the list pipeline), so each signal
@@ -494,7 +533,7 @@ impl LocalTabs {
 /// - The PR-backed tabs: `pr` and `comments` are available together, gated by
 ///   `has_pr`. On a worktree row that's the live status slot (primed from the CI
 ///   cache, then refreshed by the `CiStatus` task — see
-///   [`WorktreeSkimItem::pr_tab_available`]): it dims once the fetch reports no
+///   [`PickerRow::pr_tab_available`]): it dims once the fetch reports no
 ///   PR, and stays available while loading or with a PR. A `--prs` row always
 ///   has a PR, so both are available.
 ///
@@ -535,7 +574,7 @@ impl TabAvailability {
     /// A worktree-backed row: the local-checkout tabs follow [`LocalTabs`]
     /// (diff tabs gated by the live [`LocalContent`] + the `has_upstream` floor);
     /// the PR-backed tabs follow the live PR status (see
-    /// [`WorktreeSkimItem::pr_tab_available`]).
+    /// [`PickerRow::pr_tab_available`]).
     pub(super) fn worktree(
         content: LocalContent,
         has_upstream: bool,
@@ -725,27 +764,34 @@ fn render_tab_row_compact(tabs: &[Tab], reset: Reset) -> String {
         .join(" ")
 }
 
-/// The `pr` pane for a worktree row whose branch has a PR/MR. Renders the same
-/// shape as the `--prs` rows' pane (`PrSkimItem::pr_pane`) — reference + title
-/// header, cyan all-caps labeled metadata (the branch bold, the author, the url
-/// underlined), and the description as markdown — via the shared [`pr_pane`]
-/// helpers, so the two read alike. The title, author, body, and comment count
-/// ride the same CI fetch the column already makes (see [`PrStatus`]); a status
-/// without them (an older cache entry, a forge that doesn't expose them) falls
-/// back to a reference-only header and skips the missing lines.
+/// The sole `pr`-tab pane renderer, shared by worktree rows and listed `--prs`
+/// rows (both feed it a [`PrStatus`] — live from the CI fetch for a worktree
+/// row, pre-filled via `PrEntry::display_status` for a `--prs` row). Renders
+/// the reference + title header, cyan all-caps labeled metadata (the branch
+/// bold, the author, draft state, the url underlined), and the description as
+/// markdown via the shared [`pr_pane`] helpers. Any field a status doesn't
+/// carry (an older cache entry, a forge that doesn't expose it) is skipped, the
+/// header falling back to reference-only.
 ///
 /// The `comments` line shows only the count; the full thread is the `comments`
-/// tab's own background fetch (see [`WorktreeSkimItem::render_comments_pane`]).
+/// tab's own background fetch (see [`PickerRow::render_comments_pane`]).
 /// A PR with no comments carries `None` (zero is flattened at the mapping
 /// boundary), so the line is skipped.
 ///
 /// `width` is the live preview-pane width, used to wrap the markdown body.
-fn render_worktree_pr(branch: &str, pr_ref: PrRef, status: &PrStatus, width: usize) -> String {
+fn render_pr_pane_body(branch: &str, pr_ref: PrRef, status: &PrStatus, width: usize) -> String {
     let title = status.title.as_deref().filter(|t| !t.is_empty());
     let mut out = pr_pane::header(pr_ref, title);
     out.push_str(&pr_pane::branch_line(branch));
     if let Some(author) = status.author.as_deref().filter(|a| !a.is_empty()) {
         out.push_str(&pr_pane::metadata_line("author", &format!("@{author}")));
+    }
+    if status.review_state == Some(ReviewState::Draft) {
+        let reset = Reset;
+        out.push_str(&pr_pane::metadata_line(
+            "state",
+            &cformat!("<yellow>draft</>{reset}"),
+        ));
     }
     if let Some(url) = &status.url {
         out.push_str(&pr_pane::url_line(url));
@@ -759,7 +805,7 @@ fn render_worktree_pr(branch: &str, pr_ref: PrRef, status: &PrStatus, width: usi
     out
 }
 
-impl WorktreeSkimItem {
+impl PickerRow {
     /// Render the full preview pane (tab bar + mode content) for an explicit
     /// `mode`. Split out of [`SkimItem::preview`] so the dispatch — including
     /// the `pr` tab's `render_pr_pane` call — is testable with a given mode
@@ -773,20 +819,33 @@ impl WorktreeSkimItem {
         // selections — a tab dims once its diff (or PR) is known empty, and stays
         // available while still loading. Both reads are cheap (no body clone); the
         // panes themselves are rendered once and memoized.
-        let avail = TabAvailability::worktree(
-            self.local_content(),
-            self.has_upstream,
-            self.summaries_enabled,
-            self.pr_tab_available(),
-        );
+        let avail = match &self.local {
+            Some(local) => TabAvailability::worktree(
+                self.local_content(),
+                local.has_upstream,
+                local.summaries_enabled,
+                self.pr_tab_available(),
+            ),
+            // A listed `--prs` row: the local-checkout tabs are empty (no
+            // working tree to diff) and the `pr` tab always has content (the
+            // static slot carries a `number`), matching `pr_tab_available`.
+            None => TabAvailability::listed_pr(),
+        };
         let mut result = render_preview_tabs(mode, avail, width);
         result.push_str(&match mode {
+            // The PR-backed tabs read the same `pr_status` slot for both row
+            // kinds: `pr` renders from it, `comments` reads the background-fetched
+            // thread when the row has a PR (always, for a `--prs` row).
             PreviewMode::Pr => self.render_pr_pane_cached(width),
-            // The PR-backed tabs share one source: the live `pr_status` slot. The
-            // `comments` tab renders the same background-fetched thread a `--prs`
-            // row's does when the branch has a PR (see `render_comments_pane`).
             PreviewMode::Comments => self.render_comments_pane(),
-            _ => self.preview_for_mode(mode, width, height),
+            // The local-checkout tabs (working-tree/log/branch-diff/upstream/
+            // summary) compute locally for a worktree row; a `--prs` row has no
+            // checkout, so its `log` loads from the forge and the rest point at
+            // the `pr` tab (see `render_listed_pr_mode`).
+            _ => match &self.local {
+                Some(_) => self.preview_for_mode(mode, width, height),
+                None => self.render_listed_pr_mode(mode),
+            },
         });
         result
     }
@@ -824,9 +883,13 @@ impl WorktreeSkimItem {
     /// Snapshot the row's live diff-content signals for the `working_tree` /
     /// `branch_diff` / `upstream` tabs (see [`LocalContent`]). A cheap copy of
     /// three `Option<bool>`s; the collect handler overwrites the slot as the list
-    /// pipeline lands.
+    /// pipeline lands. A listed `--prs` row has no checkout, so it reports the
+    /// default (all-`None`) signals — its diff tabs render placeholders anyway.
     fn local_content(&self) -> LocalContent {
-        *self.local_content.lock().unwrap()
+        self.local
+            .as_ref()
+            .map(|l| *l.local_content.lock().unwrap())
+            .unwrap_or_default()
     }
 
     /// Render the `pr` pane, memoized in the shared `preview_cache` so repeated
@@ -834,11 +897,13 @@ impl WorktreeSkimItem {
     /// the markdown render of the body. The other modes are pre-computed into
     /// this same cache by the orchestrator; the `pr` pane is filled lazily here
     /// instead because its inputs aren't known at skeleton time — they stream in
-    /// on the `CiStatus` task. The collect handler's `on_update` removes this
-    /// entry whenever the live `pr_status` slot changes (fetch lands, manual
-    /// refresh), so a cache hit is always consistent with the current slot.
-    fn render_pr_pane_cached(&self, width: usize) -> String {
-        let key = (self.branch_name.clone(), PreviewMode::Pr);
+    /// on the `CiStatus` task. The entry is invalidated so a cache hit always
+    /// matches the current PR data: for a worktree row, `on_update` removes it
+    /// whenever the live `pr_status` slot changes (fetch lands, manual refresh);
+    /// for a `--prs` row, whose slot is static, `prs::listed_pr_row` removes it
+    /// when the row is (re)built on an `alt-r` reload.
+    pub(super) fn render_pr_pane_cached(&self, width: usize) -> String {
+        let key = (self.preview_key().to_string(), PreviewMode::Pr);
         if let Some(cached) = self.preview_cache.get(&key) {
             return cached.value().clone();
         }
@@ -851,7 +916,7 @@ impl WorktreeSkimItem {
     /// is the live preview-pane width, threaded to wrap the description markdown.
     fn render_pr_pane(&self, pr: PrPreview, width: usize) -> String {
         let reset = Reset;
-        let branch = self.item.branch_name();
+        let branch = self.branch_name.as_str();
         match pr {
             PrPreview::Loading => {
                 cformat!("{HINT_SYMBOL} <dim>Fetching PR status for {branch}…</>\n")
@@ -859,7 +924,7 @@ impl WorktreeSkimItem {
             PrPreview::NoPr => {
                 cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no PR\n")
             }
-            PrPreview::HasPr(pr_ref, status) => render_worktree_pr(branch, pr_ref, &status, width),
+            PrPreview::HasPr(pr_ref, status) => render_pr_pane_body(branch, pr_ref, &status, width),
         }
     }
 
@@ -872,24 +937,45 @@ impl WorktreeSkimItem {
     /// PR — or a CI fetch that hasn't resolved yet — mirrors the `pr` tab's
     /// empty/loading states, so the two PR-backed tabs stay consistent. The
     /// background fetch renders at the preview width, so this reads it back
-    /// without re-wrapping (matching `PrSkimItem::cached_pane`).
+    /// without re-wrapping (via `cached_or_loading`).
     fn render_comments_pane(&self) -> String {
         let reset = Reset;
-        let branch = self.item.branch_name();
+        let branch = self.branch_name.as_str();
         match self.pr_preview() {
             // The CI fetch hasn't reported yet — we don't know whether there's a
             // PR to fetch comments for. Mirror the `pr` tab's loading state.
+            // (A `--prs` row's static slot is always `HasPr`, so it never lands
+            // here.)
             PrPreview::Loading => {
                 cformat!("{HINT_SYMBOL} <dim>Fetching PR status for {branch}…</>\n")
             }
             PrPreview::NoPr => {
                 cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no PR\n")
             }
-            PrPreview::HasPr(..) => self
-                .preview_cache
-                .get(&(self.branch_name.clone(), PreviewMode::Comments))
-                .map(|v| v.value().clone())
-                .unwrap_or_else(|| super::prs::pr_deferred_loading(PreviewMode::Comments)),
+            PrPreview::HasPr(..) => self.cached_or_loading(PreviewMode::Comments),
+        }
+    }
+
+    /// Read a deferred forge-fetch tab's pane from the shared cache (keyed by
+    /// the row's [`Self::preview_key`]), or a loading placeholder on a miss. The
+    /// background fetch (worktree rows' `comments`, `--prs` rows' `log`/
+    /// `comments`) writes the same key, and the orchestrator pokes a repaint
+    /// once it lands.
+    pub(super) fn cached_or_loading(&self, mode: PreviewMode) -> String {
+        self.preview_cache
+            .get(&(self.preview_key().to_string(), mode))
+            .map(|v| v.value().clone())
+            .unwrap_or_else(|| super::prs::pr_deferred_loading(mode))
+    }
+
+    /// Non-PR-tab content for a listed `--prs` row (no local checkout): the
+    /// `log` tab loads commits in the background and reads from the cache; the
+    /// local-only tabs (working-tree, branch-diff, upstream, summary) have no
+    /// PR equivalent, so they point the user at the `pr` tab.
+    fn render_listed_pr_mode(&self, mode: PreviewMode) -> String {
+        match mode {
+            PreviewMode::Log => self.cached_or_loading(PreviewMode::Log),
+            _ => super::prs::pr_row_empty_placeholder(),
         }
     }
 
@@ -901,7 +987,10 @@ impl WorktreeSkimItem {
     /// the orchestrator pokes a repaint for the awaited key once the fill lands
     /// (see [`PreviewNotifier`]).
     fn preview_for_mode(&self, mode: PreviewMode, width: usize, _height: usize) -> String {
-        let cache_key = (self.branch_name.clone(), mode);
+        // Reached only for a worktree row (the `Some(_)` arm in `render_preview`),
+        // so `preview_key` is the branch — the key the orchestrator precomputes
+        // local previews under.
+        let cache_key = (self.preview_key().to_string(), mode);
         let content = self
             .preview_cache
             .get(&cache_key)
@@ -1392,6 +1481,31 @@ mod tests {
     use ansi_str::AnsiStr;
     use insta::assert_snapshot;
 
+    /// Build a worktree-backed [`PickerRow`] (`local: Some`) for tests, with the
+    /// given branch, preview cache, and live `pr_status` slot value; the local
+    /// signals default (no upstream, no summaries, unknown diff content).
+    fn worktree_test_row(
+        branch: &str,
+        preview_cache: PreviewCache,
+        pr_status: Option<Option<PrStatus>>,
+    ) -> PickerRow {
+        PickerRow {
+            search_base: String::new(),
+            gutter: '@',
+            rendered: Arc::new(Mutex::new(String::new())),
+            branch_name: branch.to_string(),
+            output_token: branch.to_string(),
+            preview_cache,
+            pr_status: Arc::new(Mutex::new(pr_status)),
+            notifier: PreviewNotifier::detached(),
+            local: Some(LocalCheckout {
+                has_upstream: false,
+                summaries_enabled: false,
+                local_content: Arc::new(Mutex::new(LocalContent::default())),
+            }),
+        }
+    }
+
     /// Width at which all seven full-form tabs fit, so the snapshots capture the
     /// full bar (the compact fallback has its own test).
     const WIDE: usize = 200;
@@ -1709,7 +1823,7 @@ mod tests {
         ] {
             assert_snapshot!(
                 format!("loading_placeholder_{name}"),
-                WorktreeSkimItem::loading_placeholder(mode)
+                PickerRow::loading_placeholder(mode)
             );
         }
     }
@@ -1717,48 +1831,16 @@ mod tests {
     #[test]
     fn test_preview_for_mode_summary_cache() {
         // Cache hit returns cached content; cache miss computes the placeholder
-        let item = Arc::new(ListItem::new_branch(
-            "abc123".to_string(),
-            "feature".to_string(),
-        ));
-
         let cache_hit = {
             let preview_cache: PreviewCache = Arc::new(DashMap::new());
             preview_cache.insert(
                 ("feature".to_string(), PreviewMode::Summary),
                 "Add auth module\n\nImplements JWT-based authentication.".to_string(),
             );
-            WorktreeSkimItem {
-                search_base: String::new(),
-                gutter: '@',
-                rendered: Arc::new(Mutex::new(String::new())),
-                branch_name: "feature".to_string(),
-                item: Arc::clone(&item),
-                preview_cache,
-                has_upstream: false,
-                summaries_enabled: false,
-                pr_status: Arc::new(Mutex::new(None)),
-                local_content: Arc::new(Mutex::new(LocalContent::default())),
-                notifier: PreviewNotifier::detached(),
-            }
+            worktree_test_row("feature", preview_cache, None)
         };
 
-        let cache_miss = {
-            let preview_cache: PreviewCache = Arc::new(DashMap::new());
-            WorktreeSkimItem {
-                search_base: String::new(),
-                gutter: '@',
-                rendered: Arc::new(Mutex::new(String::new())),
-                branch_name: "feature".to_string(),
-                item: Arc::clone(&item),
-                preview_cache,
-                has_upstream: false,
-                summaries_enabled: false,
-                pr_status: Arc::new(Mutex::new(None)),
-                local_content: Arc::new(Mutex::new(LocalContent::default())),
-                notifier: PreviewNotifier::detached(),
-            }
-        };
+        let cache_miss = worktree_test_row("feature", Arc::new(DashMap::new()), None);
 
         assert_snapshot!(
             "cache_hit",
@@ -1834,20 +1916,7 @@ mod tests {
         // Build a row whose live `pr_status` slot carries a given state — what
         // the picker primes from the cache and then overwrites as the fetch lands.
         let row = |pr_status: Option<Option<PrStatus>>| {
-            let item = ListItem::new_branch("abc".into(), "feature".into());
-            WorktreeSkimItem {
-                search_base: String::new(),
-                gutter: '@',
-                rendered: Arc::new(Mutex::new(String::new())),
-                branch_name: "feature".into(),
-                item: Arc::new(item),
-                preview_cache: Arc::new(DashMap::new()),
-                has_upstream: false,
-                summaries_enabled: false,
-                pr_status: Arc::new(Mutex::new(pr_status)),
-                local_content: Arc::new(Mutex::new(LocalContent::default())),
-                notifier: PreviewNotifier::detached(),
-            }
+            worktree_test_row("feature", Arc::new(DashMap::new()), pr_status)
         };
 
         // No result yet (outer `None`) → Loading; the pane shows a fetching hint.
@@ -1945,18 +2014,8 @@ mod tests {
                 comment_count: None,
             }))
         };
-        let row = |slot: Option<Option<PrStatus>>, cache: PreviewCache| WorktreeSkimItem {
-            search_base: String::new(),
-            gutter: '@',
-            rendered: Arc::new(Mutex::new(String::new())),
-            branch_name: "feature".into(),
-            item: Arc::new(ListItem::new_branch("abc".into(), "feature".into())),
-            preview_cache: cache,
-            has_upstream: false,
-            summaries_enabled: false,
-            pr_status: Arc::new(Mutex::new(slot)),
-            local_content: Arc::new(Mutex::new(LocalContent::default())),
-            notifier: PreviewNotifier::detached(),
+        let row = |slot: Option<Option<PrStatus>>, cache: PreviewCache| {
+            worktree_test_row("feature", cache, slot)
         };
 
         // CI hasn't reported (None) → the shared "Fetching PR status…" hint (it
@@ -2015,7 +2074,7 @@ mod tests {
 
         // A PR with comments adds a cyan all-caps `COMMENTS` metadata line
         // carrying the count (same `field_label` styling as BRANCH/URL).
-        let with = render_worktree_pr("feature", PrRef::pr(7), &status(Some(3)), 80)
+        let with = render_pr_pane_body("feature", PrRef::pr(7), &status(Some(3)), 80)
             .ansi_strip()
             .to_string();
         assert!(
@@ -2026,7 +2085,7 @@ mod tests {
 
         // No comments (zero is flattened to `None` at the mapping boundary, and an
         // older cache entry carries `None` too) → the line is skipped entirely.
-        let without = render_worktree_pr("feature", PrRef::pr(7), &status(None), 80)
+        let without = render_pr_pane_body("feature", PrRef::pr(7), &status(None), 80)
             .ansi_strip()
             .to_string();
         assert!(
@@ -2056,7 +2115,7 @@ mod tests {
             comment_count: None,
         };
 
-        let with = render_worktree_pr("feature", PrRef::pr(7), &status(Some("bob")), 80)
+        let with = render_pr_pane_body("feature", PrRef::pr(7), &status(Some("bob")), 80)
             .ansi_strip()
             .to_string();
         assert!(
@@ -2065,7 +2124,7 @@ mod tests {
             "author line: {with:?}"
         );
 
-        let without = render_worktree_pr("feature", PrRef::pr(7), &status(None), 80)
+        let without = render_pr_pane_body("feature", PrRef::pr(7), &status(None), 80)
             .ansi_strip()
             .to_string();
         assert!(
@@ -2079,17 +2138,10 @@ mod tests {
         use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef, ReviewState};
 
         // A worktree row whose live status carries a PR with title + body.
-        let item = ListItem::new_branch("abc".into(), "feature".into());
-        let row = WorktreeSkimItem {
-            search_base: String::new(),
-            gutter: '@',
-            rendered: Arc::new(Mutex::new(String::new())),
-            branch_name: "feature".into(),
-            item: Arc::new(item),
-            preview_cache: Arc::new(DashMap::new()),
-            has_upstream: false,
-            summaries_enabled: false,
-            pr_status: Arc::new(Mutex::new(Some(Some(PrStatus {
+        let row = worktree_test_row(
+            "feature",
+            Arc::new(DashMap::new()),
+            Some(Some(PrStatus {
                 ci_status: CiStatus::Passed,
                 source: CiSource::PullRequest,
                 is_stale: false,
@@ -2101,10 +2153,8 @@ mod tests {
                 body: Some("Adds a **bounded** retry.".into()),
                 author: None,
                 comment_count: None,
-            })))),
-            local_content: Arc::new(Mutex::new(LocalContent::default())),
-            notifier: PreviewNotifier::detached(),
-        };
+            })),
+        );
 
         // In Pr mode, `render_preview` assembles the tab bar plus the worktree PR
         // pane — the dispatch arm `SkimItem::preview` reaches once the picker-state
@@ -2177,18 +2227,20 @@ mod tests {
         let cache: PreviewCache = Arc::new(DashMap::new());
         let slot: PrStatusSlot = Arc::new(Mutex::new(status("First title")));
         let key = ("feature".to_string(), PreviewMode::Pr);
-        let row = WorktreeSkimItem {
+        let row = PickerRow {
             search_base: String::new(),
             gutter: '@',
             rendered: Arc::new(Mutex::new(String::new())),
             branch_name: "feature".into(),
-            item: Arc::new(ListItem::new_branch("abc".into(), "feature".into())),
+            output_token: "feature".into(),
             preview_cache: Arc::clone(&cache),
-            has_upstream: false,
-            summaries_enabled: false,
             pr_status: Arc::clone(&slot),
-            local_content: Arc::new(Mutex::new(LocalContent::default())),
             notifier: PreviewNotifier::detached(),
+            local: Some(LocalCheckout {
+                has_upstream: false,
+                summaries_enabled: false,
+                local_content: Arc::new(Mutex::new(LocalContent::default())),
+            }),
         };
 
         // First render populates the shared cache.
@@ -2251,7 +2303,7 @@ mod tests {
         let (_t, repo) = repo_with_main();
         repo.run_command(&["branch", "parity"]).unwrap();
         let item = item_at(&repo, "parity");
-        let output = WorktreeSkimItem::compute_branch_diff_preview(&repo, &item, 80);
+        let output = PickerRow::compute_branch_diff_preview(&repo, &item, 80);
         assert!(
             output.contains("has no file changes vs"),
             "expected empty-diff fallback, got: {output:?}"
@@ -2267,7 +2319,7 @@ mod tests {
         repo.run_command(&["add", "feat.txt"]).unwrap();
         repo.run_command(&["commit", "-m", "feat"]).unwrap();
         let item = item_at(&repo, "feature");
-        let output = WorktreeSkimItem::compute_branch_diff_preview(&repo, &item, 80);
+        let output = PickerRow::compute_branch_diff_preview(&repo, &item, 80);
         assert!(
             output.contains("feat.txt"),
             "expected diff to mention feat.txt, got: {output:?}"
@@ -2291,7 +2343,7 @@ mod tests {
         let sentinel = "SENTINEL_FROM_CACHE";
         super::preview_cache::write_branch_diff(&repo, &base_sha, item.head(), 80, sentinel);
 
-        let output = WorktreeSkimItem::compute_branch_diff_preview(&repo, &item, 80);
+        let output = PickerRow::compute_branch_diff_preview(&repo, &item, 80);
         assert_eq!(output, sentinel, "cache hit must return cached value");
     }
 
@@ -2311,7 +2363,7 @@ mod tests {
         assert!(
             super::preview_cache::read_branch_diff(&repo, &base_sha, item.head(), 80).is_none()
         );
-        let _ = WorktreeSkimItem::compute_branch_diff_preview(&repo, &item, 80);
+        let _ = PickerRow::compute_branch_diff_preview(&repo, &item, 80);
         assert!(
             super::preview_cache::read_branch_diff(&repo, &base_sha, item.head(), 80).is_some()
         );
@@ -2333,7 +2385,7 @@ mod tests {
         let item = item_at(&repo, "feature");
 
         assert!(super::preview_cache::read_log(&repo, item.head(), 80, 24).is_none());
-        let _ = WorktreeSkimItem::compute_log_preview(&repo, &item, 80, 24).0;
+        let _ = PickerRow::compute_log_preview(&repo, &item, 80, 24).0;
         let entry = super::preview_cache::read_log(&repo, item.head(), 80, 24)
             .expect("cache populated after first compute");
         assert!(
@@ -2378,7 +2430,7 @@ mod tests {
         // which removes that escape. The dim SGR `\x1b[2m` is unsuitable
         // because `format_log_output` already wraps every relative-time
         // column in dim, so it appears even in bright lines.
-        let before = WorktreeSkimItem::compute_log_preview(&repo, &item, 80, 24).0;
+        let before = PickerRow::compute_log_preview(&repo, &item, 80, 24).0;
         let before_subject_line = before
             .lines()
             .find(|l| l.contains("feature commit"))
@@ -2396,7 +2448,7 @@ mod tests {
             .unwrap();
         repo.run_command(&["checkout", "feature"]).unwrap();
 
-        let after = WorktreeSkimItem::compute_log_preview(&repo, &item, 80, 24).0;
+        let after = PickerRow::compute_log_preview(&repo, &item, 80, 24).0;
         let after_subject_line = after
             .lines()
             .find(|l| l.contains("feature commit"))
@@ -2419,7 +2471,7 @@ mod tests {
         let sentinel = "SENTINEL_UPSTREAM_VALUE";
         super::preview_cache::write_upstream_diff(&repo, item.head(), &upstream_sha, 80, sentinel);
 
-        let output = WorktreeSkimItem::compute_upstream_diff_preview(&repo, &item, 80);
+        let output = PickerRow::compute_upstream_diff_preview(&repo, &item, 80);
         assert_eq!(output, sentinel);
     }
 
@@ -2430,7 +2482,7 @@ mod tests {
         let (_t, repo) = repo_with_main();
         repo.run_command(&["branch", "orphan"]).unwrap();
         let item = item_at(&repo, "orphan");
-        let output = WorktreeSkimItem::compute_upstream_diff_preview(&repo, &item, 80);
+        let output = PickerRow::compute_upstream_diff_preview(&repo, &item, 80);
         assert!(
             output.contains("has no upstream tracking branch"),
             "expected no-upstream message, got: {output:?}"
@@ -2452,7 +2504,7 @@ mod tests {
     fn upstream_diff_up_to_date() {
         let (_t, repo) = repo_with_tracked_pair();
         let item = item_at(&repo, "feature");
-        let output = WorktreeSkimItem::compute_upstream_diff_preview(&repo, &item, 80);
+        let output = PickerRow::compute_upstream_diff_preview(&repo, &item, 80);
         assert!(
             output.contains("is up to date with upstream"),
             "expected up-to-date message, got: {output:?}"
@@ -2466,7 +2518,7 @@ mod tests {
         repo.run_command(&["add", "ahead.txt"]).unwrap();
         repo.run_command(&["commit", "-m", "ahead"]).unwrap();
         let item = item_at(&repo, "feature");
-        let output = WorktreeSkimItem::compute_upstream_diff_preview(&repo, &item, 80);
+        let output = PickerRow::compute_upstream_diff_preview(&repo, &item, 80);
         assert!(
             output.contains("ahead.txt"),
             "expected diff to mention ahead.txt, got: {output:?}"
@@ -2483,7 +2535,7 @@ mod tests {
         repo.run_command(&["commit", "-m", "behind"]).unwrap();
         repo.run_command(&["checkout", "feature"]).unwrap();
         let item = item_at(&repo, "feature");
-        let output = WorktreeSkimItem::compute_upstream_diff_preview(&repo, &item, 80);
+        let output = PickerRow::compute_upstream_diff_preview(&repo, &item, 80);
         assert!(
             output.contains("behind.txt"),
             "expected diff to mention behind.txt, got: {output:?}"
@@ -2504,7 +2556,7 @@ mod tests {
         repo.run_command(&["commit", "-m", "upstream"]).unwrap();
         repo.run_command(&["checkout", "feature"]).unwrap();
         let item = item_at(&repo, "feature");
-        let output = WorktreeSkimItem::compute_upstream_diff_preview(&repo, &item, 80);
+        let output = PickerRow::compute_upstream_diff_preview(&repo, &item, 80);
         // Diverged path runs the diff; symmetric difference includes both files.
         assert!(
             output.contains("feat.txt") || output.contains("upstream.txt"),

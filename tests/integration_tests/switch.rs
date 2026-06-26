@@ -2335,7 +2335,7 @@ fn setup_mock_forge_list(
 
 /// `wt switch --prs` in the headless dry-run (`WORKTRUNK_PICKER_DRY_RUN`)
 /// exercises the full forge fetch + row-render path — `stream_open_prs`,
-/// `fetch_github`, `parse_github_prs`, `PrSkimItem::new`, `render_grid_row`,
+/// `fetch_github`, `parse_github_prs`, `PrEntry::display_status`, `render_grid_row`,
 /// `render_pr_description` — as a normal-exit subprocess, so its coverage is
 /// captured. (The interactive picker exits via skim's abort, which never
 /// flushes a profile, so its `--prs` code is otherwise unmeasurable.) The mock

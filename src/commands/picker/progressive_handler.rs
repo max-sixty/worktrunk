@@ -52,8 +52,8 @@ use super::super::list::ci_status::PrStatus;
 const RENDER_THROTTLE: Duration = Duration::from_millis(16);
 
 use super::items::{
-    HeaderLoading, HeaderSkimItem, LocalContent, LocalContentSlot, PrStatusSlot, PreviewCache,
-    RowShortcutData, RowUrl, ShortcutTable, WorktreeSkimItem, worktree_output_token,
+    HeaderLoading, HeaderSkimItem, LocalCheckout, LocalContent, LocalContentSlot, PickerRow,
+    PrStatusSlot, PreviewCache, RowShortcutData, RowUrl, ShortcutTable, worktree_output_token,
 };
 use super::preview::PreviewMode;
 use super::preview_orchestrator::PreviewOrchestrator;
@@ -85,11 +85,11 @@ pub(super) struct PickerHandler {
     /// atomically in `on_skeleton` with this skeleton's worktree/branch rows;
     /// the `--prs` thread extends it with PR/MR rows. See [`ShortcutTable`].
     pub(super) shortcut_table: ShortcutTable,
-    /// One `Arc<Mutex<String>>` per data row — same Arcs `WorktreeSkimItem`
+    /// One `Arc<Mutex<String>>` per data row — same Arcs `PickerRow`
     /// holds. Set once in `on_skeleton`, read lock-free thereafter.
     pub(super) rendered_slots: OnceLock<Box<[Arc<Mutex<String>>]>>,
     /// One live `pr_status` slot per data row — same `PrStatusSlot` Arcs the
-    /// `WorktreeSkimItem`s hold. Set once in `on_skeleton` (primed from the
+    /// `PickerRow`s hold. Set once in `on_skeleton` (primed from the
     /// cache-filled snapshot), then written by `on_update` as the `CiStatus`
     /// task reports, so the `pr` tab reflects the live fetch.
     pub(super) pr_status_slots: OnceLock<Box<[PrStatusSlot]>>,
@@ -103,7 +103,7 @@ pub(super) struct PickerHandler {
     /// consistent with the `pr` tab. See [`Self::maybe_spawn_comments`].
     pub(super) comments_fetched: OnceLock<Box<[Arc<AtomicU64>]>>,
     /// One live `LocalContent` slot per data row — same Arcs the
-    /// `WorktreeSkimItem`s hold. Set once in `on_skeleton` (all-loading), then
+    /// `PickerRow`s hold. Set once in `on_skeleton` (all-loading), then
     /// overwritten by `on_update` from the row's `ListItem` as the list pipeline
     /// lands, so the `working_tree` / `branch_diff` / `upstream` tabs dim once
     /// their diff is known empty.
@@ -169,7 +169,7 @@ impl PickerHandler {
     /// Spawn row `idx`'s `comments` background fetch if its branch has an open
     /// PR and that PR's thread hasn't been fetched yet. The `comments` tab on a
     /// worktree row shows the same forge-fetched thread a `--prs` row's tab does
-    /// (see `items::WorktreeSkimItem::render_comments_pane`); the PR number comes
+    /// (see `items::PickerRow::render_comments_pane`); the PR number comes
     /// from the row's live status, which arrives asynchronously, so this fires
     /// from both the skeleton prime and `on_update`. The per-row
     /// [`Self::comments_fetched`] slot records which PR number was fetched, so
@@ -341,7 +341,7 @@ impl PickerProgressHandler for PickerHandler {
             // `search_base` is the stable head of the matcher text: branch +
             // distinct path. The PR/MR tokens (reference, title, author) and the
             // trailing gutter glyph are appended live in
-            // `WorktreeSkimItem::text()`, which reads the row's `pr_status` slot
+            // `PickerRow::text()`, which reads the row's `pr_status` slot
             // each time skim matches — so a PR filters by number/title/author as
             // soon as the CI fetch lands them, the same fields a `--prs` row
             // carries. The gutter glyph stays last so a typed sigil filters by
@@ -387,26 +387,29 @@ impl PickerProgressHandler for PickerHandler {
             // opens the URL once the live `pr_status` slot reports one. Carry the
             // raw `Option` (not `branch_name()`'s `"(detached)"` fallback) so
             // `alt-y` no-ops on a detached worktree instead of copying the label.
+            let output_token = worktree_output_token(&item_arc, &branch_name);
             shortcut_map.insert(
-                worktree_output_token(&item_arc, &branch_name),
+                output_token.clone(),
                 RowShortcutData {
                     branch: item_arc.branch.clone(),
                     url: RowUrl::Live(Arc::clone(&pr_status_arc)),
                 },
             );
 
-            skim_items.push(Arc::new(WorktreeSkimItem {
+            skim_items.push(Arc::new(PickerRow {
                 search_base,
                 gutter,
                 rendered: rendered_arc,
                 branch_name,
-                item: item_arc,
+                output_token,
                 preview_cache: Arc::clone(&self.preview_cache),
-                has_upstream,
-                summaries_enabled,
                 pr_status: pr_status_arc,
-                local_content: local_content_arc,
                 notifier: Arc::clone(self.orchestrator.notifier()),
+                local: Some(LocalCheckout {
+                    has_upstream,
+                    summaries_enabled,
+                    local_content: local_content_arc,
+                }),
             }) as Arc<dyn SkimItem>);
         }
 
@@ -473,7 +476,7 @@ impl PickerProgressHandler for PickerHandler {
             *slot.lock().unwrap() = item.pr_status.clone();
             // Drop the memoized `pr` pane for this row so the next `preview()`
             // re-renders from the status just mirrored — see
-            // `WorktreeSkimItem::render_pr_pane_cached`.
+            // `PickerRow::render_pr_pane_cached`.
             self.preview_cache
                 .remove(&(item.branch_name().to_string(), PreviewMode::Pr));
         }
@@ -662,7 +665,7 @@ mod tests {
     }
 
     /// Skeleton → update → reveal: verifies that each event writes through
-    /// to the shared `rendered` string the `WorktreeSkimItem` holds. Skim
+    /// to the shared `rendered` string the `PickerRow` holds. Skim
     /// reads these strings each time it repaints (which `request_render`
     /// triggers); the matcher-stable search text (branch + path) never changes.
     #[test]
@@ -889,7 +892,7 @@ mod tests {
     }
 
     /// Header + items get published in order. `output()` of the
-    /// WorktreeSkimItem is the branch name so skim returns the correct
+    /// PickerRow is the branch name so skim returns the correct
     /// identifier when the user hits Enter.
     #[test]
     fn skeleton_publishes_header_then_items() {

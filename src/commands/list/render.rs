@@ -422,9 +422,9 @@ impl ColumnLayout {
                 //
                 // PR rows (open PRs with no local branch, `wt switch --prs`)
                 // also carry a gutter sigil — a dim `#` — but they're a picker
-                // source (`PrSkimItem`), not a `ListItem`, so they render their
-                // gutter in `commands::picker::prs` (`PR_GUTTER_SIGIL`) rather
-                // than through this `ItemKind` match.
+                // row built without a `ListItem`, so they render their gutter in
+                // `commands::picker::prs` (`PR_GUTTER_SIGIL`) rather than through
+                // this `ItemKind` match.
                 let mut cell = StyledLine::new();
                 // `glyph` + trailing space = the two-cell sigil; the bare glyph
                 // also feeds the picker's fuzzy-search text (`gutter_glyph`).

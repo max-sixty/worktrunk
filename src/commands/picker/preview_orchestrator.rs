@@ -25,7 +25,7 @@ use skim::prelude::Event;
 use tokio::sync::mpsc::Sender;
 use worktrunk::git::Repository;
 
-use super::items::{PreviewCache, PreviewCacheKey, WorktreeSkimItem};
+use super::items::{PickerRow, PreviewCache, PreviewCacheKey};
 use super::preview::PreviewMode;
 use super::preview_notify::PreviewNotifier;
 use super::summary;
@@ -148,7 +148,7 @@ impl PreviewOrchestrator {
                 return;
             }
             let (value, log_disk_hit) =
-                WorktreeSkimItem::compute_and_page_preview(&repo, &item, mode, w, h);
+                PickerRow::compute_and_page_preview(&repo, &item, mode, w, h);
             Self::fill(&cache, &notifier, cache_key, value);
             if log_disk_hit {
                 pending.fetch_add(1, Ordering::SeqCst);
@@ -159,7 +159,7 @@ impl PreviewOrchestrator {
                 let repo = repo.clone();
                 rayon::spawn_fifo(move || {
                     let _g = guard;
-                    let rendered = WorktreeSkimItem::refresh_log_preview(&repo, &item, w, h);
+                    let rendered = PickerRow::refresh_log_preview(&repo, &item, w, h);
                     // Skip empty results so a transient `git log` failure
                     // doesn't poison the in-memory cache with "" and wipe
                     // out the value the producer just inserted.
@@ -196,8 +196,8 @@ impl PreviewOrchestrator {
     ///
     /// The general-purpose companion to [`Self::spawn_preview`]: that method
     /// computes a worktree `ListItem`'s preview via the local-git
-    /// `compute_and_page_preview`, whereas `--prs` rows (`PrSkimItem`) have no
-    /// local worktree, so they fetch their `log` / `comments` panes through a
+    /// `compute_and_page_preview`, whereas `--prs` rows (no local checkout) have
+    /// no local worktree, so they fetch their `log` / `comments` panes through a
     /// forge CLI and pass that work in as `compute`. Both share the same
     /// [`PreviewCache`], the same `COLLECT_POOL` routing, and the same
     /// pending-counter accounting (so the dry-run path's `wait_for_idle` and
