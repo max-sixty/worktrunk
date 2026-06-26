@@ -508,6 +508,14 @@ pub trait PickerProgressHandler: Send + Sync {
     /// benchmark early-exit, nor on the zero-worktree `Ok(None)` return
     /// (which exits before `on_skeleton`). Default: no-op.
     fn on_collect_complete(&self) {}
+
+    /// Hand the picker a clone of the collect layout, right after `on_skeleton`.
+    /// `LayoutConfig` is `!Sync`, so the handler stows it behind a lock for the
+    /// collector to read at `alt-x` time, where it renders a `/ branch` row on
+    /// the same grid as the worktree rows (the in-place morph). Default: no-op —
+    /// only the picker needs it. Column geometry is stable after skeleton (the
+    /// `--prs` rows already rely on that via `grid`), so one clone here suffices.
+    fn provide_layout(&self, _layout: &super::layout::LayoutConfig) {}
 }
 
 /// Controls how show flags (branches/remotes/full) are determined in [`collect`].
@@ -516,15 +524,6 @@ pub enum ShowConfig {
     Resolved {
         show_branches: bool,
         show_remotes: bool,
-        /// Branch-only rows to include even when `show_branches` is false. The
-        /// picker pins a branch here after `alt-x` removes its worktree but
-        /// keeps the (unmerged) branch, so the row returns as a `/ branch` row
-        /// on the next refresh instead of vanishing — the worktree is gone, the
-        /// branch remains. Filtered against the live branch inventory (a deleted
-        /// entry shows nothing) and against worktree branches (a re-attached one
-        /// renders as a worktree row, never duplicated), so a stale entry can't
-        /// produce a phantom row. Empty for `wt list`.
-        pinned_branches: HashSet<String>,
         skip_tasks: HashSet<TaskKind>,
         command_timeout: Option<std::time::Duration>,
         /// Wall-clock deadline for the collect phase. `None` uses the default
@@ -784,7 +783,6 @@ pub fn collect(
     let (
         show_branches,
         show_remotes,
-        pinned_branches,
         skip_tasks,
         command_timeout,
         collect_deadline,
@@ -795,7 +793,6 @@ pub fn collect(
         ShowConfig::Resolved {
             show_branches,
             show_remotes,
-            pinned_branches,
             skip_tasks,
             command_timeout,
             collect_deadline,
@@ -804,7 +801,6 @@ pub fn collect(
         } => (
             show_branches,
             show_remotes,
-            pinned_branches,
             skip_tasks,
             command_timeout,
             collect_deadline,
@@ -848,8 +844,6 @@ pub fn collect(
             (
                 show_branches,
                 show_remotes,
-                // `wt list` never pins branches; only the picker does.
-                HashSet::new(),
                 skip_tasks,
                 command_timeout,
                 collect_deadline,
@@ -886,12 +880,11 @@ pub fn collect(
     let needs_stale_check = default_branch
         .as_deref()
         .is_some_and(|b| !worktree_branches.contains(b));
-    let fetched_local: Option<&[LocalBranch]> =
-        if show_branches || needs_stale_check || !pinned_branches.is_empty() {
-            Some(repo.local_branches()?)
-        } else {
-            None
-        };
+    let fetched_local: Option<&[LocalBranch]> = if show_branches || needs_stale_check {
+        Some(repo.local_branches()?)
+    } else {
+        None
+    };
     let warn_stale_default = needs_stale_check
         && fetched_local.is_some_and(|all| {
             !all.iter()
@@ -899,14 +892,12 @@ pub fn collect(
         });
 
     // Filter local branches to those without worktrees (CPU-only, no git
-    // commands). With `show_branches` off, only branches the picker pinned
-    // (orphaned by an `alt-x` removal) survive — every other branch-only row
-    // stays hidden.
+    // commands). With `show_branches` off there are no branch-only rows.
     let branches_without_worktrees: Vec<(String, String)> = fetched_local
         .unwrap_or(&[])
         .iter()
+        .filter(|_| show_branches)
         .filter(|b| !worktree_branches.contains(b.name.as_str()))
-        .filter(|b| show_branches || pinned_branches.contains(&b.name))
         .map(|b| (b.name.clone(), b.commit_sha.clone()))
         .collect();
 
@@ -1291,6 +1282,9 @@ pub fn collect(
             layout.render_header_line(),
             layout.column_grid(),
         );
+        // Hand the picker the layout so `alt-x` can render a `/ branch` row on
+        // this same grid without re-collecting. No-op for non-picker handlers.
+        handler.provide_layout(&layout);
         // Mirror the `wt list` progressive-table marker so `wt-perf phases`
         // sees the same boundary across both commands.
         worktrunk::trace::instant("Skeleton rendered");
@@ -2173,60 +2167,6 @@ mod tests {
         assert_eq!(collect_pool_num_threads(true), 0);
         // Env var unset: explicit 2× CPU, since Rayon's own default is 1×.
         assert_eq!(collect_pool_num_threads(false), crate::rayon_thread_count());
-    }
-
-    /// `pinned_branches` surfaces a worktree-less branch as a `/ branch` row
-    /// even with `show_branches` off — the picker's `alt-x` row transform (a
-    /// removed worktree whose branch survives). Without pinning, the same branch
-    /// stays hidden, so the pin is what makes the row reappear.
-    #[test]
-    fn test_collect_pins_worktreeless_branch_without_show_branches() {
-        let test = worktrunk::testing::TestRepo::with_initial_commit();
-        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
-        // A local branch with no worktree — the shape `alt-x` leaves behind.
-        repo.run_command(&["branch", "orphaned"]).unwrap();
-
-        let resolved = |pinned: HashSet<String>| ShowConfig::Resolved {
-            show_branches: false,
-            show_remotes: false,
-            pinned_branches: pinned,
-            skip_tasks: [
-                TaskKind::BranchDiff,
-                TaskKind::CiStatus,
-                TaskKind::SummaryGenerate,
-            ]
-            .into_iter()
-            .collect(),
-            command_timeout: None,
-            collect_deadline: None,
-            list_width: Some(80),
-            progressive_handler: None,
-        };
-
-        // Unpinned: `show_branches` off hides every branch-only row.
-        let data = collect(&repo, resolved(HashSet::new()), RenderTarget::Json)
-            .unwrap()
-            .expect("the main worktree makes the list non-empty");
-        assert!(
-            !data.items.iter().any(|i| i.branch_name() == "orphaned"),
-            "an unpinned worktree-less branch stays hidden with show_branches off"
-        );
-
-        // Pinned: the branch surfaces as a local `/` branch-only row.
-        let pinned = ["orphaned".to_string()].into_iter().collect();
-        let data = collect(&repo, resolved(pinned), RenderTarget::Json)
-            .unwrap()
-            .expect("the main worktree makes the list non-empty");
-        let row = data
-            .items
-            .iter()
-            .find(|i| i.branch_name() == "orphaned")
-            .expect("the pinned branch surfaces as a row");
-        assert_eq!(
-            row.kind.gutter_glyph(),
-            '/',
-            "a pinned worktree-less branch renders as a local branch-only `/` row"
-        );
     }
 
     #[test]

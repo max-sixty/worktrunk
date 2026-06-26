@@ -520,6 +520,7 @@ pub struct ColumnLayout {
     pub format: ColumnFormat,
 }
 
+#[derive(Clone)]
 pub struct LayoutConfig {
     pub columns: Vec<ColumnLayout>,
     pub main_worktree_path: PathBuf,

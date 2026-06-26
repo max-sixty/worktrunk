@@ -2390,21 +2390,21 @@ fn test_switch_picker_alt_x_keeps_unmerged_branch_row(mut repo: TestRepo) {
     );
 }
 
-/// alt-x on a *worktree* row whose branch is unmerged removes the worktree but
-/// transforms the row in place: the worktree is gone, the local branch remains,
-/// so the row returns as a `/ branch` branch-only row (gutter `+` → `/`) instead
-/// of vanishing. End-to-end through real skim — the background removal pins the
-/// surviving branch and fires a `refresh` reload, and the re-collect re-includes
-/// it even though `show_branches` is off (the default picker). This covers the
-/// integration seam the unit tests can't reach: the `Event::Reload("refresh")`
-/// send and the live re-render.
+/// alt-x on a *worktree* row whose branch is unmerged morphs the row to
+/// `/ branch` **in place**: the worktree is removed, the local branch stays, and
+/// the row keeps its slot with the cursor on it — gutter `+` → `/`, no reload, no
+/// teleport. The cursor staying put is the whole point of the morph (the old
+/// re-collect re-sorted the row to the bottom and reset the cursor to the top).
+/// End-to-end through real skim: after alt-x, the list-pane cursor pointer (`>`)
+/// must land on the morphed `/ transform-me` row — proving both the in-place
+/// gutter flip and the sticky cursor in one assertion.
 #[rstest]
-fn test_switch_picker_alt_x_transforms_removed_worktree_to_branch_row(mut repo: TestRepo) {
+fn test_switch_picker_alt_x_morphs_removed_worktree_in_place(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
 
     // A worktree on a branch with a commit the default branch lacks, so
-    // `SafeDelete` keeps the branch when the worktree is removed.
+    // `SafeDelete` keeps the branch when the worktree is removed (→ morph, not drop).
     let wt_path = repo.add_worktree("transform-me");
     std::fs::write(wt_path.join("new.txt"), "unmerged work").unwrap();
     repo.git_command()
@@ -2423,32 +2423,81 @@ fn test_switch_picker_alt_x_transforms_removed_worktree_to_branch_row(mut repo: 
         .unwrap();
 
     let env_vars = repo.test_env_vars();
-    let result = exec_in_pty_capture_before_abort(
-        wt_bin().to_str().unwrap(),
-        &["switch"],
-        repo.root_path(),
-        &env_vars,
-        &[
-            // Filter to the worktree row (`> + transform-me`), then alt-x. The
-            // removal runs on a background thread (drop → pin → refresh →
-            // re-collect), so wait on the *post-transform* marker `/ transform-me`
-            // — the branch gutter that only appears once the row has transformed.
-            // Waiting on the bare name would match the pre-removal `+ ` row and
-            // capture before the transform rendered.
-            ("transform-me", Some("transform-me")),
-            ("\x1bx", Some("/ transform-me")),
-        ],
-    );
+    let pair = crate::common::open_pty_with_size(TERM_ROWS, TERM_COLS);
+    let mut cmd = CommandBuilder::new(wt_bin().to_str().unwrap());
+    cmd.arg("switch");
+    cmd.cwd(repo.root_path());
+    crate::common::configure_pty_command(&mut cmd);
+    cmd.env("CLICOLOR_FORCE", "1");
+    cmd.env("TERM", "xterm-256color");
+    for (key, value) in &env_vars {
+        cmd.env(key, value);
+    }
+    let mut child = pair.slave.spawn_command(cmd).unwrap();
+    drop(pair.slave);
 
-    assert_valid_abort_exit_code(result.exit_code);
-    let (list, _preview) = result.panels();
-    // `+ transform-me` (worktree) becomes `/ transform-me` (branch-only). The
-    // gutter glyph renders immediately before the branch name, so the `/ ` form
-    // appears only once the row has transformed — a worktree row (`+ `) or the
-    // prompt echo (`> transform-me`, no slash) never produces it.
+    let reader = pair.master.try_clone_reader().unwrap();
+    let writer: crate::common::pty::SharedPtyWriter =
+        Arc::new(Mutex::new(pair.master.take_writer().unwrap()));
+    let rx = crate::common::pty::spawn_pty_reader_answering_queries(reader, Arc::clone(&writer));
+    let mut parser = vt100::Parser::new(TERM_ROWS, TERM_COLS, 0);
+    let drain = |rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser| {
+        while let Ok(chunk) = rx.try_recv() {
+            parser.process(&chunk);
+        }
+    };
+    let send = |writer: &crate::common::pty::SharedPtyWriter, bytes: &[u8]| {
+        let mut w = writer.lock().unwrap();
+        w.write_all(bytes).unwrap();
+        w.flush().unwrap();
+    };
+
+    // Wait for skim to be ready, then for the worktree row to land.
+    let start = Instant::now();
+    loop {
+        drain(&rx, &mut parser);
+        if is_skim_ready(&parser.screen().contents()) || start.elapsed() > READY_TIMEOUT {
+            break;
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+    wait_for_stable_with_content(&rx, &mut parser, Some("transform-me"));
+
+    // Filter to the single worktree row so the selection is deterministic
+    // regardless of commit-recency order, then confirm the cursor is on it. The
+    // row still reads `> + transform-me` — a linked worktree.
+    send(&writer, b"transform-me");
+    wait_for_cursor_on_row(&rx, &mut parser, "+ transform-me");
+
+    // alt-x morphs the row in place. The cursor must land back on the morphed
+    // row — `> / transform-me`, gutter flipped to the branch sigil. The morph
+    // leaves `search_text` untouched, so the row still matches the active filter;
+    // a drop would empty the list, and the old re-collect would reset the cursor.
+    send(&writer, b"\x1bx");
+    wait_for_cursor_on_row(&rx, &mut parser, "/ transform-me");
+
+    send(&writer, b"\x1b"); // Esc to exit the picker.
+    drop(writer);
+    let start = Instant::now();
+    while start.elapsed() < CHILD_EXIT_TIMEOUT {
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let _ = child.kill();
+    drain(&rx, &mut parser);
+    let _ = child.wait();
+
+    // The worktree is gone but its branch survives — the morph's premise.
     assert!(
-        list.contains("/ transform-me"),
-        "after alt-x the removed worktree's row returns as a `/ transform-me` \
-         branch-only row.\nList:\n{list}"
+        !wt_path.exists(),
+        "alt-x removed the worktree directory.\nScreen:\n{}",
+        parser.screen().contents()
+    );
+    let branches = repo.git_output(&["branch", "--list", "transform-me"]);
+    assert!(
+        branches.contains("transform-me"),
+        "the unmerged branch is retained after its worktree is removed: {branches:?}"
     );
 }

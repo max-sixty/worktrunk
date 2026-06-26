@@ -285,6 +285,9 @@ fn fetch_and_stream(
                 RowShortcutData {
                     branch: Some(entry.head_branch.clone()),
                     url: RowUrl::Static(entry.url.clone()),
+                    // A `--prs` row has no local worktree to remove, so `alt-x`
+                    // can't morph it.
+                    morph: None,
                 },
             );
             Arc::new(PrSkimItem::new(
