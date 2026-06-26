@@ -4,6 +4,14 @@
 # Check: {{ cmd }} config show | Uninstall: {{ cmd }} config shell uninstall
 
 function {{ cmd }}
+    # Completion mode: let the binary emit completions directly. A stale
+    # third-party completion (e.g. an old Homebrew vendor_completions.d/wt.fish)
+    # may invoke the bare `wt` command with COMPLETE set; without this guard
+    # that lands back on this stub and recurses. Mirrors the bash/zsh guard.
+    if set -q COMPLETE
+        command {{ cmd }} $argv
+        return
+    end
     command {{ cmd }} config shell init fish | source
     # Check both command exit code ($pipestatus[1]) and source exit code ($pipestatus[2])
     # If source fails, the function isn't replaced and we'd infinite-loop calling ourselves

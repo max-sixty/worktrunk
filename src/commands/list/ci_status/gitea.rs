@@ -124,6 +124,7 @@ pub(super) fn detect_gitea_pr(
         review_state: None,
         title: pr.title.clone(),
         body: pr.body.clone(),
+        author: None,
         comment_count: pr.comment_count(),
     })
 }
@@ -149,6 +150,7 @@ pub(super) fn detect_gitea_commit_status(
         review_state: None,
         title: None,
         body: None,
+        author: None,
         comment_count: None,
     })
 }
