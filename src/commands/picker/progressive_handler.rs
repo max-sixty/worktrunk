@@ -59,7 +59,7 @@ use super::items::{
 use super::preview::PreviewMode;
 use super::preview_orchestrator::PreviewOrchestrator;
 use crate::commands::list::collect::PickerProgressHandler;
-use crate::commands::list::model::ListItem;
+use crate::commands::list::model::{BranchScope, ItemKind, ListItem};
 
 /// Handler owned by the background collect thread. Implements the
 /// `PickerProgressHandler` trait that `collect` drives.
@@ -135,8 +135,10 @@ pub(super) struct PickerHandler {
     /// to fan out the bulk preview pre-compute for items 1..N. Set once
     /// (`OnceLock`) because skeletons fire exactly once per collect.
     pub(super) deferred_items: OnceLock<Vec<Arc<ListItem>>>,
-    /// Handoff of the layout's column geometry to the `--prs` thread, which
-    /// renders PR rows on the same grid as the worktree rows.
+    /// Handoff to the `--prs` thread: the layout's column geometry (PR rows
+    /// align to the worktree grid) plus the branches already shown (so `--prs`
+    /// skips PRs already represented). Filled in `on_skeleton`. See
+    /// [`super::prs::Skeleton`].
     pub(super) grid_slot: Arc<super::prs::GridSlot>,
     /// Handoff of the full collect layout to `PickerCollector`, filled in
     /// `provide_layout` and read at `alt-x` time to render a `/ branch` row on
@@ -216,6 +218,27 @@ impl PickerHandler {
     }
 }
 
+/// Branch names the skeleton shows, for the `--prs` thread's dedup: a PR whose
+/// head branch is in this set is already on screen, so its row is dropped. A
+/// remote row ("origin/foo") also contributes its bare "foo" — remote names
+/// carry no '/', so the first segment is the remote — so a PR for "foo" dedups
+/// against a shown "origin/foo". Detached rows (no branch) contribute nothing.
+fn collect_shown_branches(items: &[ListItem]) -> HashSet<String> {
+    let mut shown = HashSet::new();
+    for item in items {
+        let Some(name) = item.branch.as_deref() else {
+            continue;
+        };
+        shown.insert(name.to_string());
+        if matches!(item.kind, ItemKind::Branch(BranchScope::Remote))
+            && let Some((_, bare)) = name.split_once('/')
+        {
+            shown.insert(bare.to_string());
+        }
+    }
+    shown
+}
+
 impl PickerProgressHandler for PickerHandler {
     fn on_skeleton(
         &self,
@@ -225,7 +248,16 @@ impl PickerProgressHandler for PickerHandler {
         grid: crate::commands::list::layout::ColumnGrid,
     ) {
         debug_assert_eq!(items.len(), rendered.len());
-        self.grid_slot.set(grid);
+
+        // Hand the `--prs` thread the column geometry plus the branches already
+        // shown, so it aligns PR rows *and* skips PRs already represented by a
+        // worktree/branch row (see `prs::Skeleton`). Built before the row loop
+        // consumes `items`, and set before any other handoff so the `--prs`
+        // thread's wait sees both.
+        self.grid_slot.set(super::prs::Skeleton {
+            grid,
+            shown_branches: collect_shown_branches(&items),
+        });
 
         let mut slots: Vec<Arc<Mutex<String>>> = Vec::with_capacity(items.len());
         let mut pr_slots: Vec<PrStatusSlot> = Vec::with_capacity(items.len());
@@ -311,19 +343,26 @@ impl PickerProgressHandler for PickerHandler {
                         .into_owned()
                 })
                 .unwrap_or_default();
-            // `search_text` is what the matcher sees — fuzzy ranks stay
-            // stable across progressive updates because this field only
-            // depends on fast data (branch + path + gutter glyph). The
-            // trailing gutter glyph lets typing a sigil filter by row kind:
-            // `+` to linked worktrees, `@` to the current one, `/`/`|` to
+            // `search_base` is the stable head of the matcher text: branch +
+            // distinct path. The PR/MR tokens (reference, title, author) and the
+            // trailing gutter glyph are appended live in
+            // `WorktreeSkimItem::text()`, which reads the row's `pr_status` slot
+            // each time skim matches — so a PR filters by number/title/author as
+            // soon as the CI fetch lands them, the same fields a `--prs` row
+            // carries. The gutter glyph stays last so a typed sigil filters by
+            // row kind: `+` linked worktrees, `@` the current one, `/`/`|`
             // local/remote branches (`gutter_glyph` is the same skeleton-time
-            // fact the rendered Gutter column uses).
+            // fact the rendered Gutter column uses). The folded reference also
+            // lets `#` isolate PR-bearing rows (a plain fuzzy char); the GitLab
+            // `!` is skim's inverse-match operator, so only the bare number
+            // filters those (see
+            // `folded_pr_reference_filters_under_skims_default_engine`).
             let gutter = item.kind.gutter_glyph();
-            let search_text = if path_str.is_empty() {
-                format!("{branch_name} {gutter}")
-            } else {
-                format!("{branch_name} {path_str} {gutter}")
-            };
+            let mut search_base = branch_name.clone();
+            if !path_str.is_empty() {
+                search_base.push(' ');
+                search_base.push_str(&path_str);
+            }
 
             // Strip OSC 8 hyperlinks — skim's pipeline mangles them into
             // garbage like `^[8;;…`. Colors (SGR codes) are preserved.
@@ -380,7 +419,8 @@ impl PickerProgressHandler for PickerHandler {
             );
 
             skim_items.push(Arc::new(WorktreeSkimItem {
-                search_text,
+                search_base,
+                gutter,
                 rendered: rendered_arc,
                 branch_name,
                 item: item_arc,
@@ -535,16 +575,21 @@ mod tests {
 
     /// Build a handler with explicit `repo` (the per-spawn inventory source)
     /// and `orchestrator` (preview compute). Diverging the two lets a test
-    /// prove which one `on_skeleton`'s inventory reads consult.
+    /// prove which one `on_skeleton`'s inventory reads consult. `render_tx` is
+    /// shared with the orchestrator's notifier (as `handle_picker` shares it),
+    /// so a test can publish a channel into it and observe both the list redraw
+    /// (`Event::Render`, via `request_render`) and the notifier's
+    /// `Event::RunPreview`.
     fn handler_with(
         repo: Repository,
         orchestrator: Arc<PreviewOrchestrator>,
         tx: SkimItemSender,
+        render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
     ) -> PickerHandler {
         let preview_cache: PreviewCache = Arc::clone(&orchestrator.cache);
         PickerHandler {
             tx,
-            render_tx: Arc::new(OnceLock::new()),
+            render_tx,
             last_render_poke: Mutex::new(Instant::now()),
             shared_items: Arc::new(Mutex::new(Vec::new())),
             shortcut_table: Arc::new(Mutex::new(std::collections::HashMap::new())),
@@ -569,11 +614,16 @@ mod tests {
     fn make_handler() -> (PickerHandler, TestRepo, SkimItemReceiver) {
         let test = TestRepo::with_initial_commit();
         let (tx, rx): (SkimItemSender, SkimItemReceiver) = unbounded();
+        // Share one `render_tx` between the orchestrator's notifier and the
+        // handler, as `handle_picker` does — so a test can publish a channel into
+        // `handler.render_tx` and observe both the list redraw and the notifier's
+        // `Event::RunPreview` on it.
+        let render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>> = Arc::new(OnceLock::new());
         let orchestrator = Arc::new(PreviewOrchestrator::new(
             test.repo.clone(),
-            Arc::new(OnceLock::new()),
+            Arc::clone(&render_tx),
         ));
-        let handler = handler_with(test.repo.clone(), orchestrator, tx);
+        let handler = handler_with(test.repo.clone(), orchestrator, tx, render_tx);
         (handler, test, rx)
     }
 
@@ -606,7 +656,12 @@ mod tests {
             orchestrator_repo.repo.clone(),
             Arc::new(OnceLock::new()),
         ));
-        let handler = handler_with(self_repo.repo.clone(), orchestrator, tx);
+        let handler = handler_with(
+            self_repo.repo.clone(),
+            orchestrator,
+            tx,
+            Arc::new(OnceLock::new()),
+        );
 
         // A worktree row under the handler-repo's tree. The shared parent strips
         // only if path_base comes from self_repo (parent of `<temp>/repo`), not
@@ -712,6 +767,75 @@ mod tests {
         assert_eq!(*slots[1].lock().unwrap(), "rev-two");
     }
 
+    /// `on_update` mirrors a row's live CI status into the preview-feeding slots,
+    /// then pokes `Event::RunPreview` so the selected row's `pr` / `comments` tab
+    /// re-renders from the new status without a keystroke. This is the loop the
+    /// orchestrator-fill path can't close — `on_update` isn't a cache fill, so it
+    /// can't ride `PreviewOrchestrator::fill`'s notify; the poke is wired
+    /// separately here. Scoped to the selected row: an update for a row the
+    /// cursor isn't on repaints the list (`Event::Render`) but must not re-run
+    /// the visible preview. Fast producer-site guard for that wiring; the
+    /// end-to-end path is also covered by the PTY test
+    /// `test_switch_picker_pr_tab_auto_resolves_from_fetching`.
+    #[test]
+    fn on_update_pokes_run_preview_for_the_selected_row() {
+        let (handler, _test, rx) = make_handler();
+        // Publish skim's event sender (shared with the orchestrator's notifier,
+        // as in production) so both the list redraw and the preview re-run land
+        // on this channel.
+        let (tx, mut render_rx) = tokio::sync::mpsc::channel::<Event>(8);
+        handler.render_tx.set(tx).unwrap();
+
+        handler.on_skeleton(
+            vec![ListItem::new_branch("aaa".into(), "feature".into())],
+            vec!["s".into()],
+            header("hdr"),
+            grid(),
+        );
+        let _ = rx.recv(); // drain the skeleton batch
+
+        // A live-status change for the row: CI reported "no PR".
+        let mut updated = ListItem::new_branch("aaa".into(), "feature".into());
+        updated.pr_status = Some(None);
+
+        let run_previews = |rx: &mut tokio::sync::mpsc::Receiver<Event>| {
+            let mut n = 0;
+            while let Ok(ev) = rx.try_recv() {
+                if matches!(ev, Event::RunPreview) {
+                    n += 1;
+                }
+            }
+            n
+        };
+
+        // Cursor is on `feature`'s `pr` tab (still loading) → its CI update
+        // re-runs the preview.
+        handler
+            .orchestrator
+            .notifier()
+            .note_awaiting("feature", PreviewMode::Pr);
+        handler.on_update(0, "r".into(), &updated);
+        assert!(
+            run_previews(&mut render_rx) >= 1,
+            "the selected row's CI update re-runs its preview"
+        );
+
+        // Cursor is on a different row → `feature`'s update must not re-run the
+        // preview the cursor is showing (no thrash). `request_render`'s throttle
+        // may swallow the `Event::Render` too, but the `RunPreview` poke is
+        // unthrottled, so its absence is the meaningful signal.
+        handler
+            .orchestrator
+            .notifier()
+            .note_awaiting("other", PreviewMode::Pr);
+        handler.on_update(0, "r".into(), &updated);
+        assert_eq!(
+            run_previews(&mut render_rx),
+            0,
+            "an update to a row the cursor isn't on doesn't re-run the visible preview"
+        );
+    }
+
     /// A row's `comments` fetch is once-per-PR, keyed by branch name — but if the
     /// live CI fetch corrects the PR number (a stale prime, a reused branch), the
     /// now-wrong cached thread is dropped and re-fetched, so the `comments` tab
@@ -744,6 +868,7 @@ mod tests {
                 review_state: None,
                 title: None,
                 body: None,
+                author: None,
                 comment_count: None,
             }));
             item
@@ -895,6 +1020,114 @@ mod tests {
         assert!(text(2).contains("origin/remotebr"));
     }
 
+    /// A worktree row's matcher text folds in its PR's reference, title, and
+    /// author — the same fields a `--prs` row carries — so a PR filters
+    /// identically however it's shown. Here the PR is primed at skeleton (the
+    /// cache case); the gutter glyph stays trailing for sigil filtering.
+    #[test]
+    fn worktree_row_matcher_text_folds_in_pr_number_title_author() {
+        use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef, PrStatus};
+
+        let (handler, _test, rx) = make_handler();
+        let mut item = ListItem::new_branch("abc".into(), "localbr".into());
+        item.pr_status = Some(Some(PrStatus {
+            ci_status: CiStatus::Passed,
+            source: CiSource::PullRequest,
+            is_stale: false,
+            is_priming: false,
+            url: None,
+            number: Some(PrRef::pr(123)),
+            review_state: None,
+            title: Some("Speed up startup".into()),
+            body: None,
+            author: Some("alice".into()),
+            comment_count: None,
+        }));
+        handler.on_skeleton(vec![item], vec!["skel".into()], header("hdr"), grid());
+
+        let received = rx.recv().expect("skeleton batch");
+        let text = received[1].text().into_owned();
+        // The CI column shows `#123`; typing the number (or title/author) filters.
+        assert!(text.contains("#123"), "PR reference folded in: {text:?}");
+        assert!(
+            text.contains("Speed up startup"),
+            "title folded in: {text:?}"
+        );
+        assert!(text.contains("alice"), "author folded in: {text:?}");
+        assert!(
+            text.contains("localbr"),
+            "branch still searchable: {text:?}"
+        );
+        assert!(text.ends_with('/'), "gutter glyph stays trailing: {text:?}");
+    }
+
+    /// The freeze is relaxed: a worktree row's matcher text is read live from its
+    /// `pr_status` slot, so a PR the live CI fetch discovers (cold cache, nothing
+    /// primed at skeleton) becomes filterable by number/title/author once
+    /// `on_update` lands it — not just on a later run.
+    #[test]
+    fn worktree_row_matcher_text_updates_when_live_fetch_lands_pr() {
+        use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef, PrStatus};
+
+        let (handler, _test, rx) = make_handler();
+        // Skeleton with no PR (cold cache).
+        handler.on_skeleton(
+            vec![ListItem::new_branch("abc".into(), "localbr".into())],
+            vec!["skel".into()],
+            header("hdr"),
+            grid(),
+        );
+        let received = rx.recv().expect("skeleton batch");
+        let row = Arc::clone(&received[1]);
+        assert!(
+            !row.text().contains("#7"),
+            "no PR before the fetch: {:?}",
+            row.text()
+        );
+
+        // The live fetch reports a PR for the row.
+        let mut updated = ListItem::new_branch("abc".into(), "localbr".into());
+        updated.pr_status = Some(Some(PrStatus {
+            ci_status: CiStatus::Passed,
+            source: CiSource::PullRequest,
+            is_stale: false,
+            is_priming: false,
+            url: None,
+            number: Some(PrRef::pr(7)),
+            review_state: None,
+            title: Some("Add caching".into()),
+            body: None,
+            author: Some("bob".into()),
+            comment_count: None,
+        }));
+        handler.on_update(0, "rendered".into(), &updated);
+
+        // Same row item; its matcher text now reflects the landed PR.
+        let text = row.text().into_owned();
+        assert!(text.contains("#7"), "number now filters: {text:?}");
+        assert!(text.contains("Add caching"), "title now filters: {text:?}");
+        assert!(text.contains("bob"), "author now filters: {text:?}");
+        assert!(text.ends_with('/'), "gutter glyph stays trailing: {text:?}");
+    }
+
+    /// `collect_shown_branches` gathers branch names for the `--prs` dedup, and
+    /// adds a remote row's bare name so a PR for "foo" dedups against a shown
+    /// "origin/foo".
+    #[test]
+    fn collect_shown_branches_adds_remote_bare_names() {
+        let items = vec![
+            ListItem::new_branch("a".into(), "local-feat".into()),
+            ListItem::new_remote_branch("b".into(), "origin/remote-feat".into()),
+        ];
+        let shown = collect_shown_branches(&items);
+        assert!(shown.contains("local-feat"), "local branch name");
+        assert!(shown.contains("origin/remote-feat"), "full remote ref");
+        assert!(
+            shown.contains("remote-feat"),
+            "bare name so a PR head dedups against the remote row"
+        );
+    }
+
     /// `on_skeleton` strips the shared main-worktree parent from each row's
     /// matcher `search_text`, so the fuzzy matcher indexes the distinguishing
     /// leaf (`repo.feat`) rather than the absolute prefix every sibling worktree
@@ -1010,6 +1243,51 @@ mod tests {
                 "| (OR operator) matches nothing — not a filter: {row:?}"
             );
         }
+    }
+
+    /// Locks the PR/MR filtering contract: a worktree row folds its PR's
+    /// reference, title, and author into the matcher text, so under skim's
+    /// default engine all three filter the row regardless of forge sigil. `#`
+    /// (GitHub/Gitea/Azure) is a plain fuzzy char that also isolates PR-bearing
+    /// rows, while the GitLab `!` is skim's inverse-match operator, so typing the
+    /// literal `!7` *excludes* its own MR row — only the number filters there.
+    /// Companion to `gutter_glyphs_filter_under_skims_default_engine`.
+    #[test]
+    fn folded_pr_reference_filters_under_skims_default_engine() {
+        struct TextItem(String);
+        impl SkimItem for TextItem {
+            fn text(&self) -> std::borrow::Cow<'_, str> {
+                std::borrow::Cow::Borrowed(&self.0)
+            }
+        }
+        let matches = |query: &str, haystack: &str| -> bool {
+            AndOrEngineFactory::new(ExactOrFuzzyEngineFactory::builder().build())
+                .create_engine(query)
+                .match_item(&TextItem(haystack.to_string()))
+                .is_some()
+        };
+
+        // Folded matcher text for a worktree row carrying a PR (`#123`) / MR
+        // (`!7`) — branch, path, reference, title, author, gutter — and one with
+        // no PR. The PR fields are exactly what a `--prs` row also folds in.
+        let github = "feature feature.wt #123 Add caching alice +";
+        let gitlab = "feature feature.wt !7 Speed up startup bob +";
+        let no_pr = "plain plain.wt +";
+
+        // The number, title, and author all filter — the same fields in both
+        // pickers, regardless of forge sigil.
+        assert!(matches("123", github), "PR number filters the GitHub row");
+        assert!(matches("7", gitlab), "MR number filters the GitLab row");
+        assert!(matches("caching", github), "title filters");
+        assert!(matches("alice", github), "author filters");
+        assert!(matches("bob", gitlab), "MR author filters");
+        // `#` is a plain fuzzy char: it isolates PR-bearing rows and skips
+        // PR-less ones (same as the `--prs` gutter sigil).
+        assert!(matches("#", github), "# selects a PR-bearing row");
+        assert!(!matches("#", no_pr), "# skips a PR-less row");
+        // `!7` is skim's inverse-match operator — it excludes rows containing
+        // `7`, hiding the very MR row it names. The bare number is reliable.
+        assert!(!matches("!7", gitlab), "!7 inverse-excludes its own MR row");
     }
 
     /// `stash_warning` accumulates lines in arrival order so the picker can

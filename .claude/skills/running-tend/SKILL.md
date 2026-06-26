@@ -189,22 +189,29 @@ closed in error, they can let us know and we'll reopen it.
 
 ### Suggesting Aliases for Niche Feature Requests
 
-Deflect narrow feature requests to aliases rather than native flags — this
-keeps the CLI surface small while giving users the behavior immediately.
-Suggest an alias when:
+worktrunk deliberately limits flag and config growth, so a `wt` alias is the
+standing answer to a narrow feature request rather than a new native flag.
+Suggest one when the request serves a single reporter's workflow or a small
+subset of users (idempotent create-or-switch, auto-push after merge) and
+composes from existing `wt` commands.
 
-- The request benefits a small subset of users or a single reporter's workflow
-  (e.g., idempotent create-or-switch, auto-push after merge)
-- The behavior can be composed from existing `wt` commands or shell primitives
-- A shell one-liner or `wt step` alias covers the use case
+Answer with a `wt` `[aliases]` entry. Defined in user config, it resolves
+`wt <name>` to the alias whenever no built-in matches, so the same alias works
+across every repo. It's the project's preferred extension point.
 
 **How to respond:**
-1. Draft the alias (shell function or `wt step` alias, whichever fits better)
-2. Test it in a scratch worktree — verify it works for the happy path and edge
-   cases (e.g., branch already exists, dirty worktree, missing remote)
-3. Post the tested alias in the issue with usage examples
-4. Link to the [aliases docs](https://worktrunk.dev/step/#aliases) and
-   [tips & patterns](https://worktrunk.dev/tips-patterns/) for further recipes
+1. Search open and closed issues for the same request and link the prior
+   thread; these asks recur, and the link lets the deflection read as a
+   considered position rather than a brush-off.
+2. Draft the alias.
+3. Test it in a scratch worktree against the happy path and edge cases (branch
+   already exists, dirty worktree). When a surprising behavior turns up, note
+   it in the reply instead of building the alias around it. For example, a
+   create-or-switch wrapper inherits `wt switch <name>`'s habit of
+   materializing a *remote* branch of the same name.
+4. Post the tested alias with usage examples.
+5. Link to the [aliases docs](https://worktrunk.dev/step/#aliases) and
+   [tips & patterns](https://worktrunk.dev/tips-patterns/).
 
 ### Don't fix tests by adding skip guards
 
