@@ -393,6 +393,11 @@ pub struct PrStatus {
     /// `pr` preview pane, riding the same forge call the CI column already makes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// PR/MR author login (GitHub) / username (GitLab). Absent as for `title`.
+    /// Folded into a worktree row's matcher text so a PR filters by author the
+    /// same whether it's shown as a worktree row or a listed `--prs` row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
     /// PR/MR description (GitHub `body`, GitLab/Azure/Gitea `description`/`body`),
     /// rendered as markdown in the `pr` preview pane. Absent as for `title`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -527,6 +532,7 @@ impl PrStatus {
             review_state: None,
             title: None,
             body: None,
+            author: None,
             comment_count: None,
         }
     }
@@ -748,6 +754,7 @@ mod tests {
             review_state: None,
             title: None,
             body: None,
+            author: None,
             comment_count: None,
         };
         assert_eq!(pr_passed.indicator(), "#");
@@ -762,6 +769,7 @@ mod tests {
             review_state: None,
             title: None,
             body: None,
+            author: None,
             comment_count: None,
         };
         assert_eq!(branch_running.indicator(), "#");
@@ -776,6 +784,7 @@ mod tests {
             review_state: None,
             title: None,
             body: None,
+            author: None,
             comment_count: None,
         };
         assert_eq!(error_status.indicator(), "⚠");
@@ -795,6 +804,7 @@ mod tests {
             review_state: None,
             title: None,
             body: None,
+            author: None,
             comment_count: None,
         };
 
@@ -891,6 +901,7 @@ mod tests {
             review_state: None,
             title: None,
             body: None,
+            author: None,
             comment_count: None,
         };
         let green = "\u{1b}[32m";
@@ -932,6 +943,7 @@ mod tests {
             review_state,
             title: None,
             body: None,
+            author: None,
             comment_count: None,
         };
 
@@ -1046,6 +1058,7 @@ mod tests {
             review_state: None,
             title: None,
             body: None,
+            author: None,
             comment_count: None,
         }
     }

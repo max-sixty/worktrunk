@@ -69,11 +69,12 @@ pub(super) fn detect_github(
             "--limit",
             &MAX_PRS_TO_FETCH.to_string(),
             "--json",
-            // title,body and the comments array ride this existing call so the
-            // picker's `pr` preview pane can show them — no extra round-trip.
-            // `gh pr list` has no comment-count field, so we request the array and
-            // count it; for a `--head <branch>` call that's typically one PR.
-            "number,title,body,comments,headRefOid,mergeStateStatus,statusCheckRollup,url,headRepositoryOwner,reviewDecision,isDraft",
+            // title,body,author and the comments array ride this existing call so
+            // the picker's `pr` preview pane and matcher text can use them — no
+            // extra round-trip. `gh pr list` has no comment-count field, so we
+            // request the array and count it; for a `--head <branch>` call that's
+            // typically one PR.
+            "number,title,body,author,comments,headRefOid,mergeStateStatus,statusCheckRollup,url,headRepositoryOwner,reviewDecision,isDraft",
         ])
         .current_dir(&repo_root)
         .run()
@@ -143,6 +144,7 @@ pub(super) fn detect_github(
         review_state: pr_info.review_state(),
         title: pr_info.title.clone(),
         body: pr_info.body.clone(),
+        author: pr_info.author.as_ref().map(|a| a.login.clone()),
         comment_count: pr_info.comment_count(),
     })
 }
@@ -216,6 +218,7 @@ pub(super) fn detect_github_commit_checks(
         review_state: None,
         title: None,
         body: None,
+        author: None,
         comment_count: None,
     })
 }
@@ -233,6 +236,10 @@ pub(crate) struct GitHubPrInfo {
     pub title: Option<String>,
     /// PR description; shown in the `pr` preview pane. Rides this call.
     pub body: Option<String>,
+    /// PR author; folded into the row's matcher text. Requested by both the
+    /// worktree-row [`detect_github`] call and the `--prs` list call.
+    #[serde(default)]
+    pub author: Option<GitHubAuthor>,
     /// Conversation comments on the PR. Requested only on the worktree-row
     /// [`detect_github`] call to count them for the `pr` pane; the `--prs` call
     /// omits `comments` to keep its 50-PR payload light, so this stays empty
@@ -263,6 +270,13 @@ pub(crate) struct GitHubPrInfo {
 #[derive(Debug, Deserialize)]
 pub(crate) struct HeadRepositoryOwner {
     /// The login (username/org name) of the repository owner.
+    pub login: String,
+}
+
+/// PR author from `gh pr list --json author` (`{"login": ...}`).
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct GitHubAuthor {
+    #[serde(default)]
     pub login: String,
 }
 
@@ -348,6 +362,7 @@ impl GitHubPrInfo {
             // background-fetched comments tab, and the list call omits `comments`.
             title: None,
             body: None,
+            author: None,
             comment_count: None,
         }
     }
@@ -434,6 +449,7 @@ mod tests {
             comments: Vec::new(),
             review_decision: None,
             is_draft: None,
+            author: None,
         };
         assert_eq!(pr.open_pr_status().ci_status, CiStatus::Conflicts);
     }
@@ -453,6 +469,7 @@ mod tests {
             comments: Vec::new(),
             review_decision: None,
             is_draft: None,
+            author: None,
         };
         assert_eq!(pr.ci_status(), CiStatus::NoCI);
 
@@ -469,6 +486,7 @@ mod tests {
             comments: Vec::new(),
             review_decision: None,
             is_draft: None,
+            author: None,
         };
         assert_eq!(pr.ci_status(), CiStatus::NoCI);
 
@@ -490,6 +508,7 @@ mod tests {
                 comments: Vec::new(),
                 review_decision: None,
                 is_draft: None,
+                author: None,
             };
             assert_eq!(pr.ci_status(), CiStatus::Running, "status={status}");
         }
@@ -511,6 +530,7 @@ mod tests {
             comments: Vec::new(),
             review_decision: None,
             is_draft: None,
+            author: None,
         };
         assert_eq!(pr.ci_status(), CiStatus::Running);
 
@@ -532,6 +552,7 @@ mod tests {
                 comments: Vec::new(),
                 review_decision: None,
                 is_draft: None,
+                author: None,
             };
             assert_eq!(pr.ci_status(), CiStatus::Failed, "conclusion={conclusion}");
         }
@@ -554,6 +575,7 @@ mod tests {
                 comments: Vec::new(),
                 review_decision: None,
                 is_draft: None,
+                author: None,
             };
             assert_eq!(pr.ci_status(), CiStatus::Failed, "state={state}");
         }
@@ -575,6 +597,7 @@ mod tests {
             comments: Vec::new(),
             review_decision: None,
             is_draft: None,
+            author: None,
         };
         assert_eq!(pr.ci_status(), CiStatus::Passed);
     }
@@ -593,6 +616,7 @@ mod tests {
             comments: Vec::new(),
             review_decision: review_decision.map(Into::into),
             is_draft,
+            author: None,
         };
 
         assert_eq!(
@@ -634,6 +658,7 @@ mod tests {
                 .collect(),
             review_decision: None,
             is_draft: None,
+            author: None,
         };
 
         // Zero comments flatten to None so a PR with no comments shows nothing.

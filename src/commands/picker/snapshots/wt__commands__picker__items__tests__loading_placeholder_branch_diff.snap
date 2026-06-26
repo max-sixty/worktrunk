@@ -2,4 +2,4 @@
 source: src/commands/picker/items.rs
 expression: "WorktreeSkimItem::loading_placeholder(mode)"
 ---
-○ Loading branch diff. Press alt-3 again to refresh.
+[2m↳[22m [2mLoading branch diff…[22m

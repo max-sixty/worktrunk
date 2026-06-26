@@ -677,7 +677,7 @@ The CI column shows each row's PR/MR CI and review status, the same as [`wt list
 
 `Alt-o` is a no-op on a row with no PR/MR (or whose status hasn't loaded yet).
 
-Plain digits go to the filter, so a branch name containing a number can be typed directly; the preview tabs move to `Alt`.
+Each row filters by its branch, path, and — when it has a PR/MR — the PR/MR's number, title, and author, the same fields whether the PR is checked out (a worktree row) or listed via `--prs`. Plain digits go to the filter, so a number can be typed directly and the preview tabs move to `Alt`.
 
 Typing a gutter sigil filters by row kind: `+` narrows to linked worktrees and `@` to the current worktree. The other sigils don't filter cleanly — `^` and `|` are skim's prefix-anchor and OR query operators (so `^` matches every row and `|` none), and `/` matches most rows because every worktree path contains it.
 
@@ -716,7 +716,7 @@ Both work anywhere a branch is accepted, including `--base`. The `--create` flag
 
 If the PR or MR is on a fork, the local branch uses its branch name directly, so `git push` works normally. A pre-existing local branch with that name tracking something else requires renaming first.
 
-The `--prs` flag adds the repository's open PRs (GitHub) or MRs (GitLab) to the interactive picker. Each row resolves to the same `pr:`/`mr:` shortcut, so selecting one fetches the ref and switches to its branch. A `--prs` row has no local worktree, so its `pr` and `comments` preview tabs load the PR/MR's metadata and comments from the forge in the background. The `log` tab uses a local `git log` — graph and merge-base dimming included — whenever the head commit is already in the object store (a same-repo PR off a fetched remote), falling back to a flat forge-fetched commit list otherwise.
+The `--prs` flag adds the repository's open PRs (GitHub) or MRs (GitLab) to the interactive picker — only the ones not already there: a PR whose branch is already shown (as a worktree, or a local or remote branch) isn't listed twice, so `--prs` only adds the rest and the two pickers differ solely by those extra rows. Each added row resolves to the same `pr:`/`mr:` shortcut, so selecting one fetches the ref and switches to its branch. A `--prs` row has no local worktree, so its `pr` and `comments` preview tabs load the PR/MR's metadata and comments from the forge in the background. The `log` tab uses a local `git log` — graph and merge-base dimming included — whenever the head commit is already in the object store (a same-repo PR off a fetched remote), falling back to a flat forge-fetched commit list otherwise.
 
 Requires `gh` (GitHub), `glab` (GitLab), or an equivalent CLI installed and authenticated; see [forge platform](@/config.md#forge-platform) for Gitea, Azure DevOps, and other supported platforms.
 
