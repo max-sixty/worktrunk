@@ -442,9 +442,13 @@ fn exec_in_pty_capture_before_abort_inner(
 /// Wait until every asynchronously-decorated list-pane column has resolved — no
 /// `·` loading placeholder remains anywhere on screen.
 ///
-/// `·` is exclusive to the list pane's column gutter (the preview pane's
-/// loading hints render as `↳`/`○`/`▲`, never `·`), so a full-screen check is
-/// equivalent to a list-pane one. Routed through `wait_for_stable_until`'s
+/// `·` loading placeholders live in the list pane's column gutter, and no
+/// committed `switch_picker` snapshot contains one, so a full-screen check
+/// settles correctly for callers whose preview pane never renders a literal
+/// `·` — e.g. `--branches` (commit-log preview). The `--prs` comments preview
+/// renders `@author · {when}`, so a `--prs` caller can't use this full-screen
+/// gate as-is (it would never clear, panicking at the stabilize timeout).
+/// Routed through `wait_for_stable_until`'s
 /// readiness predicate, so a timeout that never saw the placeholders clear
 /// panics with diagnostics rather than silently capturing a loading frame.
 fn wait_for_list_columns_settled(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser) {
