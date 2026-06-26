@@ -49,7 +49,7 @@ use serde::Deserialize;
 use skim::prelude::*;
 use unicode_width::UnicodeWidthStr;
 use worktrunk::git::{CiPlatform, Repository};
-use worktrunk::styling::{INFO_SYMBOL, StyledLine, WARNING_SYMBOL, warning_message};
+use worktrunk::styling::{HINT_SYMBOL, INFO_SYMBOL, StyledLine, WARNING_SYMBOL, warning_message};
 
 use super::super::list::ci_status::{
     CiSource, CiStatus, GitHubPrInfo, PrRef, PrStatus, ReviewState, non_interactive_cmd,
@@ -770,20 +770,19 @@ fn pr_row_empty_placeholder() -> String {
 /// [`super::items::WorktreeSkimItem::render_comments_pane`]) so both row types
 /// show the identical in-flight pane.
 pub(super) fn pr_deferred_loading(mode: PreviewMode) -> String {
-    let reset = Reset;
     let label = match mode {
         PreviewMode::Log => "commit log",
         PreviewMode::Comments => "comments",
         // Only the deferred tabs reach here; other modes render synchronously.
         _ => "preview",
     };
-    cformat!("{INFO_SYMBOL}{reset} Loading {label}…\n")
+    cformat!("{HINT_SYMBOL} <dim>Loading {label}…</>\n")
 }
 
 /// Terminal pane for a `--prs` deferred tab whose background fetch failed (forge
 /// CLI missing/unauthenticated, network error, unparsable JSON). The deferred
 /// closures cache this in place of an empty slot, so the tab shows a clear
-/// "couldn't load" rather than [`pr_deferred_loading`]'s spinner forever: the
+/// "couldn't load" rather than [`pr_deferred_loading`]'s placeholder forever: the
 /// fetch is spawned once per row and never retried in-session (see
 /// [`spawn_pr_previews`]), so a `None` left uncached would strand the tab on
 /// "Loading…". The warning glyph distinguishes it from the benign info states

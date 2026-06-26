@@ -2,4 +2,4 @@
 source: src/commands/picker/items.rs
 expression: "WorktreeSkimItem::loading_placeholder(mode)"
 ---
-○ Generating summary…
+[2m↳[22m [2mGenerating summary…[22m

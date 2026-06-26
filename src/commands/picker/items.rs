@@ -14,7 +14,7 @@ use dashmap::DashMap;
 use ratatui::text::{Line, Span};
 use skim::prelude::*;
 use worktrunk::git::Repository;
-use worktrunk::styling::{INFO_SYMBOL, visual_width};
+use worktrunk::styling::{HINT_SYMBOL, INFO_SYMBOL, visual_width};
 
 use super::super::list::ci_status::{PrRef, PrStatus};
 use super::super::list::model::ListItem;
@@ -795,7 +795,7 @@ impl WorktreeSkimItem {
         let branch = self.item.branch_name();
         match pr {
             PrPreview::Loading => {
-                cformat!("○ Fetching PR status for <bold>{branch}</>{reset}…\n")
+                cformat!("{HINT_SYMBOL} <dim>Fetching PR status for {branch}…</>\n")
             }
             PrPreview::NoPr => {
                 cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no PR\n")
@@ -821,7 +821,7 @@ impl WorktreeSkimItem {
             // The CI fetch hasn't reported yet — we don't know whether there's a
             // PR to fetch comments for. Mirror the `pr` tab's loading state.
             PrPreview::Loading => {
-                cformat!("○ Fetching PR status for <bold>{branch}</>{reset}…\n")
+                cformat!("{HINT_SYMBOL} <dim>Fetching PR status for {branch}…</>\n")
             }
             PrPreview::NoPr => {
                 cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no PR\n")
@@ -879,7 +879,7 @@ impl WorktreeSkimItem {
                 unreachable!("comments tab renders via render_comments_pane")
             }
         };
-        format!("○ {verb} {label}…\n")
+        cformat!("{HINT_SYMBOL} <dim>{verb} {label}…</>\n")
     }
 
     /// Compute preview and apply pager for diff modes. Returns the

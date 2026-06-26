@@ -2,4 +2,4 @@
 source: src/commands/picker/items.rs
 expression: "WorktreeSkimItem::loading_placeholder(mode)"
 ---
-○ Loading upstream diff…
+[2m↳[22m [2mLoading upstream diff…[22m
