@@ -358,6 +358,60 @@ fn exec_in_pty_capture_before_abort(
     env_vars: &[(String, String)],
     pre_abort_inputs: &[(&str, Option<&str>)],
 ) -> PtyResult {
+    exec_in_pty_capture_before_abort_inner(
+        command,
+        args,
+        working_dir,
+        env_vars,
+        pre_abort_inputs,
+        false,
+    )
+}
+
+/// Like `exec_in_pty_capture_before_abort`, but additionally waits for every
+/// asynchronously-decorated list-pane column (git ahead/behind, CI status) to
+/// resolve — its `·` loading placeholder cleared — before capturing.
+///
+/// Committed snapshots of the settled list frame must use this.
+/// `wait_for_stable` alone gates on "no screen change for STABLE_DURATION plus
+/// the awaited row text present", which a column's async output can satisfy
+/// *inside a lull*: a slow git ahead/behind or CI-status compute (e.g. under
+/// coverage instrumentation on a loaded Windows runner) emits nothing during
+/// the window, so the screen looks stable while a cell still shows `·` where
+/// the snapshot has the resolved value. That freezes a different async-render
+/// frame than the committed snapshot — the exact race documented on
+/// `exec_in_pty_capture_noop_probe`. No committed `switch_picker` snapshot
+/// contains `·`, so the settled frame is always reachable.
+///
+/// Tests that *intentionally* capture a transient frame keep the non-settling
+/// `exec_in_pty_capture_before_abort` — e.g.
+/// `test_switch_picker_prs_shows_loading_marker`, which asserts the "loading
+/// open PRs…" header is on screen before the rows stream in.
+fn exec_in_pty_capture_settled_before_abort(
+    command: &str,
+    args: &[&str],
+    working_dir: &Path,
+    env_vars: &[(String, String)],
+    pre_abort_inputs: &[(&str, Option<&str>)],
+) -> PtyResult {
+    exec_in_pty_capture_before_abort_inner(
+        command,
+        args,
+        working_dir,
+        env_vars,
+        pre_abort_inputs,
+        true,
+    )
+}
+
+fn exec_in_pty_capture_before_abort_inner(
+    command: &str,
+    args: &[&str],
+    working_dir: &Path,
+    env_vars: &[(String, String)],
+    pre_abort_inputs: &[(&str, Option<&str>)],
+    settle_columns: bool,
+) -> PtyResult {
     let PickerSession {
         child,
         _master,
@@ -371,11 +425,35 @@ fn exec_in_pty_capture_before_abort(
         send_input_awaiting_content(&writer, &rx, &mut parser, input, *expected_content);
     }
 
+    // The rows are on screen, but their async-decorated columns may still show
+    // the `·` loading placeholder. A committed-snapshot caller waits for those
+    // to resolve so it freezes the settled frame, not a loading one.
+    if settle_columns {
+        wait_for_list_columns_settled(&rx, &mut parser);
+    }
+
     // === CAPTURE: screen state is now stable — snapshot BEFORE aborting ===
     // The parser retains this state because we stop feeding output to it.
     let exit_code = abort_and_exit_code(child, writer, rx);
 
     PtyResult { parser, exit_code }
+}
+
+/// Wait until every asynchronously-decorated list-pane column has resolved — no
+/// `·` loading placeholder remains anywhere on screen.
+///
+/// `·` is exclusive to the list pane's column gutter (the preview pane's
+/// loading hints render as `↳`/`○`/`▲`, never `·`), so a full-screen check is
+/// equivalent to a list-pane one. Routed through `wait_for_stable_until`'s
+/// readiness predicate, so a timeout that never saw the placeholders clear
+/// panics with diagnostics rather than silently capturing a loading frame.
+fn wait_for_list_columns_settled(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser) {
+    wait_for_stable_until(
+        rx,
+        parser,
+        |screen| !screen.contains('·'),
+        Some("all list-pane loading placeholders (·) to clear"),
+    );
 }
 
 /// Drive the picker to a settled baseline, capture the list pane, send a
@@ -748,7 +826,12 @@ fn test_switch_picker_with_branches(mut repo: TestRepo) {
     assert!(output.status.success(), "Failed to create branch");
 
     let env_vars = repo.test_env_vars();
-    let result = exec_in_pty_capture_before_abort(
+    // Snapshot captures the settled column values (git ahead/behind), so wait
+    // for the `·` loading placeholders to clear, not just for the row text:
+    // under coverage instrumentation on a loaded Windows runner the stat
+    // compute can lag past wait_for_stable's window, freezing a `···` loading
+    // frame instead of the committed settled one (run 28213021257).
+    let result = exec_in_pty_capture_settled_before_abort(
         wt_bin().to_str().unwrap(),
         &["switch", "--branches"],
         repo.root_path(),
