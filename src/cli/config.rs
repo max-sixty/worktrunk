@@ -357,13 +357,13 @@ $ claude plugin uninstall worktrunk@worktrunk
     /// Configure the Claude Code statusline
     #[command(
         name = "install-statusline",
-        after_long_help = r#"Writes the statusline configuration to `~/.claude/settings.json`, setting:
+        after_long_help = r#"Writes the statusline configuration to `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json` when set), setting:
 
 ```json
 {"statusLine":{"type":"command","command":"wt list statusline --format=claude-code"}}
 ```
 
-Preserves existing settings. Creates the `.claude/` directory and `settings.json` if needed.
+Preserves existing settings. Creates the config directory and `settings.json` if needed.
 
 Skips gracefully if the statusline is already configured."#
     )]

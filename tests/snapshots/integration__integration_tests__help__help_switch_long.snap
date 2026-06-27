@@ -178,19 +178,27 @@ The CI column shows each row's PR/MR CI and review status, the same as [2mwt li
 
 [1mKeybindings:[0m
 
-      Key                       Action                   
- ───────────── ───────────────────────────────────────── 
- [2m↑[0m/[2m↓[0m           Navigate worktree list                    
- (type)        Filter worktrees                          
- [2mEnter[0m         Switch to selected worktree               
- [2mAlt-c[0m         Create new worktree named as entered text 
- [2mEsc[0m           Cancel                                    
- [2mAlt-1[0m–[2mAlt-7[0m   Jump to a preview tab                     
- [2mTab[0m/[2mShift-Tab[0m Cycle preview tabs forward/backward       
- [2mAlt-p[0m         Toggle preview panel                      
- [2mCtrl-u[0m/[2mCtrl-d[0m Scroll preview up/down                    
+      Key                              Action                         
+ ───────────── ────────────────────────────────────────────────────── 
+ [2m↑[0m/[2m↓[0m           Navigate worktree list                                 
+ (type)        Filter worktrees                                       
+ [2mEnter[0m         Switch to selected worktree                            
+ [2mAlt-c[0m         Create new worktree named as entered text              
+ [2mAlt-x[0m         Remove selected worktree/branch                        
+ [2mAlt-y[0m         Copy selected branch name to the clipboard             
+ [2mAlt-o[0m         Open the selected row's PR/MR URL in the browser       
+ [2mAlt-r[0m         Refresh the list (pick up worktrees created elsewhere) 
+ [2mEsc[0m           Cancel                                                 
+ [2mAlt-1[0m–[2mAlt-7[0m   Jump to a preview tab                                  
+ [2mTab[0m/[2mShift-Tab[0m Cycle preview tabs forward/backward                    
+ [2mAlt-p[0m         Toggle preview panel                                   
+ [2mCtrl-u[0m/[2mCtrl-d[0m Scroll preview up/down                                 
 
-Plain digits go to the filter, so a branch name containing a number can be typed directly; the preview tabs move to [2mAlt[0m.
+[2mAlt-o[0m is a no-op on a row with no PR/MR (or whose status hasn't loaded yet).
+
+[2mAlt-x[0m is a no-op on the current worktree (the [2m@[0m row) — removing the worktree in use would have to switch elsewhere first, so switch away and remove it from there.
+
+Each row filters by its branch, path, and — when it has a PR/MR — the PR/MR's number, title, and author, the same fields whether the PR is checked out (a worktree row) or listed via [2m--prs[0m. Plain digits go to the filter, so a number can be typed directly and the preview tabs move to [2mAlt[0m.
 
 Typing a gutter sigil filters by row kind: [36m+[0m narrows to linked worktrees and [2m@[0m to the current worktree. The other sigils don't filter cleanly — [2m^[0m and [2m|[0m are skim's prefix-anchor and OR query operators (so [2m^[0m matches every row and [2m|[0m none), and [2m/[0m matches most rows because every worktree path contains it.
 
@@ -211,8 +219,6 @@ On narrow previews the tab bar compacts to digits — only the active tab keeps 
 [107m [0m [2m[36m[switch.picker][0m
 [107m [0m [2mpager = [0m[2m[32m"delta --paging=never --width=$COLUMNS"[0m
 
-Available on Unix only (macOS, Linux). On Windows, use [2mwt list[0m or [2mwt switch <branch>[0m directly.
-
 [1m[32mPull requests and merge requests[0m
 
 The [2mpr:<number>[0m / [2mmr:<number>[0m shortcut and the PR/MR's web URL both resolve to its branch. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref ([2mrefs/pull/N/head[0m or [2mrefs/merge-requests/N/head[0m) and configures [2mpushRemote[0m to the fork URL.
@@ -227,8 +233,8 @@ Both work anywhere a branch is accepted, including [2m--base[0m. The [2m--cre
 
 If the PR or MR is on a fork, the local branch uses its branch name directly, so [2mgit push[0m works normally. A pre-existing local branch with that name tracking something else requires renaming first.
 
-The [2m--prs[0m flag adds the repository's open PRs (GitHub) or MRs (GitLab) to the interactive picker. Each row resolves to the same [2mpr:[0m/[2mmr:[0m shortcut, so selecting one fetches the ref and switches to its branch. A [2m--prs[0m row has no local worktree, so its [2mpr[0m and [2mcomments[0m preview tabs load the PR/MR's metadata and comments from the forge in the background. The [2mlog[0m tab uses a local [2mgit log[0m — graph and merge-base dimming included — whenever the head commit is already in the object store (a same-repo PR 
-off a fetched remote), falling back to a flat forge-fetched commit list otherwise.
+The [2m--prs[0m flag adds the repository's open PRs (GitHub) or MRs (GitLab) to the interactive picker — only the ones not already there: a PR whose branch is already shown (as a worktree, or a local or remote branch) isn't listed twice, so [2m--prs[0m only adds the rest and the two pickers differ solely by those extra rows. Each added row resolves to the same [2mpr:[0m/[2mmr:[0m shortcut, so selecting one fetches the ref and switches to its branch. A [2m--prs[0m row has no local worktree, so its [2mpr[0m and [2mcomments[0m preview tabs
+ load the PR/MR's metadata and comments from the forge in the background. The [2mlog[0m tab uses a local [2mgit log[0m — graph and merge-base dimming included — whenever the head commit is already in the object store (a same-repo PR off a fetched remote), falling back to a flat forge-fetched commit list otherwise.
 
 Requires [2mgh[0m (GitHub), [2mglab[0m (GitLab), or an equivalent CLI installed and authenticated; see forge platform for Gitea, Azure DevOps, and other supported platforms.
 

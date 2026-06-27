@@ -197,6 +197,16 @@ const PRIORITY_RATE_LIMITS: u8 = 3;
 // weeks cluster — so `σ_7d` is only modestly below `σ_5h`. The values below
 // are calibrated by feel; with real `(u, t, resets_at)` traces logged, fit
 // them from data and delete this paragraph.
+//
+// ## Two questions, two axes
+//
+// `P(over)` above answers *whether* — it gates the segment's appearance. It
+// saturates near 1, so it can't also grade *how bad*: a near-certain cross in
+// the last hour and one halfway through the week both read ≈1. Severity is a
+// second axis, [`expected_lockout`], which keeps discriminating after
+// `P(over)` has flat-lined; the segment's colour depth comes from it. The two
+// coincide only at the show boundary (`P(over) ≈ 0.5` ⇔ a cross right at the
+// reset ⇔ ~0 lockout) and diverge above it.
 // ---------------------------------------------------------------------------
 
 /// Prior parameters for one rate-limit window's pace prediction.
@@ -244,8 +254,8 @@ fn parse_rate_limits(v: &serde_json::Value) -> Vec<RateLimitReading> {
     // distinguishes "no rate_limits key" from "stdin context never parsed"
     // (which logs nothing at all).
     match v.get("rate_limits") {
-        Some(rl) => log::debug!("rate_limits input: {rl}"),
-        None => log::debug!("rate_limits input: absent"),
+        Some(rl) => tracing::debug!(rate_limits = %rl, "rate_limits input: {rl}"),
+        None => tracing::debug!("rate_limits input: absent"),
     }
     let mut out = Vec::new();
     for (key, window_secs, priors) in [
@@ -304,6 +314,32 @@ fn erf(x: f64) -> f64 {
     sign * (1.0 - poly * (-x * x).exp())
 }
 
+/// Posterior mean and variance of the long-run rate `λ` after observing
+/// `C(t) = u`. Shared by [`p_over`] (the show/no-show gate) and
+/// [`expected_lockout`] (the colour-severity axis) so the one Bayes update
+/// can't drift between them.
+///
+/// Gaussian-on-Gaussian conjugate update: both precisions live on `λ`. The
+/// data precision is `t/σ²` because observing `C(t) = u` is equivalent to
+/// observing the rate `u/t` with variance `σ²/t`:
+///
+/// ```text
+///     post_prec = prior_prec + data_prec
+///     post_mean = (prior_prec · m₀ + data_prec · (u/t)) / post_prec
+/// ```
+///
+/// The `data_prec · (u/t)` term is rewritten as `u / σ²` so both terms share
+/// a denominator and the multiplication is cheaper. At `t = 0` the data
+/// precision is 0 and this collapses to the prior `(m₀, s₀²)`.
+fn posterior_lambda(u: f64, t: f64, p: &WindowPriors) -> (f64, f64) {
+    let sigma2 = p.sigma * p.sigma;
+    let prior_prec = 1.0 / (p.s0 * p.s0);
+    let data_prec = t / sigma2;
+    let post_var = 1.0 / (prior_prec + data_prec);
+    let post_mean = post_var * (p.m0 * prior_prec + u / sigma2);
+    (post_mean, post_var)
+}
+
 /// Probability that final usage hits or exceeds the limit (`C(1) ≥ 1.0`),
 /// given fraction-of-limit-used `u` and fraction-of-window-elapsed `t`.
 ///
@@ -320,38 +356,144 @@ fn p_over(u: f64, t: f64, p: &WindowPriors) -> f64 {
         // window's worth of process noise on top.
         (p.m0, p.s0 * p.s0 + p.sigma * p.sigma)
     } else {
-        // --- Bayes update on `λ` from one observation `C(t) = u` ---
-        //
-        // Both precisions live on the rate `λ`. The data precision is `t/σ²`
-        // because observing `C(t) = u` is equivalent to observing the rate
-        // `u/t` with variance `σ²/t`. The posterior is Gaussian with:
-        //
-        //     post_prec = prior_prec + data_prec
-        //     post_mean = (prior_prec · m₀ + data_prec · (u/t)) / post_prec
-        //
-        // The `data_prec · (u/t)` term is rewritten as `u / σ²` so both
-        // terms share a denominator and the multiplication is cheaper.
-        let sigma2 = p.sigma * p.sigma;
-        let prior_prec = 1.0 / (p.s0 * p.s0);
-        let data_prec = t / sigma2;
-        let post_var = 1.0 / (prior_prec + data_prec);
-        let post_mean = post_var * (p.m0 * prior_prec + u / sigma2);
-
-        // --- Predictive for `C(1) = u + (rate × time remaining) + noise` ---
+        // Posterior on `λ`, then the predictive for
+        // `C(1) = u + (rate × time remaining) + noise`.
         //
         // Mean: what we've used, plus the posterior rate projected over the
         // remaining `(1 - t)` of the window.
         //
         // Variance has two pieces: uncertainty in the rate estimate
-        // propagated over `(1 - t)` (squared because it scales the deterministic
-        // drift term), plus accumulated process noise `σ² · (1 - t)` over the
-        // remaining interval (linear because Brownian variance grows with time).
+        // propagated over `(1 - t)` (squared because it scales the
+        // deterministic drift term), plus accumulated process noise
+        // `σ² · (1 - t)` over the remaining interval (linear because Brownian
+        // variance grows with time).
+        let (post_mean, post_var) = posterior_lambda(u, t, p);
         let mean = u + post_mean * (1.0 - t);
-        let var = post_var * (1.0 - t).powi(2) + sigma2 * (1.0 - t);
+        let var = post_var * (1.0 - t).powi(2) + p.sigma * p.sigma * (1.0 - t);
         (mean, var)
     };
     // Upper tail of the Gaussian predictive at 1.0: `P(C(1) ≥ 1)`.
     standard_normal_cdf((mean - 1.0) / var.sqrt())
+}
+
+/// Gauss–Hermite nodes and weights (7-point, physicists' convention) for
+/// integrating a smooth function against `N(m, s²)`:
+///
+/// ```text
+///     E[g(λ)] ≈ (1/√π) · Σ wᵢ · g(m + √2·s·xᵢ)
+/// ```
+///
+/// Seven nodes is ample for a colour-tier decision. The integrand's only
+/// non-smoothness is the lockout kink at `λ = (1−u)/(1−t)`; a finer rule
+/// wouldn't move the resulting tier.
+const GAUSS_HERMITE_7: [(f64, f64); 7] = [
+    (-2.651_961_356_835_233, 0.000_971_781_245_100),
+    (-1.673_551_628_767_471, 0.054_515_582_819_127),
+    (-0.816_287_882_858_965, 0.425_607_252_610_128),
+    (0.0, 0.810_264_617_556_807),
+    (0.816_287_882_858_965, 0.425_607_252_610_128),
+    (1.673_551_628_767_471, 0.054_515_582_819_127),
+    (2.651_961_356_835_233, 0.000_971_781_245_100),
+];
+
+/// Expected fraction of the window that will be spent locked out at the cap,
+/// under the posterior on the rate `λ`. This is the colour-severity axis.
+///
+/// Where [`p_over`] decides *whether* the cap is likely to be hit, this grades
+/// *how much of the window* is lost once it is. Given a rate `λ`, the mean
+/// trajectory crosses the cap at `t* = t + (1−u)/λ`, so the remaining locked-
+/// out fraction is `max(0, 1 − t*)`. Averaging that over the posterior
+/// `λ ~ N(posterior_lambda)` is what makes the metric degrade gracefully:
+///
+/// - When a cross is unlikely, most of the posterior mass never reaches the
+///   cap (lockout 0), so the expectation stays near zero and tracks
+///   confidence — a thin early-window burst inflates the raw `u/t` pace but
+///   not this.
+/// - When a cross is near-certain, the expectation tracks the deterministic
+///   lockout and keeps discriminating *after* `p_over` has saturated at 1 —
+///   "crosses halfway through the week" reads as worse than "crosses in the
+///   last hour", which `p_over` alone cannot tell apart.
+///
+/// A non-positive `λ` never crosses, so its lockout is clamped to 0; without
+/// the clamp the `(1−u)/λ` term would blow up for the Gaussian's negative
+/// tail.
+fn expected_lockout(u: f64, t: f64, p: &WindowPriors) -> f64 {
+    let remaining = 1.0 - t;
+    if remaining <= 0.0 {
+        return 0.0;
+    }
+    let headroom = (1.0 - u).max(0.0);
+    let (mean, var) = posterior_lambda(u, t, p);
+    let sd = var.sqrt();
+    let mut acc = 0.0;
+    for (x, w) in GAUSS_HERMITE_7 {
+        let lambda = mean + std::f64::consts::SQRT_2 * sd * x;
+        let lockout = if lambda > 0.0 {
+            (remaining - headroom / lambda).max(0.0)
+        } else {
+            0.0
+        };
+        acc += w * lockout;
+    }
+    acc / std::f64::consts::PI.sqrt()
+}
+
+/// Expected-lockout colour-tier thresholds for the pace segment.
+///
+/// The segment only appears once a cap is likely to be hit ([`p_over`] ≥
+/// [`RATE_LIMIT_P_THRESHOLD`]); these grade severity, deepening the colour.
+///
+/// They are cutoffs on the **duration-weighted cost** ([`lockout_cost`]), not
+/// the raw lockout fraction — anchored on the 5-hour window, where the weight
+/// is 1 so cost equals the fraction. So for the 5h window `0.10` ≈ a tenth of
+/// the window forfeited and `0.30` ≈ a third (its original calibration is
+/// preserved); a longer window crosses the same cutoff at a proportionally
+/// smaller fraction. Feel-calibrated; tune from real traces once they're
+/// logged.
+const LOCKOUT_DIM_YELLOW: f64 = 0.10;
+const LOCKOUT_YELLOW: f64 = 0.30;
+
+/// Weight an expected-lockout fraction into a cross-window severity *cost*.
+///
+/// The same lockout *fraction* costs very different amounts of real time
+/// across windows: 0.30 of the 5-hour window is 1.5 h forfeited, 0.30 of the
+/// 7-day window is ~50 h (~2 days). Colouring on the raw fraction would treat
+/// those as equally severe. The `√(window/5h)` weight fixes that: a longer
+/// window reaches a given tier at a smaller fraction, so losing real hours of
+/// a week outranks losing the same fraction of five hours.
+///
+/// **Duration drives this, not volatility.** The windows differ 33.6× in
+/// length but only 1.17× in `σ`, and `σ` is already folded into
+/// [`expected_lockout`]'s posterior integral — so weighting by `σ` would both
+/// under-separate the windows and double-count uncertainty. `window_secs` is
+/// known exactly, free, and has the right dynamic range.
+///
+/// The exponent is `0.5` (√), not `1.0` (linear): pain is taken to *saturate*
+/// in absolute time — the tenth hour of a week forfeited stings less than the
+/// first — so a longer window earns somewhat more absolute-time tolerance
+/// before alarming. The 5-hour anchor has weight `√1 = 1`, leaving its
+/// thresholds (and snapshots) unchanged.
+fn lockout_cost(lockout: f64, window_secs: i64) -> f64 {
+    lockout * (window_secs as f64 / FIVE_HOUR_SECS as f64).sqrt()
+}
+
+/// Colour the pace segment by expected-lockout severity, deepening
+/// `dim → dim-yellow → yellow`. The peak is the segment's original flat
+/// yellow; lower-severity-but-still-shown cases are dimmed rather than
+/// recoloured, so the escalation stays within the statusline's
+/// named-ANSI + `dim` vocabulary and respects the terminal theme.
+///
+/// Severity is the duration-weighted [`lockout_cost`], so the threshold a
+/// window must clear scales with its length (see [`LOCKOUT_YELLOW`]).
+fn colorize_pace(body: &str, lockout: f64, window_secs: i64) -> String {
+    let cost = lockout_cost(lockout, window_secs);
+    if cost >= LOCKOUT_YELLOW {
+        color_print::cformat!("<yellow>{body}</>")
+    } else if cost >= LOCKOUT_DIM_YELLOW {
+        color_print::cformat!("<dim,yellow>{body}</>")
+    } else {
+        color_print::cformat!("<dim>{body}</>")
+    }
 }
 
 /// 12-hour vs 24-hour clock preference. Carried as a parameter so the
@@ -477,12 +619,14 @@ fn select_binding_window(
             let elapsed = (now_unix - (r.resets_at - r.window_secs)) as f64 / r.window_secs as f64;
             let t = elapsed.clamp(0.0, 1.0);
             let p = p_over(u, t, r.priors);
-            log::debug!(
-                "rate-limit {} window: used={:.1}% elapsed={:.1}% pace={:.2}× P(over)={p:.3} (show threshold {RATE_LIMIT_P_THRESHOLD})",
+            let lockout = expected_lockout(u, t.max(0.001), r.priors);
+            tracing::debug!(
+                "rate-limit {} window: used={:.1}% elapsed={:.1}% pace={:.2}× P(over)={p:.3} lockout={lockout:.3} cost={:.3} (show threshold {RATE_LIMIT_P_THRESHOLD})",
                 r.name,
                 u * 100.0,
                 t * 100.0,
                 u / t.max(0.001),
+                lockout_cost(lockout, r.window_secs),
             );
             (p >= RATE_LIMIT_P_THRESHOLD).then_some((p, r))
         })
@@ -496,9 +640,10 @@ fn select_binding_window(
 /// `1.9×(Mon–Mon 3pm)`. `pace` is the **naive `u/t` ratio**: what the
 /// user has actually consumed per unit elapsed window. `1.0×` is on pace
 /// to exactly fill the window; `>1.0×` is over-pace. The Bayesian
-/// posterior `m₁` is only used by [`p_over`] to decide whether to show —
-/// for the *displayed* number, the raw measurement is more honest, more
-/// transparent, and tracks bursts naturally.
+/// posterior only drives *decisions* — whether to show ([`p_over`]) and how
+/// deeply to colour ([`expected_lockout`]); the *displayed* number stays the
+/// raw measurement, which is more honest, more transparent, and tracks
+/// bursts naturally.
 ///
 /// Above [`RATE_LIMIT_NEAR_CAP_PCT`] used, the shape becomes
 /// `<used>%(<window_bounds>)` — e.g. `93%(10am–3pm)` — showing how close
@@ -522,11 +667,20 @@ fn format_rate_limit_segment(readings: &[RateLimitReading], now_unix: i64) -> Op
         &chrono::Local,
         detect_clock_format(),
     );
-    // The whole segment is wrapped in yellow because its appearance *is*
-    // the warning. Unlike informational segments where color picks out one
-    // sub-glyph (`@+1` green, `?` cyan), here the entire string is the
-    // "you should look at this" signal.
-    Some(color_print::cformat!("<yellow>{reading}({bounds})</>"))
+    // The whole segment is coloured because its appearance *is* the warning —
+    // unlike informational segments where colour picks out one sub-glyph
+    // (`@+1` green, `?` cyan), here the entire string is the "you should look
+    // at this" signal. Its *depth* grades severity: expected lockout (how
+    // much of the window will be spent capped) deepens dim → dim-yellow →
+    // yellow. The displayed number stays the raw `u/t` pace; only the colour
+    // carries the Bayesian severity, so an early-window burst inflates the
+    // number without lighting up the segment.
+    let lockout = expected_lockout(u, t, r.priors);
+    Some(colorize_pace(
+        &format!("{reading}({bounds})"),
+        lockout,
+        r.window_secs,
+    ))
 }
 
 /// Format context usage as a moon phase gauge.
@@ -1363,18 +1517,25 @@ mod tests {
 
     #[test]
     fn test_select_binding_window_logs_at_debug() {
-        // The per-window debug line's format args are lazily skipped at
-        // default verbosity; enabling Debug evaluates them. The
-        // not-yet-started window (negative elapsed, clamped to 0) is the
-        // case the `t.max(0.001)` division guard exists for.
-        log::set_max_level(log::LevelFilter::Debug);
+        use tracing::Subscriber;
+        use tracing_subscriber::Registry;
+        use tracing_subscriber::layer::{Layer, SubscriberExt};
+
+        // The per-window debug line's format args are lazily skipped unless a
+        // DEBUG-level subscriber is active; installing one forces them to
+        // evaluate. The not-yet-started window (negative elapsed, clamped to
+        // 0) is the case the `t.max(0.001)` division guard exists for.
+        struct Sink;
+        impl<S: Subscriber> Layer<S> for Sink {}
+
         let now = 1_700_000_000_i64;
         let readings = [
             make_reading(80.0, 0.60, &FIVE_HOUR_PRIORS, now, FIVE_HOUR_SECS),
             make_reading(5.0, -0.10, &SEVEN_DAY_PRIORS, now, SEVEN_DAY_SECS),
         ];
-        let sel = select_binding_window(&readings, now);
-        log::set_max_level(log::LevelFilter::Off);
+        let subscriber = Registry::default().with(Sink);
+        let sel =
+            tracing::subscriber::with_default(subscriber, || select_binding_window(&readings, now));
         assert_eq!(sel.unwrap().used_percentage, 80.0);
     }
 
@@ -1411,7 +1572,8 @@ mod tests {
         let out =
             format_rate_limit_segment(std::slice::from_ref(&r), now).expect("should be visible");
         // Strip ANSI before asserting on the visible characters — the segment
-        // is wrapped in `<yellow>…</>`.
+        // is colour-wrapped (the depth grades severity; see
+        // `test_pace_color_deepens_with_lockout`).
         let visible = out.ansi_strip();
         assert!(
             visible.starts_with("1.3×(") && visible.ends_with(')'),
@@ -1448,6 +1610,99 @@ mod tests {
         let now = 1_700_000_000_i64;
         let r = make_reading(5.0, 0.03, &FIVE_HOUR_PRIORS, now, FIVE_HOUR_SECS);
         assert!(format_rate_limit_segment(&[r], now).is_none());
+    }
+
+    #[test]
+    fn test_expected_lockout_bounds_and_monotonicity() {
+        // A fraction of the window is always in [0, 1].
+        for &(u, t) in &[
+            (0.10, 0.10),
+            (0.50, 0.40),
+            (0.80, 0.60),
+            (0.95, 0.90),
+            (0.99, 0.99),
+        ] {
+            let l = expected_lockout(u, t, &SEVEN_DAY_PRIORS);
+            assert!(
+                (0.0..=1.0).contains(&l),
+                "lockout out of range at u={u}, t={t}: {l}"
+            );
+        }
+        // More used at the same elapsed ⇒ higher posterior rate and less
+        // headroom ⇒ earlier projected cross ⇒ strictly more lockout.
+        let lo = expected_lockout(0.40, 0.50, &SEVEN_DAY_PRIORS);
+        let hi = expected_lockout(0.80, 0.50, &SEVEN_DAY_PRIORS);
+        assert!(
+            hi > lo,
+            "expected more lockout at higher usage: {lo} vs {hi}"
+        );
+        // Past the reset there is nothing left to lock out.
+        assert_eq!(expected_lockout(1.2, 1.0, &SEVEN_DAY_PRIORS), 0.0);
+    }
+
+    #[test]
+    fn test_expected_lockout_small_for_marginal_cross() {
+        // At the show boundary (P(over) ≈ 0.5) the projected cross lands near
+        // the reset, so the lockout *fraction* stays modest — the metric
+        // tracks confidence rather than screaming, the same on either window.
+        // (Whether that reads as mild then depends on the window via
+        // `lockout_cost`.) A 30%@20% seven-day reading is just over the gate.
+        let l = expected_lockout(0.30, 0.20, &SEVEN_DAY_PRIORS);
+        assert!(
+            l < 0.20,
+            "a marginal cross should give a small lockout fraction: {l}"
+        );
+    }
+
+    #[test]
+    fn test_pace_color_deepens_with_lockout() {
+        // Anchor on the 5-hour window, where `lockout_cost`'s weight is 1, so
+        // cost equals the fraction and the tier cutoffs are 0.10 / 0.30.
+        let dim = colorize_pace("X", 0.05, FIVE_HOUR_SECS);
+        let dim_yellow = colorize_pace("X", 0.20, FIVE_HOUR_SECS);
+        let yellow = colorize_pace("X", 0.50, FIVE_HOUR_SECS);
+        // Three distinct renderings of the same text, deepening with severity.
+        assert_ne!(dim, dim_yellow);
+        assert_ne!(dim_yellow, yellow);
+        for s in [&dim, &dim_yellow, &yellow] {
+            assert_eq!(s.ansi_strip(), "X");
+        }
+        // Yellow fg is SGR 33; the faint attribute is SGR 2. The bottom tier
+        // is faint with no colour; the top tier is yellow; the middle is both.
+        assert!(
+            !dim.contains("33"),
+            "dim tier should carry no colour: {dim:?}"
+        );
+        assert!(
+            yellow.contains("33"),
+            "top tier should be yellow: {yellow:?}"
+        );
+        assert!(
+            dim_yellow.contains("33"),
+            "middle tier should be yellow too: {dim_yellow:?}"
+        );
+    }
+
+    #[test]
+    fn test_pace_cost_weights_longer_window_heavier() {
+        // The same lockout fraction is more severe on the longer window. The
+        // 5h window keeps weight 1; the 7d window's √(7d/5h) ≈ 5.8 weight lifts
+        // a fraction that's merely dim on 5h to full yellow on the week.
+        let frac = 0.06;
+        let five_h = colorize_pace("x", frac, FIVE_HOUR_SECS);
+        let seven_d = colorize_pace("x", frac, SEVEN_DAY_SECS);
+        // 5h: cost = 0.06 < 0.10 → dim (no colour). 7d: cost ≈ 0.35 → yellow.
+        assert!(
+            !five_h.contains("33"),
+            "0.06 on 5h should be dim: {five_h:?}"
+        );
+        assert!(
+            seven_d.contains("33"),
+            "0.06 on 7d should be coloured: {seven_d:?}"
+        );
+        // Cost is monotonic in window length, and the 5h anchor is unweighted.
+        assert!(lockout_cost(frac, SEVEN_DAY_SECS) > lockout_cost(frac, FIVE_HOUR_SECS));
+        assert_eq!(lockout_cost(0.3, FIVE_HOUR_SECS), 0.3);
     }
 
     #[test]

@@ -438,7 +438,7 @@ pub fn handle_no_ff_merge(
                     worktrunk::path::format_path_for_display(wt_path)
                 ))
             );
-            log::warn!("Failed to sync target worktree: {e}");
+            tracing::warn!(error = %e, "Failed to sync target worktree: {e}");
         }
     }
 

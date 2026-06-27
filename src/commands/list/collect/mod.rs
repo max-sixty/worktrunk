@@ -460,7 +460,6 @@ fn worktree_branch_set(worktrees: &[WorktreeInfo]) -> HashSet<&str> {
 /// The handler receives pre-rendered strings so it doesn't need to share the
 /// layout across threads (`LayoutConfig` is `!Sync` via an interior
 /// `Cell<&'static str>`).
-#[cfg_attr(not(unix), allow(dead_code))]
 pub trait PickerProgressHandler: Send + Sync {
     /// Fired once after items are initialized and layout is computed, but
     /// before any task results arrive. `rendered` is one entry per item,
@@ -509,10 +508,17 @@ pub trait PickerProgressHandler: Send + Sync {
     /// benchmark early-exit, nor on the zero-worktree `Ok(None)` return
     /// (which exits before `on_skeleton`). Default: no-op.
     fn on_collect_complete(&self) {}
+
+    /// Hand the picker a clone of the collect layout, right after `on_skeleton`.
+    /// `LayoutConfig` is `!Sync`, so the handler stows it behind a lock for the
+    /// collector to read at `alt-x` time, where it renders a `/ branch` row on
+    /// the same grid as the worktree rows (the in-place morph). Default: no-op —
+    /// only the picker needs it. Column geometry is stable after skeleton (the
+    /// `--prs` rows already rely on that via `grid`), so one clone here suffices.
+    fn provide_layout(&self, _layout: &super::layout::LayoutConfig) {}
 }
 
 /// Controls how show flags (branches/remotes/full) are determined in [`collect`].
-#[cfg_attr(not(unix), allow(dead_code))]
 pub enum ShowConfig {
     /// Flags already resolved by the caller (used by the picker).
     Resolved {
@@ -818,13 +824,14 @@ pub fn collect(
             let skip_tasks: HashSet<TaskKind> = if show_full {
                 HashSet::new()
             } else {
-                [
-                    TaskKind::BranchDiff,
-                    TaskKind::CiStatus,
-                    TaskKind::SummaryGenerate,
-                ]
-                .into_iter()
-                .collect()
+                // BranchDiff (the `main…±` column) is pure local git — a cached
+                // `git diff --shortstat` against the merge-base — so it always
+                // runs, under the non-`--full` timeout below as a backstop.
+                // `--full` gates only the off-machine columns: CI status
+                // (network) and LLM branch summaries.
+                [TaskKind::CiStatus, TaskKind::SummaryGenerate]
+                    .into_iter()
+                    .collect()
             };
             // Resolve timeouts from merged config (--full disables both)
             let (command_timeout, collect_deadline) = if show_full {
@@ -884,17 +891,15 @@ pub fn collect(
                 .any(|b| Some(b.name.as_str()) == default_branch.as_deref())
         });
 
-    // Filter local branches to those without worktrees (CPU-only, no git commands)
-    let branches_without_worktrees: Vec<(String, String)> = if show_branches {
-        fetched_local
-            .unwrap_or(&[])
-            .iter()
-            .filter(|b| !worktree_branches.contains(b.name.as_str()))
-            .map(|b| (b.name.clone(), b.commit_sha.clone()))
-            .collect()
-    } else {
-        Vec::new()
-    };
+    // Filter local branches to those without worktrees (CPU-only, no git
+    // commands). With `show_branches` off there are no branch-only rows.
+    let branches_without_worktrees: Vec<(String, String)> = fetched_local
+        .unwrap_or(&[])
+        .iter()
+        .filter(|_| show_branches)
+        .filter(|b| !worktree_branches.contains(b.name.as_str()))
+        .map(|b| (b.name.clone(), b.commit_sha.clone()))
+        .collect();
 
     if warn_stale_default && let Some(branch) = default_branch.as_deref() {
         emit_warning(
@@ -1277,6 +1282,9 @@ pub fn collect(
             layout.render_header_line(),
             layout.column_grid(),
         );
+        // Hand the picker the layout so `alt-x` can render a `/ branch` row on
+        // this same grid without re-collecting. No-op for non-picker handlers.
+        handler.provide_layout(&layout);
         // Mirror the `wt list` progressive-table marker so `wt-perf phases`
         // sees the same boundary across both commands.
         worktrunk::trace::instant("Skeleton rendered");
@@ -1676,7 +1684,7 @@ pub fn collect(
                         s.table.update_row(item_idx, rendered.clone());
 
                         if let Err(e) = s.table.flush() {
-                            log::debug!("Progressive table flush failed: {}", e);
+                            tracing::debug!(error = %e, "Progressive table flush failed: {}", e);
                         }
                     }
 
@@ -1694,7 +1702,7 @@ pub fn collect(
                             s.table.update_row(idx, line.clone());
                         }
                         if let Err(e) = s.table.flush() {
-                            log::debug!("Progressive table reveal flush failed: {}", e);
+                            tracing::debug!(error = %e, "Progressive table reveal flush failed: {}", e);
                         }
                     }
 
@@ -1724,7 +1732,7 @@ pub fn collect(
                         if s.table.update_footer(footer_msg)
                             && let Err(e) = s.table.flush()
                         {
-                            log::debug!("Progressive table flush failed: {}", e);
+                            tracing::debug!(error = %e, "Progressive table flush failed: {}", e);
                         }
                     }
                     // Picker has no stall UI; per-update repaints keep it
@@ -2105,7 +2113,8 @@ pub fn populate_item(
 
     // Handle timeout (silent for statusline - just log it)
     if let DrainOutcome::TimedOut { received_count, .. } = drain_outcome {
-        log::warn!(
+        tracing::warn!(
+            count = received_count,
             "populate_item timed out after {}s ({received_count} results received)",
             results::DRAIN_TIMEOUT.as_secs()
         );
@@ -2113,10 +2122,17 @@ pub fn populate_item(
 
     // Log errors silently (statusline shouldn't spam warnings)
     if !errors.is_empty() {
-        log::warn!("populate_item had {} task errors", errors.len());
+        tracing::warn!(
+            count = errors.len(),
+            "populate_item had {} task errors",
+            errors.len()
+        );
         for error in &errors {
             let kind_str: &'static str = error.kind.into();
-            log::debug!(
+            tracing::debug!(
+                item = error.item_idx,
+                kind = %kind_str,
+                error = %error.message,
                 "  - item {}: {} ({})",
                 error.item_idx,
                 kind_str,

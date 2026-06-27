@@ -1,8 +1,8 @@
 use crate::common::{
-    TestRepo, configure_directive_files, directive_files, make_snapshot_cmd,
-    make_snapshot_cmd_with_global_flags, repo, repo_with_remote, set_temp_home_env,
-    setup_home_snapshot_settings, setup_snapshot_settings, temp_home, wait_for_file_content,
-    wt_command,
+    SLEEP_FOR_ABSENCE_CHECK, TestRepo, configure_directive_files, directive_files,
+    make_snapshot_cmd, make_snapshot_cmd_with_global_flags, repo, repo_with_remote,
+    set_temp_home_env, setup_home_snapshot_settings, setup_snapshot_settings, temp_home,
+    wait_for_file_content, wt_command,
 };
 use ansi_str::AnsiStr;
 use insta_cmd::assert_cmd_snapshot;
@@ -1120,7 +1120,7 @@ approved-commands = ["{}"]
     // post-start runs in the background; with --no-hooks it is never spawned,
     // but sleep briefly so a regression that incorrectly spawns it has time to
     // create the marker (per tests/CLAUDE.md "Testing absence").
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     let repo_name = repo.root_path().file_name().unwrap().to_str().unwrap();
     let worktree = repo
         .root_path()
@@ -1176,7 +1176,7 @@ fn test_switch_no_config_commands_with_yes(repo: TestRepo) {
     // post-start runs in the background; with --no-hooks it is never spawned,
     // but sleep briefly so a regression that incorrectly spawns it has time to
     // create the marker (per tests/CLAUDE.md "Testing absence").
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     let repo_name = repo.root_path().file_name().unwrap().to_str().unwrap();
     let worktree = repo
         .root_path()
@@ -1250,7 +1250,7 @@ post-start = "echo post-start-from-invoking > {{ repo_path }}/post-start-marker.
     );
 
     // The base branch's committed hook must never run.
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     assert!(
         !repo.root_path().join("base-branch-marker.txt").exists(),
         "the base branch's committed config must not be consulted for `--create`"
@@ -1295,7 +1295,7 @@ fn test_switch_existing_reads_invoking_worktree_config(mut repo: TestRepo) {
     );
 
     // The destination worktree's own hook must never run.
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     assert!(
         !repo.root_path().join("dest-marker.txt").exists(),
         "the destination worktree's config must not be consulted"
@@ -1375,7 +1375,7 @@ fn test_switch_create_honors_project_config_path_override(mut repo: TestRepo) {
     wait_for_file_content(&right);
     assert_eq!(fs::read_to_string(&right).unwrap().trim(), "OVERRIDE-HOOK");
     // The base ref's committed hook must never have run.
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     assert!(
         !repo.root_path().join("wrong-marker.txt").exists(),
         "the base ref's committed hook must not run when the config path is overridden"
@@ -1813,7 +1813,6 @@ fn test_switch_ping_pong_realistic(repo: TestRepo) {
     );
 }
 
-#[cfg(unix)] // Interactive picker only available on Unix
 #[rstest]
 fn test_switch_no_args_requires_tty(repo: TestRepo) {
     // Run switch with no arguments in non-TTY - should fail with TTY requirement
@@ -1821,7 +1820,6 @@ fn test_switch_no_args_requires_tty(repo: TestRepo) {
     snapshot_switch("switch_missing_argument_hints", &repo, &[]);
 }
 
-#[cfg(unix)] // `wt select` is a deprecated alias for the Unix-only picker
 #[rstest]
 fn test_select_deprecated_alias_requires_tty(repo: TestRepo) {
     // `wt select` warns that it is deprecated, then delegates to the same
@@ -2318,7 +2316,6 @@ fn set_github_remote_url(repo: &TestRepo) {
 
 /// Install a mock forge CLI (`gh`/`glab`) answering the `--prs` list call
 /// (`pr list` / `mr list`) from a canned JSON file. Returns the mock bin dir.
-#[cfg(unix)]
 fn setup_mock_forge_list(
     repo: &TestRepo,
     cli: &str,
@@ -2338,12 +2335,11 @@ fn setup_mock_forge_list(
 
 /// `wt switch --prs` in the headless dry-run (`WORKTRUNK_PICKER_DRY_RUN`)
 /// exercises the full forge fetch + row-render path — `stream_open_prs`,
-/// `fetch_github`, `parse_github_prs`, `PrSkimItem::new`, `render_grid_row`,
+/// `fetch_github`, `parse_github_prs`, `PrEntry::display_status`, `render_grid_row`,
 /// `render_pr_description` — as a normal-exit subprocess, so its coverage is
 /// captured. (The interactive picker exits via skim's abort, which never
 /// flushes a profile, so its `--prs` code is otherwise unmeasurable.) The mock
 /// `gh pr list` keeps it off the network.
-#[cfg(unix)]
 #[rstest]
 fn test_switch_prs_dry_run_github(repo: TestRepo) {
     // Pin the forge explicitly so detection needs no remote/network.
@@ -2362,11 +2358,17 @@ fn test_switch_prs_dry_run_github(repo: TestRepo) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
-    // The forge call ran (no "could not determine the forge" warning).
+    // The fetch + parse + row-render actually ran (not a fail-soft no-op): a PR
+    // row was created with the token `pr:42`, which seeds its preview cache. The
+    // fetch path swallows every error into a stashed warning and still exits 0,
+    // so asserting on the dump — not just the exit code — is what makes this
+    // meaningful on a platform where the mock `gh` might fail to resolve.
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
+    let entries = parsed["entries"].as_array().expect("entries array");
     assert!(
-        !String::from_utf8_lossy(&output.stderr).contains("could not determine the forge"),
-        "forge not detected:\n{}",
-        String::from_utf8_lossy(&output.stderr),
+        entries.iter().any(|e| e["branch"] == "pr:42"),
+        "expected a pr:42 cache entry proving the PR row rendered, got:\n{stdout}"
     );
 }
 
@@ -2381,7 +2383,6 @@ fn test_switch_prs_dry_run_github(repo: TestRepo) {
 /// `compute_pr_log`'s local-`git log` fast path misses and falls back to the
 /// forge API — exercising that branch (the present-head fast path has its own
 /// test, `test_switch_prs_dry_run_github_log_tab_local`).
-#[cfg(unix)]
 #[rstest]
 fn test_switch_prs_dry_run_github_log_tab(repo: TestRepo) {
     repo.write_project_config("[forge]\nplatform = \"github\"\n");
@@ -2440,7 +2441,6 @@ fn test_switch_prs_dry_run_github_log_tab(repo: TestRepo) {
 /// empty — so the present Log entry (local fast path) and the present, non-empty
 /// Comments entry (failure pane) both prove the row streamed and resolved. The
 /// tab shows a clear failure for the session, never a perpetual loading spinner.
-#[cfg(unix)]
 #[rstest]
 fn test_switch_prs_dry_run_github_log_tab_local(repo: TestRepo) {
     repo.write_project_config("[forge]\nplatform = \"github\"\n");
@@ -2509,7 +2509,6 @@ fn test_switch_prs_dry_run_github_log_tab_local(repo: TestRepo) {
 /// local fast path and must hit the forge API, and `gh pr view` is rigged to
 /// exit 1 — so both the `log` (mode 2) and `comments` (mode 7) cache entries are
 /// present and non-empty, each the couldn't-load pane.
-#[cfg(unix)]
 #[rstest]
 fn test_switch_prs_dry_run_github_deferred_fetch_failure(repo: TestRepo) {
     repo.write_project_config("[forge]\nplatform = \"github\"\n");
@@ -2565,7 +2564,6 @@ fn test_switch_prs_dry_run_github_deferred_fetch_failure(repo: TestRepo) {
 /// commits` and `--json comments` both match the mock's `pr view` key, so the
 /// canned response carries both arrays; serde ignores the one each renderer
 /// doesn't read.)
-#[cfg(unix)]
 #[rstest]
 fn test_switch_prs_dry_run_github_comments_tab(repo: TestRepo) {
     repo.write_project_config("[forge]\nplatform = \"github\"\n");
@@ -2612,7 +2610,6 @@ fn test_switch_prs_dry_run_github_comments_tab(repo: TestRepo) {
 /// GitLab counterpart of [`test_switch_prs_dry_run_github`], covering the
 /// `fetch_gitlab` / `parse_gitlab_mrs` / `gitlab_mr_status` path via a mocked
 /// `glab mr list`.
-#[cfg(unix)]
 #[rstest]
 fn test_switch_prs_dry_run_gitlab(repo: TestRepo) {
     repo.write_project_config("[forge]\nplatform = \"gitlab\"\n");
@@ -2630,6 +2627,16 @@ fn test_switch_prs_dry_run_gitlab(repo: TestRepo) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
+    // Prove the fetch + parse + row-render ran (the fetch path is fail-soft and
+    // still exits 0): an MR row was created with the token `mr:7`, seeding its
+    // preview cache. See `test_switch_prs_dry_run_github` for the rationale.
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
+    let entries = parsed["entries"].as_array().expect("entries array");
+    assert!(
+        entries.iter().any(|e| e["branch"] == "mr:7"),
+        "expected an mr:7 cache entry proving the MR row rendered, got:\n{stdout}"
+    );
 }
 
 /// GitLab counterpart of the GitHub `_log_tab` / `_comments_tab` dry-run tests:
@@ -2645,7 +2652,6 @@ fn test_switch_prs_dry_run_gitlab(repo: TestRepo) {
 /// compound key, so one canned response carries all fields each renderer reads
 /// (`short_id`/`title` for commits; `body`/`author`/`created_at`/`system` for
 /// notes) — serde ignores the rest.
-#[cfg(unix)]
 #[rstest]
 fn test_switch_prs_dry_run_gitlab_deferred_tabs(repo: TestRepo) {
     repo.write_project_config("[forge]\nplatform = \"gitlab\"\n");
@@ -2693,7 +2699,6 @@ fn test_switch_prs_dry_run_gitlab_deferred_tabs(repo: TestRepo) {
 
 /// An empty forge list still runs `stream_open_prs` to completion, exercising
 /// the empty-list branch and `forge_noun` (`_ => "PRs"` on GitHub).
-#[cfg(unix)]
 #[rstest]
 fn test_switch_prs_dry_run_empty(repo: TestRepo) {
     repo.write_project_config("[forge]\nplatform = \"github\"\n");
@@ -2709,10 +2714,17 @@ fn test_switch_prs_dry_run_empty(repo: TestRepo) {
         "dry-run --prs (empty) failed:\nstderr: {}",
         String::from_utf8_lossy(&output.stderr),
     );
+    // Only the genuine empty-list branch stashes this exact warning (forge_noun
+    // = "PRs"). A missing/failed mock would stash a *different* error and still
+    // exit 0, so asserting the warning pins the empty path — not just exit 0.
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("No open PRs found"),
+        "expected the empty-list warning on stderr, got:\n{}",
+        String::from_utf8_lossy(&output.stderr),
+    );
 }
 
 /// GitLab empty list — exercises `forge_noun`'s `GitLab => "MRs"` arm.
-#[cfg(unix)]
 #[rstest]
 fn test_switch_prs_dry_run_empty_gitlab(repo: TestRepo) {
     repo.write_project_config("[forge]\nplatform = \"gitlab\"\n");
@@ -2726,6 +2738,13 @@ fn test_switch_prs_dry_run_empty_gitlab(repo: TestRepo) {
     assert!(
         output.status.success(),
         "dry-run --prs (empty gitlab) failed:\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    // Only the genuine empty-list branch stashes this exact warning (forge_noun
+    // = "MRs"); see `test_switch_prs_dry_run_empty` for the rationale.
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("No open MRs found"),
+        "expected the empty-list warning on stderr, got:\n{}",
         String::from_utf8_lossy(&output.stderr),
     );
 }
@@ -3316,7 +3335,7 @@ fn test_switch_pr_reads_invoking_worktree_config(#[from(repo_with_remote)] repo:
         "INVOKING-HOOK-RAN",
         "post-start should run from the invoking worktree's config"
     );
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     assert!(
         !repo.root_path().join("pr-hook-marker.txt").exists(),
         "the PR ref's committed config must not be consulted"

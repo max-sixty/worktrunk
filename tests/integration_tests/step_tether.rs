@@ -132,3 +132,47 @@ fn test_tether_kills_process_group_when_command_exits(repo: TestRepo) {
         "the tether supervisor must exit after the command exits"
     );
 }
+
+/// The global `-C <dir>` flag runs the tethered command in that directory —
+/// the canonical way to start a server from a subdirectory (zola in `docs/`,
+/// a dev server in `frontend/`) given the command runs directly with no shell
+/// to `cd`. The reaper still watches the launch cwd, not `-C`.
+#[rstest]
+fn test_tether_runs_command_in_working_dir(repo: TestRepo) {
+    let subdir = repo.path().join("subdir");
+    std::fs::create_dir(&subdir).unwrap();
+    let cwdfile = repo.home_path().join("tether-cwd.txt");
+
+    // The command writes its cwd and exits; the supervisor then sweeps the
+    // group and returns, so `status()` completes with nothing left running.
+    let status = repo
+        .wt_command()
+        .args([
+            "-C",
+            subdir.to_str().unwrap(),
+            "step",
+            "tether",
+            "--",
+            "sh",
+            "-c",
+            &format!("pwd -P > \"{}\"", cwdfile.display()),
+        ])
+        .current_dir(repo.path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("run wt step tether -C");
+    assert!(
+        status.success(),
+        "tether should exit 0 on command self-exit"
+    );
+
+    let recorded =
+        std::fs::read_to_string(&cwdfile).expect("tethered command should record its cwd");
+    assert_eq!(
+        std::fs::canonicalize(recorded.trim()).unwrap(),
+        std::fs::canonicalize(&subdir).unwrap(),
+        "the tethered command must run in the -C directory"
+    );
+}

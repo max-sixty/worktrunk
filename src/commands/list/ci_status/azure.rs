@@ -93,7 +93,9 @@ pub(super) fn detect_azure_pr(
     {
         Ok(output) => output,
         Err(e) => {
-            log::warn!(
+            tracing::warn!(
+                branch = %branch.full_name,
+                error = %e,
                 "az repos pr list failed to execute for branch {}: {}",
                 branch.full_name,
                 e
@@ -140,6 +142,10 @@ pub(super) fn detect_azure_pr(
         review_state: None,
         title: pr.title.clone(),
         body: pr.description.clone(),
+        // `az repos pr list` carries no comment/thread count; surfacing one
+        // would need a separate per-PR threads call, which this fetch avoids.
+        author: None,
+        comment_count: None,
     })
 }
 
@@ -179,7 +185,9 @@ pub(super) fn detect_azure_pipeline(
     {
         Ok(output) => output,
         Err(e) => {
-            log::warn!(
+            tracing::warn!(
+                branch = %branch.full_name,
+                error = %e,
                 "az pipelines runs list failed to execute for branch {}: {}",
                 branch.full_name,
                 e
@@ -223,6 +231,8 @@ pub(super) fn detect_azure_pipeline(
         review_state: None,
         title: None,
         body: None,
+        author: None,
+        comment_count: None,
     })
 }
 

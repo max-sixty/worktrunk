@@ -3,6 +3,6 @@ source: tests/integration_tests/switch_picker.rs
 expression: preview
 ---
 1: HEAD± 2 3 4 5 6 7
-Enter: switch | Tab/alt-1…7: preview | alt-c: create | Esc:
+Enter: switch | ctrl-u/d: scroll | Tab/alt-1…7: preview | a
 
 ○ main has no uncommitted changes

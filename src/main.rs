@@ -36,7 +36,6 @@ pub(crate) use invocation::{
 pub(crate) use crate::cli::{OutputFormat, StatuslineFormat};
 
 use commands::commit::HookGate;
-#[cfg(unix)]
 use commands::handle_picker;
 use commands::worktree::{PushKind, PushOutcome, PushResult, handle_no_ff_merge, handle_push};
 use commands::{
@@ -183,7 +182,11 @@ fn handle_hook_command(action: HookCommand, yes: bool) -> anyhow::Result<()> {
     }
 }
 
-fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
+fn handle_step_command(
+    action: StepCommand,
+    working_dir: Option<std::path::PathBuf>,
+    yes: bool,
+) -> anyhow::Result<()> {
     match action {
         StepCommand::Commit(args) => {
             let verify = args.hooks.resolve();
@@ -361,8 +364,16 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
             to,
             dry_run,
             force,
+            require_include,
             format,
-        } => step_copy_ignored(from.as_deref(), to.as_deref(), dry_run, force, format),
+        } => step_copy_ignored(
+            from.as_deref(),
+            to.as_deref(),
+            dry_run,
+            force,
+            require_include,
+            format,
+        ),
         StepCommand::Eval { template, format } => step_eval(&template, format),
         StepCommand::ForEach { format, args } => step_for_each(args, format),
         StepCommand::Promote { branch } => {
@@ -391,7 +402,7 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
             clobber,
             format,
         } => step_relocate(branches, dry_run, commit, clobber, format),
-        StepCommand::Tether { command } => step_tether(&command),
+        StepCommand::Tether { command } => step_tether(&command, working_dir.as_deref()),
         StepCommand::External(args) => commands::step_alias(args, yes),
     }
 }
@@ -668,20 +679,11 @@ fn handle_list_command(args: ListArgs) -> anyhow::Result<()> {
     }
 }
 
-#[cfg(unix)]
 fn handle_select_command(branches: bool, remotes: bool) -> anyhow::Result<()> {
     // Deprecated: show warning and delegate to handle_picker
     warn_select_deprecated();
     worktrunk::config::suppress_warnings();
     handle_picker(branches, remotes, false, None, SwitchFormat::Text)
-}
-
-#[cfg(not(unix))]
-fn handle_select_command(_branches: bool, _remotes: bool) -> anyhow::Result<()> {
-    use worktrunk::git::WorktrunkError;
-    warn_select_deprecated();
-    commands::print_windows_picker_unavailable();
-    Err(WorktrunkError::AlreadyDisplayed { exit_code: 1 }.into())
 }
 
 /// Rayon thread count sized for mixed git+network I/O workloads.
@@ -867,7 +869,7 @@ fn dispatch_command(
 ) -> anyhow::Result<()> {
     match command {
         Commands::Config { action } => handle_config_command(action, yes),
-        Commands::Step { action } => handle_step_command(action, yes),
+        Commands::Step { action } => handle_step_command(action, working_dir, yes),
         Commands::Hook { action } => handle_hook_command(action, yes),
         Commands::Select { branches, remotes } => handle_select_command(branches, remotes),
         Commands::List(args) => handle_list_command(args),
@@ -981,7 +983,7 @@ fn format_command_error(error: &anyhow::Error) -> String {
                         false,
                         "Multiline error without CommandError or context: {msg}"
                     );
-                    log::warn!("Multiline error without CommandError or context: {msg}");
+                    tracing::warn!("Multiline error without CommandError or context: {msg}");
                     let normalized = msg.replace("\r\n", "\n").replace('\r', "\n");
                     let _ = writeln!(out, "{}", error_message("Command failed"));
                     let _ = writeln!(out, "{}", format_with_gutter(&normalized, None));

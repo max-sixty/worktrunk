@@ -83,8 +83,7 @@ impl CiBranchName {
 
 // Re-export public types
 pub(crate) use cache::{CachedCiStatus, MaxPrNumber};
-// Only the `--prs` picker consumes this re-export, and the picker is unix-only.
-#[cfg(unix)]
+// Only the `--prs` picker consumes this re-export.
 pub(crate) use github::GitHubPrInfo;
 
 /// Maximum number of PRs/MRs to fetch when filtering by source repository.
@@ -131,7 +130,7 @@ pub(crate) fn tool_available(tool: &str, args: &[&str]) -> bool {
 /// Parse JSON output from CLI tools
 fn parse_json<T: DeserializeOwned>(stdout: &[u8], command: &str, branch: &str) -> Option<T> {
     serde_json::from_slice(stdout)
-        .map_err(|e| log::warn!("Failed to parse {} JSON for {}: {}", command, branch, e))
+        .map_err(|e| tracing::warn!(command = %command, branch = %branch, error = %e, "Failed to parse {} JSON for {}: {}", command, branch, e))
         .ok()
 }
 
@@ -394,10 +393,24 @@ pub struct PrStatus {
     /// `pr` preview pane, riding the same forge call the CI column already makes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// PR/MR author login (GitHub) / username (GitLab). Absent as for `title`.
+    /// Folded into a worktree row's matcher text so a PR filters by author the
+    /// same whether it's shown as a worktree row or a listed `--prs` row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
     /// PR/MR description (GitHub `body`, GitLab/Azure/Gitea `description`/`body`),
     /// rendered as markdown in the `pr` preview pane. Absent as for `title`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body: Option<String>,
+    /// Number of conversation comments on the PR/MR — GitHub issue comments,
+    /// GitLab user notes, Gitea PR comments — shown as a `comments` line in the
+    /// picker's `pr` preview pane. Rides the same forge list call as
+    /// `title`/`body`. Zero is flattened to `None` at the mapping boundary so a
+    /// PR with no comments shows nothing; also `None` for branch workflows (no
+    /// PR), for Azure DevOps (its PR-list call carries no comment count), and
+    /// for cache entries written before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment_count: Option<u32>,
 }
 
 impl CiStatus {
@@ -519,6 +532,8 @@ impl PrStatus {
             review_state: None,
             title: None,
             body: None,
+            author: None,
+            comment_count: None,
         }
     }
 
@@ -548,12 +563,20 @@ impl PrStatus {
         // Use full_name as cache key to distinguish local "feature" from remote "origin/feature"
         let now_secs = epoch_now();
 
+        // `age` saturates: under a pinned test clock (or real clock skew)
+        // `now_secs` can predate `checked_at`, so a raw subtraction would
+        // underflow-panic when this `debug!` fires (its args build at `-vv`).
+        // `saturating_sub` clamps to 0, matching `CachedCiStatus::is_valid`.
         let status = match CachedCiStatus::read(repo, &branch.full_name) {
             Some(cached) if cached.is_valid(local_head, now_secs, &repo_path) => {
-                log::debug!(
+                tracing::debug!(
+                    branch = %branch.full_name,
+                    age = %(now_secs.saturating_sub(cached.checked_at)),
+                    ttl = %CachedCiStatus::ttl_for_repo(&repo_path),
+                    status = ?cached.status.as_ref().map(|s| &s.ci_status),
                     "Using cached CI status for {} (age={}s, ttl={}s, status={:?})",
                     branch.full_name,
-                    now_secs - cached.checked_at,
+                    now_secs.saturating_sub(cached.checked_at),
                     CachedCiStatus::ttl_for_repo(&repo_path),
                     cached.status.as_ref().map(|s| &s.ci_status)
                 );
@@ -561,10 +584,14 @@ impl PrStatus {
             }
             cached => {
                 if let Some(cached) = cached {
-                    log::debug!(
+                    tracing::debug!(
+                        branch = %branch.full_name,
+                        age = %(now_secs.saturating_sub(cached.checked_at)),
+                        ttl = %CachedCiStatus::ttl_for_repo(&repo_path),
+                        head_match = %(cached.head == local_head),
                         "Cache expired for {} (age={}s, ttl={}s, head_match={})",
                         branch.full_name,
-                        now_secs - cached.checked_at,
+                        now_secs.saturating_sub(cached.checked_at),
                         CachedCiStatus::ttl_for_repo(&repo_path),
                         cached.head == local_head
                     );
@@ -612,7 +639,7 @@ impl PrStatus {
             Some(p) => platform::detect_ci(p, repo, branch, local_head, has_upstream),
             None => {
                 // Unknown platform — user should set forge.platform in project config
-                log::debug!(
+                tracing::debug!(
                     "Could not detect CI platform from remote URL; \
                      set forge.platform in .config/wt.toml for CI status"
                 );
@@ -727,6 +754,8 @@ mod tests {
             review_state: None,
             title: None,
             body: None,
+            author: None,
+            comment_count: None,
         };
         assert_eq!(pr_passed.indicator(), "#");
 
@@ -740,6 +769,8 @@ mod tests {
             review_state: None,
             title: None,
             body: None,
+            author: None,
+            comment_count: None,
         };
         assert_eq!(branch_running.indicator(), "#");
 
@@ -753,6 +784,8 @@ mod tests {
             review_state: None,
             title: None,
             body: None,
+            author: None,
+            comment_count: None,
         };
         assert_eq!(error_status.indicator(), "⚠");
     }
@@ -771,6 +804,8 @@ mod tests {
             review_state: None,
             title: None,
             body: None,
+            author: None,
+            comment_count: None,
         };
 
         // Number fits → PR reference, hyperlinked when supported
@@ -866,6 +901,8 @@ mod tests {
             review_state: None,
             title: None,
             body: None,
+            author: None,
+            comment_count: None,
         };
         let green = "\u{1b}[32m";
         let dim = "\u{1b}[2m";
@@ -906,6 +943,8 @@ mod tests {
             review_state,
             title: None,
             body: None,
+            author: None,
+            comment_count: None,
         };
 
         // Changes-requested outranks running and passed — waiting can't clear it
@@ -1019,6 +1058,8 @@ mod tests {
             review_state: None,
             title: None,
             body: None,
+            author: None,
+            comment_count: None,
         }
     }
 

@@ -183,7 +183,7 @@ fn execute_instant_removal_or_fallback(
                 )
             })
         {
-            log::debug!("Failed to delete branch {} synchronously: {}", branch, e);
+            tracing::debug!(branch = %branch, error = %e, "Failed to delete branch {} synchronously: {}", branch, e);
         }
         if changed_directory {
             // Create an empty placeholder at the original path so the shell's working
@@ -258,7 +258,7 @@ fn delete_branch_in_synchronous_fallback(
             deletion_mode.is_force(),
         )
     }) {
-        log::debug!("Failed to delete branch {branch} in synchronous fallback: {e}");
+        tracing::debug!(branch = %branch, error = %e, "Failed to delete branch {branch} in synchronous fallback: {e}");
     }
 }
 
@@ -524,20 +524,31 @@ struct BranchDeletionDisplay {
     show_unmerged_hint: bool,
 }
 
-fn print_retained_unmerged_branch(branch_name: &str) {
-    eprintln!(
-        "{}",
-        info_message(cformat!(
-            "Branch <bold>{branch_name}</> retained; has unmerged changes"
-        ))
-    );
+/// The canonical "branch retained because unmerged" info + hint lines, as an
+/// `(info, hint)` pair. [`print_retained_unmerged_branch`] prints them; the
+/// picker stashes them via `stash_retained_unmerged_branch` (it can't print
+/// mid-render) from its branch-only keep path — a `/ branch` row whose unmerged
+/// branch `SafeDelete` declines to delete stays put, so this explains the no-op.
+/// (A worktree removal that keeps its branch transforms the row to `/ branch`
+/// live instead, with no stashed message.) Shared so the emit paths can't drift
+/// in wording, flag, or styling.
+pub(crate) fn retained_unmerged_branch_messages(branch_name: &str) -> (String, String) {
+    let info = info_message(cformat!(
+        "Branch <bold>{branch_name}</> retained; has unmerged changes"
+    ))
+    .to_string();
     let cmd = suggest_command("remove", &[branch_name], &["-D"]);
-    eprintln!(
-        "{}",
-        hint_message(cformat!(
-            "To delete the unmerged branch, run <underline>{cmd}</>"
-        ))
-    );
+    let hint = hint_message(cformat!(
+        "To delete the unmerged branch, run <underline>{cmd}</>"
+    ))
+    .to_string();
+    (info, hint)
+}
+
+fn print_retained_unmerged_branch(branch_name: &str) {
+    let (info, hint) = retained_unmerged_branch_messages(branch_name);
+    eprintln!("{info}");
+    eprintln!("{hint}");
 }
 
 /// Handle the result of a branch deletion attempt.

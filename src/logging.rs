@@ -1,6 +1,6 @@
 //! Tracing-subscriber setup for the `wt` binary.
 //!
-//! Three layered subscribers cooperate to give each verbosity level the
+//! Four layered subscribers cooperate to give each verbosity level the
 //! routing it needs. Filtering is structural (per-layer `Filter`), not done
 //! after-the-fact in a format closure:
 //!
@@ -8,11 +8,21 @@
 //! | ---------------- | --------------------------------------------------- | ----------------- |
 //! | stderr           | `$RUST_LOG` or flag baseline (`Off`/`Info`/`Info`)  | styled with ANSI  |
 //! | `trace.log`      | `-vv` only, excludes `SUBPROCESS_FULL_TARGET`       | plain text        |
+//! | `trace.jsonl`    | `-vv` only, excludes both subprocess targets        | one JSON object per event |
 //! | `subprocess.log` | `-vv` only, includes only `SUBPROCESS_FULL_TARGET`  | raw bodies + `$ cmd … seq=N` headers |
 //!
 //! At `-vv` the stderr layer keeps its Info baseline — `-vv` is a strict
 //! superset of `-v`, with Debug-level records (the noisy ones, including
 //! the bounded subprocess preview) routed to the file layers only.
+//!
+//! Each layer's target filter carries an explicit TRACE `max_level_hint`
+//! (see [`target_filter`]) so the `EnvFilter`'s level bound survives the
+//! `Filter::and` and reaches the global `LevelFilter`. That keeps the native
+//! `tracing::*` macros cheap: below the active verbosity a `debug!` is gated
+//! out before it builds its fields, exactly as `log::debug!` short-circuits
+//! on `log::max_level`. Without the hint, `And`'s `cmp::min` (where a `None`
+//! hint sorts below any `Some`) would erase the bound, pin the global level
+//! at TRACE, and force every `debug!` to format its args even at `-v0`.
 //!
 //! The `log` crate calls (used throughout the codebase) are bridged into
 //! `tracing` by [`tracing_log::LogTracer::init`] — every layer above sees
@@ -24,17 +34,17 @@ use std::fmt::{self, Write as _};
 use color_print::cformat;
 use tracing::{Event, Subscriber};
 use tracing_subscriber::Layer;
-use tracing_subscriber::filter::{EnvFilter, FilterExt, LevelFilter, filter_fn};
+use tracing_subscriber::filter::{EnvFilter, FilterExt, FilterFn, LevelFilter, filter_fn};
 use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields, format::Writer};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
-use worktrunk::shell_exec::SUBPROCESS_FULL_TARGET;
+use worktrunk::shell_exec::{SUBPROCESS_BOUNDED_TARGET, SUBPROCESS_FULL_TARGET};
 use worktrunk::styling::{eprintln, format_with_gutter, info_message};
-use worktrunk::trace::WT_TRACE_TARGET;
+use worktrunk::trace::{WT_TRACE_TARGET, now_us, thread_id};
 use worktrunk::utils::escape_controls;
 
-use crate::log_files::{self, SubprocessMakeWriter, TraceMakeWriter};
+use crate::log_files::{self, SubprocessMakeWriter, TraceJsonlMakeWriter, TraceMakeWriter};
 use crate::output;
 
 /// Single-character thread label (e.g. `a`, `b`, …, `A`, …) used to group
@@ -320,6 +330,103 @@ fn format_wt_trace(f: &WtTraceFields) -> String {
     }
 }
 
+/// Generic field collector for `trace.jsonl`: serializes whatever typed fields
+/// an event carries into a JSON object, regardless of which fields they are.
+///
+/// This is the structured counterpart of [`event_message`] (which keeps only
+/// the `message` field). A `[wt-trace]` event arrives with its full typed
+/// grammar (`kind`, `ts`, `seq`, `cmd`, `dur_us`, `ok`, ...) and serializes
+/// rich; a bridged `log::*` / bare `tracing::*` call arrives with just
+/// `message` and serializes as `{"message":...}`. Nothing here is
+/// `[wt-trace]`-specific, so a freshly-structured call site
+/// (`tracing::warn!(branch = %b, "...")`) gains a queryable `branch` field with
+/// no change to this layer.
+///
+/// serde_json owns all string escaping, so control bytes and embedded quotes in
+/// any field are encoded losslessly -- the JSON path needs no `escape_controls`.
+#[derive(Default)]
+struct JsonFieldVisitor {
+    map: serde_json::Map<String, serde_json::Value>,
+}
+
+impl tracing::field::Visit for JsonFieldVisitor {
+    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+        self.map.insert(field.name().to_owned(), value.into());
+    }
+
+    fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
+        self.map.insert(field.name().to_owned(), value.into());
+    }
+
+    fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
+        self.map.insert(field.name().to_owned(), value.into());
+    }
+
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        self.map.insert(field.name().to_owned(), value.into());
+    }
+
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn fmt::Debug) {
+        // `message` (an `Arguments`) and `%`/`?`-formatted values arrive here;
+        // store their rendered form as a JSON string.
+        self.map
+            .insert(field.name().to_owned(), format!("{value:?}").into());
+    }
+}
+
+/// Render a single event as one line of `trace.jsonl`.
+///
+/// Collects the event's typed fields via [`JsonFieldVisitor`], then fills in
+/// `ts`/`tid` from the runtime *only if the event did not carry them* (a
+/// `[wt-trace]` record sets its own, captured at the precise event moment; a
+/// bridged `log::*` line carries neither, so it gets the emission-time values),
+/// and stamps the metadata `level`. Field order is serde_json's default
+/// (sorted) -- irrelevant to a machine reader.
+fn event_json(event: &Event<'_>) -> String {
+    let mut visitor = JsonFieldVisitor::default();
+    event.record(&mut visitor);
+    let map = &mut visitor.map;
+    map.entry("ts".to_owned())
+        .or_insert_with(|| now_us().into());
+    map.entry("tid".to_owned())
+        .or_insert_with(|| thread_id().into());
+    map.insert(
+        "level".to_owned(),
+        event
+            .metadata()
+            .level()
+            .as_str()
+            .to_ascii_lowercase()
+            .into(),
+    );
+    serde_json::Value::Object(visitor.map).to_string()
+}
+
+/// `trace.jsonl` formatter: one JSON object per event, fields serialized
+/// generically by [`event_json`].
+///
+/// The layer admits every event except the two subprocess-output targets (see
+/// [`build_trace_jsonl_layer`]), so both structured `[wt-trace]` records and
+/// free-form `log::*` messages arrive here. The former serialize rich (their
+/// full typed grammar); the latter as `{"message":...}` until their call site
+/// is given fields.
+struct TraceJsonlFormat;
+
+impl<S, N> FormatEvent<S, N> for TraceJsonlFormat
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+    N: for<'a> FormatFields<'a> + 'static,
+{
+    fn format_event(
+        &self,
+        _ctx: &FmtContext<'_, S, N>,
+        mut writer: Writer<'_>,
+        event: &Event<'_>,
+    ) -> fmt::Result {
+        writeln!(writer, "{}", event_json(event))
+    }
+}
+
 /// `subprocess.log` formatter: the message verbatim. Body lines are already
 /// prefixed (`  …` / `  ! …`) by `shell_exec::format_stream_full`, and each
 /// command's block is introduced by a `$ cmd … seq=N` header line emitted by
@@ -353,7 +460,7 @@ where
 ///    are dropped by the default no-op `log` logger, which is the right
 ///    behavior — there's nothing meaningful to attribute the call to before
 ///    the subscriber exists.
-/// 3. Build three layered subscribers, each gated by both a verbosity check
+/// 3. Build four layered subscribers, each gated by both a verbosity check
 ///    and the relevant `LogSink::is_active()` so a failed file open turns
 ///    its layer into a no-op rather than silently dropping records.
 /// 4. Bridge `log::*` into tracing via `LogTracer`. Idempotent on
@@ -371,6 +478,7 @@ pub(crate) fn init(verbose_level: u8) {
     // naturally with subscriber `.with(...)` calls.
     let stderr_layer = build_stderr_layer(verbose_level);
     let trace_layer = build_trace_layer(verbose_level);
+    let trace_jsonl_layer = build_trace_jsonl_layer(verbose_level);
     let subprocess_layer = build_subprocess_layer(verbose_level);
 
     // `try_init` fails only if a subscriber is already installed (the
@@ -380,6 +488,7 @@ pub(crate) fn init(verbose_level: u8) {
     let _ = tracing_subscriber::registry()
         .with(stderr_layer)
         .with(trace_layer)
+        .with(trace_jsonl_layer)
         .with(subprocess_layer)
         .try_init();
 
@@ -387,16 +496,20 @@ pub(crate) fn init(verbose_level: u8) {
     // init: `LogTracer::enabled` consults the tracing dispatcher.
     //
     // The builder's `with_max_level` caps `log::max_level()` — the static
-    // gate `log_enabled!` checks before format args are evaluated. Mirror
-    // the env-wins-when-set semantics the layer filters use (PR #2901):
+    // gate `log_enabled!` checks before a `log::*` record evaluates its
+    // format args. Worktrunk's own emit sites are native `tracing::*`, gated
+    // by the global level hint the layer filters now expose (see
+    // `target_filter`), so this cap is specifically for the two `log`-API
+    // consumers that hint can't reach: the `log::*` records forwarded from
+    // dependencies, and the `log::log_enabled!` deep-logging guard in
+    // `shell_exec::log_output`.
+    //
+    // Mirror the env-wins-when-set semantics the layer filters use (PR #2901):
     // if `RUST_LOG` is set, its level wins; otherwise the verbosity flag
     // baseline applies. Without an explicit cap, the default
     // `LevelFilter::max()` would always pass the static check, forcing
-    // every `log::debug!(…)` site to evaluate its format args — exposing
-    // arithmetic that's safe today only because the macro short-circuits
-    // (e.g. `now_secs - cached.checked_at` in `list/ci_status` is fine
-    // under monotonic-ish clocks but panics when args are evaluated
-    // against a clock-skewed fixture).
+    // every dependency `log::debug!(…)` to format its args even when no
+    // sink is active.
     let _ = tracing_log::LogTracer::builder()
         .with_max_level(effective_log_max_level(verbose_level, rust_log_level()))
         .init();
@@ -465,6 +578,25 @@ fn parse_verbose_level(raw: Option<&str>) -> u8 {
     raw.and_then(|v| v.trim().parse::<u8>().ok()).unwrap_or(0)
 }
 
+/// Wrap a target predicate as a `Filter` that bounds by callsite *target*,
+/// never by level — and says so via an explicit TRACE `max_level_hint`.
+///
+/// A bare [`filter_fn`] reports no hint (`None`). [`FilterExt::and`] returns
+/// `None` if *either* side lacks one (`cmp::min`, and a `None` hint sorts
+/// below any `Some`), so ANDing a hintless target filter onto an `EnvFilter`
+/// erases its level bound. That `None` then propagates through the layered
+/// subscriber's `pick_level_hint` up to the global `LevelFilter::current()`,
+/// pinning it at TRACE — at which point the `tracing::*` macros stop
+/// short-circuiting and build their fields at every verbosity, even `-v0`
+/// where nothing records them. Tagging the target filter with TRACE (honest:
+/// it really does pass all levels) lets the `EnvFilter`'s real bound survive.
+fn target_filter<F>(predicate: F) -> FilterFn<F>
+where
+    F: Fn(&tracing::Metadata<'_>) -> bool,
+{
+    filter_fn(predicate).with_max_level_hint(LevelFilter::TRACE)
+}
+
 /// Stderr layer: the flag sets a baseline (`Off` / `Info` / `Info`) and
 /// `RUST_LOG`, when set, overrides via the standard directive grammar —
 /// matching the env-wins-when-set convention (see PR #2901). At `-vv`
@@ -483,7 +615,7 @@ where
     let env_filter = EnvFilter::builder()
         .with_default_directive(baseline.into())
         .from_env_lossy();
-    let exclude_full = filter_fn(|meta| meta.target() != SUBPROCESS_FULL_TARGET);
+    let exclude_full = target_filter(|meta| meta.target() != SUBPROCESS_FULL_TARGET);
     let layer = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stderr)
         .with_ansi(true)
@@ -506,12 +638,43 @@ where
     let env_filter = EnvFilter::builder()
         .with_default_directive(LevelFilter::DEBUG.into())
         .from_env_lossy();
-    let exclude_full = filter_fn(|meta| meta.target() != SUBPROCESS_FULL_TARGET);
+    let exclude_full = target_filter(|meta| meta.target() != SUBPROCESS_FULL_TARGET);
     let layer = tracing_subscriber::fmt::layer()
         .with_writer(TraceMakeWriter)
         .with_ansi(false)
         .event_format(TraceFileFormat)
         .with_filter(env_filter.and(exclude_full));
+    Some(layer)
+}
+
+/// `trace.jsonl` layer: every event *except* the two subprocess-output targets,
+/// rendered one JSON object per line at the Debug baseline (`RUST_LOG`
+/// overrides, matching `trace.log`). Active only when `-vv` opened the file.
+///
+/// The exclusions are the raw bodies (`SUBPROCESS_FULL_TARGET`, which belong in
+/// `subprocess.log`) and the bounded preview (`SUBPROCESS_BOUNDED_TARGET`, the
+/// capped gist of that same output) — `trace.jsonl` is the *event* stream, so
+/// command output stays out and is reached via `seq` into `subprocess.log`.
+/// Everything else flows in: `[wt-trace]` records serialize rich, and free-form
+/// `log::*` lines serialize as `{"message":...}` until structured.
+fn build_trace_jsonl_layer<S>(verbose_level: u8) -> Option<impl Layer<S>>
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+{
+    if verbose_level < 2 || !log_files::TRACE_JSONL.is_active() {
+        return None;
+    }
+    let env_filter = EnvFilter::builder()
+        .with_default_directive(LevelFilter::DEBUG.into())
+        .from_env_lossy();
+    let exclude_output = target_filter(|meta| {
+        meta.target() != SUBPROCESS_FULL_TARGET && meta.target() != SUBPROCESS_BOUNDED_TARGET
+    });
+    let layer = tracing_subscriber::fmt::layer()
+        .with_writer(TraceJsonlMakeWriter)
+        .with_ansi(false)
+        .event_format(TraceJsonlFormat)
+        .with_filter(env_filter.and(exclude_output));
     Some(layer)
 }
 
@@ -524,7 +687,7 @@ where
     if verbose_level < 2 || !log_files::SUBPROCESS.is_active() {
         return None;
     }
-    let only_full = filter_fn(|meta| meta.target() == SUBPROCESS_FULL_TARGET);
+    let only_full = target_filter(|meta| meta.target() == SUBPROCESS_FULL_TARGET);
     let layer = tracing_subscriber::fmt::layer()
         .with_writer(SubprocessMakeWriter)
         .with_ansi(false)
@@ -561,6 +724,9 @@ fn announce_trace_destination() {
     // Keeping the "unavailable" note in the header leaves the gutter a clean
     // list of live, copy-pasteable paths.
     let mut paths = vec![dir.join("trace.log")];
+    if log_files::TRACE_JSONL.path().is_some() {
+        paths.push(dir.join("trace.jsonl"));
+    }
     let header = match log_files::SUBPROCESS.path() {
         Some(_) => {
             paths.push(dir.join("subprocess.log"));
@@ -584,9 +750,48 @@ mod tests {
     use ansi_str::AnsiStr;
 
     use super::{
-        WT_TRACE_TARGET, WtTraceFields, effective_log_max_level, format_wt_trace,
+        WT_TRACE_TARGET, WtTraceFields, effective_log_max_level, event_json, format_wt_trace,
         label_for_thread_index, parse_verbose_level, style_stderr_line,
     };
+
+    /// The level-hint footgun this module's `target_filter` exists to dodge:
+    /// a bare `filter_fn` reports no `max_level_hint`, and `Filter::and`
+    /// collapses to `None` (its `cmp::min` sorts `None` below any `Some`),
+    /// erasing the level bound. A `None` hint propagates to the global
+    /// `LevelFilter`, pinning it at TRACE so every `tracing::debug!` builds
+    /// its fields even at `-v0`. `target_filter` tags the predicate with a
+    /// TRACE hint so the `LevelFilter`/`EnvFilter` side survives the `and`.
+    #[test]
+    fn target_filter_preserves_level_bound_through_and() {
+        use tracing::level_filters::LevelFilter;
+        use tracing_subscriber::Registry;
+        use tracing_subscriber::filter::{FilterExt, filter_fn};
+        use tracing_subscriber::layer::Filter;
+
+        // The tagged target filter passes all levels (TRACE), but ANDing it
+        // onto an `OFF` level filter keeps the `OFF` bound.
+        let target = super::target_filter(|meta| meta.target() != "x");
+        assert_eq!(
+            Filter::<Registry>::max_level_hint(&target),
+            Some(LevelFilter::TRACE)
+        );
+        let bounded = LevelFilter::OFF.and(target);
+        assert_eq!(
+            Filter::<Registry>::max_level_hint(&bounded),
+            Some(LevelFilter::OFF),
+            "the OFF bound must survive ANDing with the target filter"
+        );
+
+        // Regression guard: the bare `filter_fn` form collapses the AND hint
+        // to `None` — the exact behavior that pinned the global level at TRACE.
+        let bare = filter_fn(|meta| meta.target() != "x");
+        let collapsed = LevelFilter::OFF.and(bare);
+        assert_eq!(
+            Filter::<Registry>::max_level_hint(&collapsed),
+            None,
+            "documents the footgun target_filter fixes"
+        );
+    }
 
     /// Branch coverage for `label_for_thread_index` — `thread_label` never
     /// hands it `n == 0` or `n > 52` in practice (Rust's `ThreadId`
@@ -804,6 +1009,79 @@ mod tests {
             format_wt_trace(&f),
             r#"[wt-trace] ts=0 tid=0 kind="<unknown>""#
         );
+    }
+
+    /// `event_json` serializes whatever typed fields an event carries, then
+    /// stamps `level` and fills `ts`/`tid` only when the event omitted them.
+    /// Drives real events through a capture layer (the only way to obtain a
+    /// `tracing::Event`). Keys land in serde_json's sorted order.
+    #[test]
+    fn event_json_serializes_structured_and_freeform_events() {
+        use std::sync::{Arc, Mutex};
+
+        use tracing::Subscriber;
+        use tracing_subscriber::Registry;
+        use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
+
+        struct Capture(Arc<Mutex<Vec<String>>>);
+        impl<S: Subscriber> Layer<S> for Capture {
+            fn on_event(&self, event: &tracing::Event<'_>, _: Context<'_, S>) {
+                self.0.lock().unwrap().push(event_json(event));
+            }
+        }
+        let lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = Registry::default().with(Capture(lines.clone()));
+        tracing::subscriber::with_default(subscriber, || {
+            // A full `[wt-trace]` cmd record: every field typed, ts/tid present.
+            tracing::debug!(
+                target: WT_TRACE_TARGET,
+                kind = "cmd_completed",
+                ts = 100u64,
+                tid = 3u64,
+                seq = 1u64,
+                context = "worktree",
+                cmd = "git status",
+                dur_us = 12300u64,
+                ok = true,
+            );
+            // The escaping win: a literal `"` in the command, where the
+            // `key="value"` text grammar would truncate the parse. The
+            // negative `exit` also drives `JsonFieldVisitor::record_i64`.
+            tracing::debug!(
+                target: WT_TRACE_TARGET,
+                kind = "cmd_completed",
+                ts = 100u64,
+                tid = 3u64,
+                seq = 5u64,
+                exit = -1i64,
+                cmd = r#"git commit -m "wip""#,
+                dur_us = 1u64,
+                ok = true,
+            );
+            // A free-form message with no fields and no ts/tid of its own.
+            tracing::warn!("fsmonitor: skipping force-kill");
+        });
+        let lines = lines.lock().unwrap();
+
+        // Structured record: rich, keys sorted, `level` stamped, ts/tid kept.
+        assert_eq!(
+            lines[0],
+            r#"{"cmd":"git status","context":"worktree","dur_us":12300,"kind":"cmd_completed","level":"debug","ok":true,"seq":1,"tid":3,"ts":100}"#
+        );
+
+        // Embedded quote round-trips losslessly.
+        let parsed: serde_json::Value = serde_json::from_str(&lines[1]).expect("valid JSON");
+        assert_eq!(parsed["cmd"], r#"git commit -m "wip""#);
+        assert_eq!(parsed["seq"], 5);
+        assert_eq!(parsed["exit"], -1); // exercises record_i64
+
+        // Free-form message: falls through as `{"message":...}`, with `level`
+        // stamped and ts/tid injected from the runtime (so present, any value).
+        let parsed: serde_json::Value = serde_json::from_str(&lines[2]).expect("valid JSON");
+        assert_eq!(parsed["message"], "fsmonitor: skipping force-kill");
+        assert_eq!(parsed["level"], "warn");
+        assert!(parsed["ts"].is_u64() && parsed["tid"].is_u64());
+        assert!(parsed.get("kind").is_none());
     }
 
     /// `effective_log_max_level` mirrors the layer filters: env wins when

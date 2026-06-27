@@ -1,5 +1,5 @@
 ---
 source: src/commands/picker/items.rs
-expression: "WorktreeSkimItem::loading_placeholder(mode)"
+expression: "PickerRow::loading_placeholder(mode)"
 ---
-○ Loading log. Press alt-2 again to refresh.
+[2m↳[22m [2mLoading log…[22m

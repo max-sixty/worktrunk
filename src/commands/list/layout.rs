@@ -54,13 +54,13 @@
 //! final_priority = base_priority + empty_penalty
 //! ```
 //!
-//! **Base priorities** (0-12) are determined by **user need hierarchy** - what questions users need
+//! **Base priorities** (0-13) are determined by **user need hierarchy** - what questions users need
 //! answered when scanning worktrees:
 //! - 0: Gutter (always present)
 //! - 1: Branch (identity - "what is this?")
 //! - 2-4: Critical (status, working diff, ahead/behind)
-//! - 5-11: Context (CI, branch diff, path, upstream, URL, commit, time)
-//! - 12: Message (nice-to-have, space-hungry)
+//! - 5-12: Context (CI, branch diff, path, upstream, URL, summary, commit, time)
+//! - 13: Message (nice-to-have, space-hungry)
 //!
 //! **Empty penalty**: +10 if column has no data (only header)
 //! - Empty working_diff: 3 + 10 = priority 13
@@ -68,8 +68,8 @@
 //! - etc.
 //!
 //! This creates two effective priority tiers:
-//! - **Tier 1 (priorities 0-12)**: Columns with actual data
-//! - **Tier 2 (priorities 12-22)**: Empty columns (visual consistency)
+//! - **Tier 1 (priorities 0-13)**: Columns with actual data
+//! - **Tier 2 (priorities 13-23)**: Empty columns (visual consistency)
 //!
 //! The empty penalty is large (+10) but not infinite, so empty columns maintain their relative
 //! ordering (empty working_diff still ranks higher than empty ci_status) for visual consistency.
@@ -83,7 +83,7 @@
 //! 2. Show nice-to-have data (message, commit hash) when space allows
 //! 3. Maintain visual consistency - empty columns in predictable positions at wide widths
 //!
-//! **Key decision**: Message sits at the boundary (priority 12). Empty columns (priority 12+)
+//! **Key decision**: Message sits at the boundary (priority 13). Empty columns (priority 13+)
 //! rank below message, so:
 //! - Narrow terminals: Data columns + message (hide empty columns)
 //! - Wide terminals: Data columns + message + empty columns (visual consistency)
@@ -105,12 +105,15 @@
 //!
 //! Some columns have non-standard behavior that extends beyond the basic two-tier model:
 //!
-//! 1. **BranchDiff** and **CiStatus** - Visibility gate (`show_full` flag)
-//!    - Both require `show_full=true` (hidden by default as too noisy for typical usage)
-//!    - Gated via `skip_tasks`: when `show_full=false`, their `TaskKind` is in `skip_tasks`
-//!      and the column is filtered out entirely (bypasses the tier system)
-//!    - Within the visibility gate, follows normal two-tier priority
-//!      (BranchDiff: 6/16, CiStatus: 5/15)
+//! 1. **CiStatus** and **Summary** - Visibility gate (`show_full` flag)
+//!    - Both require `show_full=true` — they reach off-machine (CI status over
+//!      the network, branch summaries via the LLM), so they're hidden by default
+//!    - Gated via `skip_tasks`: when `show_full=false`, their `TaskKind` is in
+//!      `skip_tasks` and the column is filtered out entirely (bypasses the tier
+//!      system)
+//!    - **BranchDiff** (`main…±`) is pure local git, so it is *not* gated — it
+//!      shows by default and follows the normal two-tier priority (6/16);
+//!      CiStatus is 5/15
 //!
 //! 2. **Low-priority columns** yield to Summary
 //!    - Columns with effective priority > Summary's (10) are dropped to reclaim
@@ -316,7 +319,6 @@ impl DiffDisplayConfig {
     ///
     /// Numbers are right-aligned within a 3-digit column width.
     /// Returns empty spaces if both values are zero.
-    #[cfg(unix)] // Only used by picker module which is unix-only
     pub fn format_aligned(&self, positive: usize, negative: usize) -> String {
         const DIGITS: usize = 3;
         let positive_width = 1 + DIGITS; // symbol + digits
@@ -518,6 +520,7 @@ pub struct ColumnLayout {
     pub format: ColumnFormat,
 }
 
+#[derive(Clone)]
 pub struct LayoutConfig {
     pub columns: Vec<ColumnLayout>,
     pub main_worktree_path: PathBuf,
@@ -532,16 +535,11 @@ pub struct LayoutConfig {
 /// threads, so renderers running outside `collect` — the picker's `--prs`
 /// thread — take this snapshot to place their cells on the same grid as the
 /// worktree rows.
-// The grid is built on every platform (`collect` hands it to `on_skeleton`),
-// but only the unix-only `--prs` picker reads its columns to align PR rows — so
-// the fields/accessor are dead on non-unix.
-#[cfg_attr(not(unix), allow(dead_code))]
 #[derive(Clone, Debug, Default)]
 pub struct ColumnGrid {
     pub columns: Vec<GridColumn>,
 }
 
-#[cfg_attr(not(unix), allow(dead_code))]
 #[derive(Clone, Copy, Debug)]
 pub struct GridColumn {
     pub kind: ColumnKind,
@@ -550,7 +548,6 @@ pub struct GridColumn {
 }
 
 impl ColumnGrid {
-    #[cfg_attr(not(unix), allow(dead_code))]
     pub fn column(&self, kind: ColumnKind) -> Option<GridColumn> {
         self.columns.iter().copied().find(|col| col.kind == kind)
     }
@@ -1794,15 +1791,12 @@ mod tests {
         )
     }
 
-    /// Default skip_tasks for non-full mode (Summary, BranchDiff, CI skipped).
+    /// Default skip_tasks for non-full mode (CI and Summary skipped; BranchDiff
+    /// runs and the `main…±` column shows by default).
     fn non_full_skip_tasks() -> HashSet<TaskKind> {
-        [
-            TaskKind::BranchDiff,
-            TaskKind::CiStatus,
-            TaskKind::SummaryGenerate,
-        ]
-        .into_iter()
-        .collect()
+        [TaskKind::CiStatus, TaskKind::SummaryGenerate]
+            .into_iter()
+            .collect()
     }
 
     /// Full mode skip_tasks (nothing skipped).

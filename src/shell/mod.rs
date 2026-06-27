@@ -409,6 +409,36 @@ mod tests {
     }
 
     #[test]
+    fn test_fish_wrapper_guards_completion_mode() {
+        // Regression for #3240: the lazy-load wrapper stub must short-circuit
+        // when COMPLETE is set, calling the binary directly rather than falling
+        // through to `wt config shell init fish | source` and the trailing
+        // `wt $argv` self-call. Without the guard, a stale third-party
+        // completion that invokes the bare `wt` command (e.g. an old Homebrew
+        // vendor_completions.d/wt.fish) re-enters the stub and recurses to
+        // fish's call-stack limit. Mirrors the bash/zsh COMPLETE guard.
+        let wrapper = ShellInit::with_prefix(Shell::Fish, "wt".to_string())
+            .generate_fish_wrapper()
+            .expect("Failed to generate fish wrapper");
+        assert!(
+            wrapper.contains("set -q COMPLETE"),
+            "fish wrapper must guard completion mode to avoid recursion (#3240); got:\n{wrapper}"
+        );
+        // The guard must precede the re-sourcing self-call so completion never
+        // reaches it.
+        let guard = wrapper
+            .find("set -q COMPLETE")
+            .expect("guard present per assertion above");
+        let resource = wrapper
+            .find("config shell init fish | source")
+            .expect("wrapper sources the full integration");
+        assert!(
+            guard < resource,
+            "the COMPLETE guard must come before the re-sourcing self-call; got:\n{wrapper}"
+        );
+    }
+
+    #[test]
     fn test_shell_config_paths_returns_paths() {
         // All shells should return at least one config path
         let shells = [

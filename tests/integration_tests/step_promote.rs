@@ -477,6 +477,54 @@ fn test_promote_swap_only_main_has_ignored(mut repo: TestRepo) {
     );
 }
 
+/// `require-include` must not affect `wt step promote` — promote swaps all
+/// gitignored artifacts between worktrees by design and ignores copy-ignored
+/// config. Regression guard for the require-include feature.
+#[rstest]
+fn test_promote_swap_ignores_require_include(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    let gitignore = "build/\n*.log\n";
+    commit_gitignore(&repo, repo.root_path(), gitignore);
+    commit_gitignore(&repo, &feature_path, gitignore);
+
+    // require-include is set via CLI override, but promote must still swap
+    // ignored files — it never reads copy-ignored config. Using --config-set
+    // avoids leaving an untracked .config/ that would itself block promote.
+    fs::create_dir_all(repo.root_path().join("build")).unwrap();
+    fs::write(repo.root_path().join("build/artifact"), "main artifact").unwrap();
+    fs::write(repo.root_path().join("app.log"), "main log").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args([
+            "--config-set",
+            "step.copy-ignored.require-include=true",
+            "step",
+            "promote",
+            "feature",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Ignored files still swapped to feature despite require-include.
+    assert!(!repo.root_path().join("build").exists());
+    assert!(!repo.root_path().join("app.log").exists());
+    assert_eq!(
+        fs::read_to_string(feature_path.join("build/artifact")).unwrap(),
+        "main artifact"
+    );
+    assert_eq!(
+        fs::read_to_string(feature_path.join("app.log")).unwrap(),
+        "main log"
+    );
+}
+
 /// Only feature worktree has gitignored files — they should move to the main worktree
 #[rstest]
 fn test_promote_swap_only_feature_has_ignored(mut repo: TestRepo) {

@@ -48,7 +48,7 @@ filterset = "test(/readme_sync/)"
 
 [package]
 name = "worktrunk"
-version = "0.61.0"
+version = "0.62.0"
 edition = "2024"
 rust-version = "1.95"
 build = "build.rs"
@@ -86,6 +86,8 @@ cli = [
     "dep:ratatui",
     "dep:ansi-to-tui",
     "dep:tokio",
+    "dep:arboard",
+    "dep:open",
     "dep:termimad",
     "dep:tracing-log",
     "dep:tracing-subscriber",
@@ -235,7 +237,12 @@ petname = { version = "=3.0.0", default-features = false, features = ["default-w
 tempfile = "3.27"
 wait-timeout = "0.2"
 
-[target.'cfg(unix)'.dependencies]
+# Interactive picker (`wt switch`) TUI stack, pulled in only by the `cli`
+# feature's `dep:` entries. These are platform-neutral (skim 4.x is the
+# ratatui/crossterm rewrite, which supports Windows), so they live in the main
+# table — not under `[target.'cfg(unix)']` — or the picker fails to compile on
+# Windows.
+#
 # skim 4.x is the ratatui-based rewrite; the 0.20 line used the now-abandoned
 # tuikit backend (we previously vendored a patched skim-tuikit fork). The
 # picker feeds rows as a custom `SkimItem` whose `display()` returns a ratatui
@@ -262,6 +269,19 @@ ansi-to-tui = { version = "8.0.1", optional = true }
 # collect mutates rows in place — skim 4.x renders on demand, not on a heartbeat.
 # `Runtime::new()` needs `rt-multi-thread`; `event_sender()` is a `sync::mpsc`.
 tokio = { version = "1.52.3", optional = true, default-features = false, features = ["rt-multi-thread", "sync"] }
+# Picker row shortcuts: `alt-y` copies the selected branch to the system
+# clipboard, `alt-o` opens its PR/MR URL in the browser. Both are cross-platform
+# (so they sit in the main table alongside the picker stack, not under
+# `[target.'cfg(unix)']`). `arboard` drops `default-features` to skip the `image`
+# crate — the picker only copies text — while keeping `wayland-data-control` so
+# Linux Wayland clipboards work alongside X11 and macOS.
+arboard = { version = "3.4", optional = true, default-features = false, features = ["wayland-data-control"] }
+open = { version = "5.3", optional = true }
+
+[target.'cfg(unix)'.dependencies]
+# Unix-only syscall crates: `nix` (process/signal) backs the fsmonitor reap and
+# `signal-hook` forwards Ctrl-C to child process groups. Gating keeps both out of
+# the Windows dependency graph.
 nix = { version = "0.31.3", default-features = false, features = ["process", "signal"] }
 signal-hook = "0.4.1"
 

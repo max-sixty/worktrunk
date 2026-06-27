@@ -182,7 +182,7 @@ Persistent flag values for `wt list`. Override on command line as needed.
 [list]
 summary = false    # Enable LLM branch summaries (requires [commit.generation])
 
-full = false       # Show CI, main…± diffstat, and LLM summaries (--full)
+full = false       # Show CI status and LLM summaries (--full)
 branches = false   # Include branches without worktrees (--branches)
 remotes = false    # Include remote-only branches (--remotes)
 
@@ -1230,11 +1230,11 @@ Custom status text or emoji shown in the `wt list` Status column.
 Markers appear at the end of the Status column, after git symbols:
 
 {% terminal(cmd="wt list") %}
-&#32;&#32;<b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Remote⇅</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
-@ main             <span class=d>^</span><span class=d>⇡</span>                         <span class=g>⇡1</span>      <span class=d>33323bc1</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
-+ feature-api      <span class=d>↑</span> 🤖              <span class=g>↑1</span>               <span class=d>70343f03</span>  <span class=d>1d</span>    <span class=d>Add REST API endpoints</span>
-+ review-ui      <span class=c>?</span> <span class=d>↑</span> 💬              <span class=g>↑1</span>               <span class=d>a585d6ed</span>  <span class=d>1d</span>    <span class=d>Add dashboard component</span>
-+ wip-docs       <span class=c>?</span> <span class=d>–</span>                                  <span class=d>33323bc1</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
+&#32;&#32;<b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Remote⇅</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
+@ main             <span class=d>^</span><span class=d>⇡</span>                                    <span class=g>⇡1</span>      <span class=d>33323bc1</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
++ feature-api      <span class=d>↑</span> 🤖              <span class=g>↑1</span>        <span class=g>+1</span>                <span class=d>70343f03</span>  <span class=d>1d</span>    <span class=d>Add REST API end…</span>
++ review-ui      <span class=c>?</span> <span class=d>↑</span> 💬              <span class=g>↑1</span>        <span class=g>+1</span>                <span class=d>a585d6ed</span>  <span class=d>1d</span>    <span class=d>Add dashboard co…</span>
++ wip-docs       <span class=c>?</span> <span class=d>–</span>                                             <span class=d>33323bc1</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
 
 <span class=d>○</span> <span class=d>Showing 4 worktrees, 2 with changes, 2 ahead, 1 column hidden</span>
 {% end %}

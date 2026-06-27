@@ -61,8 +61,8 @@
 //! # Log layout invariant
 //!
 //! Inside `wt_logs_dir()`, top-level *files* are shared logs (`commands.jsonl*`,
-//! `internal-*.log`, `trace.log`, `subprocess.log`, `diagnostic.md`) and top-level
-//! *directories* are per-branch log trees
+//! `internal-*.log`, `trace.log`, `trace.jsonl`, `subprocess.log`,
+//! `diagnostic.md`) and top-level *directories* are per-branch log trees
 //! (`{branch}/{source|internal}/{hook-type}/{name}.log`).
 //! Categorization
 //! relies on this file-vs-directory distinction: new top-level shared entries
@@ -72,6 +72,7 @@
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
+use crate::commands::picker::preview_cache;
 use anyhow::Context;
 use color_print::cformat;
 use path_slash::PathExt as _;
@@ -91,42 +92,15 @@ use crate::display::format_relative_time_short;
 use crate::help_pager::show_help_in_pager;
 use crate::summary::CachedSummary;
 
-// ==================== Picker preview cache shims ====================
-//
-// `commands::picker` is gated `#[cfg(unix)]` (see `commands/mod.rs`), so its
-// preview cache module disappears entirely on Windows. The bundled "git
-// commands cache" category still needs to compile and report consistent
-// counts on every platform — these shims forward to the picker cache on
-// unix and return 0 / `Ok(0)` elsewhere so call sites stay platform-agnostic.
-
-fn picker_preview_count(repo: &Repository) -> usize {
-    #[cfg(unix)]
-    {
-        crate::commands::picker::preview_cache::count_all(repo)
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = repo;
-        0
-    }
-}
-
-fn picker_preview_clear(repo: &Repository) -> anyhow::Result<usize> {
-    #[cfg(unix)]
-    {
-        crate::commands::picker::preview_cache::clear_all(repo)
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = repo;
-        Ok(0)
-    }
-}
-
 // ==================== Log Management ====================
 
 /// Top-level files created by `-vv` under `wt_logs_dir()`.
-const DIAGNOSTIC_FILES: &[&str] = &["trace.log", "subprocess.log", "diagnostic.md"];
+const DIAGNOSTIC_FILES: &[&str] = &[
+    "trace.log",
+    "trace.jsonl",
+    "subprocess.log",
+    "diagnostic.md",
+];
 
 /// Whether a top-level file is a diagnostic log.
 ///
@@ -152,9 +126,13 @@ fn truncate_display(s: &str, max_chars: usize) -> String {
     format!("{truncated}...")
 }
 
-/// Check if a top-level file belongs to the command audit log (`.jsonl` / `.jsonl.old`).
+/// Check if a top-level file belongs to the command audit log
+/// (`commands.jsonl`, rotated to `commands.jsonl.old`).
+///
+/// Matched by exact name, not a `.jsonl` suffix: `trace.jsonl` is a diagnostic
+/// file (see [`DIAGNOSTIC_FILES`]), not part of the audit log.
 fn is_command_log_file(name: &str) -> bool {
-    name.ends_with(".jsonl") || name.ends_with(".jsonl.old")
+    name == "commands.jsonl" || name == "commands.jsonl.old"
 }
 
 /// A hook-output log file discovered by walking the per-branch subtree.
@@ -324,7 +302,7 @@ fn count_log_files_recursive(dir: &Path) -> anyhow::Result<usize> {
 ///
 /// Walks the two layers of log storage:
 ///
-/// 1. **Top-level files**: `commands.jsonl*`, `trace.log`, `subprocess.log`, `diagnostic.md`.
+/// 1. **Top-level files**: `commands.jsonl*`, `trace.log`, `trace.jsonl`, `subprocess.log`, `diagnostic.md`.
 ///    Also sweeps any legacy flat `.log` files left over from the pre-nested
 ///    layout so the transition is self-healing (no explicit migrator).
 /// 2. **Top-level directories**: per-branch log trees — counted recursively
@@ -1150,7 +1128,7 @@ fn clear_summary_reported(repo: &Repository) -> anyhow::Result<bool> {
 /// upstream-diff). Surfaced as one user-facing category — see the parity
 /// docstring at the top of this file.
 fn clear_git_commands_reported(repo: &Repository) -> anyhow::Result<bool> {
-    let cleared = sha_cache::clear_all(repo)? + picker_preview_clear(repo)?;
+    let cleared = sha_cache::clear_all(repo)? + preview_cache::clear_all(repo)?;
     if cleared > 0 {
         eprintln!(
             "{}",
@@ -1306,7 +1284,7 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         "ci_status": ci_status,
         "max_pr_number": MaxPrNumber::read(repo),
         "summaries": summaries,
-        "git_commands_cache": sha_cache::count_all(repo) + picker_preview_count(repo),
+        "git_commands_cache": sha_cache::count_all(repo) + preview_cache::count_all(repo),
         "vars": vars_data,
         "command_log": command_log,
         "hook_output": hook_output,
@@ -1471,7 +1449,7 @@ fn handle_cache_get_json(repo: &Repository) -> anyhow::Result<()> {
         "ci_status": ci_status_json(repo),
         "max_pr_number": MaxPrNumber::read(repo),
         "summaries": summaries_json(repo),
-        "git_commands_cache": sha_cache::count_all(repo) + picker_preview_count(repo),
+        "git_commands_cache": sha_cache::count_all(repo) + preview_cache::count_all(repo),
         "hints": repo.list_shown_hints(),
     });
 
@@ -1554,7 +1532,7 @@ fn render_summary_section(out: &mut String, repo: &Repository) -> anyhow::Result
 /// regardless of which module owns the entries.
 fn render_git_commands_section(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
     writeln!(out, "{}", format_heading("GIT COMMANDS CACHE", None))?;
-    let cache_count = sha_cache::count_all(repo) + picker_preview_count(repo);
+    let cache_count = sha_cache::count_all(repo) + preview_cache::count_all(repo);
     if cache_count == 0 {
         writeln!(out, "{}", format_with_gutter("(none)", None))?;
     } else {

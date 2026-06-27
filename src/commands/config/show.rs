@@ -172,13 +172,32 @@ pub(super) fn home_dir() -> Option<PathBuf> {
         .or_else(worktrunk::path::home_dir)
 }
 
+/// Get the Claude Code config directory.
+///
+/// Honors `CLAUDE_CONFIG_DIR`, which Claude Code uses to relocate its entire
+/// config tree (`settings.json`, `plugins/`, ...) away from the default
+/// `~/.claude`. A leading `~/` in the value is expanded against the home
+/// directory; the shell normally expands it before the variable is set, so a
+/// literal `~` only reaches us when the variable is set in a non-shell context.
+pub(super) fn claude_config_dir() -> Option<PathBuf> {
+    if let Ok(dir) = std::env::var("CLAUDE_CONFIG_DIR")
+        && !dir.is_empty()
+    {
+        if let Some(rest) = dir.strip_prefix("~/") {
+            return home_dir().map(|home| home.join(rest));
+        }
+        return Some(PathBuf::from(dir));
+    }
+    home_dir().map(|home| home.join(".claude"))
+}
+
 /// Check if the worktrunk plugin is installed in Claude Code
 pub(super) fn is_plugin_installed() -> bool {
-    let Some(home) = home_dir() else {
+    let Some(config_dir) = claude_config_dir() else {
         return false;
     };
 
-    let plugins_file = home.join(".claude/plugins/installed_plugins.json");
+    let plugins_file = config_dir.join("plugins/installed_plugins.json");
     let Ok(content) = std::fs::read_to_string(&plugins_file) else {
         return false;
     };
@@ -194,11 +213,11 @@ pub(super) fn is_plugin_installed() -> bool {
 
 /// Check if the statusline is configured in Claude Code settings
 pub(super) fn is_statusline_configured() -> bool {
-    let Some(home) = home_dir() else {
+    let Some(config_dir) = claude_config_dir() else {
         return false;
     };
 
-    let settings_file = home.join(".claude/settings.json");
+    let settings_file = config_dir.join("settings.json");
     let Ok(content) = std::fs::read_to_string(&settings_file) else {
         return false;
     };
@@ -1422,7 +1441,7 @@ fn render_version_check(out: &mut String) -> anyhow::Result<()> {
     match fetch_latest_version() {
         Ok(latest) => writeln!(out, "{}", format_version_status(&latest))?,
         Err(e) => {
-            log::debug!("Version check failed: {e}");
+            tracing::debug!(error = %e, "Version check failed: {e}");
             writeln!(out, "{}", hint_message("Version check unavailable"))?;
         }
     }

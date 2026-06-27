@@ -16,15 +16,18 @@
 //! all spawned tasks to complete before reading the cache. The picker
 //! entry point (`handle_picker`) uses this for its real spawns.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use dashmap::DashMap;
+use skim::prelude::Event;
+use tokio::sync::mpsc::Sender;
 use worktrunk::git::Repository;
 
-use super::items::{PreviewCache, PreviewCacheKey, WorktreeSkimItem};
+use super::items::{PickerRow, PreviewCache, PreviewCacheKey};
 use super::preview::PreviewMode;
+use super::preview_notify::PreviewNotifier;
 use super::summary;
 use crate::commands::list::collect::COLLECT_POOL;
 use crate::commands::list::model::ListItem;
@@ -56,6 +59,10 @@ impl Drop for PendingGuard {
 pub(super) struct PreviewOrchestrator {
     pub(super) cache: PreviewCache,
     pending: Arc<AtomicUsize>,
+    /// Bridges each fill to skim's event loop so a finished compute surfaces
+    /// without a keystroke (see [`PreviewNotifier`]). Shared with the skim
+    /// items, which record their awaited preview; every fill site here notifies.
+    notifier: Arc<PreviewNotifier>,
     /// Repository used by preview compute. Captured once at construction
     /// so background tasks see a stable repo binding, and so unit tests
     /// can inject a `TestRepo`-rooted `Repository` instead of relying on
@@ -70,10 +77,11 @@ pub(super) struct PreviewOrchestrator {
 }
 
 impl PreviewOrchestrator {
-    pub(super) fn new(repo: Repository) -> Self {
+    pub(super) fn new(repo: Repository, render_tx: Arc<OnceLock<Sender<Event>>>) -> Self {
         Self {
             cache: Arc::new(DashMap::new()),
             pending: Arc::new(AtomicUsize::new(0)),
+            notifier: Arc::new(PreviewNotifier::new(render_tx)),
             repo,
         }
     }
@@ -83,6 +91,29 @@ impl PreviewOrchestrator {
     /// (`local_branches()`) for synchronous tab-availability facts.
     pub(super) fn repo(&self) -> &Repository {
         &self.repo
+    }
+
+    /// The shared preview notifier, handed to each skim item so its `preview()`
+    /// can record what it's awaiting (see [`PreviewNotifier`]).
+    pub(super) fn notifier(&self) -> &Arc<PreviewNotifier> {
+        &self.notifier
+    }
+
+    /// Insert a computed preview into the cache and surface it if the selected
+    /// row is awaiting exactly this key. The single fill path: every background
+    /// producer routes through this (or the `&self` [`Self::fill_external`]) so a
+    /// finished compute can never reach the cache without giving skim the chance
+    /// to repaint it.
+    fn fill(cache: &PreviewCache, notifier: &PreviewNotifier, key: PreviewCacheKey, value: String) {
+        cache.insert(key.clone(), value);
+        notifier.notify_filled(&key);
+    }
+
+    /// [`Self::fill`] for callers that hold the orchestrator rather than the
+    /// captured `cache` / `notifier` clones — the `--prs` comments path's
+    /// synchronous "unsupported forge" pane.
+    pub(super) fn fill_external(&self, key: PreviewCacheKey, value: String) {
+        Self::fill(&self.cache, &self.notifier, key, value);
     }
 
     /// Spawn a preview compute task. Returns immediately.
@@ -107,6 +138,7 @@ impl PreviewOrchestrator {
         dims: (usize, usize),
     ) {
         let cache = Arc::clone(&self.cache);
+        let notifier = Arc::clone(&self.notifier);
         let (w, h) = dims;
         let repo = self.repo.clone();
         let pending = Arc::clone(&self.pending);
@@ -116,22 +148,28 @@ impl PreviewOrchestrator {
                 return;
             }
             let (value, log_disk_hit) =
-                WorktreeSkimItem::compute_and_page_preview(&repo, &item, mode, w, h);
-            cache.insert(cache_key, value);
+                PickerRow::compute_and_page_preview(&repo, &item, mode, w, h);
+            Self::fill(&cache, &notifier, cache_key, value);
             if log_disk_hit {
                 pending.fetch_add(1, Ordering::SeqCst);
                 let guard = PendingGuard(Arc::clone(&pending));
                 let item = Arc::clone(&item);
                 let cache = Arc::clone(&cache);
+                let notifier = Arc::clone(&notifier);
                 let repo = repo.clone();
                 rayon::spawn_fifo(move || {
                     let _g = guard;
-                    let rendered = WorktreeSkimItem::refresh_log_preview(&repo, &item, w, h);
+                    let rendered = PickerRow::refresh_log_preview(&repo, &item, w, h);
                     // Skip empty results so a transient `git log` failure
                     // doesn't poison the in-memory cache with "" and wipe
                     // out the value the producer just inserted.
                     if !rendered.is_empty() {
-                        cache.insert((item.branch_name().to_string(), PreviewMode::Log), rendered);
+                        Self::fill(
+                            &cache,
+                            &notifier,
+                            (item.branch_name().to_string(), PreviewMode::Log),
+                            rendered,
+                        );
                     }
                 });
             }
@@ -141,8 +179,15 @@ impl PreviewOrchestrator {
     /// Spawn an LLM summary task. Returns immediately.
     pub(super) fn spawn_summary(&self, item: Arc<ListItem>, llm_command: String, repo: Repository) {
         let cache = Arc::clone(&self.cache);
+        let notifier = Arc::clone(&self.notifier);
         self.spawn_task(move || {
-            summary::generate_and_cache_summary(&item, &llm_command, &cache, &repo);
+            let summary = summary::generate_summary_for_item(&item, &llm_command, &repo);
+            Self::fill(
+                &cache,
+                &notifier,
+                (item.branch_name().to_string(), PreviewMode::Summary),
+                summary,
+            );
         });
     }
 
@@ -151,8 +196,8 @@ impl PreviewOrchestrator {
     ///
     /// The general-purpose companion to [`Self::spawn_preview`]: that method
     /// computes a worktree `ListItem`'s preview via the local-git
-    /// `compute_and_page_preview`, whereas `--prs` rows (`PrSkimItem`) have no
-    /// local worktree, so they fetch their `log` / `comments` panes through a
+    /// `compute_and_page_preview`, whereas `--prs` rows (no local checkout) have
+    /// no local worktree, so they fetch their `log` / `comments` panes through a
     /// forge CLI and pass that work in as `compute`. Both share the same
     /// [`PreviewCache`], the same `COLLECT_POOL` routing, and the same
     /// pending-counter accounting (so the dry-run path's `wait_for_idle` and
@@ -171,6 +216,7 @@ impl PreviewOrchestrator {
         F: FnOnce(&Repository) -> Option<String> + Send + 'static,
     {
         let cache = Arc::clone(&self.cache);
+        let notifier = Arc::clone(&self.notifier);
         let repo = self.repo.clone();
         self.spawn_task(move || {
             if cache.contains_key(&key) {
@@ -179,7 +225,7 @@ impl PreviewOrchestrator {
             if let Some(value) = compute(&repo)
                 && !value.is_empty()
             {
-                cache.insert(key, value);
+                Self::fill(&cache, &notifier, key, value);
             }
         });
     }
@@ -328,7 +374,9 @@ mod tests {
     use worktrunk::testing::TestRepo;
 
     fn orch_for(t: &TestRepo) -> PreviewOrchestrator {
-        PreviewOrchestrator::new(Repository::at(t.path()).unwrap())
+        // No render_tx published, so fills don't notify — these tests assert on
+        // the cache, not on skim repaints (see `fill_notifies_only_awaited_key`).
+        PreviewOrchestrator::new(Repository::at(t.path()).unwrap(), Arc::new(OnceLock::new()))
     }
 
     fn dirty_worktree_item() -> (TestRepo, Arc<ListItem>) {
@@ -550,6 +598,46 @@ mod tests {
                 .cache
                 .contains_key(&("pr:8".to_string(), PreviewMode::Log)),
             "empty string is not cached"
+        );
+    }
+
+    /// A fill injects an `Event::RunPreview` exactly when the selected row is
+    /// awaiting that key, and nothing otherwise — the "surface a finished
+    /// compute, but don't thrash off-screen rows" contract. Drives the notifier
+    /// through a real `tokio` channel as skim's event sender so the assertion is
+    /// on the injected event, not the cache.
+    #[test]
+    fn fill_notifies_only_awaited_key() {
+        let t = TestRepo::new();
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Event>(8);
+        let render_tx = Arc::new(OnceLock::new());
+        render_tx.set(tx).unwrap();
+        let orch = PreviewOrchestrator::new(Repository::at(t.path()).unwrap(), render_tx);
+
+        // The selected row is showing main's working-tree diff (a cache miss, so
+        // it's awaiting that key).
+        orch.notifier()
+            .note_awaiting("main", PreviewMode::WorkingTree);
+
+        // The awaited compute lands → skim is poked to repaint.
+        orch.fill_external(
+            ("main".to_string(), PreviewMode::WorkingTree),
+            "diff".to_string(),
+        );
+        assert!(
+            matches!(rx.try_recv(), Ok(Event::RunPreview)),
+            "the awaited fill injects a RunPreview"
+        );
+
+        // Fills for other rows / other tabs must not poke — no preview thrash.
+        orch.fill_external(
+            ("feature".to_string(), PreviewMode::WorkingTree),
+            "x".to_string(),
+        );
+        orch.fill_external(("main".to_string(), PreviewMode::Log), "y".to_string());
+        assert!(
+            rx.try_recv().is_err(),
+            "an off-screen / other-tab fill injects nothing"
         );
     }
 

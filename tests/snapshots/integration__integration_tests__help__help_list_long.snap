@@ -54,7 +54,7 @@ Usage: [1m[36mwt list[0m [36m[OPTIONS][0m
           Include remote branches
 
       [1m[36m--full[0m
-          Show CI, diff analysis, and LLM summaries
+          Show CI status and LLM summaries
 
       [1m[36m--progressive[0m
           Show fast info immediately, update with slow info[0m
@@ -86,22 +86,22 @@ The table renders progressively: branch names, paths, and commit hashes appear i
 
 [1m[32mFull mode[0m
 
-[2m--full[0m adds columns that require network access or LLM calls: CI status (GitHub/GitLab pipeline pass/fail), line diffs since the merge-base, and LLM-generated summaries of each branch's changes.
+[2m--full[0m adds the two columns that reach off-machine: CI status (GitHub/GitLab pipeline pass/fail, over the network) and LLM-generated summaries of each branch's changes. The [2mmain…±[0m line diffs are local git, so they show by default.
 
 [1m[32mExamples[0m
 
 List all worktrees:
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m list[0m
-[107m [0m [2m  [0m[2m[34mBranch[0m[2m       Status        HEAD±    main↕  Remote⇅  Commit    Age   Message[0m
-[107m [0m [2m[0m[2m[34m@[0m[2m feature-api  +   ↕⇡     +54   [0m[2m[36m-5[0m[2m   ↑4  ↓1   ⇡3      6814f02a  30m   Add API tests[0m
-[107m [0m [2m[0m[2m[34m^[0m[2m main             ^⇅                         ⇡1  ⇣1  41ee0834  4d    Merge fix-auth: hardened to…[0m
-[107m [0m [2m[0m[2m[34m+[0m[2m fix-auth         ↕[0m[2m[36m|[0m[2m                [0m[2m[34m↑2[0m[2m  ↓1     [0m[2m[36m|[0m[2m     [0m[2m[34mb772e68b[0m[2m  5h    Add secure token storage[0m
-[107m [0m [2m+ fix-typos        _[0m[2m[36m|[0m[2m                           [0m[2m[36m|[0m[2m     [0m[2m[34m41ee0834[0m[2m  4d    Merge fix-auth: hardened to…[0m
+[107m [0m [2m  [0m[2m[34mBranch[0m[2m       Status        HEAD±    main↕     main…±  Remote⇅  Commit    Age   Message[0m
+[107m [0m [2m[0m[2m[34m@[0m[2m feature-api  +   ↕⇡     +54   [0m[2m[36m-5[0m[2m   ↑4  ↓1  +234  [0m[2m[36m-24[0m[2m   ⇡3      6814f02a  30m   Add API tests[0m
+[107m [0m [2m[0m[2m[34m^[0m[2m main             ^⇅                                    ⇡1  ⇣1  41ee0834  4d    Merge fix-auth:…[0m
+[107m [0m [2m[0m[2m[34m+[0m[2m fix-auth         ↕[0m[2m[36m|[0m[2m                [0m[2m[34m↑2[0m[2m  ↓1   +25  [0m[2m[36m-11[0m[2m     [0m[2m[36m|[0m[2m     [0m[2m[34mb772e68b[0m[2m  5h    Add secure token…[0m
+[107m [0m [2m+ fix-typos        _[0m[2m[36m|[0m[2m                                      [0m[2m[36m|[0m[2m     [0m[2m[34m41ee0834[0m[2m  4d    Merge fix-auth:…[0m
 [107m [0m [0m
 [107m [0m [2m○ Showing 4 worktrees, 1 with changes, 2 ahead, 1 column hidden[0m
 
-Include CI status, line diffs, and LLM summaries:
+Include CI status and LLM summaries:
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--full[0m
 [107m [0m [2m  [0m[2m[34mBranch[0m[2m       Status        HEAD±    main↕     main…±  Summary                                                Remote⇅  CI    Commit[0m
@@ -137,7 +137,7 @@ Output as JSON for scripting:
  Status   Compact symbols (see below)                                                                         
  HEAD±    Uncommitted changes: +added -deleted lines                                                          
  main↕    Commits ahead/behind default branch                                                                 
- main…±   Line diffs since the merge-base (three-dot) with the default branch; [2m--full[0m only                    
+ main…±   Line diffs since the merge-base (three-dot) with the default branch                                 
  Summary  LLM-generated branch summary; requires [2m--full[0m, [2msummary = true[0m, and [2mcommit.generation[0m [experimental] 
  Remote⇅  Commits ahead/behind tracking branch                                                                
  CI       PR/MR number colored by pipeline status; [2m--full[0m only                                                
@@ -313,12 +313,12 @@ Query structured data with [2m--format=json[0m:
  [2mis_main[0m            boolean     Is the main worktree                                                                             
  [2mis_current[0m         boolean     Is the current worktree                                                                          
  [2mis_previous[0m        boolean     Previous worktree from wt switch                                                                 
- [2mci[0m                 object      CI status (see below); absent when no CI                                                         
+ [2mci[0m                 object      CI status (see below); [2m--full[0m only, then absent when no PR/MR or branch workflow                 
  [2mrepo_url[0m           string      Repository web URL derived from the primary remote; absent when the remote URL cannot be parsed  
  [2mrepo[0m               object      Structured repository metadata (see below); includes [2mremote[0m                                      
  [2murl[0m                string      Dev server URL from project config; absent when not configured                                   
  [2murl_active[0m         boolean     Whether the URL's port is listening; absent when not configured                                  
- [2msummary[0m            string      LLM-generated branch summary; absent when not configured or no summary                           
+ [2msummary[0m            string      LLM-generated branch summary; [2m--full[0m only, then absent when not configured or no summary         
  [2mstatusline[0m         string      Pre-formatted status with ANSI colors                                                            
  [2msymbols[0m            string      Raw status symbols without colors (e.g., [2m"!?↓"[0m)                                                  
  [2mvars[0m               object      Per-branch variables from [2mwt config state vars[0m (absent when empty)                               

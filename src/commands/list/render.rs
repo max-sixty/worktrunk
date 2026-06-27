@@ -194,7 +194,11 @@ impl LayoutConfig {
 
             // Debug: Log if cell exceeds its allocated width
             if cell_width > column.width {
-                log::debug!(
+                tracing::debug!(
+                    column = ?column.kind,
+                    allocated = column.width,
+                    actual = cell_width,
+                    excess = cell_width - column.width,
                     "Cell overflow: column={:?} allocated={} actual={} excess={}",
                     column.kind,
                     column.width,
@@ -212,7 +216,7 @@ impl LayoutConfig {
         }
 
         let final_width = line.width();
-        log::debug!("Rendered line width: {}", final_width);
+        tracing::debug!(width = final_width, "Rendered line width: {}", final_width);
 
         line
     }
@@ -418,9 +422,9 @@ impl ColumnLayout {
                 //
                 // PR rows (open PRs with no local branch, `wt switch --prs`)
                 // also carry a gutter sigil — a dim `#` — but they're a picker
-                // source (`PrSkimItem`), not a `ListItem`, so they render their
-                // gutter in `commands::picker::prs` (`PR_GUTTER_SIGIL`) rather
-                // than through this `ItemKind` match.
+                // row built without a `ListItem`, so they render their gutter in
+                // `commands::picker::prs` (`PR_GUTTER_SIGIL`) rather than through
+                // this `ItemKind` match.
                 let mut cell = StyledLine::new();
                 // `glyph` + trailing space = the two-cell sigil; the bare glyph
                 // also feeds the picker's fuzzy-search text (`gutter_glyph`).
@@ -623,7 +627,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)] // format_aligned is unix-only
     fn test_format_aligned_produces_fixed_width_output() {
         use super::super::columns::DiffVariant;
 
@@ -668,7 +671,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)] // format_aligned is unix-only
     fn test_format_aligned_handles_single_side() {
         use super::super::columns::DiffVariant;
 

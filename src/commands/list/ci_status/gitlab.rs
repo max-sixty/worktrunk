@@ -78,7 +78,7 @@ pub(super) fn detect_gitlab(
     // Get current project ID for filtering
     let project_id = gitlab_project_id(repo);
     if project_id.is_none() {
-        log::debug!("Could not determine GitLab project ID");
+        tracing::debug!("Could not determine GitLab project ID");
     }
 
     // Fetch MRs with matching source branch.
@@ -101,7 +101,9 @@ pub(super) fn detect_gitlab(
     {
         Ok(output) => output,
         Err(e) => {
-            log::warn!(
+            tracing::warn!(
+                branch = %branch.full_name,
+                error = %e,
                 "glab mr list failed to execute for branch {}: {}",
                 branch.full_name,
                 e
@@ -131,7 +133,10 @@ pub(super) fn detect_gitlab(
             .iter()
             .find(|mr| mr.source_project_id == Some(proj_id));
         if matched.is_none() && !mr_list.is_empty() {
-            log::debug!(
+            tracing::debug!(
+                count = %mr_list.len(),
+                branch = %branch.full_name,
+                project_id = %proj_id,
                 "Found {} MRs for branch {} but none from project ID {}",
                 mr_list.len(),
                 branch.full_name,
@@ -148,7 +153,9 @@ pub(super) fn detect_gitlab(
     } else {
         // Multiple MRs exist but we can't determine which project we're in.
         // Don't guess - return None to avoid showing wrong project's CI status.
-        log::debug!(
+        tracing::debug!(
+            count = %mr_list.len(),
+            branch = %branch.full_name,
             "Found {} MRs for branch {} but no project ID to filter - skipping to avoid ambiguity",
             mr_list.len(),
             branch.full_name
@@ -178,7 +185,7 @@ pub(super) fn detect_gitlab(
         // (not NoCI, which would imply no MR exists). Carry the MR identity
         // already in hand: the ⚠ stays clickable and the iid still feeds the
         // CI column width ratchet.
-        log::debug!("Could not fetch MR details for !{}", mr_entry.iid);
+        tracing::debug!(iid = %mr_entry.iid, "Could not fetch MR details for !{}", mr_entry.iid);
         return Some(PrStatus {
             ci_status: CiStatus::Error,
             source: CiSource::PullRequest,
@@ -189,6 +196,8 @@ pub(super) fn detect_gitlab(
             review_state: mr_entry.review_state(),
             title: mr_entry.title.clone(),
             body: mr_entry.description.clone(),
+            author: mr_entry.author.as_ref().map(|a| a.username.clone()),
+            comment_count: mr_entry.comment_count(),
         });
     };
 
@@ -204,6 +213,8 @@ pub(super) fn detect_gitlab(
         review_state: mr_entry.review_state(),
         title: mr_entry.title.clone(),
         body: mr_entry.description.clone(),
+        author: mr_entry.author.as_ref().map(|a| a.username.clone()),
+        comment_count: mr_entry.comment_count(),
     })
 }
 
@@ -234,7 +245,9 @@ pub(super) fn detect_gitlab_pipeline(
     {
         Ok(output) => output,
         Err(e) => {
-            log::warn!(
+            tracing::warn!(
+                branch = %branch,
+                error = %e,
                 "glab ci list failed to execute for branch {}: {}",
                 branch,
                 e
@@ -275,6 +288,8 @@ pub(super) fn detect_gitlab_pipeline(
         review_state: None,
         title: None,
         body: None,
+        author: None,
+        comment_count: None,
     })
 }
 
@@ -285,6 +300,12 @@ pub(super) fn detect_gitlab_pipeline(
 ///
 /// We include `source_project_id` for client-side filtering by source project.
 /// See `parse_owner_repo()` for why we filter by source, not by author.
+#[derive(Debug, Default, Deserialize)]
+struct GitLabMrAuthor {
+    #[serde(default)]
+    username: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct GitLabMrListEntry {
     /// The internal MR ID (used to fetch full details via `glab mr view <iid>`)
@@ -301,9 +322,17 @@ struct GitLabMrListEntry {
     /// MR title; shown in the picker's `pr` preview pane. Rides this call.
     #[serde(default)]
     pub title: Option<String>,
+    /// MR author; folded into the row's matcher text. Rides this call.
+    #[serde(default)]
+    pub author: Option<GitLabMrAuthor>,
     /// MR description; rendered as markdown in the `pr` preview pane.
     #[serde(default)]
     pub description: Option<String>,
+    /// Count of user (non-system) notes on the MR. GitLab's MR-list response
+    /// carries this directly, so the `comments` line in the `pr` pane rides the
+    /// same call with no extra round-trip.
+    #[serde(default)]
+    pub user_notes_count: Option<u32>,
 }
 
 impl GitLabMrListEntry {
@@ -321,6 +350,12 @@ impl GitLabMrListEntry {
             return Some(ReviewState::Pending);
         }
         None
+    }
+
+    /// Comment count for [`PrStatus::comment_count`], zero flattened to `None`
+    /// so an MR with no notes shows nothing in the `pr` pane.
+    fn comment_count(&self) -> Option<u32> {
+        self.user_notes_count.filter(|&n| n > 0)
     }
 }
 
@@ -357,7 +392,7 @@ fn fetch_mr_details(iid: u64, repo_root: &Path) -> Option<GitLabMrInfo> {
         .ok()?;
 
     if !output.status.success() {
-        log::debug!("glab mr view {} failed", iid);
+        tracing::debug!(iid = %iid, "glab mr view {} failed", iid);
         return None;
     }
 
@@ -410,12 +445,14 @@ mod tests {
             iid: 1,
             sha: "abc".into(),
             has_conflicts: false,
+            author: None,
             detailed_merge_status: status.map(Into::into),
             source_project_id: None,
             web_url: None,
             draft,
             title: None,
             description: None,
+            user_notes_count: None,
         };
 
         // Draft wins over the approval gap
@@ -430,6 +467,29 @@ mod tests {
         // Other merge statuses carry no review signal
         assert_eq!(entry(Some(false), Some("mergeable")).review_state(), None);
         assert_eq!(entry(None, None).review_state(), None);
+    }
+
+    #[test]
+    fn test_mr_list_entry_comment_count() {
+        let entry = |count: Option<u32>| GitLabMrListEntry {
+            iid: 1,
+            sha: "abc".into(),
+            has_conflicts: false,
+            author: None,
+            detailed_merge_status: None,
+            source_project_id: None,
+            web_url: None,
+            draft: None,
+            title: None,
+            description: None,
+            user_notes_count: count,
+        };
+
+        // Zero (or a missing count) flattens to None so an MR with no notes
+        // shows nothing in the `pr` pane; a positive count carries through.
+        assert_eq!(entry(Some(0)).comment_count(), None);
+        assert_eq!(entry(None).comment_count(), None);
+        assert_eq!(entry(Some(3)).comment_count(), Some(3));
     }
 
     #[test]
