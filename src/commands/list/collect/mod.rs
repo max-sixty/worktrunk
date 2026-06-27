@@ -1161,7 +1161,13 @@ pub fn collect(
     // The picker (`progressive_handler.is_some()`) is exempt: it fetches CI/PR
     // data for its preview tabs regardless of which columns render, so its skip
     // set stays as `handle_picker` chose it.
-    if progressive_handler.is_none() {
+    //
+    // JSON output (`!render_table`) is also exempt: `wt list --format json`
+    // ignores `[list] columns` and always emits every field (the `after_long_help`
+    // contract in `src/cli/mod.rs`), so pruning would silently null status/main/
+    // working-tree fields it promises. Only the rendered table (`render_table`,
+    // progressive or buffered) prunes.
+    if render_table && progressive_handler.is_none() {
         effective_skip_tasks.extend(super::columns::tasks_not_required_by(&selected_columns));
     }
 

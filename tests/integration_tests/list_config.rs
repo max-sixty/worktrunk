@@ -1048,6 +1048,71 @@ columns = ["branch", "age"]
     );
 }
 
+/// The task prune must not reach the JSON path. `wt list --format json` ignores
+/// `[list] columns` and always emits every field (the `after_long_help`
+/// contract in `src/cli/mod.rs`), so a narrowed selection that drops the Status
+/// column from the table must not strip the status fields it feeds from JSON.
+/// Regression for the review on #3274: the prune originally fired on every
+/// non-picker render, silently nulling `working_tree`/`main`/`main_state` in
+/// JSON for a configured column subset.
+#[rstest]
+fn test_list_json_ignores_columns_selection(repo: TestRepo) {
+    // Dirty a worktree so its `working_tree` field carries an observable value;
+    // that field is fed by the working-tree task the prune would skip.
+    let feature_dir = repo.root_path().parent().unwrap().join("repo.feature-a");
+    fs::write(feature_dir.join("dirty.txt"), "uncommitted\n").unwrap();
+
+    let run_json = |config: &str| -> serde_json::Value {
+        if config.is_empty() {
+            let _ = fs::remove_file(repo.test_config_path());
+        } else {
+            fs::write(repo.test_config_path(), config).unwrap();
+        }
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["list", "--format=json"])
+            .current_dir(repo.root_path());
+        let output = cmd.output().unwrap();
+        assert!(
+            output.status.success(),
+            "exit code should be 0 for config {config:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).unwrap()
+    };
+
+    let working_tree_of = |json: &serde_json::Value| -> serde_json::Value {
+        json.as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["branch"] == "feature-a")
+            .expect("feature-a row present")["working_tree"]
+            .clone()
+    };
+
+    // Control: the default set emits the working_tree field, with the untracked
+    // change visible.
+    let default = run_json("");
+    assert_eq!(
+        working_tree_of(&default)["untracked"],
+        serde_json::Value::Bool(true),
+        "default columns should emit working_tree.untracked = true in JSON"
+    );
+
+    // A narrowed selection drops Status from the rendered table but must not
+    // change JSON output: working_tree stays exactly as the default set emits.
+    let narrowed = run_json(
+        r#"[list]
+columns = ["branch", "age"]
+"#,
+    );
+    assert_eq!(
+        working_tree_of(&narrowed),
+        working_tree_of(&default),
+        "`--format json` must ignore `[list] columns` and emit working_tree regardless of the selection"
+    );
+}
+
 /// TODO(list-columns-env): `WORKTRUNK__LIST__COLUMNS` is not wired up yet. The
 /// env overlay can only deliver a scalar, which the `Vec<String>` field rejects,
 /// so the override is dropped — but with a warning naming the var, not silently
