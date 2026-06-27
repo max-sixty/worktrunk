@@ -4,12 +4,13 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::Context;
+use color_print::cformat;
 use worktrunk::copy::{copy_dir_recursive, copy_leaf};
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::progress::{Progress, format_bytes};
 use worktrunk::styling::{
-    eprintln, format_with_gutter, info_message, println, success_message, verbosity,
+    eprintln, format_with_gutter, hint_message, info_message, println, success_message, verbosity,
 };
 
 use super::shared::{list_and_filter_ignored_entries, resolve_copy_ignored_config};
@@ -26,6 +27,7 @@ pub fn step_copy_ignored(
     to: Option<&str>,
     dry_run: bool,
     force: bool,
+    require_include: bool,
     format: crate::cli::SwitchFormat,
 ) -> anyhow::Result<()> {
     // Self-lower only when we're running inside a background hook pipeline
@@ -100,6 +102,41 @@ pub fn step_copy_ignored(
         .iter()
         .map(|wt| wt.path.clone())
         .collect();
+
+    // `--require-include` gate: when passed, copy nothing unless a
+    // `.worktreeinclude` file exists in the source worktree. Checked before
+    // discovery so the `git ls-files --ignored` traversal is skipped entirely
+    // when nothing copies.
+    if require_include && !source_path.join(".worktreeinclude").exists() {
+        if json_mode {
+            let payload = serde_json::json!({
+                "outcome": if dry_run { "planned" } else { "copied" },
+                "dry_run": dry_run,
+                "from": source_path,
+                "to": dest_path,
+                "reason": "require-include-no-worktreeinclude",
+                "entries": Vec::<serde_json::Value>::new(),
+                "files": 0,
+                "bytes": 0,
+            });
+            println!("{}", serde_json::to_string_pretty(&payload)?);
+        } else {
+            eprintln!(
+                "{}",
+                info_message(cformat!(
+                    "Nothing copied — <bold>--require-include</> was passed but no <bold>.worktreeinclude</> exists"
+                ))
+            );
+            eprintln!(
+                "{}",
+                hint_message(cformat!(
+                    "Add a <underline>.worktreeinclude</> to select files, or drop <underline>--require-include</> to copy everything"
+                ))
+            );
+        }
+        return Ok(());
+    }
+
     let entries_to_copy = list_and_filter_ignored_entries(
         &source_path,
         &source_context,
