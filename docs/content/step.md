@@ -393,6 +393,14 @@ After `.worktreeinclude` selects entries, you can add more gitignore-style exclu
 exclude = [".cache/", ".turbo/"]
 ```
 
+To copy nothing unless `.worktreeinclude` exists — matching Claude Code desktop, where the file is required — pass `--require-include`:
+
+```bash
+wt step copy-ignored --require-include
+```
+
+Without `.worktreeinclude`, the command is a no-op (it reports that nothing was copied and why). With the file present, only matching files copy as above. To apply this across every repository, put the flag in a user-config hook: `post-start = "wt step copy-ignored --require-include"`.
+
 ### Common patterns
 
 | Type | Patterns |
@@ -452,7 +460,7 @@ Virtual environments contain absolute paths and can't be copied. Use `uv sync` i
 
 The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://code.claude.com/docs/en/desktop), which copies matching files when creating worktrees. Differences:
 
-- worktrunk copies all gitignored files by default; Claude Code requires `.worktreeinclude`
+- worktrunk copies all gitignored files by default; Claude Code requires `.worktreeinclude`. Pass `--require-include` to match Claude Code (copy nothing without `.worktreeinclude`)
 - worktrunk uses copy-on-write for large directories like `target/` — potentially 30x faster on macOS, 6x on Linux
 - worktrunk runs as a configurable hook in the worktree lifecycle
 
@@ -481,6 +489,9 @@ Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]<
 
       <b><span class=c>--force</span></b>
           Overwrite existing files in destination
+
+      <b><span class=c>--require-include</span></b>
+          Require .worktreeinclude to copy anything
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)

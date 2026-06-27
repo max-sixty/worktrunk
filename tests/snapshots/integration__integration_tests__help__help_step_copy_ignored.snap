@@ -1,0 +1,181 @@
+---
+source: tests/integration_tests/help.rs
+info:
+  program: wt
+  args:
+    - step
+    - copy-ignored
+    - "--help"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    LANG: C
+    LC_ALL: C
+    LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
+    TERM: alacritty
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
+    WORKTRUNK_TEST_BASH_INSTALLED: "0"
+    WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_CODEX_INSTALLED: "0"
+    WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
+    WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_FISH_INSTALLED: "0"
+    WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_POWERSHELL_ENV: "0"
+    WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WORKTRUNK_TEST_ZSH_INSTALLED: "0"
+---
+success: true
+exit_code: 0
+----- stdout -----
+wt step copy-ignored - Copy gitignored files to another worktree[0m
+
+Eliminates cold starts by copying build caches and dependencies.[0m
+
+Usage: [1m[36mwt step copy-ignored[0m [36m[OPTIONS][0m
+
+[1m[32mOptions:[0m
+      [1m[36m--from[0m[36m [0m[36m<FROM>[0m
+          Source worktree branch[0m
+          
+          Defaults to main worktree.[0m
+
+      [1m[36m--to[0m[36m [0m[36m<TO>[0m
+          Destination worktree branch[0m
+          
+          Defaults to current worktree.[0m
+
+      [1m[36m--dry-run[0m
+          Show what would be copied
+
+      [1m[36m--force[0m
+          Overwrite existing files in destination
+
+      [1m[36m--require-include[0m
+          Require .worktreeinclude to copy anything
+
+  [1m[36m-h[0m, [1m[36m--help[0m
+          Print help (see a summary with '-h')
+
+[1m[32mAutomation:[0m
+      [1m[36m--format[0m[36m [0m[36m<FORMAT>[0m
+          Output format[0m
+          
+          JSON prints structured result to stdout after the copy completes.[0m
+          
+          [default: text]
+          [possible values: text, json]
+
+[1m[32mGlobal Options:[0m
+  [1m[36m-C[0m[36m [0m[36m<path>[0m
+          Working directory for this command
+
+      [1m[36m--config[0m[36m [0m[36m<path>[0m
+          User config file path
+
+      [1m[36m--config-set[0m[36m [0m[36m<toml>[0m
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to apply the same level everywhere — including shell completion, which no flag can reach
+
+  [1m[36m-y[0m, [1m[36m--yes[0m
+          Skip approval prompts
+
+[1m[32mSetup[0m
+
+Add to the project config:
+
+[107m [0m [2m# .config/wt.toml[0m
+[107m [0m [2m[36m[post-start][0m
+[107m [0m [2mcopy = [0m[2m[32m"wt step copy-ignored"[0m
+
+[1m[32mWhat gets copied[0m
+
+All gitignored files are copied by default, except for built-in excluded directories: VCS metadata ([2m.bzr/[0m, [2m.hg/[0m, [2m.jj/[0m, [2m.pijul/[0m, [2m.sl/[0m, [2m.svn/[0m) and tool-state ([2m.conductor/[0m, [2m.entire/[0m, [2m.worktrees/[0m). Tracked files are never touched.
+
+To limit what gets copied further, create [2m.worktreeinclude[0m with gitignore-style patterns. Files must be [1mboth[0m gitignored [1mand[0m in [2m.worktreeinclude[0m:
+
+[107m [0m [2m# .worktreeinclude[0m
+[107m [0m [2m.env[0m
+[107m [0m [2mnode_modules/[0m
+[107m [0m [2mtarget/[0m
+
+After [2m.worktreeinclude[0m selects entries, you can add more gitignore-style excludes in user config, per-project user overrides, or project config:
+
+[107m [0m [2m[36m[step.copy-ignored][0m
+[107m [0m [2mexclude = [[0m[2m[32m".cache/"[0m[2m, [0m[2m[32m".turbo/"[0m[2m][0m
+
+To copy nothing unless [2m.worktreeinclude[0m exists — matching Claude Code desktop, where the file is required — pass [2m--require-include[0m:
+
+[107m [0m [2m[0m[2m[34mwt[0m[2m step copy-ignored [0m[2m[36m--require-include[0m
+
+Without [2m.worktreeinclude[0m, the command is a no-op (it reports that nothing was copied and why). With the file present, only matching files copy as above. To apply this across every repository, put the flag in a user-config hook: [2mpost-start = "wt step copy-ignored --require-include"[0m.
+
+[1m[32mCommon patterns[0m
+
+       Type                           Patterns                    
+ ───────────────── ────────────────────────────────────────────── 
+ Dependencies      [2mnode_modules/[0m, [2m.venv/[0m, [2mtarget/[0m, [2mvendor/[0m, [2mPods/[0m 
+ Build caches      [2m.cache/[0m, [2m.next/[0m, [2m.parcel-cache/[0m, [2m.turbo/[0m       
+ Generated assets  Images, ML models, binaries too large for git  
+ Environment files [2m.env[0m (if not generated per-worktree)           
+
+[1m[32mFeatures[0m
+
+- Uses copy-on-write (reflink) when available for space-efficient copies
+- Handles nested [2m.gitignore[0m files, global excludes, and [2m.git/info/exclude[0m
+- Skips existing files by default (safe to re-run)
+- [2m--force[0m overwrites existing files in the destination
+- Always skips built-in excluded directories — VCS metadata ([2m.bzr/[0m, [2m.hg/[0m, [2m.jj/[0m, [2m.pijul/[0m, [2m.sl/[0m, [2m.svn/[0m) and tool-state ([2m.conductor/[0m, [2m.entire/[0m, [2m.worktrees/[0m) — and nested worktrees
+
+[1m[32mPerformance[0m
+
+Reflink copies share disk blocks until modified — no data is actually copied. For a 14GB [2mtarget/[0m directory:
+
+            Command            Time 
+ ───────────────────────────── ──── 
+ [2mcp -R[0m (full copy)             2m   
+ [2mcp -Rc[0m / [2mwt step copy-ignored[0m 20s  
+
+Uses per-file reflink (like [2mcp -Rc[0m) — copy time scales with file count.
+
+Use the [2mpost-start[0m hook so the copy runs in the background. Use [2mpre-start[0m instead if subsequent hooks or [2m--execute[0m command need the copied files immediately.
+
+[1m[32mBackground-hook priority (experimental)[0m
+
+When invoked from a background hook pipeline ([2mpost-*[0m hooks), [2mwt step copy-ignored[0m self-lowers its CPU and I/O priority — [2mtaskpolicy -b[0m on macOS, [2mnice -n 19[0m plus [2mionice -c 3[0m on Linux — so it yields to interactive work. Foreground callers ([2mpre-*[0m hooks, direct interactive use) run at normal priority so the user isn't waiting on a throttled copy.
+
+wt signals background-hook context by exporting [2mWORKTRUNK_FOREGROUND=-1[0m into every detached hook pipeline; [2mcopy-ignored[0m inspects that variable on entry. The variable name is experimental and may change.
+
+[1m[32mLanguage-specific notes[0m
+
+[32mRust[0m
+
+The [2mtarget/[0m directory is huge (often 1-10GB). Copying with reflink cuts first build from ~68s to ~3s by reusing compiled dependencies.
+
+[32mNode.js[0m
+
+[2mnode_modules/[0m is large but mostly static. If the project has no native dependencies, symlinks are even faster:
+
+[107m [0m [2m[36m[pre-start][0m
+[107m [0m [2mdeps = [0m[2m[32m"ln -sf {{ primary_worktree_path }}/node_modules ."[0m
+
+[32mPython[0m
+
+Virtual environments contain absolute paths and can't be copied. Use [2muv sync[0m instead — it's fast enough that copying isn't worth it.
+
+[1m[32mBehavior vs Claude Code on desktop[0m
+
+The [2m.worktreeinclude[0m pattern is shared with Claude Code on desktop, which copies matching files when creating worktrees. Differences:
+
+- worktrunk copies all gitignored files by default; Claude Code requires [2m.worktreeinclude[0m. Pass [2m--require-include[0m to match Claude Code (copy nothing without [2m.worktreeinclude[0m)
+- worktrunk uses copy-on-write for large directories like [2mtarget/[0m — potentially 30x faster on macOS, 6x on Linux
+- worktrunk runs as a configurable hook in the worktree lifecycle
+
+----- stderr -----
