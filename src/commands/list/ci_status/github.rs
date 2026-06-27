@@ -41,7 +41,8 @@ pub(super) fn detect_github(
     let branch_owner = branch_owner_repo(repo, branch).map(|(owner, _)| owner);
 
     let Some(branch_owner) = branch_owner else {
-        log::debug!(
+        tracing::debug!(
+            branch = %branch.full_name,
             "Branch {} has no resolvable push remote; skipping PR-based CI detection",
             branch.full_name
         );
@@ -68,14 +69,21 @@ pub(super) fn detect_github(
             "--limit",
             &MAX_PRS_TO_FETCH.to_string(),
             "--json",
-            "number,headRefOid,mergeStateStatus,statusCheckRollup,url,headRepositoryOwner,reviewDecision,isDraft",
+            // title,body,author and the comments array ride this existing call so
+            // the picker's `pr` preview pane and matcher text can use them — no
+            // extra round-trip. `gh pr list` has no comment-count field, so we
+            // request the array and count it; for a `--head <branch>` call that's
+            // typically one PR.
+            "number,title,body,author,comments,headRefOid,mergeStateStatus,statusCheckRollup,url,headRepositoryOwner,reviewDecision,isDraft",
         ])
         .current_dir(&repo_root)
         .run()
     {
         Ok(output) => output,
         Err(e) => {
-            log::warn!(
+            tracing::warn!(
+                branch = %branch.full_name,
+                error = %e,
                 "gh pr list failed to execute for branch {}: {}",
                 branch.full_name,
                 e
@@ -101,7 +109,10 @@ pub(super) fn detect_github(
             .unwrap_or(true) // Missing owner field = potential match
     });
     if pr_info.is_none() && !pr_list.is_empty() {
-        log::debug!(
+        tracing::debug!(
+            count = %pr_list.len(),
+            branch = %branch.full_name,
+            owner = %branch_owner,
             "Found {} PRs for branch {} but none from owner {}",
             pr_list.len(),
             branch.full_name,
@@ -127,9 +138,14 @@ pub(super) fn detect_github(
         ci_status,
         source: CiSource::PullRequest,
         is_stale,
+        is_priming: false,
         url: pr_info.url.clone(),
         number: pr_info.number.map(PrRef::pr),
         review_state: pr_info.review_state(),
+        title: pr_info.title.clone(),
+        body: pr_info.body.clone(),
+        author: pr_info.author.as_ref().map(|a| a.login.clone()),
+        comment_count: pr_info.comment_count(),
     })
 }
 
@@ -168,7 +184,9 @@ pub(super) fn detect_github_commit_checks(
     {
         Ok(output) => output,
         Err(e) => {
-            log::warn!(
+            tracing::warn!(
+                head = %local_head,
+                error = %e,
                 "gh api check-runs failed to execute for {}: {}",
                 local_head,
                 e
@@ -194,9 +212,14 @@ pub(super) fn detect_github_commit_checks(
         ci_status,
         source: CiSource::Branch,
         is_stale: false, // We're querying by SHA, so always current
+        is_priming: false,
         url: None,
         number: None,
         review_state: None,
+        title: None,
+        body: None,
+        author: None,
+        comment_count: None,
     })
 }
 
@@ -207,8 +230,23 @@ pub(super) fn detect_github_commit_checks(
 ///
 /// Note: We don't include `state` because we already filter with `--state open`.
 #[derive(Debug, Deserialize)]
-pub(super) struct GitHubPrInfo {
+pub(crate) struct GitHubPrInfo {
     pub number: Option<u64>,
+    /// PR title; shown in the picker's `pr` preview pane. Rides this call.
+    pub title: Option<String>,
+    /// PR description; shown in the `pr` preview pane. Rides this call.
+    pub body: Option<String>,
+    /// PR author; folded into the row's matcher text. Requested by both the
+    /// worktree-row [`detect_github`] call and the `--prs` list call.
+    #[serde(default)]
+    pub author: Option<GitHubAuthor>,
+    /// Conversation comments on the PR. Requested only on the worktree-row
+    /// [`detect_github`] call to count them for the `pr` pane; the `--prs` call
+    /// omits `comments` to keep its 50-PR payload light, so this stays empty
+    /// there (`#[serde(default)]`). Only the count is needed, so each element
+    /// deserializes as [`serde::de::IgnoredAny`] rather than a comment struct.
+    #[serde(default)]
+    pub comments: Vec<serde::de::IgnoredAny>,
     #[serde(rename = "headRefOid")]
     pub head_ref_oid: Option<String>,
     #[serde(rename = "mergeStateStatus")]
@@ -230,8 +268,15 @@ pub(super) struct GitHubPrInfo {
 
 /// Owner info for the head repository of a PR.
 #[derive(Debug, Deserialize)]
-pub(super) struct HeadRepositoryOwner {
+pub(crate) struct HeadRepositoryOwner {
     /// The login (username/org name) of the repository owner.
+    pub login: String,
+}
+
+/// PR author from `gh pr list --json author` (`{"login": ...}`).
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct GitHubAuthor {
+    #[serde(default)]
     pub login: String,
 }
 
@@ -249,7 +294,7 @@ pub(super) struct HeadRepositoryOwner {
 /// `gh run list` for branch-based CI (branches without PRs), keeping the single-call approach
 /// here is simpler overall.
 #[derive(Debug, Deserialize)]
-pub(super) struct GitHubCheck {
+pub(crate) struct GitHubCheck {
     /// CheckRun only: "COMPLETED", "IN_PROGRESS", "QUEUED", etc.
     pub status: Option<String>,
     /// CheckRun only: "SUCCESS", "FAILURE", "CANCELLED", "SKIPPED", etc.
@@ -281,6 +326,44 @@ impl GitHubPrInfo {
             None => CiStatus::NoCI,
             Some(checks) if checks.is_empty() => CiStatus::NoCI,
             Some(checks) => aggregate_github_checks(checks),
+        }
+    }
+
+    /// The conversation-comment count for [`PrStatus::comment_count`], or `None`
+    /// when there are none — zero is flattened so a PR with no comments shows
+    /// nothing in the `pr` pane.
+    pub fn comment_count(&self) -> Option<u32> {
+        u32::try_from(self.comments.len()).ok().filter(|&n| n > 0)
+    }
+
+    /// Build a [`PrStatus`] from this open-PR entry, for callers that already
+    /// hold the open-PR list (the `--prs` picker) and want the same CI-column
+    /// treatment [`detect_github`] produces per branch. PR rows have no local
+    /// checkout to diff against, so the result is never marked stale.
+    ///
+    /// Only the `--prs` picker calls this.
+    pub(crate) fn open_pr_status(&self) -> PrStatus {
+        let ci_status = if self.merge_state_status.as_deref() == Some("DIRTY") {
+            CiStatus::Conflicts
+        } else {
+            self.ci_status()
+        };
+        PrStatus {
+            ci_status,
+            source: CiSource::PullRequest,
+            is_stale: false,
+            is_priming: false,
+            url: self.url.clone(),
+            number: self.number.map(PrRef::pr),
+            review_state: self.review_state(),
+            // The `--prs` pane reads title/body from the `PrEntry`, not this status
+            // (which feeds only the CI column), so they stay absent here. Likewise
+            // the comment count: the `--prs` rows surface comments in their own
+            // background-fetched comments tab, and the list call omits `comments`.
+            title: None,
+            body: None,
+            author: None,
+            comment_count: None,
         }
     }
 }
@@ -350,6 +433,27 @@ pub(super) fn aggregate_github_checks(checks: &[GitHubCheck]) -> CiStatus {
 mod tests {
     use super::*;
 
+    /// A `DIRTY` merge state (merge conflicts) reports `Conflicts` regardless of
+    /// the check rollup — the `--prs` picker's CI column treatment.
+    #[test]
+    fn open_pr_status_dirty_merge_state_reports_conflicts() {
+        let pr = GitHubPrInfo {
+            number: Some(7),
+            head_ref_oid: None,
+            merge_state_status: Some("DIRTY".to_string()),
+            status_check_rollup: None,
+            url: None,
+            head_repository_owner: None,
+            title: None,
+            body: None,
+            comments: Vec::new(),
+            review_decision: None,
+            is_draft: None,
+            author: None,
+        };
+        assert_eq!(pr.open_pr_status().ci_status, CiStatus::Conflicts);
+    }
+
     #[test]
     fn test_github_pr_info_ci_status() {
         // No checks = NoCI
@@ -360,8 +464,12 @@ mod tests {
             status_check_rollup: None,
             url: None,
             head_repository_owner: None,
+            title: None,
+            body: None,
+            comments: Vec::new(),
             review_decision: None,
             is_draft: None,
+            author: None,
         };
         assert_eq!(pr.ci_status(), CiStatus::NoCI);
 
@@ -373,8 +481,12 @@ mod tests {
             status_check_rollup: Some(vec![]),
             url: None,
             head_repository_owner: None,
+            title: None,
+            body: None,
+            comments: Vec::new(),
             review_decision: None,
             is_draft: None,
+            author: None,
         };
         assert_eq!(pr.ci_status(), CiStatus::NoCI);
 
@@ -391,8 +503,12 @@ mod tests {
                 }]),
                 url: None,
                 head_repository_owner: None,
+                title: None,
+                body: None,
+                comments: Vec::new(),
                 review_decision: None,
                 is_draft: None,
+                author: None,
             };
             assert_eq!(pr.ci_status(), CiStatus::Running, "status={status}");
         }
@@ -409,8 +525,12 @@ mod tests {
             }]),
             url: None,
             head_repository_owner: None,
+            title: None,
+            body: None,
+            comments: Vec::new(),
             review_decision: None,
             is_draft: None,
+            author: None,
         };
         assert_eq!(pr.ci_status(), CiStatus::Running);
 
@@ -427,8 +547,12 @@ mod tests {
                 }]),
                 url: None,
                 head_repository_owner: None,
+                title: None,
+                body: None,
+                comments: Vec::new(),
                 review_decision: None,
                 is_draft: None,
+                author: None,
             };
             assert_eq!(pr.ci_status(), CiStatus::Failed, "conclusion={conclusion}");
         }
@@ -446,8 +570,12 @@ mod tests {
                 }]),
                 url: None,
                 head_repository_owner: None,
+                title: None,
+                body: None,
+                comments: Vec::new(),
                 review_decision: None,
                 is_draft: None,
+                author: None,
             };
             assert_eq!(pr.ci_status(), CiStatus::Failed, "state={state}");
         }
@@ -464,8 +592,12 @@ mod tests {
             }]),
             url: None,
             head_repository_owner: None,
+            title: None,
+            body: None,
+            comments: Vec::new(),
             review_decision: None,
             is_draft: None,
+            author: None,
         };
         assert_eq!(pr.ci_status(), CiStatus::Passed);
     }
@@ -479,8 +611,12 @@ mod tests {
             status_check_rollup: None,
             url: None,
             head_repository_owner: None,
+            title: None,
+            body: None,
+            comments: Vec::new(),
             review_decision: review_decision.map(Into::into),
             is_draft,
+            author: None,
         };
 
         assert_eq!(
@@ -503,6 +639,32 @@ mod tests {
             pr(Some("APPROVED"), Some(true)).review_state(),
             Some(ReviewState::Draft)
         );
+    }
+
+    #[test]
+    fn test_github_pr_info_comment_count() {
+        // The count comes from the length of the requested `comments` array.
+        let with = |n: usize| GitHubPrInfo {
+            number: None,
+            head_ref_oid: None,
+            merge_state_status: None,
+            status_check_rollup: None,
+            url: None,
+            head_repository_owner: None,
+            title: None,
+            body: None,
+            comments: std::iter::repeat_with(|| serde::de::IgnoredAny)
+                .take(n)
+                .collect(),
+            review_decision: None,
+            is_draft: None,
+            author: None,
+        };
+
+        // Zero comments flatten to None so a PR with no comments shows nothing.
+        assert_eq!(with(0).comment_count(), None);
+        assert_eq!(with(1).comment_count(), Some(1));
+        assert_eq!(with(4).comment_count(), Some(4));
     }
 
     #[test]

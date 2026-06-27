@@ -3,12 +3,18 @@
 {% set cmd_lines = cmd | split(pat="|||") %}
 {% if body is defined %}
 {% set clean_body = body | regex_replace(pattern='<span class="cmd">[^<]*</span>\n?', rep="") %}
+{% set extra_class = "" %}
 {% else %}
 {% set clean_body = "" %}
+{% set extra_class = " terminal--commands" %}
 {% endif %}
-<pre class="terminal"><code>
+<pre class="terminal{{ extra_class }}"><code>
 {%- for cmd_line in cmd_lines -%}
 {%- set cmd_line = cmd_line | replace(from="__WT_OPEN__", to="{{") | replace(from="__WT_CLOSE__", to="}}") | replace(from="__WT_QUOT__", to='"') -%}
+{%- if cmd_line | trim == "" -%}
+{{ "
+" }}
+{%- else -%}
 {%- set md = fence ~ "bash
 " ~ cmd_line ~ "
 " ~ fence -%}
@@ -19,6 +25,7 @@
 {% else -%}
 <span class="cmd">{{ hl | safe }}</span>
 {% endif -%}
+{%- endif -%}
 {%- endfor -%}
 {{ clean_body | safe }}</code></pre>
 {% else %}

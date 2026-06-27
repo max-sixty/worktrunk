@@ -73,6 +73,7 @@ fn snapshot_help(test_name: &str, args: &[&str]) {
 #[case("help_step_short", "step -h")]
 #[case("help_step_long", "step --help")]
 #[case("help_step_promote", "step promote --help")]
+#[case("help_step_copy_ignored", "step copy-ignored --help")]
 // Config subcommands (long help only - these are less frequently accessed)
 #[case("help_config_shell", "config shell --help")]
 #[case("help_config_create", "config create --help")]
@@ -96,6 +97,7 @@ fn snapshot_help(test_name: &str, args: &[&str]) {
 #[case("help_config_state_ci_status", "config state ci-status --help")]
 #[case("help_config_state_marker", "config state marker --help")]
 #[case("help_config_state_logs", "config state logs --help")]
+#[case("help_config_state_logs_profile", "config state logs profile --help")]
 #[case("help_config_state_get", "config state get --help")]
 #[case("help_config_state_clear", "config state clear --help")]
 #[case("help_config_approvals", "config approvals --help")]
@@ -155,11 +157,12 @@ fn test_help_goes_to_stdout() {
 }
 
 /// When stdout is piped, help must be plain text — no ANSI escapes leaking into
-/// `wt --help > file.txt` or `wt --help | less`. Uses the raw binary so
-/// `CLICOLOR_FORCE` (set by `wt_command`) doesn't override color detection.
+/// `wt --help > file.txt` or `wt --help | less`. Built from `wt_command()` for
+/// HOME/config isolation, then clears the `CLICOLOR_FORCE` it sets so color
+/// detection sees a non-tty (piped) stdout.
 #[test]
 fn test_help_strips_ansi_when_piped() {
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_wt"))
+    let output = wt_command()
         .arg("--help")
         .env_remove("CLICOLOR_FORCE")
         .env("NO_COLOR", "1")
@@ -214,9 +217,11 @@ fn test_help_md_subcommand() {
     });
 }
 
-/// Verifies that markdown tables remain intact (no mid-row breaks) even when
-/// table width exceeds terminal width. Tables should extend past 80 columns
-/// rather than wrap incorrectly.
+/// Verifies width handling when help is narrower than its content:
+/// - Markdown tables stay intact (no mid-row breaks), extending past 80 columns.
+/// - Captured `wt list` example tables (`<!-- wt list … -->` blocks) are chopped
+///   to width with an ellipsis — like real `wt list` — instead of word-wrapping,
+///   while hand-authored command sessions (the `jq` examples) still wrap.
 #[test]
 fn test_help_list_narrow_terminal() {
     help_settings().bind(|| {

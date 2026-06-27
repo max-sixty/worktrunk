@@ -1,10 +1,11 @@
 //! Guard test to prevent stdout leaks in command code
 //!
-//! stdout carries content the user may want to pipe, redirect, or capture:
-//! data (JSON, tables), rendered views (`wt config show`, `wt hook show`),
-//! and shell integration output. Interactive status, progress, and errors
-//! go to stderr. When shell integration is active (directive env vars set),
-//! directives are written to files, not stdout.
+//! stdout carries the command's answer — content the user may want to pipe,
+//! redirect, or capture: data (JSON, tables), rendered views (`wt config show`,
+//! `wt hook show`), `--dry-run` previews (the whole answer when nothing
+//! mutates), and shell integration output. Interactive status, progress, and
+//! errors go to stderr. When shell integration is active (directive env vars
+//! set), directives are written to files, not stdout.
 //!
 //! This test enforces: **No accidental stdout writes in command code**
 //!
@@ -45,12 +46,17 @@ const STDOUT_ALLOWED_PATHS: &[&str] = &[
     // LLM prompt output for wt step commit --show-prompt and squash --show-prompt
     "step/commit.rs",
     "step/squash.rs",
-    // JSON output for wt step copy-ignored --format=json
+    // wt step copy-ignored dry-run plan (human preview + --format=json)
     "step/copy_ignored.rs",
-    // JSON output for wt step prune --format=json
+    // wt step prune dry-run plan (human preview + --format=json)
     "step/prune.rs",
     // JSON output for wt step relocate --format=json
     "step/relocate.rs",
+    // wt step relocate dry-run human preview (show_dry_run_preview)
+    "relocate.rs",
+    // wt config shell install/uninstall --dry-run preview (the interactive
+    // `?` re-preview still goes to stderr)
+    "configure_shell.rs",
     // Dry-run cache inventory dump (WORKTRUNK_PICKER_DRY_RUN)
     "picker/mod.rs",
     // JSON output for wt switch --format=json
@@ -65,7 +71,7 @@ const STDOUT_ALLOWED_PATHS: &[&str] = &[
     "merge.rs",
     // JSON output for wt remove --format=json
     "remove.rs",
-    // Hook listing output for wt hook show (paged)
+    // Hook listing for wt hook show (paged), and the wt hook --dry-run preview
     "hook_commands.rs",
 ];
 

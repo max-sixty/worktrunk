@@ -282,6 +282,7 @@ mod types;
 use anyhow::Context;
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 use anstyle::Style;
 use color_print::cformat;
@@ -310,6 +311,44 @@ use execution::{work_items_for_branch, work_items_for_worktree};
 use results::drain_results;
 use types::DrainOutcome;
 use types::{MissingResult, TaskError, TaskResult};
+
+/// Dedicated rayon pool for git-heavy worktree collection and preview
+/// pre-compute, kept off the global pool.
+///
+/// The picker (skim) runs its per-keystroke fuzzy matcher and result sort on
+/// the **global** rayon pool. Worktrunk's collection floods that same pool with
+/// blocking git subprocess tasks (status, diff, rev-list, merge-base…), one
+/// batch per worktree, plus the preview orchestrator's per-mode `git diff` /
+/// `git log` tasks. With only `2× CPU` global workers, all blocked on
+/// subprocesses, skim's matcher queues behind the flood and the picker freezes
+/// for seconds on the first keystroke, scaling with worktree count.
+///
+/// Routing collection and preview work through this pool leaves the global pool
+/// free for skim. Same isolation pattern as `copy::COPY_POOL` and
+/// `remove_dir::REMOVE_POOL`, but sized like the global pool
+/// ([`collect_pool_num_threads`], i.e. `2× CPU`, honoring `RAYON_NUM_THREADS`)
+/// so collection throughput is unchanged. The goal is separation, not a
+/// smaller pool.
+pub(crate) static COLLECT_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
+    let num_threads = collect_pool_num_threads(std::env::var_os("RAYON_NUM_THREADS").is_some());
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build()
+        .expect("failed to build collect thread pool")
+});
+
+/// The `num_threads` argument for [`COLLECT_POOL`]. When `RAYON_NUM_THREADS`
+/// is set, return 0 so Rayon reads and validates the env var itself.
+/// Otherwise return [`crate::rayon_thread_count`] (`2× CPU`), since Rayon's
+/// own default is `1× CPU`. Takes the env presence as a parameter so both
+/// branches are unit-testable without mutating process-global environment.
+fn collect_pool_num_threads(rayon_num_threads_set: bool) -> usize {
+    if rayon_num_threads_set {
+        0
+    } else {
+        crate::rayon_thread_count()
+    }
+}
 
 struct TableRenderPlan {
     progressive_table: Option<ProgressiveTable>,
@@ -421,24 +460,29 @@ fn worktree_branch_set(worktrees: &[WorktreeInfo]) -> HashSet<&str> {
 /// The handler receives pre-rendered strings so it doesn't need to share the
 /// layout across threads (`LayoutConfig` is `!Sync` via an interior
 /// `Cell<&'static str>`).
-#[cfg_attr(not(unix), allow(dead_code))]
 pub trait PickerProgressHandler: Send + Sync {
     /// Fired once after items are initialized and layout is computed, but
     /// before any task results arrive. `rendered` is one entry per item,
     /// with fast fields (branch, path, head) populated and blank
     /// placeholders for slow cells. `header` is the column-header line;
-    /// the handler calls `render()` / `plain_text()` as needed.
+    /// the handler calls `render()` / `plain_text()` as needed. `grid` is
+    /// the layout's column geometry, for rows rendered outside collect
+    /// (the picker's `--prs` rows align their cells to it).
     fn on_skeleton(
         &self,
         items: Vec<super::model::ListItem>,
         rendered: Vec<String>,
         header: worktrunk::styling::StyledLine,
+        grid: super::layout::ColumnGrid,
     );
 
     /// Fired after a single task result updates row `idx`. `rendered` is the
-    /// new line — write it through the item's shared state so skim picks it
-    /// up on the next heartbeat.
-    fn on_update(&self, idx: usize, rendered: String);
+    /// new line — write it through the item's shared state and wake the picker
+    /// to repaint (skim 4.x renders on demand, not on a timer). `item` is the
+    /// row's current model carrying the just-updated fields; the picker reads
+    /// `pr_status` from it to feed the live `pr` preview tab, which cannot see
+    /// the frozen skeleton snapshot.
+    fn on_update(&self, idx: usize, rendered: String, item: &super::model::ListItem);
 
     /// Fired at the 200ms reveal deadline. One pre-rendered line per row,
     /// with the placeholder promoted from blank to `·`: rows that have
@@ -455,8 +499,8 @@ pub trait PickerProgressHandler: Send + Sync {
 
     /// Fired once before `collect` returns `Ok(Some(_))`. Lets the picker
     /// kick off the deferred tier of background work — secondary preview
-    /// modes for items 1..N, and LLM summaries for items 1..N. The
-    /// global rayon pool serves both pipelines; deferring this tier
+    /// modes for items 1..N, and LLM summaries for items 1..N.
+    /// `COLLECT_POOL` serves both pipelines. Deferring this tier
     /// until drain-end keeps low-priority preview submissions out of
     /// the injector while row tasks dominate worker deques.
     ///
@@ -464,10 +508,17 @@ pub trait PickerProgressHandler: Send + Sync {
     /// benchmark early-exit, nor on the zero-worktree `Ok(None)` return
     /// (which exits before `on_skeleton`). Default: no-op.
     fn on_collect_complete(&self) {}
+
+    /// Hand the picker a clone of the collect layout, right after `on_skeleton`.
+    /// `LayoutConfig` is `!Sync`, so the handler stows it behind a lock for the
+    /// collector to read at `alt-x` time, where it renders a `/ branch` row on
+    /// the same grid as the worktree rows (the in-place morph). Default: no-op —
+    /// only the picker needs it. Column geometry is stable after skeleton (the
+    /// `--prs` rows already rely on that via `grid`), so one clone here suffices.
+    fn provide_layout(&self, _layout: &super::layout::LayoutConfig) {}
 }
 
 /// Controls how show flags (branches/remotes/full) are determined in [`collect`].
-#[cfg_attr(not(unix), allow(dead_code))]
 pub enum ShowConfig {
     /// Flags already resolved by the caller (used by the picker).
     Resolved {
@@ -755,9 +806,10 @@ pub fn collect(
             collect_deadline,
             list_width,
             progressive_handler,
-            // Picker is the only `Resolved` caller and runs the same fast
-            // bucket as default `wt list` (skips BranchDiff/CiStatus), so
-            // it also opts out of the untracked-inclusive working diff.
+            // Picker is the only `Resolved` caller. Like default `wt list` it
+            // opts out of the untracked-inclusive working diff; unlike it, the
+            // picker keeps the CiStatus task (see `handle_picker`'s skip set),
+            // so this is not the same bucket.
             false,
         ),
         ShowConfig::DeferredToParallel {
@@ -772,13 +824,14 @@ pub fn collect(
             let skip_tasks: HashSet<TaskKind> = if show_full {
                 HashSet::new()
             } else {
-                [
-                    TaskKind::BranchDiff,
-                    TaskKind::CiStatus,
-                    TaskKind::SummaryGenerate,
-                ]
-                .into_iter()
-                .collect()
+                // BranchDiff (the `main…±` column) is pure local git — a cached
+                // `git diff --shortstat` against the merge-base — so it always
+                // runs, under the non-`--full` timeout below as a backstop.
+                // `--full` gates only the off-machine columns: CI status
+                // (network) and LLM branch summaries.
+                [TaskKind::CiStatus, TaskKind::SummaryGenerate]
+                    .into_iter()
+                    .collect()
             };
             // Resolve timeouts from merged config (--full disables both)
             let (command_timeout, collect_deadline) = if show_full {
@@ -838,17 +891,15 @@ pub fn collect(
                 .any(|b| Some(b.name.as_str()) == default_branch.as_deref())
         });
 
-    // Filter local branches to those without worktrees (CPU-only, no git commands)
-    let branches_without_worktrees: Vec<(String, String)> = if show_branches {
-        fetched_local
-            .unwrap_or(&[])
-            .iter()
-            .filter(|b| !worktree_branches.contains(b.name.as_str()))
-            .map(|b| (b.name.clone(), b.commit_sha.clone()))
-            .collect()
-    } else {
-        Vec::new()
-    };
+    // Filter local branches to those without worktrees (CPU-only, no git
+    // commands). With `show_branches` off there are no branch-only rows.
+    let branches_without_worktrees: Vec<(String, String)> = fetched_local
+        .unwrap_or(&[])
+        .iter()
+        .filter(|_| show_branches)
+        .filter(|b| !worktree_branches.contains(b.name.as_str()))
+        .map(|b| (b.name.clone(), b.commit_sha.clone()))
+        .collect();
 
     if warn_stale_default && let Some(branch) = default_branch.as_deref() {
         emit_warning(
@@ -1019,6 +1070,7 @@ pub fn collect(
                 user_marker: None,
                 status_symbols: StatusSymbols::default(),
                 statusline: None,
+                custom_values: Vec::new(),
                 kind: ItemKind::Worktree(Box::new(worktree_data)),
             }
         })
@@ -1036,7 +1088,7 @@ pub fn collect(
     all_items.extend(
         remote_branches
             .iter()
-            .map(|(name, sha)| ListItem::new_branch(sha.clone(), name.clone())),
+            .map(|(name, sha)| ListItem::new_remote_branch(sha.clone(), name.clone())),
     );
 
     // If no URL template configured, add UrlStatus to skip_tasks
@@ -1052,9 +1104,66 @@ pub fn collect(
         effective_skip_tasks.insert(TaskKind::SummaryGenerate);
     }
 
+    // Custom [list.custom-columns] values expand before layout: their inputs
+    // (branch, worktree identity, vars from the bulk config snapshot) are
+    // already in memory, so cells paint with the skeleton and column widths
+    // are measured from content like Branch/Path. Pure CPU — no subprocess.
+    //
+    // A broken column definition aborts `wt list` with the error. The picker
+    // shares this path but runs collect on a background thread while skim
+    // owns the terminal, so it can't surface an abort — it stashes a warning
+    // (drained after the picker closes) and renders without custom columns.
+    let custom_columns =
+        match super::custom_columns::resolve_custom_columns(&config.list.custom_columns, repo) {
+            Ok(columns) => columns,
+            Err(e) if progressive_handler.is_some() => {
+                emit_warning(warning_message(format!("Custom columns disabled: {e}")).to_string());
+                Vec::new()
+            }
+            Err(e) => return Err(e),
+        };
+    if !custom_columns.is_empty() {
+        let all_vars = repo.all_vars_from_snapshot()?;
+        super::custom_columns::expand_custom_columns(
+            &custom_columns,
+            &mut all_items,
+            &all_vars,
+            repo,
+        );
+    }
+
+    // `[list] columns` selects/reorders the columns to render. Names address
+    // built-ins or custom columns (by header → resolved index), so the custom
+    // names are passed in resolution order. Like custom columns, a bad name
+    // aborts `wt list` but only degrades the picker (which can't surface an
+    // abort mid-render), so the same `progressive_handler` fork applies. An
+    // empty selection means "use the default column set".
+    let custom_names: Vec<&str> = custom_columns.iter().map(|c| c.name.as_str()).collect();
+    let selected_columns =
+        match super::columns::parse_selected_columns(&config.list.columns, &custom_names) {
+            Ok(columns) => columns,
+            Err(e) if progressive_handler.is_some() => {
+                emit_warning(warning_message(format!("Column selection ignored: {e}")).to_string());
+                Vec::new()
+            }
+            Err(e) => return Err(e),
+        };
+
+    // The picker primes its CI cells from the local cache so the column paints
+    // instantly, then the live `CiStatus` task (which the picker keeps — see
+    // `handle_picker`) overwrites each cell as results stream in. Uncached rows
+    // stay pending until the fetch reports, exactly like the other progressive
+    // columns. `wt list` drives its progressive render through `progressive_state`,
+    // not a handler, so the prime is picker-only.
+    if progressive_handler.is_some() {
+        super::ci_status::populate_from_cache(repo, &mut all_items);
+    }
+
     // CI column width hint: the largest PR/MR number any previous fetch saw
     // (one small file read — cheap enough for the pre-skeleton budget, and
-    // the skeleton can't size the column without it).
+    // the skeleton can't size the column without it). Whatever fetch wrote a
+    // cache entry also ratcheted this maximum, so the hint already covers any
+    // number the prime above reads back.
     let max_pr_number = (!effective_skip_tasks.contains(&TaskKind::CiStatus))
         .then(|| super::ci_status::MaxPrNumber::read(repo))
         .flatten();
@@ -1071,6 +1180,10 @@ pub fn collect(
         &main_worktree.path,
         url_template.as_deref(),
         max_pr_number,
+        super::layout::ColumnSelection {
+            custom: &custom_columns,
+            selected: (!selected_columns.is_empty()).then_some(selected_columns.as_slice()),
+        },
     );
 
     // Single-line invariant: with no detectable width, an unlimited width
@@ -1163,7 +1276,15 @@ pub fn collect(
             .iter()
             .map(|item| layout.render_skeleton_row(item, placeholder).render())
             .collect();
-        handler.on_skeleton(all_items.clone(), skeletons, layout.render_header_line());
+        handler.on_skeleton(
+            all_items.clone(),
+            skeletons,
+            layout.render_header_line(),
+            layout.column_grid(),
+        );
+        // Hand the picker the layout so `alt-x` can render a `/ branch` row on
+        // this same grid without re-collecting. No-op for non-picker handlers.
+        handler.provide_layout(&layout);
         // Mirror the `wt list` progressive-table marker so `wt-perf phases`
         // sees the same boundary across both commands.
         worktrunk::trace::instant("Skeleton rendered");
@@ -1455,10 +1576,15 @@ pub fn collect(
     worktrunk::trace::instant("Spawning worker thread");
     std::thread::spawn(move || {
         worktrunk::trace::instant("Parallel execution started");
-        all_work_items.into_par_iter().for_each(|item| {
-            worktrunk::shell_exec::set_command_timeout(command_timeout);
-            let result = item.execute();
-            let _ = tx_worker.send(result);
+        // Run on the dedicated `COLLECT_POOL` so the blocking git subprocess
+        // tasks leave the global pool free for skim's per-keystroke matcher
+        // when the picker is open. See `COLLECT_POOL`.
+        COLLECT_POOL.install(|| {
+            all_work_items.into_par_iter().for_each(|item| {
+                worktrunk::shell_exec::set_command_timeout(command_timeout);
+                let result = item.execute();
+                let _ = tx_worker.send(result);
+            });
         });
     });
 
@@ -1558,12 +1684,12 @@ pub fn collect(
                         s.table.update_row(item_idx, rendered.clone());
 
                         if let Err(e) = s.table.flush() {
-                            log::debug!("Progressive table flush failed: {}", e);
+                            tracing::debug!(error = %e, "Progressive table flush failed: {}", e);
                         }
                     }
 
                     if let Some(handler) = progressive_handler.as_ref() {
-                        handler.on_update(item_idx, rendered);
+                        handler.on_update(item_idx, rendered, item);
                     }
                 }
                 results::DrainEvent::Reveal { items } => {
@@ -1576,7 +1702,7 @@ pub fn collect(
                             s.table.update_row(idx, line.clone());
                         }
                         if let Err(e) = s.table.flush() {
-                            log::debug!("Progressive table reveal flush failed: {}", e);
+                            tracing::debug!(error = %e, "Progressive table reveal flush failed: {}", e);
                         }
                     }
 
@@ -1606,10 +1732,11 @@ pub fn collect(
                         if s.table.update_footer(footer_msg)
                             && let Err(e) = s.table.flush()
                         {
-                            log::debug!("Progressive table flush failed: {}", e);
+                            tracing::debug!(error = %e, "Progressive table flush failed: {}", e);
                         }
                     }
-                    // Picker has no stall UI; heartbeat keeps it responsive.
+                    // Picker has no stall UI; per-update repaints keep it
+                    // responsive without a stall message.
                 }
             }
         },
@@ -1741,7 +1868,10 @@ pub fn collect(
         handler.on_collect_complete();
     }
 
-    Ok(Some(super::model::ListData { items }))
+    Ok(Some(super::model::ListData {
+        items,
+        custom_columns,
+    }))
 }
 
 // ============================================================================
@@ -1838,6 +1968,7 @@ pub fn build_worktree_item(
         user_marker: None,
         status_symbols: StatusSymbols::default(),
         statusline: None,
+        custom_values: Vec::new(),
         kind: ItemKind::Worktree(Box::new(WorktreeData::from_worktree(
             wt,
             is_main,
@@ -1950,16 +2081,20 @@ pub fn populate_item(
     // Sort: network tasks last
     work_items.sort_by_key(|w| w.kind.is_network());
 
-    // Spawn collection in background thread (executes only)
+    // Spawn collection in background thread (executes only). Route through
+    // `COLLECT_POOL` for consistency with the multi-item path, though a single
+    // item never floods the global pool.
     std::thread::spawn(move || {
-        work_items.into_par_iter().for_each(|w| {
-            let result = w.execute();
-            let _ = tx.send(result);
+        COLLECT_POOL.install(|| {
+            work_items.into_par_iter().for_each(|w| {
+                let result = w.execute();
+                let _ = tx.send(result);
+            });
         });
     });
 
     // Drain task results (blocking until complete). `drain_results`
-    // writes each result onto the item and calls `compute_status_symbols`
+    // writes each result onto the item and calls `refresh_status_symbols`
     // after every write, so the callback here is just a no-op — there is
     // no progressive table to refresh on the statusline path.
     let drain_outcome = drain_results(
@@ -1978,7 +2113,8 @@ pub fn populate_item(
 
     // Handle timeout (silent for statusline - just log it)
     if let DrainOutcome::TimedOut { received_count, .. } = drain_outcome {
-        log::warn!(
+        tracing::warn!(
+            count = received_count,
             "populate_item timed out after {}s ({received_count} results received)",
             results::DRAIN_TIMEOUT.as_secs()
         );
@@ -1986,10 +2122,17 @@ pub fn populate_item(
 
     // Log errors silently (statusline shouldn't spam warnings)
     if !errors.is_empty() {
-        log::warn!("populate_item had {} task errors", errors.len());
+        tracing::warn!(
+            count = errors.len(),
+            "populate_item had {} task errors",
+            errors.len()
+        );
         for error in &errors {
             let kind_str: &'static str = error.kind.into();
-            log::debug!(
+            tracing::debug!(
+                item = error.item_idx,
+                kind = %kind_str,
+                error = %error.message,
                 "  - item {}: {} ({})",
                 error.item_idx,
                 kind_str,
@@ -2017,6 +2160,14 @@ pub fn populate_item(
 mod tests {
     use super::*;
     use ansi_str::AnsiStr;
+
+    #[test]
+    fn test_collect_pool_num_threads_honors_env() {
+        // Env var set: defer to Rayon (0 means "read RAYON_NUM_THREADS").
+        assert_eq!(collect_pool_num_threads(true), 0);
+        // Env var unset: explicit 2× CPU, since Rayon's own default is 1×.
+        assert_eq!(collect_pool_num_threads(false), crate::rayon_thread_count());
+    }
 
     #[test]
     fn test_format_stall_footer_single_pending() {
@@ -2181,8 +2332,18 @@ mod tests {
             ListItem::new_branch("bbb".into(), "row-one".into()),
         ];
         let skip_tasks: HashSet<TaskKind> = HashSet::new();
-        let layout =
-            calculate_layout_with_width(&items, &skip_tasks, 80, Path::new("/tmp"), None, None);
+        let layout = calculate_layout_with_width(
+            &items,
+            &skip_tasks,
+            80,
+            Path::new("/tmp"),
+            None,
+            None,
+            super::super::layout::ColumnSelection {
+                custom: &[],
+                selected: None,
+            },
+        );
         let placeholder = super::super::render::PLACEHOLDER;
 
         // Row 0 has data → format_list_item_line; row 1 doesn't → skeleton.

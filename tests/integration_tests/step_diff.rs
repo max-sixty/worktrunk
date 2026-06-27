@@ -175,6 +175,21 @@ fn test_step_diff_branch_no_worktree(repo: TestRepo) {
     ));
 }
 
+/// `--branch=` (empty value) is rejected at the parse boundary with a clear
+/// usage error, not surfaced as a garbled `Branch  has no worktree`.
+#[rstest]
+fn test_step_diff_branch_empty(repo: TestRepo) {
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["diff", "--branch="],
+        None,
+    ));
+}
+
 fn git_status(repo: &TestRepo, dir: &Path) -> String {
     let output = repo
         .git_command()

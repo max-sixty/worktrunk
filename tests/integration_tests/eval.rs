@@ -1,6 +1,6 @@
 //! Integration tests for `wt step eval`
 
-use crate::common::{TestRepo, make_snapshot_cmd, repo};
+use crate::common::{TestRepo, make_snapshot_cmd, make_snapshot_cmd_with_global_flags, repo};
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 
@@ -58,12 +58,36 @@ fn test_eval_template_error(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_eval_dry_run(repo: TestRepo) {
+fn test_eval_verbose(repo: TestRepo) {
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
+        &repo,
+        "step",
+        &["eval", "{{ branch | hash_port }}"],
+        None,
+        &["--verbose"],
+    ));
+}
+
+#[rstest]
+fn test_eval_format_json(repo: TestRepo) {
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "step",
-        &["eval", "--dry-run", "{{ branch | hash_port }}"],
+        &["eval", "--format=json", "{{ branch | hash_port }}"],
         None,
+    ));
+}
+
+/// `--format=json` and `-v` compose: JSON to stdout, the human expansion view
+/// to stderr.
+#[rstest]
+fn test_eval_format_json_verbose(repo: TestRepo) {
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
+        &repo,
+        "step",
+        &["eval", "--format=json", "{{ branch | hash_port }}"],
+        None,
+        &["--verbose"],
     ));
 }
 

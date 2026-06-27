@@ -82,9 +82,13 @@ Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span 
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
+      <b><span class=c>--config-set</span></b><span class=c> &lt;toml&gt;</span>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/)
+          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
+          apply the same level everywhere — including shell completion, which no flag can reach
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
@@ -161,11 +165,8 @@ Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
 
           JSON prints structured result to stdout after the commit completes.
 
-          Possible values:
-          - <b><span class=c>text</span></b>: Human-readable text output
-          - <b><span class=c>json</span></b>: JSON output
-
           [default: text]
+          [possible values: text, json]
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
@@ -174,9 +175,13 @@ Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
+      <b><span class=c>--config-set</span></b><span class=c> &lt;toml&gt;</span>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/)
+          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
+          apply the same level everywhere — including shell completion, which no flag can reach
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
@@ -256,11 +261,8 @@ Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span>
 
           JSON prints structured result to stdout after the squash completes.
 
-          Possible values:
-          - <b><span class=c>text</span></b>: Human-readable text output
-          - <b><span class=c>json</span></b>: JSON output
-
           [default: text]
+          [possible values: text, json]
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
@@ -269,9 +271,13 @@ Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span>
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
+      <b><span class=c>--config-set</span></b><span class=c> &lt;toml&gt;</span>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/)
+          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
+          apply the same level everywhere — including shell completion, which no flag can reach
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
@@ -341,9 +347,13 @@ Usage: <b><span class=c>wt step diff</span></b> <span class=c>[OPTIONS]</span> <
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
+      <b><span class=c>--config-set</span></b><span class=c> &lt;toml&gt;</span>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/)
+          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
+          apply the same level everywhere — including shell completion, which no flag can reach
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
@@ -382,6 +392,14 @@ After `.worktreeinclude` selects entries, you can add more gitignore-style exclu
 [step.copy-ignored]
 exclude = [".cache/", ".turbo/"]
 ```
+
+To copy nothing unless `.worktreeinclude` exists — matching Claude Code desktop, where the file is required — pass `--require-include`:
+
+```bash
+wt step copy-ignored --require-include
+```
+
+Without `.worktreeinclude`, the command is a no-op (it reports that nothing was copied and why). With the file present, only matching files copy as above. To apply this across every repository, put the flag in a user-config hook: `post-start = "wt step copy-ignored --require-include"`.
 
 ### Common patterns
 
@@ -442,7 +460,7 @@ Virtual environments contain absolute paths and can't be copied. Use `uv sync` i
 
 The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://code.claude.com/docs/en/desktop), which copies matching files when creating worktrees. Differences:
 
-- worktrunk copies all gitignored files by default; Claude Code requires `.worktreeinclude`
+- worktrunk copies all gitignored files by default; Claude Code requires `.worktreeinclude`. Pass `--require-include` to match Claude Code (copy nothing without `.worktreeinclude`)
 - worktrunk uses copy-on-write for large directories like `target/` — potentially 30x faster on macOS, 6x on Linux
 - worktrunk runs as a configurable hook in the worktree lifecycle
 
@@ -472,6 +490,9 @@ Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]<
       <b><span class=c>--force</span></b>
           Overwrite existing files in destination
 
+      <b><span class=c>--require-include</span></b>
+          Require .worktreeinclude to copy anything
+
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
 
@@ -481,11 +502,8 @@ Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]<
 
           JSON prints structured result to stdout after the copy completes.
 
-          Possible values:
-          - <b><span class=c>text</span></b>: Human-readable text output
-          - <b><span class=c>json</span></b>: JSON output
-
           [default: text]
+          [possible values: text, json]
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
@@ -494,9 +512,13 @@ Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]<
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
+      <b><span class=c>--config-set</span></b><span class=c> &lt;toml&gt;</span>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/)
+          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
+          apply the same level everywhere — including shell completion, which no flag can reach
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
@@ -534,13 +556,18 @@ Use conditionals and filters:
 feature_auth_oauth2_a1b
 {% end %}
 
-Show available template variables:
+List the available template variables with `-v` (alongside the expansion, on stderr):
 
-{% terminal(cmd="wt step eval --dry-run '__WT_OPEN__ branch __WT_CLOSE__'") %}
-branch=feature/auth-oauth2
-worktree_path=/home/user/projects/myapp-feature-auth-oauth2
----
-Result: feature/auth-oauth2
+{% terminal(cmd="wt step eval -v '__WT_OPEN__ branch __WT_CLOSE__'") %}
+○ Available template variables
+  branch        = feature/auth-oauth2
+  worktree_path = /home/user/projects/myapp-feature-auth-oauth2
+○ eval source
+  {{ branch }}
+○ eval result
+  feature/auth-oauth2
+
+feature/auth-oauth2
 {% end %}
 
 Note: This command is experimental and may change in future versions.
@@ -559,11 +586,17 @@ Usage: <b><span class=c>wt step eval</span></b> <span class=c>[OPTIONS]</span> <
           Template expression to evaluate
 
 <b><span class=g>Options:</span></b>
-      <b><span class=c>--dry-run</span></b>
-          Show template variables and expanded result
-
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Automation:</span></b>
+      <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
+          Output format
+
+          JSON prints <b>{name, template, result}</b> to stdout instead of the bare result.
+
+          [default: text]
+          [possible values: text, json]
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
@@ -572,9 +605,13 @@ Usage: <b><span class=c>wt step eval</span></b> <span class=c>[OPTIONS]</span> <
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
+      <b><span class=c>--config-set</span></b><span class=c> &lt;toml&gt;</span>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/)
+          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
+          apply the same level everywhere — including shell completion, which no flag can reach
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
@@ -629,13 +666,10 @@ Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</spa
 
 <b><span class=g>Options:</span></b>
       <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
-          Output format (text, json)
-
-          Possible values:
-          - <b><span class=c>text</span></b>: Human-readable text output
-          - <b><span class=c>json</span></b>: JSON output
+          Output format
 
           [default: text]
+          [possible values: text, json]
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
@@ -647,9 +681,13 @@ Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</spa
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
+      <b><span class=c>--config-set</span></b><span class=c> &lt;toml&gt;</span>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/)
+          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
+          apply the same level everywhere — including shell completion, which no flag can reach
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
@@ -724,9 +762,13 @@ Usage: <b><span class=c>wt step promote</span></b> <span class=c>[OPTIONS]</span
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
+      <b><span class=c>--config-set</span></b><span class=c> &lt;toml&gt;</span>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/)
+          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
+          apply the same level everywhere — including shell completion, which no flag can reach
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
@@ -780,13 +822,10 @@ Usage: <b><span class=c>wt step prune</span></b> <span class=c>[OPTIONS]</span>
           Run removal in foreground (block until complete)
 
       <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
-          Output format (text, json)
-
-          Possible values:
-          - <b><span class=c>text</span></b>: Human-readable text output
-          - <b><span class=c>json</span></b>: JSON output
+          Output format
 
           [default: text]
+          [possible values: text, json]
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
@@ -798,9 +837,13 @@ Usage: <b><span class=c>wt step prune</span></b> <span class=c>[OPTIONS]</span>
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
+      <b><span class=c>--config-set</span></b><span class=c> &lt;toml&gt;</span>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/)
+          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
+          apply the same level everywhere — including shell completion, which no flag can reach
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
@@ -849,9 +892,15 @@ The main worktree can't be moved with `git worktree move`. Instead, relocate
 switches it to the default branch and creates a new linked worktree at the
 expected path. Untracked and gitignored files remain at the original location.
 
+### Dirty worktrees
+
+Linked worktrees relocate as-is — `git worktree move` carries uncommitted
+changes along. Only the main worktree skips when dirty (its `git checkout`
+refuses), unless `--commit` is passed.
+
 ### Skipped worktrees
 
-- **Dirty** (without `--commit`) — use `--commit` to auto-commit first
+- **Dirty main worktree** (without `--commit`) — use `--commit` to auto-commit first
 - **Locked** — unlock with `git worktree unlock`
 - **Target blocked** (without `--clobber`) — use `--clobber` to backup blocker
 - **Detached HEAD** — no branch to compute expected path
@@ -893,11 +942,8 @@ Usage: <b><span class=c>wt step relocate</span></b> <span class=c>[OPTIONS]</spa
 
           JSON prints structured result to stdout after the relocate completes.
 
-          Possible values:
-          - <b><span class=c>text</span></b>: Human-readable text output
-          - <b><span class=c>json</span></b>: JSON output
-
           [default: text]
+          [possible values: text, json]
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
@@ -906,9 +952,13 @@ Usage: <b><span class=c>wt step relocate</span></b> <span class=c>[OPTIONS]</spa
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
+      <b><span class=c>--config-set</span></b><span class=c> &lt;toml&gt;</span>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/)
+          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
+          apply the same level everywhere — including shell completion, which no flag can reach
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
@@ -940,6 +990,12 @@ Arguments after `--` are the program and its arguments, run directly, no shell.
 For pipes, redirects, variables, or globs, wrap in `sh -c`:
 
 {{ terminal(cmd="wt step tether -- sh -c 'PORT=$P npm run dev | tee dev.log'") }}
+
+To run the command from a subdirectory, pass the global `-C` flag (teardown
+still watches the worktree root, so a server launched with a relative `-C` is
+torn down with the worktree):
+
+{{ terminal(cmd="wt step tether -C frontend -- npm run dev") }}
 
 ### Examples
 
@@ -977,9 +1033,13 @@ Usage: <b><span class=c>wt step tether</span></b> <span class=c>[OPTIONS]</span>
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
+      <b><span class=c>--config-set</span></b><span class=c> &lt;toml&gt;</span>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/)
+          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
+          apply the same level everywhere — including shell completion, which no flag can reach
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts

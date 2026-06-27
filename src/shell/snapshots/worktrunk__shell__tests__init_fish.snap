@@ -44,7 +44,10 @@ function wt
     # safe even if CWD was removed by worktree removal).
     if test -s "$cd_file"
         set -l target (string trim < "$cd_file")
-        cd -- "$target"
+        # `builtin cd` bypasses any user `cd` override (e.g. the zoxide.fish
+        # plugin replaces `cd` with a query function that mishandles the `--`
+        # separator). Matches the bash/zsh wrappers. (#3159)
+        builtin cd -- "$target"
         set -l cd_exit $status
         if test $exit_code -eq 0
             set exit_code $cd_exit

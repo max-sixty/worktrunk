@@ -547,9 +547,13 @@ fn render_dry_run(
         return Ok(());
     }
 
+    // The human preview mirrors the `--format=json` plan above (the worktrees
+    // that would be removed), so it goes to stdout. The skipped-young caveat and
+    // the "nothing to remove" no-op below are narration the json omits — they
+    // stay on stderr. See /writing-user-outputs.
     let mut dry_candidates = Vec::new();
     for (candidate, info) in dry_run_info {
-        eprintln!(
+        println!(
             "{}",
             info_message(cformat!(
                 "<bold>{}</>{} — {} {}",
@@ -583,7 +587,7 @@ fn render_dry_run(
         }
         return Ok(());
     }
-    eprintln!(
+    println!(
         "{}",
         hint_message(format!(
             "{} would be removed (dry run)",

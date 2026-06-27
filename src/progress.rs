@@ -1,4 +1,12 @@
-//! TTY spinner and file/byte counters for long-running file-walk operations.
+//! TTY spinners for long-running work.
+//!
+//! Two spinner types share one set of render primitives (spinner frames, cursor
+//! control, TTY gating, clear-on-drop): [`Progress`] shows file/byte counters
+//! for file-walk operations; [`Watchdog`] shows an elapsed-time "still waiting"
+//! line for a slow blocking subprocess (e.g. the `commit.generation` LLM) so a
+//! long or hung command isn't silent.
+//!
+//! ## `Progress`
 //!
 //! Shows a single-line stderr spinner (`⠋ Copying 1,234 files · 312 MiB`,
 //! `⠋ Removing 7,272 files · 64.5 MiB`) that updates in place while the work
@@ -28,6 +36,7 @@
 use color_print::cformat;
 
 pub use imp::Progress;
+pub use imp::Watchdog;
 
 #[cfg(feature = "cli")]
 mod imp {
@@ -40,7 +49,7 @@ mod imp {
     use color_print::cformat;
     use crossterm::{
         QueueableCommand,
-        cursor::MoveToColumn,
+        cursor::{MoveToColumn, MoveUp},
         terminal::{Clear, ClearType},
     };
 
@@ -50,11 +59,25 @@ mod imp {
     const TICK_INTERVAL: Duration = Duration::from_millis(100);
     /// Delay before the first frame renders, so sub-second operations stay silent.
     const STARTUP_DELAY: Duration = Duration::from_millis(300);
+    /// `Watchdog` waits longer before nagging — a configured LLM routinely takes
+    /// a couple of seconds, and the caller has already printed a "Generating…"
+    /// line, so the watchdog only surfaces once a command is genuinely slow.
+    const WATCHDOG_STARTUP_DELAY: Duration = Duration::from_secs(2);
+    /// Second tier: once a command has run this long, the bare status line
+    /// isn't enough to debug it, so the exact invocation is revealed in a gutter
+    /// beneath the status — cleared with the rest of the block when the command
+    /// finishes.
+    const WATCHDOG_ESCALATE_DELAY: Duration = Duration::from_secs(10);
 
+    /// Shared state between the spinner and its ticker thread. `rendered` flips
+    /// true once the ticker has actually drawn a line, so `Drop` clears the line
+    /// only when there's something to clear — a sub-startup-delay operation that
+    /// never rendered leaves the terminal untouched (mirrors [`WatchdogShared`]).
     struct Shared {
         files: AtomicUsize,
         bytes: AtomicU64,
         done: AtomicBool,
+        rendered: AtomicBool,
     }
 
     impl Shared {
@@ -63,6 +86,7 @@ mod imp {
                 files: AtomicUsize::new(0),
                 bytes: AtomicU64::new(0),
                 done: AtomicBool::new(false),
+                rendered: AtomicBool::new(false),
             }
         }
     }
@@ -116,10 +140,17 @@ mod imp {
         /// implementation. Spawns the ticker thread; safe to call from any
         /// context that genuinely wants live output.
         fn enabled(verb: &'static str) -> Self {
+            Self::enabled_with_delays(verb, STARTUP_DELAY)
+        }
+
+        /// Spawn the ticker with an explicit startup delay. The public path passes
+        /// the module constant; tests pass a millisecond delay so the render loop
+        /// is reachable without waiting out the full startup window.
+        fn enabled_with_delays(verb: &'static str, startup_delay: Duration) -> Self {
             let shared = Arc::new(Shared::new());
             let ticker = {
                 let shared = Arc::clone(&shared);
-                thread::spawn(move || ticker_loop(&shared, verb))
+                thread::spawn(move || ticker_loop(&shared, verb, startup_delay))
             };
             Self {
                 shared,
@@ -157,31 +188,54 @@ mod imp {
                 self.shared.done.store(true, Ordering::Relaxed);
                 ticker.thread().unpark();
                 let _ = ticker.join();
-                let _ = clear_line(&mut std::io::stderr().lock());
+                // Clear the line only if the ticker actually drew one. A
+                // sub-startup-delay operation never rendered, so there's nothing
+                // to clear and the terminal is left untouched (mirrors Watchdog).
+                if self.shared.rendered.load(Ordering::Relaxed) {
+                    let _ = clear_line(&mut std::io::stderr().lock());
+                }
             }
         }
     }
 
-    fn ticker_loop(shared: &Shared, verb: &str) {
+    fn ticker_loop(shared: &Shared, verb: &str, startup_delay: Duration) {
         let start = Instant::now();
-        // Sub-300ms operations render nothing — the line never gets drawn.
+        // Below the startup delay nothing renders — the line never gets drawn.
         // park_timeout returns immediately on `unpark` from drop, so short
         // operations don't block shutdown either.
-        while start.elapsed() < STARTUP_DELAY {
+        while start.elapsed() < startup_delay {
             if shared.done.load(Ordering::Relaxed) {
                 return;
             }
-            thread::park_timeout(STARTUP_DELAY - start.elapsed());
+            thread::park_timeout(startup_delay.saturating_sub(start.elapsed()));
         }
         while !shared.done.load(Ordering::Relaxed) {
-            let frame_idx = (start.elapsed().as_millis() / TICK_INTERVAL.as_millis()) as usize
-                % SPINNER_FRAMES.len();
-            let files = shared.files.load(Ordering::Relaxed);
-            let bytes = shared.bytes.load(Ordering::Relaxed);
-            let line = format_line(verb, files, bytes, SPINNER_FRAMES[frame_idx]);
-            let _ = render_line(&mut std::io::stderr().lock(), &line);
+            // Mark rendered only when the draw succeeds, so Drop clears exactly
+            // when a line is actually on screen — a failed write leaves nothing
+            // to clear.
+            if render_tick(&mut std::io::stderr().lock(), shared, verb, start.elapsed()).is_ok() {
+                shared.rendered.store(true, Ordering::Relaxed);
+            }
             thread::park_timeout(TICK_INTERVAL);
         }
+    }
+
+    /// Render one spinner frame: pick the frame for `elapsed`, read the live
+    /// counters, and write the formatted status line to `w`. Factored out of
+    /// [`ticker_loop`] so the render step is unit-testable directly — without
+    /// spawning the ticker thread or waiting out the startup delay.
+    fn render_tick<W: Write>(
+        w: &mut W,
+        shared: &Shared,
+        verb: &str,
+        elapsed: Duration,
+    ) -> std::io::Result<()> {
+        let frame_idx =
+            (elapsed.as_millis() / TICK_INTERVAL.as_millis()) as usize % SPINNER_FRAMES.len();
+        let files = shared.files.load(Ordering::Relaxed);
+        let bytes = shared.bytes.load(Ordering::Relaxed);
+        let line = format_line(verb, files, bytes, SPINNER_FRAMES[frame_idx]);
+        render_line(w, &line)
     }
 
     fn format_line(verb: &str, files: usize, bytes: u64, spinner: char) -> String {
@@ -208,6 +262,257 @@ mod imp {
     fn clear_line<W: Write>(w: &mut W) -> std::io::Result<()> {
         w.queue(MoveToColumn(0))?;
         w.queue(Clear(ClearType::CurrentLine))?;
+        w.flush()
+    }
+
+    /// Shared state between the watchdog and its ticker thread. `rendered_rows`
+    /// is the terminal-row count of the block currently on screen — 0 means
+    /// nothing was drawn (a fast command that finished inside
+    /// [`WATCHDOG_STARTUP_DELAY`], the common case), so `Drop` leaves the
+    /// terminal untouched; >0 tells `Drop` how many rows to clear. `escalated`
+    /// records whether the command gutter has been revealed, for tests.
+    struct WatchdogShared {
+        done: AtomicBool,
+        rendered_rows: AtomicUsize,
+        escalated: AtomicBool,
+    }
+
+    impl WatchdogShared {
+        fn new() -> Self {
+            Self {
+                done: AtomicBool::new(false),
+                rendered_rows: AtomicUsize::new(0),
+                escalated: AtomicBool::new(false),
+            }
+        }
+    }
+
+    /// Live "still waiting" status for a single slow blocking subprocess.
+    ///
+    /// Unlike [`Progress`] (which counts work units), `Watchdog` just tracks
+    /// elapsed time. After a startup delay it renders a dim one-line status —
+    /// `○ Waiting for the commit message (4s)` — redrawn in place each second;
+    /// the ticking counter is the "still alive" signal. After a longer delay it
+    /// escalates, revealing the exact command in a gutter beneath the status:
+    ///
+    /// ```text
+    /// ○ Waiting for the commit message (12s)
+    ///    sh -c 'claude -p --model=haiku'
+    /// ```
+    ///
+    /// The whole block is cleared on drop — nothing persists — so the caller can
+    /// print its result immediately afterward. The dim, in-place look mirrors
+    /// `wt list`'s stall footer.
+    ///
+    /// It only reads a clock and writes to stderr; it never touches the child's
+    /// stdin/stdout or its `wait`, so it's safe to wrap a capture-mode
+    /// [`Cmd::run`](crate::shell_exec::Cmd) whose output is captured rather than
+    /// streamed (e.g. the LLM commit command). Don't pair it with a streaming
+    /// command — the child's own output would interleave with the status block.
+    pub struct Watchdog {
+        shared: Arc<WatchdogShared>,
+        /// Render thread; present only when enabled (stderr TTY, non-verbose).
+        ticker: Option<JoinHandle<()>>,
+    }
+
+    impl Watchdog {
+        /// Start a watchdog for a slow subprocess.
+        ///
+        /// `waiting_for` names what is being awaited (e.g. `"the commit
+        /// message"`). `command`, if given, is the exact invocation — revealed
+        /// in a gutter beneath the status line once the command runs past the
+        /// escalation delay, so a slow or stuck command is debuggable.
+        ///
+        /// Enabled only when stderr is a TTY and verbosity is 0 — under
+        /// `-v`/`-vv` the structured diagnostics take over, and a non-TTY (piped)
+        /// context renders nothing.
+        pub fn start(waiting_for: &str, command: Option<&str>) -> Self {
+            let enabled = std::io::stderr().is_terminal() && crate::styling::verbosity() == 0;
+            Self::start_with(waiting_for, command, enabled)
+        }
+
+        /// Dispatch helper picking enabled/disabled from an explicit flag, so
+        /// tests exercise both branches without depending on the ambient stderr
+        /// fd (see [`Progress::start_with`] for why).
+        fn start_with(waiting_for: &str, command: Option<&str>, enabled: bool) -> Self {
+            if enabled {
+                Self::enabled(waiting_for, command)
+            } else {
+                Self::disabled()
+            }
+        }
+
+        fn disabled() -> Self {
+            Self {
+                shared: Arc::new(WatchdogShared::new()),
+                ticker: None,
+            }
+        }
+
+        fn enabled(waiting_for: &str, command: Option<&str>) -> Self {
+            Self::enabled_with_delays(
+                waiting_for,
+                command,
+                WATCHDOG_STARTUP_DELAY,
+                WATCHDOG_ESCALATE_DELAY,
+            )
+        }
+
+        /// Spawn the ticker with explicit delays. The public path passes the
+        /// module constants; tests pass millisecond delays so the escalation
+        /// tier is exercisable without a 10-second wait.
+        fn enabled_with_delays(
+            waiting_for: &str,
+            command: Option<&str>,
+            startup_delay: Duration,
+            escalate_delay: Duration,
+        ) -> Self {
+            let shared = Arc::new(WatchdogShared::new());
+            let ticker = {
+                let shared = Arc::clone(&shared);
+                let waiting_for = waiting_for.to_owned();
+                let command = command.map(str::to_owned);
+                thread::spawn(move || {
+                    watchdog_loop(
+                        &shared,
+                        &waiting_for,
+                        command.as_deref(),
+                        startup_delay,
+                        escalate_delay,
+                    )
+                })
+            };
+            Self {
+                shared,
+                ticker: Some(ticker),
+            }
+        }
+
+        /// Stop the watchdog and clear its block. Equivalent to dropping.
+        pub fn finish(self) {
+            drop(self);
+        }
+    }
+
+    impl Drop for Watchdog {
+        fn drop(&mut self) {
+            if let Some(ticker) = self.ticker.take() {
+                self.shared.done.store(true, Ordering::Relaxed);
+                ticker.thread().unpark();
+                let _ = ticker.join();
+                // Clear the block the ticker left on screen. 0 rows means nothing
+                // was drawn (a fast command that never tripped the startup delay),
+                // so the terminal is left untouched.
+                let rows = self.shared.rendered_rows.load(Ordering::Relaxed);
+                if rows > 0 {
+                    let _ = clear_block(&mut std::io::stderr().lock(), rows);
+                }
+            }
+        }
+    }
+
+    fn watchdog_loop(
+        shared: &WatchdogShared,
+        waiting_for: &str,
+        command: Option<&str>,
+        startup_delay: Duration,
+        escalate_delay: Duration,
+    ) {
+        let start = Instant::now();
+        // park_timeout returns immediately on `unpark` from drop, so a command
+        // that finishes before the delay neither renders nor blocks shutdown.
+        while start.elapsed() < startup_delay {
+            if shared.done.load(Ordering::Relaxed) {
+                return;
+            }
+            thread::park_timeout(startup_delay.saturating_sub(start.elapsed()));
+        }
+        let mut prev_rows = 0usize;
+        let mut last_block: Vec<String> = Vec::new();
+        while !shared.done.load(Ordering::Relaxed) {
+            let elapsed = start.elapsed();
+            // Second tier: once the command has run long enough, reveal it in a
+            // gutter beneath the status line.
+            let escalated = command.is_some() && elapsed >= escalate_delay;
+            if escalated {
+                shared.escalated.store(true, Ordering::Relaxed);
+            }
+            let block = watchdog_block(
+                waiting_for,
+                elapsed.as_secs(),
+                if escalated { command } else { None },
+                crate::styling::terminal_width(),
+            );
+            // Redraw only when the content changes — the status counter ticks
+            // once a second, the gutter appears once — so the block doesn't
+            // flicker between the (sub-second) wake-ups.
+            if block != last_block {
+                let mut err = std::io::stderr().lock();
+                prev_rows = render_block(&mut err, &block, prev_rows);
+                shared.rendered_rows.store(prev_rows, Ordering::Relaxed);
+                last_block = block;
+            }
+            thread::park_timeout(TICK_INTERVAL);
+        }
+    }
+
+    /// Build the watchdog block: a dim status line, plus — once `command` is
+    /// given (escalated) — that command in a bash-highlighted gutter beneath it
+    /// (matching how worktrunk shows commands elsewhere, e.g. the LLM-failure
+    /// error).
+    ///
+    /// Every returned string must occupy exactly one terminal row, or the
+    /// in-place cursor math in [`render_block`]/[`clear_block`] desyncs from what
+    /// the terminal actually wrapped and corrupts the lines above. So both lines
+    /// are width-bounded rather than left to soft-wrap: the status is
+    /// ANSI-aware-truncated to `width`, and the command gutter is *chopped* (not
+    /// wrapped) so an over-wide invocation stays one row. `width` is the terminal
+    /// width (`None` → unknown, leave the status unbounded); the loop passes the
+    /// live width each tick so a resize is picked up.
+    fn watchdog_block(
+        waiting_for: &str,
+        secs: u64,
+        command: Option<&str>,
+        width: Option<usize>,
+    ) -> Vec<String> {
+        let status = cformat!("<dim>○ Waiting for {waiting_for} ({secs}s)</>");
+        let status = match width {
+            Some(w) => crate::styling::truncate_visible(&status, w),
+            None => status,
+        };
+        let mut lines = vec![status];
+        if let Some(cmd) = command {
+            lines.extend(
+                crate::styling::format_bash_with_gutter_chopped(cmd)
+                    .lines()
+                    .map(str::to_owned),
+            );
+        }
+        lines
+    }
+
+    /// Redraw the in-place block: clear the previous `prev_rows` rows, then write
+    /// the new lines (joined, no trailing newline). Returns the new row count.
+    /// Relies on each line being ≤ terminal width (one row), so `prev_rows`
+    /// equals the visual rows occupied.
+    fn render_block<W: Write>(w: &mut W, lines: &[String], prev_rows: usize) -> usize {
+        let _ = w.queue(MoveToColumn(0));
+        if prev_rows > 1 {
+            let _ = w.queue(MoveUp(prev_rows as u16 - 1));
+        }
+        let _ = w.queue(Clear(ClearType::FromCursorDown));
+        let _ = write!(w, "{}", lines.join("\n"));
+        let _ = w.flush();
+        lines.len()
+    }
+
+    /// Clear a `rows`-row block: move to its first row and clear downward.
+    fn clear_block<W: Write>(w: &mut W, rows: usize) -> std::io::Result<()> {
+        w.queue(MoveToColumn(0))?;
+        if rows > 1 {
+            w.queue(MoveUp(rows as u16 - 1))?;
+        }
+        w.queue(Clear(ClearType::FromCursorDown))?;
         w.flush()
     }
 
@@ -274,13 +579,209 @@ mod imp {
         }
 
         #[test]
-        fn test_enabled_renders_after_startup_delay() {
-            let p = Progress::enabled("Removing");
+        fn test_render_tick_writes_counter_line() {
+            // The ticker's per-frame render step, exercised directly — no thread,
+            // no startup-delay wait. Asserts the rendered line carries the verb
+            // and the live counters, the wiring ticker_loop runs each tick.
+            let shared = Shared::new();
+            shared.files.fetch_add(2, Ordering::Relaxed);
+            shared.bytes.fetch_add(5 * 1024 * 1024, Ordering::Relaxed);
+            let mut buf = Vec::new();
+            render_tick(&mut buf, &shared, "Removing", Duration::ZERO).unwrap();
+            let out = String::from_utf8(buf).unwrap();
+            assert!(out.contains("Removing"));
+            assert!(out.contains("2 files"));
+            assert!(out.contains("5.0 MiB"));
+        }
+
+        #[test]
+        fn test_progress_renders_after_startup_delay() {
+            // Tiny startup delay so the ticker reaches its render loop fast. Poll
+            // for the render rather than sleeping a fixed window the thread could
+            // be starved past under load: `rendered` is the background work we're
+            // verifying, so wait on it directly.
+            let p = Progress::enabled_with_delays("Removing", Duration::from_millis(10));
             p.record(100);
-            // Wait past the startup delay + one tick so ticker_loop reaches the
-            // render branch — the part that's hardest to cover otherwise.
-            std::thread::sleep(STARTUP_DELAY + TICK_INTERVAL + Duration::from_millis(50));
+            let timeout = Duration::from_secs(5);
+            let start = Instant::now();
+            while start.elapsed() < timeout {
+                if p.shared.rendered.load(Ordering::Relaxed) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(p.shared.rendered.load(Ordering::Relaxed));
             p.finish();
+        }
+
+        #[test]
+        fn test_fast_progress_leaves_no_trace() {
+            // A reporter dropped before its startup delay elapses never renders,
+            // so Drop has nothing to clear. The startup delay sits far in the
+            // future so the assertion can't race the ticker into rendering under
+            // load; finish() wakes the parked thread immediately regardless.
+            let p = Progress::enabled_with_delays("Copying", Duration::from_secs(3600));
+            assert!(!p.shared.rendered.load(Ordering::Relaxed));
+            p.finish();
+        }
+
+        #[test]
+        fn test_watchdog_block_status_only() {
+            // Before escalation (no command) the block is a single dim status
+            // row. A wide width leaves the status untruncated.
+            let block = watchdog_block("the commit message", 4, None, Some(200));
+            assert_eq!(block.len(), 1);
+            assert!(block[0].contains("Waiting for the commit message"));
+            assert!(block[0].contains("(4s)"));
+            assert!(block[0].contains('○'));
+            assert!(!block[0].contains('…'));
+        }
+
+        #[test]
+        fn test_watchdog_block_escalated_adds_command_gutter() {
+            // Escalated, the command is revealed in a gutter row beneath the
+            // status. Assert on a bare word ("claude") rather than the whole
+            // command, since bash highlighting interleaves ANSI codes between
+            // tokens (a word itself is never split mid-token).
+            let block = watchdog_block(
+                "the commit message",
+                12,
+                Some("claude --model=haiku"),
+                Some(200),
+            );
+            assert!(block.len() >= 2);
+            assert!(block[0].contains("Waiting for the commit message"));
+            assert!(block.join("\n").contains("claude"));
+        }
+
+        #[test]
+        fn test_watchdog_block_status_truncated_to_width() {
+            // A width narrower than the status text truncates it to one row
+            // (visible width within budget, ellipsis appended) — without this the
+            // soft-wrapped second row desyncs the in-place cursor math.
+            use ansi_str::AnsiStr;
+            use unicode_width::UnicodeWidthStr;
+            let block = watchdog_block("the squash commit message", 1234, None, Some(20));
+            assert_eq!(block.len(), 1);
+            let visible = block[0].ansi_strip();
+            assert!(UnicodeWidthStr::width(visible.as_ref()) <= 20);
+            assert!(block[0].contains('…'));
+        }
+
+        #[test]
+        fn test_watchdog_start_with_non_tty_is_disabled() {
+            assert!(
+                Watchdog::start_with("the commit message", None, false)
+                    .ticker
+                    .is_none()
+            );
+        }
+
+        #[test]
+        fn test_watchdog_start_with_tty_is_enabled() {
+            let w = Watchdog::start_with("the commit message", None, true);
+            assert!(w.ticker.is_some());
+            w.finish();
+        }
+
+        #[test]
+        fn test_watchdog_renders_after_startup_delay() {
+            // Tiny startup delay, escalation far off: the status renders but the
+            // command gutter never appears. The first render happens on the
+            // background ticker thread, so poll for it rather than sleeping a
+            // fixed window the thread could be starved past under load. The
+            // far-off escalation delay keeps the gutter absent for the whole
+            // poll, so the `!escalated` assertion holds regardless of timing.
+            let w = Watchdog::enabled_with_delays(
+                "the commit message",
+                Some("sh -c 'claude -p'"),
+                Duration::from_millis(10),
+                Duration::from_secs(3600),
+            );
+            let timeout = Duration::from_secs(5);
+            let start = Instant::now();
+            while start.elapsed() < timeout {
+                if w.shared.rendered_rows.load(Ordering::Relaxed) > 0 {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(w.shared.rendered_rows.load(Ordering::Relaxed) > 0);
+            assert!(!w.shared.escalated.load(Ordering::Relaxed));
+            w.finish();
+        }
+
+        #[test]
+        fn test_watchdog_fast_command_leaves_no_trace() {
+            // A command that finishes before the startup delay must never draw a
+            // block — so Drop has nothing to clear and leaves no escape in
+            // output. The startup delay sits far in the future so the assertion
+            // can't race the ticker into rendering under load; finish() wakes the
+            // parked thread immediately regardless.
+            let w = Watchdog::enabled_with_delays(
+                "the commit message",
+                None,
+                Duration::from_secs(3600),
+                WATCHDOG_ESCALATE_DELAY,
+            );
+            assert_eq!(w.shared.rendered_rows.load(Ordering::Relaxed), 0);
+            w.finish();
+        }
+
+        #[test]
+        fn test_watchdog_escalates_and_grows_the_block() {
+            // Short startup + escalation delays so the second tier fires fast; the
+            // revealed gutter makes the block more than one row. The escalation
+            // and render both happen on the background ticker thread, so poll for
+            // its work rather than sleeping a fixed window: a loaded runner can
+            // starve the ticker past any fixed deadline, but the condition itself
+            // is what we're verifying. Generous timeout, fast poll — fast when
+            // healthy, reliable under load.
+            let w = Watchdog::enabled_with_delays(
+                "the commit message",
+                Some("sh -c 'claude -p'"),
+                Duration::from_millis(10),
+                Duration::from_millis(30),
+            );
+            let timeout = Duration::from_secs(5);
+            let start = Instant::now();
+            while start.elapsed() < timeout {
+                if w.shared.escalated.load(Ordering::Relaxed)
+                    && w.shared.rendered_rows.load(Ordering::Relaxed) >= 2
+                {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(w.shared.escalated.load(Ordering::Relaxed));
+            assert!(w.shared.rendered_rows.load(Ordering::Relaxed) >= 2);
+            w.finish();
+        }
+
+        #[test]
+        fn test_watchdog_no_escalation_without_command() {
+            // No command → the gutter never appears, however long it runs, so the
+            // block stays a single status row. Poll for that first render rather
+            // than sleeping a fixed window the ticker could be starved past under
+            // load; escalation is gated on `command.is_some()`, so `!escalated`
+            // holds at any instant no matter how long the loop runs.
+            let w = Watchdog::enabled_with_delays(
+                "the commit message",
+                None,
+                Duration::from_millis(10),
+                Duration::from_millis(30),
+            );
+            let timeout = Duration::from_secs(5);
+            let start = Instant::now();
+            while start.elapsed() < timeout {
+                if w.shared.rendered_rows.load(Ordering::Relaxed) >= 1 {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert_eq!(w.shared.rendered_rows.load(Ordering::Relaxed), 1);
+            assert!(!w.shared.escalated.load(Ordering::Relaxed));
+            w.finish();
         }
     }
 }
@@ -321,6 +822,18 @@ mod imp {
                 self.files.load(Ordering::Relaxed),
                 self.bytes.load(Ordering::Relaxed),
             )
+        }
+
+        pub fn finish(self) {}
+    }
+
+    /// Spinner-less stub when the `cli` feature is off — mirrors [`Progress`]'s
+    /// stub. The watchdog has no counters to keep, so it carries no state.
+    pub struct Watchdog;
+
+    impl Watchdog {
+        pub fn start(_waiting_for: &str, _command: Option<&str>) -> Self {
+            Self
         }
 
         pub fn finish(self) {}

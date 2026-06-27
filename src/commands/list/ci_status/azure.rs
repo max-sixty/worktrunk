@@ -93,7 +93,9 @@ pub(super) fn detect_azure_pr(
     {
         Ok(output) => output,
         Err(e) => {
-            log::warn!(
+            tracing::warn!(
+                branch = %branch.full_name,
+                error = %e,
                 "az repos pr list failed to execute for branch {}: {}",
                 branch.full_name,
                 e
@@ -134,9 +136,16 @@ pub(super) fn detect_azure_pr(
         ci_status,
         source: CiSource::PullRequest,
         is_stale,
+        is_priming: false,
         url,
         number: Some(PrRef::pr(u64::from(pr.pull_request_id))),
         review_state: None,
+        title: pr.title.clone(),
+        body: pr.description.clone(),
+        // `az repos pr list` carries no comment/thread count; surfacing one
+        // would need a separate per-PR threads call, which this fetch avoids.
+        author: None,
+        comment_count: None,
     })
 }
 
@@ -176,7 +185,9 @@ pub(super) fn detect_azure_pipeline(
     {
         Ok(output) => output,
         Err(e) => {
-            log::warn!(
+            tracing::warn!(
+                branch = %branch.full_name,
+                error = %e,
                 "az pipelines runs list failed to execute for branch {}: {}",
                 branch.full_name,
                 e
@@ -214,9 +225,14 @@ pub(super) fn detect_azure_pipeline(
         ci_status,
         source: CiSource::Branch,
         is_stale,
+        is_priming: false,
         url: web_url,
         number: None,
         review_state: None,
+        title: None,
+        body: None,
+        author: None,
+        comment_count: None,
     })
 }
 
@@ -244,6 +260,12 @@ struct AzPrListEntry {
     #[serde(default)]
     last_merge_source_commit: Option<AzCommitRef>,
     repository: AzPrRepository,
+    /// PR title; shown in the picker's `pr` preview pane. Rides this call.
+    #[serde(default)]
+    title: Option<String>,
+    /// PR description; rendered as markdown in the `pr` preview pane.
+    #[serde(default)]
+    description: Option<String>,
 }
 
 impl AzPrListEntry {

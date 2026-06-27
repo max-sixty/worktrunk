@@ -127,6 +127,37 @@ impl Merge for CommitGenerationConfig {
     }
 }
 
+/// A custom column in the `wt list` table, keyed by its header text.
+///
+/// The value is a minijinja template rendered per row with `{{ branch }}`,
+/// `{{ worktree_path }}`, `{{ worktree_name }}` (empty for branch-only rows),
+/// and `{{ vars.* }}` (per-branch state from `wt config state vars set`).
+/// Rows where the template renders empty show an empty cell; a column that is
+/// empty for every row is dropped from the table.
+///
+/// *(Experimental — fields may change in future releases.)*
+///
+/// ```toml
+/// [list.custom-columns.Ticket]
+/// template = "{{ vars.ticket }}"
+/// ```
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+pub struct ListColumnConfig {
+    /// Template rendered per row; the result is the cell text
+    pub template: String,
+
+    /// Maximum display width; longer values truncate (default: 40).
+    /// Values below the header's width are raised to it — a column is never
+    /// narrower than its header.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<usize>,
+
+    /// Drop order when the terminal narrows; lower = kept longer (default: 9,
+    /// alongside the URL column; built-in columns range 0-13)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<u8>,
+}
+
 /// Configuration for the `wt list` command
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
 pub struct ListConfig {
@@ -160,6 +191,34 @@ pub struct ListConfig {
     /// Disabled when --full is used. Default: no budget (wait for all results).
     #[serde(rename = "timeout-ms", skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
+
+    /// Columns to render, in order. When non-empty this is exhaustive — only
+    /// these columns appear (a subset and/or reorder); empty means the default
+    /// set. Built-ins are kebab identifiers (`branch`, `status`, `working-diff`,
+    /// `ahead-behind`, `branch-diff`, `summary`, `upstream`, `ci`, `path`,
+    /// `url`, `commit`, `age`, `message`); custom columns are named by their
+    /// `[list.custom-columns]` header, so a selection mixes both in one list. A
+    /// built-in wins over a custom header that collides with its name. The
+    /// gutter type indicator always shows. A custom column omitted from a
+    /// non-empty selection is hidden; with no selection, custom columns append
+    /// to the default set. Set as a TOML array in config files.
+    // TODO(list-columns-env): `WORKTRUNK__LIST__COLUMNS` is not wired up yet. The
+    // env overlay can only deliver a scalar string, which a plain `Vec<String>`
+    // rejects. When we add it, parse the scalar as TOML
+    // (`WORKTRUNK__LIST__COLUMNS='["branch", "ci"]'`) so the env form matches the
+    // config-file array exactly, rather than splitting on commas.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub columns: Vec<String>,
+
+    /// Custom columns, keyed by header text. See [`ListColumnConfig`].
+    ///
+    /// *(Experimental — fields may change in future releases.)*
+    #[serde(
+        default,
+        rename = "custom-columns",
+        skip_serializing_if = "BTreeMap::is_empty"
+    )]
+    pub custom_columns: BTreeMap<String, ListColumnConfig>,
 }
 
 impl ListConfig {
@@ -202,6 +261,25 @@ impl ListConfig {
 
 impl Merge for ListConfig {
     fn merge_with(&self, other: &Self) -> Self {
+        // Custom columns merge per key: a more specific layer overrides or
+        // adds individual columns without clearing the rest.
+        let mut custom_columns = self.custom_columns.clone();
+        custom_columns.extend(
+            other
+                .custom_columns
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone())),
+        );
+        // Column selection replaces wholesale (a more specific layer's order is
+        // the order it wants); an empty list means "unset", so it falls back to
+        // the base layer rather than blanking the selection. Unlike
+        // custom_columns, merging entries would be meaningless — a column list
+        // is an ordering, not a keyed set.
+        let columns = if other.columns.is_empty() {
+            self.columns.clone()
+        } else {
+            other.columns.clone()
+        };
         Self {
             full: other.full.or(self.full),
             branches: other.branches.or(self.branches),
@@ -209,6 +287,8 @@ impl Merge for ListConfig {
             summary: other.summary.or(self.summary),
             task_timeout_ms: other.task_timeout_ms.or(self.task_timeout_ms),
             timeout_ms: other.timeout_ms.or(self.timeout_ms),
+            columns,
+            custom_columns,
         }
     }
 }

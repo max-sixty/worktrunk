@@ -154,12 +154,11 @@ Detects various forms of the integration pattern regardless of:
     )]
     ShowTheme,
 
-    /// Generate static shell completions for package managers
+    /// Generate shell completions for package managers
     ///
-    /// Outputs static completion scripts for Homebrew and other package managers.
-    /// Only completes commands and flags, not branch names.
-    /// This is predominantly for package managers. Users should run
-    /// `wt config shell install` instead.
+    /// Outputs a completion registration that calls the binary at TAB time, so branch and
+    /// worktree names complete from a plain package install. For interactive setup, run
+    /// `wt config shell install` instead. It also enables directory changing on switch.
     #[command(hide = true)]
     Completions {
         /// Shell to generate completions for
@@ -358,13 +357,13 @@ $ claude plugin uninstall worktrunk@worktrunk
     /// Configure the Claude Code statusline
     #[command(
         name = "install-statusline",
-        after_long_help = r#"Writes the statusline configuration to `~/.claude/settings.json`, setting:
+        after_long_help = r#"Writes the statusline configuration to `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json` when set), setting:
 
 ```json
 {"statusLine":{"type":"command","command":"wt list statusline --format=claude-code"}}
 ```
 
-Preserves existing settings. Creates the `.claude/` directory and `settings.json` if needed.
+Preserves existing settings. Creates the config directory and `settings.json` if needed.
 
 Skips gracefully if the statusline is already configured."#
     )]
@@ -489,7 +488,7 @@ This tests:
         #[arg(long)]
         full: bool,
 
-        /// Output format (text, json)
+        /// Output format
         #[arg(long, default_value = "text", help_heading = "Output")]
         format: SwitchFormat,
     },
@@ -696,8 +695,8 @@ Every category that `wt config state clear` sweeps is shown here.
 
 CI cache entries show status, age, and the commit SHA they were fetched for."#)]
     Get {
-        /// Output format (table, json)
-        #[arg(long, value_enum, default_value = "table", hide_possible_values = true)]
+        /// Output format
+        #[arg(long, value_enum, default_value = "table")]
         format: super::OutputFormat,
     },
 
@@ -858,7 +857,7 @@ All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the
 | `subprocess.log` | Running with `-vv` |
 | `diagnostic.md` | Running with `-vv` |
 
-`trace.log` captures debug-level records at `-vv` — commands, `[wt-trace]` records, bounded subprocess previews. `subprocess.log` holds the raw uncapped subprocess stdout/stderr bodies. `diagnostic.md` is a markdown bug-report bundle that inlines `trace.log`; `wt` prints a `gh gist create` command pointing at it. All three are overwritten on each `-vv` run.
+`trace.log` captures debug-level records at `-vv` — commands, `[wt-trace]` records, bounded subprocess previews. `wt config state logs profile` summarizes one into a performance report (where time went, parallelism, redundant commands). `subprocess.log` holds the raw uncapped subprocess stdout/stderr bodies. `diagnostic.md` is a markdown bug-report bundle that inlines `trace.log` and a rendered performance profile; `wt` prints a `gh gist create` command pointing at it. All three are overwritten on each `-vv` run.
 
 ## Location
 
@@ -1091,7 +1090,7 @@ $ wt config state default-branch set main
 ```"#)]
     Set {
         /// Branch name to set as default
-        #[arg(add = crate::completion::branch_value_completer())]
+        #[arg(add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: String,
     },
 
@@ -1120,7 +1119,7 @@ $ wt config state previous-branch set feature
 ```"#)]
     Set {
         /// Branch name to set as previous
-        #[arg(add = crate::completion::branch_value_completer())]
+        #[arg(add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: String,
     },
 
@@ -1164,7 +1163,7 @@ $ wt config state ci-status clear && wt config state ci-status get
     )]
     Get {
         /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer())]
+        #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
     },
 
@@ -1187,7 +1186,7 @@ $ wt config state ci-status clear --all
 ```"#)]
     Clear {
         /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer(), conflicts_with = "all")]
+        #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch, conflicts_with = "all")]
         branch: Option<String>,
 
         /// Clear all CI status cache
@@ -1213,7 +1212,7 @@ $ wt config state marker get --branch=feature
 ```"#)]
     Get {
         /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer())]
+        #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
     },
 
@@ -1234,7 +1233,7 @@ $ wt config state marker set "✅ ready" --branch=feature
         value: String,
 
         /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer())]
+        #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
     },
 
@@ -1257,7 +1256,7 @@ $ wt config state marker clear --all
 ```"#)]
     Clear {
         /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer(), conflicts_with = "all")]
+        #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch, conflicts_with = "all")]
         branch: Option<String>,
 
         /// Clear all markers
@@ -1301,6 +1300,38 @@ $ wt config state logs --format=json | jq '.hook_output[] | select(.branch | sta
 ```"#
     )]
     Get,
+
+    /// Performance profile from a trace log
+    #[command(
+        after_long_help = r#"Summarize where a single `wt` invocation spent its time, reading the `[wt-trace]` records captured to `trace.log` by a `-vv` run.
+
+Reads `.git/wt/logs/trace.log` by default, or a log file given as an argument (e.g. a CI artifact, or `-` for stdin). The report answers three questions: where time goes (subprocess time by command type, plus the slowest individual jobs), how parallel the run was (concurrency factor and peak concurrency), and where work was wasted (commands re-run with the same context). For a `wt list` capture it also shows derived latencies (time to skeleton, time to first result) and a timeline of collect milestones; the skeleton/first-result markers need a terminal (TTY) capture. `--format=json` emits the same data for scripting.
+
+For an interactive timeline or a Perfetto trace, use the `wt-perf` helper (`cargo run -p wt-perf -- timeline`); both share the same trace parser.
+
+## Examples
+
+Profile the last `-vv` run in this repo:
+```console
+$ wt -vv list
+$ wt config state logs profile
+```
+
+Profile a trace from elsewhere (e.g. a CI artifact), by path or on stdin:
+```console
+$ wt config state logs profile ci-run.log
+$ wt config state logs profile - < ci-run.log
+```
+
+JSON for scripting:
+```console
+$ wt config state logs profile --format=json | jq '.by_type[0]'
+```"#
+    )]
+    Profile {
+        /// Trace log to read (defaults to `.git/wt/logs/trace.log`; `-` for stdin)
+        file: Option<std::path::PathBuf>,
+    },
 
     /// Clear all log files
     Clear,
@@ -1391,7 +1422,7 @@ impl StateWrite for MarkerAction {
 impl StateWrite for LogsAction {
     fn write_verb(&self) -> Option<&'static str> {
         match self {
-            Self::Get => None,
+            Self::Get | Self::Profile { .. } => None,
             Self::Clear => Some("clear"),
         }
     }
@@ -1426,7 +1457,7 @@ $ wt config state vars get env --branch=feature
         key: String,
 
         /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer())]
+        #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
     },
 
@@ -1444,10 +1475,10 @@ $ wt config state vars list --branch=feature
 ```"#)]
     List {
         /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer())]
+        #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
 
-        /// Output format (text, json)
+        /// Output format
         #[arg(long, default_value = "text", help_heading = "Output")]
         format: SwitchFormat,
     },
@@ -1475,7 +1506,7 @@ $ wt config state vars set env=production --branch=main
         assignment: (String, String),
 
         /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer())]
+        #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
     },
 
@@ -1506,7 +1537,7 @@ $ wt config state vars clear env --branch=feature
         all: bool,
 
         /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer())]
+        #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
     },
 }

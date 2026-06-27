@@ -2,8 +2,11 @@
 
 <h1><img src="docs/static/logo.png" alt="Worktrunk logo" width="50" align="absmiddle">&nbsp;&nbsp;Worktrunk</h1>
 
+<!-- Crates.io badge below disabled while shields.io is rate-limited by crates.io
+     (renders "CRATES.IO: INVALID"). Tracking: badges/shields#11879. Restore once fixed.
+     [![Crates.io](https://img.shields.io/crates/v/worktrunk?style=for-the-badge&logo=rust)](https://crates.io/crates/worktrunk)
+-->
 [![Docs](https://img.shields.io/badge/docs-worktrunk.dev-blue?style=for-the-badge&logo=gitbook)](https://worktrunk.dev)
-[![Crates.io](https://img.shields.io/crates/v/worktrunk?style=for-the-badge&logo=rust)](https://crates.io/crates/worktrunk)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue?style=for-the-badge)](https://opensource.org/licenses/MIT)
 [![CI](https://img.shields.io/github/actions/workflow/status/max-sixty/worktrunk/ci.yaml?event=push&branch=main&style=for-the-badge&logo=github)](https://github.com/max-sixty/worktrunk/actions?query=branch%3Amain+workflow%3Aci)
 [![Codecov](https://img.shields.io/codecov/c/github/max-sixty/worktrunk?style=for-the-badge&logo=codecov)](https://codecov.io/gh/max-sixty/worktrunk)
@@ -160,9 +163,9 @@ This creates a new branch and worktree, then switches to it. Do your work, then 
 
 ```console
 $ wt list
-  Branch        Status        HEAD±    main↕  Remote⇅  Commit    Age   Message
-@ feature-auth  +   ↑      +27   -8   ↑1               4bc72dc9  2h    Add authentication module
-^ main              ^⇡                         ⇡1      0e631add  1d    Initial commit
+  Branch        Status        HEAD±    main↕     main…±  Remote⇅  Commit    Age   Message
+@ feature-auth  +   ↑      +27   -8   ↑1       +31                4bc72dc9  2h    Add authenticat…
+^ main              ^⇡                                    ⇡1      0e631add  1d    Initial commit
 
 ○ Showing 2 worktrees, 1 with changes, 1 ahead, 1 column hidden
 

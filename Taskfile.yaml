@@ -13,29 +13,6 @@ tasks:
     desc: Run tests with coverage report
     cmd: cargo llvm-cov --html --features shell-integration-tests {{.CLI_ARGS}}
 
-  vendor-diff:
-    desc: Show the patch we carry in vendor/ vs the pristine upstream crate source
-    cmds:
-      - |
-        set -e
-        VENDORED=vendor/skim-tuikit
-        if [ ! -d "$VENDORED" ]; then
-          echo "no vendored source at $VENDORED"
-          exit 0
-        fi
-        VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$VENDORED/Cargo.toml" | head -1)
-        # Fetch the pristine tarball directly from crates.io rather than relying
-        # on ~/.cargo/registry — `[patch.crates-io]` suppresses the download, so
-        # that cache is never populated on a fresh checkout.
-        TMP=$(mktemp -d)
-        trap 'rm -rf "$TMP"' EXIT
-        URL="https://static.crates.io/crates/skim-tuikit/skim-tuikit-${VERSION}.crate"
-        if ! curl -sSfL "$URL" | tar -xz -C "$TMP"; then
-          echo "failed to fetch pristine skim-tuikit-${VERSION} from $URL"
-          exit 1
-        fi
-        diff -ruN "$TMP/skim-tuikit-${VERSION}" "$VENDORED" || true
-
   setup-web:
     desc: Setup Claude Code web environment for development
     platforms: [linux]
@@ -408,7 +385,7 @@ tasks:
 
         # Documented commands from llm-commits.md
         declare -A COMMANDS
-        COMMANDS["claude"]='MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='"'"''"'"' --disable-slash-commands --setting-sources='"'"''"'"' --system-prompt='"'"''"'"''
+        COMMANDS["claude"]='MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='"'"''"'"' --safe-mode --setting-sources='"'"'user'"'"' --system-prompt='"'"''"'"''
         COMMANDS["llm"]='llm -m claude-haiku-4.5'
         COMMANDS["aichat"]='aichat -m claude:claude-haiku-4.5'
         COMMANDS["codex"]='codex exec -m gpt-5.4-mini -c model_reasoning_effort='"'"'low'"'"' -c system_prompt='"'"''"'"' --sandbox=read-only --json - | jq -sr '"'"'[.[] | select(.item.type? == "agent_message")] | last.item.text'"'"''

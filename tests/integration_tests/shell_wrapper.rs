@@ -340,6 +340,29 @@ fn exec_in_pty_interactive(
     env_vars: &[(&str, &str)],
     inputs: &[&str],
 ) -> (String, i32) {
+    exec_in_pty_shell(shell, script, working_dir, env_vars, inputs, true)
+}
+
+/// Like [`exec_in_pty_interactive`] but lets the caller choose whether `bash` /
+/// `zsh` run interactively (`-i`).
+///
+/// An interactive shell does job-control initialization at startup: if it
+/// decides it isn't the PTY's foreground process group it sends its own process
+/// group `SIGTTIN` and stops — producing no output and never exiting. Under
+/// parallel load that occasionally wedged `test_source_flag_forwards_errors`
+/// until the 180s harness timeout. A non-interactive shell skips job control
+/// entirely, so the wedge can't happen; pass `interactive = false` for tests
+/// that don't assert on job-control output. Tests that *do* (e.g.
+/// `test_zsh_no_job_control`) pass `interactive = true`.
+#[cfg(test)]
+fn exec_in_pty_shell(
+    shell: &str,
+    script: &str,
+    working_dir: &std::path::Path,
+    env_vars: &[(&str, &str)],
+    inputs: &[&str],
+    interactive: bool,
+) -> (String, i32) {
     use portable_pty::CommandBuilder;
     use std::io::Write;
 
@@ -402,14 +425,17 @@ fn exec_in_pty_interactive(
     cmd.env("USER", "testuser");
     cmd.env("SHELL", shell_binary);
 
-    // Run in interactive mode to simulate real user environment.
-    // This ensures tests catch job control message leaks like "[1] 12345" and "[1]+ Done".
-    // Interactive shells have job control enabled by default.
+    // Interactive shells (`-i`) enable job control, so tests can catch
+    // job-control message leaks like "[1] 12345" and "[1]+ Done". Callers that
+    // don't assert on job control pass `interactive = false` to skip `-i` and
+    // avoid the startup job-control wedge (see `exec_in_pty_shell`).
     match shell {
         "zsh" => {
             // Isolate from user rc files
             cmd.env("ZDOTDIR", "/dev/null");
-            cmd.arg("-i");
+            if interactive {
+                cmd.arg("-i");
+            }
             cmd.arg("--no-rcs");
             cmd.arg("-o");
             cmd.arg("NO_GLOBAL_RCS");
@@ -419,7 +445,15 @@ fn exec_in_pty_interactive(
             cmd.arg(script);
         }
         "bash" => {
-            cmd.arg("-i");
+            // Isolate from user rc/profile files, mirroring the zsh arm and
+            // `exec_bash_truly_interactive`. A no-op for non-interactive
+            // `bash -c`, but it keeps interactive (`-i`) startup from sourcing
+            // the host's ~/.bashrc and leaking host-specific output.
+            cmd.arg("--norc");
+            cmd.arg("--noprofile");
+            if interactive {
+                cmd.arg("-i");
+            }
             cmd.arg("-c");
             cmd.arg(script);
         }
@@ -489,17 +523,22 @@ fn exec_in_pty_interactive(
 ///
 /// The setup_script is written to a temp file and sourced. Then final_cmd is run
 /// directly at the prompt (where job notifications appear).
+///
+/// `success_marker` is a substring the command is expected to print; the helper
+/// polls for it to know the command finished, instead of sleeping a fixed guess.
 #[cfg(all(test, unix))]
 fn exec_bash_truly_interactive(
     setup_script: &str,
     final_cmd: &str,
+    success_marker: &str,
     working_dir: &std::path::Path,
     env_vars: &[(&str, &str)],
 ) -> (String, i32) {
     use portable_pty::CommandBuilder;
     use std::io::{Read, Write};
+    use std::sync::mpsc;
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     // Write setup script to a temp file
     let tmp_dir = tempfile::tempdir().unwrap();
@@ -546,47 +585,89 @@ fn exec_bash_truly_interactive(
     let mut child = pair.slave.spawn_command(cmd).unwrap();
     drop(pair.slave); // Close slave in parent
 
-    // Get both reader and writer
     let reader = pair.master.try_clone_reader().unwrap();
     let mut writer = pair.master.take_writer().unwrap();
 
-    // Give bash time to start up. Unlike async operations, bash startup is deterministic
-    // and fast (<50ms typical), so a fixed sleep is acceptable here. We use 200ms for CI margin.
-    thread::sleep(Duration::from_millis(200));
+    // Stream PTY output over a channel so the main thread can poll for prompts and
+    // command output as they arrive, rather than reading only after `exit`. This is
+    // what lets the blind startup/command sleeps become waits on real output.
+    let (tx, rx) = mpsc::channel::<Vec<u8>>();
+    let reader_thread = thread::spawn(move || {
+        let mut reader = reader;
+        let mut buf = [0u8; 4096];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if tx.send(buf[..n].to_vec()).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
 
-    // Write setup and command (but not exit yet)
+    let mut accumulated: Vec<u8> = Vec::new();
+    let poll = Duration::from_millis(10);
+
+    // Drain pending chunks, then poll until `needle` appears or the timeout elapses.
+    // This is the presence half: wait on the output that the command must produce.
+    let mut wait_for = |needle: &[u8], timeout: Duration, what: &str| {
+        let start = Instant::now();
+        loop {
+            while let Ok(chunk) = rx.try_recv() {
+                accumulated.extend_from_slice(&chunk);
+            }
+            if accumulated.windows(needle.len()).any(|w| w == needle) {
+                return;
+            }
+            if start.elapsed() > timeout {
+                panic!(
+                    "Timed out waiting for {} ({:?}). Output so far:\n{}",
+                    what,
+                    String::from_utf8_lossy(needle),
+                    String::from_utf8_lossy(&accumulated)
+                );
+            }
+            thread::sleep(poll);
+        }
+    };
+
+    // Wait for bash's first prompt instead of guessing a startup delay.
+    wait_for(b"$ ", Duration::from_secs(10), "bash startup prompt");
+
+    // Write setup and command (but not exit yet).
     let commands = format!("source '{}'\n{}\n", script_path.display(), final_cmd);
     writer.write_all(commands.as_bytes()).unwrap();
     writer.flush().unwrap();
 
-    // Wait for the command to complete and bash to show job notifications.
-    // The `[1]+ Done` message appears when bash prepares to show the next prompt.
-    // Without this delay, bash might receive `exit` before it reports job completion.
-    thread::sleep(Duration::from_millis(500));
+    // Wait for the command's success output, confirming it ran to completion.
+    wait_for(
+        success_marker.as_bytes(),
+        Duration::from_secs(30),
+        "command output",
+    );
 
-    // Now send exit
+    // Absence window: a leaked `[1]+ Done` surfaces at prompt-time after the
+    // backgrounded post-start hook finishes. Hold a fixed window so a leak has time
+    // to appear. The assertion is that it does not, so there is no event to poll for.
+    thread::sleep(crate::common::SLEEP_FOR_ABSENCE_CHECK);
+
+    // Now send exit.
     writer.write_all(b"exit\n").unwrap();
     writer.flush().unwrap();
-    drop(writer); // Close writer after sending all commands
+    drop(writer);
 
-    // Read output in a thread. This is necessary because bash outputs the `[1]+ Done`
-    // notification between command completion and the next prompt, and we need to
-    // capture that output while waiting for the child to exit.
-    let reader_thread = thread::spawn(move || {
-        let mut reader = reader;
-        let mut buf = String::new();
-        reader.read_to_string(&mut buf).unwrap();
-        buf
-    });
-
-    // Wait for bash to exit
+    // Drain the remaining output once bash has exited.
     let status = child.wait().unwrap();
+    reader_thread.join().unwrap();
+    while let Ok(chunk) = rx.try_recv() {
+        accumulated.extend_from_slice(&chunk);
+    }
 
-    // Get the captured output
-    let buf = reader_thread.join().unwrap();
-
-    // Normalize CRLF to LF (same as exec_in_pty_interactive)
-    let normalized = buf.replace("\r\n", "\n");
+    // Normalize CRLF to LF (same as exec_in_pty_interactive).
+    let normalized = String::from_utf8_lossy(&accumulated).replace("\r\n", "\n");
 
     (normalized, status.exit_code() as i32)
 }
@@ -1622,8 +1703,17 @@ approved-commands = ["echo 'fish background task'"]
             ("WORKTRUNK_TEST_EPOCH", "1735776000"),
         ];
 
-        let (combined, exit_code) =
-            exec_in_pty_interactive(shell, &final_script, &worktrunk_source, &env_vars, &[]);
+        // Run non-interactively: this test only checks that the `--source`
+        // branch forwards wt's error, never job-control output. Skipping `-i`
+        // avoids the interactive-shell startup wedge that flaked this test.
+        let (combined, exit_code) = exec_in_pty_shell(
+            shell,
+            &final_script,
+            &worktrunk_source,
+            &env_vars,
+            &[],
+            false,
+        );
         let output = ShellOutput {
             combined,
             exit_code,
@@ -1755,6 +1845,7 @@ approved-commands = ["echo 'bash background'"]
         let (output, exit_code) = exec_bash_truly_interactive(
             &setup_script,
             "wt switch --create bash-job-test",
+            "and worktree",
             repo.root_path(),
             &env_vars,
         );

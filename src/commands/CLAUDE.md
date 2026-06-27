@@ -82,24 +82,28 @@ wt --source -C /path/to/repo switch
 1. Add the subcommand to the `Cli` enum in `src/cli/mod.rs`.
 2. Implement it in `src/commands/` (e.g. `src/commands/mycommand.rs`).
 3. Add an `after_long_help` attribute — it is the source of truth for `docs/content/{command}.md`.
-4. Run `cargo test --test integration test_docs_are_in_sync`.
+4. Run `cargo test --test integration test_docs_are_in_sync`. Editing help text also changes the rendered `--help` snapshots, which that test leaves untouched — regenerate them with `cargo insta test --accept -- --test integration "test_help"` (or run the pre-merge hook, which does both).
 
-## Shell Completion for CLI Arguments
+## Branch Argument Conventions
 
-Branch and worktree arguments should include shell completion for better UX. Add completion helpers to CLI definitions:
+Every branch-name argument carries a completer (shell completion) and the
+`non_empty_branch` value parser (rejects `--branch=` at the parse boundary, so
+an empty value surfaces as a clear usage error instead of a garbled
+`Branch  has no worktree`):
 
 ```rust
 /// Target branch (defaults to current)
-#[arg(long, add = crate::completion::branch_value_completer())]
+#[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
 branch: Option<String>,
 ```
 
 **Available completers:**
 - `branch_value_completer()` - Completes with branch names
 - `worktree_branch_completer()` - Completes with branch names, suppresses when --create flag present
+- `worktree_only_completer()` - Completes with branches that have a worktree
 - `local_branches_completer()` - Completes with local branch names, excludes remote-only
 
-**Pattern:** All branch arguments should use `branch_value_completer()` for consistency with commands like `wt merge`, `wt switch --base`, `wt rebase`.
+Pick the completer that fits the argument; `value_parser = crate::cli::non_empty_branch` is the same on all of them.
 
 ## CLI Flag Descriptions
 
@@ -107,7 +111,7 @@ Keep the first line of flag and argument descriptions brief—aim for 3-6 words.
 
 **Good examples:**
 - `/// Skip approval prompts`
-- `/// Show CI and \`main\` diffstat`
+- `/// Show CI status and LLM summaries`
 - `/// Target branch (defaults to default branch)`
 
 **Bad examples (too verbose):**
@@ -115,6 +119,14 @@ Keep the first line of flag and argument descriptions brief—aim for 3-6 words.
 - `/// Show CI status, conflict detection, and complete diff statistics`
 
 The help text should be scannable. Users reading `wt switch --help` need to quickly understand what each flag does without parsing long sentences.
+
+## `--dry-run` and `-v`
+
+`--dry-run` previews the mutation a command would perform without performing it. A command that changes nothing has nothing to preview, so it carries no `--dry-run`; its inspection output belongs to `-v` instead. `wt step eval` expands a template and prints the result, so it lists the available variables under `-v`, not behind a `--dry-run`.
+
+The flags answer different questions: `--dry-run` is "what would this change?", `-v` is "what is this doing?" (template variables, expansion, echoed `$ git …` subprocesses).
+
+A `--dry-run` preview is the command's answer, so it prints to stdout (pageable when long), on the same stream as the command's `--format=json` form; progress and status stay on stderr. Both flags render in the gutter house style: `format_heading` for sections, `format_with_gutter` / `format_bash_with_gutter` for quoted blocks, `info_message` / `hint_message` for status lines. The `/writing-user-outputs` skill covers the helpers, the full stdout/stderr split, and when to page.
 
 ## CLI Help Text Placement
 

@@ -43,7 +43,9 @@ Load relevant skills before starting; reload when scope changes mid-session. Pro
 
 ## Documentation
 
-Behavior changes require doc updates. `src/cli/mod.rs` (`after_long_help` plus clap attributes) is the PRIMARY SOURCE for command pages; never hand-edit the generated mirrors under `docs/content/` or `skills/worktrunk/reference/`. Ask: "does `--help` still describe what the code does?" After any doc change run `cargo test --test integration test_docs_are_in_sync`. Sync taxonomy, help-text authoring (three render contexts, link text, config-TOML blocks): `docs/CLAUDE.md`.
+Behavior changes require doc updates. `src/cli/mod.rs` (`after_long_help` plus clap attributes) is the PRIMARY SOURCE for command pages; never hand-edit the generated mirrors under `docs/content/` or `skills/worktrunk/reference/`. Ask: "does `--help` still describe what the code does?" After any doc change run `cargo test --test integration test_docs_are_in_sync`; editing help text (`after_long_help`, `about`, arg docs) also changes the rendered `--help` snapshots, which that test leaves untouched — regenerate them with `cargo insta test --accept -- --test integration "test_help"` (the pre-merge hook runs both). Sync taxonomy, help-text authoring (three render contexts, link text, config-TOML blocks): `docs/CLAUDE.md`.
+
+Design proposals live in `design/` and are review-only: open a PR to discuss, then close it without merging. They guide implementation PRs but don't land on `main`.
 
 ## Plugin Layout
 
@@ -65,12 +67,14 @@ Full inventory: FAQ [What files does Worktrunk create?](docs/content/faq.md#what
 
 ### All Commands Through `shell_exec::Cmd`
 
-Every external command goes through `shell_exec::Cmd` for consistent debug logging (`$ git status [worktree-name]`) and `[wt-trace]` timing. Never call `cmd.output()` directly. For git, prefer `Repository::run_command()` (wraps `Cmd` with worktree context). Pipe stdin via `.stdin_bytes(...)`. The `[wt-trace]` grammar is owned by `src/trace/emit.rs` — emit new trace records through that module, not ad-hoc `log::debug!("[wt-trace] …")` strings.
+Every external command goes through `shell_exec::Cmd` for consistent debug logging (`$ git status [worktree-name]`) and `[wt-trace]` timing. Never call `cmd.output()` directly. For git, prefer `Repository::run_command()` (wraps `Cmd` with worktree context). `Cmd` has four execution modes — `run` (capture), `stream` (inherit stdio), `delayed_stream` (buffer then stream to stderr, for slow ops like `git worktree add`), and `pipe_into` (two-stage pipe). Pipe stdin via `.stdin_bytes(...)`.
 
 ```rust
 Cmd::new("git").args(["status", "--porcelain"]).current_dir(&wt).context("worktree-name").run()?;
 Cmd::new("gh").args(["pr", "list"]).run()?;  // no context for standalone tools
 ```
+
+**The `[wt-trace]` command record has one emitter: `CommandTrace` in `src/trace/emit.rs`.** The grammar lives there too (don't hand-write `log::debug!("[wt-trace] …")`). `CommandTrace::{complete,fail}` are the only callers of the private `command_completed`/`command_errored` writers, so a subprocess is either traced through the guard or produces no command record. Most spawns get this for free via `Cmd`. A few spawn sites have I/O shapes `Cmd` can't model and construct a `CommandTrace` directly: the concurrent-command runner (`output/concurrent.rs`), pipeline steps (`commands/run_pipeline.rs`), `wt step tether`, and the fsmonitor daemon launch. **Any new spawn site that runs an in-process command must construct a `CommandTrace` (start it just before spawn; `complete(success)` after wait, `fail(err)` on spawn/wait error)** — otherwise the command shows up as an unattributed gap in `wt-perf timeline`. The guard is `#[must_use]` and trips a debug-build assertion if dropped unresolved, so a forgotten `complete`/`fail` fails tests rather than silently going untraced. Detached background children (`commands/process.rs`) and interactive helpers (pagers, shell probes) are intentionally untraced — they outlive the invocation or aren't part of its timeline.
 
 ### Real-time Output Streaming
 
@@ -91,18 +95,22 @@ When no structured alternative exists, document the fragility inline.
 
 ### Network Access
 
-worktrunk is local-first: the network is touched only when the user asked for it. **One detection helper is exempt:** the *first* `Repository::default_branch()` per repo may fall through to `git ls-remote`; the result caches in `worktrunk.default-branch` and every later call is local. No other detection helper may add a similar fallback.
+worktrunk is local-first: the network is touched only when the user asked for it, and only where reaching the wire directly serves that request. **One detection helper is exempt:** the *first* `Repository::default_branch()` per repo may fall through to `git ls-remote`; the result caches in `worktrunk.default-branch` and every later call is local. No other detection helper may add a similar fallback.
 
 Why: silent "lookup" paths that walk to the wire (alias dispatch, hook context build, recovery) stall commands the user wouldn't expect to do network work, worst on a fresh clone. The `default_branch()` bootstrap keeps a fresh clone usable while bounding the exception to one helper firing at most once per repo.
 
-Before adding an accessor that could reach the wire (`gh`, `glab`, `git fetch`, `git ls-remote`, HTTP), confirm the command that calls it is not intended to be fast. A foreground command the user runs and waits on absorbs the latency; a command in a synchronous hot path like a shell prompt cannot, and must not reach the wire. `wt list statusline` is not a fast command despite running on every prompt: Claude Code consumes its output asynchronously.
+**Network never blocks the first write.** Fast output to the terminal is the priority (Real-time Output Streaming, above): every command paints from local data first, then network-derived detail streams in progressively behind it. A command that can't render its first frame until `gh` or `git fetch` returns is the failure mode, worst on a fresh clone or a slow link. Before adding an accessor that could reach the wire (`gh`, `glab`, `git fetch`, `git ls-remote`, HTTP), confirm it renders progressively and never gates the first paint. A synchronous hot path like a shell prompt is stricter: it must not reach the wire at all, even progressively. `wt list statusline` is not such a path despite running on every prompt, because Claude Code consumes its output asynchronously.
+
+**The picker is the most forgiving home for network work, because its lifetime is bounded by the user, not the job.** It paints immediately, the user browses, and a slow forge call streams into the rows whenever it arrives; if the user picks first, the unfinished request is simply abandoned, so its latency never costs anything. A run-to-completion command is less forgiving: `wt list` renders progressively but still cannot *finish* until every task returns, so a slow `gh` call extends the command the user is waiting on. Prefer the picker for live forge data, and fetch it there progressively.
 
 What currently reaches the wire:
 
 - `wt list --full`, `wt list statusline` — CI status
+- `wt switch` (interactive picker, no target) — per-row CI status, primed from the local cache then fetched live and streamed into the rows; once a row's CI fetch surfaces an open PR/MR, a per-row background `gh pr view <n> --json comments` (`glab api …/notes` on GitLab) fills that row's `comments` preview tab — the same fetch a `--prs` row makes, spawned once per row from `progressive_handler` (see `picker::prs::spawn_comments_fetch`). The `comments` tab is the only PR data fetched lazily here; `pr` rides the CI call and `log` is the local `git log`
 - generating a branch summary with a `commit.generation` command
 - generating a commit message with a `commit.generation` command
 - `wt switch pr:<n>`, `wt switch mr:<n>` — host API to resolve the PR/MR, then `git fetch` of its branch
+- `wt switch --prs` — one `gh pr list` / `glab mr list` to populate the interactive picker (streamed in after the frame paints), then a per-row background `gh pr view <n> --json comments` (`glab api …/notes` on GitLab) to fill each row's `comments` preview tab, plus a `gh pr view <n> --json commits` / `glab api …/commits` for the `log` tab **only when the head commit isn't already local** — a `--prs` row whose `headRefOid`/`sha` resolves in the object store renders the `log` tab from a local `git log` with no network (off the pool, once per row when the rows land — see `picker::prs::spawn_pr_previews`)
 - `wt config show --full` — version check against GitHub
 - the first `Repository::default_branch()` per repo — `git ls-remote` (above)
 

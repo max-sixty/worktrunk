@@ -30,6 +30,7 @@ use std::process::Command;
 
 use anyhow::{Context, Result};
 use worktrunk::git::WorktrunkError;
+use worktrunk::trace::CommandTrace;
 
 use crate::cli::build_command;
 use crate::commands::{
@@ -133,9 +134,17 @@ fn run_custom(path: &Path, args: &[OsString], working_dir: Option<&Path>) -> Res
         cmd.current_dir(dir);
     }
 
-    let status = cmd
-        .status()
-        .with_context(|| format!("failed to execute {}", path.display()))?;
+    let mut trace = CommandTrace::new(None, &path.display().to_string());
+    let status = match cmd.status() {
+        Ok(status) => {
+            trace.complete(status.success());
+            status
+        }
+        Err(e) => {
+            trace.fail(&e);
+            return Err(e).with_context(|| format!("failed to execute {}", path.display()));
+        }
+    };
 
     if status.success() {
         return Ok(());
@@ -254,5 +263,17 @@ mod tests {
             }
             other => panic!("unexpected WorktrunkError variant: {other:?}"),
         }
+    }
+
+    #[test]
+    fn run_custom_spawn_failure_resolves_trace() {
+        // A non-existent binary fails at spawn, exercising the `trace.fail` arm
+        // (the success path is covered by the signal test above).
+        let err = run_custom(Path::new("/no/such/wt-custom-7f3a9b2c"), &[], None)
+            .expect_err("spawning a missing binary should fail");
+        assert!(
+            err.to_string().contains("failed to execute"),
+            "expected spawn-failure context, got: {err}"
+        );
     }
 }

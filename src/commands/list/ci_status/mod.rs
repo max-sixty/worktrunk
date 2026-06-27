@@ -83,6 +83,8 @@ impl CiBranchName {
 
 // Re-export public types
 pub(crate) use cache::{CachedCiStatus, MaxPrNumber};
+// Only the `--prs` picker consumes this re-export.
+pub(crate) use github::GitHubPrInfo;
 
 /// Maximum number of PRs/MRs to fetch when filtering by source repository.
 ///
@@ -104,7 +106,7 @@ const MAX_PRS_TO_FETCH: u8 = 20;
 /// - Prompting for user input
 /// - Using TTY-specific output formatting
 /// - Opening browsers for authentication
-fn non_interactive_cmd(program: &str) -> Cmd {
+pub(crate) fn non_interactive_cmd(program: &str) -> Cmd {
     Cmd::new(program)
         .env_remove("CLICOLOR_FORCE")
         .env_remove("GH_FORCE_TTY")
@@ -117,7 +119,7 @@ fn non_interactive_cmd(program: &str) -> Cmd {
 ///
 /// On Windows, CreateProcessW (via Cmd) searches PATH for .exe files.
 /// We provide .exe mocks in tests via mock-stub, so this works consistently.
-fn tool_available(tool: &str, args: &[&str]) -> bool {
+pub(crate) fn tool_available(tool: &str, args: &[&str]) -> bool {
     Cmd::new(tool)
         .args(args.iter().copied())
         .run()
@@ -128,7 +130,7 @@ fn tool_available(tool: &str, args: &[&str]) -> bool {
 /// Parse JSON output from CLI tools
 fn parse_json<T: DeserializeOwned>(stdout: &[u8], command: &str, branch: &str) -> Option<T> {
     serde_json::from_slice(stdout)
-        .map_err(|e| log::warn!("Failed to parse {} JSON for {}: {}", command, branch, e))
+        .map_err(|e| tracing::warn!(command = %command, branch = %branch, error = %e, "Failed to parse {} JSON for {}: {}", command, branch, e))
         .ok()
 }
 
@@ -367,6 +369,13 @@ pub struct PrStatus {
     pub source: CiSource,
     /// True if local HEAD differs from remote HEAD (unpushed changes)
     pub is_stale: bool,
+    /// True for the picker's cache-prime placeholder: the number is shown
+    /// from cache while the live `CiStatus` task refreshes, but the cached
+    /// CI color isn't yet trusted, so the cell renders neutral-dim instead of
+    /// green/red until the fetch overwrites it. Set only by
+    /// [`populate_from_cache`]; a transient render hint, never cached.
+    #[serde(skip)]
+    pub is_priming: bool,
     /// URL to the PR/MR (if available)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
@@ -379,6 +388,29 @@ pub struct PrStatus {
     /// Review state of the PR/MR (absent when the forge reports no review signal)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub review_state: Option<ReviewState>,
+    /// PR/MR title. Absent for branch workflows (no PR) and for cache entries
+    /// written before this field existed. Shown in the picker's worktree-row
+    /// `pr` preview pane, riding the same forge call the CI column already makes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// PR/MR author login (GitHub) / username (GitLab). Absent as for `title`.
+    /// Folded into a worktree row's matcher text so a PR filters by author the
+    /// same whether it's shown as a worktree row or a listed `--prs` row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    /// PR/MR description (GitHub `body`, GitLab/Azure/Gitea `description`/`body`),
+    /// rendered as markdown in the `pr` preview pane. Absent as for `title`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    /// Number of conversation comments on the PR/MR — GitHub issue comments,
+    /// GitLab user notes, Gitea PR comments — shown as a `comments` line in the
+    /// picker's `pr` preview pane. Rides the same forge list call as
+    /// `title`/`body`. Zero is flattened to `None` at the mapping boundary so a
+    /// PR with no comments shows nothing; also `None` for branch workflows (no
+    /// PR), for Azure DevOps (its PR-list call carries no comment count), and
+    /// for cache entries written before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment_count: Option<u32>,
 }
 
 impl CiStatus {
@@ -421,6 +453,12 @@ impl PrStatus {
 
     /// Get the style for this PR status (color + dimming for stale/draft)
     pub fn style(&self) -> Style {
+        // Cache-prime placeholder: the number is real but the cached color is
+        // a guess the live fetch is about to overwrite, so render neutral-dim
+        // (no green/red) rather than assert a CI verdict we don't yet trust.
+        if self.is_priming {
+            return Style::new().dimmed();
+        }
         let style = Style::new().fg_color(Some(Color::Ansi(self.color())));
         if self.is_stale || self.review_state == Some(ReviewState::Draft) {
             style.dimmed()
@@ -488,9 +526,14 @@ impl PrStatus {
             ci_status: CiStatus::Error,
             source: CiSource::Branch,
             is_stale: false,
+            is_priming: false,
             url: None,
             number: None,
             review_state: None,
+            title: None,
+            body: None,
+            author: None,
+            comment_count: None,
         }
     }
 
@@ -520,12 +563,20 @@ impl PrStatus {
         // Use full_name as cache key to distinguish local "feature" from remote "origin/feature"
         let now_secs = epoch_now();
 
+        // `age` saturates: under a pinned test clock (or real clock skew)
+        // `now_secs` can predate `checked_at`, so a raw subtraction would
+        // underflow-panic when this `debug!` fires (its args build at `-vv`).
+        // `saturating_sub` clamps to 0, matching `CachedCiStatus::is_valid`.
         let status = match CachedCiStatus::read(repo, &branch.full_name) {
             Some(cached) if cached.is_valid(local_head, now_secs, &repo_path) => {
-                log::debug!(
+                tracing::debug!(
+                    branch = %branch.full_name,
+                    age = %(now_secs.saturating_sub(cached.checked_at)),
+                    ttl = %CachedCiStatus::ttl_for_repo(&repo_path),
+                    status = ?cached.status.as_ref().map(|s| &s.ci_status),
                     "Using cached CI status for {} (age={}s, ttl={}s, status={:?})",
                     branch.full_name,
-                    now_secs - cached.checked_at,
+                    now_secs.saturating_sub(cached.checked_at),
                     CachedCiStatus::ttl_for_repo(&repo_path),
                     cached.status.as_ref().map(|s| &s.ci_status)
                 );
@@ -533,10 +584,14 @@ impl PrStatus {
             }
             cached => {
                 if let Some(cached) = cached {
-                    log::debug!(
+                    tracing::debug!(
+                        branch = %branch.full_name,
+                        age = %(now_secs.saturating_sub(cached.checked_at)),
+                        ttl = %CachedCiStatus::ttl_for_repo(&repo_path),
+                        head_match = %(cached.head == local_head),
                         "Cache expired for {} (age={}s, ttl={}s, head_match={})",
                         branch.full_name,
-                        now_secs - cached.checked_at,
+                        now_secs.saturating_sub(cached.checked_at),
                         CachedCiStatus::ttl_for_repo(&repo_path),
                         cached.head == local_head
                     );
@@ -584,7 +639,7 @@ impl PrStatus {
             Some(p) => platform::detect_ci(p, repo, branch, local_head, has_upstream),
             None => {
                 // Unknown platform — user should set forge.platform in project config
-                log::debug!(
+                tracing::debug!(
                     "Could not detect CI platform from remote URL; \
                      set forge.platform in .config/wt.toml for CI status"
                 );
@@ -594,9 +649,62 @@ impl PrStatus {
     }
 }
 
+/// Prime `pr_status` on items from the CI cache without touching the network.
+///
+/// The interactive picker fetches CI live, but a cached result is local data,
+/// so priming it lets the CI column and `pr` tab show cached status on the
+/// first frame while the live `CiStatus` task refreshes each row behind it. A valid
+/// entry (HEAD unchanged, within TTL) is used as-is. An expired entry that
+/// names a PR/MR is kept with `is_priming` set: a PR/MR number is stable per
+/// branch *identity*, so it still identifies the PR, but the cached CI color
+/// may be outdated, so `is_priming` renders the number neutral-dim (no
+/// green/red) until the live fetch overwrites it. An expired entry without a
+/// number is dropped — a stale dot conveys nothing but the outdated color.
+///
+/// Rows with no usable cache entry are left `None` (pending): the live task
+/// fills them, so they must not be resolved to "no PR" here.
+///
+/// `item.branch` is the cache key for every row shape: local worktrees and
+/// branches cache under the bare name, remote rows under `origin/...` —
+/// the same `full_name` the `CiStatus` task writes.
+pub(crate) fn populate_from_cache(repo: &Repository, items: &mut [super::model::ListItem]) {
+    // Common never-fetched case (no `wt list --full`/statusline run yet):
+    // skip the per-row file probes entirely.
+    if !CachedCiStatus::cache_dir_exists(repo) {
+        return;
+    }
+    let Ok(repo_path) = repo.current_worktree().root() else {
+        return;
+    };
+    let now_secs = epoch_now();
+    for item in items.iter_mut() {
+        let Some(branch) = item.branch.as_deref() else {
+            continue;
+        };
+        let Some(cached) = CachedCiStatus::read(repo, branch) else {
+            continue;
+        };
+        if cached.is_valid(&item.head, now_secs, &repo_path) {
+            item.pr_status = Some(cached.status);
+        } else if let Some(stale) = cached.status.filter(|s| s.number.is_some()) {
+            // Show the number now, but render it neutral-dim: the cached color
+            // is stale and the live task will overwrite this cell shortly.
+            // `is_stale` (a SHA mismatch) carries through from the cache as-is —
+            // the live fetch recomputes it; `is_priming` alone drives the
+            // placeholder rendering, so this never fabricates a SHA mismatch.
+            item.pr_status = Some(Some(PrStatus {
+                is_priming: true,
+                ..stale
+            }));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::super::model::ListItem;
     use super::*;
+    use worktrunk::testing::TestRepo;
 
     #[test]
     fn test_is_retriable_error() {
@@ -640,9 +748,14 @@ mod tests {
             ci_status: CiStatus::Passed,
             source: CiSource::PullRequest,
             is_stale: false,
+            is_priming: false,
             url: None,
             number: None,
             review_state: None,
+            title: None,
+            body: None,
+            author: None,
+            comment_count: None,
         };
         assert_eq!(pr_passed.indicator(), "#");
 
@@ -650,9 +763,14 @@ mod tests {
             ci_status: CiStatus::Running,
             source: CiSource::Branch,
             is_stale: false,
+            is_priming: false,
             url: None,
             number: None,
             review_state: None,
+            title: None,
+            body: None,
+            author: None,
+            comment_count: None,
         };
         assert_eq!(branch_running.indicator(), "#");
 
@@ -660,9 +778,14 @@ mod tests {
             ci_status: CiStatus::Error,
             source: CiSource::PullRequest,
             is_stale: false,
+            is_priming: false,
             url: None,
             number: None,
             review_state: None,
+            title: None,
+            body: None,
+            author: None,
+            comment_count: None,
         };
         assert_eq!(error_status.indicator(), "⚠");
     }
@@ -675,9 +798,14 @@ mod tests {
             ci_status: CiStatus::Passed,
             source: CiSource::PullRequest,
             is_stale: false,
+            is_priming: false,
             url: Some("https://github.com/owner/repo/pull/123".to_string()),
             number: Some(PrRef::pr(123)),
             review_state: None,
+            title: None,
+            body: None,
+            author: None,
+            comment_count: None,
         };
 
         // Number fits → PR reference, hyperlinked when supported
@@ -763,18 +891,44 @@ mod tests {
 
     #[test]
     fn test_pr_status_style() {
-        // Stale status gets dimmed
-        let stale = PrStatus {
-            ci_status: CiStatus::Running,
-            source: CiSource::Branch,
-            is_stale: true,
+        let passed = |is_stale: bool, is_priming: bool| PrStatus {
+            ci_status: CiStatus::Passed,
+            source: CiSource::PullRequest,
+            is_stale,
+            is_priming,
             url: None,
-            number: None,
+            number: Some(PrRef::pr(12)),
             review_state: None,
+            title: None,
+            body: None,
+            author: None,
+            comment_count: None,
         };
-        let style = stale.style();
-        // Just verify it doesn't panic and returns a style
-        let _ = format!("{style}test{style:#}");
+        let green = "\u{1b}[32m";
+        let dim = "\u{1b}[2m";
+
+        // Fresh verdict: green, not dimmed.
+        let fresh = passed(false, false).format_cell(3, false);
+        assert!(
+            fresh.contains(green) && !fresh.contains(dim),
+            "fresh: green, no dim: {fresh:?}"
+        );
+
+        // SHA-mismatch stale keeps its verdict color, dimmed — `wt list` flags a
+        // failing/passing pushed commit even when local HEAD has moved on.
+        let stale = passed(true, false).format_cell(3, false);
+        assert!(
+            stale.contains(green) && stale.contains(dim),
+            "stale: green + dim: {stale:?}"
+        );
+
+        // Cache-prime placeholder: dimmed and neutral — the number shows, but no
+        // green/red is asserted until the live fetch lands.
+        let priming = passed(false, true).format_cell(3, false);
+        assert!(
+            priming.contains(dim) && !priming.contains(green),
+            "priming: dim, neutral: {priming:?}"
+        );
     }
 
     #[test]
@@ -783,9 +937,14 @@ mod tests {
             ci_status,
             source: CiSource::PullRequest,
             is_stale: false,
+            is_priming: false,
             url: None,
             number: None,
             review_state,
+            title: None,
+            body: None,
+            author: None,
+            comment_count: None,
         };
 
         // Changes-requested outranks running and passed — waiting can't clear it
@@ -886,5 +1045,143 @@ mod tests {
         // No body at all → None.
         let out = fake_output("", "");
         assert!(retriable_pr_error(&out).is_none());
+    }
+
+    fn passed_pr_status(number: Option<u64>) -> PrStatus {
+        PrStatus {
+            ci_status: CiStatus::Passed,
+            source: CiSource::PullRequest,
+            is_stale: false,
+            is_priming: false,
+            url: None,
+            number: number.map(PrRef::pr),
+            review_state: None,
+            title: None,
+            body: None,
+            author: None,
+            comment_count: None,
+        }
+    }
+
+    fn seed_cache(
+        repo: &Repository,
+        branch: &str,
+        status: Option<PrStatus>,
+        checked_at: u64,
+        head: &str,
+    ) {
+        CachedCiStatus {
+            status,
+            checked_at,
+            head: head.to_string(),
+            branch: branch.to_string(),
+        }
+        .write(repo, branch);
+    }
+
+    #[test]
+    fn test_populate_from_cache() {
+        let test = TestRepo::new();
+        let repo = &test.repo;
+        let now = epoch_now();
+
+        seed_cache(repo, "fresh", Some(passed_pr_status(Some(123))), now, "aaa");
+        // Expired (past the 60s max TTL) but carries a number
+        seed_cache(
+            repo,
+            "expired-pr",
+            Some(passed_pr_status(Some(77))),
+            now - 10_000,
+            "bbb",
+        );
+        // Expired branch-workflow dot — no number to preserve
+        seed_cache(
+            repo,
+            "expired-dot",
+            Some(passed_pr_status(None)),
+            now - 10_000,
+            "ccc",
+        );
+        // Fresh "no CI found" entry
+        seed_cache(repo, "fresh-none", None, now, "ddd");
+
+        let mut items = vec![
+            ListItem::new_branch("aaa".to_string(), "fresh".to_string()),
+            ListItem::new_branch("bbb".to_string(), "expired-pr".to_string()),
+            ListItem::new_branch("ccc".to_string(), "expired-dot".to_string()),
+            ListItem::new_branch("ddd".to_string(), "fresh-none".to_string()),
+            ListItem::new_branch("eee".to_string(), "uncached".to_string()),
+        ];
+        populate_from_cache(repo, &mut items);
+
+        let fresh = items[0].pr_status.as_ref().unwrap().as_ref().unwrap();
+        assert_eq!(fresh.number.unwrap().number, 123);
+        assert!(!fresh.is_stale);
+
+        let expired = items[1].pr_status.as_ref().unwrap().as_ref().unwrap();
+        assert_eq!(expired.number.unwrap().number, 77);
+        assert!(expired.is_priming, "expired entries render neutral-dim");
+        // Same HEAD, only TTL expired — not a SHA mismatch, so `is_stale` stays
+        // as cached (false). The neutral-dim comes from `is_priming`, not a
+        // fabricated `is_stale`.
+        assert!(!expired.is_stale);
+
+        assert!(
+            items[2].pr_status.is_none(),
+            "expired dot with no number conveys nothing — left pending for the live fetch"
+        );
+        assert!(
+            matches!(items[3].pr_status, Some(None)),
+            "a valid no-CI entry resolves the cell to empty"
+        );
+        assert!(
+            items[4].pr_status.is_none(),
+            "uncached row stays pending — the live fetch will fill it"
+        );
+    }
+
+    #[test]
+    fn test_populate_from_cache_head_moved_primes_number() {
+        let test = TestRepo::new();
+        let repo = &test.repo;
+
+        // Fresh timestamp but the branch has new commits since the fetch —
+        // the number still identifies the PR, the colors may not.
+        seed_cache(
+            repo,
+            "feature",
+            Some(passed_pr_status(Some(9))),
+            epoch_now(),
+            "old-head",
+        );
+        let mut items = vec![ListItem::new_branch(
+            "new-head".to_string(),
+            "feature".to_string(),
+        )];
+        populate_from_cache(repo, &mut items);
+        let status = items[0].pr_status.as_ref().unwrap().as_ref().unwrap();
+        assert_eq!(status.number.unwrap().number, 9);
+        // Primed as a placeholder: the number shows now, but neutral-dim — the
+        // cached color isn't asserted until the live fetch refreshes it (which
+        // is also where `is_stale` is recomputed against the moved HEAD).
+        assert!(status.is_priming);
+    }
+
+    #[test]
+    fn test_populate_from_cache_leaves_uncached_rows_pending() {
+        // No cache at all: the row stays pending for the live fetch.
+        let test = TestRepo::new();
+        let mut items = vec![ListItem::new_branch(
+            "aaa".to_string(),
+            "feature".to_string(),
+        )];
+        populate_from_cache(&test.repo, &mut items);
+        assert!(items[0].pr_status.is_none());
+
+        // A fresh "no CI" entry is a real cache hit, so it resolves the cell
+        // to empty rather than leaving it pending for the live fetch.
+        seed_cache(&test.repo, "feature", None, epoch_now(), "aaa");
+        populate_from_cache(&test.repo, &mut items);
+        assert!(matches!(items[0].pr_status, Some(None)));
     }
 }

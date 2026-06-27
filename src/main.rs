@@ -2,7 +2,7 @@ use clap::FromArgMatches;
 use clap::error::ErrorKind as ClapErrorKind;
 use color_print::{ceprintln, cformat};
 use std::process;
-use worktrunk::config::set_config_path;
+use worktrunk::config::{set_config_overrides, set_config_path};
 use worktrunk::git::{
     ErrorExt, Repository, WorktrunkError, current_or_recover, cwd_removed_hint, set_base_path,
 };
@@ -33,10 +33,9 @@ pub(crate) use invocation::{
     binary_name, invocation_path, is_git_subcommand, was_invoked_with_explicit_path,
 };
 
-pub(crate) use crate::cli::OutputFormat;
+pub(crate) use crate::cli::{OutputFormat, StatuslineFormat};
 
 use commands::commit::HookGate;
-#[cfg(unix)]
 use commands::handle_picker;
 use commands::worktree::{PushKind, PushOutcome, PushResult, handle_no_ff_merge, handle_push};
 use commands::{
@@ -46,7 +45,7 @@ use commands::{
     handle_claude_uninstall, handle_codex_install, handle_codex_uninstall, handle_completions,
     handle_config_create, handle_config_show, handle_config_update, handle_configure_shell,
     handle_custom_command, handle_hints_clear, handle_hints_get, handle_hook_show, handle_init,
-    handle_list, handle_logs_list, handle_merge, handle_opencode_install,
+    handle_list, handle_logs_list, handle_logs_profile, handle_merge, handle_opencode_install,
     handle_opencode_uninstall, handle_promote, handle_rebase, handle_remove_command,
     handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get,
     handle_state_set, handle_state_show, handle_switch_command, handle_unconfigure_shell,
@@ -183,7 +182,11 @@ fn handle_hook_command(action: HookCommand, yes: bool) -> anyhow::Result<()> {
     }
 }
 
-fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
+fn handle_step_command(
+    action: StepCommand,
+    working_dir: Option<std::path::PathBuf>,
+    yes: bool,
+) -> anyhow::Result<()> {
     match action {
         StepCommand::Commit(args) => {
             let verify = args.hooks.resolve();
@@ -361,9 +364,17 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
             to,
             dry_run,
             force,
+            require_include,
             format,
-        } => step_copy_ignored(from.as_deref(), to.as_deref(), dry_run, force, format),
-        StepCommand::Eval { template, dry_run } => step_eval(&template, dry_run),
+        } => step_copy_ignored(
+            from.as_deref(),
+            to.as_deref(),
+            dry_run,
+            force,
+            require_include,
+            format,
+        ),
+        StepCommand::Eval { template, format } => step_eval(&template, format),
         StepCommand::ForEach { format, args } => step_for_each(args, format),
         StepCommand::Promote { branch } => {
             handle_promote(branch.as_deref()).map(|result| match result {
@@ -391,7 +402,7 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
             clobber,
             format,
         } => step_relocate(branches, dry_run, commit, clobber, format),
-        StepCommand::Tether { command } => step_tether(&command),
+        StepCommand::Tether { command } => step_tether(&command, working_dir.as_deref()),
         StepCommand::External(args) => commands::step_alias(args, yes),
     }
 }
@@ -509,6 +520,7 @@ fn handle_state_command(action: StateCommand, yes: bool) -> anyhow::Result<()> {
             }
             match action {
                 Some(LogsAction::Get) | None => handle_logs_list(format),
+                Some(LogsAction::Profile { file }) => handle_logs_profile(file, format),
                 Some(LogsAction::Clear) => handle_state_clear("logs", None, false),
             }
         }
@@ -646,8 +658,8 @@ fn handle_list_command(args: ListArgs) -> anyhow::Result<()> {
             }
             // Hidden --claude-code flag only applies when format is default (Table)
             // Explicit --format=json takes precedence over --claude-code
-            let effective_format = if claude_code && matches!(format, OutputFormat::Table) {
-                OutputFormat::ClaudeCode
+            let effective_format = if claude_code && matches!(format, StatuslineFormat::Table) {
+                StatuslineFormat::ClaudeCode
             } else {
                 format
             };
@@ -667,20 +679,11 @@ fn handle_list_command(args: ListArgs) -> anyhow::Result<()> {
     }
 }
 
-#[cfg(unix)]
 fn handle_select_command(branches: bool, remotes: bool) -> anyhow::Result<()> {
     // Deprecated: show warning and delegate to handle_picker
     warn_select_deprecated();
     worktrunk::config::suppress_warnings();
-    handle_picker(branches, remotes, None, SwitchFormat::Text)
-}
-
-#[cfg(not(unix))]
-fn handle_select_command(_branches: bool, _remotes: bool) -> anyhow::Result<()> {
-    use worktrunk::git::WorktrunkError;
-    warn_select_deprecated();
-    commands::print_windows_picker_unavailable();
-    Err(WorktrunkError::AlreadyDisplayed { exit_code: 1 }.into())
+    handle_picker(branches, remotes, false, None, SwitchFormat::Text)
 }
 
 /// Rayon thread count sized for mixed git+network I/O workloads.
@@ -726,8 +729,8 @@ fn parse_cli() -> Option<Cli> {
     // The same early parse also tells us whether this is help for the top
     // level or `wt step`, so the splice path in `augment_help` has no
     // separate arg scanner.
-    let (directory, config, alias_help_context) = parse_early_globals();
-    apply_global_options(directory, config);
+    let (directory, config, config_overrides, alias_help_context) = parse_early_globals();
+    apply_global_options(directory, config, config_overrides);
 
     // Handle --help with pager before clap processes it.
     // Exits the process on a help/version/doc request; otherwise returns.
@@ -747,7 +750,11 @@ fn parse_cli() -> Option<Cli> {
     Some(Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit()))
 }
 
-fn apply_global_options(directory: Option<std::path::PathBuf>, config: Option<std::path::PathBuf>) {
+fn apply_global_options(
+    directory: Option<std::path::PathBuf>,
+    config: Option<std::path::PathBuf>,
+    config_overrides: Vec<String>,
+) {
     // Initialize base path from -C flag if provided
     if let Some(path) = directory {
         set_base_path(path);
@@ -757,11 +764,16 @@ fn apply_global_options(directory: Option<std::path::PathBuf>, config: Option<st
     if let Some(path) = config {
         set_config_path(path);
     }
+
+    // Record any --config-set overrides for the config loader.
+    if !config_overrides.is_empty() {
+        set_config_overrides(config_overrides);
+    }
 }
 
-/// Parse global options (`-C`, `--config`) and detect whether this invocation
-/// renders help that should include the configured aliases — in a single pass
-/// against the real `Cli` definition.
+/// Parse global options (`-C`, `--config`, `--config-set`) and detect whether this
+/// invocation renders help that should include the configured aliases — in a
+/// single pass against the real `Cli` definition.
 ///
 /// Uses `ignore_errors(true)` so unknown args, missing values, and `--help`
 /// don't abort parsing — we just read what matched. This lets `wt -C other
@@ -774,16 +786,21 @@ fn apply_global_options(directory: Option<std::path::PathBuf>, config: Option<st
 fn parse_early_globals() -> (
     Option<std::path::PathBuf>,
     Option<std::path::PathBuf>,
+    Vec<String>,
     Option<commands::HelpContext>,
 ) {
     let cmd = cli::build_command()
         .ignore_errors(true)
         .disable_help_flag(true);
     let Ok(matches) = cmd.try_get_matches_from(std::env::args_os()) else {
-        return (None, None, None);
+        return (None, None, Vec::new(), None);
     };
     let directory = matches.get_one::<std::path::PathBuf>("directory").cloned();
     let config = matches.get_one::<std::path::PathBuf>("config").cloned();
+    let config_overrides = matches
+        .get_many::<String>("config_override")
+        .map(|values| values.cloned().collect())
+        .unwrap_or_default();
     // Top-level help: `wt --help` (or `-h`, or bare `wt` via `arg_required_else_help`)
     // lands here with no subcommand matched. Step help: `wt step --help` (or
     // `-h`, or bare `wt step`) matches `step` with nothing past it. Other
@@ -793,7 +810,7 @@ fn parse_early_globals() -> (
         Some(("step", sub)) if sub.subcommand_name().is_none() => Some(commands::HelpContext::Step),
         _ => None,
     };
-    (directory, config, alias_help_context)
+    (directory, config, config_overrides, alias_help_context)
 }
 
 fn init_command_log(command_line: &str) {
@@ -852,7 +869,7 @@ fn dispatch_command(
 ) -> anyhow::Result<()> {
     match command {
         Commands::Config { action } => handle_config_command(action, yes),
-        Commands::Step { action } => handle_step_command(action, yes),
+        Commands::Step { action } => handle_step_command(action, working_dir, yes),
         Commands::Hook { action } => handle_hook_command(action, yes),
         Commands::Select { branches, remotes } => handle_select_command(branches, remotes),
         Commands::List(args) => handle_list_command(args),
@@ -966,7 +983,7 @@ fn format_command_error(error: &anyhow::Error) -> String {
                         false,
                         "Multiline error without CommandError or context: {msg}"
                     );
-                    log::warn!("Multiline error without CommandError or context: {msg}");
+                    tracing::warn!("Multiline error without CommandError or context: {msg}");
                     let normalized = msg.replace("\r\n", "\n").replace('\r', "\n");
                     let _ = writeln!(out, "{}", error_message("Command failed"));
                     let _ = writeln!(out, "{}", format_with_gutter(&normalized, None));
@@ -1043,14 +1060,20 @@ fn main() {
     let Cli {
         directory,
         config,
+        config_override,
         verbose,
         yes,
         command,
     } = cli;
+    // `WORKTRUNK_VERBOSE` provides a baseline verbosity the `-v`/`-vv` flags
+    // raise but never lower (`max`). It also drives shell completion, which
+    // exits in `parse_cli` before reaching here — see
+    // `completion::maybe_handle_env_completion`.
+    let verbose = verbose.max(logging::env_verbose_level());
     // Globals were already applied in `parse_cli` before help rendering;
     // OnceLock makes this call a no-op, but keeping it avoids touching the
     // existing destructure pattern.
-    apply_global_options(directory.clone(), config);
+    apply_global_options(directory.clone(), config, config_override);
 
     // Latch warning suppression for commands whose UX is broken by stderr
     // noise — TUI pickers (`switch` without a branch, `select`) and

@@ -8,7 +8,21 @@ use super::highlighting::bash_token_style;
 use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter};
 
 // Import canonical implementations from parent module
-use super::{terminal_width, visual_width};
+use super::{terminal_width, truncate_visible, visual_width};
+
+/// How a gutter line that exceeds the available width is fitted.
+///
+/// `Wrap` word-wraps onto continuation lines — the right choice for commands and
+/// config, where every token must stay readable. `Chop` truncates with an
+/// ellipsis, preserving horizontal alignment — the right choice for pre-formatted
+/// tabular output (e.g. captured `wt list` tables in help text), where wrapping
+/// would shear the columns apart and a paste is never intended.
+#[cfg(feature = "syntax-highlighting")]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum LineFit {
+    Wrap,
+    Chop,
+}
 
 /// Width overhead added by format_with_gutter()
 ///
@@ -244,7 +258,11 @@ fn unique_template_placeholders(content: &str) -> (String, String) {
 }
 
 #[cfg(feature = "syntax-highlighting")]
-fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) -> String {
+fn format_bash_with_gutter_impl(
+    content: &str,
+    width_override: Option<usize>,
+    fit: LineFit,
+) -> String {
     // Normalize line endings: CRLF to LF, and trim trailing newlines.
     // Trailing newlines would create spurious blank gutter lines because
     // style restoration after newlines produces `\n[DIM]` which becomes
@@ -415,8 +433,22 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
                 .or_else(|| line.strip_suffix(dim_open.as_str()))
                 .unwrap_or(line)
         })
-        .flat_map(|line| wrap_styled_text(line, available_width))
-        .map(|wrapped| format!("{gutter} {gutter:#} {wrapped}{reset}"))
+        .flat_map(|line| match fit {
+            LineFit::Wrap => wrap_styled_text(line, available_width),
+            LineFit::Chop => {
+                // truncate_visible ends a chopped line with a bare `…\x1b[0m`. Re-dim
+                // the ellipsis so it matches the dimmed block instead of rendering at
+                // full brightness, and drop its reset — the gutter map below appends
+                // the single trailing reset that every line gets.
+                let chopped = truncate_visible(line, available_width);
+                let chopped = match chopped.strip_suffix("…\u{1b}[0m") {
+                    Some(head) => format!("{head}{dim}…"),
+                    None => chopped,
+                };
+                vec![chopped]
+            }
+        })
+        .map(|fitted| format!("{gutter} {gutter:#} {fitted}{reset}"))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -437,15 +469,27 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
 /// ```
 #[cfg(feature = "syntax-highlighting")]
 pub fn format_bash_with_gutter(content: &str) -> String {
-    format_bash_with_gutter_impl(content, None)
+    format_bash_with_gutter_impl(content, None, LineFit::Wrap)
+}
+
+/// Like [`format_bash_with_gutter`], but truncates over-wide lines instead of
+/// wrapping them. For pre-formatted tabular output where alignment matters more
+/// than seeing every column (captured `wt list` tables in `--help`).
+#[cfg(feature = "syntax-highlighting")]
+pub fn format_bash_with_gutter_chopped(content: &str) -> String {
+    format_bash_with_gutter_impl(content, None, LineFit::Chop)
 }
 
 /// Test-only helper to force a specific terminal width for deterministic output.
 ///
 /// This avoids env var mutation which is unsafe in parallel tests.
 #[cfg(all(test, feature = "syntax-highlighting"))]
-pub(crate) fn format_bash_with_gutter_at_width(content: &str, width: usize) -> String {
-    format_bash_with_gutter_impl(content, Some(width))
+pub(crate) fn format_bash_with_gutter_at_width(
+    content: &str,
+    width: usize,
+    fit: LineFit,
+) -> String {
+    format_bash_with_gutter_impl(content, Some(width), fit)
 }
 
 /// Format bash commands with gutter (fallback without syntax highlighting)
@@ -455,6 +499,25 @@ pub(crate) fn format_bash_with_gutter_at_width(content: &str, width: usize) -> S
 #[cfg(not(feature = "syntax-highlighting"))]
 pub fn format_bash_with_gutter(content: &str) -> String {
     format_with_gutter(content, None)
+}
+
+/// Chopping counterpart to [`format_bash_with_gutter`] for the no-highlighting
+/// fallback build. Mirrors [`format_with_gutter`]'s gutter, truncating each line.
+#[cfg(not(feature = "syntax-highlighting"))]
+pub fn format_bash_with_gutter_chopped(content: &str) -> String {
+    let gutter = super::GUTTER;
+    let term_width = terminal_width().unwrap_or(usize::MAX);
+    let available_width = term_width.saturating_sub(2);
+    content
+        .lines()
+        .map(|line| {
+            format!(
+                "{gutter} {gutter:#} {}",
+                truncate_visible(line, available_width)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]
@@ -571,17 +634,48 @@ mod tests {
     #[test]
     #[cfg(feature = "syntax-highlighting")]
     fn test_format_bash_with_gutter() {
-        assert_snapshot!(format_bash_with_gutter_at_width("echo hello", 80), @"[107m [0m [2m[0m[2m[34mecho[0m[2m hello[0m");
+        assert_snapshot!(format_bash_with_gutter_at_width("echo hello", 80, LineFit::Wrap), @"[107m [0m [2m[0m[2m[34mecho[0m[2m hello[0m");
         assert_snapshot!(
-            format_bash_with_gutter_at_width("echo line1\necho line2", 80),
+            format_bash_with_gutter_at_width("echo line1\necho line2", 80, LineFit::Wrap),
             @"
         [107m [0m [2m[0m[2m[34mecho[0m[2m line1[0m
         [107m [0m [2m[0m[2m[34mecho[0m[2m line2[0m
         "
         );
         assert_snapshot!(
-            format_bash_with_gutter_at_width("npm install && cargo build --release", 100),
+            format_bash_with_gutter_at_width("npm install && cargo build --release", 100, LineFit::Wrap),
             @"[107m [0m [2m[0m[2m[34mnpm[0m[2m install [0m[2m[36m&&[0m[2m [0m[2m[34mcargo[0m[2m build [0m[2m[36m--release[0m"
+        );
+    }
+
+    /// `LineFit::Chop` truncates an over-wide line to a single gutter line ending in
+    /// a dimmed ellipsis (one trailing reset, no full-brightness `…`); `LineFit::Wrap`
+    /// of the same content spills onto continuation lines instead. A line that fits
+    /// is untouched — Chop and Wrap agree.
+    #[test]
+    #[cfg(feature = "syntax-highlighting")]
+    fn test_format_bash_with_gutter_chop() {
+        let wide = "echo one two three four five six seven eight";
+
+        // Chop: one line, dimmed ellipsis, single trailing reset.
+        assert_snapshot!(
+            format_bash_with_gutter_at_width(wide, 30, LineFit::Chop),
+            @"[107m [0m [2m[0m[2m[34mecho[0m[2m one two three four fiv[22m[2m…[0m"
+        );
+
+        // Wrap: the same content continues onto a second gutter line.
+        assert_snapshot!(
+            format_bash_with_gutter_at_width(wide, 30, LineFit::Wrap),
+            @"
+        [107m [0m [2m[0m[2m[34mecho[0m[2m one two three four five[0m
+        [107m [0m [2m six seven eight[0m
+        "
+        );
+
+        // A line that fits is identical under Chop and Wrap.
+        assert_eq!(
+            format_bash_with_gutter_at_width("echo hi", 80, LineFit::Chop),
+            format_bash_with_gutter_at_width("echo hi", 80, LineFit::Wrap),
         );
     }
 
@@ -639,7 +733,7 @@ mod tests {
         use ansi_str::AnsiStr;
 
         let cmd = r#"if [ "{{ target }}" = "main" ]; then git pull && git push; fi"#;
-        let result = format_bash_with_gutter_at_width(cmd, 120);
+        let result = format_bash_with_gutter_at_width(cmd, 120, LineFit::Wrap);
 
         assert_snapshot!(result.ansi_strip(), @r#"  if [ "{{ target }}" = "main" ]; then git pull && git push; fi"#);
     }
@@ -696,7 +790,7 @@ mod tests {
 
         // Path with `WTC` embedded (the actual failure shape seen on Windows CI).
         let path = r"D:\tmp\.tmpOuiWTC\repo/../repo.feature";
-        let stripped = format_bash_with_gutter_at_width(path, 120)
+        let stripped = format_bash_with_gutter_at_width(path, 120, LineFit::Wrap)
             .ansi_strip()
             .into_owned();
         assert!(stripped.contains("WTC"), "{stripped}");
@@ -704,7 +798,7 @@ mod tests {
 
         // Same with `WTO`.
         let path = "echo /a/b/WTO/c";
-        let stripped = format_bash_with_gutter_at_width(path, 120)
+        let stripped = format_bash_with_gutter_at_width(path, 120, LineFit::Wrap)
             .ansi_strip()
             .into_owned();
         assert!(stripped.contains("WTO"), "{stripped}");
@@ -720,13 +814,13 @@ mod tests {
     #[cfg(feature = "syntax-highlighting")]
     fn test_trailing_cr_is_normalized() {
         assert_eq!(
-            format_bash_with_gutter_at_width("echo hello\r", 80),
-            format_bash_with_gutter_at_width("echo hello", 80),
+            format_bash_with_gutter_at_width("echo hello\r", 80, LineFit::Wrap),
+            format_bash_with_gutter_at_width("echo hello", 80, LineFit::Wrap),
         );
         // The failure shape: last line ends in a highlighted token.
         assert_eq!(
-            format_bash_with_gutter_at_width("function wt\n    wt $argv\nend\r", 80),
-            format_bash_with_gutter_at_width("function wt\n    wt $argv\nend", 80),
+            format_bash_with_gutter_at_width("function wt\n    wt $argv\nend\r", 80, LineFit::Wrap),
+            format_bash_with_gutter_at_width("function wt\n    wt $argv\nend", 80, LineFit::Wrap),
         );
     }
 }

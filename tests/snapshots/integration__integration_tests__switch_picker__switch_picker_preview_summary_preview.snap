@@ -2,8 +2,8 @@
 source: tests/integration_tests/switch_picker.rs
 expression: preview
 ---
-1: HEAD± | 2: log | 3: main…± | 4: remote⇅ | 5: summary [N/M]
-Enter: switch | alt-c: create | Esc: cancel | ctrl-u/d: scr
+1 2 3 4 5: summary 6 7
+Enter: switch | ctrl-u/d: scroll | Tab/alt-1…7: preview | a
 
 Configure [commit.generation] command to enable LLM summari
 

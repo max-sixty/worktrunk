@@ -41,17 +41,18 @@ Usage: [1m[36mwt list[0m [36m[OPTIONS][0m
   [1m[36mstatusline[0m  Single-line status for shell prompts
 
 [1m[32mOptions:[0m
-      [1m[36m--format[0m[36m [0m[36m<FORMAT>[0m  Output format (table, json) [default: table]
+      [1m[36m--format[0m[36m [0m[36m<FORMAT>[0m  Output format [default: table] [possible values: table, json]
       [1m[36m--branches[0m         Include branches without worktrees
       [1m[36m--remotes[0m          Include remote branches
-      [1m[36m--full[0m             Show CI, diff analysis, and LLM summaries
+      [1m[36m--full[0m             Show CI status and LLM summaries
       [1m[36m--progressive[0m      Show fast info immediately, update with slow info
   [1m[36m-h[0m, [1m[36m--help[0m             Print help (see more with '--help')
 
 [1m[32mGlobal Options:[0m
-  [1m[36m-C[0m[36m [0m[36m<path>[0m            Working directory for this command
-      [1m[36m--config[0m[36m [0m[36m<path>[0m  User config file path
-  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m     Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/)
-  [1m[36m-y[0m, [1m[36m--yes[0m            Skip approval prompts
+  [1m[36m-C[0m[36m [0m[36m<path>[0m                Working directory for this command
+      [1m[36m--config[0m[36m [0m[36m<path>[0m      User config file path
+      [1m[36m--config-set[0m[36m [0m[36m<toml>[0m  Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m         Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to apply the same level everywhere — including shell completion, which no flag can reach
+  [1m[36m-y[0m, [1m[36m--yes[0m                Skip approval prompts
 
 ----- stderr -----

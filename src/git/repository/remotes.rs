@@ -91,8 +91,9 @@
 
 use anyhow::Context;
 
-use super::{GitRemoteUrl, Repository};
+use super::{GitRemoteUrl, GitRepoInfo, Repository};
 use crate::git::error::RefType;
+use crate::git::url_path_segments_eq;
 
 impl Repository {
     /// Get the primary remote name for this repository.
@@ -234,8 +235,8 @@ impl Repository {
                 .is_some_and(|o| o.eq_ignore_ascii_case(organization))
                 && parsed
                     .azure_project()
-                    .is_some_and(|p| p.eq_ignore_ascii_case(project))
-                && parsed.repo().eq_ignore_ascii_case(repo_name)
+                    .is_some_and(|p| url_path_segments_eq(p, project))
+                && url_path_segments_eq(parsed.repo(), repo_name)
         })
     }
 
@@ -295,16 +296,36 @@ impl Repository {
             .and_then(GitRemoteUrl::parse)
     }
 
-    /// Repository web URL derived from the primary remote.
+    /// Configured `[forge].platform` override, if any.
     ///
-    /// Local-only: built from the cached primary remote URL via
-    /// [`GitRemoteUrl::web_url`], with no network access. Returns `None` when no
-    /// remote is configured or the URL doesn't parse as a forge remote. In rare
-    /// multi-remote mirror setups this may name a different forge than a
-    /// branch's CI URL, since it always derives from the primary remote
-    /// (matching [`project_identifier`](Self::project_identifier)).
-    pub fn repo_web_url(&self) -> Option<String> {
-        self.primary_remote_parsed_url().and_then(|u| u.web_url())
+    /// Local-only: reads (and may cache) project config. Every structured-output
+    /// path that derives a forge provider feeds this into the URL parser so a
+    /// self-hosted instance whose host can't be auto-detected reports the
+    /// configured provider instead of `unknown`. Centralized here so the three
+    /// call sites (`wt list`, `wt list statusline`, `wt config state ci-status`)
+    /// can't drift — see `repo_info` and `json_output::JsonCi`.
+    pub fn forge_platform_override(&self) -> Option<String> {
+        self.project_config()
+            .ok()
+            .flatten()
+            .and_then(|config| config.forge_platform().map(str::to_string))
+    }
+
+    /// Repository metadata derived from the primary remote.
+    ///
+    /// Local-only: built from the cached primary remote URL and optional
+    /// `[forge].platform`, with no network access. This may load/cache project
+    /// config to inspect the configured forge platform. The returned
+    /// [`GitRepoInfo::remote`] names which local remote was used, so structured
+    /// JSON can report it.
+    pub fn repo_info(&self) -> Option<GitRepoInfo> {
+        let remote = self.primary_remote().ok()?;
+        let url = self.remote_url(&remote)?;
+        let parsed = GitRemoteUrl::parse(&url)?;
+        let provider_override = self.forge_platform_override();
+        let mut info = parsed.repo_info(provider_override.as_deref())?;
+        info.remote = Some(remote);
+        Some(info)
     }
 
     /// Parsed URL of the remote that belongs to a particular forge.

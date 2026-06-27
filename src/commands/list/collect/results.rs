@@ -101,8 +101,8 @@ fn pick_pending_hint<'a>(
 ///
 /// Errors are collected in the `errors` vec for display after rendering. No
 /// defaults are applied — an errored field stays `None`, so the renderer
-/// shows its standard placeholder and `compute_status_symbols` stays a
-/// no-op for that item.
+/// shows its standard placeholder and the gate that reads it in
+/// `refresh_status_symbols` stays unresolved.
 ///
 /// Callers decide how to handle timeout:
 /// - `collect()`: Shows user-facing diagnostic (interactive command)
@@ -417,9 +417,9 @@ mod tests {
         item.upstream = Some(UpstreamStatus::default());
     }
 
-    /// True iff `compute_status_symbols` produced its full output (using
+    /// True iff `refresh_status_symbols` resolved every gate (using
     /// the seed values from `seed_all_fields`). False iff status is at
-    /// default (nothing computed) or the metadata-only fallback ran.
+    /// default (nothing computed) or only the metadata-only gate ran.
     fn full_computation_ran(item: &ListItem) -> bool {
         item.status_symbols.main_state == Some(MainState::Diverged)
     }
@@ -748,8 +748,14 @@ mod tests {
 
     #[test]
     fn test_drain_results_does_not_fire_stall_when_results_flow() {
-        // Results arrive faster than the stall threshold, so no Stall event
-        // should fire. last_result_time is reset on each received result.
+        // The result is already queued and tx is dropped before draining, so
+        // the drain processes the result and then exits on channel disconnect
+        // without ever hitting a recv timeout — the stall path is never taken.
+        // The deadline is just a guard that must never win the race against the
+        // already-available work, so use the generous DRAIN_TIMEOUT (like the
+        // sibling Complete tests) rather than a tight wall-clock bound: a slow
+        // runner's scheduling delay before the first recv could otherwise let
+        // an undersized deadline fire first and flip the outcome to TimedOut.
         let (tx, rx) = crossbeam_channel::unbounded();
         let mut items = vec![ListItem::new_branch("abc123".into(), "feat".into())];
         let mut errors = Vec::new();
@@ -770,10 +776,10 @@ mod tests {
             &mut items,
             &mut errors,
             &expected,
-            Instant::now() + Duration::from_millis(50),
+            Instant::now() + DRAIN_TIMEOUT,
             None,
             StallTimings {
-                threshold: Duration::from_secs(10), // far exceeds deadline
+                threshold: Duration::from_secs(10),
                 tick: Duration::from_millis(20),
             },
             |event| {

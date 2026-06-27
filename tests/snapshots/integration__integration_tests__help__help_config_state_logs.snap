@@ -39,8 +39,9 @@ wt config state logs - Operation and debug logs
 Usage: [1m[36mwt config state logs[0m [36m[OPTIONS][0m [36m[COMMAND][0m
 
 [1m[32mCommands:[0m
-  [1m[36mget[0m    List all log file paths
-  [1m[36mclear[0m  Clear all log files
+  [1m[36mget[0m      List all log file paths
+  [1m[36mprofile[0m  Performance profile from a trace log
+  [1m[36mclear[0m    Clear all log files
 
 [1m[32mOptions:[0m
   [1m[36m-h[0m, [1m[36m--help[0m
@@ -57,8 +58,11 @@ Usage: [1m[36mwt config state logs[0m [36m[OPTIONS][0m [36m[COMMAND][0m
       [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
+      [1m[36m--config-set[0m[36m [0m[36m<toml>[0m
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to apply the same level everywhere — including shell completion, which no flag can reach
 
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
@@ -103,7 +107,7 @@ All [2mpost-*[0m hooks (post-start, post-switch, post-commit, post-merge) run 
  [2msubprocess.log[0m Running with [2m-vv[0m 
  [2mdiagnostic.md[0m  Running with [2m-vv[0m 
 
-[2mtrace.log[0m captures debug-level records at [2m-vv[0m — commands, [2m[wt-trace][0m records, bounded subprocess previews. [2msubprocess.log[0m holds the raw uncapped subprocess stdout/stderr bodies. [2mdiagnostic.md[0m is a markdown bug-report bundle that inlines [2mtrace.log[0m; [2mwt[0m prints a [2mgh gist create[0m command pointing at it. All three are overwritten on each [2m-vv[0m run.
+[2mtrace.log[0m captures debug-level records at [2m-vv[0m — commands, [2m[wt-trace][0m records, bounded subprocess previews. [2mwt config state logs profile[0m summarizes one into a performance report (where time went, parallelism, redundant commands). [2msubprocess.log[0m holds the raw uncapped subprocess stdout/stderr bodies. [2mdiagnostic.md[0m is a markdown bug-report bundle that inlines [2mtrace.log[0m and a rendered performance profile; [2mwt[0m prints a [2mgh gist create[0m command pointing at it. All three are overwritten on each [2m-vv[0m run.
 
 [1m[32mLocation[0m
 

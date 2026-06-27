@@ -56,19 +56,6 @@
             || (baseNameOf p == "gemini-extension.json");
         };
 
-        # Vendored path dependencies (vendor/skim-tuikit) need their real
-        # source preserved during buildDepsOnly — crane's mkDummySrc stubs
-        # all .rs files, but [patch.crates-io] path deps must compile for
-        # downstream crates (skim) to resolve their imports. Kept as a
-        # separate derivation so non-vendor source edits don't invalidate
-        # the dependency cache.
-        vendorSrc = pkgs.lib.cleanSourceWith {
-          src = ./.;
-          filter =
-            path: _type:
-            pkgs.lib.hasInfix "/vendor/" path || pkgs.lib.hasSuffix "/vendor" path;
-        };
-
         # Common arguments for crane builds
         commonArgs = {
           inherit src;
@@ -99,21 +86,7 @@
         };
 
         # Build just the cargo dependencies for caching.
-        # extraDummyScript restores vendor/ after mkDummySrc stubs all .rs
-        # files — without this, [patch.crates-io] path deps are empty crates.
-        cargoArtifacts = craneLib.buildDepsOnly (
-          commonArgs
-          // {
-            dummySrc = craneLib.mkDummySrc {
-              src = commonArgs.src;
-              extraDummyScript = ''
-                rm -rf $out/vendor
-                cp -r ${vendorSrc}/vendor $out/vendor
-                chmod -R u+w $out/vendor
-              '';
-            };
-          }
-        );
+        cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 
         # Build the actual package
         worktrunk = craneLib.buildPackage (

@@ -125,7 +125,7 @@ pub fn stop_fsmonitor_daemon(worktree: &WorkingTree) {
     let socket = match worktree.git_dir() {
         Ok(git_dir) => git_dir.join("fsmonitor--daemon.ipc"),
         Err(e) => {
-            log::debug!("fsmonitor: could not resolve git dir, skipping force-kill: {e}");
+            tracing::debug!(error = %e, "fsmonitor: could not resolve git dir, skipping force-kill: {e}");
             return;
         }
     };
@@ -159,7 +159,7 @@ fn force_kill_fsmonitor_via_socket(socket: &Path) {
     {
         Ok(output) => output,
         Err(e) => {
-            log::debug!("fsmonitor: lsof failed, cannot force-kill: {e}");
+            tracing::debug!(error = %e, "fsmonitor: lsof failed, cannot force-kill: {e}");
             return;
         }
     };
@@ -379,7 +379,7 @@ pub fn stage_worktree_removal(repo: &Repository, worktree_path: &Path) -> Option
 
     if std::fs::rename(worktree_path, &staged_path).is_ok() {
         if let Err(e) = repo.prune_worktrees() {
-            log::debug!("Failed to prune worktrees after rename: {e}");
+            tracing::debug!(error = %e, "Failed to prune worktrees after rename: {e}");
         }
         Some(staged_path)
     } else {

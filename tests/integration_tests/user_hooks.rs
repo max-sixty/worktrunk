@@ -7,8 +7,9 @@
 //! - Skipped together with project hooks via --no-hooks
 
 use crate::common::{
-    TestRepo, make_snapshot_cmd, make_snapshot_cmd_with_global_flags, repo, resolve_git_common_dir,
-    setup_snapshot_settings, wait_for_file, wait_for_file_content, wait_for_file_count,
+    SLEEP_FOR_ABSENCE_CHECK, TestRepo, make_snapshot_cmd, make_snapshot_cmd_with_global_flags,
+    repo, resolve_git_common_dir, setup_snapshot_settings, wait_for_file, wait_for_file_content,
+    wait_for_file_count,
 };
 use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
@@ -17,11 +18,6 @@ use rstest::rstest;
 use std::fs;
 use std::thread;
 use std::time::Duration;
-
-// Note: Duration is still imported for SLEEP_FOR_ABSENCE_CHECK (testing command did NOT run)
-
-/// Wait duration when checking file absence (testing command did NOT run).
-const SLEEP_FOR_ABSENCE_CHECK: Duration = Duration::from_millis(500);
 
 // ============================================================================
 // User Post-Create Hook Tests
@@ -415,7 +411,7 @@ long = "sh -c 'echo start >> hook.log; sleep 30; echo done >> hook.log'"
     );
 
     // Give the (killed) hook a moment; it must not append "done"
-    thread::sleep(Duration::from_millis(500));
+    thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
 
     let mut contents = String::new();
     std::fs::File::open(&hook_log)
@@ -475,7 +471,7 @@ long = "sh -c 'echo start >> hook.log; sleep 30; echo done >> hook.log'"
     );
 
     // Give the (killed) hook a moment; it must not append "done"
-    thread::sleep(Duration::from_millis(500));
+    thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
 
     let mut contents = String::new();
     std::fs::File::open(&hook_log)
@@ -884,7 +880,7 @@ marker = "echo 'SHOULD_NOT_RUN' > ../no_hooks_postremove.txt"
         .parent()
         .unwrap()
         .join("no_hooks_postremove.txt");
-    thread::sleep(Duration::from_millis(500)); // Wait to ensure hook would have run if enabled
+    thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     assert!(
         !marker_file.exists(),
         "Post-remove hook should be skipped when --no-hooks is used"

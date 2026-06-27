@@ -39,6 +39,7 @@ use std::process::Command;
 use crate::config::sanitize_branch_name;
 use crate::git::Repository;
 use crate::shell_exec::{Cmd, INHERITED_GIT_PATH_VARS};
+use path_slash::PathExt;
 
 use self::mock_commands::{MockConfig, MockResponse};
 
@@ -160,22 +161,30 @@ fn copy_standard_fixture(dest: &Path) -> FixtureWorktrees {
     // Canonicalize dest for worktrees map (on macOS /var -> /private/var)
     let canonical_dest = canonicalize(dest).unwrap();
 
-    // Fix gitdir files - fixture uses _git which we rename to .git
-    // Paths are relative so no absolute path replacement needed
+    // Fix gitdir files: the fixture uses _git which we rename to .git, and
+    // each copied repo needs links that point at its own tempdir. Use absolute
+    // paths, matching `git worktree add`, so `git worktree list` does not
+    // interpret fixture-relative paths from the wrong base on some Git builds.
     for wt in ["feature-a", "feature-b", "feature-c"] {
+        let worktree_path = canonical_dest.join(format!("repo.{wt}"));
+        let worktree_gitdir = worktree_path.join(".git").to_slash_lossy().into_owned();
+        let main_worktree_gitdir = canonical_dest
+            .join("repo")
+            .join(".git")
+            .join("worktrees")
+            .join(format!("repo.{wt}"))
+            .to_slash_lossy()
+            .into_owned();
+
         let gitdir_path = dest.join(format!("repo.{wt}/.git"));
         if gitdir_path.exists() {
-            let content = std::fs::read_to_string(&gitdir_path).unwrap();
-            let fixed = content.replace("_git", ".git");
-            std::fs::write(&gitdir_path, fixed).unwrap();
+            std::fs::write(&gitdir_path, format!("gitdir: {main_worktree_gitdir}\n")).unwrap();
         }
 
         // Fix main repo's worktree gitdir reference
         let main_gitdir = dest.join(format!("repo/.git/worktrees/repo.{wt}/gitdir"));
         if main_gitdir.exists() {
-            let content = std::fs::read_to_string(&main_gitdir).unwrap();
-            let fixed = content.replace("_git", ".git");
-            std::fs::write(&main_gitdir, fixed).unwrap();
+            std::fs::write(&main_gitdir, format!("{worktree_gitdir}\n")).unwrap();
         }
     }
 
@@ -735,6 +744,10 @@ pub fn set_temp_home_env(cmd: &mut Command, home: &Path) {
     // OpenCode: override config dir to avoid platform-specific dirs::config_dir() differences
     // (Linux: ~/.config, macOS: ~/Library/Application Support, Windows: AppData\Roaming)
     cmd.env("OPENCODE_CONFIG_DIR", home.join("opencode-config"));
+    // Claude Code: pin the config dir to the temp home's `.claude` so detection
+    // matches the setup helpers and stays hermetic against an ambient
+    // CLAUDE_CONFIG_DIR inherited from the test runner's environment.
+    cmd.env("CLAUDE_CONFIG_DIR", home.join(".claude"));
 }
 
 /// Override `WORKTRUNK_CONFIG_PATH` to point to the XDG-derived user config path
@@ -2721,6 +2734,28 @@ impl ExponentialBackoff {
 fn exponential_sleep(attempt: u32) {
     ExponentialBackoff::default().sleep(attempt);
 }
+
+/// Fixed window for an **absence** assertion, proving that something did
+/// *not* happen (a hook that must not fire, a marker that must not appear).
+///
+/// The polarity of the assertion decides the tool. A **presence** assertion
+/// waits for an event that *will* happen: poll with [`wait_for_file`] and
+/// friends, which return the instant the event lands and tolerate a slow CI
+/// runner via a generous timeout. An **absence** assertion has no event to
+/// wait for, so polling can't help: the only option is to wait long enough
+/// that the thing would have happened if it were going to, then assert it
+/// didn't. 500ms is the floor; a starved background process needs a wide
+/// margin for the window to be conclusive.
+///
+/// Use this constant rather than a bare `Duration::from_millis(500)` so
+/// absence sleeps are greppable and self-documenting. Never pair it with a
+/// presence assertion in the same test: a fixed sleep before a "did happen"
+/// check is the flaky pattern this constant exists to keep out of the
+/// assertion path. When the absence is *structural* (the event is gated on a
+/// condition the test never sets up, so it can't fire at all), no window is
+/// needed: poll the positive precondition instead and the absence holds by
+/// construction.
+pub const SLEEP_FOR_ABSENCE_CHECK: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// True when a worktree's contents have been removed — either the path
 /// is gone, or it's an empty placeholder directory.

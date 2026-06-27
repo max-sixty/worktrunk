@@ -49,7 +49,7 @@ branches = true
 }
 
 #[rstest]
-fn test_list_config_cli_override(repo: TestRepo) {
+fn test_list_config_branches_flag_overrides_file(repo: TestRepo) {
     // Create a branch without a worktree
     repo.run_git(&["branch", "feature"]);
 
@@ -427,6 +427,28 @@ fn test_list_config_env_override_bad_value_warns_on_stderr(repo: TestRepo) {
     });
 }
 
+/// A *deprecated* env var is canonicalized before it is applied, so a
+/// type-mismatched value the deprecated name hid now surfaces.
+/// `WORKTRUNK__COMMIT_GENERATION__COMMAND=42` migrates to
+/// `commit.generation.command = 42`, which fails to deserialize (the field is a
+/// String), so the whole env layer is dropped with a `LoadError::Env` warning
+/// naming the var — the same contract as a bad value in a canonical env var.
+/// File config survives. (Pre-migration the unknown key was silently ignored.)
+#[rstest]
+fn test_list_config_env_deprecated_type_mismatch_drops_layer(repo: TestRepo) {
+    fs::write(repo.test_config_path(), "[list]\nbranches = true\n").unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.env("WORKTRUNK__COMMIT_GENERATION__COMMAND", "42");
+        cmd.arg("list").current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 /// Numeric-looking env var values for String fields must not break config
 /// loading. WORKTRUNK_WORKTREE_PATH=42 should be treated as the string "42",
 /// not the integer 42 (which would fail to deserialize into Option<String>).
@@ -517,6 +539,88 @@ fn test_list_config_env_override_validation_failure(repo: TestRepo) {
         // Empty worktree-path deserializes as Some("") but fails validation
         cmd.env("WORKTRUNK_WORKTREE_PATH", "");
         cmd.arg("list").current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// A `--config-set` override is the highest-priority layer: it wins over the
+/// config file. A file that disables branch listing is overridden back on,
+/// surfacing the branch without a worktree.
+#[rstest]
+fn test_list_config_cli_override_beats_file(repo: TestRepo) {
+    fs::write(repo.test_config_path(), "[list]\nbranches = false\n").unwrap();
+    repo.run_git(&["branch", "feature"]);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["--config-set", "list.branches = true", "list"])
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// A malformed `--config-set` fragment warns (attributed to `--config-set`,
+/// listing the bad value) and leaves the file config intact — the branch is
+/// still listed.
+#[rstest]
+fn test_list_config_cli_override_malformed_warns_on_stderr(repo: TestRepo) {
+    fs::write(repo.test_config_path(), "[list]\nbranches = true\n").unwrap();
+    repo.run_git(&["branch", "feature"]);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["--config-set", "garbage", "list"])
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// `--config-set` is a `global` arg, so it applies in any position — including
+/// after the subcommand. Pins that `wt list --config-set …` is accepted (and
+/// takes effect: branch listing toggles on).
+#[rstest]
+fn test_list_config_cli_override_after_subcommand(repo: TestRepo) {
+    fs::write(repo.test_config_path(), "[list]\nbranches = false\n").unwrap();
+    repo.run_git(&["branch", "feature"]);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["list", "--config-set", "list.branches = true"])
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// A *deprecated* key passed via `--config-set` is run through the same
+/// deprecation migration as a config file (`merge.no-ff` → `merge.ff`), so the
+/// override layer is accepted rather than dropped as unknown. The migration is
+/// silent — an inline override has no file for `wt config update` to rewrite —
+/// so no deprecation or `--config-set` warning appears and `list` runs
+/// normally. (That the migrated value takes effect is covered by the
+/// `apply_cli_overrides` unit tests and
+/// `test_switch_config_set_migrates_deprecated_no_cd`; `list` output does not
+/// reflect a `merge` key.)
+#[rstest]
+fn test_list_config_cli_override_deprecated_key_silently_migrated(repo: TestRepo) {
+    fs::write(repo.test_config_path(), "[list]\nbranches = true\n").unwrap();
+    repo.run_git(&["branch", "feature"]);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["--config-set", "merge.no-ff = true", "list"])
+            .current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -631,4 +735,356 @@ task-timeout-ms = 1
         "Expected no timeout message with --full flag, but got: {}",
         stderr
     );
+}
+
+#[rstest]
+fn test_list_custom_columns(repo: TestRepo) {
+    // A vars-backed column (only feature-a has the key; other rows render
+    // empty cells) and a filter-driven column with a value on every row.
+    fs::write(
+        repo.test_config_path(),
+        r#"[list.custom-columns.Ticket]
+template = "{{ vars.ticket }}"
+
+[list.custom-columns.Codename]
+template = "{{ branch | codename }}"
+priority = 12
+"#,
+    )
+    .unwrap();
+    repo.run_git(&[
+        "config",
+        "worktrunk.state.feature-a.vars.ticket",
+        "JIRA-1234",
+    ]);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_list_custom_column_empty_everywhere_dropped(repo: TestRepo) {
+    // No branch has the vars key, so the column drops from the table
+    // entirely (no header, no reserved width).
+    fs::write(
+        repo.test_config_path(),
+        r#"[list.custom-columns.Ticket]
+template = "{{ vars.ticket }}"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_list_custom_columns_json(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        r#"[list.custom-columns.Ticket]
+template = "{{ vars.ticket }}"
+"#,
+    )
+    .unwrap();
+    repo.run_git(&[
+        "config",
+        "worktrunk.state.feature-a.vars.ticket",
+        "JIRA-1234",
+    ]);
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["list", "--format=json"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let items = json.as_array().unwrap();
+
+    let by_branch = |branch: &str| {
+        items
+            .iter()
+            .find(|item| item["branch"] == branch)
+            .unwrap_or_else(|| panic!("no item for branch {branch}"))
+    };
+
+    // Rendered value keyed by header; rows with an empty cell omit the key
+    assert_eq!(by_branch("feature-a")["columns"]["Ticket"], "JIRA-1234");
+    assert!(by_branch("feature-b")["columns"].is_null());
+}
+
+#[rstest]
+fn test_list_custom_column_invalid_template(repo: TestRepo) {
+    // An unknown top-level variable aborts wt list with the available set
+    fs::write(
+        repo.test_config_path(),
+        r#"[list.custom-columns.Ticket]
+template = "{{ branhc }}"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_list_custom_column_worktree_identity(repo: TestRepo) {
+    // A template referencing worktree identity sets `needs_worktree`, so the
+    // per-row worktree-data lookup runs: a worktree-attached row resolves the
+    // directory name, a branch with no worktree falls back to an empty cell.
+    fs::write(
+        repo.test_config_path(),
+        r#"[list.custom-columns.Dir]
+template = "{{ worktree_name }}"
+"#,
+    )
+    .unwrap();
+    // A branch with no worktree — only visible with --branches.
+    repo.run_git(&["branch", "lonely"]);
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["list", "--branches", "--format=json"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let items = json.as_array().unwrap();
+
+    let by_branch = |branch: &str| {
+        items
+            .iter()
+            .find(|item| item["branch"] == branch)
+            .unwrap_or_else(|| panic!("no item for branch {branch}"))
+    };
+
+    // Worktree-attached row: the Dir column is the worktree directory name.
+    let feature_dir = by_branch("feature-a")["columns"]["Dir"]
+        .as_str()
+        .expect("feature-a has a Dir value");
+    assert!(
+        feature_dir.contains("feature-a"),
+        "worktree row shows its directory name, got: {feature_dir}"
+    );
+
+    // Branch with no worktree: worktree_name is empty, so the cell is omitted.
+    assert!(
+        by_branch("lonely")["columns"].is_null(),
+        "branch-only row has no worktree name, so the Dir cell is empty"
+    );
+}
+
+/// `[list] columns` selects and reorders the built-in columns end-to-end:
+/// only the listed columns appear (Commit, normally shown at this width, is
+/// gone), in the configured order (Age before Branch), with the gutter always
+/// present.
+#[rstest]
+fn test_list_config_columns_select_and_reorder(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        r#"[list]
+columns = ["age", "branch"]
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        // Wide enough that the default set (incl. Commit) would all fit, so an
+        // absent Commit proves selection filtered it rather than width dropping.
+        cmd.env("COLUMNS", "200");
+        cmd.arg("list").current_dir(repo.root_path());
+
+        let output = cmd.output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "exit code should be 0: {stderr}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        let header = stdout
+            .lines()
+            .find(|line| line.contains("Branch"))
+            .unwrap_or_else(|| panic!("no header row in:\n{stdout}"));
+        assert!(header.contains("Age"), "Age selected, got header: {header}");
+        assert!(
+            !header.contains("Commit"),
+            "Commit not selected, should be absent: {header}"
+        );
+        assert!(
+            !header.contains("Message"),
+            "Message not selected, should be absent: {header}"
+        );
+        let age_at = header.find("Age").unwrap();
+        let branch_at = header.find("Branch").unwrap();
+        assert!(
+            age_at < branch_at,
+            "configured order puts Age before Branch: {header}"
+        );
+    });
+}
+
+/// Custom columns are addressable in `[list] columns` by their header. A named
+/// custom renders interleaved with built-ins at its configured position, while a
+/// custom omitted from a non-empty selection is hidden. Both use the `codename`
+/// filter so every row has a value (an all-empty custom drops regardless).
+#[rstest]
+fn test_list_config_columns_select_custom(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        r#"[list]
+columns = ["branch", "Codename", "age"]
+
+[list.custom-columns.Codename]
+template = "{{ branch | codename }}"
+
+[list.custom-columns.Owner]
+template = "{{ branch | codename }}"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.env("COLUMNS", "200");
+        cmd.arg("list").current_dir(repo.root_path());
+
+        let output = cmd.output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "exit code should be 0: {stderr}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        let header = stdout
+            .lines()
+            .find(|line| line.contains("Branch"))
+            .unwrap_or_else(|| panic!("no header row in:\n{stdout}"));
+        assert!(
+            header.contains("Codename"),
+            "a selected custom column renders: {header}"
+        );
+        assert!(
+            !header.contains("Owner"),
+            "a custom omitted from a non-empty selection is hidden: {header}"
+        );
+        let branch_at = header.find("Branch").unwrap();
+        let codename_at = header.find("Codename").unwrap();
+        let age_at = header.find("Age").unwrap();
+        assert!(
+            branch_at < codename_at && codename_at < age_at,
+            "the custom sorts at its configured position between built-ins: {header}"
+        );
+    });
+}
+
+/// TODO(list-columns-env): `WORKTRUNK__LIST__COLUMNS` is not wired up yet. The
+/// env overlay can only deliver a scalar, which the `Vec<String>` field rejects,
+/// so the override is dropped — but with a warning naming the var, not silently
+/// (see `ListConfig::columns`). The default columns still render. When env
+/// support lands, this becomes a working selection (Commit drops, Age stays).
+#[rstest]
+fn test_list_config_columns_env_override_not_yet_supported(repo: TestRepo) {
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.env("COLUMNS", "200");
+        cmd.env("WORKTRUNK__LIST__COLUMNS", "branch,age");
+        cmd.arg("list").current_dir(repo.root_path());
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// An unknown column name aborts `wt list` with a message that lists the valid
+/// names, so a typo is self-correcting rather than silently rendering a
+/// different table.
+#[rstest]
+fn test_list_config_columns_unknown_name_errors(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        r#"[list]
+columns = ["branch", "bogus"]
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(repo.root_path());
+
+        let output = cmd.output().unwrap();
+        assert!(
+            !output.status.success(),
+            "an unknown column name should abort wt list"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("Unknown column"), "stderr: {stderr}");
+        assert!(
+            stderr.contains("bogus"),
+            "stderr names the bad column: {stderr}"
+        );
+        assert!(
+            stderr.contains("branch"),
+            "stderr lists valid names: {stderr}"
+        );
+    });
+}
+
+/// The headline use case: `wt --config-set 'list.columns=[…]' list` renders a
+/// reduced view for a single invocation. The TOML array parses natively in the
+/// override fragment (no string splitting needed), winning over any config file.
+#[rstest]
+fn test_list_config_columns_cli_override(repo: TestRepo) {
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.env("COLUMNS", "200");
+        cmd.args([
+            "--config-set",
+            r#"list.columns = ["branch", "age"]"#,
+            "list",
+        ])
+        .current_dir(repo.root_path());
+
+        let output = cmd.output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "exit code should be 0: {stderr}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        let header = stdout
+            .lines()
+            .find(|line| line.contains("Branch"))
+            .unwrap_or_else(|| panic!("no header row in:\n{stdout}"));
+        assert!(header.contains("Age"), "Age selected: {header}");
+        assert!(
+            !header.contains("Commit"),
+            "Commit not selected, should be absent: {header}"
+        );
+    });
 }

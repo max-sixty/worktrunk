@@ -62,7 +62,7 @@
 # ### Claude Code
 #
 # [commit.generation]
-# command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
+# command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --safe-mode --setting-sources='user' --system-prompt=''"
 #
 # ### Codex
 #
@@ -95,12 +95,67 @@
 # [list]
 # summary = false    # Enable LLM branch summaries (requires [commit.generation])
 #
-# full = false       # Show CI, main…± diffstat, and LLM summaries (--full)
+# full = false       # Show CI status and LLM summaries (--full)
 # branches = false   # Include branches without worktrees (--branches)
 # remotes = false    # Include remote-only branches (--remotes)
 #
+# columns = ["branch", "status", "ci", "path"]   # Columns to show, in order — built-ins or custom headers (omit for the default set)
+#
 # task-timeout-ms = 0   # Kill individual git commands after N ms; 0 disables
 # timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disables
+#
+# `columns` selects and orders the columns to render; omit it for the default set.
+# It is designed to be driven by an alias (https://worktrunk.dev/extending/#aliases) that sets it
+# per invocation — a body like `wt --config-set 'list.columns=[…]' list` gives a
+# named view (run as `wt <alias>`) without disturbing the default `wt list`.
+# Setting it statically in the config file uses the same key and works, but is not
+# the intended use: it pins one layout over a table that otherwise adapts to
+# `--full` and terminal width.
+#
+# Valid built-in names are `branch`, `status`, `working-diff`, `ahead-behind`,
+# `branch-diff`, `summary`, `upstream`, `ci`, `path`, `url`, `commit`, `age`, and
+# `message`. A custom column (#custom-columns) is named by its `[list.custom-columns]`
+# header, so a selection mixes built-ins and custom columns in one ordered list
+# (`columns = ["branch", "Ticket", "ci"]`). When `columns` is set it is exhaustive
+# — only the listed columns render, so a custom column omitted from a non-empty
+# list is hidden (omit `columns` entirely to keep the default set, where custom
+# columns append automatically). A built-in name wins over a custom header that
+# collides with it. The gutter type indicator always shows.
+#
+# Listing a column requests it but does not force it on: a column gated off
+# elsewhere stays hidden — `ci` needs `--full`, `summary` needs
+# `[commit.generation]` — so `columns` only narrows which columns may appear.
+#
+# The selection drives the rendered table and the `wt switch` picker.
+# `wt list --format json` ignores it, always emitting every field, built-in and
+# custom.
+#
+# #### Custom columns [experimental]
+#
+# Custom columns add per-branch context to the `wt list` table. Each
+# `[list.custom-columns]` entry is a column: the key is the header, the template
+# renders each row's cell.
+#
+# [list.custom-columns.Ticket]
+# template = "{{ vars.ticket }}"   # Required; the result is the cell text
+# width = 20                       # Optional max display width (default: 40)
+# priority = 9                     # Optional drop order when the terminal narrows;
+#                                  # lower = kept longer (default: 9, the URL band)
+#
+# Templates may reference `{{ branch }}`, `{{ worktree_path }}`,
+# `{{ worktree_name }}` (empty for branch-only rows), and `{{ vars.* }}` —
+# per-branch values stored with
+# `wt config state vars set` (https://worktrunk.dev/config/#wt-config-state-vars).
+# All standard filters work (`sanitize`, `hash_port`, `codename`, …). A row
+# where the template renders empty (e.g. a branch without the vars key) shows an
+# empty cell; a column that is empty for every row is dropped from the table.
+# `wt list --format json` includes the rendered values under `columns`.
+#
+# A `Note` column showing free-form descriptions, set per branch with
+# `wt config state vars set note "Bug fix for production fire"`:
+#
+# [list.custom-columns.Note]
+# template = "{{ vars.note }}"
 #
 # ### Commit
 #

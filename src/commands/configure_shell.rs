@@ -8,7 +8,7 @@ use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{self, Shell};
 use worktrunk::styling::{
     INFO_SYMBOL, SUCCESS_SYMBOL, eprint, eprintln, format_bash_with_gutter, format_toml,
-    format_with_gutter, hint_message, prompt_message, warning_message,
+    format_with_gutter, hint_message, println, prompt_message, warning_message,
 };
 
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
@@ -280,7 +280,10 @@ pub fn handle_configure_shell(
 
     // For --dry-run, show preview and return without modifying anything
     if dry_run {
-        show_install_preview(&preview.configured, &completion_preview, &cmd);
+        let preview_text = show_install_preview(&preview.configured, &completion_preview, &cmd);
+        if !preview_text.is_empty() {
+            println!("{preview_text}");
+        }
         return Ok(ScanResult {
             configured: preview.configured,
             completion_results: completion_preview,
@@ -725,10 +728,12 @@ fn configure_wrapper_file(
     }))
 }
 
-/// Display what will be installed (shell extensions and completions)
+/// Format what will be installed (shell extensions and completions).
 ///
-/// Shows the config lines that will be added without prompting.
-/// Used both for install preview and when user types `?` at prompt.
+/// Returns the preview as a string (no trailing newline); the caller picks the
+/// sink. `--dry-run` is the command's answer, so it prints to stdout; the
+/// interactive `?` re-preview during the install prompt is mid-prompt narration,
+/// so it prints to stderr. See /writing-user-outputs.
 ///
 /// Note: I/O errors are intentionally ignored - preview is best-effort
 /// and shouldn't block the prompt flow.
@@ -736,8 +741,9 @@ pub fn show_install_preview(
     results: &[ConfigureResult],
     completion_results: &[CompletionResult],
     cmd: &str,
-) {
+) -> String {
     let bold = Style::new().bold();
+    let mut blocks: Vec<String> = Vec::new();
 
     // Show shell extension changes
     for result in results {
@@ -750,12 +756,6 @@ pub fn show_install_preview(
         let path = format_path_for_display(&result.path);
         let what = shell_extension_label(shell);
 
-        eprintln!(
-            "{} {} {what} for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
-            result.action.symbol(),
-            result.action.description(),
-        );
-
         // Show the config content that will be added with gutter
         // Fish: show the wrapper (it's a complete file that sources the full function)
         // Other shells: show the one-liner that gets appended
@@ -766,13 +766,18 @@ pub fn show_install_preview(
         } else {
             result.config_line.clone()
         };
-        eprintln!("{}", format_bash_with_gutter(&content));
+        let nushell_note = if matches!(shell, Shell::Nushell) {
+            format!("\n{}", hint_message("Nushell support is experimental"))
+        } else {
+            String::new()
+        };
 
-        if matches!(shell, Shell::Nushell) {
-            eprintln!("{}", hint_message("Nushell support is experimental"));
-        }
-
-        eprintln!(); // Blank line after each shell block
+        blocks.push(format!(
+            "{} {} {what} for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}\n{}{nushell_note}",
+            result.action.symbol(),
+            result.action.description(),
+            format_bash_with_gutter(&content),
+        ));
     }
 
     // Show completion changes (only fish has separate completion files)
@@ -784,31 +789,33 @@ pub fn show_install_preview(
         let shell = result.shell;
         let path = format_path_for_display(&result.path);
 
-        eprintln!(
-            "{} {} completions for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
-            result.action.symbol(),
-            result.action.description(),
-        );
-
         // Show the completion content that will be written
         let fish_completion = fish_completion_content(cmd);
-        eprintln!("{}", format_bash_with_gutter(fish_completion.trim()));
-        eprintln!(); // Blank line after
+        blocks.push(format!(
+            "{} {} completions for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}\n{}",
+            result.action.symbol(),
+            result.action.description(),
+            format_bash_with_gutter(fish_completion.trim()),
+        ));
     }
+
+    blocks.join("\n\n")
 }
 
-/// Display what will be uninstalled (shell extensions and completions)
+/// Format what will be uninstalled (shell extensions and completions).
 ///
-/// Shows the files that will be modified without prompting.
-/// Used for --dry-run mode.
+/// Returns the preview as a string (no trailing newline). Used only for
+/// `--dry-run`, which is the command's answer, so the caller prints it to
+/// stdout. See /writing-user-outputs.
 ///
 /// Note: I/O errors are intentionally ignored - preview is best-effort
 /// and shouldn't block the flow.
 pub fn show_uninstall_preview(
     results: &[UninstallResult],
     completion_results: &[CompletionUninstallResult],
-) {
+) -> String {
     let bold = Style::new().bold();
+    let mut lines: Vec<String> = Vec::new();
 
     for result in results {
         let shell = result.shell;
@@ -817,18 +824,18 @@ pub fn show_uninstall_preview(
         // Deprecated files get a different message format
         if let Some(canonical) = &result.superseded_by {
             let canonical_path = format_path_for_display(canonical);
-            eprintln!(
+            lines.push(format!(
                 "{INFO_SYMBOL} {} {bold}{path}{bold:#} (deprecated; now using {bold}{canonical_path}{bold:#})",
                 result.action.description(),
-            );
+            ));
         } else {
             let what = shell_extension_label(shell);
 
-            eprintln!(
+            lines.push(format!(
                 "{} {} {what} for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
                 result.action.symbol(),
                 result.action.description(),
-            );
+            ));
         }
     }
 
@@ -836,12 +843,14 @@ pub fn show_uninstall_preview(
         let shell = result.shell;
         let path = format_path_for_display(&result.path);
 
-        eprintln!(
+        lines.push(format!(
             "{} {} completions for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
             result.action.symbol(),
             result.action.description(),
-        );
+        ));
     }
+
+    lines.join("\n")
 }
 
 /// Prompt for install with [y/N/?] options
@@ -856,7 +865,12 @@ pub fn prompt_for_install(
     prompt_text: &str,
 ) -> Result<bool, String> {
     let response = prompt_yes_no_preview(prompt_text, || {
-        show_install_preview(results, completion_results, cmd);
+        // Mid-prompt re-preview is narration, so it goes to stderr (the trailing
+        // blank separates it from the re-prompt). See /writing-user-outputs.
+        eprintln!(
+            "{}\n",
+            show_install_preview(results, completion_results, cmd)
+        );
     })
     .map_err(|e| e.to_string())?;
 
@@ -883,7 +897,7 @@ fn prompt_yes_no() -> Result<bool, String> {
 }
 
 /// Fish completion content - finds command in PATH, with WORKTRUNK_BIN as optional override
-fn fish_completion_content(cmd: &str) -> String {
+pub(crate) fn fish_completion_content(cmd: &str) -> String {
     format!(
         r#"# worktrunk completions for fish
 complete --keep-order --exclusive --command {cmd} --arguments "(test -n \"\$WORKTRUNK_BIN\"; or set -l WORKTRUNK_BIN (type -P {cmd} 2>/dev/null); and COMPLETE=fish \$WORKTRUNK_BIN -- (commandline --current-process --tokenize --cut-at-cursor) (commandline --current-token))"
@@ -983,9 +997,17 @@ pub fn handle_unconfigure_shell(
         return Ok(preview);
     }
 
-    // For --dry-run, show preview and return without prompting or applying
+    // For --dry-run, show preview and return without prompting or applying. The
+    // early-return above guarantees at least one result, and
+    // show_uninstall_preview emits a line per result, so the preview is never
+    // empty here (unlike the install path, where AlreadyExists entries are
+    // skipped and the preview can be empty). The preview is the command's
+    // answer, so it goes to stdout. See /writing-user-outputs.
     if dry_run {
-        show_uninstall_preview(&preview.results, &preview.completion_results);
+        println!(
+            "{}",
+            show_uninstall_preview(&preview.results, &preview.completion_results)
+        );
         return Ok(preview);
     }
 

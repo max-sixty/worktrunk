@@ -31,7 +31,10 @@ pub use anstyle::Style as AnstyleStyle;
 
 // Re-export our public types
 pub use constants::*;
-pub use format::{GUTTER_OVERHEAD, format_bash_with_gutter, format_with_gutter, wrap_styled_text};
+pub use format::{
+    GUTTER_OVERHEAD, format_bash_with_gutter, format_bash_with_gutter_chopped, format_with_gutter,
+    wrap_styled_text,
+};
 pub use highlighting::format_toml;
 pub use hyperlink::{Stream, hyperlink_stdout, strip_osc8_hyperlinks, supports_hyperlinks};
 pub use line::{StyledLine, StyledString, truncate_visible};
@@ -63,28 +66,46 @@ pub fn verbosity() -> u8 {
     VERBOSITY.load(Ordering::Relaxed)
 }
 
-/// Get terminal width, or `None` if detection fails (piped context, no TTY).
+/// Get terminal width and height, or `None` if detection fails (piped context,
+/// no TTY, and no `COLUMNS`).
 ///
-/// Prefers direct terminal size detection over COLUMNS environment variable,
-/// because tools like cargo may set COLUMNS incorrectly.
+/// This is the canonical terminal-size reader; [`terminal_width`] is its width
+/// projection, so width-only and width+height callers share one probe chain and
+/// can never observe different widths:
 ///
-/// Checks stderr first (for status messages), then stdout (for table output).
+/// 1. Direct `terminal_size` detection — stderr first (status messages), then
+///    stdout (table output). More accurate than `COLUMNS`, which tools like
+///    cargo may set incorrectly.
+/// 2. The `COLUMNS` env var, for scripts and piped contexts where detection
+///    fails. `COLUMNS` carries a width but has no height counterpart, so the
+///    height comes back `None`; callers that need a height supply their own
+///    fallback.
 ///
 /// Does **not** probe the parent process tree — that fallback is expensive
 /// (spawns `ps` up to 10 times plus `stty`) and only useful for `wt statusline`
 /// under Claude Code, where no TTY is inherited. Statusline calls
 /// [`terminal_width_for_statusline`] instead.
-pub fn terminal_width() -> Option<usize> {
-    // Prefer direct terminal detection (more accurate than COLUMNS which may be stale/wrong)
-    // Check stderr first (status messages), then stdout (table output)
-    if let Some((terminal_size::Width(w), _)) =
+pub fn terminal_dimensions() -> Option<(usize, Option<usize>)> {
+    // Prefer direct terminal detection (more accurate than COLUMNS which may be stale/wrong).
+    // Check stderr first (status messages), then stdout (table output).
+    if let Some((terminal_size::Width(w), terminal_size::Height(h))) =
         terminal_size::terminal_size_of(std::io::stderr()).or_else(terminal_size::terminal_size)
     {
-        return Some(w as usize);
+        return Some((w as usize, Some(h as usize)));
     }
 
-    // Fall back to COLUMNS env var (for scripts, piped contexts, or when detection fails)
-    std::env::var("COLUMNS").ok()?.parse::<usize>().ok()
+    // Fall back to COLUMNS (width only — there is no height equivalent) for
+    // scripts, piped contexts, or when detection fails.
+    let columns = std::env::var("COLUMNS").ok()?.parse::<usize>().ok()?;
+    Some((columns, None))
+}
+
+/// Get terminal width, or `None` if detection fails (piped context, no TTY).
+///
+/// The width projection of [`terminal_dimensions`] — see it for the probe chain
+/// (stderr, then stdout, then `COLUMNS`).
+pub fn terminal_width() -> Option<usize> {
+    terminal_dimensions().map(|(width, _)| width)
 }
 
 /// Terminal width for `wt statusline`, including a subprocess-compat fallback.
@@ -192,7 +213,7 @@ mod tests {
     use insta::assert_snapshot;
 
     #[cfg(feature = "syntax-highlighting")]
-    use super::format::format_bash_with_gutter_at_width;
+    use super::format::{LineFit, format_bash_with_gutter_at_width};
     use super::*;
     use anstyle::Style;
     use unicode_width::UnicodeWidthStr;
@@ -218,6 +239,25 @@ mod tests {
         // `.cargo/config.toml`, so the fast path always finds a width.
         let width = terminal_width_for_statusline();
         assert!(width.expect("COLUMNS=80 is set in .cargo/config.toml") > 0);
+    }
+
+    #[test]
+    fn terminal_width_projects_terminal_dimensions() {
+        // `terminal_width` is exactly the width component of
+        // `terminal_dimensions`, so the two can never report different widths
+        // regardless of TTY / `COLUMNS` state — this locks that delegation.
+        assert_eq!(terminal_width(), terminal_dimensions().map(|(w, _)| w));
+    }
+
+    #[test]
+    fn terminal_dimensions_returns_a_width() {
+        // Under cargo test, `COLUMNS=80` is set in `.cargo/config.toml`, so a
+        // width is always available even with no TTY. Height depends on the
+        // environment (a real TTY yields `Some`; the `COLUMNS` fallback yields
+        // `None`), so only the width is asserted.
+        let (width, _height) =
+            terminal_dimensions().expect("COLUMNS=80 is set in .cargo/config.toml");
+        assert!(width > 0);
     }
 
     #[cfg(unix)]
@@ -639,7 +679,7 @@ command = "npm install"
         let command = "cp -cR {{ repo_root }}/target/debug/.fingerprint {{ repo_root }}/target/debug/build {{ worktree }}/target/debug/";
 
         // Use explicit width for deterministic output (avoids env var mutation in parallel tests)
-        let result = format_bash_with_gutter_at_width(command, 80);
+        let result = format_bash_with_gutter_at_width(command, 80, LineFit::Wrap);
 
         // Snapshot the raw output to verify ANSI codes are consistent
         assert_snapshot!(result);
@@ -670,7 +710,7 @@ cp -cR {{ repo_root }}/target/debug/.fingerprint {{ repo_root }}/target/debug/bu
 }}/target/debug/"#;
 
         // Use explicit width for deterministic output (avoids env var mutation in parallel tests)
-        let result = format_bash_with_gutter_at_width(multiline_command, 80);
+        let result = format_bash_with_gutter_at_width(multiline_command, 80, LineFit::Wrap);
 
         // Snapshot the output - each line should have consistent dim styling
         assert_snapshot!(result);

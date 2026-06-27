@@ -6,7 +6,8 @@ use termimad::{CompoundStyle, MadSkin, TableBorderChars};
 use unicode_width::UnicodeWidthStr;
 
 use worktrunk::styling::{
-    DEFAULT_HELP_WIDTH, format_bash_with_gutter, format_toml, format_with_gutter, wrap_styled_text,
+    DEFAULT_HELP_WIDTH, format_bash_with_gutter, format_bash_with_gutter_chopped, format_toml,
+    format_with_gutter, wrap_styled_text,
 };
 
 /// Table border style matching our help text format:
@@ -37,11 +38,31 @@ fn help_table_skin() -> MadSkin {
     skin
 }
 
+/// How fenced code blocks render: quoted in the house gutter (the default, for
+/// help pages and the summary tab) or flush and dim with no gutter. The picker's
+/// `pr` description pane renders the whole body gutter-free, so it picks `Flush`.
+#[derive(Clone, Copy, PartialEq)]
+enum CodeBlocks {
+    Gutter,
+    Flush,
+}
+
 /// Render markdown in help text to ANSI with minimal styling (green headers only)
 ///
 /// If `width` is provided, prose text is wrapped to that width. Tables, code blocks,
 /// and headers are never wrapped (tables need full-width rows for alignment).
 pub(crate) fn render_markdown_in_help_with_width(help: &str, width: Option<usize>) -> String {
+    render_markdown(help, width, CodeBlocks::Gutter)
+}
+
+/// Like [`render_markdown_in_help_with_width`], but renders fenced code blocks
+/// flush and dim rather than quoted in the house gutter — for the picker's `pr`
+/// description pane, which renders the whole body gutter-free and flush-left.
+pub(crate) fn render_markdown_flush(help: &str, width: Option<usize>) -> String {
+    render_markdown(help, width, CodeBlocks::Flush)
+}
+
+fn render_markdown(help: &str, width: Option<usize>, code_blocks: CodeBlocks) -> String {
     let green = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green)));
 
     let mut result = String::new();
@@ -49,6 +70,10 @@ pub(crate) fn render_markdown_in_help_with_width(help: &str, width: Option<usize
     let mut code_block_lang = String::new();
     let mut code_block_lines: Vec<&str> = Vec::new();
     let mut table_lines: Vec<&str> = Vec::new();
+    // Set by a `<!-- wt list … -->` marker; consumed by the next code block.
+    // Tags captured `wt list` output (pre-formatted tables) so it is chopped to
+    // terminal width like real `wt list`, not word-wrapped (which shears columns).
+    let mut chop_next_block = false;
 
     let lines: Vec<&str> = help.lines().collect();
     let mut i = 0;
@@ -57,8 +82,17 @@ pub(crate) fn render_markdown_in_help_with_width(help: &str, width: Option<usize
         let line = lines[i];
         let trimmed = line.trim_start();
 
-        // Skip HTML comments (expansion markers for web docs, see readme_sync.rs)
+        // HTML comments are expansion markers for web docs (see readme_sync.rs) and
+        // don't render. A `<!-- wt list … -->` marker tags the captured `wt list`
+        // output that immediately follows, so the next code block is chopped (below).
         if trimmed.starts_with("<!--") && trimmed.ends_with("-->") {
+            let inner = trimmed
+                .trim_start_matches("<!--")
+                .trim_end_matches("-->")
+                .trim();
+            if inner.starts_with("wt list") {
+                chop_next_block = true;
+            }
             i += 1;
             continue;
         }
@@ -71,36 +105,56 @@ pub(crate) fn render_markdown_in_help_with_width(help: &str, width: Option<usize
                 code_block_lines.clear();
                 in_code_block = true;
             } else {
-                // Closing fence — render collected code block with gutter
+                // Closing fence — render the collected code block. Flush mode
+                // dims each line with no gutter and no language-specific
+                // highlighting, so the description pane stays gutter-free and
+                // flush-left; the gutter mode quotes it in the house bar.
                 let content = code_block_lines.join("\n");
-                let formatted = match code_block_lang.as_str() {
-                    "toml" => format_toml(&content),
-                    "console" => {
-                        // Strip `$ ` prompt from console blocks for copy-paste.
-                        // The prefix is preserved in source for web docs.
-                        let stripped = content
-                            .lines()
-                            .map(|l| l.strip_prefix("$ ").unwrap_or(l))
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        format_bash_with_gutter(&stripped)
-                    }
-                    "bash" | "sh" => format_bash_with_gutter(&content),
-                    _ => {
-                        // Dim the content before adding gutter (format_with_gutter
-                        // doesn't style text; bash/toml formatters handle their own)
-                        let dim = Style::new().dimmed();
-                        let dimmed = code_block_lines
-                            .iter()
-                            .map(|l| format!("{dim}{l}{dim:#}"))
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        format_with_gutter(&dimmed, None)
+                let formatted = if code_blocks == CodeBlocks::Flush {
+                    let dim = Style::new().dimmed();
+                    code_block_lines
+                        .iter()
+                        .map(|l| format!("{dim}{l}{dim:#}"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                } else {
+                    match code_block_lang.as_str() {
+                        "toml" => format_toml(&content),
+                        "console" => {
+                            // Strip `$ ` prompt from console blocks for copy-paste.
+                            // The prefix is preserved in source for web docs.
+                            let stripped = content
+                                .lines()
+                                .map(|l| l.strip_prefix("$ ").unwrap_or(l))
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            // Captured `wt list` tables (chop_next_block) are chopped to
+                            // width; hand-authored command sessions still word-wrap.
+                            if chop_next_block {
+                                format_bash_with_gutter_chopped(&stripped)
+                            } else {
+                                format_bash_with_gutter(&stripped)
+                            }
+                        }
+                        "bash" | "sh" => format_bash_with_gutter(&content),
+                        _ => {
+                            // Dim the content before adding gutter (format_with_gutter
+                            // doesn't style text; bash/toml formatters handle their own)
+                            let dim = Style::new().dimmed();
+                            let dimmed = code_block_lines
+                                .iter()
+                                .map(|l| format!("{dim}{l}{dim:#}"))
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            format_with_gutter(&dimmed, None)
+                        }
                     }
                 };
                 result.push_str(&formatted);
                 result.push('\n');
                 in_code_block = false;
+                // A marker applies only to the block right after it.
+                chop_next_block = false;
             }
             i += 1;
             continue;

@@ -2,10 +2,14 @@
 //!
 //! Trace lines are emitted by `shell_exec::Cmd` with this format:
 //! ```text
-//! [wt-trace] ts=1234567 tid=3 context=worktree cmd="git status" dur_us=12300 ok=true
-//! [wt-trace] ts=1234567 tid=3 cmd="gh pr list" dur_us=45200 ok=false
-//! [wt-trace] ts=1234567 tid=3 context=main cmd="git merge-base" dur_us=100000 err="fatal: ..."
+//! [wt-trace] ts=1234567 tid=3 seq=1 context=worktree cmd="git status" dur_us=12300 ok=true
+//! [wt-trace] ts=1234567 tid=3 seq=2 cmd="gh pr list" dur_us=45200 ok=false
+//! [wt-trace] ts=1234567 tid=3 seq=3 context=main cmd="git merge-base" dur_us=100000 err="fatal: ..."
 //! ```
+//!
+//! `seq` (a per-command counter, command records only) is parsed leniently —
+//! it's dropped as an unknown key, since no consumer needs it; it correlates a
+//! `trace.log` record with its raw output block in `subprocess.log`.
 //!
 //! Instant events (milestones without duration) use this format:
 //! ```text

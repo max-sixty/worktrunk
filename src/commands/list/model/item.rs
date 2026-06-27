@@ -15,8 +15,8 @@ use crate::commands::list::columns::ColumnKind;
 
 /// Compute the `WorktreeState` from `WorktreeData` metadata alone.
 ///
-/// Used by both `compute_status_symbols` (full computation) and the
-/// metadata-only fallback path. The decision priority is:
+/// Used by `refresh_status_symbols` to resolve the worktree-state position
+/// (Gate 2) from metadata alone. The decision priority is:
 /// `branch_worktree_mismatch` > `prunable` > `locked` > `None`.
 fn metadata_worktree_state(data: &WorktreeData) -> WorktreeState {
     if data.branch_worktree_mismatch {
@@ -69,6 +69,19 @@ impl WorktreeData {
         self.prunable.is_some()
     }
 
+    /// This worktree's location on the gutter's presence axis (see
+    /// [`WorktreePresence`]). `is_current` wins when a worktree is both
+    /// current and primary — you're sitting in the main worktree.
+    pub fn presence(&self) -> WorktreePresence {
+        if self.is_current {
+            WorktreePresence::Current
+        } else if self.is_main {
+            WorktreePresence::Primary
+        } else {
+            WorktreePresence::Linked
+        }
+    }
+
     /// Create WorktreeData from a WorktreeInfo, with all computed fields set to None.
     pub(crate) fn from_worktree(
         wt: &worktrunk::git::WorktreeInfo,
@@ -100,7 +113,95 @@ impl WorktreeData {
 #[derive(Clone)]
 pub enum ItemKind {
     Worktree(Box<WorktreeData>),
-    Branch,
+    Branch(BranchScope),
+}
+
+impl ItemKind {
+    /// The single-character gutter glyph identifying this row's kind:
+    /// worktrees by location (`@` current, `^` primary/main, `+` other
+    /// linked), branches by scope (`/` local, `|` remote). Single-width
+    /// ASCII by design — the gutter must dodge skim's `width_cjk` clipping.
+    ///
+    /// Canonical source shared by the rendered Gutter column (which appends
+    /// a trailing space for the two-cell sigil) and the picker's fuzzy-search
+    /// text, so the glyph a user sees is the glyph they can type to filter.
+    /// A skeleton-time fact — `is_current`/`is_main` are set at construction
+    /// and `BranchScope` is structural — so folding it into the search text
+    /// keeps fuzzy ranks stable across the picker's progressive column updates.
+    pub fn gutter_glyph(&self) -> char {
+        match self {
+            ItemKind::Worktree(data) => data.presence().gutter_glyph(),
+            ItemKind::Branch(scope) => scope.gutter_glyph(),
+        }
+    }
+}
+
+/// A worktree row's location on the gutter's presence axis: the worktree
+/// currently in use (`@`), the primary/main worktree (`^`), or any other
+/// linked worktree (`+`) — the three worktree rungs before the branch
+/// glyphs (`/`/`|`). See [`ItemKind::gutter_glyph`].
+///
+/// Unlike [`BranchScope`], which is stored structurally, this is *derived*
+/// from `WorktreeData` via [`WorktreeData::presence`]. `is_current` and
+/// `is_main` are orthogonal bits — the main worktree is also current when
+/// you sit in it — and `is_main` is consumed independently by the status
+/// column and JSON, so the pair can't collapse into a single stored
+/// discriminant. `is_current` wins when a worktree is both.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum WorktreePresence {
+    /// The current worktree (matches repo discovery path: PWD or `-C`).
+    Current,
+    /// The primary/main worktree, and not the current one.
+    Primary,
+    /// Any other linked worktree.
+    Linked,
+}
+
+impl WorktreePresence {
+    /// The gutter glyph for a worktree row at this presence: `@` current,
+    /// `^` primary, `+` other linked. See [`ItemKind::gutter_glyph`] for the
+    /// row-kind axis this feeds and how the rendered sigil and picker search
+    /// text share it.
+    pub const fn gutter_glyph(self) -> char {
+        match self {
+            WorktreePresence::Current => '@',
+            WorktreePresence::Primary => '^',
+            WorktreePresence::Linked => '+',
+        }
+    }
+}
+
+/// Whether a branch-without-worktree row is a local branch
+/// (`refs/heads/…`, checked out nowhere) or a remote-tracking branch
+/// (`refs/remotes/<remote>/…`, not present locally until fetched).
+///
+/// Recorded structurally at construction (the `RemoteBranch` vs
+/// `LocalBranch` inventory is known then) rather than inferred from the
+/// branch name — a local branch may legitimately be named `origin/foo`,
+/// so a name-prefix heuristic would misclassify it.
+///
+/// Drives the gutter sigil: local branches render `/`, remote branches
+/// render `|` — the two branch rungs past the worktree glyphs (`@`/`^`/`+`)
+/// on the gutter's presence/location axis. See `ColumnKind::Gutter` in
+/// `render.rs`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BranchScope {
+    /// Local branch with no worktree.
+    Local,
+    /// Remote-tracking branch (needs a fetch to materialize locally).
+    Remote,
+}
+
+impl BranchScope {
+    /// The gutter glyph for a branch row of this scope: `/` local, `|`
+    /// remote. See [`ItemKind::gutter_glyph`] for the row-kind axis this
+    /// feeds and how the rendered sigil and picker search text share it.
+    pub const fn gutter_glyph(self) -> char {
+        match self {
+            BranchScope::Local => '/',
+            BranchScope::Remote => '|',
+        }
+    }
 }
 
 /// Unified item for displaying worktrees and branches in the same table.
@@ -184,6 +285,13 @@ pub struct ListItem {
     /// `JsonItem` for the `statusline` field.
     pub statusline: Option<String>,
 
+    /// Rendered `[list.custom-columns]` values, indexed like the resolved column
+    /// list (`ColumnKind::Custom`). Unlike the `Option`-gated fields above,
+    /// these are final at construction time: templates expand from in-memory
+    /// data before layout, so there is no loading state. Empty when no custom
+    /// columns are configured.
+    pub custom_values: Vec<String>,
+
     // Type-specific data (worktree vs branch)
     pub kind: ItemKind,
 }
@@ -191,11 +299,23 @@ pub struct ListItem {
 /// Container for list command results.
 pub struct ListData {
     pub items: Vec<ListItem>,
+    /// Resolved `[list.custom-columns]` definitions; each item's `custom_values`
+    /// uses the same indexing.
+    pub custom_columns: Vec<crate::commands::list::custom_columns::ResolvedCustomColumn>,
 }
 
 impl ListItem {
-    /// Create a ListItem for a branch (not a worktree)
+    /// Create a ListItem for a local branch without a worktree.
     pub(crate) fn new_branch(head: String, branch: String) -> Self {
+        Self::new_branch_with_scope(head, branch, BranchScope::Local)
+    }
+
+    /// Create a ListItem for a remote-tracking branch (no local worktree).
+    pub(crate) fn new_remote_branch(head: String, branch: String) -> Self {
+        Self::new_branch_with_scope(head, branch, BranchScope::Remote)
+    }
+
+    fn new_branch_with_scope(head: String, branch: String, scope: BranchScope) -> Self {
         Self {
             head,
             short_sha: String::new(),
@@ -218,7 +338,8 @@ impl ListItem {
             user_marker: None,
             status_symbols: StatusSymbols::default(),
             statusline: None,
-            kind: ItemKind::Branch,
+            custom_values: Vec::new(),
+            kind: ItemKind::Branch(scope),
         }
     }
 
@@ -249,14 +370,14 @@ impl ListItem {
     pub fn worktree_data(&self) -> Option<&WorktreeData> {
         match &self.kind {
             ItemKind::Worktree(data) => Some(data),
-            ItemKind::Branch => None,
+            ItemKind::Branch(_) => None,
         }
     }
 
     pub fn worktree_data_mut(&mut self) -> Option<&mut WorktreeData> {
         match &mut self.kind {
             ItemKind::Worktree(data) => Some(data),
-            ItemKind::Branch => None,
+            ItemKind::Branch(_) => None,
         }
     }
 
@@ -267,21 +388,18 @@ impl ListItem {
     /// Determine if the item contains no unique work and can likely be removed.
     ///
     /// Returns:
-    /// - `Some(true)` - confirmed removable (branch integrated into integration target)
+    /// - `Some(true)` - confirmed removable (no unique work vs the integration target)
     /// - `Some(false)` - confirmed not removable (has unique work)
     /// - `None` - data still loading, cannot determine yet
     ///
-    /// Checks (in order):
-    /// 1. **Same commit** - ahead/behind vs default branch is 0.
-    ///    The branch is already part of the default branch's history.
-    /// 2. **No file changes** - three-dot diff (`<integration-target>...branch`) is empty.
-    ///    Catches squash-merged branches where commits exist but add no files.
-    /// 3. **Tree matches integration target** - tree SHA equals the target's tree SHA.
-    ///    Catches rebased/squash-merged branches with identical content.
-    /// 4. **Merge simulation** - merging branch into the integration target wouldn't change the
-    ///    target's tree. Catches squash-merged branches where the integration target advanced.
-    /// 5. **Working tree matches default branch** (worktrees only) - uncommitted changes
-    ///    don't diverge from the default branch.
+    /// The verdict is read directly from the already-resolved gate-3
+    /// [`MainState`] (`None` until its inputs land). `Empty` (same commit as
+    /// the default branch with a clean tree) and `Integrated` (content reached
+    /// the default branch via different history) are removable; everything
+    /// else — including `SameCommit`, where uncommitted work would be lost — is
+    /// not. The integration tiers themselves (ancestor, matching trees, no
+    /// added changes, merge-adds-nothing) live on `MainState` /
+    /// [`IntegrationReason`]; see the `MainState` spec in `model/state.rs`.
     pub(crate) fn is_potentially_removable(&self) -> Option<bool> {
         // Gate 3 (`main_state`) is `None` until its inputs land. Until
         // then, we don't know whether the item is removable.
@@ -433,7 +551,7 @@ impl ListItem {
         // `worktree_state = Some(Prunable)` by the time this runs.)
         let metadata_state = match &self.kind {
             ItemKind::Worktree(data) => metadata_worktree_state(data),
-            ItemKind::Branch => WorktreeState::Branch,
+            ItemKind::Branch(_) => WorktreeState::Branch,
         };
         if self.status_symbols.worktree_state.is_none() {
             self.status_symbols.worktree_state = Some(metadata_state);
@@ -487,7 +605,7 @@ impl ListItem {
         match &self.kind {
             ItemKind::Worktree(data) => data.working_tree_status,
             // Branches have no working tree; treat as permanently clean.
-            ItemKind::Branch => Some(WorkingTreeStatus::default()),
+            ItemKind::Branch(_) => Some(WorkingTreeStatus::default()),
         }
     }
 
@@ -509,7 +627,7 @@ impl ListItem {
                 }
             }
             // Branches have no operation state; trivially resolved to None.
-            ItemKind::Branch => Some(OperationState::None),
+            ItemKind::Branch(_) => Some(OperationState::None),
         }
     }
 
@@ -541,7 +659,7 @@ impl ListItem {
         // but working tree is clean / N/A" sentinel).
         let has_working_tree_conflicts = match &self.kind {
             ItemKind::Worktree(data) => data.has_working_tree_conflicts,
-            ItemKind::Branch => Some(None),
+            ItemKind::Branch(_) => Some(None),
         };
         match tier_would_conflict(self.has_merge_tree_conflicts, has_working_tree_conflicts) {
             Tier::Fired(s) => return Some(s),
@@ -560,13 +678,13 @@ impl ListItem {
                 Some(diff.is_empty() && !status.untracked)
             }
             // Branches have no working tree; trivially clean.
-            ItemKind::Branch => Some(true),
+            ItemKind::Branch(_) => Some(true),
         };
         let integration = match &self.kind {
             ItemKind::Worktree(data) => {
                 self.check_integration_state(data.is_main, default_branch, is_clean?)
             }
-            ItemKind::Branch => self.check_integration_state(false, default_branch, true),
+            ItemKind::Branch(_) => self.check_integration_state(false, default_branch, true),
         };
 
         match tier_integration_or_counts(self.counts, is_clean, integration) {
@@ -684,10 +802,30 @@ mod tests {
 
     #[test]
     fn test_list_item_worktree_data() {
-        // Branch item has no worktree data
-        let item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
+        // Branch items have no worktree data, via either accessor.
+        let mut item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
         assert!(item.worktree_data().is_none());
+        assert!(item.worktree_data_mut().is_none());
         assert!(item.worktree_path().is_none());
+    }
+
+    #[test]
+    fn gutter_glyph_marks_each_row_kind() {
+        let worktree = |is_main, is_current| {
+            ItemKind::Worktree(Box::new(WorktreeData {
+                is_main,
+                is_current,
+                ..Default::default()
+            }))
+        };
+        // Worktrees by location (`is_current` wins when a row is both).
+        assert_eq!(worktree(false, true).gutter_glyph(), '@');
+        assert_eq!(worktree(true, false).gutter_glyph(), '^');
+        assert_eq!(worktree(false, false).gutter_glyph(), '+');
+        assert_eq!(worktree(true, true).gutter_glyph(), '@');
+        // Branches by scope.
+        assert_eq!(ItemKind::Branch(BranchScope::Local).gutter_glyph(), '/');
+        assert_eq!(ItemKind::Branch(BranchScope::Remote).gutter_glyph(), '|');
     }
 
     #[test]

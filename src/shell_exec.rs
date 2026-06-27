@@ -42,16 +42,19 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fs::Metadata;
-use std::io::{ErrorKind, Read, Write};
+use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::OnceLock;
-use std::time::Instant;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
+use anyhow::Context;
 use wait_timeout::ChildExt;
 
 use crate::git::{GitError, WorktrunkError};
 use crate::sync::Semaphore;
+use crate::trace::CommandTrace;
 
 /// Semaphore to limit concurrent command execution.
 /// Prevents resource exhaustion when spawning many parallel git commands.
@@ -455,7 +458,6 @@ pub fn shell_escape_for(mode: ShellEscapeMode, s: &str) -> String {
 // ============================================================================
 
 use std::cell::Cell;
-use std::time::Duration;
 
 thread_local! {
     /// Thread-local command timeout. When set, all commands executed via `run()` on this
@@ -487,9 +489,11 @@ const LOG_OUTPUT_MAX_LINES: usize = 200;
 /// addition to [`LOG_OUTPUT_MAX_LINES`].
 const LOG_OUTPUT_MAX_BYTES: usize = 64 * 1024;
 
-/// Log target used for *full* subprocess stdout/stderr. The tracing-subscriber
-/// `subprocess.log` layer filters on this target, so raw subprocess bodies (diffs,
-/// `git log -p`, patch-id pipelines) never reach stderr or `trace.log`.
+/// Log target used for *full* subprocess stdin/stdout/stderr (and the per-command
+/// `$ cmd … seq=N` header `log_output` prepends to each block). The
+/// tracing-subscriber `subprocess.log` layer filters on this target, so raw
+/// subprocess bodies (diffs, `git log -p`, patch-id pipelines) never reach
+/// stderr or `trace.log`.
 pub const SUBPROCESS_FULL_TARGET: &str = "worktrunk::subprocess_full";
 
 /// Log target used for the *bounded* preview of subprocess output (capped
@@ -499,31 +503,81 @@ pub const SUBPROCESS_FULL_TARGET: &str = "worktrunk::subprocess_full";
 /// uncapped version is captured via [`SUBPROCESS_FULL_TARGET`].
 pub const SUBPROCESS_BOUNDED_TARGET: &str = "worktrunk::subprocess_bounded";
 
-/// Log captured stdout/stderr of a finished command.
+/// The `$ <cmd> [<context>]` command header. Shared by the stderr/`trace.log`
+/// start line ([`Cmd::log_run_start`] and friends) and the per-command header
+/// that [`log_output`] prepends to each block in `subprocess.log`, so the two
+/// render the command identically.
+fn command_header(cmd: &str, context: Option<&str>) -> String {
+    match context {
+        Some(ctx) => format!("$ {cmd} [{ctx}]"),
+        None => format!("$ {cmd}"),
+    }
+}
+
+/// Log a command's captured stdin, stdout, and stderr to the debug targets.
 ///
-/// At `tracing::DEBUG` (`-vv`) each stream is emitted twice via separate
-/// targets, and the tracing-subscriber layers route them:
-///   - [`SUBPROCESS_FULL_TARGET`]: uncapped, line-per-record, `subprocess.log` only.
-///   - [`SUBPROCESS_BOUNDED_TARGET`]: capped at [`LOG_OUTPUT_MAX_LINES`] and
-///     [`LOG_OUTPUT_MAX_BYTES`] per stream with an elision marker, then
-///     routed to `trace.log` at `-vv` or stderr otherwise.
+/// At `tracing::DEBUG` (`-vv`) each stream is emitted twice, and the
+/// tracing-subscriber layers route the two targets:
+///   - [`SUBPROCESS_FULL_TARGET`] → `subprocess.log`: uncapped, one record per
+///     line. Each command with I/O opens with a `$ cmd … [seq=N tid=T]` header
+///     over its stdin (`  < `), stdout (`  `), and stderr (`  ! `) lines, so the
+///     otherwise-undelimited bytes segment into blocks and `seq` joins each
+///     block to its `[wt-trace]` record.
+///   - [`SUBPROCESS_BOUNDED_TARGET`] → `trace.log` at `-vv` (else stderr):
+///     capped at [`LOG_OUTPUT_MAX_LINES`] / [`LOG_OUTPUT_MAX_BYTES`] with an
+///     elision marker, under the `$ cmd` start line `trace.log` already carries.
+///
+/// One record per line keeps a command's own output contiguous but lets
+/// concurrent commands interleave by line; `tid` groups a block and the atomic
+/// header recovers the `seq` join.
+///
+/// `output` is `None` for a command that never produced any (spawn or wait
+/// failure); its header and stdin still emit, so the input survives in the deep
+/// log even when nothing ran.
 ///
 /// Below Debug both targets are disabled and this is a no-op.
-fn log_output(output: &std::process::Output) {
+fn log_output(trace: &CommandTrace, stdin: Option<&[u8]>, output: Option<&std::process::Output>) {
+    // `log::max_level` (held at the verbosity/`RUST_LOG` ceiling by the
+    // `LogTracer` cap in `logging::init`) is the coarse "deep logging on at
+    // all?" gate that skips building the full *and* bounded output strings
+    // when nothing consumes them. It stays a `log::*` check on purpose: this
+    // body feeds both `SUBPROCESS_FULL_TARGET` and `SUBPROCESS_BOUNDED_TARGET`,
+    // so the gate must fire whenever *either* deep sink is live — exactly the
+    // verbosity cap. A per-target `tracing::enabled!(SUBPROCESS_FULL_TARGET …)`
+    // would wrongly skip the bounded preview in the rare case where `-vv`
+    // opened `trace.log` but `subprocess.log` failed to open.
     if !log::log_enabled!(log::Level::Debug) {
         return;
     }
-    for line in format_stream_full(&output.stdout, "  ") {
-        log::debug!(target: SUBPROCESS_FULL_TARGET, "{}", line);
+    let stdin = stdin.unwrap_or_default();
+    // `None` when the command never produced output (spawn/wait failure); stdin
+    // is still logged so the input survives in the deep log.
+    let (stdout, stderr) = output
+        .map(|o| (o.stdout.as_slice(), o.stderr.as_slice()))
+        .unwrap_or_default();
+    if !stdin.is_empty() || !stdout.is_empty() || !stderr.is_empty() {
+        tracing::debug!(
+            target: SUBPROCESS_FULL_TARGET,
+            "{}  [seq={} tid={}]",
+            command_header(trace.cmd(), trace.context()),
+            trace.seq(),
+            trace.tid(),
+        );
     }
-    for line in format_stream_full(&output.stderr, "  ! ") {
-        log::debug!(target: SUBPROCESS_FULL_TARGET, "{}", line);
+    for line in format_stream_full(stdin, "  < ") {
+        tracing::debug!(target: SUBPROCESS_FULL_TARGET, "{}", line);
     }
-    for line in format_stream_bounded(&output.stdout, "  ") {
-        log::debug!(target: SUBPROCESS_BOUNDED_TARGET, "{}", line);
+    for line in format_stream_full(stdout, "  ") {
+        tracing::debug!(target: SUBPROCESS_FULL_TARGET, "{}", line);
     }
-    for line in format_stream_bounded(&output.stderr, "  ! ") {
-        log::debug!(target: SUBPROCESS_BOUNDED_TARGET, "{}", line);
+    for line in format_stream_full(stderr, "  ! ") {
+        tracing::debug!(target: SUBPROCESS_FULL_TARGET, "{}", line);
+    }
+    for line in format_stream_bounded(stdout, "  ") {
+        tracing::debug!(target: SUBPROCESS_BOUNDED_TARGET, "{}", line);
+    }
+    for line in format_stream_bounded(stderr, "  ! ") {
+        tracing::debug!(target: SUBPROCESS_BOUNDED_TARGET, "{}", line);
     }
 }
 
@@ -747,75 +801,100 @@ impl ExternalCommandLog {
     }
 }
 
-/// Per-subprocess `[wt-trace]` recorder used by `Cmd::run`, `Cmd::pipe_into`,
-/// and `Cmd::stream`.
+/// Resolve a [`CommandTrace`] from a finished `run`/`pipe_into` invocation and
+/// surface the command's captured stdin/stdout/stderr to the debug log.
 ///
-/// Captures `ts`/`tid`/`started_at` at construction; callers invoke
-/// `completed` / `errored` at each exit point. `record_result` is a
-/// convenience wrapper used by `run`/`pipe_into` (which have a single
-/// `Result<Output>` exit each, plus captured stdout/stderr to surface).
-/// `stream` has multiple exit points and uses the lower-level methods.
-struct WtTraceLog<'a> {
-    context: Option<&'a str>,
-    cmd_str: &'a str,
-    started_at: Instant,
-    ts: u64,
-    tid: u64,
+/// The buffered counterpart to calling `complete`/`fail` directly: `run` and
+/// `pipe_into` capture output, so they also feed it to [`log_output`] — stdin
+/// regardless of outcome, stdout/stderr when the command produced any.
+/// `stream`/`delayed_stream` inherit or stream stdio and resolve their
+/// `CommandTrace` directly at each exit point.
+fn record_captured(
+    trace: &mut CommandTrace,
+    stdin: Option<&[u8]>,
+    result: &std::io::Result<std::process::Output>,
+) {
+    match result {
+        Ok(output) => trace.complete(output.status.success()),
+        Err(e) => trace.fail(e),
+    }
+    // stdin is logged either way; stdout/stderr only when the command produced
+    // output — a command that failed to spawn still leaves its input behind.
+    log_output(trace, stdin, result.as_ref().ok());
 }
 
-impl<'a> WtTraceLog<'a> {
-    fn new(context: Option<&'a str>, cmd_str: &'a str) -> Self {
-        let started_at = Instant::now();
-        let ts = started_at
-            .duration_since(crate::trace::emit::trace_epoch())
-            .as_micros() as u64;
-        let tid = crate::trace::emit::thread_id();
-        Self {
-            context,
-            cmd_str,
-            started_at,
-            ts,
-            tid,
-        }
-    }
+/// Structured error from [`Cmd::delayed_stream`].
+///
+/// Separates command output from command identity so callers can format each
+/// part with appropriate styling (e.g., bold command, gray exit code). The
+/// streaming counterpart to [`crate::git::CommandError`]: the delayed-stream
+/// path interleaves stdout/stderr into a single buffer, so a string body is
+/// the most it can recover. `Repository::extract_failed_command` downcasts
+/// this to render git's failure to the user.
+#[derive(Debug)]
+pub struct StreamCommandError {
+    /// Lines of output from the command (may be empty).
+    pub output: String,
+    /// The command string, e.g., "git worktree add /path -b fix main".
+    pub command: String,
+    /// Exit information, e.g., "exit code 255" or "killed by signal".
+    pub exit_info: String,
+}
 
-    fn completed(&self, success: bool) {
-        let dur_us = self.started_at.elapsed().as_micros() as u64;
-        crate::trace::emit::command_completed(
-            self.context,
-            self.cmd_str,
-            self.ts,
-            self.tid,
-            dur_us,
-            success,
-        );
+impl std::fmt::Display for StreamCommandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Callers use Repository::extract_failed_command() to access fields
+        // directly. This Display impl exists only to satisfy the Error trait
+        // bound.
+        write!(f, "{}", self.output)
     }
+}
 
-    fn errored(&self, err: impl std::fmt::Display) {
-        let dur_us = self.started_at.elapsed().as_micros() as u64;
-        crate::trace::emit::command_errored(
-            self.context,
-            self.cmd_str,
-            self.ts,
-            self.tid,
-            dur_us,
-            err,
-        );
+impl std::error::Error for StreamCommandError {}
+
+/// Convert a finished child's exit status into `Ok(())` or a
+/// [`StreamCommandError`] carrying the buffered output.
+fn stream_exit_result(
+    status: std::process::ExitStatus,
+    buffer: &Arc<Mutex<Vec<String>>>,
+    cmd_str: &str,
+) -> anyhow::Result<()> {
+    if status.success() {
+        return Ok(());
     }
+    let lines = buffer.lock().unwrap();
+    let exit_info = status
+        .code()
+        .map(|c| format!("exit code {c}"))
+        .unwrap_or_else(|| "killed by signal".to_string());
+    Err(StreamCommandError {
+        output: lines.join("\n"),
+        command: cmd_str.to_string(),
+        exit_info,
+    }
+    .into())
+}
 
-    /// Emit a trace record for a finished `run`/`pipe_into` invocation and
-    /// surface the captured stdout/stderr to the debug log. `stream` doesn't
-    /// capture output (it inherits stdio), so it uses `completed`/`errored`
-    /// directly.
-    fn record_result(&self, result: &std::io::Result<std::process::Output>) {
-        match result {
-            Ok(output) => {
-                self.completed(output.status.success());
-                log_output(output);
+/// Spawn a reader thread for [`Cmd::delayed_stream`]: each line is written to
+/// stderr live once `streaming` is set, or buffered (for the quiet-fast and
+/// pre-threshold cases) until then. Both the child's stdout and stderr use
+/// this; everything routes to stderr to keep our stdout clean.
+fn spawn_delayed_reader<R: Read + Send + 'static>(
+    stream: R,
+    streaming: Arc<AtomicBool>,
+    buffer: Arc<Mutex<Vec<String>>>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let reader = BufReader::new(stream);
+        for line in reader.lines().map_while(Result::ok) {
+            if streaming.load(Ordering::Relaxed) {
+                let _ = writeln!(std::io::stderr(), "{}", line);
+                let _ = std::io::stderr().flush();
+            } else {
+                buffer.lock().unwrap().push(line);
             }
-            Err(e) => self.errored(e),
         }
-    }
+    })
 }
 
 impl Cmd {
@@ -921,17 +1000,23 @@ impl Cmd {
     }
 
     fn log_run_start(&self, cmd_str: &str) {
-        match &self.context {
-            Some(ctx) => log::debug!("$ {} [{}]", cmd_str, ctx),
-            None => log::debug!("$ {}", cmd_str),
-        }
+        tracing::debug!("{}", command_header(cmd_str, self.context.as_deref()));
     }
 
     fn log_stream_start(&self, cmd_str: &str, exec_mode: &str) {
-        match &self.context {
-            Some(ctx) => log::debug!("$ {} [{}] (streaming, {})", cmd_str, ctx, exec_mode),
-            None => log::debug!("$ {} (streaming, {})", cmd_str, exec_mode),
-        }
+        tracing::debug!(
+            "{} (streaming, {})",
+            command_header(cmd_str, self.context.as_deref()),
+            exec_mode
+        );
+    }
+
+    fn log_delayed_stream_start(&self, cmd_str: &str, delay_ms: i64) {
+        tracing::debug!(
+            "{} (delayed stream, {}ms)",
+            command_header(cmd_str, self.context.as_deref()),
+            delay_ms
+        );
     }
 
     /// Add a single argument.
@@ -1138,10 +1223,10 @@ impl Cmd {
         // Acquire semaphore to limit concurrent commands
         let _guard = semaphore().acquire();
 
-        let trace_log = WtTraceLog::new(self.context.as_deref(), &cmd_str);
+        let mut trace = CommandTrace::new(self.context.as_deref(), &cmd_str);
 
         if let Err(e) = self.check_spawn_preconditions() {
-            trace_log.errored(&e);
+            trace.fail(&e);
             external_log.record(None);
             return Err(e);
         }
@@ -1152,25 +1237,34 @@ impl Cmd {
         // Determine effective timeout: explicit > thread-local > none
         let effective_timeout = self.timeout.or_else(|| COMMAND_TIMEOUT.with(|t| t.get()));
 
-        // Execute with or without stdin
-        let result = if let Some(stdin_data) = self.stdin_data {
+        // Execute with or without stdin. Every branch produces a single
+        // `Result<Output>` so spawn/write failures resolve the trace through
+        // `record_captured` rather than `?`-ing past it (which would leave the
+        // command unattributed and trip CommandTrace's drop assertion).
+        let result = if let Some(stdin_data) = self.stdin_data.as_deref() {
             // Stdin piping requires spawn/write/wait
             // Note: stdin path doesn't support timeout (would need async I/O)
             cmd.stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
 
-            let mut child = cmd.spawn()?;
-
-            // Write stdin data (ignore BrokenPipe - some commands exit early)
-            if let Some(mut stdin) = child.stdin.take()
-                && let Err(e) = stdin.write_all(&stdin_data)
-                && e.kind() != std::io::ErrorKind::BrokenPipe
-            {
-                return Err(e);
+            match cmd.spawn() {
+                Ok(mut child) => {
+                    // Write stdin data in an inner scope so the handle DROPS
+                    // (closing the pipe) before `wait_with_output` — otherwise a
+                    // child that reads stdin to EOF (e.g. `git … --stdin`) blocks
+                    // forever. (ignore BrokenPipe - some commands exit early)
+                    let write_result = {
+                        let mut stdin = child.stdin.take().expect("stdin was configured as piped");
+                        stdin.write_all(stdin_data)
+                    };
+                    match write_result {
+                        Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => Err(e),
+                        _ => child.wait_with_output(),
+                    }
+                }
+                Err(e) => Err(e),
             }
-
-            child.wait_with_output()
         } else if let Some(timeout_duration) = effective_timeout {
             // Timeout handling uses the existing impl
             run_with_timeout_impl(&mut cmd, timeout_duration)
@@ -1179,7 +1273,7 @@ impl Cmd {
             cmd.output()
         };
 
-        trace_log.record_result(&result);
+        record_captured(&mut trace, self.stdin_data.as_deref(), &result);
 
         let exit_code = result.as_ref().ok().and_then(|output| output.status.code());
         external_log.record(exit_code);
@@ -1195,6 +1289,10 @@ impl Cmd {
     /// debug logs. This keeps large intermediate outputs (for example
     /// `git diff-tree -p | git patch-id`) out of the `-vv` trace stream, where
     /// `log_output` would otherwise dump every line of the raw diff.
+    ///
+    /// The source's *own* stdin (`stdin_bytes`, e.g. the `git rev-list` commit
+    /// list) is logged under `  < ` like any `.run()` command — only the
+    /// intermediate stream above is suppressed.
     ///
     /// Each command is logged and traced individually (same format as
     /// `.run()`), so `-vv` still shows both commands and their exit status.
@@ -1244,15 +1342,15 @@ impl Cmd {
 
         let _guard = semaphore().acquire();
 
-        let first_log = WtTraceLog::new(self.context.as_deref(), &first_cmd_str);
-        let second_log = WtTraceLog::new(next.context.as_deref(), &second_cmd_str);
-
+        // Validate both commands before spawning either. Nothing has spawned
+        // yet, so a precondition failure emits a one-shot failed record rather
+        // than holding a guard across an execution that never happens.
         if let Err(e) = self.check_spawn_preconditions() {
-            first_log.errored(&e);
+            CommandTrace::record_failed(self.context.as_deref(), &first_cmd_str, &e);
             return Err(e);
         }
         if let Err(e) = next.check_spawn_preconditions() {
-            second_log.errored(&e);
+            CommandTrace::record_failed(next.context.as_deref(), &second_cmd_str, &e);
             return Err(e);
         }
 
@@ -1269,21 +1367,28 @@ impl Cmd {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        let mut first_child = first.spawn()?;
+        // Trace each command from just before its own spawn so the duration
+        // brackets the real spawn → wait span.
+        let mut first_trace = CommandTrace::new(self.context.as_deref(), &first_cmd_str);
+        let mut first_child = match first.spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                first_trace.fail(&e);
+                return Err(e);
+            }
+        };
         let first_stdout = first_child
             .stdout
             .take()
             .expect("stdout was configured as piped");
-        // Pair the source's stdin pipe with the data to write; a writer
-        // thread (below) drains it concurrently with the rest of the pipeline.
-        let first_stdin = source_stdin.map(|data| {
-            (
-                first_child
-                    .stdin
-                    .take()
-                    .expect("stdin was configured as piped"),
-                data,
-            )
+        // Take the source's stdin pipe, keeping `source_stdin` owned so it can
+        // also be logged below; a writer thread (in the scope) drains it
+        // concurrently with the rest of the pipeline.
+        let source_stdin_pipe = source_stdin.as_ref().map(|_| {
+            first_child
+                .stdin
+                .take()
+                .expect("stdin was configured as piped")
         });
 
         let mut second = next.direct_command();
@@ -1296,11 +1401,17 @@ impl Cmd {
         // Spawn `next` before waiting on either child so `self`'s stdout keeps
         // flowing through the pipe (otherwise a full pipe buffer would wedge
         // `self`). If the spawn itself fails, clean up `self` before returning.
+        let mut second_trace = CommandTrace::new(next.context.as_deref(), &second_cmd_str);
         let second_child = match second.spawn() {
             Ok(child) => child,
             Err(e) => {
+                second_trace.fail(&e);
                 let _ = first_child.kill();
                 let _ = first_child.wait();
+                // `first` spawned but is being torn down because the pipeline
+                // can't run — record it as a non-success rather than leaving
+                // the guard unresolved.
+                first_trace.complete(false);
                 return Err(e);
             }
         };
@@ -1325,18 +1436,22 @@ impl Cmd {
             // with the drain below — writing it all up front would deadlock
             // once the source's stdout pipe fills. A short write (the source
             // exited early) surfaces as its non-zero exit status, which
-            // callers already inspect.
-            if let Some((mut stdin, data)) = first_stdin {
+            // callers already inspect. The scoped thread only borrows the
+            // data, so `source_stdin` stays available to log after the
+            // pipeline reaps the source.
+            if let (Some(mut stdin), Some(data)) = (source_stdin_pipe, source_stdin.as_deref()) {
                 s.spawn(move || {
-                    let _ = stdin.write_all(&data);
+                    let _ = stdin.write_all(data);
                     // `stdin` drops here, closing the pipe so the source sees EOF.
                 });
             }
 
             // Drain `next` first (its `wait_with_output` reads its own
-            // stdout/stderr), so `first`'s writes can complete.
+            // stdout/stderr), so `first`'s writes can complete. Its stdin is the
+            // source's stdout (the OS pipe), not its own input, so it is logged
+            // with `None` — the intermediate stream stays out of the deep log.
             let second_result = second_child.wait_with_output();
-            second_log.record_result(&second_result);
+            record_captured(&mut second_trace, None, &second_result);
 
             // Reap `first`. Its stderr is already being drained; combine
             // the captured stderr with the exit status into an Output.
@@ -1350,7 +1465,10 @@ impl Cmd {
                     stderr,
                 })
             });
-            first_log.record_result(&first_result);
+            // The source's own stdin (the commit list) is logged under `  < `,
+            // symmetric with `run`. Only the intermediate diff stream — the
+            // source's stdout, routed to the sink via OS pipe — stays out.
+            record_captured(&mut first_trace, source_stdin.as_deref(), &first_result);
 
             (first_result, second_result)
         });
@@ -1411,10 +1529,10 @@ impl Cmd {
             cmd.env(DIRECTIVE_FILE_ENV_VAR, path);
         }
 
-        let trace_log = WtTraceLog::new(self.context.as_deref(), &cmd_str);
-
         if let Err(e) = self.check_spawn_preconditions() {
-            trace_log.errored(&e);
+            // Nothing spawned yet — emit a one-shot failed record (the trace
+            // guard is constructed just before spawn, below).
+            CommandTrace::record_failed(self.context.as_deref(), &cmd_str, &e);
             return Err(anyhow::Error::from(GitError::Other {
                 message: format!("Failed to execute command ({}): {}", exec_mode, e),
             }));
@@ -1448,7 +1566,7 @@ impl Cmd {
             //
             // Skipped when the caller used `.inherit_stdin()`: a child that
             // reads the parent's controlling terminal must share the
-            // foreground pgroup, otherwise calls like skim/tuikit's
+            // foreground pgroup, otherwise calls like skim's (crossterm)
             // `tcsetattr` on `/dev/tty` raise SIGTTOU and stop the child
             // mid-render. The kernel already delivers tty-initiated signals
             // (Ctrl-C, Ctrl-Z, hangup) to every process in the shared
@@ -1463,10 +1581,14 @@ impl Cmd {
             // Prevent vergen "overridden" warning in nested cargo builds
             .env_remove("VERGEN_GIT_DESCRIBE");
 
+        // Start the trace immediately before spawn, after the fallible
+        // signal-handler install — so a pre-spawn early return can't drop the
+        // guard unresolved, and the duration brackets the child.
+        let mut trace = CommandTrace::new(self.context.as_deref(), &cmd_str);
         let mut child = match cmd.spawn() {
             Ok(child) => child,
             Err(e) => {
-                trace_log.errored(&e);
+                trace.fail(&e);
                 return Err(anyhow::Error::from(GitError::Other {
                     message: format!("Failed to execute command ({}): {}", exec_mode, e),
                 }));
@@ -1479,7 +1601,7 @@ impl Cmd {
             && let Err(e) = stdin.write_all(content)
             && e.kind() != std::io::ErrorKind::BrokenPipe
         {
-            trace_log.errored(&e);
+            trace.fail(&e);
             return Err(e.into());
         }
         // stdin handle is dropped here, closing the pipe
@@ -1501,7 +1623,7 @@ impl Cmd {
         let status = match wait_result {
             Ok(status) => status,
             Err(e) => {
-                trace_log.errored(&e);
+                trace.fail(&e);
                 return Err(anyhow::Error::from(GitError::Other {
                     message: format!("Failed to wait for command: {}", e),
                 }));
@@ -1522,7 +1644,7 @@ impl Cmd {
         if let Some(sig) = seen_signal
             && !status.success()
         {
-            trace_log.completed(false);
+            trace.complete(false);
             external_log.record(Some(128 + sig));
             return Err(WorktrunkError::ChildProcessExited {
                 code: 128 + sig,
@@ -1537,11 +1659,11 @@ impl Cmd {
             // SIGPIPE (13) is expected when a pager (less, bat) exits before the
             // child finishes writing — not an error from the user's perspective.
             if sig == SIGPIPE {
-                trace_log.completed(true);
+                trace.complete(true);
                 external_log.record(Some(0));
                 return Ok(());
             }
-            trace_log.completed(false);
+            trace.complete(false);
             external_log.record(Some(128 + sig));
             return Err(WorktrunkError::ChildProcessExited {
                 code: 128 + sig,
@@ -1553,7 +1675,7 @@ impl Cmd {
 
         if !status.success() {
             let code = status.code().unwrap_or(1);
-            trace_log.completed(false);
+            trace.complete(false);
             external_log.record(status.code());
             return Err(WorktrunkError::ChildProcessExited {
                 code,
@@ -1563,10 +1685,141 @@ impl Cmd {
             .into());
         }
 
-        trace_log.completed(true);
+        trace.complete(true);
         external_log.record(Some(0));
 
         Ok(())
+    }
+
+    /// Execute the command with delayed output streaming.
+    ///
+    /// Buffers stdout/stderr initially; if the command runs longer than
+    /// `delay_ms`, switches to streaming both to **stderr** live (keeping our
+    /// stdout clean for callers like `wt switch`). Fast commands stay quiet;
+    /// slow ones (`git worktree add` on a large repo) show progress. Pass `-1`
+    /// to never switch to streaming (always buffer); `0` streams immediately.
+    ///
+    /// `progress_message`, when set, prints to stderr at the moment streaming
+    /// starts (the delay threshold is crossed).
+    ///
+    /// Like [`Cmd::stream`], this does **not** acquire the concurrency
+    /// semaphore: a delayed-stream command runs in the foreground and would
+    /// only ever contend with itself (and acquiring a permit while one is held
+    /// could deadlock under `concurrency = 1`). On a non-zero exit it returns a
+    /// [`StreamCommandError`] carrying the buffered output so callers can render
+    /// the failure (e.g. git's `fatal: …`).
+    ///
+    /// # Panics
+    ///
+    /// Panics if called on a shell-wrapped command (`Cmd::shell()`); the
+    /// delayed-stream path runs a program directly.
+    pub fn delayed_stream(
+        self,
+        delay_ms: i64,
+        progress_message: Option<String>,
+    ) -> anyhow::Result<()> {
+        assert!(
+            !self.shell_wrap,
+            "Cmd::delayed_stream() runs a program directly; Cmd::shell() is not supported"
+        );
+        debug_assert!(
+            self.stdin_data.is_none()
+                && self.timeout.is_none()
+                && self.external_label.is_none()
+                && self.directive_cd_file.is_none()
+                && self.directive_exec_file.is_none()
+                && self.directive_legacy_file.is_none(),
+            "delayed_stream does not support stdin/timeout/external/directive options"
+        );
+
+        // Allow tests to override the delay threshold (-1 to disable, 0 for
+        // immediate streaming).
+        let delay_ms = std::env::var("WORKTRUNK_TEST_DELAYED_STREAM_MS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(delay_ms);
+
+        let cmd_str = self.command_string();
+        self.log_delayed_stream_start(&cmd_str, delay_ms);
+
+        let mut trace = CommandTrace::new(self.context.as_deref(), &cmd_str);
+
+        let mut cmd = self.direct_command();
+        self.apply_common_settings(&mut cmd);
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let mut child = match cmd.spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                trace.fail(&e);
+                return Err(e).with_context(|| format!("Failed to spawn: {}", cmd_str));
+            }
+        };
+
+        let stdout = child.stdout.take().expect("stdout was piped");
+        let stderr = child.stderr.take().expect("stderr was piped");
+
+        // Shared state: when true, output streams directly; when false, buffers.
+        let streaming = Arc::new(AtomicBool::new(false));
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let stdout_handle = spawn_delayed_reader(stdout, streaming.clone(), buffer.clone());
+        let stderr_handle = spawn_delayed_reader(stderr, streaming.clone(), buffer.clone());
+
+        let start = Instant::now();
+
+        // Phase 1: If the delay threshold is enabled, wait that long for the
+        // child to exit. If it finishes before the threshold, output stays
+        // buffered (quiet).
+        if delay_ms >= 0 {
+            let delay = Duration::from_millis(delay_ms as u64);
+            let remaining = delay.saturating_sub(start.elapsed());
+
+            // Zero delay means "stream immediately", not "try a zero-timeout reap".
+            if !remaining.is_zero() {
+                match child.wait_timeout(remaining) {
+                    Ok(Some(status)) => {
+                        let _ = stdout_handle.join();
+                        let _ = stderr_handle.join();
+                        trace.complete(status.success());
+                        return stream_exit_result(status, &buffer, &cmd_str);
+                    }
+                    // Threshold exceeded — fall through to streaming.
+                    Ok(None) => {}
+                    Err(e) => {
+                        let _ = stdout_handle.join();
+                        let _ = stderr_handle.join();
+                        trace.fail(&e);
+                        return Err(e).context("Failed to wait for command");
+                    }
+                }
+            }
+
+            // Delay threshold exceeded — switch to streaming.
+            streaming.store(true, Ordering::Relaxed);
+            if let Some(ref msg) = progress_message {
+                let _ = writeln!(std::io::stderr(), "{}", msg);
+            }
+            for line in buffer.lock().unwrap().drain(..) {
+                let _ = writeln!(std::io::stderr(), "{}", line);
+            }
+            let _ = std::io::stderr().flush();
+        }
+
+        // Phase 2: Block until the child exits (no polling).
+        let wait_result = child.wait();
+        let _ = stdout_handle.join();
+        let _ = stderr_handle.join();
+        let status = match wait_result {
+            Ok(status) => status,
+            Err(e) => {
+                trace.fail(&e);
+                return Err(e).context("Failed to wait for command");
+            }
+        };
+        trace.complete(status.success());
+        stream_exit_result(status, &buffer, &cmd_str)
     }
 }
 
@@ -2100,6 +2353,143 @@ mod tests {
             msg.contains("Failed to execute command"),
             "expected spawn-failure message, got: {msg}"
         );
+    }
+
+    // Fault-injection coverage for the `CommandTrace` resolution arms across
+    // `Cmd`'s execution modes. A non-existent *relative* program slips past
+    // `check_spawn_preconditions` (which only stats absolute paths) and fails at
+    // `spawn()`, exercising the `trace.fail` spawn-error arms; a non-existent
+    // *absolute* program is caught by preconditions, exercising the
+    // `record_failed` arms. None set `.context()`, so the no-context logging
+    // branches are covered too.
+    const MISSING_CMD: &str = "worktrunk-nonexistent-binary-7f3a9b2c";
+
+    #[test]
+    fn test_cmd_run_spawn_failure_resolves_trace() {
+        let err = Cmd::new(MISSING_CMD).run().unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::NotFound);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_run_with_stdin_closes_pipe() {
+        // `cat` reads stdin to EOF; it can only exit once the pipe is closed,
+        // so this pins the "drop stdin before wait" behavior (a regression here
+        // hangs forever rather than failing).
+        let output = Cmd::new("cat").stdin_bytes("piped body").run().unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "piped body");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_delayed_stream_quiet_success() {
+        // A fast command under a generous threshold exits during phase 1
+        // (wait_timeout returns Some) and stays buffered/quiet.
+        Cmd::new("true").delayed_stream(5_000, None).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_delayed_stream_streams_then_reports_failure() {
+        // delay_ms=0 streams immediately (phase-1 threshold crossed → progress
+        // message + buffer drain), and a non-zero exit surfaces as a
+        // StreamCommandError carrying the buffered output.
+        let err = Cmd::new("sh")
+            .args(["-c", "echo to-stderr 1>&2; exit 3"])
+            .delayed_stream(0, Some("working…".to_string()))
+            .unwrap_err();
+        let stream_err = err
+            .downcast_ref::<StreamCommandError>()
+            .expect("non-zero delayed_stream exit should be a StreamCommandError");
+        assert_eq!(stream_err.exit_info, "exit code 3");
+    }
+
+    #[test]
+    fn test_cmd_delayed_stream_spawn_failure_resolves_trace() {
+        // delay_ms=-1 disables phase 1; the spawn failure resolves the trace
+        // via `fail` rather than dropping it unresolved.
+        let err = Cmd::new(MISSING_CMD).delayed_stream(-1, None).unwrap_err();
+        assert!(err.to_string().contains("Failed to spawn"), "{err}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_pipe_into_succeeds() {
+        let (source, sink) = Cmd::new("printf")
+            .arg("hello")
+            .pipe_into(Cmd::new("cat"))
+            .unwrap();
+        assert!(source.status.success() && sink.status.success());
+        assert_eq!(String::from_utf8_lossy(&sink.stdout), "hello");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_pipe_into_feeds_source_stdin() {
+        // The source's stdin must flow through to the sink: `cat` echoes its
+        // stdin to stdout, piped into a second `cat`, so the bytes round-trip.
+        let (source, sink) = Cmd::new("cat")
+            .stdin_bytes(b"piped stdin".to_vec())
+            .pipe_into(Cmd::new("cat"))
+            .unwrap();
+        assert!(source.status.success() && sink.status.success());
+        assert_eq!(String::from_utf8_lossy(&sink.stdout), "piped stdin");
+    }
+
+    #[test]
+    fn test_cmd_pipe_into_source_spawn_failure_resolves_trace() {
+        let err = Cmd::new(MISSING_CMD)
+            .pipe_into(Cmd::new("cat"))
+            .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::NotFound);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_pipe_into_sink_spawn_failure_resolves_both_traces() {
+        // The sink fails to spawn after the source is already running: the sink
+        // trace fails and the source is torn down with complete(false).
+        let err = Cmd::new("printf")
+            .arg("hello")
+            .pipe_into(Cmd::new(MISSING_CMD))
+            .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::NotFound);
+    }
+
+    // An *absolute* non-existent program is rejected by
+    // `check_spawn_preconditions` (which stats absolute paths) before any spawn,
+    // exercising the `record_failed` precondition arms rather than the
+    // spawn-error arms above.
+    #[test]
+    fn test_cmd_pipe_into_source_precondition_failure_resolves_trace() {
+        let err = Cmd::new("/no/such/abs-source-7f3a9b2c")
+            .pipe_into(Cmd::new("cat"))
+            .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::NotFound);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_pipe_into_sink_precondition_failure_resolves_trace() {
+        // Source preconditions pass (relative program); the sink's fail.
+        let err = Cmd::new("printf")
+            .arg("x")
+            .pipe_into(Cmd::new("/no/such/abs-sink-7f3a9b2c"))
+            .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn test_stream_command_error_display_is_the_output() {
+        // The Display impl exists only for the Error bound; callers read fields
+        // via Repository::extract_failed_command, so nothing else exercises it.
+        let err = StreamCommandError {
+            output: "fatal: ref exists".to_string(),
+            command: "git worktree add /x".to_string(),
+            exit_info: "exit code 128".to_string(),
+        };
+        assert_eq!(err.to_string(), "fatal: ref exists");
     }
 
     #[test]

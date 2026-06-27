@@ -38,9 +38,9 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
 
 [1m[32mArguments:[0m
   [36m[BRANCH][0m
-          Branch name or shortcut[0m
+          Branch name, shortcut, or PR/MR URL[0m
           
-          Opens interactive picker if omitted. Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub PR), 'mr:{N}' (GitLab MR)[0m
+          Opens interactive picker if omitted. Shortcuts: [1m^[0m (default branch), [1m-[0m (previous), [1m@[0m (current), [1mpr:{N}[0m (GitHub PR), [1mmr:{N}[0m (GitLab MR)[0m
 
   [36m[EXECUTE_ARGS]...[0m
           Additional arguments for --execute command (after --)[0m
@@ -90,6 +90,9 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
       [1m[36m--remotes[0m
           Include remote branches
 
+      [1m[36m--prs[0m
+          Include open PRs/MRs
+
 [1m[32mAutomation:[0m
       [1m[36m--no-hooks[0m
           Skip hooks
@@ -98,12 +101,9 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
           Output format[0m
           
           JSON prints structured result to stdout. Designed for tool integration (e.g., Claude Code WorktreeCreate hooks).[0m
-
-          Possible values:
-          - [1m[36mtext[0m: Human-readable text output
-          - [1m[36mjson[0m: JSON output
           
           [default: text]
+          [possible values: text, json]
 
 [1m[32mGlobal Options:[0m
   [1m[36m-C[0m[36m [0m[36m<path>[0m
@@ -112,8 +112,11 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
       [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
+      [1m[36m--config-set[0m[36m [0m[36m<toml>[0m
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to apply the same level everywhere — including shell completion, which no flag can reach
 
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
@@ -169,35 +172,52 @@ Shortcuts also apply to [2m--base[0m. For a fork PR/MR, the head commit is fet
 
 [1m[32mInteractive picker[0m
 
-When called without arguments, [2mwt switch[0m opens an interactive picker to browse and select worktrees with live preview.
+When called without arguments, [2mwt switch[0m opens an interactive picker to browse and select worktrees with live preview. The candidate set widens with [2m--branches[0m (local branches without worktrees), [2m--remotes[0m (remote branches), and [2m--prs[0m (open PRs/MRs — see below).
+
+The CI column shows each row's PR/MR CI and review status, the same as [2mwt list --full[0m.
 
 [1mKeybindings:[0m
 
-      Key                       Action                   
- ───────────── ───────────────────────────────────────── 
- [2m↑[0m/[2m↓[0m           Navigate worktree list                    
- (type)        Filter worktrees                          
- [2mEnter[0m         Switch to selected worktree               
- [2mAlt-c[0m         Create new worktree named as entered text 
- [2mEsc[0m           Cancel                                    
- [2m1[0m–[2m5[0m           Switch preview tab                        
- [2mAlt-p[0m         Toggle preview panel                      
- [2mCtrl-u[0m/[2mCtrl-d[0m Scroll preview up/down                    
+      Key                              Action                         
+ ───────────── ────────────────────────────────────────────────────── 
+ [2m↑[0m/[2m↓[0m           Navigate worktree list                                 
+ (type)        Filter worktrees                                       
+ [2mEnter[0m         Switch to selected worktree                            
+ [2mAlt-c[0m         Create new worktree named as entered text              
+ [2mAlt-x[0m         Remove selected worktree/branch                        
+ [2mAlt-y[0m         Copy selected branch name to the clipboard             
+ [2mAlt-o[0m         Open the selected row's PR/MR URL in the browser       
+ [2mAlt-r[0m         Refresh the list (pick up worktrees created elsewhere) 
+ [2mEsc[0m           Cancel                                                 
+ [2mAlt-1[0m–[2mAlt-7[0m   Jump to a preview tab                                  
+ [2mTab[0m/[2mShift-Tab[0m Cycle preview tabs forward/backward                    
+ [2mAlt-p[0m         Toggle preview panel                                   
+ [2mCtrl-u[0m/[2mCtrl-d[0m Scroll preview up/down                                 
 
-[1mPreview tabs[0m — toggle with number keys:
+[2mAlt-o[0m is a no-op on a row with no PR/MR (or whose status hasn't loaded yet).
+
+[2mAlt-x[0m is a no-op on the current worktree (the [2m@[0m row) — removing the worktree in use would have to switch elsewhere first, so switch away and remove it from there.
+
+Each row filters by its branch, path, and — when it has a PR/MR — the PR/MR's number, title, and author, the same fields whether the PR is checked out (a worktree row) or listed via [2m--prs[0m. Plain digits go to the filter, so a number can be typed directly and the preview tabs move to [2mAlt[0m.
+
+Typing a gutter sigil filters by row kind: [36m+[0m narrows to linked worktrees and [2m@[0m to the current worktree. The other sigils don't filter cleanly — [2m^[0m and [2m|[0m are skim's prefix-anchor and OR query operators (so [2m^[0m matches every row and [2m|[0m none), and [2m/[0m matches most rows because every worktree path contains it.
+
+[1mPreview tabs:[0m
 
 1. [1mHEAD±[0m — Diff of uncommitted changes
 2. [1mlog[0m — Recent commits; commits already on the default branch have dimmed hashes
 3. [1mmain…±[0m — Diff of changes since the merge-base with the default branch
 4. [1mremote⇅[0m — Ahead/behind diff vs upstream tracking branch
 5. [1msummary[0m — LLM-generated branch summary; requires [2m[list] summary = true[0m and [2mcommit.generation[0m
+6. [1mpr[0m — The selected row's PR/MR, for any row whose branch has one
+7. [1mcomments[0m — The PR/MR's comment thread, fetched from the forge on [2m--prs[0m rows
+
+On narrow previews the tab bar compacts to digits — only the active tab keeps its label — so every [2mAlt-N[0m accelerator stays visible.
 
 [1mPager configuration:[0m The preview panel pipes diff output through git's pager. Override in user config:
 
 [107m [0m [2m[36m[switch.picker][0m
 [107m [0m [2mpager = [0m[2m[32m"delta --paging=never --width=$COLUMNS"[0m
-
-Available on Unix only (macOS, Linux). On Windows, use [2mwt list[0m or [2mwt switch <branch>[0m directly.
 
 [1m[32mPull requests and merge requests[0m
 
@@ -207,16 +227,16 @@ The [2mpr:<number>[0m / [2mmr:<number>[0m shortcut and the PR/MR's web URL b
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch https://github.com/owner/repo/pull/101  # ...the same PR, by URL[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch mr:101                                  # GitLab MR !101[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch https://gitlab.com/owner/repo/-/merge_requests/101  # ...the same MR, by URL[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--prs[0m[2m                                   # Browse open PRs/MRs in the picker[0m
 
-Both work anywhere a branch is accepted, including [2m--base[0m.
+Both work anywhere a branch is accepted, including [2m--base[0m. The [2m--create[0m flag cannot be used with a PR/MR reference since the branch already exists.
 
-Requires [2mgh[0m (GitHub) or [2mglab[0m (GitLab) CLI to be installed and authenticated. The [2m--create[0m flag cannot be used with a PR/MR reference since the branch already exists.
+If the PR or MR is on a fork, the local branch uses its branch name directly, so [2mgit push[0m works normally. A pre-existing local branch with that name tracking something else requires renaming first.
 
-[1mForks:[0m The local branch uses the PR/MR's branch name directly (e.g., [2mfeature-fix[0m), so [2mgit push[0m works normally. If a local branch with that name already exists tracking something else, rename it first.
+The [2m--prs[0m flag adds the repository's open PRs (GitHub) or MRs (GitLab) to the interactive picker — only the ones not already there: a PR whose branch is already shown (as a worktree, or a local or remote branch) isn't listed twice, so [2m--prs[0m only adds the rest and the two pickers differ solely by those extra rows. Each added row resolves to the same [2mpr:[0m/[2mmr:[0m shortcut, so selecting one fetches the ref and switches to its branch. A [2m--prs[0m row has no local worktree, so its [2mpr[0m and [2mcomments[0m preview tabs
+ load the PR/MR's metadata and comments from the forge in the background. The [2mlog[0m tab uses a local [2mgit log[0m — graph and merge-base dimming included — whenever the head commit is already in the object store (a same-repo PR off a fetched remote), falling back to a flat forge-fetched commit list otherwise.
 
-[1mGitea (experimental):[0m [2mpr:[0m is also compatible with Gitea via the [2mtea[0m CLI. Set [2m[forge] platform = "gitea"[0m in [2m.config/wt.toml[0m to opt in; worktrunk also auto-detects Gitea when the remote host contains [2mgitea[0m or when [2mtea login add[0m has been run for the host.
-
-[1mAzure DevOps (experimental):[0m [2mpr:[0m is also compatible with Azure DevOps via the [2maz[0m CLI (with the [2mazure-devops[0m extension). Set [2m[forge] platform = "azure-devops"[0m in [2m.config/wt.toml[0m to opt in; worktrunk also auto-detects Azure DevOps from [2mdev.azure.com[0m and [2m*.visualstudio.com[0m remotes.
+Requires [2mgh[0m (GitHub), [2mglab[0m (GitLab), or an equivalent CLI installed and authenticated; see forge platform for Gitea, Azure DevOps, and other supported platforms.
 
 [1m[32mWhen wt switch fails[0m
 

@@ -7,6 +7,7 @@ name: nightly
 #   - check-unused-dependencies: cargo-udeps on nightly toolchain
 #   - minimal-versions: cargo check against minimum-version dep resolution
 #   - nix-flake: nix flake check (packaging-environment bugs, motivated by #2624)
+#   - crate-build: build the crates.io archive with no `.git` (faithful #3123 repro)
 #
 # Runs daily on cron, on demand via workflow_dispatch, on pushes to main that
 # touch dependency or toolchain files, and on PRs that either (a) touch the
@@ -105,13 +106,13 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
 
     - name: Install cargo-hack
-      uses: taiki-e/install-action@v2.81.10
+      uses: taiki-e/install-action@v2.82.4
       with:
         tool: cargo-hack
 
@@ -119,7 +120,7 @@ jobs:
     # zsh/fish and probe nushell; match the test matrix's shell setup
     # (.github/actions/test-setup) so those combinations run, not just compile.
     - name: Install shells (zsh, fish)
-      uses: awalsh128/cache-apt-pkgs-action@v1.6.0
+      uses: awalsh128/cache-apt-pkgs-action@v1.6.1
       with:
         packages: zsh fish
         version: 1.0
@@ -165,7 +166,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: Install musl-tools
       if: matrix.install == 'musl-tools'
@@ -191,13 +192,13 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
 
     - name: Install shells (zsh, fish)
-      uses: awalsh128/cache-apt-pkgs-action@v1.6.0
+      uses: awalsh128/cache-apt-pkgs-action@v1.6.1
       with:
         packages: zsh fish
         version: 1.0
@@ -208,7 +209,7 @@ jobs:
         version: '0.113.1'
 
     - name: 💰 Rust repo cache
-      uses: actions/cache@v5
+      uses: actions/cache@v6
       with:
         path: target/bench-repos
         key: bench-repos-rust-${{ runner.os }}
@@ -252,7 +253,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     # cargo-udeps requires nightly; update date periodically
     - run: rustup override set nightly-2026-03-01
@@ -265,7 +266,7 @@ jobs:
         crate: cargo-udeps
         version: "=0.1.61"
 
-    - uses: clechasseur/rs-cargo@v5.0.5
+    - uses: clechasseur/rs-cargo@v5.0.6
       with:
         command: udeps
         args: --all-targets
@@ -281,7 +282,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - run: rustup override set nightly-2026-03-01
 
@@ -291,18 +292,41 @@ jobs:
         key: minimal-versions
 
     - name: Resolve to minimum versions
-      run: |
-        cargo update -Z minimal-versions
-        # filedescriptor 0.8.3 declares `thiserror = "^1.0"` but uses `#[from]`,
-        # which is unsupported in thiserror 1.0.0/1.0.1 (it was added in 1.0.2).
-        # Under -Z minimal-versions the resolver picks 1.0.0, which fails to
-        # compile. Bump the floor to a known-good version that has `#[from]`.
-        # (Upstream filedescriptor hasn't been touched since 2025-02-11; we
-        # can't fix this at the source.)
-        cargo update -p thiserror@1 --precise 1.0.7
+      # `direct`, not full `-Z minimal-versions`: minimize only worktrunk's own
+      # direct deps and let transitive crates resolve normally. Full minimization
+      # also walks skim 4.8's TUI/image stack (ansi-to-tui, ratatui's
+      # `instability` macro, color-eyre, ratatui-image -> image/avif -> num-* and
+      # bitvec), whose crates under-declare their floors and don't compile at the
+      # picked versions — upstream brokenness, not ours, that we'd have to pin
+      # around. Direct minimization confines the check to floors we actually own;
+      # they're raised in the manifests to the minimums the tree builds against.
+      run: cargo update -Z direct-minimal-versions
 
     - name: cargo check
       run: cargo check --workspace --all-targets
+
+  crate-build:
+    # Faithful end-to-end guard for #3123: build the crates.io *source archive*
+    # in a directory with no ancestor `.git` and confirm `wt` both compiles and
+    # reports the cargo version (the `option_env!("VERGEN_GIT_DESCRIBE")`
+    # fallback). ci.yaml's fast `vergen_env_vars_are_read_optionally` guard
+    # catches the mechanism (`env!` vs `option_env!`) on every PR by scanning
+    # source; this reproduces the actual `cargo install` condition — a full
+    # from-scratch build (~minutes), which is why it's `#[ignore]`d and run here
+    # via `--ignored`. A regression that an in-tree build can't see (git
+    # describe ascends to the outer repo) surfaces only on this no-git build.
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v7
+
+    - name: 💰 Cache
+      uses: Swatinem/rust-cache@v2
+
+    - name: 🧪 Build crates.io archive without .git
+      run: cargo test --test integration crate_io_archive_builds_and_versions_without_git -- --ignored
 
   nix-flake:
     # Build and test under the nix sandbox so packaging-environment bugs
@@ -321,7 +345,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: Install Nix
       uses: cachix/install-nix-action@v31
@@ -341,6 +365,7 @@ jobs:
       - check-unused-dependencies
       - minimal-versions
       - nix-flake
+      - crate-build
     if: always() && contains(needs.*.result, 'failure') && github.repository_owner == 'max-sixty' && github.event_name == 'schedule'
     runs-on: ubuntu-24.04
     permissions:
@@ -348,7 +373,7 @@ jobs:
       issues: write
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - uses: JasonEtco/create-an-issue@v2
       env:

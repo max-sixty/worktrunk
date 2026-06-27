@@ -590,6 +590,11 @@ pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
     );
     // OpenCode config directory (platform-independent override for tests)
     settings.add_redaction(".env.OPENCODE_CONFIG_DIR", "[TEST_OPENCODE_CONFIG]");
+    // Claude Code config directory: `set_temp_home_env` pins it to the temp
+    // home's `.claude` for hermeticity, so the value is a per-run temp path that
+    // would leak (and fail the host-path guard) when regenerated under an
+    // ambient CLAUDE_CONFIG_DIR. Redact it like its OpenCode sibling above.
+    settings.add_redaction(".env.CLAUDE_CONFIG_DIR", "[TEST_CLAUDE_CONFIG]");
     // `wt config show --full` tests inject WORKTRUNK_TEST_LATEST_VERSION = the
     // current crate version (so the version-check line reads "Up to date"), which
     // would otherwise churn this `info` block on every release bump. Redact any
@@ -622,56 +627,6 @@ pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
         ".env.CARGO_LLVM_COV_TARGET_DIR",
         "[CARGO_LLVM_COV_TARGET_DIR]",
     );
-
-    // Drop empty-valued entries from the recorded `env:` block so it depends
-    // only on what the test affirmatively sets — identically on every
-    // contributor's machine.
-    //
-    // insta-cmd records `Command::env_remove` calls as `KEY: ""` (it
-    // serializes `get_envs()`, which yields `None` for removals, rendered via
-    // `unwrap_or("")`), so a removal is indistinguishable from a deliberate
-    // set-to-empty — and the recorded line is false either way: the child sees
-    // no variable, not an empty one. Worse, `isolate_subprocess_env` scrubs
-    // every `GIT_*` / `WORKTRUNK_*` key it finds in the *parent* environment,
-    // so which markers appear is a property of the host: CI has `GIT_EDITOR`,
-    // a contributor's box might have `GIT_PAGER`, neither, or both. insta
-    // never *compares* the `info:` block (only stdout/stderr/exit), so this
-    // only churns regenerated snapshots from machine to machine — but that
-    // churn is exactly what makes contributors think they have to match their
-    // local environment to CI. Normalizing it away here means they don't.
-    //
-    // This runs as its own pass after the per-key `.env.*` redactions above,
-    // so affirmatively-set vars (config paths → `[TEST_CONFIG]`, coverage →
-    // `[LLVM_PROFILE_FILE]`, etc.) already hold non-empty placeholders and are
-    // kept.
-    //
-    // Caveat: a test that affirmatively sets a var to `""` as its subject
-    // (e.g. `test_list_config_env_override_validation_failure` setting
-    // `WORKTRUNK_WORKTREE_PATH=""` to trigger the "worktree-path cannot be
-    // empty" warning) loses that header line too — the recorded YAML can't
-    // tell it apart from a removal. Harmless: the test body still asserts the
-    // warning, and insta never compares the `env:` block.
-    settings.add_dynamic_redaction(".env", |content, _path| drop_empty_env_entries(content));
-}
-
-/// Drop empty-valued entries from an insta-cmd `env` map node. These are
-/// usually `Command::env_remove` markers — chiefly the
-/// [`isolate_subprocess_env`](worktrunk::testing) scrub, whose key set depends
-/// on the host environment; removing them makes the recorded block
-/// host-independent. An affirmatively-set empty value is indistinguishable
-/// from a removal in the recorded YAML and is dropped too — see the caveat on
-/// [`add_standard_env_redactions`].
-fn drop_empty_env_entries(content: insta::internals::Content) -> insta::internals::Content {
-    use insta::internals::Content;
-
-    let Content::Map(entries) = content else {
-        return content;
-    };
-    let kept = entries
-        .into_iter()
-        .filter(|(_, value)| value.as_str() != Some(""))
-        .collect();
-    Content::Map(kept)
 }
 
 fn canonical_home_dir() -> Option<PathBuf> {
@@ -1409,55 +1364,5 @@ mod tests {
             assert_snapshot!(linux_home_eq_tempdir, @"▲ [TEST_CONFIG] failed");
             assert_snapshot!(linux_home_above_tempdir, @"▲ [TEST_CONFIG] failed");
         });
-    }
-
-    /// The `env:` redaction drops every empty-valued entry (`KEY: ""` — how
-    /// insta-cmd records `env_remove`, including the host-dependent
-    /// `GIT_*`/`WORKTRUNK_*` scrub and the unconditional `NO_COLOR`/`SHELL`/
-    /// `PSModulePath` scrubs) while keeping everything a test affirmatively
-    /// sets to a non-empty value. A non-map node passes through.
-    #[test]
-    fn drop_empty_env_entries_normalizes_env_block() {
-        use insta::internals::Content;
-
-        let env = Content::Map(vec![
-            // Host-dependent scrub markers — dropped.
-            (Content::from("GIT_EDITOR"), Content::from("")),
-            (Content::from("GIT_PAGER"), Content::from("")),
-            (Content::from("WORKTRUNK_LEAKED"), Content::from("")),
-            // Affirmatively set vars — kept.
-            (Content::from("CLICOLOR_FORCE"), Content::from("1")),
-            (Content::from("LANG"), Content::from("C")),
-            // A scrub-prefixed var the test set to a real (redacted) value — kept.
-            (
-                Content::from("WORKTRUNK_CONFIG_PATH"),
-                Content::from("[TEST_CONFIG]"),
-            ),
-            // A scrub-prefixed var set to "0", not removed — kept.
-            (
-                Content::from("WORKTRUNK_TEST_CLAUDE_INSTALLED"),
-                Content::from("0"),
-            ),
-            // Unconditional, explicitly-named scrub — dropped like any removal.
-            (Content::from("NO_COLOR"), Content::from("")),
-        ]);
-
-        let Content::Map(kept) = drop_empty_env_entries(env) else {
-            panic!("expected a map back");
-        };
-        let keys: Vec<&str> = kept.iter().filter_map(|(k, _)| k.as_str()).collect();
-        assert_eq!(
-            keys,
-            vec![
-                "CLICOLOR_FORCE",
-                "LANG",
-                "WORKTRUNK_CONFIG_PATH",
-                "WORKTRUNK_TEST_CLAUDE_INSTALLED",
-            ]
-        );
-
-        // Non-map nodes pass through untouched.
-        let scalar = Content::from("not a map");
-        assert_eq!(drop_empty_env_entries(scalar.clone()), scalar);
     }
 }

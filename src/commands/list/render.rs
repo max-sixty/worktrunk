@@ -7,7 +7,7 @@ use worktrunk::styling::{Stream, StyledLine, hyperlink_stdout, supports_hyperlin
 use super::collect::parse_port_from_url;
 use super::columns::{ColumnKind, DiffVariant};
 use super::layout::{ColumnFormat, ColumnLayout, DiffColumnConfig, LayoutConfig};
-use super::model::{ListItem, PositionMask};
+use super::model::{ItemKind, ListItem, PositionMask};
 
 /// Placeholder glyph for unresolved Status positions — both "still loading" and
 /// "drain deadline fired, won't arrive."
@@ -194,7 +194,11 @@ impl LayoutConfig {
 
             // Debug: Log if cell exceeds its allocated width
             if cell_width > column.width {
-                log::debug!(
+                tracing::debug!(
+                    column = ?column.kind,
+                    allocated = column.width,
+                    actual = cell_width,
+                    excess = cell_width - column.width,
                     "Cell overflow: column={:?} allocated={} actual={} excess={}",
                     column.kind,
                     column.width,
@@ -212,7 +216,7 @@ impl LayoutConfig {
         }
 
         let final_width = line.width();
-        log::debug!("Rendered line width: {}", final_width);
+        tracing::debug!(width = final_width, "Rendered line width: {}", final_width);
 
         line
     }
@@ -275,7 +279,6 @@ impl LayoutConfig {
     /// and a blank gutter placeholder. See [`Self::render_list_item_line`] for `placeholder` semantics.
     pub fn render_skeleton_row(&self, item: &ListItem, placeholder: &str) -> StyledLine {
         let branch = item.branch_name();
-        let wt_data = item.worktree_data();
         let shortened_path = item
             .worktree_path()
             .map(|p| shorten_path(p, &self.main_worktree_path))
@@ -289,16 +292,19 @@ impl LayoutConfig {
 
             match col.kind {
                 ColumnKind::Gutter => {
-                    // Skeleton shows placeholder gutter - actual symbols (including is_previous)
-                    // appear when WorktreeData is populated post-skeleton.
-                    // Uses the current placeholder so the 200ms blank-reveal flow
-                    // keeps the gutter in lockstep with the data columns.
-                    let symbol = if wt_data.is_some() {
-                        format!("{spinner} ") // Placeholder for worktrees
-                    } else {
-                        "  ".to_string() // Branch without worktree (two spaces to match width)
-                    };
-                    cell.push_styled(symbol, dim);
+                    // Worktree gutter symbols (@/^/+, including is_previous)
+                    // resolve when WorktreeData is populated post-skeleton, so
+                    // show the dimmed placeholder — it keeps the 200ms
+                    // blank-reveal flow in lockstep with the data columns.
+                    // Branch scope is known at construction, so its sigil
+                    // (`/`/`|`) renders immediately, dimmed to match the final
+                    // render (and its Status-column twin) — no flash or flicker.
+                    match &item.kind {
+                        ItemKind::Worktree(_) => cell.push_styled(format!("{spinner} "), dim),
+                        ItemKind::Branch(scope) => {
+                            cell.push_styled(format!("{} ", scope.gutter_glyph()), dim)
+                        }
+                    }
                 }
                 ColumnKind::Branch => {
                     // Show actual branch name (no dim - start normal, gray out later if removable)
@@ -317,6 +323,33 @@ impl LayoutConfig {
                         let short_head = &head[..8.min(head.len())];
                         cell.push_styled(short_head, dim);
                     }
+                }
+                ColumnKind::Custom(i) => {
+                    // Custom values are expanded before the skeleton renders —
+                    // show them like Branch/Path rather than a placeholder.
+                    let text = item
+                        .custom_values
+                        .get(i as usize)
+                        .map(String::as_str)
+                        .unwrap_or("");
+                    return col.render_text_cell(text, None);
+                }
+                ColumnKind::CiStatus if item.pr_status.is_some() => {
+                    // Set before the skeleton only by the picker's cache prime —
+                    // render it now for an instant first paint; the live CiStatus
+                    // task repaints the cell as it lands. `wt list` never sets
+                    // pr_status this early and keeps the placeholder arm below.
+                    return match &item.pr_status {
+                        Some(Some(pr_status)) => {
+                            let mut ci = StyledLine::new();
+                            ci.push_raw(
+                                pr_status
+                                    .format_cell(col.width, supports_hyperlinks(Stream::Stdout)),
+                            );
+                            ci
+                        }
+                        _ => StyledLine::new(),
+                    };
                 }
                 _ => {
                     // Show spinner for data columns (placeholder_cell handles alignment)
@@ -378,20 +411,30 @@ impl ColumnLayout {
 
         match self.kind {
             ColumnKind::Gutter => {
+                // The gutter is a 2-cell presence/location axis. Worktree rows
+                // (`@`/`^`/`+`) are materialized on disk and render bright;
+                // branch rows are refs with no working copy, split by scope
+                // (`/` local, `|` remote) and rendered dim to match those same
+                // glyphs in the Status column (WORKTREE_STATE `/`, upstream `|`
+                // are both dim) — bright worktree vs dim ref reinforces the
+                // presence gradient, glyph still primary. All single-width
+                // ASCII — the gutter must dodge skim's `width_cjk` clipping.
+                //
+                // PR rows (open PRs with no local branch, `wt switch --prs`)
+                // also carry a gutter sigil — a dim `#` — but they're a picker
+                // row built without a `ListItem`, so they render their gutter in
+                // `commands::picker::prs` (`PR_GUTTER_SIGIL`) rather than through
+                // this `ItemKind` match.
                 let mut cell = StyledLine::new();
-                let symbol = if let Some(data) = worktree_data {
-                    // Priority: @ (current) > ^ (main) > + (regular, including previous)
-                    if data.is_current {
-                        "@ " // Current worktree
-                    } else if data.is_main {
-                        "^ " // Main worktree
-                    } else {
-                        "+ " // Regular worktree (including previous)
-                    }
-                } else {
-                    "  " // Branch without worktree (two spaces to match width)
-                };
-                cell.push_raw(symbol.to_string());
+                // `glyph` + trailing space = the two-cell sigil; the bare glyph
+                // also feeds the picker's fuzzy-search text (`gutter_glyph`).
+                let sigil = format!("{} ", item.kind.gutter_glyph());
+                match &item.kind {
+                    // Worktree rows are materialized on disk — render bright.
+                    ItemKind::Worktree(_) => cell.push_raw(sigil),
+                    // Branch rows are refs with no working copy — render dim.
+                    ItemKind::Branch(_) => cell.push_styled(sigil, Style::new().dimmed()),
+                }
                 cell
             }
             ColumnKind::Branch => {
@@ -539,6 +582,16 @@ impl ColumnLayout {
                 cell.push_styled(msg, Style::new().dimmed());
                 cell
             }
+            // Values are expanded before layout — no loading state, so an
+            // absent or empty value is an empty cell, never a placeholder.
+            ColumnKind::Custom(i) => {
+                let text = item
+                    .custom_values
+                    .get(i as usize)
+                    .map(String::as_str)
+                    .unwrap_or("");
+                self.render_text_cell(text, text_style)
+            }
         }
     }
 }
@@ -574,7 +627,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)] // format_aligned is unix-only
     fn test_format_aligned_produces_fixed_width_output() {
         use super::super::columns::DiffVariant;
 
@@ -619,7 +671,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)] // format_aligned is unix-only
     fn test_format_aligned_handles_single_side() {
         use super::super::columns::DiffVariant;
 
@@ -1234,7 +1285,7 @@ mod tests {
         let layout = LayoutConfig {
             columns: vec![ColumnLayout {
                 kind: ColumnKind::Summary,
-                header: "Summary",
+                header: std::borrow::Cow::Borrowed("Summary"),
                 start: 0,
                 width: 10,
                 format: ColumnFormat::Text,
@@ -1261,7 +1312,7 @@ mod tests {
 
         let summary_col = ColumnLayout {
             kind: ColumnKind::Summary,
-            header: "Summary",
+            header: std::borrow::Cow::Borrowed("Summary"),
             start: 0,
             width: 40,
             format: ColumnFormat::Text,
@@ -1296,7 +1347,7 @@ mod tests {
 
         let col = ColumnLayout {
             kind: ColumnKind::WorkingDiff,
-            header: "Working",
+            header: std::borrow::Cow::Borrowed("Working"),
             start: 0,
             width: 9,
             format: ColumnFormat::Diff(DiffColumnConfig {
@@ -1339,7 +1390,7 @@ mod tests {
 
         let col = ColumnLayout {
             kind: ColumnKind::Upstream,
-            header: "Remote⇅",
+            header: std::borrow::Cow::Borrowed("Remote⇅"),
             start: 0,
             width: 7,
             format: ColumnFormat::Diff(DiffColumnConfig {

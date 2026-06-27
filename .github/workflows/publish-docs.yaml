@@ -20,10 +20,10 @@ jobs:
 
     steps:
       - name: 📂 Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Zola
-        uses: taiki-e/install-action@v2.81.10
+        uses: taiki-e/install-action@v2.82.4
         with:
           tool: zola@0.22.1
 

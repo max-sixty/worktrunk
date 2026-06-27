@@ -6,6 +6,7 @@ info:
     - list
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
+    CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
@@ -43,20 +44,21 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-  [1mBranch[0m     [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mRemote⇅[0m  [1mPath[0m               [1mCommit[0m    [1mAge[0m   [1mMessage[0m
-@ main           [2m^[22m[2m|[22m                           [2m|[0m     .                  [2m05a4a45d[0m  [2m·[0m     [2m·[0m
-+ -          [2m·[0m  [2m·[0m[2m·[0m             [2m·[0m        [2m·[0m           ../repo.feature    [2m00000000[0m  [2m·[0m     [2m·[0m
-+ feature-a      [2m↑[22m                 [32m↑1[0m               ../repo.feature-a  [2m1b87d473[0m  [2m·[0m     [2m·[0m
-+ feature-b      [2m↑[22m                 [32m↑1[0m               ../repo.feature-b  [2mf62940fc[0m  [2m·[0m     [2m·[0m
-+ feature-c      [2m↑[22m                 [32m↑1[0m               ../repo.feature-c  [2m345c7c93[0m  [2m·[0m     [2m·[0m
+  [1mBranch[0m     [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m     [1mmain…±[0m  [1mRemote⇅[0m  [1mPath[0m               [1mCommit[0m    [1mAge[0m   [1mMessage[0m
+@ main           [2m^[22m[2m|[22m                                      [2m|[0m     .                  [2m05a4a45d[0m  [2m·[0m     [2m·[0m
++ -          [2m·[0m  [2m·[0m[2m·[0m             [2m·[0m        [2m·[0m          [2m·[0m           ../repo.feature    [2m00000000[0m  [2m·[0m     [2m·[0m
++ feature-a      [2m↑[22m                 [32m↑1[0m        [32m+1[0m                ../repo.feature-a  [2m1b87d473[0m  [2m·[0m     [2m·[0m
++ feature-b      [2m↑[22m                 [32m↑1[0m        [32m+1[0m                ../repo.feature-b  [2mf62940fc[0m  [2m·[0m     [2m·[0m
++ feature-c      [2m↑[22m                 [32m↑1[0m        [32m+1[0m                ../repo.feature-c  [2m345c7c93[0m  [2m·[0m     [2m·[0m
 
-[2m○[22m [2mShowing 5 worktrees, 3 ahead. 5 tasks failed[0m
+[2m○[22m [2mShowing 5 worktrees, 3 ahead. 6 tasks failed[0m
 
 ----- stderr -----
 [33m▲[39m [33mFailed to batch-fetch commit details: fatal: bad object 0000000000000000000000000000000000000001[39m
 [33m▲[39m [33mSome git operations failed:
 [107m [0m [1m(detached)[22m: ahead-behind (git merge-base failed for 05a4a45d0b981dad5c27db59dca482836d59f89e 0000000000000000000000000000000000000001: fatal: Not a valid commit name 0000000000000000000000000000000000000001)
 [107m [0m [1m(detached)[22m: committed-trees-match (fatal: ambiguous argument '0000000000000000000000000000000000000001^{tree}': unknown revision or path not in the working tree.)
+[107m [0m [1m(detached)[22m: branch-diff (git merge-base failed for 05a4a45d0b981dad5c27db59dca482836d59f89e 0000000000000000000000000000000000000001: fatal: Not a valid commit name 0000000000000000000000000000000000000001)
 [107m [0m [1m(detached)[22m: working-tree-diff (fatal: bad object HEAD)
 [107m [0m [1m(detached)[22m: merge-tree-conflicts (fatal: bad object HEAD)
 [107m [0m [1m(detached)[22m: working-tree-conflicts (fatal: bad object HEAD)[39m

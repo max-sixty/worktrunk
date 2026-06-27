@@ -175,13 +175,7 @@ impl Repository {
             let Some((config_key, value)) = line.split_once(' ') else {
                 continue;
             };
-            let Some(rest) = config_key.strip_prefix("worktrunk.state.") else {
-                continue;
-            };
-            // Use rsplit_once: var keys cannot contain dots (validated by
-            // validate_vars_key), so the last `.vars.` is always the real separator.
-            // split_once would misparse branch names containing `.vars.`.
-            let Some((branch, key)) = rest.rsplit_once(".vars.") else {
+            let Some((branch, key)) = parse_vars_config_key(config_key) else {
                 continue;
             };
             result
@@ -190,6 +184,38 @@ impl Repository {
                 .insert(key.to_string(), value.to_string());
         }
         result
+    }
+
+    /// Get all vars entries across all branches from the bulk config snapshot.
+    ///
+    /// Unlike [`Self::all_vars_entries`], this reads the in-memory
+    /// `Repository::all_config` map and spawns no subprocess. The snapshot
+    /// is loaded once per process, so writes made by other processes after
+    /// that load are invisible — coherent for a single read like `wt list`
+    /// rendering, wrong for hook/alias pipelines that must observe writes
+    /// from earlier steps (those use [`Self::vars_entries`]).
+    pub fn all_vars_from_snapshot(
+        &self,
+    ) -> anyhow::Result<std::collections::HashMap<String, std::collections::BTreeMap<String, String>>>
+    {
+        let guard = self.all_config()?.read().unwrap();
+        let mut result: std::collections::HashMap<
+            String,
+            std::collections::BTreeMap<String, String>,
+        > = std::collections::HashMap::new();
+        for (config_key, values) in guard.iter() {
+            let Some((branch, key)) = parse_vars_config_key(config_key) else {
+                continue;
+            };
+            let Some(value) = values.last() else {
+                continue;
+            };
+            result
+                .entry(branch.to_string())
+                .or_default()
+                .insert(key.to_string(), value.clone());
+        }
+        Ok(result)
     }
 
     /// Set the previous branch in worktrunk.history for `wt switch -` support.
@@ -346,7 +372,7 @@ impl Repository {
                 // Detect: try remote, then local inference
                 let detected = self.detect_from_remote().or_else(|| {
                     self.infer_default_branch_locally()
-                        .inspect_err(|e| log::debug!("Local inference failed: {e}"))
+                        .inspect_err(|e| tracing::debug!(error = %e, "Local inference failed: {e}"))
                         .ok()
                 });
 
@@ -354,7 +380,7 @@ impl Repository {
                 if let Some(ref branch) = detected
                     && let Err(e) = self.set_config_value("worktrunk.default-branch", branch)
                 {
-                    log::debug!("Failed to persist default-branch cache: {e}");
+                    tracing::debug!(error = %e, "Failed to persist default-branch cache: {e}");
                 }
 
                 detected
@@ -655,6 +681,17 @@ impl Repository {
     }
 }
 
+/// Split a `worktrunk.state.<branch>.vars.<key>` config key into `(branch, key)`.
+///
+/// Uses `rsplit_once`: var keys cannot contain dots (validated by
+/// `validate_vars_key`), so the last `.vars.` is always the real separator.
+/// `split_once` would misparse branch names containing `.vars.`.
+fn parse_vars_config_key(config_key: &str) -> Option<(&str, &str)> {
+    config_key
+        .strip_prefix("worktrunk.state.")?
+        .rsplit_once(".vars.")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -742,5 +779,26 @@ mod tests {
         // From there, normal increment behaviour resumes.
         repo.mark_hint_shown("legacy").unwrap();
         assert_eq!(repo.hint_count("legacy"), 2);
+    }
+
+    /// The snapshot read must parse the same entries as the subprocess read,
+    /// including branch names that themselves contain `.vars.`.
+    #[test]
+    fn test_all_vars_from_snapshot_matches_subprocess_read() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        repo.set_config("worktrunk.state.feature.vars.ticket", "JIRA-1")
+            .unwrap();
+        repo.set_config("worktrunk.state.feature.vars.note", "a note")
+            .unwrap();
+        repo.set_config("worktrunk.state.weird.vars.branch.vars.key", "v")
+            .unwrap();
+
+        let snapshot = repo.all_vars_from_snapshot().unwrap();
+        assert_eq!(snapshot, repo.all_vars_entries());
+        assert_eq!(snapshot["feature"]["ticket"], "JIRA-1");
+        assert_eq!(snapshot["feature"]["note"], "a note");
+        assert_eq!(snapshot["weird.vars.branch"]["key"], "v");
     }
 }

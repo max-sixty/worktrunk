@@ -305,7 +305,7 @@ fn delete_branch_in_synchronous_fallback(
 ///   similar race) — otherwise `print_hints` has explained the case and a
 ///   second message would duplicate.
 /// - `Ok(ForceDeleted)` / `Ok(Integrated(_))`: succeeded; no message.
-/// - `Err`: `log::warn!` for developer diagnostics; the failure modes
+/// - `Err`: `tracing::warn!` for developer diagnostics; the failure modes
 ///   here (`git update-ref` exec error, refs DB I/O failure) are not
 ///   user-actionable beyond re-running the command.
 fn warn_if_branch_retained(
@@ -339,7 +339,7 @@ fn warn_if_branch_retained(
             );
         }
         Err(e) => {
-            log::warn!("Failed to delete branch {branch} after removing worktree: {e}");
+            tracing::warn!(branch = %branch, error = %e, "Failed to delete branch {branch} after removing worktree: {e}");
         }
         Ok(_) => {}
     }
@@ -643,20 +643,31 @@ struct BranchDeletionDisplay {
     show_unmerged_hint: bool,
 }
 
-fn print_retained_unmerged_branch(branch_name: &str) {
-    eprintln!(
-        "{}",
-        info_message(cformat!(
-            "Branch <bold>{branch_name}</> retained; has unmerged changes"
-        ))
-    );
+/// The canonical "branch retained because unmerged" info + hint lines, as an
+/// `(info, hint)` pair. [`print_retained_unmerged_branch`] prints them; the
+/// picker stashes them via `stash_retained_unmerged_branch` (it can't print
+/// mid-render) from its branch-only keep path — a `/ branch` row whose unmerged
+/// branch `SafeDelete` declines to delete stays put, so this explains the no-op.
+/// (A worktree removal that keeps its branch transforms the row to `/ branch`
+/// live instead, with no stashed message.) Shared so the emit paths can't drift
+/// in wording, flag, or styling.
+pub(crate) fn retained_unmerged_branch_messages(branch_name: &str) -> (String, String) {
+    let info = info_message(cformat!(
+        "Branch <bold>{branch_name}</> retained; has unmerged changes"
+    ))
+    .to_string();
     let cmd = suggest_command("remove", &[branch_name], &["-D"]);
-    eprintln!(
-        "{}",
-        hint_message(cformat!(
-            "To delete the unmerged branch, run <underline>{cmd}</>"
-        ))
-    );
+    let hint = hint_message(cformat!(
+        "To delete the unmerged branch, run <underline>{cmd}</>"
+    ))
+    .to_string();
+    (info, hint)
+}
+
+fn print_retained_unmerged_branch(branch_name: &str) {
+    let (info, hint) = retained_unmerged_branch_messages(branch_name);
+    eprintln!("{info}");
+    eprintln!("{hint}");
 }
 
 /// Handle the result of a branch deletion attempt.
@@ -2043,7 +2054,7 @@ mod tests {
             false,
         );
 
-        // Err arm → log::warn! only, no stderr message
+        // Err arm → tracing::warn! only, no stderr message
         warn_if_branch_retained(
             "feature",
             &Err(anyhow::anyhow!("simulated git failure")),

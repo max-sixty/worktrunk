@@ -172,13 +172,32 @@ pub(super) fn home_dir() -> Option<PathBuf> {
         .or_else(worktrunk::path::home_dir)
 }
 
+/// Get the Claude Code config directory.
+///
+/// Honors `CLAUDE_CONFIG_DIR`, which Claude Code uses to relocate its entire
+/// config tree (`settings.json`, `plugins/`, ...) away from the default
+/// `~/.claude`. A leading `~/` in the value is expanded against the home
+/// directory; the shell normally expands it before the variable is set, so a
+/// literal `~` only reaches us when the variable is set in a non-shell context.
+pub(super) fn claude_config_dir() -> Option<PathBuf> {
+    if let Ok(dir) = std::env::var("CLAUDE_CONFIG_DIR")
+        && !dir.is_empty()
+    {
+        if let Some(rest) = dir.strip_prefix("~/") {
+            return home_dir().map(|home| home.join(rest));
+        }
+        return Some(PathBuf::from(dir));
+    }
+    home_dir().map(|home| home.join(".claude"))
+}
+
 /// Check if the worktrunk plugin is installed in Claude Code
 pub(super) fn is_plugin_installed() -> bool {
-    let Some(home) = home_dir() else {
+    let Some(config_dir) = claude_config_dir() else {
         return false;
     };
 
-    let plugins_file = home.join(".claude/plugins/installed_plugins.json");
+    let plugins_file = config_dir.join("plugins/installed_plugins.json");
     let Ok(content) = std::fs::read_to_string(&plugins_file) else {
         return false;
     };
@@ -194,11 +213,11 @@ pub(super) fn is_plugin_installed() -> bool {
 
 /// Check if the statusline is configured in Claude Code settings
 pub(super) fn is_statusline_configured() -> bool {
-    let Some(home) = home_dir() else {
+    let Some(config_dir) = claude_config_dir() else {
         return false;
     };
 
-    let settings_file = home.join(".claude/settings.json");
+    let settings_file = config_dir.join("settings.json");
     let Ok(content) = std::fs::read_to_string(&settings_file) else {
         return false;
     };
@@ -250,9 +269,17 @@ fn check_zsh_compinit_missing() -> bool {
     // The (( ... )) arithmetic returns exit 0 if true (compdef exists), 1 if false
     // Suppress zsh's "insecure directories" warning from compinit.
     // See detailed rationale in shell::detect_zsh_compinit().
+    //
+    // Bound the probe with a timeout that kills the child on expiry — the same
+    // hardening detect_zsh_compinit() relies on. An interactive `zsh -ic` whose
+    // startup prompts on /dev/tty (compinit's insecure-directories prompt
+    // bypasses both the stdin=null default and the stderr suppression above)
+    // would otherwise hang `wt config show` indefinitely. On timeout run()
+    // returns Err, so the `else` below declines to warn rather than misreport.
     let Ok(output) = Cmd::new("zsh")
         .args(["--no-globalrcs", "-ic", "(( $+functions[compdef] ))"])
         .env("ZSH_DISABLE_COMPFIX", "true")
+        .timeout(std::time::Duration::from_secs(2))
         .run()
     else {
         return false; // Can't determine, don't warn
@@ -1414,7 +1441,7 @@ fn render_version_check(out: &mut String) -> anyhow::Result<()> {
     match fetch_latest_version() {
         Ok(latest) => writeln!(out, "{}", format_version_status(&latest))?,
         Err(e) => {
-            log::debug!("Version check failed: {e}");
+            tracing::debug!(error = %e, "Version check failed: {e}");
             writeln!(out, "{}", hint_message("Version check unavailable"))?;
         }
     }
@@ -1436,17 +1463,28 @@ fn fetch_latest_version() -> anyhow::Result<String> {
         "worktrunk/{} (https://worktrunk.dev)",
         env!("CARGO_PKG_VERSION")
     );
-    let output = Cmd::new("curl")
-        .args([
-            "--silent",
-            "--fail",
-            "--max-time",
-            "5",
-            "--header",
-            &format!("User-Agent: {user_agent}"),
-            "https://api.github.com/repos/max-sixty/worktrunk/releases/latest",
-        ])
-        .run()?;
+    // The watchdog (below) supplies "still waiting" feedback, so the fetch needn't
+    // be cut off at an aggressive 5s. But the watchdog is TTY-gated — a
+    // non-interactive run (CI, scripts, redirected stderr) gets no feedback — so a
+    // hard ceiling still has to exist or such a run could hang silently:
+    // --connect-timeout fails fast when offline, and a generous --max-time bounds a
+    // connected-but-stalled host without cutting off a slow-but-progressing fetch.
+    let output = {
+        let _watchdog = worktrunk::progress::Watchdog::start("the latest version", None);
+        Cmd::new("curl")
+            .args([
+                "--silent",
+                "--fail",
+                "--connect-timeout",
+                "10",
+                "--max-time",
+                "60",
+                "--header",
+                &format!("User-Agent: {user_agent}"),
+                "https://api.github.com/repos/max-sixty/worktrunk/releases/latest",
+            ])
+            .run()?
+    };
 
     if !output.status.success() {
         anyhow::bail!("GitHub API request failed");

@@ -160,6 +160,118 @@ fn test_list_full_with_github_pr_status(
     run_ci_status_test(&mut repo, snapshot_name, &pr_json, "[]");
 }
 
+#[rstest]
+fn test_list_full_json_ci_repo_from_pr_url(mut repo: TestRepo) {
+    let head_sha = setup_github_repo_with_feature(&mut repo);
+
+    let pr_json = format!(
+        r#"[{{
+        "headRefOid": "{}",
+        "mergeStateStatus": "CLEAN",
+        "statusCheckRollup": [
+            {{"status": "COMPLETED", "conclusion": "SUCCESS"}}
+        ],
+        "url": "https://github.com/test-owner/test-repo/pull/1",
+        "headRepositoryOwner": {{"login": "test-owner"}}
+    }}]"#,
+        head_sha
+    );
+    repo.setup_mock_gh_with_ci_data(&pr_json, "[]");
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["list", "--full", "--format=json"]);
+    repo.configure_mock_commands(&mut cmd);
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt list --full --format=json should succeed\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let row = rows
+        .iter()
+        .find(|row| row["branch"].as_str() == Some("feature"))
+        .expect("feature row should be present");
+    let ci = &row["ci"];
+    assert_eq!(
+        ci["repo_url"].as_str(),
+        Some("https://github.com/test-owner/test-repo")
+    );
+    assert_eq!(
+        ci["repo"]["url"].as_str(),
+        Some("https://github.com/test-owner/test-repo")
+    );
+    assert_eq!(ci["repo"]["provider"].as_str(), Some("github"));
+    assert_eq!(ci["repo"]["host"].as_str(), Some("github.com"));
+    assert_eq!(ci["repo"]["owner"].as_str(), Some("test-owner"));
+    assert_eq!(ci["repo"]["name"].as_str(), Some("test-repo"));
+    assert!(
+        ci["repo"].get("remote").is_none(),
+        "ci.repo should not include the local remote name"
+    );
+}
+
+#[rstest]
+fn test_list_full_json_ci_repo_uses_configured_provider_for_opaque_host(mut repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://git.company.com/test-owner/test-repo.git",
+    ]);
+    repo.write_project_config("[forge]\nplatform = \"github\"\n");
+    repo.add_worktree("feature");
+    setup_tracking_for_all_branches(&repo, "origin");
+    let head_sha = branch_sha(&repo, "feature");
+
+    let pr_json = format!(
+        r#"[{{
+        "headRefOid": "{}",
+        "mergeStateStatus": "CLEAN",
+        "statusCheckRollup": [
+            {{"status": "COMPLETED", "conclusion": "SUCCESS"}}
+        ],
+        "url": "https://git.company.com/test-owner/test-repo/pull/1",
+        "headRepositoryOwner": {{"login": "test-owner"}}
+    }}]"#,
+        head_sha
+    );
+    repo.setup_mock_gh_with_ci_data(&pr_json, "[]");
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["list", "--full", "--format=json"]);
+    repo.configure_mock_commands(&mut cmd);
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt list --full --format=json should succeed\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let row = rows
+        .iter()
+        .find(|row| row["branch"].as_str() == Some("feature"))
+        .expect("feature row should be present");
+    assert_eq!(row["repo"]["provider"].as_str(), Some("github"));
+    assert_eq!(row["repo"]["host"].as_str(), Some("git.company.com"));
+
+    let ci = &row["ci"];
+    assert_eq!(
+        ci["repo_url"].as_str(),
+        Some("https://git.company.com/test-owner/test-repo")
+    );
+    assert_eq!(
+        ci["repo"]["url"].as_str(),
+        Some("https://git.company.com/test-owner/test-repo")
+    );
+    assert_eq!(ci["repo"]["provider"].as_str(), Some("github"));
+    assert_eq!(ci["repo"]["host"].as_str(), Some("git.company.com"));
+    assert_eq!(ci["repo"]["owner"].as_str(), Some("test-owner"));
+    assert_eq!(ci["repo"]["name"].as_str(), Some("test-repo"));
+}
+
 // =============================================================================
 // Review state tests (reviewDecision / isDraft from gh pr list)
 // =============================================================================
@@ -519,8 +631,11 @@ platform = "invalid_platform"
     repo.setup_mock_gh_with_ci_data(&pr_json, "[]");
 
     let mut settings = setup_snapshot_settings(&repo);
-    // Normalize worker thread ID prefix in log output (e.g., [n], [z], [A] -> [W])
-    settings.add_filter(r"\[[a-zA-Z]\]", "[W]");
+    // Normalize worker thread ID prefix in log output (e.g., [n], [z], [A] -> [W]).
+    // `label_for_thread_index` emits `0`, `a`-`z`, `A`-`Z`, and `?` (the latter
+    // for thread IDs above 52, which appear on high-core machines where the
+    // rayon pools span enough threads); the filter covers the whole alphabet.
+    settings.add_filter(r"\[[a-zA-Z0-9?]\]", "[W]");
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
         repo.configure_mock_commands(&mut cmd);

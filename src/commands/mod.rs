@@ -17,7 +17,6 @@ pub(crate) mod hooks;
 pub(crate) mod init;
 pub(crate) mod list;
 pub(crate) mod merge;
-#[cfg(unix)]
 pub(crate) mod picker;
 pub(crate) mod pipeline_spec;
 pub(crate) mod process;
@@ -40,9 +39,9 @@ pub(crate) use config::{
     handle_cache_get, handle_claude_install, handle_claude_install_statusline,
     handle_claude_uninstall, handle_codex_install, handle_codex_uninstall, handle_config_create,
     handle_config_show, handle_config_update, handle_hints_clear, handle_hints_get,
-    handle_logs_list, handle_opencode_install, handle_opencode_uninstall, handle_state_clear,
-    handle_state_clear_all, handle_state_get, handle_state_set, handle_state_show,
-    handle_vars_clear, handle_vars_get, handle_vars_list, handle_vars_set,
+    handle_logs_list, handle_logs_profile, handle_opencode_install, handle_opencode_uninstall,
+    handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
+    handle_state_show, handle_vars_clear, handle_vars_get, handle_vars_list, handle_vars_set,
 };
 pub(crate) use configure_shell::{
     handle_configure_shell, handle_show_theme, handle_unconfigure_shell,
@@ -54,7 +53,6 @@ pub(crate) use hook_commands::{HookCliArgs, handle_hook_show, run_hook};
 pub(crate) use init::{handle_completions, handle_init};
 pub(crate) use list::handle_list;
 pub(crate) use merge::{MergeFlagOverrides, MergeOptions, handle_merge};
-#[cfg(unix)]
 pub(crate) use picker::handle_picker;
 pub(crate) use remove::handle_remove_command;
 pub(crate) use repository_ext::RemoveTarget;
@@ -81,20 +79,6 @@ pub(crate) fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
         (_, true) => Some(false),
         _ => None,
     }
-}
-
-#[cfg(not(unix))]
-pub(crate) fn print_windows_picker_unavailable() {
-    use worktrunk::styling::{error_message, hint_message};
-
-    eprintln!(
-        "{}",
-        error_message("Interactive picker is not available on Windows")
-    );
-    eprintln!(
-        "{}",
-        hint_message(cformat!("Specify a branch: <underline>wt switch BRANCH</>"))
-    );
 }
 
 /// Format command execution label with optional command name.

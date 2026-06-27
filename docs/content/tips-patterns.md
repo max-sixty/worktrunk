@@ -65,13 +65,13 @@ The URL column in `wt list` shows each worktree's dev server:
 
 {% terminal(cmd="wt list") %}
 <span class="cmd">wt list</span>
-  <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Remote⇅</b>  <b>URL</b>                     <b>Commit</b>    <b>Age</b>
-@ main           <span class=c>?</span> <span class=d>^</span><span class=d>⇅</span>                         <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=d>http://localhost:12107</span>  <span class=d>41ee0834</span>  <span class=d>4d</span>
-+ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>⇡3</span>      <span class=d>http://localhost:10703</span>  <span class=d>6814f02a</span>  <span class=d>30m</span>
-+ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>     <span class=d>|</span>     <span class=d>http://localhost:16460</span>  <span class=d>b772e68b</span>  <span class=d>5h</span>
-+ <span class=d>fix-typos</span>        <span class=d>_</span><span class=d>|</span>                           <span class=d>|</span>     <span class=d>http://localhost:14301</span>  <span class=d>41ee0834</span>  <span class=d>4d</span>
+  <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Remote⇅</b>  <b>URL</b>                     <b>Commit</b>
+@ main           <span class=c>?</span> <span class=d>^</span><span class=d>⇅</span>                                    <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=d>http://localhost:12107</span>  <span class=d>41ee0834</span>
++ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>   <span class=g>⇡3</span>      <span class=d>http://localhost:10703</span>  <span class=d>6814f02a</span>
++ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+25</span>  <span class=r>-11</span>     <span class=d>|</span>     <span class=d>http://localhost:16460</span>  <span class=d>b772e68b</span>
++ <span class=d>fix-typos</span>        <span class=d>_</span><span class=d>|</span>                                      <span class=d>|</span>     <span class=d>http://localhost:14301</span>  <span class=d>41ee0834</span>
 
-<span class=d>○</span> <span class=d>Showing 4 worktrees, 2 with changes, 2 ahead, 2 columns hidden</span>
+<span class=d>○</span> <span class=d>Showing 4 worktrees, 2 with changes, 2 ahead, 3 columns hidden</span>
 {% end %}
 
 <!-- END AUTO-GENERATED -->
@@ -112,6 +112,29 @@ The `('db-' ~ branch)` concatenation hashes differently than plain `branch`, so 
 The connection string is accessible anywhere — not just in hooks:
 
 {{ terminal(cmd="DATABASE_URL=$(wt config state vars get db_url) npm start") }}
+
+## Per-worktree env vars
+
+To scope environment variables to a worktree — a tool's package path, a profile, an API endpoint — use a directory environment manager like [direnv](https://direnv.net) or [mise](https://mise.jdx.dev). Both hook the shell prompt, so they activate on the `cd` that `wt switch` already performs — no worktrunk configuration needed. Commit the config at the repo root and every worktree gets its own copy, with paths resolving relative to that worktree.
+
+**direnv** — commit `.envrc` at the repo root:
+
+```sh
+export MY_PACKAGES_PATH="$PWD/.packages"
+```
+
+Run `direnv allow` once per worktree to trust the file ([getting started](https://direnv.net/#getting-started)). After that, switching into a worktree loads the env; switching out unloads it.
+
+**mise** — commit `mise.toml` at the repo root:
+
+```toml
+[env]
+MY_PACKAGES_PATH = "{{ config_root }}/.packages"
+```
+
+`{{ config_root }}` is the project root mise resolves relative paths against ([env directives](https://mise.jdx.dev/environments/)) — the worktree root, not the primary worktree. mise also covers Windows / PowerShell, which direnv doesn't natively.
+
+Both set real environment variables in the shell session, so every child process inherits them — hooks, build tools, subshells — without the `--execute` workaround. Each new worktree is a new path, so it needs its own one-time trust step (`direnv allow` / `mise trust`); worktrunk deliberately doesn't bypass that prompt, the same safety reasoning behind [disabling `--execute` in project alias and hook bodies](https://github.com/max-sixty/worktrunk/issues/2101).
 
 ## Eliminate cold starts
 

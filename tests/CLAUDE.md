@@ -141,11 +141,13 @@ silently: it passes wherever `$HOME` is writable and fails only in a sandbox
 that forbids it. `config_path()` and `system_config_path()` have no guard at
 all.
 
-## Timing Tests: Long Timeouts with Fast Polling
+## Timing Tests: Polling and Absence Windows
 
-**Core principle:** Use long timeouts (5+ seconds) for reliability on slow CI, but poll frequently (10-50ms) so tests complete quickly when things work.
+**The assertion's polarity picks the tool.** A *presence* assertion waits for something that will happen (a file appears, a counter ticks): poll it, so the test returns the instant the event lands. An *absence* assertion proves something did NOT happen (a hook stays silent, a marker never appears): there's no event to wait for, so hold a fixed window with `SLEEP_FOR_ABSENCE_CHECK`, then assert. The most common timing flake is pairing a fixed sleep with a presence assertion: it guesses how long the work takes and fails when load overruns the guess.
 
-This achieves both goals:
+### Presence: long timeouts, fast polling
+
+Use long timeouts (5+ seconds) for reliability on slow CI, but poll frequently (10-50ms) so tests complete quickly when things work:
 - **No flaky failures** on slow machines - generous timeout accommodates worst-case
 - **Fast tests** on normal machines - frequent polling means no unnecessary waiting
 
@@ -159,7 +161,7 @@ while start.elapsed() < timeout {
     thread::sleep(poll_interval);
 }
 
-// ❌ BAD: Fixed sleep (always slow, might still fail)
+// ❌ BAD: fixed sleep before a presence assertion (always slow, races under load)
 thread::sleep(Duration::from_millis(500));
 assert!(condition_met());
 
@@ -227,12 +229,21 @@ let outcome = drain_results_with_timings(
 
 **Rule of thumb:** if your producer thread needs `thread::sleep` to line up with a deadline in the code under test, you're racing the scheduler. Reach for the callback, a channel, or a condvar instead. Fixed deadlines belong only in the safety-net role — "stop if something has truly hung" — not in the assertion path.
 
-**Exception - testing absence:** When verifying something did NOT happen, polling doesn't work. Use a fixed 500ms+ sleep:
+### Absence: hold a fixed window
+
+When the assertion proves a negative (`assert!(!marker.exists())`), polling can't help, because there's no event to wait for. Hold a window long enough that the thing would have happened if it were going to, then assert it didn't. Use the shared constant (defined in `src/testing/mod.rs`, re-exported via `tests/common`) so absence sleeps stay greppable and self-documenting:
 
 ```rust
-thread::sleep(Duration::from_millis(500));
+use crate::common::SLEEP_FOR_ABSENCE_CHECK;
+
+thread::sleep(SLEEP_FOR_ABSENCE_CHECK); // 500ms, the floor for an absence window
 assert!(!marker_file.exists(), "Command should NOT have run");
 ```
+
+Two traps:
+
+- **Give each half its own wait.** Sleeping once and then asserting both "X happened" and "Y didn't" makes the presence half flaky. Poll for X, then hold the window for Y.
+- **Structural absence needs no window at all.** When the event is gated on a condition the test never sets up, it can't fire regardless of timing. Drop the sleep: poll the positive precondition and the absence holds by construction. A watchdog whose escalation is gated on `command.is_some()` can't escalate with no command, so the test polls for the first render and asserts `!escalated` with no window.
 
 ## Testing with --execute Commands
 
@@ -460,22 +471,22 @@ before dismissing:
   `add_filter` does **not** work on the `env:` block — it only substitutes on
   captured snapshot content; use a redaction.
 
-Empty-valued entries never appear: a dynamic `.env` redaction in
-`add_standard_env_redactions` (`drop_empty_env_entries`) drops them. insta-cmd
-records each `Command::env_remove` as `KEY: ""` (it serializes `get_envs()`,
-which includes removals), so a removal is indistinguishable from a deliberate
-set-to-empty — and `isolate_subprocess_env` scrubs whichever `GIT_*` /
-`WORKTRUNK_*` keys exist in the *parent* environment, so which markers would
-appear depends on the host (CI has `GIT_EDITOR`; a contributor's box might
-have `GIT_PAGER`, neither, or both). Dropping the whole class means
-regenerating on any machine produces the same block — you don't have to match
-CI's `GIT_*` environment.
+Removed vars never appear: insta-cmd (≥0.7, hence the `insta-cmd = "0.7"` dep
+floor) drops every `Command::env_remove` from the recorded block. `get_envs()`
+yields `None` for a removal and `Some("")` for a deliberate set-to-empty, and
+insta-cmd keeps only the latter — so a removed var leaves no trace, while a var
+a test sets to `""` is recorded faithfully as `KEY: ""`. This matters because
+`isolate_subprocess_env` removes whichever `GIT_*` / `WORKTRUNK_*` keys exist
+in the *parent* environment (plus `NO_COLOR` / `SHELL` / `PSModulePath`), so
+which removals happen depends on the host (CI has `GIT_EDITOR`; a contributor's
+box might have `GIT_PAGER`, neither, or both). Dropping removals at the source
+means regenerating on any machine produces the same block — you don't have to
+match CI's `GIT_*` environment.
 
-The predicate keys on the empty *value*, so a test that affirmatively sets a
-var to `""` as its subject (`test_list_config_env_override_validation_failure`
-sets `WORKTRUNK_WORKTREE_PATH=""` to trigger the validation warning) loses
-that header line too — harmless, since the test body still asserts the
-behavior and insta never compares the `env:` block.
+A var a test affirmatively sets to `""` as its subject does show up:
+`test_list_config_env_override_validation_failure` sets
+`WORKTRUNK_WORKTREE_PATH=""` to trigger the validation warning, and the block
+records it as `WORKTRUNK_WORKTREE_PATH: ""`.
 
 The `args:` block has the same property: a repo path passed as a CLI argument
 (`wt -C <root>`) is covered by the `.args[]` redaction in

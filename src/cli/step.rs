@@ -3,7 +3,7 @@ use clap::{Args, Subcommand};
 #[derive(Args)]
 pub struct CommitArgs {
     /// Branch to operate on (defaults to current worktree)
-    #[arg(short, long, add = crate::completion::worktree_only_completer())]
+    #[arg(short, long, add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
     pub(crate) branch: Option<String>,
 
     #[command(flatten)]
@@ -33,7 +33,7 @@ pub struct SquashArgs {
     /// Target branch
     ///
     /// Defaults to default branch.
-    #[arg(add = crate::completion::branch_value_completer())]
+    #[arg(add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
     pub(crate) target: Option<String>,
 
     #[command(flatten)]
@@ -165,7 +165,7 @@ $ wt step rebase develop    # Rebase onto develop
         /// Target branch
         ///
         /// Defaults to default branch.
-        #[arg(add = crate::completion::branch_value_completer())]
+        #[arg(add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         target: Option<String>,
 
         /// Output format
@@ -177,7 +177,7 @@ $ wt step rebase develop    # Rebase onto develop
 
     /// Fast-forward target to current branch
     #[command(
-        after_long_help = r#"Updates the local target branch (e.g., `main`) to include current commits.
+        after_long_help = r#"Updates the local target branch to include current commits.
 
 ## Examples
 
@@ -193,7 +193,7 @@ Similar to `git push . HEAD:<target>`, but uses `receive.denyCurrentBranch=updat
         /// Target branch
         ///
         /// Defaults to default branch.
-        #[arg(add = crate::completion::branch_value_completer())]
+        #[arg(add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         target: Option<String>,
 
         /// Create a merge commit (no fast-forward)
@@ -260,11 +260,11 @@ $ GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state defau
         /// Target branch
         ///
         /// Defaults to default branch.
-        #[arg(add = crate::completion::branch_value_completer())]
+        #[arg(add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         target: Option<String>,
 
         /// Branch to operate on (defaults to current worktree)
-        #[arg(short, long, add = crate::completion::worktree_only_completer())]
+        #[arg(short, long, add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
 
         /// Extra arguments forwarded to `git diff`
@@ -304,6 +304,14 @@ After `.worktreeinclude` selects entries, you can add more gitignore-style exclu
 [step.copy-ignored]
 exclude = [".cache/", ".turbo/"]
 ```
+
+To copy nothing unless `.worktreeinclude` exists — matching Claude Code desktop, where the file is required — pass `--require-include`:
+
+```console
+wt step copy-ignored --require-include
+```
+
+Without `.worktreeinclude`, the command is a no-op (it reports that nothing was copied and why). With the file present, only matching files copy as above. To apply this across every repository, put the flag in a user-config hook: `post-start = "wt step copy-ignored --require-include"`.
 
 ## Common patterns
 
@@ -364,7 +372,7 @@ Virtual environments contain absolute paths and can't be copied. Use `uv sync` i
 
 The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://code.claude.com/docs/en/desktop), which copies matching files when creating worktrees. Differences:
 
-- worktrunk copies all gitignored files by default; Claude Code requires `.worktreeinclude`
+- worktrunk copies all gitignored files by default; Claude Code requires `.worktreeinclude`. Pass `--require-include` to match Claude Code (copy nothing without `.worktreeinclude`)
 - worktrunk uses copy-on-write for large directories like `target/` — potentially 30x faster on macOS, 6x on Linux
 - worktrunk runs as a configurable hook in the worktree lifecycle
 "#)]
@@ -372,13 +380,13 @@ The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://c
         /// Source worktree branch
         ///
         /// Defaults to main worktree.
-        #[arg(long, add = crate::completion::worktree_only_completer())]
+        #[arg(long, add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
         from: Option<String>,
 
         /// Destination worktree branch
         ///
         /// Defaults to current worktree.
-        #[arg(long, add = crate::completion::worktree_only_completer())]
+        #[arg(long, add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
         to: Option<String>,
 
         /// Show what would be copied
@@ -388,6 +396,10 @@ The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://c
         /// Overwrite existing files in destination
         #[arg(long)]
         force: bool,
+
+        /// Require .worktreeinclude to copy anything
+        #[arg(long)]
+        require_include: bool,
 
         /// Output format
         ///
@@ -431,14 +443,19 @@ $ wt step eval '{{ branch | sanitize_db }}'
 feature_auth_oauth2_a1b
 ```
 
-Show available template variables:
+List the available template variables with `-v` (alongside the expansion, on stderr):
 
 ```console
-$ wt step eval --dry-run '{{ branch }}'
-branch=feature/auth-oauth2
-worktree_path=/home/user/projects/myapp-feature-auth-oauth2
----
-Result: feature/auth-oauth2
+$ wt step eval -v '{{ branch }}'
+○ Available template variables
+  branch        = feature/auth-oauth2
+  worktree_path = /home/user/projects/myapp-feature-auth-oauth2
+○ eval source
+  {{ branch }}
+○ eval result
+  feature/auth-oauth2
+
+feature/auth-oauth2
 ```
 
 Note: This command is experimental and may change in future versions.
@@ -448,9 +465,11 @@ Note: This command is experimental and may change in future versions.
         /// Template expression to evaluate
         template: String,
 
-        /// Show template variables and expanded result
-        #[arg(long)]
-        dry_run: bool,
+        /// Output format
+        ///
+        /// JSON prints `{name, template, result}` to stdout instead of the bare result.
+        #[arg(long, default_value = "text", help_heading = "Automation")]
+        format: crate::cli::SwitchFormat,
     },
 
     /// \[experimental\] Run command in each worktree
@@ -497,7 +516,7 @@ Note: This command is experimental and may change in future versions.
 "#
     )]
     ForEach {
-        /// Output format (text, json)
+        /// Output format
         #[arg(long, default_value = "text")]
         format: crate::cli::SwitchFormat,
 
@@ -555,7 +574,7 @@ The swap uses `rename()` for each entry — fast regardless of entry size, since
         /// Branch to promote to main worktree
         ///
         /// Defaults to current branch, or default branch from main worktree.
-        #[arg(add = crate::completion::worktree_only_completer())]
+        #[arg(add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
     },
 
@@ -604,7 +623,7 @@ $ wt step prune
         #[arg(long)]
         foreground: bool,
 
-        /// Output format (text, json)
+        /// Output format
         #[arg(long, default_value = "text")]
         format: crate::cli::SwitchFormat,
     },
@@ -657,9 +676,15 @@ The main worktree can't be moved with `git worktree move`. Instead, relocate
 switches it to the default branch and creates a new linked worktree at the
 expected path. Untracked and gitignored files remain at the original location.
 
+## Dirty worktrees
+
+Linked worktrees relocate as-is — `git worktree move` carries uncommitted
+changes along. Only the main worktree skips when dirty (its `git checkout`
+refuses), unless `--commit` is passed.
+
 ## Skipped worktrees
 
-- **Dirty** (without `--commit`) — use `--commit` to auto-commit first
+- **Dirty main worktree** (without `--commit`) — use `--commit` to auto-commit first
 - **Locked** — unlock with `git worktree unlock`
 - **Target blocked** (without `--clobber`) — use `--clobber` to backup blocker
 - **Detached HEAD** — no branch to compute expected path
@@ -668,7 +693,7 @@ Note: This command is experimental and may change in future versions.
 "#)]
     Relocate {
         /// Worktrees to relocate (defaults to all mismatched)
-        #[arg(add = crate::completion::worktree_only_completer())]
+        #[arg(add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
         branches: Vec<String>,
 
         /// Show what would be moved
@@ -719,6 +744,14 @@ For pipes, redirects, variables, or globs, wrap in `sh -c`:
 
 ```console
 $ wt step tether -- sh -c 'PORT=$P npm run dev | tee dev.log'
+```
+
+To run the command from a subdirectory, pass the global `-C` flag (teardown
+still watches the worktree root, so a server launched with a relative `-C` is
+torn down with the worktree):
+
+```console
+$ wt step tether -C frontend -- npm run dev
 ```
 
 ## Examples

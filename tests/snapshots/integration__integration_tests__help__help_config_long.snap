@@ -59,8 +59,11 @@ Usage: [1m[36mwt config[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
       [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
+      [1m[36m--config-set[0m[36m [0m[36m<toml>[0m
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to apply the same level everywhere — including shell completion, which no flag can reach
 
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
@@ -98,7 +101,7 @@ Organizations can deploy a system-wide config file for shared defaults — run 
 [107m [0m [2mworktree-path = [0m[2m[32m".worktrees/{{ branch | sanitize }}"[0m
 [107m [0m 
 [107m [0m [2m[36m[commit.generation][0m
-[107m [0m [2mcommand = [0m[2m[32m"MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
+[107m [0m [2mcommand = [0m[2m[32m"MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --safe-mode --setting-sources='user' --system-prompt=''"[0m
 
 [1mProject config[0m — shared team settings:
 
@@ -173,7 +176,7 @@ Generate commit messages automatically during merge. Requires an external CLI to
 [32mClaude Code[0m
 
 [107m [0m [2m[36m[commit.generation][0m
-[107m [0m [2mcommand = [0m[2m[32m"MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
+[107m [0m [2mcommand = [0m[2m[32m"MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --safe-mode --setting-sources='user' --system-prompt=''"[0m
 
 [32mCodex[0m
 
@@ -206,12 +209,67 @@ Persistent flag values for [2mwt list[0m. Override on command line as needed.
 [107m [0m [2m[36m[list][0m
 [107m [0m [2msummary = [0m[2m[33mfalse[0m[2m    [0m[2m# Enable LLM branch summaries (requires [commit.generation])[0m
 [107m [0m 
-[107m [0m [2mfull = [0m[2m[33mfalse[0m[2m       [0m[2m# Show CI, main…± diffstat, and LLM summaries (--full)[0m
+[107m [0m [2mfull = [0m[2m[33mfalse[0m[2m       [0m[2m# Show CI status and LLM summaries (--full)[0m
 [107m [0m [2mbranches = [0m[2m[33mfalse[0m[2m   [0m[2m# Include branches without worktrees (--branches)[0m
 [107m [0m [2mremotes = [0m[2m[33mfalse[0m[2m    [0m[2m# Include remote-only branches (--remotes)[0m
 [107m [0m 
+[107m [0m [2mcolumns = [[0m[2m[32m"branch"[0m[2m, [0m[2m[32m"status"[0m[2m, [0m[2m[32m"ci"[0m[2m, [0m[2m[32m"path"[0m[2m]   [0m[2m# Columns to show, in order — built-ins or custom headers (omit for the default set)[0m
+[107m [0m 
 [107m [0m [2mtask-timeout-ms = [0m[2m[33m0[0m[2m   [0m[2m# Kill individual git commands after N ms; 0 disables[0m
 [107m [0m [2mtimeout-ms = [0m[2m[33m0[0m[2m        [0m[2m# Wall-clock budget for the entire collect phase; 0 disables[0m
+
+[2mcolumns[0m selects and orders the columns to render; omit it for the default set.
+It is designed to be driven by an alias that sets it
+per invocation — a body like [2mwt --config-set 'list.columns=[…]' list[0m gives a
+named view (run as [2mwt <alias>[0m) without disturbing the default [2mwt list[0m.
+Setting it statically in the config file uses the same key and works, but is not
+the intended use: it pins one layout over a table that otherwise adapts to
+[2m--full[0m and terminal width.
+
+Valid built-in names are [2mbranch[0m, [2mstatus[0m, [2mworking-diff[0m, [2mahead-behind[0m,
+[2mbranch-diff[0m, [2msummary[0m, [2mupstream[0m, [2mci[0m, [2mpath[0m, [2murl[0m, [2mcommit[0m, [2mage[0m, and
+[2mmessage[0m. A custom column is named by its [2m[list.custom-columns][0m
+header, so a selection mixes built-ins and custom columns in one ordered list
+([2mcolumns = ["branch", "Ticket", "ci"][0m). When [2mcolumns[0m is set it is exhaustive
+— only the listed columns render, so a custom column omitted from a non-empty
+list is hidden (omit [2mcolumns[0m entirely to keep the default set, where custom
+columns append automatically). A built-in name wins over a custom header that
+collides with it. The gutter type indicator always shows.
+
+Listing a column requests it but does not force it on: a column gated off
+elsewhere stays hidden — [2mci[0m needs [2m--full[0m, [2msummary[0m needs
+[2m[commit.generation][0m — so [2mcolumns[0m only narrows which columns may appear.
+
+The selection drives the rendered table and the [2mwt switch[0m picker.
+[2mwt list --format json[0m ignores it, always emitting every field, built-in and
+custom.
+
+[1mCustom columns [experimental][0m
+
+Custom columns add per-branch context to the [2mwt list[0m table. Each
+[2m[list.custom-columns][0m entry is a column: the key is the header, the template
+renders each row's cell.
+
+[107m [0m [2m[36m[list.custom-columns.Ticket][0m
+[107m [0m [2mtemplate = [0m[2m[32m"{{ vars.ticket }}"[0m[2m   [0m[2m# Required; the result is the cell text[0m
+[107m [0m [2mwidth = [0m[2m[33m20[0m[2m                       [0m[2m# Optional max display width (default: 40)[0m
+[107m [0m [2mpriority = [0m[2m[33m9[0m[2m                     [0m[2m# Optional drop order when the terminal narrows;[0m
+[107m [0m [2m                                 [0m[2m# lower = kept longer (default: 9, the URL band)[0m
+
+Templates may reference [2m{{ branch }}[0m, [2m{{ worktree_path }}[0m,
+[2m{{ worktree_name }}[0m (empty for branch-only rows), and [2m{{ vars.* }}[0m —
+per-branch values stored with
+[2mwt config state vars set[0m.
+All standard filters work ([2msanitize[0m, [2mhash_port[0m, [2mcodename[0m, …). A row
+where the template renders empty (e.g. a branch without the vars key) shows an
+empty cell; a column that is empty for every row is dropped from the table.
+[2mwt list --format json[0m includes the rendered values under [2mcolumns[0m.
+
+A [2mNote[0m column showing free-form descriptions, set per branch with
+[2mwt config state vars set note "Bug fix for production fire"[0m:
+
+[107m [0m [2m[36m[list.custom-columns.Note][0m
+[107m [0m [2mtemplate = [0m[2m[32m"{{ vars.note }}"[0m
 
 [32mCommit[0m
 
@@ -517,18 +575,29 @@ Override the LLM command in CI to use a mock:
 
 [32mOther environment variables[0m
 
-             Variable                                                      Purpose                                         
- ───────────────────────────────── ─────────────────────────────────────────────────────────────────────────────────────── 
- [2mWORKTRUNK_BIN[0m                     Override binary path for shell wrappers; useful for testing dev builds                  
- [2mWORKTRUNK_CONFIG_PATH[0m             Override user config file location                                                      
- [2mWORKTRUNK_SYSTEM_CONFIG_PATH[0m      Override system config file location                                                    
- [2mWORKTRUNK_PROJECT_CONFIG_PATH[0m     Override project config file location (defaults to [2m.config/wt.toml[0m)                     
- [2mXDG_CONFIG_DIRS[0m                   Colon-separated system config directories (default: [2m/etc/xdg[0m)                           
- [2mWORKTRUNK_DIRECTIVE_CD_FILE[0m       Internal: set by shell wrappers. wt writes a raw path; the wrapper [2mcd[0ms to it            
- [2mWORKTRUNK_DIRECTIVE_EXEC_FILE[0m     Internal: set by shell wrappers. wt writes shell commands; the wrapper sources the file 
- [2mWORKTRUNK_SHELL[0m                   Internal: set by shell wrappers to indicate shell type (e.g., [2mpowershell[0m)               
- [2mWORKTRUNK_MAX_CONCURRENT_COMMANDS[0m Max parallel git commands (default: 32). Lower if hitting file descriptor limits.       
- [2mNO_COLOR[0m                          Disable colored output (standard)                                                       
- [2mCLICOLOR_FORCE[0m                    Force colored output even when not a TTY                                                
+             Variable                                                                   Purpose                                                      
+ ───────────────────────────────── ───────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
+ [2mWORKTRUNK_BIN[0m                     Override binary path for shell wrappers; useful for testing dev builds                                            
+ [2mWORKTRUNK_CONFIG_PATH[0m             Override user config file location                                                                                
+ [2mWORKTRUNK_SYSTEM_CONFIG_PATH[0m      Override system config file location                                                                              
+ [2mWORKTRUNK_PROJECT_CONFIG_PATH[0m     Override project config file location (defaults to [2m.config/wt.toml[0m)                                               
+ [2mXDG_CONFIG_DIRS[0m                   Colon-separated system config directories (default: [2m/etc/xdg[0m)                                                     
+ [2mWORKTRUNK_DIRECTIVE_CD_FILE[0m       Internal: set by shell wrappers. wt writes a raw path; the wrapper [2mcd[0ms to it                                      
+ [2mWORKTRUNK_DIRECTIVE_EXEC_FILE[0m     Internal: set by shell wrappers. wt writes shell commands; the wrapper sources the file                           
+ [2mWORKTRUNK_SHELL[0m                   Internal: set by shell wrappers to indicate shell type (e.g., [2mpowershell[0m)                                         
+ [2mWORKTRUNK_MAX_CONCURRENT_COMMANDS[0m Max parallel git commands (default: 32). Lower if hitting file descriptor limits.                                 
+ [2mWORKTRUNK_VERBOSE[0m                 Verbosity level ([2m0[0m/[2m1[0m/[2m2[0m), like [2m-v[0m/[2m-vv[0m but applied everywhere — including shell completion, which no flag can reach 
+ [2mRUST_LOG[0m                          Logging directive (e.g. [2mworktrunk=debug[0m); overrides the verbosity baseline for what reaches stderr                
+ [2mNO_COLOR[0m                          Disable colored output (standard)                                                                                 
+ [2mCLICOLOR_FORCE[0m                    Force colored output even when not a TTY                                                                          
+
+[1m[32mInline config overrides (--config-set)[0m
+
+[2m--config-set <toml>[0m overrides any user config key for a single invocation, with higher priority than both config files and [2mWORKTRUNK_[0m env vars. The value is a TOML fragment, so arrays and tables work directly; the flag is global (works before or after the subcommand), repeatable, and a later [2m--config-set[0m replaces an earlier one for the same key.
+
+[107m [0m [2m[0m[2m[34mwt[0m[2m [0m[2m[36m--config-set[0m[2m list.full=true list[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m step copy-ignored [0m[2m[36m--config-set[0m[2m [0m[2m[32m'step.copy-ignored.exclude=["target", "dist"]'[0m
+
+This composes with aliases — an alias body can invoke [2mwt --config-set … <command>[0m to render a named view without changing the saved config.
 
 ----- stderr -----

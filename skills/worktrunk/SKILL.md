@@ -267,7 +267,9 @@ grep -A 20 "## Warning Messages" reference/shell-integration.md
 
 ## Hook Approvals in Non-Interactive Sessions
 
-Project hooks and project aliases prompt for approval on first run, so an untrusted `.config/wt.toml` can't silently execute arbitrary commands. Agents running `wt merge`, `wt switch`, or other commands that trigger hooks will hit an error like:
+Worktrunk never runs a project's hooks or aliases until the user has explicitly approved them. The commands in `.config/wt.toml` are arbitrary shell code shipped in a repository the user may have just cloned, so on first run Worktrunk shows each command and waits for the user to approve it — an untrusted `.config/wt.toml` cannot silently execute anything. Approvals are stored per-project in `~/.config/worktrunk/approvals.toml` and re-prompted whenever a command template changes, so a hook can't be swapped for a different command after it was approved.
+
+Agents running `wt merge`, `wt switch`, or other commands that trigger hooks will hit an error like:
 
 ```
 ▲ cargo-difftest needs approval to execute 1 command:
@@ -277,12 +279,11 @@ Project hooks and project aliases prompt for approval on first run, so an untrus
 ↳ To skip prompts in CI/CD, add --yes; to pre-approve commands, run wt config approvals add
 ```
 
-Two resolutions exist — pick based on who the agent is running for:
+The resolution is for the user to make the trust decision themselves:
 
-- **`wt config approvals add`** — interactive prompt that stores approvals to `~/.config/worktrunk/approvals.toml`. Run once per project; persists across invocations until the command template changes or the project moves. This is the right choice when the human owns the trust decision.
-- **`--yes`** / `-y` — bypasses approval for a single invocation. Appropriate for CI/CD where hook contents are controlled by the pipeline itself.
+- **`wt config approvals add`** — interactive prompt where the user reviews each command before it is stored to `~/.config/worktrunk/approvals.toml`. Run once per project; the approval persists across invocations until the command template changes or the project moves. This is the path to recommend — the user reviews and consents to exactly the commands that will run.
 
-**When invoked as an agent, stop and escalate to the user** — pre-approval is a security decision about whether this project's hooks should be trusted to run arbitrary commands on their machine. Tell the user to run `wt config approvals add` (or review and re-run with `--yes` if they accept the CI-style one-shot bypass). Don't reach for `--yes` on the user's behalf just to unblock the command.
+**When invoked as an agent, stop and escalate to the user.** Approving a project's hooks is a security decision about whether this repository should be trusted to run arbitrary commands on the user's machine — that decision belongs to the user, not the agent. Tell the user to run `wt config approvals add` and let them review the commands. Do not run `--yes` on the user's behalf: it skips the approval gate for that invocation, so reaching for it to unblock a command defeats the protection. `--yes` exists for CI/CD pipelines that already control their own hook contents; it is not a shortcut for an interactive agent to silence an approval prompt.
 
 ## Advanced: Agent Handoffs
 

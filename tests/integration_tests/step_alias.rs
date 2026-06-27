@@ -4,6 +4,10 @@ use crate::common::{
     TestRepo, configure_directive_files, directive_files, make_snapshot_cmd,
     make_snapshot_cmd_with_global_flags, repo, setup_snapshot_settings, wt_bin,
 };
+// Used only by the `#[cfg(unix)]` signal tests below; gate the import to match,
+// or it reads as unused on Windows under `-D warnings`.
+#[cfg(unix)]
+use crate::common::SLEEP_FOR_ABSENCE_CHECK;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::io::Write;
@@ -1288,6 +1292,13 @@ trapped = "trap 'echo got-term >> trap.log; exit 143' TERM; echo started >> star
 
     let status = child.wait().expect("failed to wait for wt");
 
+    // wt forwarded SIGTERM to the wrapper sh by PID (the contract this test
+    // pins), so the trap's `exit` orphaned the backgrounded `sleep 30` in wt's
+    // process group. wt led that group (`process_group(0)` above) and is now
+    // reaped, so SIGKILL the whole group (negative pgid) to reap the sleep
+    // before returning — otherwise it lingers ~30s as a stray process.
+    let _ = kill(Pid::from_raw(-wt_pid.as_raw()), Signal::SIGKILL);
+
     // The trap marker proves the alias shell received SIGTERM. Without the
     // PID-targeted forwarding, this file would never appear and wt would
     // block on the 30s sleep.
@@ -1351,6 +1362,13 @@ trapped = "trap 'echo got-int >> trap.log; exit 130' INT; echo started >> start.
     kill(wt_pid, Signal::SIGINT).expect("failed to send SIGINT to wt");
 
     let status = child.wait().expect("failed to wait for wt");
+
+    // wt forwarded SIGINT to the wrapper sh by PID (the contract this test
+    // pins), so the trap's `exit` orphaned the backgrounded `sleep 30` in wt's
+    // process group. wt led that group (`process_group(0)` above) and is now
+    // reaped, so SIGKILL the whole group (negative pgid) to reap the sleep
+    // before returning — otherwise it lingers ~30s as a stray process.
+    let _ = kill(Pid::from_raw(-wt_pid.as_raw()), Signal::SIGKILL);
 
     let trap_marker = repo.root_path().join("trap.log");
     let recorded = std::fs::read_to_string(&trap_marker).unwrap_or_else(|e| {
@@ -1427,7 +1445,7 @@ two = "sh -c 'echo start-two >> slow_two.log; sleep 30; echo done-two >> slow_tw
     );
 
     // Grace period — the killed children must NOT reach their "done" write.
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     for log in [&one_log, &two_log] {
         let contents = std::fs::read_to_string(log).unwrap_or_default();
         assert!(
@@ -1437,23 +1455,28 @@ two = "sh -c 'echo start-two >> slow_two.log; sleep 30; echo done-two >> slow_tw
     }
 }
 
-/// When children trap SIGINT, wt's forwarder escalates SIGINT → SIGTERM,
-/// and the children actually die from SIGTERM. But the user only sent SIGINT
-/// — wt's exit code must reflect that (130), not the escalated signal (143).
-/// Otherwise users who Ctrl-C a `wt step <concurrent-alias>` whose children
-/// happen to swallow SIGINT (or are slow under load) see "terminated by
-/// SIGTERM" / exit 143 even though they pressed Ctrl-C.
+/// Children that trap SIGINT survive a single Ctrl-C — wt forwards the
+/// user's signal once and waits. Matches `make` / `cargo` behavior:
+/// stubborn children need a second Ctrl-C (see
+/// `test_alias_concurrent_second_sigint_kills`) to escalate to SIGKILL.
+///
+/// Counterpart to `test_alias_concurrent_receives_sigint` (cooperative
+/// children, single press is sufficient). Together they pin the
+/// no-per-child-escalation contract: the previous design escalated
+/// SIGINT → SIGTERM → SIGKILL inside one press, which under CI scheduling
+/// latency could land SIGTERM on a cooperative-but-slow child and make
+/// `wt step <alias>` exit 143 instead of 130 on Ctrl-C.
 #[rstest]
 #[cfg(unix)]
-fn test_alias_concurrent_sigint_reports_origin_after_escalation(repo: TestRepo) {
+fn test_alias_concurrent_sigint_trapped_survives_first_press(repo: TestRepo) {
     use crate::common::wait_for_file_content;
     use nix::sys::signal::{Signal, kill};
     use nix::unistd::Pid;
     use std::os::unix::process::CommandExt;
     use std::process::Stdio;
 
-    // Children trap SIGINT (ignore it) but NOT SIGTERM — so wt's
-    // SIGINT → SIGTERM escalation is what actually kills them.
+    // Children trap SIGINT (ignore it). With the new no-escalation
+    // contract, a single SIGINT should NOT kill them.
     repo.write_test_config(
         r#"
 [aliases.intignored]
@@ -1478,14 +1501,26 @@ two = "sh -c 'trap \"\" INT; echo start-two >> ignored_two.log; sleep 30'"
     kill(Pid::from_raw(-wt_pgid.as_raw()), Signal::SIGINT)
         .expect("failed to send SIGINT to wt's process group");
 
-    let status = child.wait().expect("failed to wait for wt");
+    // Give the signal a moment to traverse the forwarder. With escalation
+    // (the old design), within ~400 ms SIGTERM would have killed both
+    // children and wt would be in the process of exiting. With the new
+    // contract, both children keep sleeping and wt is still running.
+    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
 
-    use std::os::unix::process::ExitStatusExt;
-    assert!(
-        status.signal() == Some(2) || status.code() == Some(130),
-        "wt should report the originating SIGINT (signal 2 / code 130) even \
-         when escalation killed children with SIGTERM, got: {status:?}"
-    );
+    match child.try_wait().expect("try_wait failed") {
+        None => {
+            // Expected: wt is still running, blocked on its sleeping
+            // children. Clean up with a second SIGINT (impatient
+            // SIGKILL path).
+            kill(Pid::from_raw(-wt_pgid.as_raw()), Signal::SIGINT)
+                .expect("failed to send second SIGINT");
+            let _ = child.wait();
+        }
+        Some(status) => panic!(
+            "wt exited after a single SIGINT against SIGINT-trapping children — \
+             per-child escalation appears to have crept back in. status: {status:?}"
+        ),
+    }
 }
 
 /// A second SIGINT (user mashing Ctrl-C) must escalate to SIGKILL on every

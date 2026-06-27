@@ -191,7 +191,8 @@ pub enum ErrorCause {
 ///
 /// Tasks return this instead of swallowing errors. The drain layer
 /// collects errors for display after rendering; errored fields stay
-/// `None` so `compute_status_symbols` naturally skips the item.
+/// `None` so `refresh_status_symbols` naturally leaves the affected gate
+/// unresolved.
 #[derive(Debug, Clone)]
 pub struct TaskError {
     pub item_idx: usize,

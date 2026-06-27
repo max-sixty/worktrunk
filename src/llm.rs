@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use worktrunk::config::CommitGenerationConfig;
 use worktrunk::git::{CommitMessageDetail, Repository};
 use worktrunk::path::format_path_for_display;
-use worktrunk::shell_exec::{Cmd, SUBPROCESS_FULL_TARGET, ShellConfig};
+use worktrunk::shell_exec::{Cmd, ShellConfig};
 use worktrunk::styling::{eprintln, warning_message};
 
 use minijinja::Environment;
@@ -86,6 +86,23 @@ pub(crate) fn render_llm_invocation(command: &str) -> anyhow::Result<String> {
     rendered.push(' ');
     rendered.push_str(&escape(Cow::Borrowed(command)));
     Ok(rendered)
+}
+
+/// Start a "still waiting" watchdog for a *foreground* LLM shell-out.
+///
+/// [`execute_llm_command`] captures stdout, so a slow or hung command is
+/// otherwise silent. The watchdog shows a dim status line that escalates to
+/// reveal the exact invocation (via [`render_llm_invocation`]) in a gutter. The
+/// caller holds the returned guard until the command returns; on drop it clears
+/// the status before the result is printed.
+///
+/// Only for single, foreground calls — never the concurrent summary path
+/// ([`generate_summary_core`](crate::summary::generate_summary_core), up to 8
+/// under a semaphore), where
+/// per-call spinners would interleave.
+fn watch_llm_command(command: &str, waiting_for: &str) -> worktrunk::progress::Watchdog {
+    let invocation = render_llm_invocation(command).ok();
+    worktrunk::progress::Watchdog::start(waiting_for, invocation.as_deref())
 }
 
 /// Format a reproduction command, only wrapping with `sh -c` if needed.
@@ -218,7 +235,9 @@ pub(crate) fn prepare_diff(diff: String, stat: String) -> PreparedDiff {
         return PreparedDiff { diff, stat };
     }
 
-    log::debug!(
+    tracing::debug!(
+        count = diff.len(),
+        threshold = DIFF_SIZE_THRESHOLD,
         "Diff size ({} chars) exceeds threshold ({}), filtering",
         diff.len(),
         DIFF_SIZE_THRESHOLD
@@ -233,7 +252,11 @@ pub(crate) fn prepare_diff(diff: String, stat: String) -> PreparedDiff {
 
     let lock_files_removed = sections.len() - filtered_sections.len();
     if lock_files_removed > 0 {
-        log::debug!("Filtered out {} lock file(s)", lock_files_removed);
+        tracing::debug!(
+            count = lock_files_removed,
+            "Filtered out {} lock file(s)",
+            lock_files_removed
+        );
     }
 
     let filtered_diff: String = filtered_sections
@@ -250,7 +273,8 @@ pub(crate) fn prepare_diff(diff: String, stat: String) -> PreparedDiff {
     }
 
     // Step 2: Truncate each file and limit file count
-    log::debug!(
+    tracing::debug!(
+        count = filtered_diff.len(),
         "Still too large ({} chars), truncating to {} lines/file, {} files max",
         filtered_diff.len(),
         MAX_LINES_PER_FILE,
@@ -399,13 +423,6 @@ pub(crate) fn execute_llm_command(command: &str, prompt: &str) -> anyhow::Result
     // `Cmd::pipe_into` (preamble + epilogue through env vars). Avoids buffering
     // MB-scale diffs in our process memory and removes them from our logs
     // entirely. See conversation around PR #2136 for sketch.
-
-    // Log the prompt to subprocess.log alongside captured subprocess stdout —
-    // SUBPROCESS_FULL_TARGET routes to subprocess.log at `-vv`, never to stderr.
-    log::debug!(target: SUBPROCESS_FULL_TARGET, "  Prompt (stdin):");
-    for line in prompt.lines() {
-        log::debug!(target: SUBPROCESS_FULL_TARGET, "    {}", line);
-    }
 
     let shell = ShellConfig::get()?;
     let output = Cmd::new(shell.executable.to_string_lossy())
@@ -647,6 +664,10 @@ pub(crate) fn generate_commit_message(
     // Check if commit generation is configured (non-empty command)
     if commit_generation_config.is_configured() {
         let command = commit_generation_config.command.as_ref().unwrap();
+        // A slow or hung command is otherwise silent (stdout is captured); the
+        // watchdog surfaces a "still waiting" status. Held until this function
+        // returns, clearing the block before the caller prints the message.
+        let _watchdog = watch_llm_command(command, "the commit message");
         // Commit generation is explicitly configured - fail if it doesn't work
         return try_generate_commit_message(
             command,
@@ -818,6 +839,9 @@ pub(crate) fn generate_squash_message(
             project_append,
         )?;
 
+        // See `generate_commit_message` — keep a slow squash-message generation
+        // from being silent.
+        let _watchdog = watch_llm_command(command, "the squash commit message");
         return execute_llm_command(command, &prompt).map_err(|e| {
             worktrunk::git::GitError::LlmCommandFailed {
                 command: command.clone(),
@@ -941,6 +965,9 @@ pub(crate) fn test_commit_generation(
     };
     let prompt = build_prompt(commit_generation_config, TemplateType::Commit, &context)?;
 
+    // The connectivity test shells out the same way real generation does, so a
+    // slow command would be just as silent — surface the same waiting status.
+    let _watchdog = watch_llm_command(command, "the test commit message");
     execute_llm_command(command, &prompt).map_err(|e| {
         worktrunk::git::GitError::LlmCommandFailed {
             command: command.clone(),

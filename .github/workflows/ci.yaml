@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
@@ -54,7 +54,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
@@ -84,7 +84,7 @@ jobs:
 
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - uses: ./.github/actions/test-setup
 
@@ -92,7 +92,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: worktrunk
-        version: "=0.58.0"
+        version: "=0.60.0"
 
     - name: "Use fast D: drive for temp files (Windows)"
       if: runner.os == 'Windows'
@@ -144,7 +144,7 @@ jobs:
       docs: ${{ steps.filter.outputs.docs }}
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
     - uses: dorny/paths-filter@v4
       id: filter
       with:
@@ -164,7 +164,7 @@ jobs:
     if: needs.changes.outputs.cargo == 'true' || github.event_name == 'workflow_dispatch'
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
@@ -183,10 +183,10 @@ jobs:
     if: needs.changes.outputs.docs == 'true' || github.event_name == 'workflow_dispatch'
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: Setup Zola
-      uses: taiki-e/install-action@v2.81.10
+      uses: taiki-e/install-action@v2.82.4
       with:
         tool: zola@0.22.1
 
@@ -265,7 +265,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
       with:
         # `cargo affected run` later diffs PR HEAD against the sha that was
         # HEAD when collect ran. That sha must be reachable.
@@ -292,7 +292,7 @@ jobs:
       run: rustup component add llvm-tools
 
     - name: 💾 Restore prior coverage DB
-      uses: actions/cache/restore@v5
+      uses: actions/cache/restore@v6
       with:
         path: target/affected/coverage.db
         # Primary key matches the current sha (no-op on first push of this
@@ -315,7 +315,7 @@ jobs:
       run: cargo affected collect -- --features shell-integration-tests
 
     - name: 💾 Save coverage DB
-      uses: actions/cache/save@v5
+      uses: actions/cache/save@v6
       with:
         # Only the SQLite DB. `target/affected/profraw-<PID>/` holds raw
         # profile bundles (~5 GB on this repo) that aren't needed past the
@@ -344,7 +344,7 @@ jobs:
     continue-on-error: true
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
       with:
         # Need the cached `collect_sha` reachable from HEAD for the diff;
         # see collect-affected above.
@@ -378,7 +378,7 @@ jobs:
     # there. Order: rust-cache populates `target/` first; we then drop the
     # DB on top, where nothing else touches it.
     - name: 💾 Restore coverage DB
-      uses: actions/cache/restore@v5
+      uses: actions/cache/restore@v6
       with:
         path: target/affected/coverage.db
         # Exact match: collect ran on the PR's merge-base → tight diff.
@@ -427,7 +427,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - uses: baptiste0928/cargo-install@v3
       with:
@@ -440,7 +440,7 @@ jobs:
         save-if: ${{ github.ref == 'refs/heads/main' }}
 
     - name: Install shells (zsh, fish)
-      uses: awalsh128/cache-apt-pkgs-action@v1.6.0
+      uses: awalsh128/cache-apt-pkgs-action@v1.6.1
       with:
         packages: zsh fish
         version: 1.0
