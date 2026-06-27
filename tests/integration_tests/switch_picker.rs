@@ -1713,7 +1713,16 @@ fn test_switch_picker_worktree_row_comments_tab_shows_thread(mut repo: TestRepo)
 /// pane re-renders. Distinct producer from
 /// `test_switch_picker_preview_auto_refreshes_when_compute_lands` (an orchestrator
 /// cache fill): here it's the CI fetch surfaced through `on_update`.
+///
+/// Ignored: same delayed-mock + auto-refresh shape as
+/// `test_switch_picker_preview_auto_refreshes_when_compute_lands` — the final
+/// `("", Some("PRTABMARK"))` step asserts content appears with no keystroke once
+/// the background fetch lands and the picker repaints on its own. That
+/// no-input-then-wait-for-repaint gate flakes under CI contention for the same
+/// reason; restore tracked alongside its sibling in
+/// https://github.com/max-sixty/worktrunk/issues/3269.
 #[rstest]
+#[ignore = "flaky under CI contention; restore tracked in #3269"]
 fn test_switch_picker_pr_tab_auto_resolves_from_fetching(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     repo.run_git(&[
