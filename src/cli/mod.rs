@@ -1938,11 +1938,9 @@ Listing a column requests it but does not force it on: a column gated off
 elsewhere stays hidden — `ci` needs `--full`, `summary` needs
 `[commit.generation]` — so `columns` only narrows which columns may appear.
 
-Narrowing the selection also narrows the work: `wt list` skips the git commands
-that feed only hidden columns, so a branch/path-only view runs no `git status`,
-diffs, or ahead/behind walks. A minimal `ls`-style alias stays fast across many
-worktrees, while the picker keeps fetching CI data for its preview panes
-regardless of which columns render.
+Narrowing the selection narrows the work: `wt list` skips git commands feeding
+only hidden columns, so a branch/path-only view runs no `git status`, diffs, or
+ahead/behind walks. The picker still fetches CI for its previews regardless.
 
 The selection drives the rendered table and the `wt switch` picker.
 `wt list --format json` ignores it, always emitting every field, built-in and
