@@ -210,7 +210,7 @@ across every repo. It's the project's preferred extension point.
    create-or-switch wrapper inherits `wt switch <name>`'s habit of
    materializing a *remote* branch of the same name.
 4. Post the tested alias with usage examples.
-5. Link to the [aliases docs](https://worktrunk.dev/step/#aliases) and
+5. Link to the [aliases docs](https://worktrunk.dev/extending/#aliases) and
    [tips & patterns](https://worktrunk.dev/tips-patterns/).
 
 ### Don't fix tests by adding skip guards

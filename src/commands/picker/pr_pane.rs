@@ -1,11 +1,12 @@
 //! Shared rendering for the picker's `pr` preview pane.
 //!
-//! Two rows show a PR/MR: a worktree row whose branch has one
-//! (`render_worktree_pr` in [`super::items`]) and a `--prs` row
-//! ([`super::prs::PrSkimItem`]). Both render the same shape — a bold reference +
-//! title header, cyan all-caps labeled metadata lines whose values share one
-//! column, and a matching `DESCRIPTION` heading above the full body rendered
-//! flush as markdown — so they read alike.
+//! Both picker row kinds show a PR/MR through one renderer
+//! (`render_pr_pane_body` in [`super::items`]): a worktree row whose branch has
+//! one, and a listed `--prs` row (a `PickerRow` with no local checkout). They
+//! render the same shape — a bold reference + title header, cyan all-caps
+//! labeled metadata lines whose values share one column, and a matching
+//! `DESCRIPTION` heading above the full body rendered flush as markdown — so
+//! they read alike.
 //! They build from these shared pieces rather than each formatting their own.
 //! Every label (`BRANCH`, `URL`, `DESCRIPTION`, …) goes through [`field_label`],
 //! which renders the app's cyan all-caps title style, so they all match the

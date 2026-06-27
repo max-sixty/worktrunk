@@ -213,7 +213,7 @@ impl PreviewLayout {
 /// The active preview tab, shared across the picker session.
 ///
 /// One picker runs per process, so a single process-wide value is the source of
-/// truth: `WorktreeSkimItem::preview` / `PrSkimItem::preview` read it to choose
+/// truth: `PickerRow::preview` reads it to choose
 /// what to render, and the keymap's `Action::Custom` callbacks (installed in
 /// `super::install_preview_tab_keybindings`) write it on alt-1…alt-7 / tab /
 /// shift-tab, then re-run the preview.

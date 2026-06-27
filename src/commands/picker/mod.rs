@@ -204,7 +204,7 @@ impl PickerRemovalTarget {
 /// detached *and* branched alike. A branch-only row has no worktree, so its
 /// branch name is the only handle.
 ///
-/// Decoding `output()` rather than `downcast_ref::<WorktreeSkimItem>()` also
+/// Decoding `output()` rather than `downcast_ref::<PickerRow>()` also
 /// sidesteps skim's cross-thread `TypeId` mismatch, which can make the
 /// downcast fail when the item originates on the reader thread.
 fn picker_item_identifier(item: &dyn SkimItem) -> String {
@@ -2285,7 +2285,7 @@ fn resolve_identifier(
 
 #[cfg(test)]
 pub mod tests {
-    use super::items::{LocalContent, WorktreeSkimItem};
+    use super::items::{LocalCheckout, LocalContent, PickerRow, worktree_output_token};
     use super::{
         PickerAction, PickerCollector, PickerRemovalTarget, drain_stashed_warnings,
         install_preview_tab_keybindings, install_shortcut_keybindings, parse_reload_remove_token,
@@ -2777,26 +2777,29 @@ pub mod tests {
         assert!(!marker.exists(), "unapproved pre-remove hook must not run");
     }
 
-    /// Build a `WorktreeSkimItem` from a snapshot `ListItem`.
+    /// Build a `PickerRow` from a snapshot `ListItem`.
     fn picker_item(branch_name: &str, item: ListItem) -> Arc<dyn SkimItem> {
         let pr_status = Arc::new(Mutex::new(item.pr_status.clone()));
-        Arc::new(WorktreeSkimItem {
+        let output_token = worktree_output_token(&item, branch_name);
+        Arc::new(PickerRow {
             search_base: branch_name.to_string(),
             gutter: '@',
             rendered: Arc::new(Mutex::new(String::new())),
             branch_name: branch_name.to_string(),
-            item: Arc::new(item),
+            output_token,
             preview_cache: Arc::new(dashmap::DashMap::new()),
-            has_upstream: false,
-            summaries_enabled: false,
             pr_status,
-            local_content: Arc::new(Mutex::new(LocalContent::default())),
             notifier: super::preview_notify::PreviewNotifier::detached(),
-            morphed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            local: Some(LocalCheckout {
+                has_upstream: false,
+                summaries_enabled: false,
+                local_content: Arc::new(Mutex::new(LocalContent::default())),
+                morphed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            }),
         }) as Arc<dyn SkimItem>
     }
 
-    /// Build a `WorktreeSkimItem` standing in for a detached-worktree row.
+    /// Build a `PickerRow` standing in for a detached-worktree row.
     fn detached_picker_item(path: &Path) -> Arc<dyn SkimItem> {
         let mut item = ListItem::new_branch("abc123".to_string(), "(detached)".to_string());
         item.branch = None;
@@ -2808,7 +2811,7 @@ pub mod tests {
         picker_item("(detached)", item)
     }
 
-    /// Build a `WorktreeSkimItem` standing in for a branched-worktree row.
+    /// Build a `PickerRow` standing in for a branched-worktree row.
     fn branched_picker_item(branch: &str, path: &Path) -> Arc<dyn SkimItem> {
         let mut item = ListItem::new_branch("abc123".to_string(), branch.to_string());
         item.kind = ItemKind::Worktree(Box::new(WorktreeData {
@@ -2818,7 +2821,7 @@ pub mod tests {
         picker_item(branch, item)
     }
 
-    /// Build a `WorktreeSkimItem` standing in for a branch-only row (no worktree).
+    /// Build a `PickerRow` standing in for a branch-only row (no worktree).
     fn branch_only_picker_item(branch: &str) -> Arc<dyn SkimItem> {
         picker_item(
             branch,
@@ -2851,19 +2854,21 @@ pub mod tests {
         let rendered = Arc::new(Mutex::new(format!("+ {branch}")));
         let local_content = Arc::new(Mutex::new(LocalContent::default()));
         let morphed = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let row: Arc<dyn SkimItem> = Arc::new(WorktreeSkimItem {
+        let row: Arc<dyn SkimItem> = Arc::new(PickerRow {
             search_base: branch.to_string(),
             gutter: '+',
             rendered: Arc::clone(&rendered),
             branch_name: branch.to_string(),
-            item: Arc::clone(&item_arc),
+            output_token: worktree_output_token(&item_arc, branch),
             preview_cache: Arc::new(dashmap::DashMap::new()),
-            has_upstream: false,
-            summaries_enabled: false,
             pr_status: Arc::new(Mutex::new(None)),
-            local_content: Arc::clone(&local_content),
             notifier: super::preview_notify::PreviewNotifier::detached(),
-            morphed: Arc::clone(&morphed),
+            local: Some(LocalCheckout {
+                has_upstream: false,
+                summaries_enabled: false,
+                local_content: Arc::clone(&local_content),
+                morphed: Arc::clone(&morphed),
+            }),
         });
         let token = row.output().to_string();
 
@@ -3936,7 +3941,7 @@ pub mod tests {
         assert!(!branch_list.is_empty(), "the unmerged branch is preserved");
     }
 
-    // Note: skim's `as_any().downcast_ref::<WorktreeSkimItem>()` can fail at
+    // Note: skim's `as_any().downcast_ref::<PickerRow>()` can fail at
     // runtime due to a TypeId mismatch between skim's reader thread and the main
     // compilation unit. The invoke() code path uses output() matching instead.
     // Full TUI tests require interactive skim — verified via tmux-cli during

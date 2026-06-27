@@ -1,5 +1,5 @@
 ---
 source: src/commands/picker/items.rs
-expression: "WorktreeSkimItem::loading_placeholder(mode)"
+expression: "PickerRow::loading_placeholder(mode)"
 ---
-○ Loading branch diff…
+[2m↳[22m [2mLoading branch diff…[22m
