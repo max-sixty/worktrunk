@@ -105,6 +105,87 @@ impl ColumnKind {
             .filter_map(|spec| spec.kind.config_name())
             .collect()
     }
+
+    /// Background tasks whose results feed this column.
+    ///
+    /// When `[list] columns` names an explicit subset, `wt list` skips every
+    /// task no selected column consumes (see [`tasks_not_required_by`]) — the
+    /// layer below the layout filter, so a narrowed view does less git work
+    /// rather than just hiding already-computed cells.
+    ///
+    /// `Status` aggregates almost every status-feeding task (the five
+    /// `refresh_status_symbols` gates); identity columns (Branch, Path, Commit,
+    /// Age, Message), the always-on Gutter, and custom columns are derived
+    /// without any task. The single-task columns mirror [`ColumnSpec::requires_task`]
+    /// — `test_required_tasks_superset_of_requires_task` pins that they agree.
+    ///
+    /// Drift guard: `test_required_tasks_cover_every_task` asserts the union
+    /// across all built-ins is exactly the full `TaskKind` set, so a new task
+    /// (or a new consumer of one) can't silently fall out of the mapping.
+    pub fn required_tasks(self) -> &'static [TaskKind] {
+        match self {
+            // Gate 1 (working tree) ← WorkingTreeDiff; gate 2 (operation) ←
+            // WorkingTreeDiff + GitOperation; gate 3 (main state) ← AheadBehind,
+            // WorkingTreeDiff, MergeTreeConflicts, WorkingTreeConflicts, and the
+            // integration signals (CommittedTreesMatch, HasFileChanges,
+            // WouldMergeAdd, IsAncestor); gate 4 (upstream) ← Upstream; gate 5
+            // (user marker) ← UserMarker. See `model::item::refresh_status_symbols`.
+            ColumnKind::Status => &[
+                TaskKind::WorkingTreeDiff,
+                TaskKind::GitOperation,
+                TaskKind::AheadBehind,
+                TaskKind::MergeTreeConflicts,
+                TaskKind::WorkingTreeConflicts,
+                TaskKind::CommittedTreesMatch,
+                TaskKind::HasFileChanges,
+                TaskKind::WouldMergeAdd,
+                TaskKind::IsAncestor,
+                TaskKind::Upstream,
+                TaskKind::UserMarker,
+            ],
+            ColumnKind::WorkingDiff => &[TaskKind::WorkingTreeDiff],
+            ColumnKind::AheadBehind => &[TaskKind::AheadBehind],
+            ColumnKind::BranchDiff => &[TaskKind::BranchDiff],
+            ColumnKind::Upstream => &[TaskKind::Upstream],
+            ColumnKind::CiStatus => &[TaskKind::CiStatus],
+            ColumnKind::Url => &[TaskKind::UrlStatus],
+            ColumnKind::Summary => &[TaskKind::SummaryGenerate],
+            ColumnKind::Gutter
+            | ColumnKind::Branch
+            | ColumnKind::Path
+            | ColumnKind::Commit
+            | ColumnKind::Time
+            | ColumnKind::Message
+            | ColumnKind::Custom(_) => &[],
+        }
+    }
+}
+
+/// Tasks that no column in `selected` consumes — the set `wt list` adds to its
+/// skip set when `[list] columns` names an explicit subset.
+///
+/// The layout already hides unselected columns; this prunes the work that fed
+/// only those hidden columns so a narrowed view (e.g. an `ls`-style
+/// branch/path alias over many dirty worktrees) skips `git status`, diffs, and
+/// ahead/behind walks at the source rather than computing and discarding them.
+///
+/// Returns nothing to skip when `selected` is empty — that's the "default
+/// column set" sentinel, which shows everything and prunes nothing. The Gutter
+/// is always rendered but requires no task, so its omission from `selected`
+/// (it is never user-selectable) never keeps a task alive.
+pub fn tasks_not_required_by(selected: &[ColumnKind]) -> Vec<TaskKind> {
+    use strum::IntoEnumIterator;
+
+    if selected.is_empty() {
+        return Vec::new();
+    }
+    let required: std::collections::HashSet<TaskKind> = selected
+        .iter()
+        .flat_map(|kind| kind.required_tasks().iter().copied())
+        .collect();
+    TaskKind::iter()
+        .filter(|kind| !required.contains(kind))
+        .collect()
 }
 
 /// Parse the `[list] columns` selection into an ordered list of columns.
@@ -432,6 +513,94 @@ mod tests {
         // Matching is exact: the rendered header "Branch" is not the kebab name.
         let cased = parse_selected_columns(&["Branch".into()], &[]).unwrap_err();
         assert!(cased.to_string().contains("Unknown column"), "{cased}");
+    }
+
+    #[test]
+    fn test_required_tasks_superset_of_requires_task() {
+        // The single-task `requires_task` gate and the fuller `required_tasks`
+        // map must agree: a column that gates on a task must also list it as a
+        // task it consumes, or selection-driven pruning could skip the task the
+        // layout still needs.
+        for spec in COLUMN_SPECS {
+            if let Some(task) = spec.requires_task {
+                assert!(
+                    spec.kind.required_tasks().contains(&task),
+                    "{:?} gates on {task:?} but required_tasks() omits it",
+                    spec.kind
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_required_tasks_cover_every_task() {
+        use strum::IntoEnumIterator;
+
+        // Every TaskKind must feed at least one built-in column. Otherwise a
+        // task is either dead work (computed, rendered nowhere) or a missing
+        // entry in `required_tasks()` that selection-driven pruning would skip
+        // while its consuming column is shown. The union is checked exactly
+        // equal so the mapping can't drift in either direction as tasks or
+        // columns are added.
+        let covered: HashSet<TaskKind> = COLUMN_SPECS
+            .iter()
+            .flat_map(|spec| spec.kind.required_tasks().iter().copied())
+            .collect();
+        let all: HashSet<TaskKind> = TaskKind::iter().collect();
+        assert_eq!(
+            covered, all,
+            "required_tasks() union must equal the full TaskKind set"
+        );
+    }
+
+    #[test]
+    fn test_tasks_not_required_by() {
+        use strum::IntoEnumIterator;
+
+        // The default-set sentinel prunes nothing.
+        assert!(tasks_not_required_by(&[]).is_empty());
+
+        // Selecting Status keeps every status-feeding task; only the
+        // independent columns' tasks (BranchDiff, CiStatus, UrlStatus,
+        // SummaryGenerate) are prunable.
+        let pruned: HashSet<TaskKind> = tasks_not_required_by(&[ColumnKind::Status])
+            .into_iter()
+            .collect();
+        assert_eq!(
+            pruned,
+            HashSet::from([
+                TaskKind::BranchDiff,
+                TaskKind::CiStatus,
+                TaskKind::UrlStatus,
+                TaskKind::SummaryGenerate,
+            ]),
+            "Status consumes every other task"
+        );
+
+        // A pure identity selection (branch + age) consumes no task, so every
+        // task is prunable.
+        let all: HashSet<TaskKind> = TaskKind::iter().collect();
+        let pruned: HashSet<TaskKind> =
+            tasks_not_required_by(&[ColumnKind::Branch, ColumnKind::Time])
+                .into_iter()
+                .collect();
+        assert_eq!(pruned, all, "branch + age need no background task");
+
+        // A selected task is never pruned, and an unselected one always is.
+        let pruned = tasks_not_required_by(&[ColumnKind::AheadBehind, ColumnKind::CiStatus]);
+        assert!(!pruned.contains(&TaskKind::AheadBehind));
+        assert!(!pruned.contains(&TaskKind::CiStatus));
+        assert!(pruned.contains(&TaskKind::BranchDiff));
+        assert!(pruned.contains(&TaskKind::WorkingTreeDiff));
+
+        // Custom columns consume no task, so they prune like identity columns.
+        assert_eq!(
+            tasks_not_required_by(&[ColumnKind::Custom(0)])
+                .into_iter()
+                .collect::<HashSet<_>>(),
+            all,
+            "a custom column needs no background task"
+        );
     }
 
     #[test]

@@ -1000,6 +1000,54 @@ template = "{{ branch | codename }}"
     });
 }
 
+/// A narrowed `[list] columns` selection prunes the git work that fed only the
+/// hidden columns — not just the rendered cells (#3133). With `["branch", "age"]`
+/// no column consumes a background task, so `git status` (run by the
+/// working-tree-diff task) never fires; the default set still runs it. Mirrors
+/// the trace-based diagnosis on the issue, asserted on the `$ git …` debug log.
+#[rstest]
+fn test_list_config_columns_prune_unused_tasks(repo: TestRepo) {
+    let run_list = |config: &str| -> String {
+        if config.is_empty() {
+            // Default column set: leave any prior config file out of the way.
+            let _ = fs::remove_file(repo.test_config_path());
+        } else {
+            fs::write(repo.test_config_path(), config).unwrap();
+        }
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        // The working-tree task's `git … status --porcelain` is logged only
+        // under debug; capture it from stderr.
+        cmd.env("RUST_LOG", "worktrunk=debug");
+        cmd.arg("list").current_dir(repo.root_path());
+        let output = cmd.output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "exit code should be 0 for config {config:?}: {stderr}"
+        );
+        stderr.into_owned()
+    };
+
+    // Control: the default set shows the Status column, so the working-tree
+    // task runs `git status --porcelain`.
+    assert!(
+        run_list("").contains("status --porcelain"),
+        "default columns should run `git status` for the Status column"
+    );
+
+    // Branch + Age consume no task: nothing should run `git status`.
+    let narrowed = run_list(
+        r#"[list]
+columns = ["branch", "age"]
+"#,
+    );
+    assert!(
+        !narrowed.contains("status --porcelain"),
+        "a branch/age selection must not run `git status`:\n{narrowed}"
+    );
+}
+
 /// TODO(list-columns-env): `WORKTRUNK__LIST__COLUMNS` is not wired up yet. The
 /// env overlay can only deliver a scalar, which the `Vec<String>` field rejects,
 /// so the override is dropped — but with a warning naming the var, not silently

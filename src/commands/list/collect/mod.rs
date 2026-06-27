@@ -1149,6 +1149,22 @@ pub fn collect(
             Err(e) => return Err(e),
         };
 
+    // Prune tasks no selected column consumes. When `[list] columns` names an
+    // explicit subset, the layout already hides the unselected columns; this
+    // skips the git work that fed only those hidden columns at the source, so a
+    // narrowed view (e.g. a branch/path `ls` alias over many dirty worktrees)
+    // doesn't run `git status` / diffs / ahead-behind walks just to discard them
+    // (#3133). Additive only — it never un-skips a task gated off elsewhere
+    // (`--full`, missing template/LLM), matching the layout's "select narrows,
+    // never forces" rule.
+    //
+    // The picker (`progressive_handler.is_some()`) is exempt: it fetches CI/PR
+    // data for its preview tabs regardless of which columns render, so its skip
+    // set stays as `handle_picker` chose it.
+    if progressive_handler.is_none() {
+        effective_skip_tasks.extend(super::columns::tasks_not_required_by(&selected_columns));
+    }
+
     // The picker primes its CI cells from the local cache so the column paints
     // instantly, then the live `CiStatus` task (which the picker keeps — see
     // `handle_picker`) overwrites each cell as results stream in. Uncached rows

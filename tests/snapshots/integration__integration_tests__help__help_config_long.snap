@@ -240,6 +240,12 @@ Listing a column requests it but does not force it on: a column gated off
 elsewhere stays hidden — [2mci[0m needs [2m--full[0m, [2msummary[0m needs
 [2m[commit.generation][0m — so [2mcolumns[0m only narrows which columns may appear.
 
+Narrowing the selection also narrows the work: [2mwt list[0m skips the git commands
+that feed only hidden columns, so a branch/path-only view runs no [2mgit status[0m,
+diffs, or ahead/behind walks. A minimal [2mls[0m-style alias stays fast across many
+worktrees, while the picker keeps fetching CI data for its preview panes
+regardless of which columns render.
+
 The selection drives the rendered table and the [2mwt switch[0m picker.
 [2mwt list --format json[0m ignores it, always emitting every field, built-in and
 custom.
