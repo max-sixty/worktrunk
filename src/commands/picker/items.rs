@@ -116,7 +116,7 @@ pub(super) struct RowShortcutData {
 /// in place — no reload, no cursor move — when a removal keeps the (unmerged)
 /// branch. The collector rewrites the row's display through these slots and
 /// flips [`morphed`](Self::morphed); the same `Arc`s back the live
-/// [`WorktreeSkimItem`], so skim repaints the one row on the next `Event::Render`.
+/// [`PickerRow`], so skim repaints the one row on the next `Event::Render`.
 ///
 /// Reached by the collector through the shared [`RowShortcutData`] table (the
 /// `downcast_ref` route is unreliable cross-thread), so every field is an `Arc`
@@ -132,7 +132,7 @@ pub(super) struct MorphHandle {
     /// Dimmed to `working_tree: Some(false)` on morph so the `working_tree`
     /// preview tab — there's no worktree left to diff — reads as empty.
     pub local_content: LocalContentSlot,
-    /// Shared with [`WorktreeSkimItem::output`]: once set, the row's selection
+    /// Shared with [`PickerRow::output`]: once set, the row's selection
     /// token is the bare branch name (a branch-only row) instead of the
     /// worktree path.
     pub morphed: Arc<AtomicBool>,

@@ -554,7 +554,7 @@ impl PickerCollector {
     /// predicts will keep its (unmerged) branch. The row never leaves its slot:
     /// the morph rewrites the row's shared `rendered` line to the branch line
     /// (rendered on the live layout — gutter `+` → `/`, path blank), flips the
-    /// row's [`morphed`](items::WorktreeSkimItem::morphed) flag (so `output()`
+    /// row's [`morphed`](items::LocalCheckout::morphed) flag (so `output()`
     /// becomes the branch token), dims the `working_tree` preview tab (no worktree
     /// left to diff), and re-keys the row's `alt-y`/`alt-o` shortcut entry to the
     /// branch token. skim repaints just that row on the reload alt-x already
@@ -724,7 +724,7 @@ fn build_morph_branch_row(
 ///
 /// The mirror of [`PickerCollector::morph_and_remove_in_background`]'s apply
 /// step: restore the row's pre-morph display, clear the
-/// [`morphed`](items::WorktreeSkimItem::morphed) flag (so `output()` is the
+/// [`morphed`](items::LocalCheckout::morphed) flag (so `output()` is the
 /// worktree token again), restore the diff-content slot, and move the
 /// `alt-y`/`alt-o` shortcut entry back to the worktree token. The row never left
 /// its slot, so a plain `Event::Render` repaints it — no reload, no cursor move
