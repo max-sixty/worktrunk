@@ -1475,8 +1475,8 @@ fn test_switch_picker_preview_auto_refreshes_when_compute_lands(mut repo: TestRe
     // cache hit. `pr list` is instant so the row lands promptly.
     let mock_bin = repo.root_path().join("mock-bin");
     std::fs::create_dir_all(&mock_bin).unwrap();
-    // A short head branch so it isn't truncated in the narrow (preview-shown)
-    // list pane — the test gates on its full text to confirm the row rendered.
+    // A short head branch so the PR row isn't truncated in the narrow
+    // (preview-shown) list pane.
     let pr_json = r#"[{"number":42,"title":"Retry the flaky network test","headRefName":"flaky","author":{"login":"octocat"},"isDraft":false,"url":"https://github.com/owner/test-repo/pull/42","body":"body"}]"#;
     std::fs::write(mock_bin.join("pr_list.json"), pr_json).unwrap();
     let comments_json = r#"{"comments":[{"author":{"login":"octocat"},"body":"AUTOREFRESHMARK","createdAt":"2025-01-01T00:00:00Z"}]}"#;
@@ -1497,11 +1497,18 @@ fn test_switch_picker_preview_auto_refreshes_when_compute_lands(mut repo: TestRe
         repo.root_path(),
         &env_vars,
         &[
-            // Wait for the PR row to stream into the list (its head branch shows
-            // in the Branch column), then move the cursor onto it (its preview is
-            // the "not checked out locally" pane), then open the comments tab.
-            ("", Some("flaky")),
-            ("\x1b[B", Some("Not checked out")),
+            // Filter to the PR row with `#` (its gutter sigil — a worktree row's
+            // path can't contain a literal `#`, so this isolates PR/MR rows; see
+            // `folded_pr_reference_filters_under_skims_default_engine`). This puts
+            // the cursor on the PR row deterministically. A `--prs` row's order
+            // against the worktree row isn't fixed — it streams in on its own
+            // thread and an async refresh resets skim's cursor to the top, so a
+            // single Down could land on either row depending on timing (when the
+            // order is [pr, worktree] the reset puts the cursor on the PR row and
+            // Down moves *off* it, stranding the test). Filtering removes the
+            // navigation entirely: the PR row becomes the sole, selected row, and
+            // its preview is the "not checked out locally" pane.
+            ("#", Some("Not checked out")),
             // alt-7: comments tab. The fetch is still in flight, so the pane shows
             // "Loading comments…"; the comment appears with NO further input once
             // the delayed fetch lands and the picker repaints on its own.
