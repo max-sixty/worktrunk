@@ -1459,7 +1459,15 @@ fn test_switch_picker_prs_gitlab_list(mut repo: TestRepo) {
 /// repaint (`PreviewNotifier`). Before that product-side poke the placeholder
 /// would strand until the next keystroke — the gap the picker's test harness
 /// used to paper over by re-issuing the tab key.
+///
+/// Ignored: flakes under CI contention. Filtering to a single visible row
+/// (`#`, then `!main`) doesn't control which row is *selected* — when the
+/// filter applies before the async `--prs` row has streamed in, the result
+/// set empties, the cursor is lost, and skim doesn't reselect the lone row
+/// once it arrives, so the `"Not checked out"` gate times out. Tracked in
+/// https://github.com/max-sixty/worktrunk/issues/3269.
 #[rstest]
+#[ignore = "flaky under CI contention; restore tracked in #3269"]
 fn test_switch_picker_preview_auto_refreshes_when_compute_lands(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     repo.run_git(&[
