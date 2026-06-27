@@ -2930,3 +2930,105 @@ fn test_switch_picker_alt_x_unremovable_row_keeps_cursor(mut repo: TestRepo) {
 
     let _ = abort_and_exit_code(child, writer, rx);
 }
+
+/// alt-x under an active fuzzy query lands the cursor on the row displayed just
+/// below the removed one — the *filtered display* order, not the removed row's
+/// index in the full (unfiltered) `shared_items` list.
+///
+/// Typing a query both shrinks and reorders skim's `item_list` relative to
+/// `shared_items`. A reposition that scrolled to the removed row's `shared_items`
+/// index lands rows past the right one — the "+N down" jump a user sees when
+/// removing rows after filtering, where N is the count of filtered-out rows above
+/// the cursor. The other alt-x cursor tests type no query, so the two index spaces
+/// coincide and this regression hides. Here decoy worktrees the query filters out
+/// sit between the matching ones, inflating each keeper's `shared_items` index past
+/// its displayed index: an index-based reposition overshoots (and `scroll_by`
+/// clamps it to the last filtered row), an identity-based one lands on the neighbor.
+#[rstest]
+fn test_switch_picker_alt_x_lands_on_neighbor_under_filter(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+    // Keepers (match the query `keep`) interleaved with decoys (don't), so each
+    // keeper carries decoys ahead of it in `shared_items` order. All sit at main's
+    // commit, so alt-x integrates-and-drops (the drop path).
+    for branch in [
+        "keep-1", "other-1", "keep-2", "other-2", "keep-3", "other-3", "keep-4",
+    ] {
+        repo.add_worktree(branch);
+    }
+
+    let env_vars = repo.test_env_vars();
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--no-cd", "--format=json"],
+        repo.root_path(),
+        &env_vars,
+    );
+    let send = |bytes: &[u8]| {
+        let mut w = writer.lock().unwrap();
+        w.write_all(bytes).unwrap();
+        w.flush().unwrap();
+    };
+
+    wait_for_stable_with_content(&rx, &mut parser, Some("keep-4"));
+
+    // Type the query: only the four keepers survive (the current/main row and the
+    // decoys filter out), so the cursor starts on the top keeper.
+    send(b"keep");
+    wait_for_stable_with_content(&rx, &mut parser, Some("keep-1"));
+
+    // Learn the filtered display order — skim ranks the equal-scoring keepers, so
+    // read the rows top-to-bottom rather than assume one.
+    let order: Vec<String> = {
+        let list = list_pane_text(parser.screen());
+        let mut rows: Vec<(usize, String)> = ["keep-1", "keep-2", "keep-3", "keep-4"]
+            .iter()
+            .filter_map(|name| {
+                list.lines()
+                    .position(|l| l.contains(name))
+                    .map(|line| (line, (*name).to_string()))
+            })
+            .collect();
+        rows.sort_by_key(|(line, _)| *line);
+        rows.into_iter().map(|(_, name)| name).collect()
+    };
+    assert_eq!(
+        order.len(),
+        4,
+        "all four keepers shown under the `keep` filter"
+    );
+    // Remove the second displayed keeper (two still below it): the row directly
+    // below must catch the cursor, not one further down.
+    let remove_target = order[1].clone();
+    let expected_landing = order[2].clone();
+    let overshoot_row = order[3].clone();
+
+    // Down from the top filtered row onto the second keeper.
+    send(b"\x1b[B");
+    wait_for_cursor_on_row(&rx, &mut parser, &remove_target);
+
+    // alt-x drops it; the cursor must land on the row that slid up. An index-based
+    // reposition overshoots toward `overshoot_row` (clamped to the last filtered
+    // row) and times this out.
+    send(b"\x1bx");
+    wait_for_cursor_on_row(&rx, &mut parser, &expected_landing);
+
+    let pointer_line = list_pane_text(parser.screen())
+        .lines()
+        .find(|l| l.starts_with('>'))
+        .map(str::to_string)
+        .unwrap_or_default();
+    assert!(
+        !pointer_line.contains(&overshoot_row),
+        "alt-x under a filter overshot to `{overshoot_row}` instead of the \
+         immediate next row `{expected_landing}`.\nPointer line: {pointer_line:?}"
+    );
+
+    let _ = abort_and_exit_code(child, writer, rx);
+}

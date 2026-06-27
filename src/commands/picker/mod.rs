@@ -274,6 +274,15 @@ struct PickerCollector {
     /// back (or un-morphed) didn't actually go away. See [`restore_failed_removal`]
     /// and [`revert_morph`].
     stashed_warnings: Arc<Mutex<Vec<String>>>,
+    /// The `output()` token of the row displayed just below the selected one,
+    /// captured by the `alt-x` keybinding *before* its `reload(remove {})` resets
+    /// the cursor to the top. A drop consumes it to land the cursor on the row
+    /// that slides up — by identity, since the removed row's `shared_items` index
+    /// doesn't map to skim's filtered/reordered `item_list` (an active query made
+    /// an index land +N rows off). `None` when the selected row was last (no
+    /// successor → land on the new last row). See the `alt-x` bind in `handle_picker`
+    /// and [`reposition_cursor_action`].
+    drop_landing: Arc<Mutex<Option<String>>>,
 }
 
 impl PickerCollector {
@@ -427,23 +436,25 @@ impl PickerCollector {
         result: RemoveResult,
     ) {
         // Capture the removed row (and its position) before dropping it: the
-        // position restores the cursor to that slot (the row that slides up) after
-        // the reload — see `reposition_cursor_action` — and the row itself is
-        // handed to the background thread so it can put the row back if the removal
-        // fails (see `restore_failed_removal`).
-        let (removed, reposition_target) = {
+        // position is handed to the background thread so it can put the row back
+        // at its slot if the removal fails (see `restore_failed_removal`). The
+        // cursor lands by identity on the row that slid up — its token was
+        // captured before the reload by the `alt-x` binding (see
+        // `reposition_cursor_action`), since the removed row's `shared_items`
+        // index doesn't map to skim's filtered/reordered `item_list`.
+        let removed = {
             let mut items = self.items.lock().unwrap();
             let removed = items
                 .iter()
                 .position(|item| item.output().as_ref() == selected_output)
                 .map(|pos| (Arc::clone(&items[pos]), pos));
             items.retain(|item| item.output().as_ref() != selected_output);
-            let remaining_data_rows = items.len().saturating_sub(PICKER_HEADER_ROWS);
-            let target = removed
-                .as_ref()
-                .and_then(|(_, pos)| sticky_reposition_target(*pos, remaining_data_rows));
-            (removed, target)
+            removed
         };
+        // The row displayed just below the removed one, captured before this
+        // reload reset the cursor (`None` if the removed row was last — land on
+        // the new last row).
+        let reposition_target = self.drop_landing.lock().unwrap().take();
 
         // A user-facing (label, noun) for the `kept` message, taken from the result
         // before it moves into the background thread.
@@ -478,14 +489,12 @@ impl PickerCollector {
                 }
             });
 
-        // Restore the cursor near the removed row. skim resets it to the top on
-        // every reload; inject a Custom action that moves it back to the removed
-        // row's slot once the reloaded rows land (`render_tx` is skim's event
-        // sender, set once the TUI is up — always present by the time a reload
-        // fires).
-        if let Some(target) = reposition_target {
-            send_reposition(&self.render_tx, target);
-        }
+        // Restore the cursor onto the row that slid into the removed row's slot.
+        // skim resets it to the top on every reload; inject a Custom action that
+        // lands it on the captured row once the reloaded rows land (`render_tx` is
+        // skim's event sender, set once the TUI is up — always present by the time
+        // a reload fires).
+        send_reposition(&self.render_tx, reposition_target);
     }
 
     /// Keep the selected row in place and explain why its target wasn't removed.
@@ -533,19 +542,9 @@ impl PickerCollector {
     /// [`keep_current_worktree_row`](Self::keep_current_worktree_row)) re-anchor it
     /// on the row's slot.
     fn reposition_to_kept_row(&self, selected_output: &str) {
-        let reposition_target = {
-            let items = self.items.lock().unwrap();
-            items
-                .iter()
-                .position(|item| item.output().as_ref() == selected_output)
-                .and_then(|pos| {
-                    let remaining = items.len().saturating_sub(PICKER_HEADER_ROWS);
-                    sticky_reposition_target(pos, remaining)
-                })
-        };
-        if let Some(target) = reposition_target {
-            send_reposition(&self.render_tx, target);
-        }
+        // The row stayed put, so land back on it by its own token — identity, not
+        // an index, so it's right under an active query too.
+        send_reposition(&self.render_tx, Some(selected_output.to_string()));
     }
 
     /// Morph the selected worktree row into a `/ branch` row in place, then remove
@@ -610,18 +609,10 @@ impl PickerCollector {
             return;
         };
 
-        // Find the row's slot before flipping its identity (its `output()` token
-        // changes on morph). The row stays put, so the cursor lands right back.
-        let reposition_target = {
-            let items = self.items.lock().unwrap();
-            items
-                .iter()
-                .position(|item| item.output().as_ref() == selected_output)
-                .and_then(|pos| {
-                    let remaining = items.len().saturating_sub(PICKER_HEADER_ROWS);
-                    sticky_reposition_target(pos, remaining)
-                })
-        };
+        // The row stays put but flips its identity: after the morph its `output()`
+        // is the branch token. Land the cursor back on it by that token (captured
+        // here, before `branch` moves into the background thread below).
+        let reposition_target = Some(branch.clone());
 
         // Snapshot the pre-morph display for the revert, then apply the morph.
         let original_rendered = slots.rendered.lock().unwrap().clone();
@@ -669,9 +660,7 @@ impl PickerCollector {
 
         // alt-x's reload reset the cursor to the top; land it back on the row,
         // which is still in its original slot (morphed, not removed).
-        if let Some(target) = reposition_target {
-            send_reposition(&self.render_tx, target);
-        }
+        send_reposition(&self.render_tx, reposition_target);
     }
 }
 
@@ -814,30 +803,24 @@ const REPOSITION_SETTLED_RENDERS: usize = 3;
 /// guards against an unforeseen state where the matcher never settles.
 const REPOSITION_MAX_ATTEMPTS: usize = 1000;
 
-/// The `item_list` row the cursor should land on after an alt-x removal, given
-/// the removed row's position in `shared_items` (header included) and how many
-/// data rows remain.
+/// A skim `Custom` action that lands the cursor on the row whose `output()`
+/// token is `landing` once the reloaded item list is populated — or on the last
+/// row when `landing` is `None` or names a row the reload dropped.
 ///
-/// The removed row sat at `removed_pos`; the row that slides up into its slot is
-/// the next one, which lands at the same `item_list` index once the header is
-/// subtracted. Returns `None` when there's nothing to land on (the list is now
-/// header-only) or the position was the header itself. The caller clamps to the
-/// list's last row via `scroll_by`, so a removed-last-row target just overshoots
-/// and snaps back to the new last row.
-fn sticky_reposition_target(removed_pos: usize, remaining_data_rows: usize) -> Option<usize> {
-    if remaining_data_rows == 0 {
-        return None;
-    }
-    removed_pos.checked_sub(PICKER_HEADER_ROWS)
-}
-
-/// A skim `Custom` action that moves the cursor to `target` once the reloaded
-/// item list is populated.
+/// skim has no "select this item" action and resets the cursor to the top on
+/// reload, so this drives the move through `ItemList`'s public cursor API with
+/// `&mut App` in hand. It lands by **identity**, not by absolute index: a fuzzy
+/// query reorders and shrinks `item_list` relative to `shared_items`, so an
+/// index computed from a row's `shared_items` position would point at the wrong
+/// row (or past the filtered list's end) — the +N-row jump removals showed under
+/// an active query. Walking to the token is correct whether or not a query is
+/// live. `landing` is captured *before* the reload: the drop hands the token of
+/// the row displayed just below the removed one (see the `alt-x` binding), the
+/// keep / morph / restore paths the token of the row that stays or returns.
 ///
-/// skim has no "set cursor to index N" action and resets the cursor to the top
-/// on reload, so this drives the move through `ItemList`'s public cursor API
-/// with `&mut App` in hand: `jump_to_first` + `scroll_by(target)` lands on
-/// `target`, clamped to the last row.
+/// `None` (a removed *last* row, with no successor to slide up) and a token the
+/// reload dropped (also removed, or filtered out by the live query) both land on
+/// the new last row — for a removed last row, the row that was above it.
 ///
 /// The reload repopulates `item_list` asynchronously — the reader refills
 /// `item_pool`, then the matcher filters it into `item_list` — so the first
@@ -849,11 +832,6 @@ fn sticky_reposition_target(removed_pos: usize, remaining_data_rows: usize) -> O
 /// on. Sleeping instead of re-arming would hold `&mut App` across the await and
 /// starve the render that loads the rows.
 ///
-/// `target` is an `item_list` index (data rows only — see [`PICKER_HEADER_ROWS`])
-/// from [`sticky_reposition_target`]. Under an active fuzzy query the displayed
-/// order diverges from `shared_items` order, so the landing row is approximate
-/// (a valid nearby row) rather than the exact next row.
-///
 /// On landing, it returns [`Event::RunPreview`] so the preview pane repaints for
 /// the row the cursor settled on. skim only repaints the preview on a
 /// selection-*change* event (`on_selection_changed`), and moving the cursor
@@ -861,18 +839,34 @@ fn sticky_reposition_target(removed_pos: usize, remaining_data_rows: usize) -> O
 /// showing the row skim last previewed (the current worktree, which the reload
 /// briefly reset the cursor to) until the next keystroke.
 fn reposition_cursor_action(
-    target: usize,
+    landing: Option<String>,
     attempts: Arc<AtomicUsize>,
     settled_streak: Arc<AtomicUsize>,
 ) -> Action {
     Action::Custom(ActionCallback::new_sync(
         move |app| -> Result<Vec<Event>, Box<dyn std::error::Error + Send + Sync>> {
-            // Rows are in: land the cursor on the removed row's slot, then
+            // Rows are in: land the cursor on the target row by identity, then
             // repaint the preview for it (the cursor move alone doesn't).
-            if app.item_list.count() > 0 {
-                app.item_list.jump_to_first();
-                app.item_list
-                    .scroll_by(i32::try_from(target).unwrap_or(i32::MAX));
+            let count = app.item_list.count();
+            if count > 0 {
+                let mut landed = false;
+                if let Some(token) = landing.as_deref() {
+                    app.item_list.jump_to_first();
+                    for _ in 0..count {
+                        if app
+                            .item_list
+                            .selected()
+                            .is_some_and(|m| m.item.output().as_ref() == token)
+                        {
+                            landed = true;
+                            break;
+                        }
+                        app.item_list.select_next();
+                    }
+                }
+                if !landed {
+                    app.item_list.jump_to_last();
+                }
                 return Ok(vec![Event::RunPreview]);
             }
             // No rows yet. The matcher has "settled" once it has stopped with the
@@ -896,7 +890,7 @@ fn reposition_cursor_action(
                 return Ok(Vec::new());
             }
             Ok(vec![Event::Action(reposition_cursor_action(
-                target,
+                landing.clone(),
                 Arc::clone(&attempts),
                 Arc::clone(&settled_streak),
             ))])
@@ -904,13 +898,14 @@ fn reposition_cursor_action(
     ))
 }
 
-/// Inject a cursor reposition onto `target` through skim's event sender, with
-/// fresh attempt/streak counters (see [`reposition_cursor_action`]). The single
-/// path every alt-x outcome uses to move the cursor after its reload — the drop
-/// (cursor onto the slide-up row), the keep (back onto the row), and the restore
-/// (back onto the re-inserted row). A no-op before `render_tx` is set or once the
-/// receiver is gone (teardown); the queued action is dropped if the channel is
-/// full.
+/// Inject a cursor reposition onto the row whose `output()` token is `landing`
+/// through skim's event sender, with fresh attempt/streak counters (see
+/// [`reposition_cursor_action`]). `None` lands on the last row. The single path
+/// every alt-x outcome uses to move the cursor after its reload — the drop
+/// (cursor onto the row that slid up, captured before the reload), the keep /
+/// morph (back onto the row, which stays), and the restore (onto the re-inserted
+/// row). A no-op before `render_tx` is set or once the receiver is gone
+/// (teardown); the queued action is dropped if the channel is full.
 ///
 /// Rapid alt-r (or a background restore overtaking the optimistic drop) can leave
 /// more than one chain in flight. Each carries its own counters and self-terminates
@@ -919,10 +914,13 @@ fn reposition_cursor_action(
 /// render. Bounding this to only the newest reposition would take a generation
 /// token threaded through every chain (and every `PickerCollector` construction
 /// site); the self-correcting transient isn't worth that cross-chain state.
-fn send_reposition(render_tx: &OnceLock<tokio::sync::mpsc::Sender<Event>>, target: usize) {
+fn send_reposition(
+    render_tx: &OnceLock<tokio::sync::mpsc::Sender<Event>>,
+    landing: Option<String>,
+) {
     if let Some(event_tx) = render_tx.get() {
         let _ = event_tx.try_send(Event::Action(reposition_cursor_action(
-            target,
+            landing,
             Arc::new(AtomicUsize::new(0)),
             Arc::new(AtomicUsize::new(0)),
         )));
@@ -1135,8 +1133,9 @@ fn restore_failed_removal(
         // Another removal may have shrunk the list since the drop; clamp.
         let insert_at = removed_pos.min(items.len());
         items.insert(insert_at, removed_item);
-        let remaining_data_rows = items.len().saturating_sub(PICKER_HEADER_ROWS);
-        sticky_reposition_target(insert_at, remaining_data_rows)
+        // Land the cursor back on the restored row by its token — identity, not a
+        // `shared_items` index, so it's right even with a query reordering the list.
+        Some(token)
     };
 
     stashed_warnings.lock().unwrap().push(
@@ -1151,9 +1150,7 @@ fn restore_failed_removal(
     };
     // Re-stream the restored list, then land the cursor back on the row.
     let _ = event_tx.try_send(Event::Reload("restore".to_string()));
-    if let Some(target) = reposition_target {
-        send_reposition(render_tx, target);
-    }
+    send_reposition(render_tx, reposition_target);
 }
 
 impl CommandCollector for PickerCollector {
@@ -1754,6 +1751,11 @@ pub fn handle_picker(
         is_preview_bench,
     });
 
+    // Carries the drop's landing-row token from the `alt-x` keybinding (which sees
+    // skim's `App`, pre-reload) to the collector's `invoke` (reader thread,
+    // post-reload). See the `drop_landing` field and the `alt-x` bind below.
+    let drop_landing: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+
     let collector = PickerCollector {
         items: Arc::clone(&shared_items),
         repo: repo.clone(),
@@ -1761,6 +1763,7 @@ pub fn handle_picker(
         render_tx: Arc::clone(&render_tx),
         factory: Rc::clone(&factory),
         stashed_warnings: Arc::clone(&stashed_warnings),
+        drop_landing: Arc::clone(&drop_landing),
     };
 
     // Half-page preview scroll: half of skim's usable height.
@@ -1828,8 +1831,7 @@ pub fn handle_picker(
         // (or `--prs`) list scrolls with no position cue, made worse by
         // `no_info(true)` below hiding the matched/total counter.
         .scrollbar("▐".to_string())
-        // First line (header) non-selectable. `PICKER_HEADER_ROWS` mirrors this
-        // count so the alt-x cursor-reposition math stays in sync — keep them one.
+        // First line (header) non-selectable; `PICKER_HEADER_ROWS` names the count.
         .header_lines(PICKER_HEADER_ROWS)
         .multi(false)
         // The table is laid out at full terminal width (see `skim_list_width`
@@ -1870,18 +1872,10 @@ pub fn handle_picker(
             //
             // Create new worktree with query as branch name (alt-c for "create")
             "alt-c:accept(create)".to_string(),
-            // Remove selected worktree: `reload(remove {})` hands the selected
-            // row's output() token to PickerCollector, which performs the removal
-            // and streams updated items back — all without leaving the picker.
-            // Passing the token through the reload cmd (not an execute-silent +
-            // file write) sidesteps skim 4.x's fire-and-forget execute-silent,
-            // which raced the reader and removed nothing. The collector also
-            // re-positions the cursor onto the removed row's slot afterward —
-            // reload otherwise snaps it back to the top (see PickerCollector).
-            // alt-x for "remove" — alt-r is the refresh key (below), and putting
-            // the destructive action on a less-reflexive key guards against a
-            // mis-hit, the safe direction being a stray refresh.
-            "alt-x:reload(remove {})".to_string(),
+            // alt-x (remove) is installed natively below via
+            // `install_remove_keybinding` — it pairs a Custom callback (capture the
+            // landing row off skim's `App` before the reload resets the cursor)
+            // with `reload(remove {})`, which a string bind can't express.
             // Refresh the list (alt-r for "refresh"): `reload(refresh)` re-runs
             // collect through PickerCollector, picking up worktrees/branches
             // created outside the session (a teammate's push, a parallel agent)
@@ -1915,6 +1909,10 @@ pub fn handle_picker(
     // that read the selected row off skim's `App` and run the OS action on a
     // background thread. Like the preview-tab keys, they can't be string binds.
     install_shortcut_keybindings(&mut options.keymap, Arc::clone(&shortcut_table));
+    // alt-x (remove): a Custom callback that captures the would-be landing row
+    // off skim's `App`, then `reload(remove {})` — the same removal path as a
+    // string bind, fronted by the pre-reload capture a string bind can't run.
+    install_remove_keybinding(&mut options.keymap, Arc::clone(&drop_landing));
     worktrunk::trace::instant("Picker skim options built");
 
     // Spawn the collect pipeline (and the `--prs` thread when active). The
@@ -2185,6 +2183,60 @@ fn install_shortcut_keybindings(keymap: &mut skim::binds::KeyMap, shortcut_table
             }))],
         );
     }
+}
+
+/// Install `alt-x` (remove the selected row) as a native binding: a Custom
+/// callback that captures the drop's landing row, paired with `reload(remove {})`.
+///
+/// The capture has to run *before* the reload, which resets the cursor to the top.
+/// A drop's reposition needs to know which row should take the removed row's slot
+/// — the row displayed just below it — and only the live `App` knows skim's
+/// displayed order (a fuzzy query reorders and shrinks `item_list` relative to
+/// `shared_items`, so a `shared_items` index lands +N rows off). The callback
+/// peeks that neighbor, stashes its `output()` token in `drop_landing`, and the
+/// collector's drop path lands the cursor on it by identity. `None` means the
+/// selected row was last (no successor → land on the new last row).
+///
+/// skim runs a key's bound actions in order, so the callback restores the cursor
+/// to the selected row before `reload(remove {})` expands `{}` against it — the
+/// same removal the old string bind ran, fronted by a capture a string bind can't
+/// express (like the preview-tab and row shortcuts, hence a native keymap insert).
+fn install_remove_keybinding(
+    keymap: &mut skim::binds::KeyMap,
+    drop_landing: Arc<Mutex<Option<String>>>,
+) {
+    use skim::binds::parse_key;
+    let Ok(key) = parse_key("alt-x") else {
+        return;
+    };
+    let capture = Action::Custom(ActionCallback::new_sync(move |app| {
+        // Peek the row just below the selected one by stepping the cursor down and
+        // back. A clamp (the cursor doesn't move, so the peeked token equals the
+        // selected one) means the selected row is last — no successor, `None`. Any
+        // real move is restored so the paired `reload(remove {})` still expands
+        // `{}` against the selected row.
+        let landing = app.item_list.selected().and_then(|selected| {
+            let selected_token = selected.item.output().into_owned();
+            app.item_list.select_next();
+            let below = app
+                .item_list
+                .selected()
+                .map(|m| m.item.output().into_owned());
+            match below {
+                Some(token) if token != selected_token => {
+                    app.item_list.select_previous();
+                    Some(token)
+                }
+                _ => None,
+            }
+        });
+        *drop_landing.lock().unwrap() = landing;
+        Ok(Vec::new())
+    }));
+    keymap.insert(
+        key,
+        vec![capture, Action::Reload(Some("remove {}".to_string()))],
+    );
 }
 
 /// Run a row shortcut's OS action on a named background thread, logging any
@@ -2474,26 +2526,6 @@ pub mod tests {
         assert_eq!(parse_reload_remove_token("remove plain"), "plain");
     }
 
-    /// `sticky_reposition_target` maps a removed row's `shared_items` position
-    /// (header at index 0) to the `item_list` index the cursor should land on —
-    /// the data-row index of the slot the removed row vacated. It declines when
-    /// the list is now header-only (nothing to land on); `scroll_by` clamps the
-    /// removed-last-row overshoot, so the helper itself never caps the target.
-    #[test]
-    fn test_sticky_reposition_target() {
-        // First data row (shared_items index 1) → item_list index 0.
-        assert_eq!(super::sticky_reposition_target(1, 3), Some(0));
-        // Third data row (index 3) → item_list index 2, with rows remaining.
-        assert_eq!(super::sticky_reposition_target(3, 2), Some(2));
-        // Removed the only data row → header-only list, nothing to land on.
-        assert_eq!(super::sticky_reposition_target(1, 0), None);
-        // The header position itself never repositions.
-        assert_eq!(super::sticky_reposition_target(0, 2), None);
-        // Removed-last-row target may exceed the remaining rows; the helper
-        // returns it verbatim and leaves clamping to `scroll_by`.
-        assert_eq!(super::sticky_reposition_target(4, 3), Some(3));
-    }
-
     /// `send_reposition` (the single path the drop/keep/restore cursor moves
     /// share) queues an `Event::Action` through skim's sender when the TUI is up,
     /// and is a no-op before the sender is set.
@@ -2503,7 +2535,7 @@ pub mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::channel(4);
         render_tx.set(tx).unwrap();
 
-        super::send_reposition(&render_tx, 2);
+        super::send_reposition(&render_tx, Some("worktree-path:/tmp/wt".to_string()));
         assert!(
             matches!(rx.try_recv(), Ok(skim::prelude::Event::Action(_))),
             "a set sender receives a reposition Action"
@@ -2511,7 +2543,7 @@ pub mod tests {
 
         // No sender set → no panic, nothing emitted.
         let empty: OnceLock<tokio::sync::mpsc::Sender<skim::prelude::Event>> = OnceLock::new();
-        super::send_reposition(&empty, 0);
+        super::send_reposition(&empty, None);
     }
 
     /// `from_signal` rejects tokens that carry no usable target: a blank or
@@ -2950,6 +2982,7 @@ pub mod tests {
             render_tx: Arc::new(OnceLock::new()),
             factory,
             stashed_warnings,
+            drop_landing: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -3341,6 +3374,7 @@ pub mod tests {
             approvals: Arc::new(approvals),
             render_tx: Arc::new(OnceLock::new()),
             stashed_warnings: Arc::clone(&stashed),
+            drop_landing: Arc::new(Mutex::new(None)),
         };
 
         let cmd = format!("remove '{token}'");
@@ -3899,6 +3933,7 @@ pub mod tests {
             approvals: Arc::new(Approvals::default()),
             render_tx: Arc::new(OnceLock::new()),
             stashed_warnings: Arc::clone(&stashed),
+            drop_landing: Arc::new(Mutex::new(None)),
         };
 
         let cmd = format!("remove '{token}'");
