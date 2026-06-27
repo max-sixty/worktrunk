@@ -138,6 +138,18 @@ fn list_pane_text(screen: &vt100::Screen) -> String {
         .to_string()
 }
 
+/// The preview pane: screen columns right of the skim border (the panel interior),
+/// trailing whitespace trimmed. Mirrors the split [`PtyResult::panels`] uses.
+fn preview_pane_text(screen: &vt100::Screen) -> String {
+    screen
+        .rows(PREVIEW_START_COL, TERM_COLS - PREVIEW_START_COL)
+        .map(|row| row.trim_end().to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim_end()
+        .to_string()
+}
+
 /// Assert that exit code is valid for skim abort (0, 1, or 130)
 fn assert_valid_abort_exit_code(exit_code: i32) {
     // Skim exits with:
@@ -2582,10 +2594,102 @@ fn test_switch_picker_alt_x_lands_on_immediate_next_row(mut repo: TestRepo) {
     let _ = abort_and_exit_code(child, writer, rx);
 }
 
+/// Dropping the *last* row with alt-x refreshes the preview pane to the new last
+/// row. skim auto-repaints the preview across the matcher's `Replace` only when the
+/// selected row's text changes — which a last-row drop doesn't produce (`current`
+/// goes briefly out of range, then clamps onto the new last row with no text change
+/// to detect). The picker fires its own settled-gated `RunPreview`
+/// (`run_preview_when_settled`) to cover that; without it the pane keeps showing the
+/// removed row's preview until the next keystroke.
+#[rstest]
+fn test_switch_picker_alt_x_last_row_refreshes_preview(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+    // Two clean worktrees at main's commit, so alt-x integrates-and-drops them.
+    for branch in ["wt-a", "wt-b"] {
+        repo.add_worktree(branch);
+    }
+
+    let env_vars = repo.test_env_vars();
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--no-cd", "--format=json"],
+        repo.root_path(),
+        &env_vars,
+    );
+    let send = |bytes: &[u8]| {
+        let mut w = writer.lock().unwrap();
+        w.write_all(bytes).unwrap();
+        w.flush().unwrap();
+    };
+
+    wait_for_stable_with_content(&rx, &mut parser, Some("wt-b"));
+
+    // Rendered order: the pinned current (main) on top, then the two worktrees by
+    // recency. The bottom worktree row is the drop target; the one above it becomes
+    // the new last row the cursor lands on.
+    let order: Vec<String> = {
+        let list = list_pane_text(parser.screen());
+        let mut rows: Vec<(usize, String)> = ["wt-a", "wt-b"]
+            .iter()
+            .filter_map(|name| {
+                list.lines()
+                    .position(|l| l.contains(name))
+                    .map(|line| (line, (*name).to_string()))
+            })
+            .collect();
+        rows.sort_by_key(|(line, _)| *line);
+        rows.into_iter().map(|(_, name)| name).collect()
+    };
+    assert_eq!(order.len(), 2, "both worktree rows rendered");
+    let remove_target = order[1].clone(); // the bottom row
+    let new_last = order[0].clone(); // becomes the new last row after the drop
+
+    // Down onto the bottom worktree row, then confirm its preview is showing.
+    send(b"\x1b[B");
+    wait_for_cursor_on_row(&rx, &mut parser, &order[0]);
+    send(b"\x1b[B");
+    wait_for_cursor_on_row(&rx, &mut parser, &remove_target);
+    wait_for_stable_with_content(
+        &rx,
+        &mut parser,
+        Some(&format!("{remove_target} has no uncommitted changes")),
+    );
+
+    // alt-x drops the last row; the cursor lands on the new last row and its preview
+    // must refresh (the removed row's preview must not linger).
+    send(b"\x1bx");
+    wait_for_cursor_on_row(&rx, &mut parser, &new_last);
+    wait_for_stable_with_content(
+        &rx,
+        &mut parser,
+        Some(&format!("{new_last} has no uncommitted changes")),
+    );
+
+    let preview = preview_pane_text(parser.screen());
+    assert!(
+        preview.contains(&format!("{new_last} has no uncommitted changes")),
+        "the preview refreshed to the new last row `{new_last}`.\nPreview:\n{preview}"
+    );
+    assert!(
+        !preview.contains(&format!("{remove_target} has no uncommitted changes")),
+        "the preview must not keep showing the removed row `{remove_target}`.\nPreview:\n{preview}"
+    );
+
+    let _ = abort_and_exit_code(child, writer, rx);
+}
+
 /// Removing the sole row matching an active query leaves the filtered list empty,
-/// so the cursor-reposition gives up once the matcher settles empty rather than
-/// spinning the event loop. The picker stays responsive — its screen stabilizes,
-/// then aborts cleanly.
+/// so the settled-gated preview refresh gives up once the matcher settles empty
+/// rather than spinning the event loop. A second alt-x with nothing selected is a
+/// no-op (the keybinding callback returns early on an empty selection). The picker
+/// stays responsive — its screen stabilizes, then aborts cleanly.
 #[rstest]
 fn test_switch_picker_alt_x_no_match_stays_responsive(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
@@ -2601,6 +2705,7 @@ fn test_switch_picker_alt_x_no_match_stays_responsive(mut repo: TestRepo) {
         &[
             ("solo-wt", Some("solo-wt")), // filter to the sole matching worktree
             ("\x1bx", None),              // alt-x removes it; query now matches nothing
+            ("\x1bx", None),              // alt-x again with nothing selected: a no-op
         ],
     );
 

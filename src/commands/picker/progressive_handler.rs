@@ -249,15 +249,16 @@ impl PickerProgressHandler for PickerHandler {
     ) {
         debug_assert_eq!(items.len(), rendered.len());
 
-        // Hand the `--prs` thread the column geometry plus the branches already
-        // shown, so it aligns PR rows *and* skips PRs already represented by a
-        // worktree/branch row (see `prs::Skeleton`). Built before the row loop
-        // consumes `items`, and set before any other handoff so the `--prs`
-        // thread's wait sees both.
-        self.grid_slot.set(super::prs::Skeleton {
-            grid,
-            shown_branches: collect_shown_branches(&items),
-        });
+        // The branches already shown, so the `--prs` thread can skip PRs already
+        // represented by a worktree/branch row (see `prs::Skeleton`). Computed here,
+        // before the row loop consumes `items` — but the handoff that *wakes* the
+        // `--prs` thread (`grid_slot.set`, with this set plus the column geometry) is
+        // deferred until after the skeleton batch is sent (below). Setting it here
+        // instead let the `--prs` thread race the skeleton: with an instant forge
+        // call its rows could reach skim's channel first and a PR row would take the
+        // reserved header slot (`header_lines(1)`), displacing the real header. The
+        // grid is width-stable, so the brief extra wait costs nothing.
+        let shown_branches = collect_shown_branches(&items);
 
         let mut slots: Vec<Arc<Mutex<String>>> = Vec::with_capacity(items.len());
         let mut pr_slots: Vec<PrStatusSlot> = Vec::with_capacity(items.len());
@@ -456,6 +457,14 @@ impl PickerProgressHandler for PickerHandler {
         // `request_render` (see module docstring), since skim won't repaint a
         // silent in-place mutation on its own.
         let _ = self.tx.send(skim_items);
+
+        // Skeleton is in skim's channel; now wake the `--prs` thread (see the
+        // `shown_branches` note above). Its rows append after the skeleton, so a PR
+        // row can never land in the reserved header slot.
+        self.grid_slot.set(super::prs::Skeleton {
+            grid,
+            shown_branches,
+        });
 
         // Tier 1: warm the user's landing row (all modes) and every
         // other row's default tab. Tier 2 (secondary modes + summaries
