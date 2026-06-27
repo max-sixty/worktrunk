@@ -13,6 +13,7 @@ use ansi_to_tui::IntoText;
 use anstyle::Reset;
 use color_print::cformat;
 use dashmap::DashMap;
+use ratatui::style::{Color, Modifier};
 use ratatui::text::{Line, Span};
 use skim::prelude::*;
 use worktrunk::git::Repository;
@@ -54,6 +55,56 @@ pub(super) fn ansi_to_line(s: &str) -> Line<'static> {
         ),
         Err(_) => Line::from(s.to_string()),
     }
+}
+
+/// Foreground for faint text on the *selected* row.
+///
+/// A removable worktree (integrated / same commit as the default branch) renders
+/// its branch and path gray — the "safe to delete" signal — via the `DIM`
+/// modifier (foreground unset; see `list::render`). That works everywhere except
+/// under the picker's cursor: skim paints the current row with
+/// `current:237,current_bg:251` as a *line-level* style, so a `DIM` span inherits
+/// foreground 237 and the faint attribute washes out against the light selection
+/// background — the gray vanishes exactly when the row is highlighted. A
+/// span-level foreground overrides the line-level `current`, so re-anchoring the
+/// faint text to an explicit muted gray makes the de-emphasis read through the
+/// selection. Gray 245 ≈ the perceived faint-gray off-cursor, so the row's look
+/// is continuous as the cursor lands on it. See [`anchor_faint_under_selection`].
+const SELECTED_FAINT_FG: Color = Color::Indexed(245);
+
+/// Re-anchor a row's faint (`DIM`) spans to an explicit gray when it is the
+/// selected row, so the de-emphasis survives skim's selection highlight.
+///
+/// Scoped to the current row only — `wt list` and unselected picker rows keep
+/// their `DIM` styling untouched. skim tells the row its selection state through
+/// `DisplayContext::base_style`: the `current` style (a concrete foreground) on
+/// the cursor row, `normal` (foreground `Reset`) on every other. A concrete
+/// foreground is therefore the "this row is selected" discriminator. Only faint
+/// spans with no explicit foreground are touched (an already-colored span, e.g.
+/// a green diff count, overrides `current` on its own and must keep its color);
+/// the `DIM` modifier is dropped so the gray renders solid rather than dimming a
+/// second time into the light background.
+///
+/// The discriminator relies on the picker's color scheme leaving `normal`'s
+/// foreground unset (`fg:-1` in the `.color(...)` string in `picker::mod`, which
+/// parses to `Reset`). Giving `fg` a concrete index there would make *every*
+/// row's `base_style.fg` concrete and so read as selected — keep `fg:-1`.
+fn anchor_faint_under_selection(
+    mut line: Line<'static>,
+    context: &DisplayContext,
+) -> Line<'static> {
+    let is_selected = !matches!(context.base_style.fg, None | Some(Color::Reset));
+    if is_selected {
+        for span in &mut line.spans {
+            if span.style.add_modifier.contains(Modifier::DIM)
+                && matches!(span.style.fg, None | Some(Color::Reset))
+            {
+                span.style.fg = Some(SELECTED_FAINT_FG);
+                span.style.add_modifier.remove(Modifier::DIM);
+            }
+        }
+    }
+    line
 }
 
 /// Cache key for pre-computed previews: `(row-key, mode)`, where the row-key is
@@ -421,11 +472,11 @@ impl SkimItem for PickerRow {
         Cow::Owned(text)
     }
 
-    fn display(&self, _context: DisplayContext) -> Line<'_> {
+    fn display(&self, context: DisplayContext) -> Line<'_> {
         // Clone-under-lock so the parser's input outlives the guard;
         // `ansi_to_line` returns an owned `Line<'static>`.
         let snapshot = self.rendered.lock().unwrap().clone();
-        ansi_to_line(&snapshot)
+        anchor_faint_under_selection(ansi_to_line(&snapshot), &context)
     }
 
     fn output(&self) -> Cow<'_, str> {
@@ -1535,6 +1586,71 @@ mod tests {
     use super::*;
     use ansi_str::AnsiStr;
     use insta::assert_snapshot;
+
+    /// `anchor_faint_under_selection` recolors faint text to an explicit gray
+    /// only on the selected row (and only foreground-less faint spans), so the
+    /// "safe to delete" gray survives skim's selection highlight while
+    /// off-cursor rows keep their `DIM` styling.
+    #[test]
+    fn anchor_faint_under_selection_targets_only_the_selected_row() {
+        use ratatui::style::Style;
+
+        // A removable row's branch (faint, no fg), a faint span whose fg parsed
+        // to an explicit `Reset` (e.g. `\x1b[2m\x1b[39m`), a colored diff count
+        // (faint but explicitly green), and a plain span.
+        let make = || {
+            Line::from(vec![
+                Span::styled(
+                    "safe-to-delete",
+                    Style::default().add_modifier(Modifier::DIM),
+                ),
+                Span::styled(
+                    "path",
+                    Style::default()
+                        .fg(Color::Reset)
+                        .add_modifier(Modifier::DIM),
+                ),
+                Span::styled(
+                    "+1",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::DIM),
+                ),
+                Span::raw("main"),
+            ])
+        };
+
+        // Off-cursor rows (base_style fg unset / Reset) are left untouched.
+        for fg in [None, Some(Color::Reset)] {
+            let ctx = DisplayContext {
+                base_style: Style {
+                    fg,
+                    ..Style::default()
+                },
+                ..Default::default()
+            };
+            let out = anchor_faint_under_selection(make(), &ctx);
+            assert!(out.spans[0].style.add_modifier.contains(Modifier::DIM));
+            assert_eq!(out.spans[0].style.fg, None);
+            assert!(out.spans[1].style.add_modifier.contains(Modifier::DIM));
+        }
+
+        // The selected row (base_style carries a concrete `current` fg) re-anchors
+        // both the fg-unset and the `Reset`-fg faint spans to gray and drops their
+        // DIM; the green span keeps its color, and the plain span is unchanged.
+        let selected = DisplayContext {
+            base_style: Style::default().fg(Color::Indexed(237)),
+            ..Default::default()
+        };
+        let out = anchor_faint_under_selection(make(), &selected);
+        for i in [0, 1] {
+            assert_eq!(out.spans[i].style.fg, Some(SELECTED_FAINT_FG));
+            assert!(!out.spans[i].style.add_modifier.contains(Modifier::DIM));
+        }
+        assert_eq!(out.spans[2].style.fg, Some(Color::Green));
+        assert!(out.spans[2].style.add_modifier.contains(Modifier::DIM));
+        assert_eq!(out.spans[3].style.fg, None);
+    }
 
     /// Build a worktree-backed [`PickerRow`] (`local: Some`) for tests, with the
     /// given branch, preview cache, and live `pr_status` slot value; the local
