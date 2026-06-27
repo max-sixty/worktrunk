@@ -192,6 +192,12 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# elsewhere stays hidden — `ci` needs `--full`, `summary` needs[0m
 [107m [0m [2m# `[commit.generation]` — so `columns` only narrows which columns may appear.[0m
 [107m [0m [2m#[0m
+[107m [0m [2m# Narrowing the selection also narrows the work: `wt list` skips the git commands[0m
+[107m [0m [2m# that feed only hidden columns, so a branch/path-only view runs no `git status`,[0m
+[107m [0m [2m# diffs, or ahead/behind walks. A minimal `ls`-style alias stays fast across many[0m
+[107m [0m [2m# worktrees, while the picker keeps fetching CI data for its preview panes[0m
+[107m [0m [2m# regardless of which columns render.[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# The selection drives the rendered table and the `wt switch` picker.[0m
 [107m [0m [2m# `wt list --format json` ignores it, always emitting every field, built-in and[0m
 [107m [0m [2m# custom.[0m
