@@ -120,9 +120,11 @@ use skim::reader::CommandCollector;
 use skim::tui::event::ActionCallback;
 use worktrunk::HookType;
 use worktrunk::config::Approvals;
-use worktrunk::git::{Repository, current_or_recover};
+use worktrunk::git::{ErrorExt, Repository, current_or_recover};
 use worktrunk::path::format_path_for_display;
-use worktrunk::styling::{eprintln, strip_osc8_hyperlinks, warning_message};
+use worktrunk::styling::{
+    eprintln, hint_message, info_message, strip_osc8_hyperlinks, warning_message,
+};
 
 use super::hook_plan::{ApprovedHookPlan, HookPlanBuilder};
 use super::hooks::HookAnnouncer;
@@ -144,6 +146,15 @@ use preview_orchestrator::PreviewOrchestrator;
 /// terminal (or in the dry-run path after the bg thread joins) — eprintln
 /// during the picker would corrupt skim's frame, so collect routes warnings
 /// through `PickerProgressHandler::stash_warning` and we emit them here.
+///
+/// TODO(picker-feedback): the declined-removal diagnostics (the main-worktree /
+/// dirty / unmerged "can't remove this row" messages from the `alt-x` keep paths)
+/// only surface here, on exit — the user presses `alt-x`, the row visibly stays,
+/// and the reason scrolls past after they quit. Consider a short in-picker message
+/// at `alt-x` time so the *why* lands immediately. skim has no footer slot (see the
+/// dropped Stall-indicator work), so the realistic slot is the header line — swap
+/// it to a transient "main worktree can't be removed" for a beat, then restore. The
+/// stash stays the fallback for background failures that surface after exit.
 fn drain_stashed_warnings(stash: &Mutex<Vec<String>>) {
     for line in stash.lock().unwrap().drain(..) {
         eprintln!("{line}");
@@ -434,22 +445,6 @@ impl PickerCollector {
             (removed, target)
         };
 
-        // If removing the current worktree, cd to home so skim and git commands
-        // continue to work after the directory disappears.
-        if matches!(
-            &result,
-            RemoveResult::RemovedWorktree {
-                changed_directory: true,
-                ..
-            }
-        ) && let Some(home) = result.destination_path()
-        {
-            let _ = std::env::set_current_dir(home);
-            if let Ok(repo) = Repository::at(home) {
-                self.repo = repo;
-            }
-        }
-
         // A user-facing (label, noun) for the `kept` message, taken from the result
         // before it moves into the background thread.
         let (removal_label, removal_noun) = removal_failure_subject(&result);
@@ -514,9 +509,30 @@ impl PickerCollector {
         // a `RemovedWorktree`, which always removes — see the dispatch in `invoke`
         // and [`removal_will_remove_target`].
         stash_retained_unmerged_branch(&self.stashed_warnings, branch_name);
+        self.reposition_to_kept_row(selected_output);
+    }
 
-        // The row never moved, so land the cursor back on it (alt-x's reload reset
-        // it to the top).
+    /// Keep the current worktree's row in place and explain why the picker won't
+    /// remove it.
+    ///
+    /// Called from `invoke` when [`removal_targets_current_worktree`] is true —
+    /// alt-x on the worktree the picker was launched from. Removing it would have
+    /// to switch the shell elsewhere first (see `removal_targets_current_worktree`
+    /// for why that's disruptive mid-picker), so the row stays put and a hint to
+    /// switch away first is stashed, drained to stderr when the picker exits. The
+    /// row never drops and no `do_removal` runs, so this is the only removal path
+    /// that never reaches a background thread.
+    fn keep_current_worktree_row(&self, selected_output: &str) {
+        stash_current_worktree_hint(&self.stashed_warnings);
+        self.reposition_to_kept_row(selected_output);
+    }
+
+    /// Land the cursor back on a row that stayed in place. alt-x's reload resets
+    /// the cursor to the top even when the row didn't move, so the keep-in-place
+    /// paths ([`keep_unremovable_row`](Self::keep_unremovable_row),
+    /// [`keep_current_worktree_row`](Self::keep_current_worktree_row)) re-anchor it
+    /// on the row's slot.
+    fn reposition_to_kept_row(&self, selected_output: &str) {
         let reposition_target = {
             let items = self.items.lock().unwrap();
             items
@@ -620,22 +636,6 @@ impl PickerCollector {
             let mut table = self.factory.shortcut_table.lock().unwrap();
             if let Some(data) = table.remove(&selected_output) {
                 table.insert(branch.clone(), data);
-            }
-        }
-
-        // If removing the current worktree, cd home so skim and git commands keep
-        // working after its directory disappears (as in the drop path).
-        if matches!(
-            &result,
-            RemoveResult::RemovedWorktree {
-                changed_directory: true,
-                ..
-            }
-        ) && let Some(home) = result.destination_path()
-        {
-            let _ = std::env::set_current_dir(home);
-            if let Ok(repo) = Repository::at(home) {
-                self.repo = repo;
             }
         }
 
@@ -975,6 +975,28 @@ fn removal_will_remove_target(result: &RemoveResult) -> bool {
     }
 }
 
+/// Whether the row's target is the worktree the picker was launched from — the
+/// `changed_directory` flag `prepare_worktree_removal` sets when the removed
+/// worktree is the caller's own.
+///
+/// The picker declines this case (see [`PickerCollector::keep_current_worktree_row`]):
+/// removing the current worktree would have to cd the shell elsewhere first, and
+/// that switch drags in `post-switch` hooks streaming into the picker, an empty
+/// placeholder directory swapped under the cursor mid-render, and a directory
+/// change the picker can't cleanly reflect. Switching away (Enter) and then
+/// removing the now-non-current row is the clean path, so alt-x on the current
+/// worktree keeps the row and explains. `BranchOnly` rows have no worktree to be
+/// standing in, so this is always `false` for them.
+fn removal_targets_current_worktree(result: &RemoveResult) -> bool {
+    matches!(
+        result,
+        RemoveResult::RemovedWorktree {
+            changed_directory: true,
+            ..
+        }
+    )
+}
+
 /// The branch a `RemovedWorktree` removal will **keep** — worktree gone, branch
 /// retained — or `None` if the removal will delete the branch (or there's no
 /// branch). Drives the `alt-x` in-place morph: a kept branch turns the row into
@@ -1021,24 +1043,20 @@ fn worktree_removal_keeps_branch(repo: &Repository, result: &RemoveResult) -> Op
 /// and a `BranchOnly` safe-delete that raced from integrated to unmerged returns
 /// `Ok` while leaving the branch in place. (The *predictable* unmerged case never
 /// reaches here — [`removal_will_remove_target`] keeps that row without dropping
-/// it.) Observing the target directly handles both: a removed worktree no longer
-/// has a `.git` entry at its path, and the branch ref is gone once deleted. The
-/// check runs on the background thread, off skim's event loop.
+/// it.) Observing the target directly handles both: the worktree dir is gone once
+/// removed (renamed into `.git/wt/trash/`), and the branch ref is gone once
+/// deleted. The check runs on the background thread, off skim's event loop.
 ///
-/// A bare `worktree_path.exists()` is *not* the signal: removing the **current**
-/// worktree leaves an empty placeholder directory at the original path so the
-/// shell's `$PWD` stays valid until the wrapper cd's away (see
-/// [`crate::output::handlers`] and `build_remove_command_staged`). That
-/// placeholder exists yet holds no worktree, so a successful removal would read as
-/// "still present" and spuriously restore the row. Probing the `.git` entry
-/// instead distinguishes a real worktree from the placeholder, and is also immune
-/// to a silently-failed `prune_worktrees` (the filesystem is ground truth; git's
-/// registration can lag) and to a stray `.DS_Store` landing in the placeholder
-/// during the cleanup race (the staging rename moves `.git` atomically with the
-/// rest of the tree, so the placeholder never has one).
+/// `worktree_path.exists()` is the right signal here because the picker only ever
+/// removes *non-current* worktrees — [`removal_targets_current_worktree`] keeps the
+/// current one in place rather than removing it. So no empty placeholder directory
+/// is ever left at `worktree_path` (that placeholder, which keeps `$PWD` valid, is
+/// created only when removing the worktree the shell is sitting in — see
+/// [`crate::output::handlers`]). A successful removal renames the whole tree away;
+/// a failed one leaves it intact.
 fn removal_target_still_present(repo: &Repository, result: &RemoveResult) -> bool {
     match result {
-        RemoveResult::RemovedWorktree { worktree_path, .. } => worktree_path.join(".git").exists(),
+        RemoveResult::RemovedWorktree { worktree_path, .. } => worktree_path.exists(),
         RemoveResult::BranchOnly { branch_name, .. } => {
             repo.branch(branch_name).exists_locally().unwrap_or(false)
         }
@@ -1055,6 +1073,21 @@ fn removal_target_still_present(repo: &Repository, result: &RemoveResult) -> boo
 /// prints — see [`crate::output::retained_unmerged_branch_messages`].
 fn stash_retained_unmerged_branch(stashed: &Mutex<Vec<String>>, branch_name: &str) {
     let (info, hint) = crate::output::retained_unmerged_branch_messages(branch_name);
+    let mut stashed = stashed.lock().unwrap();
+    if !stashed.contains(&info) {
+        stashed.push(info);
+        stashed.push(hint);
+    }
+}
+
+/// Stash the "can't remove the current worktree here" info + hint pair (deduped),
+/// drained to stderr once the picker releases the terminal. Used by
+/// [`PickerCollector::keep_current_worktree_row`] — alt-x on the worktree the
+/// picker was launched from keeps the row and explains, since removing it would
+/// have to switch the shell elsewhere first.
+fn stash_current_worktree_hint(stashed: &Mutex<Vec<String>>) {
+    let info = info_message("Can't remove the current worktree from the picker").to_string();
+    let hint = hint_message("Switch to another worktree first").to_string();
     let mut stashed = stashed.lock().unwrap();
     if !stashed.contains(&info) {
         stashed.push(info);
@@ -1158,13 +1191,20 @@ impl CommandCollector for PickerCollector {
                     Ok((planning_repo, result)) => {
                         // Decide up front, from the already-computed result, what
                         // this removal does to the row:
+                        //   - targets the current worktree → keep it; removing the
+                        //     worktree you're standing in has to switch you away
+                        //     first, which the picker declines (no row drop);
                         //   - keeps its (unmerged) branch → morph to `/ branch` in
                         //     place (worktree gone, branch stays) — no row drop;
                         //   - removes the target → drop the row;
                         //   - branch-only row whose branch is unmerged → stays put,
                         //     explained, so the list never flickers a row off and on.
-                        // See `worktree_removal_keeps_branch` / `removal_will_remove_target`.
-                        if let Some(branch) = worktree_removal_keeps_branch(&planning_repo, &result)
+                        // See `removal_targets_current_worktree` /
+                        // `worktree_removal_keeps_branch` / `removal_will_remove_target`.
+                        if removal_targets_current_worktree(&result) {
+                            self.keep_current_worktree_row(&selected_output);
+                        } else if let Some(branch) =
+                            worktree_removal_keeps_branch(&planning_repo, &result)
                         {
                             self.morph_and_remove_in_background(
                                 selected_output,
@@ -1189,6 +1229,18 @@ impl CommandCollector for PickerCollector {
                     }
                     Err(e) => {
                         tracing::info!(selected_output = %selected_output, error = %e, "picker: cannot remove '{selected_output}': {e:#}");
+                        // The target can't be removed — the main worktree, a dirty
+                        // worktree, a lock. Surface the *same* diagnostic `wt remove`
+                        // prints (drained to stderr on exit) instead of swallowing
+                        // it, so alt-x isn't a silent dead keypress. Nothing was
+                        // removed, so the row stays; re-anchor the cursor on it.
+                        if let Some(diagnostic) = e.render_diagnostic() {
+                            let mut stashed = self.stashed_warnings.lock().unwrap();
+                            if !stashed.contains(&diagnostic) {
+                                stashed.push(diagnostic);
+                            }
+                        }
+                        self.reposition_to_kept_row(&selected_output);
                     }
                 }
             }
@@ -3583,11 +3635,9 @@ pub mod tests {
         );
     }
 
-    /// `removal_target_still_present` observes reality: a worktree (a path with a
-    /// `.git` entry) or a branch ref that's gone reads as removed; one still on
-    /// disk / in the ref store reads as present (the restore trigger). The empty
-    /// placeholder left behind when removing the current worktree has no `.git`,
-    /// so it correctly reads as removed — not a spurious restore.
+    /// `removal_target_still_present` observes reality: a worktree dir or a branch
+    /// ref that's gone reads as removed; one still on disk / in the ref store reads
+    /// as present (the restore trigger).
     #[test]
     fn test_removal_target_still_present() {
         let test = worktrunk::testing::TestRepo::with_initial_commit();
@@ -3606,21 +3656,11 @@ pub mod tests {
         };
         assert!(super::removal_target_still_present(
             &repo,
-            &worktree_result(test.path().to_path_buf()) // a real worktree: has `.git`
+            &worktree_result(test.path().to_path_buf()) // still on disk
         ));
         assert!(!super::removal_target_still_present(
             &repo,
             &worktree_result(test.path().join("does-not-exist"))
-        ));
-
-        // The empty placeholder left at the original path when removing the
-        // current worktree exists on disk but has no `.git` — it must read as
-        // removed, not trigger a spurious restore.
-        let placeholder = test.path().join("empty-placeholder");
-        std::fs::create_dir(&placeholder).unwrap();
-        assert!(!super::removal_target_still_present(
-            &repo,
-            &worktree_result(placeholder)
         ));
 
         repo.run_command(&["branch", "live-branch"]).unwrap();
@@ -3699,6 +3739,128 @@ pub mod tests {
                 Some(IntegrationReason::SameCommit)
             )),
             "Keep never deletes, even when integrated"
+        );
+    }
+
+    /// `removal_targets_current_worktree` fires only for a `RemovedWorktree` whose
+    /// `changed_directory` flag is set (the worktree the picker was launched from);
+    /// a non-current worktree and any `BranchOnly` row read as `false`.
+    #[test]
+    fn test_removal_targets_current_worktree() {
+        let path = std::path::PathBuf::from("/repo.feature");
+        let worktree = |changed_directory| RemoveResult::RemovedWorktree {
+            main_path: std::path::PathBuf::from("/repo"),
+            worktree_path: path.clone(),
+            changed_directory,
+            branch_name: Some("feature".to_string()),
+            deletion_mode: BranchDeletionMode::SafeDelete,
+            target_branch: Some("main".to_string()),
+            force_worktree: false,
+            expected_path: None,
+            removed_commit: None,
+        };
+        assert!(
+            super::removal_targets_current_worktree(&worktree(true)),
+            "removing the worktree the picker was launched from"
+        );
+        assert!(
+            !super::removal_targets_current_worktree(&worktree(false)),
+            "removing some other worktree"
+        );
+        assert!(
+            !super::removal_targets_current_worktree(&RemoveResult::BranchOnly {
+                branch_name: "feature".to_string(),
+                deletion_mode: BranchDeletionMode::SafeDelete,
+                pruned: false,
+                target_branch: None,
+                integration_reason: None,
+            }),
+            "a branch-only row has no worktree to be standing in"
+        );
+    }
+
+    /// `keep_current_worktree_row` keeps the row in place and stashes the
+    /// can't-remove-current-worktree info + switch-away hint — alt-x on the current
+    /// worktree never removes it and never spawns a background removal.
+    #[test]
+    fn test_keep_current_worktree_row() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+
+        let item = branched_picker_item("current", &test.path().join("current"));
+        let token = item.output().to_string();
+        let items = Arc::new(Mutex::new(vec![Arc::clone(&item)]));
+        let collector = test_collector(Arc::clone(&items), repo.clone());
+
+        collector.keep_current_worktree_row(&token);
+
+        assert_eq!(
+            items
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|item| item.output().into_owned())
+                .collect::<Vec<_>>(),
+            vec![token.clone()],
+            "the current worktree row is kept, not removed"
+        );
+        let warnings = collector.stashed_warnings.lock().unwrap().clone();
+        assert!(
+            warnings.iter().any(|w| w.contains("current worktree")),
+            "stashes the can't-remove-current-worktree info: {warnings:?}"
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("Switch to another worktree")),
+            "stashes the switch-away hint: {warnings:?}"
+        );
+
+        // A second alt-x on the same kept row dedups — the stash doesn't grow.
+        collector.keep_current_worktree_row(&token);
+        assert_eq!(
+            collector.stashed_warnings.lock().unwrap().len(),
+            warnings.len(),
+            "repeated alt-x on the current worktree stashes the hint only once"
+        );
+    }
+
+    /// alt-x on an unremovable target surfaces the same diagnostic `wt remove`
+    /// prints rather than swallowing it: `prepare_removal` errors (here the main
+    /// worktree can't be removed), so the dispatch's `Err` arm stashes the rendered
+    /// reason and keeps the row in place — no silent dead keypress.
+    #[test]
+    fn test_invoke_surfaces_unremovable_diagnostic() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+
+        // The repo root is the main worktree — `prepare_worktree_removal` rejects it.
+        let item = branched_picker_item("main", test.path());
+        let token = item.output().to_string();
+        let items = Arc::new(Mutex::new(vec![Arc::clone(&item)]));
+        let mut collector = test_collector(Arc::clone(&items), repo.clone());
+
+        let cmd = format!("remove '{token}'");
+        let (_rx, _interrupt) = collector.invoke(&cmd, Arc::new(AtomicUsize::new(0)));
+
+        // Nothing was removed, so the row stays...
+        assert_eq!(
+            items
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|item| item.output().into_owned())
+                .collect::<Vec<_>>(),
+            vec![token],
+            "an unremovable row is never dropped"
+        );
+        // ...and the reason is surfaced, not swallowed.
+        let warnings = collector.stashed_warnings.lock().unwrap().clone();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("main worktree cannot be removed")),
+            "the unremovable diagnostic is stashed for the user: {warnings:?}"
         );
     }
 

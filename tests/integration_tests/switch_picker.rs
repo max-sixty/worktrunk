@@ -2311,6 +2311,102 @@ fn test_switch_picker_alt_x_keeps_cursor_sticky(mut repo: TestRepo) {
     );
 }
 
+/// alt-x lands the cursor on the row that slides up — the *immediate* next row —
+/// not one past it, even when the removed row has several rows below it.
+///
+/// [`test_switch_picker_alt_x_keeps_cursor_sticky`] removes the row directly below
+/// the pinned current worktree, leaving a single row beneath it. That can't tell a
+/// correct landing from a one-row overshoot: `scroll_by` clamps the cursor to the
+/// list's last row, so an off-by-one lands on the same (only) remaining row and the
+/// test passes anyway. This removes a *middle* row with two rows below it, where an
+/// overshoot lands one row too far instead of being clamped — the exact "jumps two
+/// down" a user sees with a long worktree list.
+#[rstest]
+fn test_switch_picker_alt_x_lands_on_immediate_next_row(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+    // Four worktrees beneath the pinned current (main) row. All sit at main's
+    // commit, so each alt-x integrates-and-drops (no morph) — the drop path.
+    for branch in ["wt-a", "wt-b", "wt-c", "wt-d"] {
+        repo.add_worktree(branch);
+    }
+
+    let env_vars = repo.test_env_vars();
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--no-cd", "--format=json"],
+        repo.root_path(),
+        &env_vars,
+    );
+    let send = |bytes: &[u8]| {
+        let mut w = writer.lock().unwrap();
+        w.write_all(bytes).unwrap();
+        w.flush().unwrap();
+    };
+
+    // One skeleton batch carries every worktree row, so waiting for one implies
+    // all are present.
+    wait_for_stable_with_content(&rx, &mut parser, Some("wt-a"));
+
+    // Learn the rendered order: the current worktree is pinned to the top, then the
+    // four worktrees by commit recency (a tie here, so insertion order). Read the
+    // four worktree rows top-to-bottom from the list pane.
+    let order: Vec<String> = {
+        let list = list_pane_text(parser.screen());
+        let mut rows: Vec<(usize, String)> = ["wt-a", "wt-b", "wt-c", "wt-d"]
+            .iter()
+            .filter_map(|name| {
+                list.lines()
+                    .position(|l| l.contains(name))
+                    .map(|line| (line, (*name).to_string()))
+            })
+            .collect();
+        rows.sort_by_key(|(line, _)| *line);
+        rows.into_iter().map(|(_, name)| name).collect()
+    };
+    assert_eq!(order.len(), 4, "all four worktree rows rendered");
+    // Remove the second worktree row (two rows still below it); the row directly
+    // below it must catch the cursor.
+    let remove_target = order[1].clone();
+    let expected_landing = order[2].clone();
+    let overshoot_row = order[3].clone();
+
+    // Down onto the second worktree row: one Down per row from the pinned current
+    // worktree at the top.
+    send(b"\x1b[B");
+    wait_for_cursor_on_row(&rx, &mut parser, &order[0]);
+    send(b"\x1b[B");
+    wait_for_cursor_on_row(&rx, &mut parser, &remove_target);
+
+    // alt-x drops it; the cursor must land on the row that slid up — the one
+    // directly below, not the one after it. A one-row overshoot lands on
+    // `overshoot_row` and times this out.
+    send(b"\x1bx");
+    wait_for_cursor_on_row(&rx, &mut parser, &expected_landing);
+
+    // Guard against the cursor having blown past to the next row: the pointer marks
+    // exactly one row, so a landing on `expected_landing` already excludes
+    // `overshoot_row`, but assert it explicitly for a clear failure message.
+    let pointer_line = list_pane_text(parser.screen())
+        .lines()
+        .find(|l| l.starts_with('>'))
+        .map(str::to_string)
+        .unwrap_or_default();
+    assert!(
+        !pointer_line.contains(&overshoot_row),
+        "alt-x overshot to `{overshoot_row}` instead of the immediate next row \
+         `{expected_landing}`.\nPointer line: {pointer_line:?}"
+    );
+
+    let _ = abort_and_exit_code(child, writer, rx);
+}
+
 /// Removing the sole row matching an active query leaves the filtered list empty,
 /// so the cursor-reposition gives up once the matcher settles empty rather than
 /// spinning the event loop. The picker stays responsive — its screen stabilizes,
@@ -2500,4 +2596,162 @@ fn test_switch_picker_alt_x_morphs_removed_worktree_in_place(mut repo: TestRepo)
         branches.contains("transform-me"),
         "the unmerged branch is retained after its worktree is removed: {branches:?}"
     );
+}
+
+/// alt-x on the *current* worktree — the one the picker was launched from — keeps
+/// the row in place rather than removing it. Removing the worktree the shell is
+/// sitting in would have to cd elsewhere first, which drags `post-switch` hooks
+/// into the picker and swaps an empty placeholder under the cursor mid-render, so
+/// the picker declines (`removal_targets_current_worktree`). End-to-end through
+/// real skim launched from inside the worktree: after alt-x the cursor stays on
+/// the unchanged `@ standing-here` row (gutter still `@` — not dropped, not
+/// morphed to `/`) and the worktree survives on disk. The branch is unmerged, so
+/// were the guard absent the row would morph; a surviving `@` proves the
+/// current-worktree check fires before the morph path.
+#[rstest]
+fn test_switch_picker_alt_x_keeps_current_worktree(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    let wt_path = repo.add_worktree("standing-here");
+    std::fs::write(wt_path.join("new.txt"), "unmerged work").unwrap();
+    repo.git_command()
+        .args(["-C", wt_path.to_str().unwrap(), "add", "new.txt"])
+        .run()
+        .unwrap();
+    repo.git_command()
+        .args([
+            "-C",
+            wt_path.to_str().unwrap(),
+            "commit",
+            "-m",
+            "unmerged work",
+        ])
+        .run()
+        .unwrap();
+
+    let env_vars = repo.test_env_vars();
+    let pair = crate::common::open_pty_with_size(TERM_ROWS, TERM_COLS);
+    let mut cmd = CommandBuilder::new(wt_bin().to_str().unwrap());
+    cmd.arg("switch");
+    cmd.cwd(&wt_path); // launched from inside the worktree → it's the current one
+    crate::common::configure_pty_command(&mut cmd);
+    cmd.env("CLICOLOR_FORCE", "1");
+    cmd.env("TERM", "xterm-256color");
+    for (key, value) in &env_vars {
+        cmd.env(key, value);
+    }
+    let mut child = pair.slave.spawn_command(cmd).unwrap();
+    drop(pair.slave);
+
+    let reader = pair.master.try_clone_reader().unwrap();
+    let writer: crate::common::pty::SharedPtyWriter =
+        Arc::new(Mutex::new(pair.master.take_writer().unwrap()));
+    let rx = crate::common::pty::spawn_pty_reader_answering_queries(reader, Arc::clone(&writer));
+    let mut parser = vt100::Parser::new(TERM_ROWS, TERM_COLS, 0);
+    let drain = |rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser| {
+        while let Ok(chunk) = rx.try_recv() {
+            parser.process(&chunk);
+        }
+    };
+    let send = |writer: &crate::common::pty::SharedPtyWriter, bytes: &[u8]| {
+        let mut w = writer.lock().unwrap();
+        w.write_all(bytes).unwrap();
+        w.flush().unwrap();
+    };
+
+    let start = Instant::now();
+    loop {
+        drain(&rx, &mut parser);
+        if is_skim_ready(&parser.screen().contents()) || start.elapsed() > READY_TIMEOUT {
+            break;
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+    wait_for_stable_with_content(&rx, &mut parser, Some("standing-here"));
+
+    // Filter to the current-worktree row so the selection is deterministic, then
+    // confirm the cursor is on it — `> @ standing-here`, the `@` current gutter.
+    send(&writer, b"standing-here");
+    wait_for_cursor_on_row(&rx, &mut parser, "@ standing-here");
+
+    // alt-x is declined for the current worktree: the row neither drops (the
+    // filtered list would empty) nor morphs (the gutter would flip to `/`). After
+    // the reload settles the cursor is back on the unchanged `@ standing-here` row.
+    send(&writer, b"\x1bx");
+    wait_for_cursor_on_row(&rx, &mut parser, "@ standing-here");
+
+    send(&writer, b"\x1b"); // Esc to exit the picker.
+    drop(writer);
+    let start = Instant::now();
+    while start.elapsed() < CHILD_EXIT_TIMEOUT {
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let _ = child.kill();
+    drain(&rx, &mut parser);
+    let _ = child.wait();
+
+    // The worktree survives — alt-x declined to remove the one we're standing in.
+    assert!(
+        wt_path.exists(),
+        "alt-x removed the current worktree.\nScreen:\n{}",
+        parser.screen().contents()
+    );
+}
+
+/// alt-x on an unremovable row (here the main worktree) keeps the cursor exactly on
+/// that row — it must not drift down — even with several rows below it.
+///
+/// This mirrors the keep paths a user hits most: alt-x on the main worktree or a
+/// dirty worktree surfaces a diagnostic and keeps the row. The single-row filtered
+/// case in [`test_switch_picker_alt_x_keeps_current_worktree`] can't catch a
+/// one-row drift (only one row matches the filter), so this drives a full,
+/// unfiltered list and removes nothing: the cursor has to come back to the *same*
+/// row, not the one below it.
+#[rstest]
+fn test_switch_picker_alt_x_unremovable_row_keeps_cursor(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+    // Launch from `wt-a` so it's the pinned current row; `main` then sorts second,
+    // with `wt-b`/`wt-c`/`wt-d` below it — main is a mid-list unremovable row.
+    let wt_a = repo.add_worktree("wt-a");
+    for branch in ["wt-b", "wt-c", "wt-d"] {
+        repo.add_worktree(branch);
+    }
+
+    let env_vars = repo.test_env_vars();
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--no-cd", "--format=json"],
+        &wt_a,
+        &env_vars,
+    );
+    let send = |bytes: &[u8]| {
+        let mut w = writer.lock().unwrap();
+        w.write_all(bytes).unwrap();
+        w.flush().unwrap();
+    };
+
+    wait_for_stable_with_content(&rx, &mut parser, Some("wt-d"));
+
+    // Down from the pinned current `wt-a` onto the `main` row (sorted second).
+    send(b"\x1b[B");
+    wait_for_cursor_on_row(&rx, &mut parser, "main");
+
+    // alt-x is declined for the main worktree (it can't be removed). The row stays
+    // and the cursor must land back on it — a one-row drift lands on the worktree
+    // below `main` and times this out.
+    send(b"\x1bx");
+    wait_for_cursor_on_row(&rx, &mut parser, "main");
+
+    let _ = abort_and_exit_code(child, writer, rx);
 }

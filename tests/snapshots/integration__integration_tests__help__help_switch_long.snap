@@ -196,6 +196,8 @@ The CI column shows each row's PR/MR CI and review status, the same as [2mwt li
 
 [2mAlt-o[0m is a no-op on a row with no PR/MR (or whose status hasn't loaded yet).
 
+[2mAlt-x[0m is a no-op on the current worktree (the [2m@[0m row) — removing the worktree in use would have to switch elsewhere first, so switch away and remove it from there.
+
 Each row filters by its branch, path, and — when it has a PR/MR — the PR/MR's number, title, and author, the same fields whether the PR is checked out (a worktree row) or listed via [2m--prs[0m. Plain digits go to the filter, so a number can be typed directly and the preview tabs move to [2mAlt[0m.
 
 Typing a gutter sigil filters by row kind: [36m+[0m narrows to linked worktrees and [2m@[0m to the current worktree. The other sigils don't filter cleanly — [2m^[0m and [2m|[0m are skim's prefix-anchor and OR query operators (so [2m^[0m matches every row and [2m|[0m none), and [2m/[0m matches most rows because every worktree path contains it.
