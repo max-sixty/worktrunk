@@ -105,7 +105,7 @@ Why: silent "lookup" paths that walk to the wire (alias dispatch, hook context b
 
 What currently reaches the wire:
 
-- `wt list --full`, `wt list statusline` — CI status
+- `wt list --full`, `wt list statusline` — CI status; also plain `wt list` when `[list] columns` names `ci`, which forces the column (and its fetch) on without `--full`
 - `wt switch` (interactive picker, no target) — per-row CI status, primed from the local cache then fetched live and streamed into the rows; once a row's CI fetch surfaces an open PR/MR, a per-row background `gh pr view <n> --json comments` (`glab api …/notes` on GitLab) fills that row's `comments` preview tab — the same fetch a `--prs` row makes, spawned once per row from `progressive_handler` (see `picker::prs::spawn_comments_fetch`). The `comments` tab is the only PR data fetched lazily here; `pr` rides the CI call and `log` is the local `git log`
 - generating a branch summary with a `commit.generation` command
 - generating a commit message with a `commit.generation` command

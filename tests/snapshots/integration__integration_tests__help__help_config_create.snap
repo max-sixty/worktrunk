@@ -198,8 +198,11 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# default set, where custom columns append automatically. A built-in name wins a[0m
 [107m [0m [2m# header collision; the gutter type indicator always shows.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Listing a column requests it but cannot force it on: a gated column stays hidden[0m
-[107m [0m [2m# (`ci` needs `--full`, `summary` needs `[commit.generation]`).[0m
+[107m [0m [2m# Listing a column forces it on, space permitting: `ci` shows without `--full`,[0m
+[107m [0m [2m# since `--full` only bundles columns into the default table rather than gating a[0m
+[107m [0m [2m# named one. A column whose data source is missing still stays hidden — `summary`[0m
+[107m [0m [2m# needs an LLM command (`[commit.generation]`), `url` needs a `[list] url`[0m
+[107m [0m [2m# template — since listing can't supply the data.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# The selection drives the table and the `wt switch` picker; `wt list --format[0m
 [107m [0m [2m# json` ignores it and emits every field.[0m
