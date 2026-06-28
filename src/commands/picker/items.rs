@@ -2057,6 +2057,7 @@ mod tests {
             body: None,
             author: None,
             comment_count: None,
+            updated_at: None,
         };
         let with_url: PrStatusSlot = Arc::new(Mutex::new(Some(Some(status))));
         assert_eq!(
@@ -2084,6 +2085,7 @@ mod tests {
             body: body.map(String::from),
             author: None,
             comment_count: None,
+            updated_at: None,
         };
         // Build a row whose live `pr_status` slot carries a given state — what
         // the picker primes from the cache and then overwrites as the fetch lands.
@@ -2184,6 +2186,7 @@ mod tests {
                 body: None,
                 author: None,
                 comment_count: None,
+                updated_at: None,
             }))
         };
         let row = |slot: Option<Option<PrStatus>>, cache: PreviewCache| {
@@ -2242,6 +2245,7 @@ mod tests {
             body: None,
             author: None,
             comment_count,
+            updated_at: None,
         };
 
         // A PR with comments adds a cyan all-caps `COMMENTS` metadata line
@@ -2285,6 +2289,7 @@ mod tests {
             body: None,
             author: author.map(str::to_owned),
             comment_count: None,
+            updated_at: None,
         };
 
         let with = render_pr_pane_body("feature", PrRef::pr(7), &status(Some("bob")), 80)
@@ -2325,6 +2330,7 @@ mod tests {
                 body: Some("Adds a **bounded** retry.".into()),
                 author: None,
                 comment_count: None,
+                updated_at: None,
             })),
         );
 
@@ -2392,6 +2398,7 @@ mod tests {
                 body: Some("body".into()),
                 author: None,
                 comment_count: None,
+                updated_at: None,
             }))
         };
         // Share the cache and slot Arcs so the test can mutate the slot and

@@ -198,6 +198,7 @@ pub(super) fn detect_gitlab(
             body: mr_entry.description.clone(),
             author: mr_entry.author.as_ref().map(|a| a.username.clone()),
             comment_count: mr_entry.comment_count(),
+            updated_at: None,
         });
     };
 
@@ -215,6 +216,7 @@ pub(super) fn detect_gitlab(
         body: mr_entry.description.clone(),
         author: mr_entry.author.as_ref().map(|a| a.username.clone()),
         comment_count: mr_entry.comment_count(),
+        updated_at: None,
     })
 }
 
@@ -290,6 +292,7 @@ pub(super) fn detect_gitlab_pipeline(
         body: None,
         author: None,
         comment_count: None,
+        updated_at: None,
     })
 }
 

@@ -59,6 +59,7 @@ use super::super::list::layout::ColumnGrid;
 use super::items::{PickerRow, PreviewCache, RowShortcutData, RowUrl, ShortcutTable};
 use super::pr_pane;
 use super::preview::PreviewMode;
+use super::preview_cache::CommentEntry;
 use super::preview_notify::PreviewNotifier;
 use super::preview_orchestrator::PreviewOrchestrator;
 
@@ -165,6 +166,12 @@ struct PrEntry {
     /// `None` when the forge can't supply it in one call (the row then keeps
     /// its `#N` in the title instead of the CI column).
     status: Option<PrStatus>,
+    /// GitHub PR `updatedAt`, riding the one list call — keys the row's on-disk
+    /// comments cache so a repeat `--prs` open skips the per-row comments fetch
+    /// when nothing changed (see [`compute_pr_comments`]). `None` for GitLab MRs
+    /// (their `updated_at` is throttled and delete-blind, so MR comments aren't
+    /// disk-cached).
+    updated_at: Option<String>,
 }
 
 impl PrEntry {
@@ -205,6 +212,7 @@ impl PrEntry {
             body: None,
             author: None,
             comment_count: None,
+            updated_at: None,
         });
         status.number = status.number.or_else(|| Some(self.pr_ref()));
         status.title = Some(self.title.clone()).filter(|t| !t.is_empty());
@@ -509,7 +517,14 @@ fn spawn_pr_previews(
             .unwrap_or_else(|| pr_unavailable_pane("commit log")),
         )
     });
-    spawn_comments_fetch(orchestrator, token, entry.kind, entry.number, width);
+    spawn_comments_fetch(
+        orchestrator,
+        token,
+        entry.kind,
+        entry.number,
+        entry.updated_at.clone(),
+        width,
+    );
 }
 
 /// Spawn the background `comments` fetch keyed by `key_token`, fetching through
@@ -523,16 +538,23 @@ fn spawn_pr_previews(
 /// keyspaces can't collide. A failed fetch caches a terminal [`pr_unavailable_pane`]
 /// (not `None`), so the tab never strands on its loading placeholder — see
 /// [`spawn_pr_previews`] and [`PreviewOrchestrator::spawn_compute`].
+///
+/// `updated_at` is the GitHub PR's `updatedAt` content signature (riding the
+/// forge call the picker already made), used to disk-cache the rendered pane so
+/// a later `wt switch` skips this fetch when it's unchanged. `None` for GitLab
+/// (or any forge whose timestamp can't key the cache) means the fetch always
+/// runs and nothing is written to disk — see [`compute_pr_comments`].
 fn spawn_comments_fetch(
     orchestrator: &PreviewOrchestrator,
     key_token: String,
     kind: RefKind,
     number: u32,
+    updated_at: Option<String>,
     width: usize,
 ) {
     orchestrator.spawn_compute((key_token, PreviewMode::Comments), move |repo| {
         Some(
-            compute_pr_comments(repo, kind, number, width)
+            compute_pr_comments(repo, kind, number, updated_at.as_deref(), width)
                 .unwrap_or_else(|| pr_unavailable_pane("comments")),
         )
     });
@@ -552,6 +574,7 @@ pub(super) fn spawn_worktree_comments_fetch(
     orchestrator: &PreviewOrchestrator,
     branch: String,
     number: u32,
+    updated_at: Option<String>,
     width: usize,
 ) {
     let kind = match orchestrator.repo().ci_platform(None) {
@@ -565,7 +588,7 @@ pub(super) fn spawn_worktree_comments_fetch(
             return;
         }
     };
-    spawn_comments_fetch(orchestrator, branch, kind, number, width);
+    spawn_comments_fetch(orchestrator, branch, kind, number, updated_at, width);
 }
 
 /// The `comments` tab pane for a worktree row whose branch has a PR on a forge
@@ -614,11 +637,11 @@ struct GhPr {
     head_ref_oid: String,
     /// CI/review and display fields reused via the shared `gh pr list` mapping:
     /// number, `title`, `body`, `author`, `isDraft`, `url`, `statusCheckRollup`,
-    /// `reviewDecision`, `mergeStateStatus`. Flattened so one parse feeds the
-    /// row display, the `pr` preview pane, and the CI-column status. `title`/
-    /// `body`/`author` live on [`GitHubPrInfo`] (not here) so the worktree-row
-    /// fetch, which parses `GitHubPrInfo` directly, gets them from the same
-    /// widened call.
+    /// `reviewDecision`, `mergeStateStatus`, `updatedAt`. Flattened so one parse
+    /// feeds the row display, the `pr` preview pane, the CI-column status, and the
+    /// comments-cache key. `title`/`body`/`author` live on [`GitHubPrInfo`] (not
+    /// here) so the worktree-row fetch, which parses `GitHubPrInfo` directly, gets
+    /// them from the same widened call.
     #[serde(flatten)]
     info: GitHubPrInfo,
 }
@@ -644,7 +667,7 @@ fn fetch_github(repo_root: &Path) -> anyhow::Result<Vec<PrEntry>> {
             &MAX_PRS.to_string(),
             "--json",
             // CI/review fields and the description ride the one call; no extra round-trip.
-            "number,title,headRefName,headRefOid,author,isDraft,url,body,statusCheckRollup,reviewDecision,mergeStateStatus",
+            "number,title,headRefName,headRefOid,author,isDraft,url,body,statusCheckRollup,reviewDecision,mergeStateStatus,updatedAt",
         ])
         .current_dir(repo_root)
         .run()
@@ -680,6 +703,7 @@ fn parse_github_prs(stdout: &[u8]) -> anyhow::Result<Vec<PrEntry>> {
             url: pr.info.url.clone(),
             kind: RefKind::Pr,
             body: pr.info.body.clone().unwrap_or_default(),
+            updated_at: pr.info.updated_at.clone(),
             status: Some(pr.info.open_pr_status()),
         })
         .collect())
@@ -765,6 +789,9 @@ fn parse_gitlab_mrs(stdout: &[u8]) -> anyhow::Result<Vec<PrEntry>> {
                 url: mr.web_url,
                 kind: RefKind::Mr,
                 body: mr.description,
+                // GitLab's MR `updated_at` is throttled and delete-blind, so it
+                // can't key a comments cache — MR comments stay uncached.
+                updated_at: None,
                 status: Some(status),
             }
         })
@@ -808,6 +835,7 @@ fn gitlab_mr_status(
         body: None,
         author: None,
         comment_count: None,
+        updated_at: None,
     }
 }
 
@@ -1032,34 +1060,56 @@ fn render_commit_lines(commits: &[(String, String)], width: usize) -> String {
 /// `--paginate` follows every page so a long thread isn't capped at GitLab's
 /// default page size. Returns `None` on any failure; the caller maps that to a
 /// terminal [`pr_unavailable_pane`] (see [`spawn_pr_previews`]).
+///
+/// `updated_at` is the GitHub PR's `updatedAt` content signature. When present
+/// (GitHub only), the parsed thread is read from / written to the on-disk
+/// comments cache keyed by `(number, updated_at)` — a hit re-renders the cached
+/// [`CommentEntry`]s at the live width with no forge call, so a repeat
+/// `wt switch` skips the `gh pr view --json comments` fetch when nothing changed.
+/// `None` (GitLab, whose `updated_at` can't key a cache) takes the always-fetch
+/// path and writes nothing to disk. See [`super::preview_cache::read_comments`].
 fn compute_pr_comments(
     repo: &Repository,
     kind: RefKind,
     number: u32,
+    updated_at: Option<&str>,
     width: usize,
 ) -> Option<String> {
-    let number = number.to_string();
-    let endpoint = format!("projects/:fullpath/merge_requests/{number}/notes?sort=asc");
+    // Disk cache hit: the cached entry is the raw parsed thread, re-rendered
+    // here at the live width and current relative time (the pane folds in both),
+    // so a hit returns with no forge call.
+    if let Some(ts) = updated_at
+        && let Some(cached) = super::preview_cache::read_comments(repo, number, ts)
+    {
+        return Some(render_comment_blocks(&cached, width));
+    }
+
+    let number_str = number.to_string();
+    let endpoint = format!("projects/:fullpath/merge_requests/{number_str}/notes?sort=asc");
     let stdout = fetch_forge_json(
         repo,
         kind,
-        &["pr", "view", &number, "--json", "comments"],
+        &["pr", "view", &number_str, "--json", "comments"],
         &["api", "--paginate", &endpoint],
     )?;
-    match kind {
-        RefKind::Pr => render_github_comments(&stdout, width),
-        RefKind::Mr => render_gitlab_notes(&stdout, width),
+    let comments = match kind {
+        RefKind::Pr => parse_github_comments(&stdout),
+        RefKind::Mr => parse_gitlab_notes(&stdout),
+    }?;
+
+    // Persist the raw thread for the next session, keyed by the content
+    // signature. Only GitHub PRs carry a usable `updated_at`; GitLab skips it.
+    if let Some(ts) = updated_at {
+        super::preview_cache::write_comments(repo, number, ts, &comments);
     }
+    Some(render_comment_blocks(&comments, width))
 }
 
-/// One PR/MR comment, normalized across forges for the `comments` pane.
-struct Comment {
-    author: String,
-    body: String,
-    /// RFC 3339 timestamp; rendered as relative time when parseable.
-    created_at: String,
-}
-
+// The normalized per-comment type is [`CommentEntry`] (author/body/created_at):
+// the parse functions below produce it, the disk cache stores it, and
+// `render_comment_blocks` renders it. Caching the raw fields (not the rendered
+// pane) keeps width and relative time out of the cache, so the thread re-renders
+// correctly at the live width and current time on every read.
 #[derive(Deserialize)]
 struct GhCommentsResponse {
     #[serde(default)]
@@ -1076,20 +1126,21 @@ struct GhComment {
     created_at: String,
 }
 
-/// Map `gh pr view <n> --json comments` to the `comments` pane. gh returns the
-/// thread oldest-first, which reads top-to-bottom.
-fn render_github_comments(stdout: &[u8], width: usize) -> Option<String> {
+/// Parse `gh pr view <n> --json comments` into the normalized thread. gh returns
+/// the comments oldest-first, which reads top-to-bottom; the order is preserved.
+fn parse_github_comments(stdout: &[u8]) -> Option<Vec<CommentEntry>> {
     let parsed: GhCommentsResponse = serde_json::from_slice(stdout).ok()?;
-    let comments: Vec<Comment> = parsed
-        .comments
-        .into_iter()
-        .map(|c| Comment {
-            author: c.author.login,
-            body: c.body,
-            created_at: c.created_at,
-        })
-        .collect();
-    Some(render_comment_blocks(&comments, width))
+    Some(
+        parsed
+            .comments
+            .into_iter()
+            .map(|c| CommentEntry {
+                author: c.author.login,
+                body: c.body,
+                created_at: c.created_at,
+            })
+            .collect(),
+    )
 }
 
 #[derive(Deserialize)]
@@ -1106,20 +1157,21 @@ struct GlabNote {
     system: bool,
 }
 
-/// Map `glab api …/notes` to the `comments` pane, dropping system notes (label
-/// changes, description edits, …) so only human comments show.
-fn render_gitlab_notes(stdout: &[u8], width: usize) -> Option<String> {
+/// Parse `glab api …/notes` into the normalized thread, dropping system notes
+/// (label changes, description edits, …) so only human comments show.
+fn parse_gitlab_notes(stdout: &[u8]) -> Option<Vec<CommentEntry>> {
     let notes: Vec<GlabNote> = serde_json::from_slice(stdout).ok()?;
-    let comments: Vec<Comment> = notes
-        .into_iter()
-        .filter(|n| !n.system)
-        .map(|n| Comment {
-            author: n.author.username,
-            body: n.body,
-            created_at: n.created_at,
-        })
-        .collect();
-    Some(render_comment_blocks(&comments, width))
+    Some(
+        notes
+            .into_iter()
+            .filter(|n| !n.system)
+            .map(|n| CommentEntry {
+                author: n.author.username,
+                body: n.body,
+                created_at: n.created_at,
+            })
+            .collect(),
+    )
 }
 
 /// Render the `comments` pane: each comment as a header line (author + relative
@@ -1127,7 +1179,7 @@ fn render_gitlab_notes(stdout: &[u8], width: usize) -> Option<String> {
 /// [`pr_pane::markdown_in_gutter`] the PR/MR body uses. An empty thread renders
 /// an info line so `spawn_compute` caches a terminal value rather than leaving
 /// the slot empty (an empty string is skipped, which would keep the loading placeholder).
-fn render_comment_blocks(comments: &[Comment], width: usize) -> String {
+fn render_comment_blocks(comments: &[CommentEntry], width: usize) -> String {
     let reset = Reset;
     if comments.is_empty() {
         return cformat!("{INFO_SYMBOL}{reset} No comments\n");
@@ -1308,6 +1360,7 @@ mod tests {
             url: Some("https://github.com/owner/repo/pull/123".to_string()),
             kind,
             body: String::new(),
+            updated_at: None,
             status: Some(PrStatus {
                 ci_status: CiStatus::Passed,
                 source: CiSource::PullRequest,
@@ -1320,6 +1373,7 @@ mod tests {
                 body: None,
                 author: None,
                 comment_count: None,
+                updated_at: None,
             }),
         }
     }
@@ -2103,6 +2157,19 @@ mod tests {
             "points at the only retry: {stripped:?}"
         );
         assert!(stripped.contains('▲'), "warning glyph: {stripped:?}");
+    }
+
+    /// Test helpers composing the parse + render split the production path now
+    /// runs in two steps (parse to cache, render on read): these exercise both
+    /// at once so the existing end-to-end assertions stay unchanged.
+    fn render_github_comments(stdout: &[u8], width: usize) -> Option<String> {
+        Some(render_comment_blocks(
+            &parse_github_comments(stdout)?,
+            width,
+        ))
+    }
+    fn render_gitlab_notes(stdout: &[u8], width: usize) -> Option<String> {
+        Some(render_comment_blocks(&parse_gitlab_notes(stdout)?, width))
     }
 
     #[test]

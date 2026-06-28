@@ -213,6 +213,7 @@ impl PickerHandler {
             &self.orchestrator,
             branch_name.to_string(),
             number as u32,
+            status.updated_at.clone(),
             self.preview_dims.0,
         );
     }
@@ -882,6 +883,7 @@ mod tests {
                 body: None,
                 author: None,
                 comment_count: None,
+                updated_at: None,
             }));
             item
         };
@@ -1054,6 +1056,7 @@ mod tests {
             body: None,
             author: Some("alice".into()),
             comment_count: None,
+            updated_at: None,
         }));
         handler.on_skeleton(vec![item], vec!["skel".into()], header("hdr"), grid());
 
@@ -1111,6 +1114,7 @@ mod tests {
             body: None,
             author: Some("bob".into()),
             comment_count: None,
+            updated_at: None,
         }));
         handler.on_update(0, "rendered".into(), &updated);
 

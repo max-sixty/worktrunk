@@ -146,6 +146,7 @@ pub(super) fn detect_azure_pr(
         // would need a separate per-PR threads call, which this fetch avoids.
         author: None,
         comment_count: None,
+        updated_at: None,
     })
 }
 
@@ -233,6 +234,7 @@ pub(super) fn detect_azure_pipeline(
         body: None,
         author: None,
         comment_count: None,
+        updated_at: None,
     })
 }
 
