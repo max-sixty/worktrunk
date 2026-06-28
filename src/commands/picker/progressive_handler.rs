@@ -540,7 +540,7 @@ impl PickerProgressHandler for PickerHandler {
         self.request_render(false);
     }
 
-    fn on_reveal(&self, rendered: Vec<String>) {
+    fn repaint_rows(&self, rendered: Vec<String>) {
         let Some(slots) = self.rendered_slots.get() else {
             return;
         };
@@ -772,9 +772,9 @@ mod tests {
             "row 0 diff-content untouched"
         );
 
-        // on_reveal rewrites every slot — slot writes are idempotent
+        // repaint_rows rewrites every slot — slot writes are idempotent
         // through `Mutex<String>`, so unconditional updates are safe.
-        handler.on_reveal(vec!["rev-one".into(), "rev-two".into()]);
+        handler.repaint_rows(vec!["rev-one".into(), "rev-two".into()]);
         assert_eq!(*slots[0].lock().unwrap(), "rev-one");
         assert_eq!(*slots[1].lock().unwrap(), "rev-two");
     }
