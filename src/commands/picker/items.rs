@@ -532,7 +532,7 @@ enum PrPreview {
 /// within `HasPr` (its thread is branch-keyed and surfaced by `notify_filled`),
 /// so the collect handler re-renders that tab on a *presence* change, not on
 /// every `pr_status` field — re-running it for an unchanged body would only
-/// reset the user's scroll. See [`PreviewNotifier`](super::preview_notify::PreviewNotifier).
+/// reset the user's scroll. See [`PreviewNotifier`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum PrPresence {
     Loading,
