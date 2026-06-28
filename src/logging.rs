@@ -214,6 +214,9 @@ struct WtTraceFields {
     seq: Option<u64>,
     dur_us: Option<u64>,
     ok: Option<bool>,
+    /// `true` when the command consumed stdin uncaptured by `cmd`; rendered as a
+    /// trailing `stdin=true` only when true (omitted otherwise, like `context`).
+    stdin: Option<bool>,
     context: Option<String>,
     cmd: Option<String>,
     err: Option<String>,
@@ -233,8 +236,10 @@ impl tracing::field::Visit for WtTraceFields {
     }
 
     fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
-        if field.name() == "ok" {
-            self.ok = Some(value);
+        match field.name() {
+            "ok" => self.ok = Some(value),
+            "stdin" => self.stdin = Some(value),
+            _ => {}
         }
     }
 
@@ -289,13 +294,20 @@ fn format_wt_trace(f: &WtTraceFields) -> String {
             let cmd = f.cmd.as_deref().unwrap_or("");
             let dur_us = f.dur_us.unwrap_or(0);
             let ok = f.ok.unwrap_or(false);
+            // Only commands that read stdin carry the marker; omit it otherwise
+            // so the overwhelmingly common no-stdin record stays lean.
+            let stdin = if f.stdin == Some(true) {
+                " stdin=true"
+            } else {
+                ""
+            };
             match &f.context {
                 Some(ctx) => format!(
-                    r#"[wt-trace] ts={ts} tid={tid} seq={seq} context={ctx} cmd="{cmd}" dur_us={dur_us} ok={ok}"#
+                    r#"[wt-trace] ts={ts} tid={tid} seq={seq} context={ctx} cmd="{cmd}" dur_us={dur_us} ok={ok}{stdin}"#
                 ),
                 None => {
                     format!(
-                        r#"[wt-trace] ts={ts} tid={tid} seq={seq} cmd="{cmd}" dur_us={dur_us} ok={ok}"#
+                        r#"[wt-trace] ts={ts} tid={tid} seq={seq} cmd="{cmd}" dur_us={dur_us} ok={ok}{stdin}"#
                     )
                 }
             }
@@ -305,12 +317,17 @@ fn format_wt_trace(f: &WtTraceFields) -> String {
             let cmd = f.cmd.as_deref().unwrap_or("");
             let dur_us = f.dur_us.unwrap_or(0);
             let err = f.err.as_deref().unwrap_or("");
+            let stdin = if f.stdin == Some(true) {
+                " stdin=true"
+            } else {
+                ""
+            };
             match &f.context {
                 Some(ctx) => format!(
-                    r#"[wt-trace] ts={ts} tid={tid} seq={seq} context={ctx} cmd="{cmd}" dur_us={dur_us} err="{err}""#
+                    r#"[wt-trace] ts={ts} tid={tid} seq={seq} context={ctx} cmd="{cmd}" dur_us={dur_us} err="{err}"{stdin}"#
                 ),
                 None => format!(
-                    r#"[wt-trace] ts={ts} tid={tid} seq={seq} cmd="{cmd}" dur_us={dur_us} err="{err}""#
+                    r#"[wt-trace] ts={ts} tid={tid} seq={seq} cmd="{cmd}" dur_us={dur_us} err="{err}"{stdin}"#
                 ),
             }
         }
@@ -963,6 +980,42 @@ mod tests {
         assert_eq!(
             format_wt_trace(&f),
             r#"[wt-trace] ts=100 tid=3 seq=4 cmd="gh pr list" dur_us=1000 err="network down""#
+        );
+
+        // cmd_completed reading stdin — `stdin=true` trails the record; a
+        // stdin-less record (stdin None/Some(false)) omits the field entirely,
+        // as every fixture above shows.
+        let f = WtTraceFields {
+            kind: Some("cmd_completed".into()),
+            ts: Some(100),
+            tid: Some(3),
+            seq: Some(5),
+            cmd: Some("git patch-id --verbatim".into()),
+            dur_us: Some(640),
+            ok: Some(true),
+            stdin: Some(true),
+            ..Default::default()
+        };
+        assert_eq!(
+            format_wt_trace(&f),
+            r#"[wt-trace] ts=100 tid=3 seq=5 cmd="git patch-id --verbatim" dur_us=640 ok=true stdin=true"#
+        );
+
+        // cmd_errored reading stdin — `stdin=true` trails the err field.
+        let f = WtTraceFields {
+            kind: Some("cmd_errored".into()),
+            ts: Some(100),
+            tid: Some(3),
+            seq: Some(6),
+            cmd: Some("claude -p".into()),
+            dur_us: Some(900),
+            err: Some("boom".into()),
+            stdin: Some(true),
+            ..Default::default()
+        };
+        assert_eq!(
+            format_wt_trace(&f),
+            r#"[wt-trace] ts=100 tid=3 seq=6 cmd="claude -p" dur_us=900 err="boom" stdin=true"#
         );
 
         // instant

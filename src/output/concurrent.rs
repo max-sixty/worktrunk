@@ -320,7 +320,9 @@ fn spawn_child(
 
     // Start the trace just before spawning so its duration brackets the real
     // spawn → wait span (the child keeps running while we drain its output).
-    let mut trace = CommandTrace::new(None, cmd.expanded);
+    // Each child is fed its own `context_json` on stdin, so mark it stdin-reading
+    // — the same command across worktrees isn't a duplicate (different input).
+    let mut trace = CommandTrace::new(None, cmd.expanded).reads_stdin(true);
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(e) => {

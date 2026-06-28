@@ -5,7 +5,14 @@
 //! [wt-trace] ts=1234567 tid=3 seq=1 context=worktree cmd="git status" dur_us=12300 ok=true
 //! [wt-trace] ts=1234567 tid=3 seq=2 cmd="gh pr list" dur_us=45200 ok=false
 //! [wt-trace] ts=1234567 tid=3 seq=3 context=main cmd="git merge-base" dur_us=100000 err="fatal: ..."
+//! [wt-trace] ts=1234567 tid=3 seq=4 cmd="git patch-id --verbatim" dur_us=640 ok=true stdin=true
 //! ```
+//!
+//! `stdin=true` (command records only) flags a command that consumed stdin not
+//! captured in `cmd` — a `stdin_bytes` buffer or an upstream pipe. It trails the
+//! `ok`/`err` field and is omitted entirely when false, so older records parse
+//! as `reads_stdin: false`. The cache analysis uses it to skip dedup for
+//! commands whose real input the command string doesn't show.
 //!
 //! `seq` (a per-command counter, command records only) is parsed leniently —
 //! it's dropped as an unknown key, since no consumer needs it; it correlates a
@@ -35,6 +42,11 @@ pub enum TraceEntryKind {
         duration: Duration,
         /// Command result
         result: TraceResult,
+        /// Whether the command consumed stdin not captured in `command` (a
+        /// `stdin_bytes` buffer or an upstream pipe). `false` for older records
+        /// without the `stdin` field. The cache analysis treats a stdin-reading
+        /// command as inherently unique — its real input isn't in `command`.
+        reads_stdin: bool,
     },
     /// An instant event (milestone marker with no duration)
     Instant {
@@ -113,6 +125,7 @@ fn parse_line(line: &str) -> Option<TraceEntry> {
     let mut result = None;
     let mut start_time_us = None;
     let mut thread_id = None;
+    let mut reads_stdin = false;
 
     let mut remaining = rest;
 
@@ -167,6 +180,9 @@ fn parse_line(line: &str) -> Option<TraceEntry> {
             "tid" => {
                 thread_id = value.parse().ok();
             }
+            "stdin" => {
+                reads_stdin = value == "true";
+            }
             _ => {} // Ignore unknown keys for forward compatibility
         }
     }
@@ -187,6 +203,7 @@ fn parse_line(line: &str) -> Option<TraceEntry> {
             command: command?,
             duration: duration?,
             result: result?,
+            reads_stdin,
         }
     };
 
@@ -279,6 +296,23 @@ mod tests {
             &entry.kind,
             TraceEntryKind::Command { command, .. } if command == "git status"
         ));
+    }
+
+    #[test]
+    fn test_parse_stdin_marker() {
+        // `stdin=true` marks a command whose input came via stdin; its absence
+        // (older records, stdin-less commands) parses as `reads_stdin: false`.
+        let with = r#"[wt-trace] cmd="git patch-id --verbatim" dur_us=640 ok=true stdin=true"#;
+        let TraceEntryKind::Command { reads_stdin, .. } = parse_line(with).unwrap().kind else {
+            panic!("expected command");
+        };
+        assert!(reads_stdin);
+
+        let without = r#"[wt-trace] cmd="git status" dur_us=5000 ok=true"#;
+        let TraceEntryKind::Command { reads_stdin, .. } = parse_line(without).unwrap().kind else {
+            panic!("expected command");
+        };
+        assert!(!reads_stdin);
     }
 
     #[test]

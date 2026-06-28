@@ -160,8 +160,10 @@ fn spawn_shell_command(
         .try_clone()
         .context("failed to clone log file handle")?;
     // Start the trace just before spawning; the caller resolves it once the
-    // child is waited on (see `wait_resolving`).
-    let mut trace = CommandTrace::new(None, expanded);
+    // child is waited on (see `wait_resolving`). The step is fed its own
+    // `context_json` on stdin, so mark it stdin-reading — the same command
+    // across worktrees isn't a duplicate (different per-worktree input).
+    let mut trace = CommandTrace::new(None, expanded).reads_stdin(true);
     let mut child = match shell
         .command(expanded)
         .current_dir(worktree_path)

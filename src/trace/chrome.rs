@@ -187,6 +187,7 @@ mod tests {
                 command: command.to_string(),
                 duration: Duration::from_millis(duration_ms),
                 result: TraceResult::Completed { success: true },
+                reads_stdin: false,
             },
             start_time_us,
             thread_id,

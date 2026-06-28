@@ -1223,7 +1223,8 @@ impl Cmd {
         // Acquire semaphore to limit concurrent commands
         let _guard = semaphore().acquire();
 
-        let mut trace = CommandTrace::new(self.context.as_deref(), &cmd_str);
+        let mut trace = CommandTrace::new(self.context.as_deref(), &cmd_str)
+            .reads_stdin(self.stdin_data.is_some());
 
         if let Err(e) = self.check_spawn_preconditions() {
             trace.fail(&e);
@@ -1346,11 +1347,19 @@ impl Cmd {
         // yet, so a precondition failure emits a one-shot failed record rather
         // than holding a guard across an execution that never happens.
         if let Err(e) = self.check_spawn_preconditions() {
-            CommandTrace::record_failed(self.context.as_deref(), &first_cmd_str, &e);
+            // stdin_data is still owned here (taken below), so it reflects
+            // whether the source would have read a buffer; the sink always reads
+            // the upstream pipe.
+            CommandTrace::record_failed(
+                self.context.as_deref(),
+                &first_cmd_str,
+                self.stdin_data.is_some(),
+                &e,
+            );
             return Err(e);
         }
         if let Err(e) = next.check_spawn_preconditions() {
-            CommandTrace::record_failed(next.context.as_deref(), &second_cmd_str, &e);
+            CommandTrace::record_failed(next.context.as_deref(), &second_cmd_str, true, &e);
             return Err(e);
         }
 
@@ -1368,8 +1377,10 @@ impl Cmd {
             .stderr(Stdio::piped());
 
         // Trace each command from just before its own spawn so the duration
-        // brackets the real spawn → wait span.
-        let mut first_trace = CommandTrace::new(self.context.as_deref(), &first_cmd_str);
+        // brackets the real spawn → wait span. The source reads stdin only when
+        // fed a buffer; the sink always reads it (the source's piped stdout).
+        let mut first_trace = CommandTrace::new(self.context.as_deref(), &first_cmd_str)
+            .reads_stdin(source_stdin.is_some());
         let mut first_child = match first.spawn() {
             Ok(child) => child,
             Err(e) => {
@@ -1401,7 +1412,8 @@ impl Cmd {
         // Spawn `next` before waiting on either child so `self`'s stdout keeps
         // flowing through the pipe (otherwise a full pipe buffer would wedge
         // `self`). If the spawn itself fails, clean up `self` before returning.
-        let mut second_trace = CommandTrace::new(next.context.as_deref(), &second_cmd_str);
+        let mut second_trace =
+            CommandTrace::new(next.context.as_deref(), &second_cmd_str).reads_stdin(true);
         let second_child = match second.spawn() {
             Ok(child) => child,
             Err(e) => {
@@ -1532,7 +1544,12 @@ impl Cmd {
         if let Err(e) = self.check_spawn_preconditions() {
             // Nothing spawned yet — emit a one-shot failed record (the trace
             // guard is constructed just before spawn, below).
-            CommandTrace::record_failed(self.context.as_deref(), &cmd_str, &e);
+            CommandTrace::record_failed(
+                self.context.as_deref(),
+                &cmd_str,
+                self.stdin_data.is_some(),
+                &e,
+            );
             return Err(anyhow::Error::from(GitError::Other {
                 message: format!("Failed to execute command ({}): {}", exec_mode, e),
             }));
@@ -1584,7 +1601,8 @@ impl Cmd {
         // Start the trace immediately before spawn, after the fallible
         // signal-handler install — so a pre-spawn early return can't drop the
         // guard unresolved, and the duration brackets the child.
-        let mut trace = CommandTrace::new(self.context.as_deref(), &cmd_str);
+        let mut trace = CommandTrace::new(self.context.as_deref(), &cmd_str)
+            .reads_stdin(self.stdin_data.is_some());
         let mut child = match cmd.spawn() {
             Ok(child) => child,
             Err(e) => {
