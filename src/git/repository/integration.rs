@@ -141,23 +141,13 @@ impl Repository {
     /// Useful for detecting squash merges or rebases where the content has been
     /// integrated but commit ancestry doesn't show the relationship.
     ///
-    /// Resolves each commit SHA to its tree SHA in a single `git rev-parse`
-    /// call and compares. The commit→tree resolution is itself uncached
-    /// (trees are cheap and not stale-prone), but the inputs are SHAs so
-    /// the call is immune to ref-name staleness.
+    /// Both commit→tree resolutions go through `commit_to_tree_sha`, so the
+    /// shared target side (the default-branch tip, identical across every
+    /// `wt list` row) is peeled once per process and shared with
+    /// `would_merge_add_to_target`'s lookup. Inputs are commit SHAs, so the
+    /// mapping is content-addressed and immune to ref-name staleness.
     pub fn trees_match_by_sha(&self, commit_sha1: &str, commit_sha2: &str) -> anyhow::Result<bool> {
-        let output = self.run_command(&[
-            "rev-parse",
-            &format!("{commit_sha1}^{{tree}}"),
-            &format!("{commit_sha2}^{{tree}}"),
-        ])?;
-        let mut lines = output.lines();
-        let tree1 = lines.next().context("rev-parse returned no output")?.trim();
-        let tree2 = lines
-            .next()
-            .context("rev-parse returned only one line")?
-            .trim();
-        Ok(tree1 == tree2)
+        Ok(self.commit_to_tree_sha(commit_sha1)? == self.commit_to_tree_sha(commit_sha2)?)
     }
 
     /// Check if merging `head_sha` into `base_sha` would result in conflicts.
@@ -224,9 +214,10 @@ impl Repository {
     fn merge_tree_outcome(&self, a: &str, b: &str) -> anyhow::Result<MergeTreeOutcome> {
         use dashmap::mapref::entry::Entry;
 
-        // Asymmetric key: both call sites pass arguments in `(target, branch)`
-        // order, and a swapped merge can differ in conflict-hunk content, so
-        // the order is preserved rather than normalized.
+        // Keyed in call order, not normalized: both dedup call sites pass
+        // `(target, branch)`, so they already share a key, and the cached
+        // outcome (a conflict flag, or the order-independent clean-merge tree)
+        // doesn't depend on argument order — a symmetric key would buy nothing.
         match self.cache.merge_tree.entry((a.to_string(), b.to_string())) {
             Entry::Occupied(e) => Ok(e.get().clone()),
             Entry::Vacant(e) => {
@@ -302,8 +293,11 @@ impl Repository {
             MergeTreeOutcome::Conflict => Ok(None),
             MergeTreeOutcome::Clean { tree } => {
                 // If the merge result differs from target's tree, merging would
-                // add something (the branch is not already integrated).
-                let target_tree = self.rev_parse_tree(&format!("{target}^{{tree}}"))?;
+                // add something (the branch is not already integrated). The
+                // target is shared across every `wt list` row, so resolve its
+                // tree through the in-memory repo cache — peeled once, not once
+                // per row (see [`Self::commit_to_tree_sha`]).
+                let target_tree = self.commit_to_tree_sha(target)?;
                 Ok(Some(tree != target_tree))
             }
         }
@@ -528,12 +522,43 @@ impl Repository {
 
     /// Resolve a tree spec (e.g. `"refs/heads/main^{tree}"`) to its tree SHA.
     /// Uncached — tree resolution is cheap (~1 ms) and stale-prone if memoized
-    /// against a moving ref name.
+    /// against a moving ref name. When the input is a commit SHA, prefer
+    /// [`Self::commit_to_tree_sha`], which memoizes the immutable commit→tree
+    /// mapping.
     pub(super) fn rev_parse_tree(&self, spec: &str) -> anyhow::Result<String> {
         Ok(self
             .run_command(&["rev-parse", "--verify", "--end-of-options", spec])?
             .trim()
             .to_string())
+    }
+
+    /// Resolve a commit SHA to its tree SHA, memoized in the in-memory repo
+    /// cache (get-or-create — the same lock-free pattern as
+    /// [`Self::merge_base_by_sha`]).
+    ///
+    /// Unlike [`Self::rev_parse_tree`], the input is a commit SHA, so the
+    /// commit→tree mapping is content-addressed and never stale within a
+    /// process — a `git` object's tree is immutable. Caching it dedups the
+    /// `wt list` hot path, where every branch row peels the *same*
+    /// default-branch tip to its tree inside
+    /// [`Self::would_merge_add_to_target`]; without the cache that is one
+    /// identical `rev-parse` subprocess per row.
+    ///
+    /// In-memory rather than the persistent `sha_cache`: the resolution is
+    /// ~1 ms, so cross-run persistence saves almost nothing, while the `Entry`
+    /// match holds the shard lock across check-and-insert so the first miss
+    /// computes once and every concurrent row reads it — no cold-start race.
+    /// The disk cache is reserved for results expensive enough that persisting
+    /// them across invocations outweighs a one-off recompute.
+    fn commit_to_tree_sha(&self, commit_sha: &str) -> anyhow::Result<String> {
+        use dashmap::mapref::entry::Entry;
+        match self.cache.commit_tree.entry(commit_sha.to_string()) {
+            Entry::Occupied(e) => Ok(e.get().clone()),
+            Entry::Vacant(e) => {
+                let tree = self.rev_parse_tree(&format!("{commit_sha}^{{tree}}"))?;
+                Ok(e.insert(tree).clone())
+            }
+        }
     }
 
     /// Resolve a ref to its commit SHA. Uncached — callers that want
@@ -714,6 +739,50 @@ mod snapshot_resolve_tests {
         // Bogus ref → error (not a confusing "unknown option" — `--verify`
         // surfaces a clean "Needed a single revision" / "bad revision").
         assert!(snapshot_resolve(&repo, &snapshot, "no-such-ref").is_err());
+    }
+}
+
+#[cfg(test)]
+mod commit_tree_cache_tests {
+    use super::*;
+    use crate::testing::TestRepo;
+
+    /// The integration probe peels the target commit to its tree once and
+    /// memoizes it in the in-memory repo cache, keyed by the target commit
+    /// SHA — so the many `wt list` rows sharing one target don't each spawn
+    /// `git rev-parse <target>^{tree}`.
+    #[test]
+    fn probe_caches_target_tree_in_memory() {
+        let test = TestRepo::with_initial_commit();
+
+        // Feature adds a file; main is unchanged. The merge is clean but adds
+        // changes, so the probe reaches the Clean arm of
+        // would_merge_add_to_target and resolves the target (main) tree.
+        test.run_git(&["checkout", "-b", "feature"]);
+        std::fs::write(test.root_path().join("new.txt"), "content\n").unwrap();
+        test.run_git(&["add", "new.txt"]);
+        test.run_git(&["commit", "-m", "Feature"]);
+        test.run_git(&["checkout", "main"]);
+
+        let feature_sha = test.git_output(&["rev-parse", "feature"]);
+        let main_sha = test.git_output(&["rev-parse", "main"]);
+        let main_tree = test.git_output(&["rev-parse", "main^{tree}"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        assert!(!repo.cache.commit_tree.contains_key(&main_sha));
+
+        let probe = repo
+            .merge_integration_probe_by_sha(&feature_sha, &main_sha)
+            .unwrap();
+        assert!(probe.would_merge_add, "clean merge adds the new file");
+
+        // Target tree resolved once and cached under the target commit SHA.
+        let cached = repo
+            .cache
+            .commit_tree
+            .get(&main_sha)
+            .map(|e| e.value().clone());
+        assert_eq!(cached, Some(main_tree));
     }
 }
 
