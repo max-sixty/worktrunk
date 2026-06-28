@@ -59,6 +59,20 @@ pub fn require_config_path() -> Result<PathBuf, ConfigError> {
     })
 }
 
+/// Resolve the user config path for display, formatted with `~` and falling
+/// back to the canonical location when none can be determined.
+///
+/// The display counterpart of [`config_path`]: user-facing messages that name
+/// "the config file wt would load or write" route through this, so the
+/// `--config` / `WORKTRUNK_CONFIG_PATH` / `$XDG_CONFIG_HOME` resolution and the
+/// fallback literal live in one place. Use [`require_config_path`] for the
+/// actual mutation; this is display-only.
+pub fn config_path_for_display() -> String {
+    config_path()
+        .map(|p| crate::path::format_path_for_display(&p))
+        .unwrap_or_else(|| "~/.config/worktrunk/config.toml".to_string())
+}
+
 /// Platform-specific default config path, without CLI or env var overrides.
 ///
 /// Returns the etcetera-based platform default. Called by `config_path()`

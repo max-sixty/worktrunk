@@ -672,4 +672,52 @@ mod commit_generation_prompt_tests {
             "Should show preview: {output}"
         );
     }
+
+    /// Test: LLM tool available, user accepts, but the config save fails
+    ///
+    /// Points WORKTRUNK_CONFIG_PATH at a path whose parent is a regular file,
+    /// so the write fails with ENOTDIR — exercising the save-failure hint,
+    /// which names the resolved config path via `config_path_for_display`.
+    #[rstest]
+    fn test_user_accepts_but_save_fails_shows_manual_hint(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+        let bin_dir = setup_fake_claude(temp_home.path());
+
+        // Stage a change
+        let test_file = repo.root_path().join("test.txt");
+        fs::write(&test_file, "test content\n").unwrap();
+        repo.run_git(&["add", "test.txt"]);
+
+        // A regular file standing in for the config's parent directory makes
+        // every write under it fail with ENOTDIR — root-proof, unlike chmod.
+        let blocker = temp_home.path().join("blocker");
+        fs::write(&blocker, "x").unwrap();
+        let unwritable_config = blocker.join("config.toml");
+
+        let mut env_vars = repo.test_env_vars();
+        let path = format!("{}:/usr/bin:/bin", bin_dir.display());
+        env_vars.push(("PATH".to_string(), path));
+        // Overrides the WORKTRUNK_CONFIG_PATH from test_env_vars (last wins).
+        env_vars.push((
+            "WORKTRUNK_CONFIG_PATH".to_string(),
+            unwritable_config.to_string_lossy().to_string(),
+        ));
+
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["step", "commit"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["y\n"], "[y/N");
+
+        // The commit still completes with a fallback message; only the config
+        // save fails, so the manual-add hint fires.
+        assert_eq!(exit_code, 0, "Command should succeed: {output}");
+        assert!(
+            output.contains("Config save failed"),
+            "Should show manual-add hint on save failure: {output}"
+        );
+    }
 }
