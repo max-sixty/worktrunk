@@ -524,7 +524,7 @@ fn format_raw_symbols(symbols: &super::model::StatusSymbols) -> String {
         result.push_str(&wt.to_symbols());
     }
 
-    // Main state (gate 3) — merged column: ^✗_⊂↕↑↓
+    // Main state (gate 3) — merged column: ^_⊂✗↕↑↓
     if let Some(ms) = symbols.main_state {
         let s = ms.to_string();
         if !s.is_empty() {

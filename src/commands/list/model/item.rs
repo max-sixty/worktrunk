@@ -633,10 +633,17 @@ impl ListItem {
 
     /// Gate 3: main state. Walks the priority chain tier by tier, using
     /// the per-tier helpers from `state.rs`.
+    ///
+    /// Tier order: `IsMain > Orphan > integration (⊂/_) > WouldConflict (✗) >
+    /// same-commit-dirty / counts`. Integration outranks `WouldConflict`
+    /// because a branch whose content is already in the default branch is
+    /// safe to delete even if a naive re-merge would conflict (the conflict
+    /// is vacuous). To keep that from *delaying* the common `↑`/`↓`/`⊂`
+    /// cases, integration stays fire-or-continue (never blocks); only `✗` is
+    /// held back until the integration verdict is final, so an integrated
+    /// branch never momentarily flashes `✗` before settling to `⊂`.
     fn try_gate_main_state(&self, default_branch: Option<&str>) -> Option<MainState> {
-        use super::state::{
-            Tier, tier_integration_or_counts, tier_is_main, tier_orphan, tier_would_conflict,
-        };
+        use super::state::{Tier, tier_counts, tier_is_main, tier_orphan, tier_would_conflict};
 
         let is_main = matches!(&self.kind, ItemKind::Worktree(data) if data.is_main);
 
@@ -654,43 +661,78 @@ impl ListItem {
             Tier::Wait => return None,
         }
 
-        // Tier 3: WouldConflict. For branches, there's no working-tree
-        // conflict probe, so we substitute `Some(None)` (the "task ran
-        // but working tree is clean / N/A" sentinel).
+        // `is_clean` feeds both the integration verdict (only a clean tree
+        // can be shown as integrated) and the `✗` guard (we can rule out
+        // "clean & integrated" only once cleanliness is known). It comes
+        // from the cheap local `WorkingTreeDiff`, which lands well before
+        // the merge-tree probes, so requiring it here rarely delays a cell.
+        let is_clean = match &self.kind {
+            ItemKind::Worktree(data) => {
+                let diff = data.working_tree_diff.as_ref()?;
+                let status = data.working_tree_status?;
+                diff.is_empty() && !status.untracked
+            }
+            // Branches have no working tree; trivially clean.
+            ItemKind::Branch(_) => true,
+        };
+
+        // Tier 3: Integration (`⊂`/`_`). Fire when the content is known to be
+        // in the default branch; otherwise fall through (the gate re-evaluates,
+        // so a later pass can still upgrade `↑` to `⊂`). `is_main` is already
+        // `false` here (tier 1 returned otherwise).
+        if let Some(state) = self.check_integration_state(is_main, default_branch, is_clean) {
+            return Some(state);
+        }
+
+        // Tier 4: WouldConflict (`✗`). Held until the integration verdict is
+        // final (`integration_resolved`) so an integrated-but-stale branch
+        // never flashes `✗` before tier 3 settles it to `⊂`. For branches
+        // there's no working-tree conflict probe, so substitute `Some(None)`
+        // (the "task ran but working tree is clean / N/A" sentinel).
         let has_working_tree_conflicts = match &self.kind {
             ItemKind::Worktree(data) => data.has_working_tree_conflicts,
             ItemKind::Branch(_) => Some(None),
         };
-        match tier_would_conflict(self.has_merge_tree_conflicts, has_working_tree_conflicts) {
+        let integration_resolved = self.integration_resolved(default_branch, is_clean);
+        match tier_would_conflict(
+            self.has_merge_tree_conflicts,
+            has_working_tree_conflicts,
+            integration_resolved,
+        ) {
             Tier::Fired(s) => return Some(s),
             Tier::RuledOut => {}
             Tier::Wait => return None,
         }
 
-        // Tiers 4-6: integration / same-commit-dirty / counts-based. Needs
-        // `counts` and `is_clean`, plus the integration signals fed
-        // through `check_integration_state` (which is short-circuiting and
-        // treats missing integration signals as "no info, fall through").
-        let is_clean = match &self.kind {
-            ItemKind::Worktree(data) => {
-                let diff = data.working_tree_diff.as_ref()?;
-                let status = data.working_tree_status?;
-                Some(diff.is_empty() && !status.untracked)
-            }
-            // Branches have no working tree; trivially clean.
-            ItemKind::Branch(_) => Some(true),
-        };
-        let integration = match &self.kind {
-            ItemKind::Worktree(data) => {
-                self.check_integration_state(data.is_main, default_branch, is_clean?)
-            }
-            ItemKind::Branch(_) => self.check_integration_state(false, default_branch, true),
-        };
-
-        match tier_integration_or_counts(self.counts, is_clean, integration) {
+        // Tiers 5-6: same-commit-dirty / counts-based fallback.
+        match tier_counts(self.counts, Some(is_clean)) {
             Tier::Fired(s) => Some(s),
             Tier::RuledOut | Tier::Wait => None,
         }
+    }
+
+    /// Whether the integration verdict for this item is final — i.e. it will
+    /// not later flip to "integrated". Used by gate 3 to decide when `✗`
+    /// (WouldConflict) is safe to render: a detected conflict only means `✗`
+    /// for a branch that isn't already in the default branch, so `✗` holds
+    /// until this returns `true`.
+    ///
+    /// The verdict is final immediately when integration can't apply (no
+    /// default branch, or a dirty tree — integration states require a clean
+    /// tree). Otherwise it can still resolve to integrated until every feeder
+    /// signal of `check_integration_state` has reported. Those signals are
+    /// seeded on skip (see `seed_skipped_task_defaults`), so this converges
+    /// for every item — including branches, which schedule the same probes.
+    fn integration_resolved(&self, default_branch: Option<&str>, is_clean: bool) -> bool {
+        if default_branch.is_none() || !is_clean {
+            return true;
+        }
+        self.counts.is_some()
+            && self.is_ancestor.is_some()
+            && self.has_file_changes.is_some()
+            && self.committed_trees_match.is_some()
+            && self.would_merge_add.is_some()
+            && self.is_patch_id_match.is_some()
     }
 
     /// Gate 4: upstream divergence. Resolves once `upstream` is loaded.
@@ -1036,31 +1078,42 @@ mod tests {
         assert_eq!(item.status_symbols.main_state, Some(MainState::Orphan));
     }
 
+    /// Mark `item`'s working tree clean (so `is_clean` resolves) by seeding
+    /// the cheap local probes the gate reads for cleanliness.
+    fn mark_working_tree_clean(item: &mut ListItem) {
+        use super::super::super::model::WorkingTreeStatus;
+        use worktrunk::git::LineDiff;
+        if let ItemKind::Worktree(ref mut data) = item.kind {
+            data.working_tree_diff = Some(LineDiff::default());
+            data.working_tree_status = Some(WorkingTreeStatus::default());
+            data.has_working_tree_conflicts = Some(None); // clean: defer to HEAD probe
+        }
+    }
+
     #[test]
     fn gate_main_state_would_conflict_requires_both_conflict_signals() {
-        // `has_merge_tree_conflicts = None` → tier 3 waits even with
+        // Clean tree + no default branch ⇒ integration can't apply, so the
+        // WouldConflict tier is reached and gated only by the conflict probes.
+        // `has_merge_tree_conflicts = None` → the tier waits even with
         // `has_working_tree_conflicts` saying "clean."
         let mut item = make_worktree_item();
         item.is_orphan = Some(false);
+        mark_working_tree_clean(&mut item);
         item.has_merge_tree_conflicts = None;
-        if let ItemKind::Worktree(ref mut data) = item.kind {
-            data.has_working_tree_conflicts = Some(None); // clean working tree
-        }
         item.refresh_status_symbols(None);
         assert_eq!(item.status_symbols.main_state, None);
 
-        // Set the merge-tree probe to "no conflict" → tier 3 rules out,
-        // fall through to lower tiers. But counts is still None, so
-        // tier 4 waits and gate stays None.
+        // Set the merge-tree probe to "no conflict" → the tier rules out and
+        // falls through. But counts is still None, so the counts tier waits
+        // and the gate stays None.
         item.has_merge_tree_conflicts = Some(false);
         item.refresh_status_symbols(None);
         assert_eq!(item.status_symbols.main_state, None);
     }
 
     #[test]
-    fn gate_main_state_tier4_waits_for_counts_and_clean() {
-        use super::super::super::model::{AheadBehind, WorkingTreeStatus};
-        use worktrunk::git::LineDiff;
+    fn gate_main_state_counts_tier_waits_for_counts_and_clean() {
+        use super::super::super::model::AheadBehind;
 
         let mut item = make_worktree_item();
         item.is_orphan = Some(false);
@@ -1068,7 +1121,8 @@ mod tests {
         if let ItemKind::Worktree(ref mut data) = item.kind {
             data.has_working_tree_conflicts = Some(None);
         }
-        // counts set but is_clean inputs missing → Wait.
+        // counts set but is_clean inputs missing → the gate can't even
+        // compute `is_clean`, so it waits.
         item.counts = Some(AheadBehind {
             ahead: 3,
             behind: 2,
@@ -1076,13 +1130,83 @@ mod tests {
         item.refresh_status_symbols(None);
         assert_eq!(item.status_symbols.main_state, None);
 
-        // Fill in the is_clean inputs → gate resolves.
-        if let ItemKind::Worktree(ref mut data) = item.kind {
-            data.working_tree_diff = Some(LineDiff::default());
-            data.working_tree_status = Some(WorkingTreeStatus::default());
-        }
+        // Fill in the is_clean inputs → gate resolves to Diverged.
+        mark_working_tree_clean(&mut item);
         item.refresh_status_symbols(None);
         assert_eq!(item.status_symbols.main_state, Some(MainState::Diverged));
+    }
+
+    /// Seed the integration feeder signals for a branch whose squashed diff
+    /// matches a commit already on the default branch (patch-id match), with
+    /// ahead/behind counts so it isn't same-commit. `patch_id` and
+    /// `would_merge_add` are left to the caller to model the loading state.
+    fn seed_patch_id_integration(item: &mut ListItem) {
+        use super::super::super::model::AheadBehind;
+        item.is_orphan = Some(false);
+        item.counts = Some(AheadBehind {
+            ahead: 1,
+            behind: 11,
+        });
+        item.is_ancestor = Some(false);
+        item.has_file_changes = Some(true); // has added changes (not NoAddedChanges)
+        item.committed_trees_match = Some(false);
+        // A real merge-tree conflict against today's default branch.
+        item.has_merge_tree_conflicts = Some(true);
+        mark_working_tree_clean(item);
+    }
+
+    #[test]
+    fn gate_main_state_integration_outranks_would_conflict() {
+        // The squash-merged-then-base-moved-on case: content is in the
+        // default branch (patch-id match) AND a naive re-merge conflicts.
+        // The row must show ⊂ (Integrated), never ✗ — matching what
+        // `wt step prune` reports.
+        let mut item = make_worktree_item();
+        seed_patch_id_integration(&mut item);
+        item.would_merge_add = Some(true); // merge-tree conflicted, can't tell
+        item.is_patch_id_match = Some(true); // …but the patch-id matches
+        item.refresh_status_symbols(Some("main"));
+        assert_eq!(
+            item.status_symbols.main_state,
+            Some(MainState::Integrated(IntegrationReason::PatchIdMatch))
+        );
+    }
+
+    #[test]
+    fn gate_main_state_conflict_holds_until_integration_resolves() {
+        // While the patch-id probe is still loading, a detected conflict must
+        // NOT flash ✗ — the gate holds at `·` (None) so an integrated branch
+        // never momentarily alarms before settling to ⊂.
+        let mut item = make_worktree_item();
+        seed_patch_id_integration(&mut item);
+        item.would_merge_add = None; // integration verdict not yet final
+        item.is_patch_id_match = None;
+        item.refresh_status_symbols(Some("main"));
+        assert_eq!(item.status_symbols.main_state, None);
+
+        // Once the probe lands as a patch-id match, it settles to ⊂.
+        item.would_merge_add = Some(true);
+        item.is_patch_id_match = Some(true);
+        item.refresh_status_symbols(Some("main"));
+        assert_eq!(
+            item.status_symbols.main_state,
+            Some(MainState::Integrated(IntegrationReason::PatchIdMatch))
+        );
+    }
+
+    #[test]
+    fn gate_main_state_genuine_conflict_shows_would_conflict() {
+        // Not integrated (patch-id resolves negative) AND a real conflict →
+        // ✗ is correct and still rendered.
+        let mut item = make_worktree_item();
+        seed_patch_id_integration(&mut item);
+        item.would_merge_add = Some(true);
+        item.is_patch_id_match = Some(false); // resolved: NOT integrated
+        item.refresh_status_symbols(Some("main"));
+        assert_eq!(
+            item.status_symbols.main_state,
+            Some(MainState::WouldConflict)
+        );
     }
 
     // ---- Gate 4: upstream divergence (position 5) ----
