@@ -42,7 +42,7 @@
 //! | Log / BranchDiff / UpstreamDiff | [`super::preview_cache`], SHA-keyed | `git`, then write disk |
 //! | Summary | [`crate::summary`], diff-hash-keyed | LLM, then write disk |
 //! | Pr | none | render from the already-fetched CI/PR data |
-//! | Comments | none | one background forge fetch per PR |
+//! | Comments | [`super::preview_cache`], `updatedAt`-keyed (GitHub PRs only) | forge fetch, then write disk |
 //!
 //! # Invalidation
 //!

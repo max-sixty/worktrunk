@@ -849,6 +849,7 @@ mod tests {
                 body: None,
                 author: None,
                 comment_count: None,
+                updated_at: None,
             }));
             item
         };
