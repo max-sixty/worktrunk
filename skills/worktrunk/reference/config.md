@@ -199,9 +199,23 @@ Setting it statically in the config file uses the same key and works, but is not
 the intended use: it pins one layout over a table that otherwise adapts to
 `--full` and terminal width.
 
-Valid built-in names are `branch`, `status`, `working-diff`, `ahead-behind`,
-`branch-diff`, `summary`, `upstream`, `ci`, `path`, `url`, `commit`, `age`, and
-`message`. A [custom column](#custom-columns) is named by its `[list.custom-columns]`
+Valid built-in names:
+
+- `branch` — The branch name
+- `status` — Git status symbols, plus any user-defined status
+- `working-diff` — Uncommitted line changes against `HEAD` (header `HEAD±`)
+- `ahead-behind` — Commits ahead of and behind the default branch (header `main↕`)
+- `branch-diff` — Line changes against the default branch (header `main…±`)
+- `summary` — An LLM-generated summary of the branch
+- `upstream` — The upstream tracking branch
+- `ci` — CI status of the head commit
+- `path` — The worktree's path
+- `url` — Dev-server URL from the `[list] url` template
+- `commit` — The head commit's short hash
+- `age` — Time since the last commit
+- `message` — The head commit's subject
+
+A [custom column](#custom-columns) is named by its `[list.custom-columns]`
 header, so a selection mixes built-ins and custom columns in one ordered list
 (`columns = ["branch", "Ticket", "ci"]`). When `columns` is set it is exhaustive
 — only the listed columns render, so a custom column omitted from a non-empty
@@ -212,10 +226,6 @@ collides with it. The gutter type indicator always shows.
 Listing a column requests it but does not force it on: a column gated off
 elsewhere stays hidden — `ci` needs `--full`, `summary` needs
 `[commit.generation]` — so `columns` only narrows which columns may appear.
-
-Narrowing the selection narrows the work: `wt list` skips git commands feeding
-only hidden columns, so a branch/path-only view runs no `git status`, diffs, or
-ahead/behind walks. The picker still fetches CI for its previews regardless.
 
 The selection drives the rendered table and the `wt switch` picker.
 `wt list --format json` ignores it, always emitting every field, built-in and

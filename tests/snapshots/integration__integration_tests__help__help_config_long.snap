@@ -226,9 +226,23 @@ Setting it statically in the config file uses the same key and works, but is not
 the intended use: it pins one layout over a table that otherwise adapts to
 [2m--full[0m and terminal width.
 
-Valid built-in names are [2mbranch[0m, [2mstatus[0m, [2mworking-diff[0m, [2mahead-behind[0m,
-[2mbranch-diff[0m, [2msummary[0m, [2mupstream[0m, [2mci[0m, [2mpath[0m, [2murl[0m, [2mcommit[0m, [2mage[0m, and
-[2mmessage[0m. A custom column is named by its [2m[list.custom-columns][0m
+Valid built-in names:
+
+- [2mbranch[0m — The branch name
+- [2mstatus[0m — Git status symbols, plus any user-defined status
+- [2mworking-diff[0m — Uncommitted line changes against [2mHEAD[0m (header [2mHEAD±[0m)
+- [2mahead-behind[0m — Commits ahead of and behind the default branch (header [2mmain↕[0m)
+- [2mbranch-diff[0m — Line changes against the default branch (header [2mmain…±[0m)
+- [2msummary[0m — An LLM-generated summary of the branch
+- [2mupstream[0m — The upstream tracking branch
+- [2mci[0m — CI status of the head commit
+- [2mpath[0m — The worktree's path
+- [2murl[0m — Dev-server URL from the [2m[list] url[0m template
+- [2mcommit[0m — The head commit's short hash
+- [2mage[0m — Time since the last commit
+- [2mmessage[0m — The head commit's subject
+
+A custom column is named by its [2m[list.custom-columns][0m
 header, so a selection mixes built-ins and custom columns in one ordered list
 ([2mcolumns = ["branch", "Ticket", "ci"][0m). When [2mcolumns[0m is set it is exhaustive
 — only the listed columns render, so a custom column omitted from a non-empty
@@ -239,10 +253,6 @@ collides with it. The gutter type indicator always shows.
 Listing a column requests it but does not force it on: a column gated off
 elsewhere stays hidden — [2mci[0m needs [2m--full[0m, [2msummary[0m needs
 [2m[commit.generation][0m — so [2mcolumns[0m only narrows which columns may appear.
-
-Narrowing the selection narrows the work: [2mwt list[0m skips git commands feeding
-only hidden columns, so a branch/path-only view runs no [2mgit status[0m, diffs, or
-ahead/behind walks. The picker still fetches CI for its previews regardless.
 
 The selection drives the rendered table and the [2mwt switch[0m picker.
 [2mwt list --format json[0m ignores it, always emitting every field, built-in and

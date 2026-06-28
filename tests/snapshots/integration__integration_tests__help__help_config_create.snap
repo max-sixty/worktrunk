@@ -178,9 +178,23 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# the intended use: it pins one layout over a table that otherwise adapts to[0m
 [107m [0m [2m# `--full` and terminal width.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Valid built-in names are `branch`, `status`, `working-diff`, `ahead-behind`,[0m
-[107m [0m [2m# `branch-diff`, `summary`, `upstream`, `ci`, `path`, `url`, `commit`, `age`, and[0m
-[107m [0m [2m# `message`. A custom column (#custom-columns) is named by its `[list.custom-columns]`[0m
+[107m [0m [2m# Valid built-in names:[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# - `branch` — The branch name[0m
+[107m [0m [2m# - `status` — Git status symbols, plus any user-defined status[0m
+[107m [0m [2m# - `working-diff` — Uncommitted line changes against `HEAD` (header `HEAD±`)[0m
+[107m [0m [2m# - `ahead-behind` — Commits ahead of and behind the default branch (header `main↕`)[0m
+[107m [0m [2m# - `branch-diff` — Line changes against the default branch (header `main…±`)[0m
+[107m [0m [2m# - `summary` — An LLM-generated summary of the branch[0m
+[107m [0m [2m# - `upstream` — The upstream tracking branch[0m
+[107m [0m [2m# - `ci` — CI status of the head commit[0m
+[107m [0m [2m# - `path` — The worktree's path[0m
+[107m [0m [2m# - `url` — Dev-server URL from the `[list] url` template[0m
+[107m [0m [2m# - `commit` — The head commit's short hash[0m
+[107m [0m [2m# - `age` — Time since the last commit[0m
+[107m [0m [2m# - `message` — The head commit's subject[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# A custom column (#custom-columns) is named by its `[list.custom-columns]`[0m
 [107m [0m [2m# header, so a selection mixes built-ins and custom columns in one ordered list[0m
 [107m [0m [2m# (`columns = ["branch", "Ticket", "ci"]`). When `columns` is set it is exhaustive[0m
 [107m [0m [2m# — only the listed columns render, so a custom column omitted from a non-empty[0m
@@ -191,10 +205,6 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# Listing a column requests it but does not force it on: a column gated off[0m
 [107m [0m [2m# elsewhere stays hidden — `ci` needs `--full`, `summary` needs[0m
 [107m [0m [2m# `[commit.generation]` — so `columns` only narrows which columns may appear.[0m
-[107m [0m [2m#[0m
-[107m [0m [2m# Narrowing the selection narrows the work: `wt list` skips git commands feeding[0m
-[107m [0m [2m# only hidden columns, so a branch/path-only view runs no `git status`, diffs, or[0m
-[107m [0m [2m# ahead/behind walks. The picker still fetches CI for its previews regardless.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# The selection drives the rendered table and the `wt switch` picker.[0m
 [107m [0m [2m# `wt list --format json` ignores it, always emitting every field, built-in and[0m
