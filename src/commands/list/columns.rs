@@ -110,7 +110,7 @@ impl ColumnKind {
     ///
     /// The single source of the column→task relationship, in both directions:
     /// [`required_tasks_for_render`] unions it over the rendered columns to
-    /// decide which tasks `wt list` runs at all, and [`ColumnKind::renders_given_skipped`]
+    /// decide which tasks `wt list` runs at all, and [`ColumnKind::renders_given_run`]
     /// reads it to hide a column whose tasks were skipped. So a narrowed view
     /// does less git work rather than computing cells it then hides.
     ///
@@ -162,20 +162,18 @@ impl ColumnKind {
         }
     }
 
-    /// Whether this column can still render given a set of skipped tasks.
+    /// Whether this column renders, given the set of tasks that will run.
     ///
-    /// A column renders unless *every* task it consumes was skipped: an
-    /// identity column (Gutter, Branch, custom, …) consumes nothing and always
-    /// renders; a single-task column hides exactly when its task is skipped;
-    /// `Status` keeps rendering while any of its status signals still computes.
+    /// A column renders when it consumes no task (identity columns, Gutter,
+    /// custom — always shown) or at least one of its tasks is in the run set.
     /// The layout filter applies this to every built-in, dropping any whose
-    /// tasks were all skipped: a column gated off (`--full`, a missing
-    /// template/LLM), or — under a `[list] columns` selection — an unselected
-    /// column (whose tasks are pruned too, though the separate selection filter
-    /// also removes it).
-    pub fn renders_given_skipped(self, skip: &std::collections::HashSet<TaskKind>) -> bool {
+    /// tasks were all left out of the plan: a column gated off (`--full`, a
+    /// missing template/LLM), or — under a `[list] columns` selection — an
+    /// unselected column (whose tasks aren't planned either, though the separate
+    /// selection filter also removes it).
+    pub fn renders_given_run(self, run: &std::collections::HashSet<TaskKind>) -> bool {
         let required = self.required_tasks();
-        required.is_empty() || required.iter().any(|task| !skip.contains(task))
+        required.is_empty() || required.iter().any(|task| run.contains(task))
     }
 }
 
@@ -185,6 +183,16 @@ impl ColumnKind {
 /// consume no background task, so they never change the task set.
 pub fn all_columns() -> impl Iterator<Item = ColumnKind> {
     COLUMN_SPECS.iter().map(|spec| spec.kind)
+}
+
+/// Every background task — the full plan, equivalent to rendering every column
+/// with all gates open. Test-only: it's the "render everything" plan the
+/// picker's single-row layout tests pass. Production `wt list` and statusline
+/// derive their plan from the columns they actually show (no blanket "all").
+#[cfg(test)]
+pub fn all_tasks() -> std::collections::HashSet<TaskKind> {
+    use strum::IntoEnumIterator;
+    TaskKind::iter().collect()
 }
 
 /// Gates that hide a column independent of the `[list] columns` selection — the
@@ -390,34 +398,35 @@ mod tests {
     }
 
     #[test]
-    fn test_renders_given_skipped() {
-        // The layout filter hides a column iff *every* task it consumes was
-        // skipped. With nothing skipped, every column renders.
-        let none: HashSet<TaskKind> = HashSet::new();
+    fn test_renders_given_run() {
+        // The layout filter renders a column iff at least one of its tasks is in
+        // the run set (or it consumes none). With every task running, every
+        // column renders.
+        let all = all_tasks();
         for spec in COLUMN_SPECS {
             assert!(
-                spec.kind.renders_given_skipped(&none),
-                "{:?} should render when no task is skipped",
+                spec.kind.renders_given_run(&all),
+                "{:?} should render when every task runs",
                 spec.kind
             );
         }
 
-        // A single-task column hides exactly when its one task is skipped; an
-        // identity column (no task) is untouched.
-        let skip_ci: HashSet<TaskKind> = [TaskKind::CiStatus].into_iter().collect();
-        assert!(!ColumnKind::CiStatus.renders_given_skipped(&skip_ci));
-        assert!(ColumnKind::Branch.renders_given_skipped(&skip_ci));
-        assert!(ColumnKind::AheadBehind.renders_given_skipped(&skip_ci));
+        // Drop one gated task from the plan: only its own column stops
+        // rendering; identity columns (no task) are untouched.
+        let mut without_ci = all.clone();
+        without_ci.remove(&TaskKind::CiStatus);
+        assert!(!ColumnKind::CiStatus.renders_given_run(&without_ci));
+        assert!(ColumnKind::Branch.renders_given_run(&without_ci));
 
-        // Status keeps rendering while any of its many signals still computes,
-        // and drops only when all of them are skipped.
-        assert!(ColumnKind::Status.renders_given_skipped(&skip_ci));
-        let skip_all_status: HashSet<TaskKind> = ColumnKind::Status
-            .required_tasks()
-            .iter()
-            .copied()
-            .collect();
-        assert!(!ColumnKind::Status.renders_given_skipped(&skip_all_status));
+        // Status renders while any of its many signals is planned, and drops
+        // only when none of them is. CiStatus is not one of its signals.
+        let one_status_signal: HashSet<TaskKind> = [TaskKind::AheadBehind].into_iter().collect();
+        assert!(ColumnKind::Status.renders_given_run(&one_status_signal));
+        let no_status_signal: HashSet<TaskKind> = [TaskKind::CiStatus].into_iter().collect();
+        assert!(!ColumnKind::Status.renders_given_run(&no_status_signal));
+
+        // An identity column renders even with an empty run set.
+        assert!(ColumnKind::Branch.renders_given_run(&HashSet::new()));
     }
 
     #[test]

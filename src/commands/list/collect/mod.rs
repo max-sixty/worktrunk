@@ -290,7 +290,6 @@ use crossbeam_channel as chan;
 use dunce::canonicalize;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
-use strum::IntoEnumIterator;
 use worktrunk::git::{ErrorExt, LocalBranch, Repository, WorktreeInfo};
 use worktrunk::styling::{
     INFO_SYMBOL, eprintln, format_with_gutter, hint_message, warning_message,
@@ -400,17 +399,22 @@ fn print_buffered_table(header: &str, rows: &[String], summary: &str) {
 ///
 /// This is operation parameters for a single `wt list` invocation, not a cache.
 /// For cached repo data, see Repository's global cache.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct CollectOptions {
-    /// Tasks to skip (not compute). Empty set means compute everything.
+    /// The background tasks to run, derived from the columns that will render
+    /// (`columns::required_tasks_for_render`). `collect` plans this once from the
+    /// `[list] columns` selection and the gates; nothing hand-writes a task set.
     ///
-    /// This controls both:
-    /// - Work item generation (in `work_items_for_worktree`/`work_items_for_branch`)
-    /// - Column visibility (the layout filter calls `ColumnKind::renders_given_skipped`)
+    /// This drives both work-item generation (the spawn loops in
+    /// `work_items_for_worktree` / `work_items_for_branch`) and column visibility
+    /// (the layout filter calls `ColumnKind::renders_given_run`). A task runs iff
+    /// some rendered column needs it, so an unrendered column's tasks never run.
     ///
-    /// It is the complement of the planning decision in `collect`: the union of
-    /// the tasks the rendered columns need, inverted. See `required_tasks_for_render`.
-    pub skip_tasks: std::collections::HashSet<TaskKind>,
+    /// There is no blanket default: `collect` plans this from the `[list] columns`
+    /// selection, and single-item callers (statusline) declare their columns via
+    /// [`CollectOptions::for_columns`]. A caller states which columns it renders;
+    /// the tasks follow.
+    pub tasks: std::collections::HashSet<TaskKind>,
 
     /// URL template from project config (e.g., "http://localhost:{{ branch | hash_port }}").
     /// Expanded per-item in task spawning (post-skeleton) to minimize time-to-skeleton.
@@ -448,6 +452,31 @@ pub struct CollectOptions {
     /// `HEAD±`. Set by `wt list --full` and `wt statusline`; consumed
     /// in `tasks.rs` where the cost/cutover rationale lives.
     pub include_untracked_in_working_diff: bool,
+}
+
+impl CollectOptions {
+    /// Build options whose task plan is derived from the columns that will
+    /// render under `gates` — the canonical "declare the columns, get the tasks"
+    /// entry, so nothing hand-writes a task set. The context fields (url
+    /// template, llm command, snapshot, …) start empty; callers set what they
+    /// need (e.g. `CollectOptions { url_template, ..for_columns(cols, &gates) }`).
+    ///
+    /// `collect` builds its options directly — it has the context fields already
+    /// resolved — so this is for the single-item callers (statusline).
+    pub fn for_columns(
+        rendered: impl IntoIterator<Item = super::columns::ColumnKind>,
+        gates: &super::columns::ColumnGates,
+    ) -> Self {
+        Self {
+            tasks: super::columns::required_tasks_for_render(rendered, gates),
+            url_template: None,
+            llm_command: None,
+            default_branch: None,
+            integration_targets: None,
+            snapshot: None,
+            include_untracked_in_working_diff: false,
+        }
+    }
 }
 
 fn worktree_branch_set(worktrees: &[WorktreeInfo]) -> HashSet<&str> {
@@ -1138,15 +1167,15 @@ pub fn collect(
 
     // Decide, in one place, which background tasks to run: the union of the
     // tasks every column the table will render needs. This is the canonical
-    // "what do we need" stage — `effective_skip_tasks` is just its complement,
-    // and the spawn loop fires exactly the tasks that survive here.
+    // "what do we need" stage — the spawn loop fires exactly this set, and the
+    // layout filter renders exactly the columns it feeds.
     //
     // The rendered set is the `[list] columns` selection for the table; the
     // picker and JSON ignore it (`all_columns`) because their consumers — the
     // picker's preview tabs, JSON's every-field contract in `src/cli/mod.rs` —
     // need the full data set, not just what renders. The gates (`--full`,
-    // `[list] summary` + `[commit.generation]`, a url template) then hide a
-    // column and drop its tasks regardless of selection.
+    // `[list] summary` + `[commit.generation]`, a url template) then drop a
+    // column and its tasks regardless of selection.
     //
     // So a branch/path `ls` alias over many dirty worktrees runs no `git status`
     // / diffs / ahead-behind walks (#3133), while a column gated off elsewhere
@@ -1159,14 +1188,11 @@ pub fn collect(
     };
     let prune_to_selection =
         render_table && progressive_handler.is_none() && !selected_columns.is_empty();
-    let needed_tasks = if prune_to_selection {
+    let tasks = if prune_to_selection {
         super::columns::required_tasks_for_render(selected_columns.iter().copied(), &gates)
     } else {
         super::columns::required_tasks_for_render(super::columns::all_columns(), &gates)
     };
-    let effective_skip_tasks: HashSet<TaskKind> = TaskKind::iter()
-        .filter(|kind| !needed_tasks.contains(kind))
-        .collect();
 
     // The picker primes its CI cells from the local cache so the column paints
     // instantly, then the live `CiStatus` task (which the picker keeps — see
@@ -1183,7 +1209,8 @@ pub fn collect(
     // the skeleton can't size the column without it). Whatever fetch wrote a
     // cache entry also ratcheted this maximum, so the hint already covers any
     // number the prime above reads back.
-    let max_pr_number = (!effective_skip_tasks.contains(&TaskKind::CiStatus))
+    let max_pr_number = tasks
+        .contains(&TaskKind::CiStatus)
         .then(|| super::ci_status::MaxPrNumber::read(repo))
         .flatten();
 
@@ -1192,7 +1219,7 @@ pub fn collect(
     // terminal — the rest belongs to the preview pane.
     let layout = super::layout::calculate_layout_with_width(
         &all_items,
-        &effective_skip_tasks,
+        &tasks,
         list_width
             .or_else(crate::display::terminal_width)
             .unwrap_or(usize::MAX),
@@ -1209,12 +1236,12 @@ pub fn collect(
     // keeps rows untruncated rather than wrapping at a guessed width
     let max_width = crate::display::terminal_width().unwrap_or(usize::MAX);
 
-    // Create collection options from skip set. `integration_targets` is
-    // patched in after the parallel phase below extracts it — at this
+    // Create collection options from the planned task set. `integration_targets`
+    // is patched in after the parallel phase below extracts it — at this
     // point we haven't yet resolved it, but task spawning doesn't happen
     // until line 1090+ so late population is safe.
     let mut options = CollectOptions {
-        skip_tasks: effective_skip_tasks,
+        tasks,
         url_template: url_template.clone(),
         llm_command,
         default_branch: default_branch.clone(),
@@ -2044,8 +2071,9 @@ pub fn populate_item(
     // Populate default_branch / snapshot / integration_targets if the
     // caller didn't. Tasks read these through `TaskContext`; `None`
     // values tell them to skip (see collect()'s stale-default-branch
-    // path). Single-item callers like statusline pass
-    // `CollectOptions::default()` and expect the repo-derived values.
+    // path). Single-item callers like statusline build options via
+    // `CollectOptions::for_columns` (these fields start `None`) and expect
+    // the repo-derived values.
     if options.default_branch.is_none() {
         options.default_branch = repo.default_branch();
     }
@@ -2343,17 +2371,16 @@ mod tests {
     fn test_render_reveal_picks_renderer_per_row() {
         use super::super::layout::calculate_layout_with_width;
         use super::super::model::ListItem;
-        use std::collections::HashSet;
         use std::path::Path;
 
         let items = vec![
             ListItem::new_branch("aaa".into(), "row-zero".into()),
             ListItem::new_branch("bbb".into(), "row-one".into()),
         ];
-        let skip_tasks: HashSet<TaskKind> = HashSet::new();
+        let tasks = super::super::columns::all_tasks();
         let layout = calculate_layout_with_width(
             &items,
-            &skip_tasks,
+            &tasks,
             80,
             Path::new("/tmp"),
             None,

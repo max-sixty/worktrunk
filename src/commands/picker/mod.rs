@@ -2854,7 +2854,7 @@ pub mod tests {
         *remover.layout_slot.lock().unwrap() =
             Some(crate::commands::list::layout::calculate_layout_with_width(
                 std::slice::from_ref(&*item_arc),
-                &std::collections::HashSet::new(),
+                &crate::commands::list::columns::all_tasks(),
                 80,
                 Path::new("/test"),
                 None,
@@ -3638,7 +3638,7 @@ pub mod tests {
         }));
         let layout = crate::commands::list::layout::calculate_layout_with_width(
             std::slice::from_ref(&worktree_item),
-            &std::collections::HashSet::new(),
+            &crate::commands::list::columns::all_tasks(),
             80,
             Path::new("/test"),
             None,

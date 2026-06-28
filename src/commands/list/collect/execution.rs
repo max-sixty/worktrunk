@@ -13,7 +13,7 @@
 //! gate's required fields on `ListItem` / `WorktreeData` as they become
 //! `Some`. Tasks that *will* run are written by the drain as their results
 //! arrive. Tasks that will *not* run (stale branches skip expensive tasks,
-//! unborn branches skip commit-dependent tasks, `--skip-tasks` filters,
+//! unborn branches skip commit-dependent tasks, the column plan excludes them,
 //! branches with no worktree have no worktree-only tasks) have their fields
 //! seeded here via [`seed_skipped_task_defaults`] with conservative defaults
 //! — otherwise the fields would stay `None` forever and their gate would
@@ -154,7 +154,7 @@ impl ExpectedResults {
 ///
 /// `refresh_status_symbols` keeps gates at `None` while their inputs are
 /// unloaded, which renders as the `·` placeholder. For tasks that will
-/// *never* run (stale branch, user `--skip-tasks`, unborn item missing
+/// *never* run (stale branch, a task no rendered column needs, unborn item missing
 /// commit-dependent tasks, prunable worktree), seeding a conservative
 /// default up front lets the gate resolve normally instead of showing `·`
 /// forever.
@@ -328,9 +328,9 @@ pub fn work_items_for_worktree(
         return vec![];
     }
 
-    let skip = &options.skip_tasks;
+    let run = &options.tasks;
 
-    let include_url = !skip.contains(&TaskKind::UrlStatus);
+    let include_url = run.contains(&TaskKind::UrlStatus);
 
     // Expand URL template for this item (only if URL status is enabled).
     let item_url = if include_url {
@@ -400,9 +400,7 @@ pub fn work_items_for_worktree(
         TaskKind::WouldMergeAdd,
         TaskKind::SummaryGenerate,
     ] {
-        let will_skip = skip.contains(&kind)
-            || (!has_commits && COMMIT_TASKS.contains(&kind))
-            || (kind == TaskKind::SummaryGenerate && options.llm_command.is_none());
+        let will_skip = !run.contains(&kind) || (!has_commits && COMMIT_TASKS.contains(&kind));
         if will_skip {
             seed_skipped_task_defaults(item, kind);
             continue;
@@ -469,7 +467,7 @@ pub fn work_items_for_branch(
         is_remote,
     } = branch;
 
-    let skip = &options.skip_tasks;
+    let run = &options.tasks;
 
     let branch_ref = if is_remote {
         BranchRef::remote_branch(branch_name, commit_sha)
@@ -505,9 +503,7 @@ pub fn work_items_for_branch(
         TaskKind::WouldMergeAdd,
         TaskKind::SummaryGenerate,
     ] {
-        let will_skip = skip.contains(&kind)
-            || (kind == TaskKind::SummaryGenerate && options.llm_command.is_none());
-        if will_skip {
+        if !run.contains(&kind) {
             seed_skipped_task_defaults(item, kind);
             continue;
         }
@@ -544,7 +540,6 @@ pub fn work_items_for_branch(
 mod tests {
     use super::*;
     use crate::commands::list::collect::build_worktree_item;
-    use std::collections::HashSet;
 
     #[test]
     fn test_skip_url_status_suppresses_placeholder_and_task() {
@@ -560,11 +555,17 @@ mod tests {
             prunable: None,
         };
 
-        let skip_tasks: HashSet<TaskKind> = [TaskKind::UrlStatus].into_iter().collect();
+        // The `url` column isn't rendered (gate off), so UrlStatus isn't planned
+        // — even though a template is configured.
+        let gates = crate::commands::list::columns::ColumnGates {
+            show_full: true,
+            summary_enabled: true,
+            has_llm_command: true,
+            has_url_template: false,
+        };
         let options = CollectOptions {
-            skip_tasks,
             url_template: Some("http://localhost/{{ branch }}".to_string()),
-            ..Default::default()
+            ..CollectOptions::for_columns(crate::commands::list::columns::all_columns(), &gates)
         };
 
         let expected_results = Arc::new(ExpectedResults::default());
@@ -588,33 +589,10 @@ mod tests {
         assert!(items.iter().all(|w| w.ctx.item_url.is_none()));
     }
 
-    #[test]
-    fn test_no_llm_command_skips_summary_generate() {
-        let test = worktrunk::testing::TestRepo::new();
-        let repo = Repository::at(test.path()).expect("repo");
-        let wt = WorktreeInfo {
-            path: test.path().to_path_buf(),
-            head: "deadbeef".to_string(),
-            branch: Some("main".to_string()),
-            bare: false,
-            detached: false,
-            locked: None,
-            prunable: None,
-        };
-
-        // No llm_command, no skip_tasks — SummaryGenerate should still be skipped
-        let options = CollectOptions::default();
-
-        let expected_results = Arc::new(ExpectedResults::default());
-        let (tx, _rx) = chan::unbounded::<Result<TaskResult, TaskError>>();
-        let mut item = build_worktree_item(&wt, true, false, false);
-
-        let items =
-            work_items_for_worktree(&repo, &wt, 0, &options, &expected_results, &tx, &mut item);
-
-        assert!(
-            !items.iter().any(|w| w.kind == TaskKind::SummaryGenerate),
-            "SummaryGenerate should be skipped when llm_command is None"
-        );
-    }
+    // No spawn-level test for "no LLM → no Summary": the column plan is the
+    // single authority, and `test_required_tasks_for_render` pins that the gate
+    // drops SummaryGenerate when no LLM is configured. The spawn loop's "skip
+    // what isn't planned" rule is covered by the UrlStatus test above. If a
+    // caller plans Summary without a command anyway, `SummaryGenerateTask`
+    // returns a clean error rather than misbehaving (tasks.rs).
 }
