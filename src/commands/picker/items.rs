@@ -609,13 +609,24 @@ impl LocalTabs {
     /// `upstream`) follow the live [`LocalContent`] signals — available while
     /// loading, dim once their diff is known empty; `upstream` also requires the
     /// synchronous `has_upstream` floor (no tracking ref → dim with no loading
-    /// window). `summary` follows the process-wide `[commit.generation]` flag.
+    /// window). `summary` requires the process-wide `[commit.generation]` flag
+    /// *and* something to summarize: its pane is generated from the combined diff
+    /// (`crate::summary::compute_combined_diff` = commits ahead of the default +
+    /// working-tree changes), so it reuses the `branch_diff` and `working_tree`
+    /// signals that gate tabs 3 and 1 — dimming in concert with them once both
+    /// are known empty, not only when summaries are disabled. Like tab 3,
+    /// `branch_diff` measures against the upstream-aware comparison base while the
+    /// summary pane diffs the local default, so a fork whose local default lags
+    /// upstream can hold the number a step out of sync with the pane; the common
+    /// case (local default current) matches.
     fn worktree(content: LocalContent, has_upstream: bool, summaries_enabled: bool) -> Self {
+        let working_tree = content.working_tree.unwrap_or(true);
+        let branch_diff = content.branch_diff.unwrap_or(true);
         Self {
-            working_tree: content.working_tree.unwrap_or(true),
-            branch_diff: content.branch_diff.unwrap_or(true),
+            working_tree,
+            branch_diff,
             upstream: has_upstream && content.upstream_diverged.unwrap_or(true),
-            summary: summaries_enabled,
+            summary: summaries_enabled && (working_tree || branch_diff),
         }
     }
 }
@@ -634,8 +645,11 @@ impl LocalTabs {
 ///   upstream), the same loading-then-dim shape as the `pr` tab. `upstream` also
 ///   carries a synchronous `has_upstream` floor (`Repository::local_branches()`),
 ///   so a branch with no tracking ref dims immediately with no loading window.
-///   `summary` follows the process-wide `[commit.generation]` flag. A `--prs` row
-///   has no local checkout, so all four are empty.
+///   `summary` requires the process-wide `[commit.generation]` flag *and* a
+///   non-empty combined diff — its pane's content source — so it reuses the
+///   `branch_diff` / `working_tree` signals and dims alongside the "no changes
+///   to summarize" pane, not only when summaries are disabled. A `--prs` row has
+///   no local checkout, so all four are empty.
 /// - The PR-backed tabs: `pr` and `comments` are available together, gated by
 ///   `has_pr`. On a worktree row that's the live status slot (primed from the CI
 ///   cache, then refreshed by the `CiStatus` task — see
@@ -923,8 +937,11 @@ impl PickerRow {
         // `pr` (`pr_tab_available`) read the row's live slots, refreshed as the
         // list pipeline / `CiStatus` task stream in, so they can change between
         // selections — a tab dims once its diff (or PR) is known empty, and stays
-        // available while still loading. Both reads are cheap (no body clone); the
-        // panes themselves are rendered once and memoized.
+        // available while still loading. The `summary` tab rides the same
+        // `local_content` signal: its content source is the combined diff, so it
+        // dims once both `branch_diff` and `working_tree` are known empty. Both
+        // reads are cheap (no body clone); the panes themselves are rendered once
+        // and memoized.
         let avail = match &self.local {
             Some(local) => TabAvailability::worktree(
                 self.local_content(),
@@ -1888,6 +1905,55 @@ mod tests {
         assert!(
             !has(TabAvailability::worktree(CONTENT_FULL, false, false, false)).2,
             "no upstream ref → dim despite a 'diverged' signal"
+        );
+    }
+
+    /// The summary tab needs both the process-wide `[commit.generation]` flag and
+    /// something to summarize — its content is the combined diff (`branch_diff` or
+    /// `working_tree`), so it dims in lockstep with the "no changes to summarize"
+    /// pane rather than only when summaries are disabled. Like the diff tabs, it
+    /// stays available while either signal is still loading.
+    #[test]
+    fn summary_tab_tracks_combined_diff_content() {
+        let summary = |content, summaries_enabled| {
+            TabAvailability::worktree(content, true, summaries_enabled, false).summary
+        };
+
+        // Summaries disabled dims the tab regardless of content.
+        assert!(!summary(CONTENT_FULL, false), "disabled → dim");
+
+        // Enabled + content in either diff → available.
+        assert!(summary(CONTENT_FULL, true), "enabled + content → available");
+
+        // Enabled but both diffs *known* empty (clean tree, no commits ahead) →
+        // dim, matching the "has no changes to summarize" pane. This is the bug
+        // the gate fixes: previously the tab stayed solid here.
+        assert!(
+            !summary(CONTENT_EMPTY, true),
+            "enabled + nothing to summarize → dim"
+        );
+
+        // Only one diff has content → still something to summarize → available.
+        let working_only = LocalContent {
+            working_tree: Some(true),
+            branch_diff: Some(false),
+            upstream_diverged: Some(false),
+        };
+        let branch_only = LocalContent {
+            working_tree: Some(false),
+            branch_diff: Some(true),
+            upstream_diverged: Some(false),
+        };
+        assert!(
+            summary(working_only, true),
+            "uncommitted changes → available"
+        );
+        assert!(summary(branch_only, true), "commits ahead → available");
+
+        // Still loading (both unknown) → available; don't dim before we know.
+        assert!(
+            summary(LocalContent::default(), true),
+            "loading → available"
         );
     }
 
