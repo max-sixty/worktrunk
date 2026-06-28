@@ -1,5 +1,8 @@
 //! Persistent cache for picker preview content, keyed by SHA + dimensions.
 //!
+//! This is the on-disk tier for three of the modes; the in-memory tier above it
+//! and the system-wide invalidation rules live in [`super::preview_orchestrator`].
+//!
 //! Three of the picker's preview modes are deterministic functions of git
 //! object SHAs at a given terminal width: Log on `(branch_head_sha)`,
 //! BranchDiff on `(default_head_sha, branch_head_sha)`, and UpstreamDiff on

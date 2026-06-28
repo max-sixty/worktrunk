@@ -113,7 +113,9 @@ fn anchor_faint_under_selection(
 pub(super) type PreviewCacheKey = (String, PreviewMode);
 
 /// Cache for pre-computed previews, keyed by [`PreviewCacheKey`].
-/// Shared across all PickerRows for background pre-computation.
+/// Shared across all PickerRows for background pre-computation. This is the
+/// in-memory tier and the only one `preview()` reads; the disk tiers and the
+/// invalidation rules are mapped in [`super::preview_orchestrator`].
 pub(super) type PreviewCache = Arc<DashMap<PreviewCacheKey, String>>;
 
 /// Per-row live `pr_status` for the `pr` tab, shared with the collect handler.
