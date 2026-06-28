@@ -245,6 +245,17 @@ pub(super) struct RepoCache {
     /// branch row peels the same default-branch tip to its tree. Resolved via
     /// [`Repository::commit_to_tree_sha`].
     pub(super) commit_tree: DashMap<String, String>,
+    /// In-memory merge-tree outcome cache: (a_sha, b_sha) -> outcome.
+    /// `git merge-tree --write-tree` is the costliest op in `wt list`, and the
+    /// conflict probe (`has_merge_conflicts_by_sha`) and the integration probe
+    /// (`merge_integration_probe_by_sha` via `would_merge_add_to_target`) run
+    /// the identical `(target, branch)` merge per row for two different
+    /// answers. Their persistent caches (`merge-tree-conflicts` vs
+    /// `merge-add-probe`) are keyed separately, so a cold run would spawn the
+    /// subprocess twice; this front collapses both to one via the entry-lock
+    /// pattern (same as [`Self::merge_base`]). Keys are commit SHAs in call
+    /// order — see `Repository::merge_tree_outcome`.
+    pub(super) merge_tree: DashMap<(String, String), integration::MergeTreeOutcome>,
     /// Effective remote URLs: remote_name -> effective URL (with `url.insteadOf` applied).
     /// Separate from `all_config` because `git remote get-url` applies
     /// `url.insteadOf` rewrites that aren't visible in raw config.

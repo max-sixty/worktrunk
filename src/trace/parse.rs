@@ -14,7 +14,9 @@
 //!
 //! `seq` (a per-command counter, command records only) is ignored here — no
 //! consumer needs it; it correlates a record with its raw output block in
-//! `subprocess.log`.
+//! `subprocess.log`. `stdin` (bool, command records, omitted → `false`) flags a
+//! command that consumed stdin the `cmd` string doesn't capture; the cache
+//! analysis skips such commands from dedup.
 //!
 //! `trace.jsonl` also carries free-form `log::*` / `tracing::*` lines as
 //! `{"message":...}` (no `kind`); those — and the `$ cmd` start echoes — are
@@ -38,6 +40,12 @@ pub enum TraceEntryKind {
         duration: Duration,
         /// Command result
         result: TraceResult,
+        /// Whether the command consumed stdin the `command` string doesn't
+        /// capture (a `stdin_bytes` buffer or an upstream pipe). The cache
+        /// analysis skips these — two runs with identical `(command, context)`
+        /// may be entirely different work. From the `stdin` JSON field
+        /// (omitted → `false`).
+        reads_stdin: bool,
     },
     /// An instant event (milestone marker with no duration)
     Instant {
@@ -121,6 +129,12 @@ fn parse_line(line: &str) -> Option<TraceEntry> {
             .map(Duration::from_micros)
     };
 
+    // `stdin` is omitted from records that didn't read it → `false`.
+    let reads_stdin = obj
+        .get("stdin")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+
     let kind = match obj.get("kind")?.as_str()? {
         "cmd_completed" => TraceEntryKind::Command {
             command: obj.get("cmd")?.as_str()?.to_string(),
@@ -128,6 +142,7 @@ fn parse_line(line: &str) -> Option<TraceEntry> {
             result: TraceResult::Completed {
                 success: obj.get("ok")?.as_bool()?,
             },
+            reads_stdin,
         },
         "cmd_errored" => TraceEntryKind::Command {
             command: obj.get("cmd")?.as_str()?.to_string(),
@@ -139,6 +154,7 @@ fn parse_line(line: &str) -> Option<TraceEntry> {
                     .unwrap_or_default()
                     .to_string(),
             },
+            reads_stdin,
         },
         "instant" => TraceEntryKind::Instant {
             name: obj.get("event")?.as_str()?.to_string(),
@@ -218,6 +234,32 @@ mod tests {
             &entry.kind,
             TraceEntryKind::Command {
                 result: TraceResult::Completed { success: false },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_parse_reads_stdin() {
+        // `stdin:true` is carried onto the Command; omitted → false.
+        let with = parse_line(
+            r#"{"kind":"cmd_completed","cmd":"git patch-id","dur_us":640,"ok":true,"stdin":true}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            with.kind,
+            TraceEntryKind::Command {
+                reads_stdin: true,
+                ..
+            }
+        ));
+        let without =
+            parse_line(r#"{"kind":"cmd_completed","cmd":"git status","dur_us":10,"ok":true}"#)
+                .unwrap();
+        assert!(matches!(
+            without.kind,
+            TraceEntryKind::Command {
+                reads_stdin: false,
                 ..
             }
         ));

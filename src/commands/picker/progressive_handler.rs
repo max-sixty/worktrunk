@@ -54,9 +54,10 @@ const RENDER_THROTTLE: Duration = Duration::from_millis(16);
 use super::items::{
     HeaderLoading, HeaderSkimItem, LayoutSlot, LocalCheckout, LocalContent, LocalContentSlot,
     MorphHandle, PickerRow, PrStatusSlot, PreviewCache, RowShortcutData, RowUrl, ShortcutTable,
-    worktree_output_token,
+    pr_presence, pr_status_pane_eq, worktree_output_token,
 };
 use super::preview::PreviewMode;
+use super::preview_notify::PrStatusDelta;
 use super::preview_orchestrator::PreviewOrchestrator;
 use crate::commands::list::collect::PickerProgressHandler;
 use crate::commands::list::model::{BranchScope, ItemKind, ListItem};
@@ -194,6 +195,17 @@ impl PickerHandler {
             return;
         };
         let Some(pr_ref) = status.number else { return };
+        // Skip the expired-cache prime: `populate_from_cache` carries an
+        // unbounded-stale `updated_at` on a `is_priming` placeholder, and since
+        // the fetch is deduped by PR number, keying off it here would lock the
+        // comments cache to a wrong signature for the whole session (a stale
+        // disk hit, or a mis-keyed write) — the live `CiStatus` fetch
+        // (`is_priming: false`, within-TTL/fresh `updated_at`) re-runs this and
+        // spawns with the right key. A valid (within-TTL) prime is not priming,
+        // so it still warms the tab at skeleton.
+        if status.is_priming {
+            return;
+        }
         let Some(slots) = self.comments_fetched.get() else {
             return;
         };
@@ -213,6 +225,7 @@ impl PickerHandler {
             &self.orchestrator,
             branch_name.to_string(),
             number as u32,
+            status.updated_at.clone(),
             self.preview_dims.0,
         );
     }
@@ -500,13 +513,29 @@ impl PickerProgressHandler for PickerHandler {
         {
             *slot.lock().unwrap() = strip_osc8_hyperlinks(&rendered);
         }
-        // Mirror the row's current CI status into its live slot so the `pr`
-        // tab reflects the fetch as it lands. Cheap clone; `pr_status` is
-        // `None` until the CiStatus task reports, then `Some(..)`.
+        // Mirror the row's current CI status into its live slot so the `pr` /
+        // `comments` tabs reflect the fetch as it lands. Track change at the
+        // granularity each tab's body reads (see `PrStatusDelta`): `pane_changed`
+        // (any field the `pr` pane draws, ignoring the `is_priming` dim hint it
+        // doesn't) gates the slot write, the `pr` cache eviction, and the `pr`
+        // tab re-render; `presence_changed` (Loading/NoPr/HasPr) gates only the
+        // `comments` re-render. An unchanged-pane update touches nothing — a
+        // re-render would just reset the preview scroll.
+        let mut delta = PrStatusDelta {
+            pane_changed: false,
+            presence_changed: false,
+        };
         if let Some(slots) = self.pr_status_slots.get()
             && let Some(slot) = slots.get(idx)
         {
-            *slot.lock().unwrap() = item.pr_status.clone();
+            let mut slot = slot.lock().unwrap();
+            delta.pane_changed = !pr_status_pane_eq(&slot, &item.pr_status);
+            delta.presence_changed = pr_presence(&slot) != pr_presence(&item.pr_status);
+            if delta.pane_changed {
+                *slot = item.pr_status.clone();
+            }
+        }
+        if delta.pane_changed {
             // Drop the memoized `pr` pane for this row so the next `preview()`
             // re-renders from the status just mirrored — see
             // `PickerRow::render_pr_pane_cached`.
@@ -528,15 +557,20 @@ impl PickerProgressHandler for PickerHandler {
         self.maybe_spawn_comments(idx, item.branch_name(), &item.pr_status);
         // `request_render` sends `Event::Render`, which repaints the *list* row
         // (its CI/status cells just changed) but does NOT re-run the preview.
-        // The slots just mirrored — `pr_status` (the `pr` / `comments` panes) and
-        // `local_content` (the diff tabs' dim state) — feed the preview, so if
-        // this is the selected row also poke a `RunPreview` to re-render it:
-        // that's what flips its `pr` tab from "Fetching PR status…" to the
-        // resolved PR without a keystroke. Scoped to the selected row, so
-        // off-screen updates don't thrash the preview (see `PreviewNotifier`).
-        self.orchestrator
-            .notifier()
-            .notify_row_changed(item.branch_name());
+        // When the `pr` pane changed, poke a `RunPreview` so the selected row's
+        // `pr` / `comments` tab flips from "Fetching PR status…" to the resolved
+        // PR without a keystroke. The notifier scopes the poke to the selected
+        // row and to the visible tab's own change signal, so neither an
+        // off-screen update nor a CI fetch landing while the user scrolls a diff
+        // (or an unchanged `comments` thread) thrashes the preview — each would
+        // reset its scroll (see `PreviewNotifier`). The `local_content` mirror
+        // above feeds only the diff tabs' tab-bar dim, which refreshes on the
+        // next selection change or tab switch rather than re-running here.
+        if delta.pane_changed {
+            self.orchestrator
+                .notifier()
+                .notify_pr_status_changed(item.branch_name(), delta);
+        }
         self.request_render(false);
     }
 
@@ -784,13 +818,17 @@ mod tests {
     /// re-renders from the new status without a keystroke. This is the loop the
     /// orchestrator-fill path can't close — `on_update` isn't a cache fill, so it
     /// can't ride `PreviewOrchestrator::fill`'s notify; the poke is wired
-    /// separately here. Scoped to the selected row: an update for a row the
-    /// cursor isn't on repaints the list (`Event::Render`) but must not re-run
-    /// the visible preview. Fast producer-site guard for that wiring; the
-    /// end-to-end path is also covered by the PTY test
-    /// `test_switch_picker_pr_tab_auto_resolves_from_fetching`.
+    /// separately here. It re-runs only when the *visible* tab's body would
+    /// differ: an update for a row the cursor isn't on, while a diff tab shows,
+    /// for an unchanged status, or for an `is_priming`-only flip (which the
+    /// `pr` / `comments` panes don't draw) repaints the list (`Event::Render`)
+    /// but must not re-run the preview — a re-run resets its scroll. Fast
+    /// producer-site guard for that wiring; the end-to-end path is also covered
+    /// by the PTY test `test_switch_picker_pr_tab_auto_resolves_from_fetching`.
     #[test]
-    fn on_update_pokes_run_preview_for_the_selected_row() {
+    fn on_update_pokes_run_preview_only_when_the_visible_pane_changes() {
+        use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef, PrStatus};
+
         let (handler, _test, rx) = make_handler();
         // Publish skim's event sender (shared with the orchestrator's notifier,
         // as in production) so both the list redraw and the preview re-run land
@@ -806,9 +844,31 @@ mod tests {
         );
         let _ = rx.recv(); // drain the skeleton batch
 
-        // A live-status change for the row: CI reported "no PR".
-        let mut updated = ListItem::new_branch("aaa".into(), "feature".into());
-        updated.pr_status = Some(None);
+        // A worktree row carrying PR #7, with `is_priming` and `ci_status`
+        // controllable so the test can vary just one field at a time.
+        let row = |is_priming: bool, ci_status: CiStatus| {
+            let mut item = ListItem::new_branch("aaa".into(), "feature".into());
+            item.pr_status = Some(Some(PrStatus {
+                ci_status,
+                source: CiSource::PullRequest,
+                is_stale: false,
+                is_priming,
+                url: None,
+                number: Some(PrRef::pr(7)),
+                review_state: None,
+                title: None,
+                body: None,
+                author: None,
+                comment_count: None,
+                updated_at: None,
+            }));
+            item
+        };
+        let no_pr = || {
+            let mut item = ListItem::new_branch("aaa".into(), "feature".into());
+            item.pr_status = Some(None);
+            item
+        };
 
         let run_previews = |rx: &mut tokio::sync::mpsc::Receiver<Event>| {
             let mut n = 0;
@@ -819,28 +879,81 @@ mod tests {
             }
             n
         };
+        let await_tab = |mode| {
+            handler
+                .orchestrator
+                .notifier()
+                .note_awaiting("feature", mode)
+        };
 
-        // Cursor is on `feature`'s `pr` tab (still loading) → its CI update
-        // re-runs the preview.
-        handler
-            .orchestrator
-            .notifier()
-            .note_awaiting("feature", PreviewMode::Pr);
-        handler.on_update(0, "r".into(), &updated);
+        // Cursor on `feature`'s `pr` tab (still loading). The CI fetch lands as a
+        // cache-prime placeholder → the pane resolves, so it re-runs.
+        await_tab(PreviewMode::Pr);
+        handler.on_update(0, "r".into(), &row(true, CiStatus::Passed));
         assert!(
             run_previews(&mut render_rx) >= 1,
-            "the selected row's CI update re-runs its preview"
+            "the selected row's first CI report re-runs its pr tab"
         );
 
-        // Cursor is on a different row → `feature`'s update must not re-run the
-        // preview the cursor is showing (no thrash). `request_render`'s throttle
-        // may swallow the `Event::Render` too, but the `RunPreview` poke is
-        // unthrottled, so its absence is the meaningful signal.
+        // The live fetch overwrites the prime, clearing only `is_priming`. The
+        // pr pane never draws that hint, so the body is byte-identical — it must
+        // NOT re-run and reset the scroll of the PR body the user is reading.
+        await_tab(PreviewMode::Pr);
+        handler.on_update(0, "r".into(), &row(false, CiStatus::Passed));
+        assert_eq!(
+            run_previews(&mut render_rx),
+            0,
+            "an is_priming-only flip leaves the pr pane unchanged — no scroll reset"
+        );
+
+        // A real field the pane shows (the CI badge) changes → re-run.
+        await_tab(PreviewMode::Pr);
+        handler.on_update(0, "r".into(), &row(false, CiStatus::Failed));
+        assert_eq!(
+            run_previews(&mut render_rx),
+            1,
+            "a changed CI badge re-runs the pr tab"
+        );
+
+        // Cursor on the `comments` tab: a pr-field change that keeps the PR
+        // present (#7, badge flips back) leaves the branch-keyed thread
+        // unchanged, so it must NOT re-run a scrolled thread.
+        await_tab(PreviewMode::Comments);
+        handler.on_update(0, "r".into(), &row(false, CiStatus::Passed));
+        assert_eq!(
+            run_previews(&mut render_rx),
+            0,
+            "a pane-only change must not reset a scrolled comments thread"
+        );
+
+        // A presence change (#7 → no PR) flips the comments body, so it re-runs.
+        await_tab(PreviewMode::Comments);
+        handler.on_update(0, "r".into(), &no_pr());
+        assert_eq!(
+            run_previews(&mut render_rx),
+            1,
+            "a presence change re-runs the comments tab"
+        );
+
+        // Cursor on a diff tab: a real status change (a PR surfaces again) feeds
+        // the tab bar's dim but not the diff body, so it must NOT re-run.
+        await_tab(PreviewMode::WorkingTree);
+        handler.on_update(0, "r".into(), &row(false, CiStatus::Passed));
+        assert_eq!(
+            run_previews(&mut render_rx),
+            0,
+            "a CI update while a diff tab is showing must not reset its scroll"
+        );
+
+        // Cursor on a different row → `feature`'s update must not re-run the
+        // preview the cursor is showing. `request_render`'s throttle may swallow
+        // the `Event::Render` too, but the `RunPreview` poke is unthrottled, so
+        // its absence is the meaningful signal.
         handler
             .orchestrator
             .notifier()
             .note_awaiting("other", PreviewMode::Pr);
-        handler.on_update(0, "r".into(), &updated);
+        handler.on_update(0, "r".into(), &no_pr());
         assert_eq!(
             run_previews(&mut render_rx),
             0,
@@ -882,6 +995,7 @@ mod tests {
                 body: None,
                 author: None,
                 comment_count: None,
+                updated_at: None,
             }));
             item
         };
@@ -928,6 +1042,63 @@ mod tests {
         assert!(
             handler.preview_cache.contains_key(&key),
             "the re-fetch repopulated the comments cache for #42"
+        );
+    }
+
+    /// An expired-cache prime (`is_priming: true`) carries an unbounded-stale
+    /// `updated_at`; spawning the comments fetch off it would lock the disk cache
+    /// to a wrong signature for the whole session. The prime is skipped, so the
+    /// comments cache stays empty until the live (`is_priming: false`) fetch
+    /// lands and spawns with a fresh timestamp.
+    #[test]
+    fn comments_skip_priming_prime_until_live() {
+        use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef, PrStatus};
+
+        let (handler, _test, rx) = make_handler();
+        handler.on_skeleton(
+            vec![ListItem::new_branch("aaa".into(), "feature".into())],
+            vec!["s".into()],
+            header("hdr"),
+            grid(),
+        );
+        let _ = rx.recv();
+
+        let status = |is_priming: bool, updated_at: &str| {
+            let mut item = ListItem::new_branch("aaa".into(), "feature".into());
+            item.pr_status = Some(Some(PrStatus {
+                ci_status: CiStatus::Passed,
+                source: CiSource::PullRequest,
+                is_stale: false,
+                is_priming,
+                url: None,
+                number: Some(PrRef::pr(7)),
+                review_state: None,
+                title: None,
+                body: None,
+                author: None,
+                comment_count: None,
+                updated_at: Some(updated_at.to_string()),
+            }));
+            item
+        };
+        let key = ("feature".to_string(), PreviewMode::Comments);
+
+        // Expired prime → skipped: no comments fetch, cache stays empty. (The
+        // prime also must not consume the dedup slot, or the live update below
+        // would short-circuit.)
+        handler.on_update(0, "r".into(), &status(true, "2020-01-01T00:00:00Z"));
+        handler.orchestrator.wait_for_idle();
+        assert!(
+            !handler.preview_cache.contains_key(&key),
+            "an is_priming prime must not spawn the comments fetch"
+        );
+
+        // Live fetch (not priming) with a fresh timestamp → spawns and caches.
+        handler.on_update(0, "r".into(), &status(false, "2026-06-28T00:00:00Z"));
+        handler.orchestrator.wait_for_idle();
+        assert!(
+            handler.preview_cache.contains_key(&key),
+            "the live fetch spawns the comments fetch with a fresh signature"
         );
     }
 
@@ -1054,6 +1225,7 @@ mod tests {
             body: None,
             author: Some("alice".into()),
             comment_count: None,
+            updated_at: None,
         }));
         handler.on_skeleton(vec![item], vec!["skel".into()], header("hdr"), grid());
 
@@ -1111,6 +1283,7 @@ mod tests {
             body: None,
             author: Some("bob".into()),
             comment_count: None,
+            updated_at: None,
         }));
         handler.on_update(0, "rendered".into(), &updated);
 

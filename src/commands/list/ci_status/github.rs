@@ -73,8 +73,9 @@ pub(super) fn detect_github(
             // the picker's `pr` preview pane and matcher text can use them — no
             // extra round-trip. `gh pr list` has no comment-count field, so we
             // request the array and count it; for a `--head <branch>` call that's
-            // typically one PR.
-            "number,title,body,author,comments,headRefOid,mergeStateStatus,statusCheckRollup,url,headRepositoryOwner,reviewDecision,isDraft",
+            // typically one PR. `updatedAt` rides too: it keys the picker's
+            // on-disk comments cache (see `PrStatus::updated_at`).
+            "number,title,body,author,comments,headRefOid,mergeStateStatus,statusCheckRollup,url,headRepositoryOwner,reviewDecision,isDraft,updatedAt",
         ])
         .current_dir(&repo_root)
         .run()
@@ -146,6 +147,7 @@ pub(super) fn detect_github(
         body: pr_info.body.clone(),
         author: pr_info.author.as_ref().map(|a| a.login.clone()),
         comment_count: pr_info.comment_count(),
+        updated_at: pr_info.updated_at.clone(),
     })
 }
 
@@ -220,6 +222,7 @@ pub(super) fn detect_github_commit_checks(
         body: None,
         author: None,
         comment_count: None,
+        updated_at: None,
     })
 }
 
@@ -264,6 +267,11 @@ pub(crate) struct GitHubPrInfo {
     pub review_decision: Option<String>,
     #[serde(rename = "isDraft")]
     pub is_draft: Option<bool>,
+    /// PR `updatedAt` — the forge's "last modified" timestamp (RFC 3339). Rides
+    /// both the worktree-row [`detect_github`] call and the `--prs` list call;
+    /// keys the picker's on-disk comments cache (see [`PrStatus::updated_at`]).
+    #[serde(rename = "updatedAt", default)]
+    pub updated_at: Option<String>,
 }
 
 /// Owner info for the head repository of a PR.
@@ -364,6 +372,10 @@ impl GitHubPrInfo {
             body: None,
             author: None,
             comment_count: None,
+            // Unlike title/body/comment_count, `updated_at` IS read off this
+            // status: it keys the `--prs` row's on-disk comments cache, so it
+            // rides through here from the same `gh pr list` call.
+            updated_at: self.updated_at.clone(),
         }
     }
 }
@@ -449,6 +461,7 @@ mod tests {
             comments: Vec::new(),
             review_decision: None,
             is_draft: None,
+            updated_at: None,
             author: None,
         };
         assert_eq!(pr.open_pr_status().ci_status, CiStatus::Conflicts);
@@ -469,6 +482,7 @@ mod tests {
             comments: Vec::new(),
             review_decision: None,
             is_draft: None,
+            updated_at: None,
             author: None,
         };
         assert_eq!(pr.ci_status(), CiStatus::NoCI);
@@ -486,6 +500,7 @@ mod tests {
             comments: Vec::new(),
             review_decision: None,
             is_draft: None,
+            updated_at: None,
             author: None,
         };
         assert_eq!(pr.ci_status(), CiStatus::NoCI);
@@ -508,6 +523,7 @@ mod tests {
                 comments: Vec::new(),
                 review_decision: None,
                 is_draft: None,
+                updated_at: None,
                 author: None,
             };
             assert_eq!(pr.ci_status(), CiStatus::Running, "status={status}");
@@ -530,6 +546,7 @@ mod tests {
             comments: Vec::new(),
             review_decision: None,
             is_draft: None,
+            updated_at: None,
             author: None,
         };
         assert_eq!(pr.ci_status(), CiStatus::Running);
@@ -552,6 +569,7 @@ mod tests {
                 comments: Vec::new(),
                 review_decision: None,
                 is_draft: None,
+                updated_at: None,
                 author: None,
             };
             assert_eq!(pr.ci_status(), CiStatus::Failed, "conclusion={conclusion}");
@@ -575,6 +593,7 @@ mod tests {
                 comments: Vec::new(),
                 review_decision: None,
                 is_draft: None,
+                updated_at: None,
                 author: None,
             };
             assert_eq!(pr.ci_status(), CiStatus::Failed, "state={state}");
@@ -597,6 +616,7 @@ mod tests {
             comments: Vec::new(),
             review_decision: None,
             is_draft: None,
+            updated_at: None,
             author: None,
         };
         assert_eq!(pr.ci_status(), CiStatus::Passed);
@@ -616,6 +636,7 @@ mod tests {
             comments: Vec::new(),
             review_decision: review_decision.map(Into::into),
             is_draft,
+            updated_at: None,
             author: None,
         };
 
@@ -658,6 +679,7 @@ mod tests {
                 .collect(),
             review_decision: None,
             is_draft: None,
+            updated_at: None,
             author: None,
         };
 

@@ -647,6 +647,7 @@ mod tests {
                 body: None,
                 author: None,
                 comment_count: None,
+                updated_at: None,
             },
             None,
         );
@@ -689,6 +690,7 @@ mod tests {
                 body: None,
                 author: None,
                 comment_count: None,
+                updated_at: None,
             },
             None,
         );
@@ -721,6 +723,7 @@ mod tests {
                     body: None,
                     author: None,
                     comment_count: None,
+                    updated_at: None,
                 },
                 None,
             );
@@ -745,6 +748,7 @@ mod tests {
             body: None,
             author: None,
             comment_count: None,
+            updated_at: None,
         };
 
         let without = JsonCi::from_pr_status(&pr, None);

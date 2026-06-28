@@ -456,6 +456,7 @@ fn describe(e: &TraceEntry) -> (&'static str, Duration, String) {
             command,
             duration,
             result,
+            ..
         } => {
             let mut label = match e.context.as_deref() {
                 Some(c) => format!("{command} [{c}]"),
@@ -530,7 +531,9 @@ fn read_trace_entries(file: Option<&std::path::Path>) -> Vec<worktrunk::trace::T
 /// `worktrunk::trace::CacheReport` so `wt config state logs profile` and this
 /// helper share one implementation: each `(command, context)` pair run N times
 /// counts the first call as necessary and the rest as extra, with wasted time
-/// summed over all but the slowest (likely cold) run per context.
+/// summed over all but the slowest (likely cold) run per context. Commands that
+/// read stdin (`stdin=true`) are excluded — their input isn't in the command
+/// string, so identical lines aren't necessarily redundant.
 fn cache_check(entries: &[worktrunk::trace::TraceEntry]) {
     let report = worktrunk::trace::CacheReport::from_entries(entries);
     println!("{}", serde_json::to_string_pretty(&report).unwrap());
@@ -579,6 +582,7 @@ mod tests {
                 command: cmd.to_string(),
                 duration: Duration::from_micros(dur_us),
                 result: TraceResult::Completed { success: ok },
+                reads_stdin: false,
             },
             start_time_us: Some(ts_us),
             thread_id: Some(tid),
