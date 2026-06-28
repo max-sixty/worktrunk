@@ -646,7 +646,7 @@ pub fn handle_logs_list(format: SwitchFormat) -> anyhow::Result<()> {
 }
 
 /// `wt config state logs profile [FILE]` — summarize where a `-vv` run spent its
-/// time, from the `[wt-trace]` records in `trace.log` (or a given file / stdin).
+/// time, from the records in `trace.jsonl` (or a given file / stdin).
 pub fn handle_logs_profile(file: Option<PathBuf>, format: SwitchFormat) -> anyhow::Result<()> {
     let (input, source) = match file {
         Some(ref p) if p.as_os_str() == "-" => {
@@ -656,21 +656,20 @@ pub fn handle_logs_profile(file: Option<PathBuf>, format: SwitchFormat) -> anyho
             (buf, "stdin".to_string())
         }
         Some(p) => {
-            let content = std::fs::read_to_string(&p).with_context(|| {
-                format!("Failed to read trace log {}", format_path_for_display(&p))
-            })?;
+            let content = std::fs::read_to_string(&p)
+                .with_context(|| format!("Failed to read trace {}", format_path_for_display(&p)))?;
             (content, format_path_for_display(&p).to_string())
         }
         None => {
             let repo = Repository::current().map_err(|_| {
                 anyhow::anyhow!(cformat!(
-                    "Not inside a git repository, so there's no default <bold>.git/wt/logs/trace.log</> to read; pass a trace log path or <bold>-</> for stdin"
+                    "Not inside a git repository, so there's no default <bold>.git/wt/logs/trace.jsonl</> to read; pass a trace path or <bold>-</> for stdin"
                 ))
             })?;
-            let path = repo.wt_logs_dir().join("trace.log");
+            let path = repo.wt_logs_dir().join("trace.jsonl");
             let content = std::fs::read_to_string(&path).map_err(|_| {
                 anyhow::anyhow!(cformat!(
-                    "No trace log at <bold>{}</>; run a command with <bold>-vv</> to capture one",
+                    "No trace at <bold>{}</>; run a command with <bold>-vv</> to capture one",
                     format_path_for_display(&path)
                 ))
             })?;
@@ -681,7 +680,7 @@ pub fn handle_logs_profile(file: Option<PathBuf>, format: SwitchFormat) -> anyho
     let entries = worktrunk::trace::parse_lines(&input);
     if entries.is_empty() {
         anyhow::bail!(cformat!(
-            "No [wt-trace] records in {source}; run a command with <bold>-vv</> to capture a trace"
+            "No trace records in {source}; run a command with <bold>-vv</> to capture a trace"
         ));
     }
 

@@ -1,4 +1,4 @@
-//! Aggregate `[wt-trace]` records into a performance profile.
+//! Aggregate trace records into a performance profile.
 //!
 //! Where [`parse`](super::parse) turns trace lines into [`TraceEntry`] values and
 //! [`chrome`](super::chrome) exports them for Perfetto, this module answers the
@@ -68,7 +68,7 @@ fn ser_opt_dur_us<S: serde::Serializer>(d: &Option<Duration>, s: S) -> Result<S:
     }
 }
 
-/// A performance profile derived from a set of `[wt-trace]` records.
+/// A performance profile derived from a set of trace records.
 ///
 /// The struct IS the canonical result: `--format=json` serializes it directly
 /// (durations as `*_us` microseconds), and [`Profile::render_text`] renders the

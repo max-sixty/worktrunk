@@ -1,38 +1,34 @@
-//! Authoritative emitter for the `[wt-trace]` log grammar.
-//!
-//! `[wt-trace]` records are structured single-line `key=value` text emitted on
-//! top of `tracing` and parsed downstream by [`super::parse`] and the
-//! `wt-perf` binary. This module is the single source of truth for the
-//! grammar — any field or formatting change happens here and in `parse.rs`
-//! together.
-//!
-//! # Format
-//!
-//! ```text
-//! [wt-trace] ts=1234567 tid=3 seq=1 context=worktree cmd="git status" dur_us=12300 ok=true
-//! [wt-trace] ts=1234567 tid=3 seq=2 cmd="gh pr list" dur_us=45200 ok=false
-//! [wt-trace] ts=1234567 tid=3 seq=3 context=main cmd="git merge-base" dur_us=100000 err="fatal: ..."
-//! [wt-trace] ts=1234567 tid=3 event="Showed skeleton"
-//! [wt-trace] ts=1234567 tid=3 span="build_hook_context" dur_us=8200
-//! ```
-//!
-//! `seq` is a process-global monotonic command counter (command records only).
-//! The same value is printed into the per-command header in `subprocess.log`,
-//! so a raw output block there joins back to its command record here.
-//!
-//! # Emission model
+//! Authoritative emitter for `[wt-trace]` records.
 //!
 //! Records emit as `tracing` events under [`WT_TRACE_TARGET`] with typed
-//! structured fields (`kind`, `ts`, `tid`, `seq`, `cmd`, `dur_us`, `ok`, `err`,
-//! `event`, `span`, `context`). The text grammar is produced downstream by
-//! the `trace.log` layer's `FormatEvent` impl in
-//! `src/logging.rs::TraceFileFormat`, which reads the structured fields
-//! and renders the exact `[wt-trace] key=value …` lines wt-perf and the
-//! integration suite parse.
+//! structured fields; the logging layers in `src/logging.rs` render them two
+//! ways. This module is the single source of truth for the fields — any field
+//! change happens here.
 //!
-//! This split — structured fields at the emission site, grammar rendering
-//! at the layer — means the wire format lives in one place
-//! (`logging.rs`) and emit sites carry no string-formatting noise.
+//! # Two renderings, decoupled
+//!
+//! - **Human** (`trace.log`, and stderr at `RUST_LOG=debug`): a readable line
+//!   per record, where a command's start echo and finish record pair up —
+//!   `✓ git status [worktree]  12.3ms` / `✗ …`, `· Showed skeleton`,
+//!   `◷ build_hook_context  8.2ms`. Rendered by `logging.rs::format_wt_trace`.
+//! - **Machine** (`trace.jsonl`): one JSON object per record, carrying every
+//!   field — `{"kind":"cmd_completed","ts":…,"tid":…,"seq":…,"cmd":…,"dur_us":…,"ok":…}`.
+//!   Rendered by `logging.rs::event_json`, and parsed back by [`super::parse`]
+//!   and the `wt-perf` binary. This is the sole format any tool reads.
+//!
+//! Keeping the human and machine formats separate means the readable lines
+//! never carry `key=value` clutter and a parser never reads them.
+//!
+//! # Fields
+//!
+//! Typed structured fields on each event: `kind`, `ts`, `tid`, `seq`, `cmd`,
+//! `dur_us`, `ok`, `err`, `event`, `span`, `context`. `seq` is a process-global
+//! monotonic command counter (command records only); the same value is printed
+//! into the per-command header in `subprocess.log`, so a raw output block there
+//! joins back to its command record via the `seq` field in `trace.jsonl`.
+//!
+//! This split — structured fields at the emission site, rendering at the
+//! layer — means emit sites carry no string-formatting noise.
 //!
 //! # The subprocess chokepoint: [`CommandTrace`]
 //!
@@ -116,9 +112,9 @@ pub fn thread_id() -> u64 {
 }
 
 /// Process-global monotonic command counter. Each [`CommandTrace`] claims the
-/// next value at construction; the same `seq` is printed into the `[wt-trace]`
-/// record in `trace.log` and the per-command header in `subprocess.log`, so a
-/// raw output block can be joined back to its command record. Claimed at
+/// next value at construction; the same `seq` is recorded in the `trace.jsonl`
+/// record and the per-command header in `subprocess.log`, so a raw output block
+/// can be joined back to its command record. Claimed at
 /// construction (outside any verbosity gate) so the sequence is dense
 /// regardless of whether the file layers are active. Starts at 1.
 static CMD_SEQ: AtomicU64 = AtomicU64::new(1);
@@ -254,7 +250,7 @@ impl CommandTrace {
     }
 
     /// The command's monotonic sequence number — the key shared by this
-    /// command's `[wt-trace]` record (`trace.log`) and its raw output block
+    /// command's `trace.jsonl` record and its raw output block
     /// (`subprocess.log`).
     pub(crate) fn seq(&self) -> u64 {
         self.seq

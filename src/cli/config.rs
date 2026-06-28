@@ -854,10 +854,11 @@ All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the
 | File | Created when |
 |------|-------------|
 | `trace.log` | Running with `-vv` |
+| `trace.jsonl` | Running with `-vv` |
 | `subprocess.log` | Running with `-vv` |
 | `diagnostic.md` | Running with `-vv` |
 
-`trace.log` captures debug-level records at `-vv` — commands, `[wt-trace]` records, bounded subprocess previews. `wt config state logs profile` summarizes one into a performance report (where time went, parallelism, redundant commands). `subprocess.log` holds the raw uncapped subprocess stdout/stderr bodies. `diagnostic.md` is a markdown bug-report bundle that inlines `trace.log` and a rendered performance profile; `wt` prints a `gh gist create` command pointing at it. All three are overwritten on each `-vv` run.
+`trace.log` is the human-readable trace at `-vv` — each command's start (`$ …`) and completion (`✓`/`✗ … 12.3ms`), in-process spans, milestones, and bounded subprocess previews. `trace.jsonl` is the same event stream as one JSON object per line, for machines (`jq`, chrome://tracing); `wt config state logs profile` reads it to summarize a performance report (where time went, parallelism, redundant commands). `subprocess.log` holds the raw uncapped subprocess stdout/stderr bodies. `diagnostic.md` is a markdown bug-report bundle that inlines `trace.log` and a rendered performance profile; `wt` prints a `gh gist create` command pointing at it. All four are overwritten on each `-vv` run.
 
 ## Location
 
@@ -1301,13 +1302,13 @@ $ wt config state logs --format=json | jq '.hook_output[] | select(.branch | sta
     )]
     Get,
 
-    /// Performance profile from a trace log
+    /// Performance profile from a trace
     #[command(
-        after_long_help = r#"Summarize where a single `wt` invocation spent its time, reading the `[wt-trace]` records captured to `trace.log` by a `-vv` run.
+        after_long_help = r#"Summarize where a single `wt` invocation spent its time, reading the records captured to `trace.jsonl` by a `-vv` run.
 
-Reads `.git/wt/logs/trace.log` by default, or a log file given as an argument (e.g. a CI artifact, or `-` for stdin). The report answers three questions: where time goes (subprocess time by command type, plus the slowest individual jobs), how parallel the run was (concurrency factor and peak concurrency), and where work was wasted (commands re-run with the same context). For a `wt list` capture it also shows derived latencies (time to skeleton, time to first result) and a timeline of collect milestones; the skeleton/first-result markers need a terminal (TTY) capture. `--format=json` emits the same data for scripting.
+Reads `.git/wt/logs/trace.jsonl` by default, or a trace given as an argument (e.g. a CI artifact, or `-` for stdin). The report answers three questions: where time goes (subprocess time by command type, plus the slowest individual jobs), how parallel the run was (concurrency factor and peak concurrency), and where work was wasted (commands re-run with the same context). For a `wt list` capture it also shows derived latencies (time to skeleton, time to first result) and a timeline of collect milestones; the skeleton/first-result markers need a terminal (TTY) capture. `--format=json` emits the same data for scripting.
 
-For an interactive timeline or a Perfetto trace, use the `wt-perf` helper (`cargo run -p wt-perf -- timeline`); both share the same trace parser.
+For an interactive timeline or a Perfetto trace, use the `wt-perf` helper (`cargo run -p wt-perf -- timeline`); both read the same `trace.jsonl`.
 
 ## Examples
 
@@ -1319,8 +1320,8 @@ $ wt config state logs profile
 
 Profile a trace from elsewhere (e.g. a CI artifact), by path or on stdin:
 ```console
-$ wt config state logs profile ci-run.log
-$ wt config state logs profile - < ci-run.log
+$ wt config state logs profile ci-run.jsonl
+$ wt config state logs profile - < ci-run.jsonl
 ```
 
 JSON for scripting:
@@ -1329,7 +1330,7 @@ $ wt config state logs profile --format=json | jq '.by_type[0]'
 ```"#
     )]
     Profile {
-        /// Trace log to read (defaults to `.git/wt/logs/trace.log`; `-` for stdin)
+        /// Trace to read (defaults to `.git/wt/logs/trace.jsonl`; `-` for stdin)
         file: Option<std::path::PathBuf>,
     },
 

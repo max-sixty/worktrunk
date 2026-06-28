@@ -19,7 +19,7 @@
 //! 2. **Environment** — wt version, OS, git version, shell integration
 //! 3. **Worktrees** — Raw `git worktree list --porcelain` output
 //! 4. **Config** — User and project config contents
-//! 5. **Performance profile** — Rendered view of `trace.log`: where time went,
+//! 5. **Performance profile** — Rendered view of `trace.jsonl`: where time went,
 //!    parallelism, and same-context cache misses (omitted if no records)
 //! 6. **Verbose log** — Debug log output, truncated to ~50KB if large
 //!
@@ -35,7 +35,7 @@
 //! # File Location
 //!
 //! Reports are written to `<git-common-dir>/wt/logs/diagnostic.md` (typically
-//! `.git/wt/logs/diagnostic.md`). Companion log files (`trace.log`, `subprocess.log`) live in the same directory.
+//! `.git/wt/logs/diagnostic.md`). Companion log files (`trace.log`, `trace.jsonl`, `subprocess.log`) live in the same directory.
 //!
 //! # Usage
 //!
@@ -181,7 +181,13 @@ impl DiagnosticReport {
             .as_deref()
             .map(|content| truncate_log(content.trim()))
             .filter(|s| !s.is_empty());
-        let performance_profile = trace_content.as_deref().and_then(render_trace_profile);
+        // The profile is derived from the machine `trace.jsonl` (the human
+        // `trace.log` inlined above is no longer parseable).
+        let performance_profile = crate::log_files::TRACE_JSONL
+            .path()
+            .and_then(|path| std::fs::read_to_string(&path).ok())
+            .as_deref()
+            .and_then(render_trace_profile);
         // Forward slashes on both platforms so the rendered markdown reads the
         // same in bug reports regardless of where it was produced.
         let subprocess_log_path = crate::log_files::SUBPROCESS
@@ -317,15 +323,15 @@ fn is_gh_installed() -> bool {
 }
 
 /// Render the captured trace as a human-readable performance profile for the
-/// report — a derived view of `trace.log` (where time went, parallelism,
+/// report — a derived view of `trace.jsonl` (where time went, parallelism,
 /// same-context cache misses), ANSI-stripped for the markdown bundle. `None`
-/// when the capture has no `[wt-trace]` records, so the section is omitted.
-fn render_trace_profile(trace_content: &str) -> Option<String> {
-    let entries = worktrunk::trace::parse_lines(trace_content);
+/// when the capture has no trace records, so the section is omitted.
+fn render_trace_profile(trace_jsonl: &str) -> Option<String> {
+    let entries = worktrunk::trace::parse_lines(trace_jsonl);
     if entries.is_empty() {
         return None;
     }
-    let rendered = worktrunk::trace::Profile::from_entries(&entries).render_text("trace.log");
+    let rendered = worktrunk::trace::Profile::from_entries(&entries).render_text("trace.jsonl");
     Some(rendered.ansi_strip().to_string())
 }
 
@@ -475,8 +481,8 @@ mod tests {
 
     #[test]
     fn test_render_trace_profile_summarizes_records() {
-        let trace = r#"[wt-trace] ts=1000 tid=1 context=main cmd="git status" dur_us=12000 ok=true
-[wt-trace] ts=1000 tid=2 context=feature cmd="git status" dur_us=8000 ok=true
+        let trace = r#"{"kind":"cmd_completed","ts":1000,"tid":1,"context":"main","cmd":"git status","dur_us":12000,"ok":true}
+{"kind":"cmd_completed","ts":1000,"tid":2,"context":"feature","cmd":"git status","dur_us":8000,"ok":true}
 "#;
         let rendered = render_trace_profile(trace).expect("records present");
         assert!(rendered.contains("PERFORMANCE PROFILE"), "{rendered}");

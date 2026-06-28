@@ -32,10 +32,10 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
     // Completion exits before `main`'s `logging::init`, so the normal
     // `-v`/`-vv` pipeline never runs here. `WORKTRUNK_VERBOSE` opts this
     // short-lived subprocess into the same logging as a flagged command — the
-    // env-var equivalent of `-vv` — so `[wt-trace]` timing and `$ git …`
-    // records for a slow completion land in `.git/wt/logs/` just as `-vv`
-    // writes them. Left unset, completion stays silent so stray stderr never
-    // lands above the user's prompt.
+    // env-var equivalent of `-vv` — so humanized timing (`✓ git …`) and
+    // `$ git …` start records for a slow completion land in `.git/wt/logs/`
+    // just as `-vv` writes them. Left unset, completion stays silent so stray
+    // stderr never lands above the user's prompt.
     let completion_verbose = crate::logging::env_verbose_level();
     if completion_verbose > 0 {
         crate::logging::init(completion_verbose);

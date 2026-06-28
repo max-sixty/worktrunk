@@ -334,15 +334,15 @@ fn test_state_bare_logs(repo: TestRepo) {
 /// A synthetic `-vv` trace: two parallel `git status` runs, an in-process span,
 /// a failed `git diff`, and a `git config` run twice in the same context (the
 /// cache-miss the profile flags), bracketed by milestone events.
-const PROFILE_FIXTURE_TRACE: &str = r#"[wt-trace] ts=1000 tid=1 event="List collect started"
-[wt-trace] ts=1000 tid=1 context=main cmd="git status --porcelain" dur_us=12000 ok=true
-[wt-trace] ts=1000 tid=2 context=feature cmd="git status --porcelain" dur_us=8000 ok=true
-[wt-trace] ts=500 tid=1 span="user_config_load" dur_us=2000
-[wt-trace] ts=13000 tid=1 event="Skeleton rendered"
-[wt-trace] ts=13000 tid=1 context=main cmd="git diff --shortstat" dur_us=5000 ok=false
-[wt-trace] ts=1000 tid=1 context=main cmd="git config --list" dur_us=4000 ok=true
-[wt-trace] ts=6000 tid=1 context=main cmd="git config --list" dur_us=3000 ok=true
-[wt-trace] ts=18000 tid=1 event="All results drained"
+const PROFILE_FIXTURE_TRACE: &str = r#"{"kind":"instant","ts":1000,"tid":1,"event":"List collect started"}
+{"kind":"cmd_completed","ts":1000,"tid":1,"context":"main","cmd":"git status --porcelain","dur_us":12000,"ok":true}
+{"kind":"cmd_completed","ts":1000,"tid":2,"context":"feature","cmd":"git status --porcelain","dur_us":8000,"ok":true}
+{"kind":"span","ts":500,"tid":1,"span":"user_config_load","dur_us":2000}
+{"kind":"instant","ts":13000,"tid":1,"event":"Skeleton rendered"}
+{"kind":"cmd_completed","ts":13000,"tid":1,"context":"main","cmd":"git diff --shortstat","dur_us":5000,"ok":false}
+{"kind":"cmd_completed","ts":1000,"tid":1,"context":"main","cmd":"git config --list","dur_us":4000,"ok":true}
+{"kind":"cmd_completed","ts":6000,"tid":1,"context":"main","cmd":"git config --list","dur_us":3000,"ok":true}
+{"kind":"instant","ts":18000,"tid":1,"event":"All results drained"}
 "#;
 
 /// Run `wt config state logs profile <args>` with `input` on stdin.
@@ -516,18 +516,15 @@ fn test_logs_profile_file_missing(repo: TestRepo) {
     let output = cmd.output().unwrap();
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Failed to read trace log"),
-        "stderr: {stderr}"
-    );
+    assert!(stderr.contains("Failed to read trace"), "stderr: {stderr}");
 }
 
-/// With no argument, the profile reads the repo's `.git/wt/logs/trace.log`.
+/// With no argument, the profile reads the repo's `.git/wt/logs/trace.jsonl`.
 #[rstest]
 fn test_logs_profile_default_path(repo: TestRepo) {
     let logs_dir = repo.root_path().join(".git/wt/logs");
     std::fs::create_dir_all(&logs_dir).unwrap();
-    std::fs::write(logs_dir.join("trace.log"), PROFILE_FIXTURE_TRACE).unwrap();
+    std::fs::write(logs_dir.join("trace.jsonl"), PROFILE_FIXTURE_TRACE).unwrap();
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
@@ -540,13 +537,13 @@ fn test_logs_profile_default_path(repo: TestRepo) {
     assert!(stdout.contains("BY COMMAND TYPE"), "stdout: {stdout}");
 }
 
-/// An input with no `[wt-trace]` records fails, pointing at `-vv`.
+/// An input with no trace records fails, pointing at `-vv`.
 #[rstest]
 fn test_logs_profile_no_records(repo: TestRepo) {
     let output = profile_from_stdin(&repo, &["-"], "not a trace line\nanother line\n");
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("No [wt-trace] records"), "stderr: {stderr}");
+    assert!(stderr.contains("No trace records"), "stderr: {stderr}");
     assert!(stderr.contains("-vv"), "stderr: {stderr}");
 }
 
@@ -587,7 +584,7 @@ fn test_logs_profile_real_capture_has_key_intervals(repo: TestRepo) {
     );
 }
 
-/// Without a trace log, the error names the missing file and points at `-vv`.
+/// Without a trace, the error names the missing file and points at `-vv`.
 #[rstest]
 fn test_logs_profile_missing(repo: TestRepo) {
     let mut cmd = wt_command();
@@ -597,13 +594,13 @@ fn test_logs_profile_missing(repo: TestRepo) {
     let output = cmd.output().unwrap();
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("No trace log at"), "stderr: {stderr}");
+    assert!(stderr.contains("No trace at"), "stderr: {stderr}");
     assert!(stderr.contains("-vv"), "stderr: {stderr}");
 }
 
 /// With no FILE argument and no surrounding git repository, the error explains
-/// the absent default trace log and points at the path / `-` (stdin)
-/// alternatives, rather than surfacing a bare git "not a repository" error.
+/// the absent default trace and points at the path / `-` (stdin) alternatives,
+/// rather than surfacing a bare git "not a repository" error.
 /// `wt_command()`'s default cwd is a process-scoped tempdir outside any repo.
 #[rstest]
 fn test_logs_profile_no_repo() {
@@ -619,7 +616,7 @@ fn test_logs_profile_no_repo() {
     );
     // The `-` is bold-wrapped (`\x1b[1m-\x1b[22m`), so assert on the surrounding
     // unstyled text rather than a substring that crosses the ANSI boundary.
-    assert!(stderr.contains("pass a trace log path"), "stderr: {stderr}");
+    assert!(stderr.contains("pass a trace path"), "stderr: {stderr}");
     assert!(stderr.contains("for stdin"), "stderr: {stderr}");
 }
 
