@@ -219,30 +219,38 @@ Persistent flag values for [2mwt list[0m. Override on command line as needed.
 [107m [0m [2mtimeout-ms = [0m[2m[33m0[0m[2m        [0m[2m# Wall-clock budget for the entire collect phase; 0 disables[0m
 
 [2mcolumns[0m selects and orders the columns to render; omit it for the default set.
-It is designed to be driven by an alias that sets it
-per invocation — a body like [2mwt --config-set 'list.columns=[…]' list[0m gives a
-named view (run as [2mwt <alias>[0m) without disturbing the default [2mwt list[0m.
-Setting it statically in the config file uses the same key and works, but is not
-the intended use: it pins one layout over a table that otherwise adapts to
-[2m--full[0m and terminal width.
+It is meant to drive a per-invocation alias
+([2mwt --config-set 'list.columns=[…]' list[0m), giving a named view without
+disturbing the default [2mwt list[0m. A static setting works but pins one layout
+over a table that otherwise adapts to [2m--full[0m and terminal width.
 
-Valid built-in names are [2mbranch[0m, [2mstatus[0m, [2mworking-diff[0m, [2mahead-behind[0m,
-[2mbranch-diff[0m, [2msummary[0m, [2mupstream[0m, [2mci[0m, [2mpath[0m, [2murl[0m, [2mcommit[0m, [2mage[0m, and
-[2mmessage[0m. A custom column is named by its [2m[list.custom-columns][0m
-header, so a selection mixes built-ins and custom columns in one ordered list
-([2mcolumns = ["branch", "Ticket", "ci"][0m). When [2mcolumns[0m is set it is exhaustive
-— only the listed columns render, so a custom column omitted from a non-empty
-list is hidden (omit [2mcolumns[0m entirely to keep the default set, where custom
-columns append automatically). A built-in name wins over a custom header that
-collides with it. The gutter type indicator always shows.
+Valid built-in names:
 
-Listing a column requests it but does not force it on: a column gated off
-elsewhere stays hidden — [2mci[0m needs [2m--full[0m, [2msummary[0m needs
-[2m[commit.generation][0m — so [2mcolumns[0m only narrows which columns may appear.
+- [2mbranch[0m — The branch name
+- [2mstatus[0m — Git status symbols, plus any user-defined status
+- [2mworking-diff[0m — Uncommitted line changes against [2mHEAD[0m (header [2mHEAD±[0m)
+- [2mahead-behind[0m — Commits ahead of and behind the default branch (header [2mmain↕[0m)
+- [2mbranch-diff[0m — Line changes against the default branch (header [2mmain…±[0m)
+- [2msummary[0m — An LLM-generated summary of the branch
+- [2mupstream[0m — Commits ahead of and behind the upstream tracking branch (header [2mRemote⇅[0m)
+- [2mci[0m — CI status of the head commit
+- [2mpath[0m — The worktree's path
+- [2murl[0m — Dev-server URL from the [2m[list] url[0m template
+- [2mcommit[0m — The head commit's short hash
+- [2mage[0m — Time since the last commit
+- [2mmessage[0m — The head commit's subject
 
-The selection drives the rendered table and the [2mwt switch[0m picker.
-[2mwt list --format json[0m ignores it, always emitting every field, built-in and
-custom.
+A selection mixes built-ins with custom columns, each named
+by its [2m[list.custom-columns][0m header ([2mcolumns = ["branch", "Ticket", "ci"][0m),
+and is exhaustive: only the listed columns render. Omit [2mcolumns[0m to keep the
+default set, where custom columns append automatically. A built-in name wins a
+header collision; the gutter type indicator always shows.
+
+Listing a column requests it but cannot force it on: a gated column stays hidden
+([2mci[0m needs [2m--full[0m, [2msummary[0m needs [2m[commit.generation][0m).
+
+The selection drives the table and the [2mwt switch[0m picker; [2mwt list --format[0m
+json[2m ignores it and emits every field.[0m
 
 [1mCustom columns [experimental][0m
 

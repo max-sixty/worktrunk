@@ -362,7 +362,7 @@ pub enum ReviewState {
 }
 
 /// CI status from PR/MR or branch workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrStatus {
     pub ci_status: CiStatus,
     /// Source of the CI status (PR/MR or branch workflow)

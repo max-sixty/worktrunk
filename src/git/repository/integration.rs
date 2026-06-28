@@ -76,7 +76,10 @@ const PATCH_ID_SCAN_MAX_COMMITS: usize = 500;
 /// Exit 0 → `Clean` carrying the resulting tree SHA; exit 1 → `Conflict`;
 /// anything else is an error (the helper bails). Both merge-tree callers
 /// share this dispatch; they differ only in what they do with a clean tree.
-enum MergeTreeOutcome {
+/// `Clone` + `Debug` so the outcome can be memoized in
+/// [`RepoCache::merge_tree`](super::RepoCache::merge_tree).
+#[derive(Debug, Clone)]
+pub(in crate::git) enum MergeTreeOutcome {
     Clean { tree: String },
     Conflict,
 }
@@ -195,11 +198,40 @@ impl Repository {
         self.run_merge_tree(base_sha, head_commit, base_sha, &cache_head)
     }
 
-    /// Run `git merge-tree --write-tree <a> <b>` and classify the outcome by
-    /// exit code. Exit 1 → [`MergeTreeOutcome::Conflict`]; anything other than
-    /// success is an error; exit 0 → [`MergeTreeOutcome::Clean`] with the
-    /// resulting tree SHA (first line of stdout).
+    /// Run `git merge-tree --write-tree <a> <b>`, memoizing the outcome in the
+    /// in-memory [`RepoCache::merge_tree`](super::RepoCache::merge_tree) cache.
+    ///
+    /// `git merge-tree` is the costliest operation in `wt list`, and the two
+    /// integration probes ask it the same question per row:
+    /// [`Self::run_merge_tree`] wants the conflict bit (for the `WouldConflict`
+    /// column) and [`Self::would_merge_add_to_target`] wants the resulting tree
+    /// (for the integration column) — both run `merge-tree --write-tree
+    /// <target> <branch>`. Their persistent caches (`merge-tree-conflicts` vs
+    /// `merge-add-probe`) are keyed separately, so on a cold run neither sees
+    /// the other and the subprocess fires twice. The shared entry lock
+    /// collapses both — and any cross-row repeat of the same pair — to a single
+    /// spawn, mirroring [`Self::merge_base_by_sha`].
     fn merge_tree_outcome(&self, a: &str, b: &str) -> anyhow::Result<MergeTreeOutcome> {
+        use dashmap::mapref::entry::Entry;
+
+        // Keyed in call order, not normalized: both dedup call sites pass
+        // `(target, branch)`, so they already share a key, and the cached
+        // outcome (a conflict flag, or the order-independent clean-merge tree)
+        // doesn't depend on argument order — a symmetric key would buy nothing.
+        match self.cache.merge_tree.entry((a.to_string(), b.to_string())) {
+            Entry::Occupied(e) => Ok(e.get().clone()),
+            Entry::Vacant(e) => {
+                let outcome = self.compute_merge_tree_outcome(a, b)?;
+                Ok(e.insert(outcome).clone())
+            }
+        }
+    }
+
+    /// Compute a fresh `git merge-tree --write-tree <a> <b>` outcome, classified
+    /// by exit code. Exit 1 → [`MergeTreeOutcome::Conflict`]; anything other
+    /// than success is an error; exit 0 → [`MergeTreeOutcome::Clean`] with the
+    /// resulting tree SHA (first line of stdout).
+    fn compute_merge_tree_outcome(&self, a: &str, b: &str) -> anyhow::Result<MergeTreeOutcome> {
         // Exit codes: 0 = clean merge, 1 = conflicts, 128+ = error (invalid ref, corrupt repo)
         let output = self.run_command_output(&["merge-tree", "--write-tree", a, b])?;
 
@@ -948,6 +980,65 @@ mod patch_id_tests {
             check_integration(&signals),
             Some(IntegrationReason::PatchIdMatch),
             "squash merge must be detected via patch-id regardless of diff.* config"
+        );
+    }
+}
+
+#[cfg(test)]
+mod merge_tree_cache_tests {
+    use super::*;
+    use crate::testing::TestRepo;
+
+    /// The conflict probe ([`Repository::has_merge_conflicts_by_sha`], driving
+    /// the `WouldConflict` column) and the integration probe
+    /// ([`Repository::merge_integration_probe_by_sha`], driving the
+    /// integration column) both run `git merge-tree --write-tree <target>
+    /// <branch>` for the same row but extract different answers — the conflict
+    /// bit versus the resulting tree. They must key the in-memory cache
+    /// identically, in `(target, branch)` order, so the subprocess fires once
+    /// per row rather than once per probe. An argument-order regression on
+    /// either call site would split this into two entries (two spawns); this
+    /// pins it at one.
+    #[test]
+    fn conflict_and_integration_probes_share_one_merge_tree_spawn() {
+        let test = TestRepo::with_initial_commit();
+
+        // feature: one commit ahead of main, clean-mergeable, not integrated.
+        test.run_git(&["checkout", "-b", "feature"]);
+        std::fs::write(test.root_path().join("new.txt"), "content\n").unwrap();
+        test.run_git(&["add", "new.txt"]);
+        test.run_git(&["commit", "-m", "feature"]);
+        test.run_git(&["checkout", "main"]);
+
+        let main_sha = test.git_output(&["rev-parse", "main"]);
+        let feature_sha = test.git_output(&["rev-parse", "feature"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        // Conflict probe: a clean merge has no conflicts.
+        assert!(
+            !repo
+                .has_merge_conflicts_by_sha(&main_sha, &feature_sha)
+                .unwrap()
+        );
+        // Integration probe: merging adds new.txt, so it would change main —
+        // not yet integrated, and no patch-id fallback (merge was clean).
+        let probe = repo
+            .merge_integration_probe_by_sha(&feature_sha, &main_sha)
+            .unwrap();
+        assert!(probe.would_merge_add);
+        assert!(!probe.is_patch_id_match);
+
+        // Both probes resolved through a single shared merge-tree entry, keyed
+        // (target, branch) = (main, feature).
+        assert_eq!(
+            repo.cache.merge_tree.len(),
+            1,
+            "conflict + integration probes must share one merge-tree cache entry"
+        );
+        assert!(
+            repo.cache.merge_tree.contains_key(&(main_sha, feature_sha)),
+            "the shared entry must be keyed (target, branch)"
         );
     }
 }

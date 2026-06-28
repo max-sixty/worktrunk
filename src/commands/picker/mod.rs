@@ -1242,8 +1242,10 @@ fn approved_removal_plan(
 ///
 /// Each [`spawn`](Self::spawn) builds a *fresh* progressive handler (its
 /// `OnceLock` slots can't be reset) and item channel, but shares the
-/// session-long state — the orchestrator / preview cache (so previews stay
-/// warm), `shared_items` and `shortcut_table` (which `on_skeleton` seeds and the
+/// session-long state — the orchestrator / preview cache (warm across row
+/// navigation and the fall-through re-stream; a refresh clears it so previews
+/// recompute — see [`spawn`](Self::spawn)), `shared_items` and `shortcut_table`
+/// (which `on_skeleton` seeds and the
 /// `--prs` thread extends), and skim's `render_tx`. Held by [`PickerCollector`]
 /// so a refresh can re-enter the pipeline.
 struct PipelineFactory {
@@ -1267,7 +1269,6 @@ struct PipelineFactory {
     preview_dims: (usize, usize),
     skim_list_width: usize,
     command_timeout: Option<std::time::Duration>,
-    skip_tasks: std::collections::HashSet<collect::TaskKind>,
     llm_command: Option<String>,
     summary_hint: Option<String>,
     show_branches: bool,
@@ -1295,11 +1296,14 @@ impl PipelineFactory {
     /// relies on to end its `reload`.
     /// `rebuild_repo` controls the worktree/branch inventory source. A refresh
     /// (`alt-r`) passes `true` to rebuild a fresh `Repository`, re-enumerating
-    /// after an in-picker removal. The initial spawn passes `false` to reuse the
-    /// startup repo, whose cache the prelude already primed — nothing has mutated
-    /// yet, so reusing it is correct and avoids re-paying `git worktree list` /
-    /// `local_branches` on the first-paint hot path (doubling them there slows
-    /// the picker, worst on Windows).
+    /// after an in-picker removal, and to clear the in-memory preview cache so
+    /// previews recompute (see the `spawn_repo` binding, and the
+    /// `preview_orchestrator` spec for what a refresh does and doesn't refresh).
+    /// The initial spawn passes `false` to reuse the startup repo, whose cache
+    /// the prelude already primed — nothing has mutated yet, so reusing it is
+    /// correct and avoids re-paying `git worktree list` / `local_branches` on the
+    /// first-paint hot path (doubling them there slows the picker, worst on
+    /// Windows).
     ///
     /// The rebuild is also what lets `alt-r` drop a worktree an in-picker `alt-x`
     /// removed: re-enumerating from a fresh handle skips the gone worktree, where
@@ -1326,6 +1330,22 @@ impl PipelineFactory {
         // The collect thread (`bg_repo`), the `--prs` thread (`prs_repo`), and
         // the skeleton handler's inventory reads all share this one snapshot.
         let spawn_repo = if rebuild_repo {
+            // A refresh recomputes previews too, not just the row inventory.
+            // The in-memory preview cache is keyed by `(branch, mode)` with no
+            // SHA — the working-tree diff has no stable hash to key on — so a
+            // warm entry outlives the branch's commits or working tree moving
+            // and would re-serve a stale diff / log / summary. Dropping it lets
+            // each rebuilt row recompute against its current `item.head()` from
+            // the rebuilt inventory; the on-disk caches (SHA-keyed for log /
+            // branch-diff / upstream, diff-hash-keyed for the summary) make an
+            // unchanged branch a cheap re-read, so only genuinely changed content
+            // pays a recompute. The `pr` / `comments` tabs already self-invalidate
+            // on the CI path; clearing them here too just means a refresh also
+            // re-fetches their forge data. Precompute still runs against the
+            // orchestrator's startup repo, so a moved default-branch base isn't
+            // picked up and a narrow stale-fill race remains — see the
+            // `preview_orchestrator` module spec ("Refresh") for both.
+            self.preview_cache.clear();
             Repository::at(self.repo.discovery_path())?
         } else {
             self.repo.clone()
@@ -1366,7 +1386,6 @@ impl PipelineFactory {
 
         let bg_handler: Arc<dyn collect::PickerProgressHandler> = handler.clone();
         let bg_repo = spawn_repo.clone();
-        let bg_skip_tasks = self.skip_tasks.clone();
         let show_branches = self.show_branches;
         let show_remotes = self.show_remotes;
         let command_timeout = self.command_timeout;
@@ -1379,7 +1398,6 @@ impl PipelineFactory {
                     collect::ShowConfig::Resolved {
                         show_branches,
                         show_remotes,
-                        skip_tasks: bg_skip_tasks,
                         command_timeout,
                         collect_deadline: None,
                         list_width: Some(skim_list_width),
@@ -1571,19 +1589,19 @@ pub fn handle_picker(
         orchestrator.spawn_preview(Arc::new(item), PreviewMode::WorkingTree, dims);
     }
 
-    // Run every task — the picker is `wt list --full`. `main…±` (BranchDiff) is
-    // now a default `wt list` column, so the picker surfaces it too; it's local
-    // git keyed by a persistent content-addressed cache, so warm rows are instant
-    // and a cold row computes once in the background (its merge-base walk streams
-    // in behind the frame, never blocking the picker). CiStatus is primed from
-    // the local cache so the first frame shows cached status (see
-    // `populate_from_cache`), then fetched live and streamed in — the same
-    // 30–60s-TTL cache plus live fetch as `wt list --full`. The picker's lifetime
-    // is bounded by the user, so a slow forge call never blocks anything (see the
-    // "Network Access" notes in CLAUDE.md). The `pr` preview tab reads the same
-    // live status. `--prs` rows carry their own number from the explicit `--prs`
-    // forge call.
-    let skip_tasks: std::collections::HashSet<collect::TaskKind> = std::collections::HashSet::new();
+    // The picker runs every task — it is `wt list --full` (`ShowConfig::Resolved`
+    // forces `show_full`, so `collect` plans the full task set from all columns).
+    // `main…±` (BranchDiff) is a default `wt list` column, so the picker surfaces
+    // it too; it's local git keyed by a persistent content-addressed cache, so
+    // warm rows are instant and a cold row computes once in the background (its
+    // merge-base walk streams in behind the frame, never blocking the picker).
+    // CiStatus is primed from the local cache so the first frame shows cached
+    // status (see `populate_from_cache`), then fetched live and streamed in — the
+    // same 30–60s-TTL cache plus live fetch as `wt list --full`. The picker's
+    // lifetime is bounded by the user, so a slow forge call never blocks anything
+    // (see the "Network Access" notes in CLAUDE.md). The `pr` preview tab reads
+    // the same live status. `--prs` rows carry their own number from the explicit
+    // `--prs` forge call.
 
     // Per-task command timeout (bounds any single git invocation) from
     // shared `[list]` config. Still applies in progressive mode.
@@ -1702,7 +1720,6 @@ pub fn handle_picker(
         preview_dims,
         skim_list_width,
         command_timeout,
-        skip_tasks,
         llm_command,
         summary_hint,
         show_branches,
@@ -2858,7 +2875,7 @@ pub mod tests {
         *remover.layout_slot.lock().unwrap() =
             Some(crate::commands::list::layout::calculate_layout_with_width(
                 std::slice::from_ref(&*item_arc),
-                &std::collections::HashSet::new(),
+                &crate::commands::list::columns::all_tasks(),
                 80,
                 Path::new("/test"),
                 None,
@@ -2895,7 +2912,6 @@ pub mod tests {
             preview_dims: (80, 24),
             skim_list_width: 80,
             command_timeout: None,
-            skip_tasks: std::collections::HashSet::new(),
             llm_command: None,
             summary_hint: None,
             show_branches: false,
@@ -3077,6 +3093,50 @@ pub mod tests {
         assert!(
             !outputs.iter().any(|out| out.contains("doomed")),
             "refresh must not stream the removed worktree: {outputs:?}"
+        );
+    }
+
+    /// A refresh (`alt-r`, `spawn(true)`) drops the warm in-memory preview cache
+    /// so each rebuilt row recomputes against the fresh repo; the initial spawn
+    /// (`spawn(false)`) keeps it warm. The probe entry is keyed under a branch
+    /// with no row, so the background precompute never re-fills it — the entry's
+    /// fate is the clear alone, not a race with recompute.
+    #[test]
+    fn test_refresh_clears_preview_cache_initial_spawn_keeps_it() {
+        use super::preview::PreviewMode;
+
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        let factory = test_factory(repo);
+        let ghost = ("ghost-branch".to_string(), PreviewMode::WorkingTree);
+
+        // Initial spawn (`false`) preserves warm previews.
+        factory
+            .preview_cache
+            .insert(ghost.clone(), "warm".to_string());
+        let super::SpawnedPipeline {
+            handler,
+            collect_handle,
+            ..
+        } = factory.spawn(false).unwrap();
+        drop(handler);
+        collect_handle.join().unwrap();
+        assert!(
+            factory.preview_cache.contains_key(&ghost),
+            "initial spawn must keep the preview cache warm"
+        );
+
+        // Refresh (`true`) drops them.
+        let super::SpawnedPipeline {
+            handler,
+            collect_handle,
+            ..
+        } = factory.spawn(true).unwrap();
+        drop(handler);
+        collect_handle.join().unwrap();
+        assert!(
+            !factory.preview_cache.contains_key(&ghost),
+            "refresh must clear the in-memory preview cache"
         );
     }
 
@@ -3643,7 +3703,7 @@ pub mod tests {
         }));
         let layout = crate::commands::list::layout::calculate_layout_with_width(
             std::slice::from_ref(&worktree_item),
-            &std::collections::HashSet::new(),
+            &crate::commands::list::columns::all_tasks(),
             80,
             Path::new("/test"),
             None,
