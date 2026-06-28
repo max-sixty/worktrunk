@@ -111,13 +111,23 @@ impl std::fmt::Display for WorktreeState {
 /// Priority order determines which symbol is shown:
 /// 1. IsMain (^) - this IS the main worktree
 /// 2. Orphan (∅) - no common ancestor with default branch
-/// 3. WouldConflict (✗) - merge-tree simulation shows conflicts
-/// 4. Empty (_) - same commit as default branch AND clean working tree (safe to delete)
-/// 5. SameCommit (–) - same commit as default branch with uncommitted changes
-/// 6. Integrated (⊂) - content is in default branch via different history
+/// 3. Empty (_) - same commit as default branch AND clean working tree (safe to delete)
+/// 4. Integrated (⊂) - content is in default branch via different history (safe to delete)
+/// 5. WouldConflict (✗) - merge-tree simulation shows conflicts AND not already integrated
+/// 6. SameCommit (–) - same commit as default branch with uncommitted changes
 /// 7. Diverged (↕) - both ahead and behind default branch
 /// 8. Ahead (↑) - has commits default branch doesn't have
 /// 9. Behind (↓) - missing commits from default branch
+///
+/// `Empty`/`Integrated` rank above `WouldConflict`: a branch whose content is
+/// already in the default branch is safe to delete regardless of whether a
+/// naive re-merge would conflict. Such a conflict is vacuous — it happens when
+/// the default branch squash-merged the branch and then re-edited the same
+/// lines, so resolving it just reproduces the default branch's tree (nothing
+/// added). `wt step prune` reaches the same verdict via the same patch-id
+/// check, so the list symbol and the prune message agree. (Same rationale as
+/// `Orphan` outranking `WouldConflict`: show the root-cause state, not the
+/// downstream conflict.)
 ///
 /// The `Integrated` variant carries an [`IntegrationReason`] explaining how the
 /// content was integrated (ancestor, trees match, no added changes, or merge adds nothing).
@@ -198,18 +208,21 @@ impl MainState {
 
     /// Compute from divergence counts, integration state, and same-commit-dirty flag.
     ///
-    /// Priority: IsMain > Orphan > WouldConflict > integration > SameCommit > Diverged > Ahead > Behind
+    /// Priority: IsMain > Orphan > integration > WouldConflict > SameCommit > Diverged > Ahead > Behind
     ///
-    /// Orphan takes priority over WouldConflict because:
-    /// - Orphan is a fundamental property (no common ancestor)
-    /// - Merge conflicts for orphan branches are expected but not actionable normally
-    /// - Users should understand "this is an orphan branch" rather than "this would conflict"
+    /// Both Orphan and integration take priority over WouldConflict because:
+    /// - Each is a more fundamental property (no common ancestor / content
+    ///   already in the default branch)
+    /// - The merge conflict they imply is expected and not actionable —
+    ///   an orphan can't be merged cleanly, and an integrated branch has
+    ///   nothing left to merge (its conflict is vacuous)
+    /// - Users should see "this is an orphan branch" / "this is integrated
+    ///   (safe to delete)" rather than the downstream "this would conflict"
     ///
     /// This function takes every input up front — it's the "all data is
     /// available" path. For the per-gate resolver that walks tiers with
     /// partial data, see [`tier_is_main`], [`tier_orphan`],
-    /// [`tier_would_conflict`], [`tier_integration_or_counts`], and the
-    /// [`Tier`] helper below.
+    /// [`tier_would_conflict`], [`tier_counts`], and the [`Tier`] helper below.
     pub fn from_integration_and_counts(
         is_main: bool,
         would_conflict: bool,
@@ -223,10 +236,10 @@ impl MainState {
             Self::IsMain
         } else if is_orphan {
             Self::Orphan
-        } else if would_conflict {
-            Self::WouldConflict
         } else if let Some(state) = integration {
             state
+        } else if would_conflict {
+            Self::WouldConflict
         } else if is_same_commit_dirty {
             Self::SameCommit
         } else {
@@ -289,8 +302,9 @@ pub fn tier_orphan(is_orphan: Option<bool>) -> Tier<MainState> {
     }
 }
 
-/// Tier 3: `WouldConflict`. Authoritative source depends on which probe
-/// landed.
+/// Tier 4: `WouldConflict`. Runs *after* the integration tier, because a
+/// merge-tree conflict only means `✗` for a branch that isn't already
+/// integrated into the default branch.
 ///
 /// `has_merge_tree_conflicts` is the committed-HEAD probe (from
 /// `MergeTreeConflicts`). `has_working_tree_conflicts` is the dirty-tree
@@ -308,53 +322,69 @@ pub fn tier_orphan(is_orphan: Option<bool>) -> Tier<MainState> {
 /// avoid a redundant subprocess (returning a sentinel `false` that this
 /// gate ignores).
 ///
-/// Behavior:
-/// - `has_working_tree_conflicts == Some(Some(true))` → fire (dirty
-///   conflict, authoritative).
-/// - `has_working_tree_conflicts == Some(Some(false))` → rule out (dirty
-///   no-conflict, authoritative).
+/// **The conflict verdict (from the two probes):**
+/// - `has_working_tree_conflicts == Some(Some(true))` → conflict.
+/// - `has_working_tree_conflicts == Some(Some(false))` → no conflict.
 /// - Otherwise consult the HEAD probe:
-///   - `Some(true)` → fire.
+///   - `Some(true)` → conflict.
 ///   - `Some(false)` and working-tree probe loaded (`Some(None)`, i.e.,
-///     clean or unmerged) → rule out.
-///   - `Some(false)` and working-tree probe still `None` → wait (the
+///     clean or unmerged) → no conflict.
+///   - `Some(false)` and working-tree probe still `None` → unknown (the
 ///     working-tree probe could still flip us).
-///   - `None` → wait.
+///   - `None` → unknown.
+///
+/// **Then the integration gate:** a conflict fires `✗` only once
+/// `integration_resolved` is true (the integration verdict is final and
+/// negative — a positive verdict already fired `⊂`/`_` in the earlier
+/// tier). While the verdict is still pending, a detected conflict holds at
+/// `Wait` rather than flashing `✗` for a branch that may settle to `⊂`.
+/// No conflict rules out; an unknown conflict waits.
 pub fn tier_would_conflict(
     has_merge_tree_conflicts: Option<bool>,
     has_working_tree_conflicts: Option<Option<bool>>,
+    integration_resolved: bool,
 ) -> Tier<MainState> {
     use Tier::*;
-    match (has_merge_tree_conflicts, has_working_tree_conflicts) {
+    let conflict = match (has_merge_tree_conflicts, has_working_tree_conflicts) {
         // Working-tree probe is authoritative when it reports a dirty result.
-        (_, Some(Some(true))) => Fired(MainState::WouldConflict),
-        (_, Some(Some(false))) => RuledOut,
+        (_, Some(Some(true))) => Some(true),
+        (_, Some(Some(false))) => Some(false),
         // Otherwise consult HEAD probe.
-        (Some(true), _) => Fired(MainState::WouldConflict),
-        (Some(false), Some(None)) => RuledOut,
-        // HEAD says "no conflict" but WT hasn't reported — wait.
-        (Some(false), None) => Wait,
-        (None, _) => Wait,
+        (Some(true), _) => Some(true),
+        (Some(false), Some(None)) => Some(false),
+        // HEAD says "no conflict" but WT hasn't reported — unknown.
+        (Some(false), None) => None,
+        (None, _) => None,
+    };
+    match conflict {
+        // A conflict is only `✗` for a branch that isn't already integrated.
+        // Hold until the integration verdict is final so we never flash `✗`
+        // for a branch that will settle to `⊂`.
+        Some(true) if integration_resolved => Fired(MainState::WouldConflict),
+        Some(true) => Wait,
+        Some(false) => RuledOut,
+        None => Wait,
     }
 }
 
-/// Tiers 4–6: integration / same-commit-dirty / counts-based fallback.
+/// Tiers 5–6: same-commit-dirty / counts-based fallback.
 ///
-/// Once tiers 1–3 have been ruled out, the gate needs `counts` and
-/// `is_clean`, plus whatever integration signals the caller can provide.
-/// This delegates to [`MainState::from_integration_and_counts`] with
-/// `is_main = false`, `would_conflict = false`, `is_orphan = false`
-/// (callers enforce those invariants via the earlier tiers).
+/// Reached once tiers 1–4 have been ruled out (not main, not orphan, not
+/// integrated, no un-integrated conflict). The gate needs `counts` and
+/// `is_clean`. Integration is resolved in the earlier integration tier, so
+/// this delegates to [`MainState::from_integration_and_counts`] with
+/// `is_main = false`, `would_conflict = false`, `integration = None`,
+/// `is_orphan = false` (callers enforce those invariants via the earlier
+/// tiers).
 ///
 /// Returns:
 /// - `Fired(state)` if `counts` and `is_clean` are both known. (`state`
 ///   may be `MainState::None` when there's nothing to display, which
 ///   callers should still treat as a resolved gate.)
 /// - `Wait` if either `counts` or `is_clean` is still loading.
-pub fn tier_integration_or_counts(
+pub fn tier_counts(
     counts: Option<super::stats::AheadBehind>,
     is_clean: Option<bool>,
-    integration: Option<MainState>,
 ) -> Tier<MainState> {
     let Some(counts) = counts else {
         return Tier::Wait;
@@ -366,8 +396,8 @@ pub fn tier_integration_or_counts(
     let is_same_commit_dirty = !is_clean && counts.ahead == 0 && counts.behind == 0;
     Tier::Fired(MainState::from_integration_and_counts(
         false, // is_main — tier 1 ruled this out
-        false, // would_conflict — tier 3 ruled this out
-        integration,
+        false, // would_conflict — tier 4 ruled this out
+        None,  // integration — resolved in the integration tier
         is_same_commit_dirty,
         false, // is_orphan — tier 2 ruled this out
         counts.ahead,
@@ -616,10 +646,41 @@ mod tests {
             MainState::Orphan
         ));
 
-        // WouldConflict when not orphan
+        // WouldConflict when not orphan and not integrated
         assert!(matches!(
             MainState::from_integration_and_counts(false, true, None, false, false, 5, 3),
             MainState::WouldConflict
+        ));
+
+        // Integration outranks WouldConflict: a branch whose content is
+        // already in the default branch shows ⊂, not ✗, even though a naive
+        // re-merge would conflict (the conflict is vacuous). This is the
+        // squash-merged-then-base-moved-on case.
+        assert!(matches!(
+            MainState::from_integration_and_counts(
+                false, // is_main
+                true,  // would_conflict
+                Some(MainState::Integrated(IntegrationReason::PatchIdMatch)),
+                false, // is_same_commit_dirty
+                false, // is_orphan
+                1,
+                11,
+            ),
+            MainState::Integrated(IntegrationReason::PatchIdMatch)
+        ));
+
+        // Empty (same commit, clean) also outranks WouldConflict.
+        assert!(matches!(
+            MainState::from_integration_and_counts(
+                false,
+                true,
+                Some(MainState::Empty),
+                false,
+                false,
+                0,
+                0
+            ),
+            MainState::Empty
         ));
 
         // Empty (passed as integration state - same commit with clean working tree)
@@ -706,35 +767,45 @@ mod tests {
 
     #[test]
     fn test_tier_would_conflict() {
+        // The integration verdict is resolved-negative (`true`) in these
+        // cases, so the conflict verdict alone decides the tier — the
+        // historical contract for the two probes is unchanged.
+
         // HEAD probe says conflict → fire, even if working-tree probe
         // hasn't reported.
         assert_eq!(
-            tier_would_conflict(Some(true), None),
+            tier_would_conflict(Some(true), None, true),
             Tier::Fired(MainState::WouldConflict)
         );
         // Working-tree probe says dirty conflict → fire, even if HEAD
         // probe hasn't reported.
         assert_eq!(
-            tier_would_conflict(None, Some(Some(true))),
+            tier_would_conflict(None, Some(Some(true)), true),
             Tier::Fired(MainState::WouldConflict)
         );
         // Both probes report "no conflict" (HEAD: Some(false), WT:
         // Some(None) meaning "working tree is clean, no dirty-tree
         // result") → rule out.
-        assert_eq!(tier_would_conflict(Some(false), Some(None)), Tier::RuledOut);
+        assert_eq!(
+            tier_would_conflict(Some(false), Some(None), true),
+            Tier::RuledOut
+        );
         // WT probe reports a clean dirty-tree result (Some(Some(false)))
         // → rule out, regardless of HEAD probe.
         assert_eq!(
-            tier_would_conflict(Some(false), Some(Some(false))),
+            tier_would_conflict(Some(false), Some(Some(false)), true),
             Tier::RuledOut
         );
         // WT probe is authoritative: rule out even when HEAD probe was
         // skipped (None) because MergeTreeConflictsTask deferred to it.
-        assert_eq!(tier_would_conflict(None, Some(Some(false))), Tier::RuledOut);
+        assert_eq!(
+            tier_would_conflict(None, Some(Some(false)), true),
+            Tier::RuledOut
+        );
         // WT probe is authoritative: fire even when HEAD probe says no
         // conflict (the dirty tree's merge result wins).
         assert_eq!(
-            tier_would_conflict(Some(false), Some(Some(true))),
+            tier_would_conflict(Some(false), Some(Some(true)), true),
             Tier::Fired(MainState::WouldConflict)
         );
         // WT probe is authoritative: rule out even when HEAD probe says
@@ -745,103 +816,98 @@ mod tests {
         // contract so a future refactor that reorders the matches
         // doesn't silently regress.
         assert_eq!(
-            tier_would_conflict(Some(true), Some(Some(false))),
+            tier_would_conflict(Some(true), Some(Some(false)), true),
             Tier::RuledOut
         );
         // HEAD probe hasn't reported → wait (could flip us to conflict).
-        assert_eq!(tier_would_conflict(None, None), Tier::Wait);
-        assert_eq!(tier_would_conflict(None, Some(None)), Tier::Wait);
+        assert_eq!(tier_would_conflict(None, None, true), Tier::Wait);
+        assert_eq!(tier_would_conflict(None, Some(None), true), Tier::Wait);
         // HEAD probe says "no conflict" but WT probe hasn't reported →
         // wait (WT could still flip us).
-        assert_eq!(tier_would_conflict(Some(false), None), Tier::Wait);
+        assert_eq!(tier_would_conflict(Some(false), None, true), Tier::Wait);
+
+        // Integration gate: a detected conflict holds at Wait until the
+        // integration verdict is final, so an integrated-but-stale branch
+        // never flashes ✗ before tier 3 settles it to ⊂.
+        assert_eq!(tier_would_conflict(Some(true), None, false), Tier::Wait);
+        assert_eq!(
+            tier_would_conflict(None, Some(Some(true)), false),
+            Tier::Wait
+        );
+        // The integration gate doesn't change a "no conflict" or "unknown"
+        // verdict — only a detected conflict is held.
+        assert_eq!(
+            tier_would_conflict(Some(false), Some(None), false),
+            Tier::RuledOut
+        );
+        assert_eq!(tier_would_conflict(None, None, false), Tier::Wait);
     }
 
     #[test]
-    fn test_tier_integration_or_counts() {
+    fn test_tier_counts() {
         use super::super::stats::AheadBehind;
 
         // counts missing → wait
-        assert_eq!(
-            tier_integration_or_counts(None, Some(true), None),
-            Tier::Wait
-        );
+        assert_eq!(tier_counts(None, Some(true)), Tier::Wait);
 
         // is_clean missing → wait
         assert_eq!(
-            tier_integration_or_counts(
+            tier_counts(
                 Some(AheadBehind {
                     ahead: 0,
                     behind: 0
                 }),
                 None,
-                None
             ),
             Tier::Wait
         );
 
         // in-sync clean → Fired(None)
         assert_eq!(
-            tier_integration_or_counts(
+            tier_counts(
                 Some(AheadBehind {
                     ahead: 0,
                     behind: 0
                 }),
                 Some(true),
-                None
             ),
             Tier::Fired(MainState::None)
         );
 
         // in-sync dirty → SameCommit
         assert_eq!(
-            tier_integration_or_counts(
+            tier_counts(
                 Some(AheadBehind {
                     ahead: 0,
                     behind: 0
                 }),
                 Some(false),
-                None
             ),
             Tier::Fired(MainState::SameCommit)
         );
 
         // Ahead only
         assert_eq!(
-            tier_integration_or_counts(
+            tier_counts(
                 Some(AheadBehind {
                     ahead: 3,
                     behind: 0
                 }),
                 Some(true),
-                None
             ),
             Tier::Fired(MainState::Ahead)
         );
 
         // Diverged
         assert_eq!(
-            tier_integration_or_counts(
+            tier_counts(
                 Some(AheadBehind {
                     ahead: 3,
                     behind: 2
                 }),
                 Some(true),
-                None
             ),
             Tier::Fired(MainState::Diverged)
-        );
-
-        // Integration state wins over counts
-        assert_eq!(
-            tier_integration_or_counts(
-                Some(AheadBehind {
-                    ahead: 5,
-                    behind: 0
-                }),
-                Some(true),
-                Some(MainState::Integrated(IntegrationReason::Ancestor)),
-            ),
-            Tier::Fired(MainState::Integrated(IntegrationReason::Ancestor))
         );
     }
 
