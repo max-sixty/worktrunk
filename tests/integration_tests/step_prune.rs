@@ -1481,13 +1481,14 @@ fn write_delaying_git_wrapper(dir: &std::path::Path, real_git: &std::path::Path)
     use std::os::unix::fs::PermissionsExt;
 
     let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
-    // Match all three deletion shapes:
-    //   - `branch -d <branch>` (force-delete via `git branch -D` from
-    //     `delete_branch_if_safe`'s force path was previously also covered
-    //     by the `-D` alternative)
-    //   - `branch -D <branch>` (force path)
-    //   - `update-ref -d refs/heads/<branch> <expected-sha>` (the CAS path
-    //     `delete_branch_if_safe` now takes when the branch is integrated)
+    // Match every deletion shape this prune might take. `delete_branch_if_safe`
+    // emits one of:
+    //   - `branch -D <branch>` (the force path, and the fallback when there's
+    //     no snapshot SHA to compare-and-swap against)
+    //   - `update-ref -d refs/heads/<branch> <expected-sha>` (the CAS path it
+    //     takes when the branch is integrated)
+    // The `-d` arm below is also matched defensively for the plain-delete form;
+    // production no longer emits it.
     let script = format!(
         r#"#!/bin/sh
 if [ "$1" = "branch" ] && {{ [ "$2" = "-d" ] || [ "$2" = "-D" ]; }} && [ "$3" = "$WT_PRUNE_DELAY_BRANCH" ]; then
