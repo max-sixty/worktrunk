@@ -594,10 +594,17 @@ fn wait_for_cursor_on_row(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Pars
 /// rely on this navigate by cursor and never type, so the query stays empty —
 /// only the selected row both starts with `>` and carries a worktree `name`,
 /// which uniquely picks it out.
+///
+/// The match is scoped to the list pane (cols `0..LIST_WIDTH`). The preview pane
+/// shares each physical row to the right of the border, so `name` is sought only
+/// in the row's own list text — otherwise a token that also renders in the
+/// preview (e.g. a PR title carrying a branch word) could satisfy the check from
+/// the wrong row.
 fn cursor_points_at(screen: &str, name: &str) -> bool {
-    screen
-        .lines()
-        .any(|line| line.starts_with('>') && line.contains(name))
+    screen.lines().any(|line| {
+        let list: String = line.chars().take(LIST_WIDTH as usize).collect();
+        list.starts_with('>') && list.contains(name)
+    })
 }
 
 /// Drive the PTY reader until the screen satisfies `ready` and then settles, or
@@ -1483,14 +1490,15 @@ fn test_switch_picker_prs_gitlab_list(mut repo: TestRepo) {
 /// would strand until the next keystroke — the gap the picker's test harness
 /// used to paper over by re-issuing the tab key.
 ///
-/// Ignored: flakes under CI contention. Filtering to a single visible row
-/// (`#`, then `!main`) doesn't control which row is *selected* — when the
-/// filter applies before the async `--prs` row has streamed in, the result
-/// set empties, the cursor is lost, and skim doesn't reselect the lone row
-/// once it arrives, so the `"Not checked out"` gate times out. Tracked in
-/// https://github.com/max-sixty/worktrunk/issues/3269.
+/// The PR row is selected by driving the cursor with a re-issued Down, not by an
+/// `!main` filter: a filter applied before the async `--prs` row streams in
+/// empties the result set, and skim doesn't reselect the lone row when it arrives
+/// — so the gate timed out under contention (#3269). Down is idempotent and
+/// clamps on the bottom row, where the streamed PR row sits (below the worktree
+/// row), so the cursor-arrow wait re-issues it until the `>` pointer holds on
+/// `flaky`, outlasting both the stream-in and the cursor reset that the
+/// item-list refresh triggers.
 #[rstest]
-#[ignore = "flaky under CI contention; restore tracked in #3269"]
 fn test_switch_picker_preview_auto_refreshes_when_compute_lands(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     repo.run_git(&[
@@ -1528,22 +1536,13 @@ fn test_switch_picker_preview_auto_refreshes_when_compute_lands(mut repo: TestRe
         repo.root_path(),
         &env_vars,
         &[
-            // Isolate the PR row with skim's inverse-match operator `!main`,
-            // which excludes the worktree row (uniquely carrying its branch name
-            // `main` in its matcher text) and leaves only the `--prs` row. This
-            // puts the cursor on the PR row deterministically. Two reasons a
-            // simpler approach won't do: (1) a `--prs` row's order against the
-            // worktree row isn't fixed — it streams in on its own thread and the
-            // worktree row's `PathName` tiebreak reads the random temp path, so
-            // either order can win and a single Down lands on either row; (2) the
-            // mock returns this PR for *every* `gh pr list` (including the
-            // worktree row's CI-status lookup), folding the PR's number/title/
-            // author into the worktree row's matcher text too — so no PR-content
-            // query (`#`, the title, the author) can single out the PR row. The
-            // worktree branch name is the one token only the worktree row has.
-            // The PR row is then the sole, selected row; its preview is the "not
-            // checked out locally" pane.
-            ("!main", Some("Not checked out")),
+            // Drive the cursor onto the PR row. Its narrow (preview-shown) list
+            // line shows the short head branch `flaky`; the worktree row shows
+            // `main`. A re-issued Down lands the `>` pointer on `flaky` (the
+            // bottom row) and re-drives it there if a streamed-row refresh resets
+            // the cursor — see the docstring for why this replaces the `!main`
+            // filter.
+            ("\x1b[B", Some("flaky")),
             // alt-7: comments tab. The fetch is still in flight, so the pane shows
             // "Loading comments…"; the comment appears with NO further input once
             // the delayed fetch lands and the picker repaints on its own.
