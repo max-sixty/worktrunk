@@ -150,6 +150,8 @@ Output as JSON for scripting:
 
 The [2mmain[0m header label is used regardless of the default branch's actual name.
 
+[2mmain↕[0m and [2mmain…±[0m measure against the default branch's upstream tip when the local copy lags it — so in a fork whose local [2mmain[0m trails [2morigin/main[0m, a branch reads as ahead of the real mainline, not of a stale local checkout. The [2m↑[0m/[2m↓[0m/[2m↕[0m Status symbols derive from these counts, so they track the upstream tip too.
+
 [32mGutter[0m
 
 The leftmost column marks each row by physical presence, from most present to least:
