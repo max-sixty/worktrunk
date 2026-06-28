@@ -1243,13 +1243,19 @@ fn approved_removal_plan(
 /// Each [`spawn`](Self::spawn) builds a *fresh* progressive handler (its
 /// `OnceLock` slots can't be reset) and item channel, but shares the
 /// session-long state — the orchestrator / preview cache (so previews stay
-/// warm), `shared_items` and `shortcut_table` (which `on_skeleton` overwrites),
-/// and skim's `render_tx`. Held by [`PickerCollector`] so a refresh can
-/// re-enter the pipeline.
+/// warm), `shared_items` and `shortcut_table` (which `on_skeleton` seeds and the
+/// `--prs` thread extends), and skim's `render_tx`. Held by [`PickerCollector`]
+/// so a refresh can re-enter the pipeline.
 struct PipelineFactory {
     repo: Repository,
     render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
     shared_items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>>,
+    /// Monotonic spawn counter. Each [`spawn`](Self::spawn) bumps it and hands
+    /// the value to that spawn's `--prs` thread, which appends its PR/MR rows to
+    /// `shared_items` only while the counter still matches — so a stale forge call
+    /// from a pre-refresh spawn can't pollute the list a later spawn rebuilt. See
+    /// [`prs::PrsShared`].
+    prs_epoch: Arc<AtomicUsize>,
     shortcut_table: ShortcutTable,
     preview_cache: PreviewCache,
     orchestrator: Arc<PreviewOrchestrator>,
@@ -1395,9 +1401,18 @@ impl PipelineFactory {
             let prs_warnings = Arc::clone(&self.stashed_warnings);
             let prs_orchestrator = Arc::clone(&self.orchestrator);
             let prs_render_tx = Arc::clone(&self.render_tx);
+            // Bump the spawn counter and capture this spawn's value: the `--prs`
+            // thread appends its rows to `shared_items` only while the counter
+            // still matches, so an earlier spawn's still-in-flight forge call
+            // can't add rows to this (or a later) spawn's list. See
+            // `PipelineFactory::prs_epoch` and `prs::PrsShared`.
+            let current_epoch = self.prs_epoch.fetch_add(1, Ordering::SeqCst) + 1;
             let prs_shared = prs::PrsShared {
                 grid_slot: Arc::clone(&grid_slot),
                 shortcut_table: Arc::clone(&self.shortcut_table),
+                shared_items: Arc::clone(&self.shared_items),
+                epoch: Arc::clone(&self.prs_epoch),
+                current_epoch,
             };
             let prs_layout = prs::PrsLayout {
                 list_width: self.skim_list_width,
@@ -1648,10 +1663,11 @@ pub fn handle_picker(
             (None, Some(hint.to_string()))
         };
 
-    // Shared items list: populated by the handler's `on_skeleton` and read
-    // by `PickerCollector` on alt-x reload. Starts empty — the collector's
-    // `invoke` only fires after skim has displayed items, by which time
-    // the handler has already published them.
+    // The picker's full row list — header, worktree/branch rows, and (in `--prs`
+    // mode) PR/MR rows. `on_skeleton` fills it with the header + worktree/branch
+    // rows and the `--prs` thread appends its PR/MR rows; an `alt-x` removal
+    // mutates it (`AltXRemover`) and rebuilds skim's pool from it (`resync_pool`).
+    // Starts empty — those writers run only after skim is displaying rows.
     let shared_items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>> = Arc::new(Mutex::new(Vec::new()));
 
     // `alt-y` / `alt-o` lookup table (token → branch + URL). The collect handler
@@ -1675,6 +1691,7 @@ pub fn handle_picker(
         repo: repo.clone(),
         render_tx: Arc::clone(&render_tx),
         shared_items: Arc::clone(&shared_items),
+        prs_epoch: Arc::new(AtomicUsize::new(0)),
         shortcut_table: Arc::clone(&shortcut_table),
         preview_cache: Arc::clone(&preview_cache),
         orchestrator: Arc::clone(&orchestrator),
@@ -2869,6 +2886,7 @@ pub mod tests {
             repo,
             render_tx,
             shared_items: Arc::new(Mutex::new(Vec::new())),
+            prs_epoch: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             shortcut_table: Arc::new(Mutex::new(std::collections::HashMap::new())),
             preview_cache,
             orchestrator,

@@ -37,7 +37,7 @@
 
 use std::collections::HashSet;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -242,12 +242,31 @@ pub(super) struct PrsLayout {
 }
 
 /// The structures the `--prs` thread coordinates with the collect side: the
-/// column-geometry handoff that aligns PR rows with the worktree grid, and the
-/// `alt-y` / `alt-o` shortcut table it extends with PR/MR rows. Bundled so the
-/// streaming entry points stay within the argument budget.
+/// column-geometry handoff that aligns PR rows with the worktree grid, the
+/// `alt-y` / `alt-o` shortcut table it extends with PR/MR rows, and the picker's
+/// shared row list it appends those rows into. Bundled so the streaming entry
+/// points stay within the argument budget.
 pub(super) struct PrsShared {
     pub grid_slot: Arc<GridSlot>,
     pub shortcut_table: ShortcutTable,
+    /// The picker's row list (`shared_items` — what `resync_pool` rebuilds skim's
+    /// pool from on an `alt-x` removal). `on_skeleton` fills it with the
+    /// worktree/branch rows; the `--prs` thread appends its PR/MR rows here too,
+    /// so a removal's pool rebuild keeps the streamed rows (they reach skim
+    /// through its own channel, which `resync_pool` never reads). Appended after
+    /// the skeleton has populated it — the `grid_slot.wait` below is gated on
+    /// that — so PR rows always land after the worktree rows, never in the
+    /// reserved header slot.
+    pub shared_items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>>,
+    /// Session-shared spawn counter (`PipelineFactory::prs_epoch`); each spawn
+    /// bumps it. Read together with `current_epoch` to decide whether this
+    /// thread's append is still wanted — see the append in [`fetch_and_stream`].
+    pub epoch: Arc<AtomicUsize>,
+    /// This spawn's `epoch` value, captured when the thread was spawned. The
+    /// append into `shared_items` runs only while `epoch` still equals it, so a
+    /// stale forge call from a pre-refresh spawn (whose skim channel is already
+    /// dropped) can't pollute the list a newer spawn rebuilt.
+    pub current_epoch: usize,
 }
 
 /// Stream the open PRs/MRs into the picker, then clear the header's "loading…"
@@ -380,6 +399,23 @@ fn fetch_and_stream(
             )) as Arc<dyn SkimItem>
         })
         .collect();
+
+    // Record the PR rows in the picker's shared list so an `alt-x` removal's
+    // pool rebuild (`resync_pool`) keeps them — they reach skim through its own
+    // channel below, which the rebuild never reads. The skeleton has already
+    // populated `shared_items` (the `grid_slot.wait` above gates on it), so this
+    // appends after the worktree rows. Done under the lock and gated on the spawn
+    // epoch: a stale forge call from a pre-refresh spawn (its skim channel already
+    // dropped) must not add rows to the list a newer spawn rebuilt — reading the
+    // epoch inside the lock pairs the check with the next spawn's `on_skeleton`
+    // overwrite, which holds the same lock. Ordered before `tx.send` so the rows
+    // reach `shared_items` no later than they reach skim's pool.
+    {
+        let mut list = shared.shared_items.lock().unwrap();
+        if shared.epoch.load(Ordering::SeqCst) == shared.current_epoch {
+            list.extend(items.iter().map(Arc::clone));
+        }
+    }
     let _ = tx.send(items);
 }
 
@@ -1772,6 +1808,9 @@ mod tests {
         let shared = PrsShared {
             grid_slot: Arc::new(GridSlot::new()),
             shortcut_table: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            shared_items: Arc::new(Mutex::new(Vec::new())),
+            epoch: Arc::new(AtomicUsize::new(1)),
+            current_epoch: 1,
         };
         let (rtx, mut rrx) = tokio::sync::mpsc::channel(8);
         let render_tx = OnceLock::new();
