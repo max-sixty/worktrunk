@@ -5518,6 +5518,7 @@ dependencies = [
  "path-slash",
  "pathdiff",
  "petname",
+ "petname-macros",
  "portable-pty",
  "ratatui",
  "rayon",
