@@ -220,8 +220,11 @@ and is exhaustive: only the listed columns render. Omit `columns` to keep the
 default set, where custom columns append automatically. A built-in name wins a
 header collision; the gutter type indicator always shows.
 
-Listing a column requests it but cannot force it on: a gated column stays hidden
-(`ci` needs `--full`, `summary` needs `[commit.generation]`).
+Listing a column forces it on, space permitting: `ci` shows without `--full`,
+since `--full` only bundles columns into the default table rather than gating a
+named one. A column whose data source is missing still stays hidden — `summary`
+needs an LLM command (`[commit.generation]`), `url` needs a `[list] url`
+template — since listing can't supply the data.
 
 The selection drives the table and the `wt switch` picker; `wt list --format
 json` ignores it and emits every field.

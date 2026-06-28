@@ -167,10 +167,10 @@ impl ColumnKind {
     /// A column renders when it consumes no task (identity columns, Gutter,
     /// custom — always shown) or at least one of its tasks is in the run set.
     /// The layout filter applies this to every built-in, dropping any whose
-    /// tasks were all left out of the plan: a column gated off (`--full`, a
-    /// missing template/LLM), or — under a `[list] columns` selection — an
-    /// unselected column (whose tasks aren't planned either, though the separate
-    /// selection filter also removes it).
+    /// tasks the planner left out: a default-set column gated off by `--full`,
+    /// any column whose data source is missing (no template/LLM), or — under a
+    /// `[list] columns` selection — an unselected column (whose tasks aren't
+    /// planned either, though the separate selection filter also removes it).
     pub fn renders_given_run(self, run: &std::collections::HashSet<TaskKind>) -> bool {
         let required = self.required_tasks();
         required.is_empty() || required.iter().any(|task| run.contains(task))
@@ -195,28 +195,54 @@ pub fn all_tasks() -> std::collections::HashSet<TaskKind> {
     TaskKind::iter().collect()
 }
 
-/// Gates that hide a column independent of the `[list] columns` selection — the
-/// data source is off, so neither the column nor its tasks appear.
+/// Gates that hide a column independent of the `[list] columns` selection.
+///
+/// Two kinds, distinguished by [`column_renders`]. *Preset* gates (`show_full`,
+/// `summary_enabled`) bundle columns into the default table; a column named
+/// outright in `[list] columns` overrides them. *Data-source* gates
+/// (`has_llm_command`, `has_url_template`) are hard: without the command or
+/// template there's nothing to render, so they hold even for a listed column.
 #[derive(Clone, Copy, Debug)]
 pub struct ColumnGates {
-    /// `--full` (or `[list] full`): CI status and LLM summaries are off without it.
+    /// `--full` (or `[list] full`): CI status and LLM summaries join the default
+    /// table only with it. A preset — a listed `ci`/`summary` ignores it.
     pub show_full: bool,
-    /// `[list] summary`: the summary column is opt-in even under `--full`.
+    /// `[list] summary`: the summary column is opt-in for the default table even
+    /// under `--full`. A preset — a listed `summary` ignores it.
     pub summary_enabled: bool,
-    /// An LLM command is configured (`[commit.generation]`).
+    /// An LLM command is configured (`[commit.generation]`). A data source: no
+    /// command, no summary, however the column was requested.
     pub has_llm_command: bool,
-    /// A `[list] url` template is configured.
+    /// A `[list] url` template is configured. A data source: no template, no url.
     pub has_url_template: bool,
 }
 
-/// Whether a column's data source is available under `gates`. `false` hides the
-/// column and skips its tasks regardless of selection: `ci` and `summary` need
-/// `--full`; `summary` additionally needs an LLM command and `[list] summary`;
-/// `url` needs a template. Every other column always renders.
-fn column_renders(kind: ColumnKind, gates: &ColumnGates) -> bool {
+/// How a column entered the rendered set, which decides whether the preset gates
+/// apply to it (see [`ColumnGates`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColumnSource {
+    /// Part of the default set: no `[list] columns`, or the picker/JSON plan over
+    /// every column. Every gate applies.
+    Default,
+    /// Named explicitly in `[list] columns`. The preset gates don't apply; the
+    /// data-source gates still do.
+    Listed,
+}
+
+/// Whether a column renders under `gates`, given how it entered the set.
+///
+/// A `Listed` column overrides the preset gates (`--full`, `[list] summary`):
+/// listing `ci` shows it without `--full`, listing `summary` shows it whenever an
+/// LLM command exists. The data-source gates always apply — `summary` needs an
+/// LLM command, `url` needs a template — since listing can't supply data that
+/// isn't configured. Every other column always renders.
+fn column_renders(kind: ColumnKind, source: ColumnSource, gates: &ColumnGates) -> bool {
+    let listed = source == ColumnSource::Listed;
     match kind {
-        ColumnKind::CiStatus => gates.show_full,
-        ColumnKind::Summary => gates.show_full && gates.summary_enabled && gates.has_llm_command,
+        ColumnKind::CiStatus => listed || gates.show_full,
+        ColumnKind::Summary => {
+            gates.has_llm_command && (listed || (gates.show_full && gates.summary_enabled))
+        }
         ColumnKind::Url => gates.has_url_template,
         _ => true,
     }
@@ -224,19 +250,23 @@ fn column_renders(kind: ColumnKind, gates: &ColumnGates) -> bool {
 
 /// The one place that decides which background tasks `wt list` runs.
 ///
-/// `rendered` is the column set the table will lay out — the `[list] columns`
-/// selection, or [`all_columns`] when nothing narrows it. The task set is
-/// exactly the union of the [`required_tasks`](ColumnKind::required_tasks) of
-/// the columns that survive the gates (`column_renders`). `collect` stores this
-/// set directly on [`CollectOptions::tasks`](super::collect::CollectOptions::tasks); the spawn loops and layout filter
-/// consume it as-is, so a task runs iff some rendered column needs it.
+/// `rendered` is the column set the table will lay out, paired with its `source`:
+/// the `[list] columns` selection (`Listed`), or [`all_columns`] when nothing
+/// narrows it (`Default`). The task set is exactly the union of the
+/// [`required_tasks`](ColumnKind::required_tasks) of the columns that survive the
+/// gates (`column_renders`) — so a `Listed` `ci` enrols its task without `--full`,
+/// while a column whose data source is missing enrols nothing. `collect` stores
+/// this set directly on [`CollectOptions::tasks`](super::collect::CollectOptions::tasks);
+/// the spawn loops and layout filter consume it as-is, so a task runs iff some
+/// rendered column needs it.
 pub fn required_tasks_for_render(
     rendered: impl IntoIterator<Item = ColumnKind>,
+    source: ColumnSource,
     gates: &ColumnGates,
 ) -> std::collections::HashSet<TaskKind> {
     rendered
         .into_iter()
-        .filter(|&kind| column_renders(kind, gates))
+        .filter(|&kind| column_renders(kind, source, gates))
         .flat_map(|kind| kind.required_tasks().iter().copied())
         .collect()
 }
@@ -578,6 +608,7 @@ mod tests {
 
     #[test]
     fn test_required_tasks_for_render() {
+        use ColumnSource::{Default, Listed};
         use strum::IntoEnumIterator;
 
         // Every gate open: every column can render.
@@ -591,56 +622,50 @@ mod tests {
 
         // The default set (all built-ins) under open gates needs every task —
         // the planner is exhaustive, so nothing falls out silently.
-        assert_eq!(required_tasks_for_render(all_columns(), &open), all);
+        assert_eq!(
+            required_tasks_for_render(all_columns(), Default, &open),
+            all
+        );
 
         // A branch/path `ls` view needs no background task at all.
         assert!(
-            required_tasks_for_render([ColumnKind::Branch, ColumnKind::Path], &open).is_empty(),
+            required_tasks_for_render([ColumnKind::Branch, ColumnKind::Path], Default, &open)
+                .is_empty(),
             "identity columns need no task"
         );
 
         // Selecting Status keeps every status-feeding task; the independent
         // columns' tasks are not pulled in.
-        let status = required_tasks_for_render([ColumnKind::Status], &open);
+        let status = required_tasks_for_render([ColumnKind::Status], Listed, &open);
         assert!(status.contains(&TaskKind::AheadBehind));
         assert!(status.contains(&TaskKind::WorkingTreeDiff));
         assert!(!status.contains(&TaskKind::BranchDiff));
         assert!(!status.contains(&TaskKind::CiStatus));
 
         // A custom column consumes no task, like the identity columns.
-        assert!(required_tasks_for_render([ColumnKind::Custom(0)], &open).is_empty());
+        assert!(required_tasks_for_render([ColumnKind::Custom(0)], Listed, &open).is_empty());
 
-        // Gates drop a column's tasks even when it is explicitly selected —
-        // "select narrows the work, never forces it on".
-        assert_eq!(
-            required_tasks_for_render([ColumnKind::CiStatus], &open),
-            HashSet::from([TaskKind::CiStatus]),
-            "ci runs under --full"
-        );
+        // `ci`'s only gate is the `--full` preset: hidden in the default set
+        // without it, forced on when listed.
         let no_full = ColumnGates {
             show_full: false,
             ..open
         };
         assert!(
-            required_tasks_for_render([ColumnKind::CiStatus], &no_full).is_empty(),
-            "ci is gated off without --full"
+            required_tasks_for_render([ColumnKind::CiStatus], Default, &no_full).is_empty(),
+            "ci stays off in the default set without --full"
         );
-        let no_template = ColumnGates {
-            has_url_template: false,
-            ..open
-        };
-        assert!(
-            required_tasks_for_render([ColumnKind::Url], &no_template).is_empty(),
-            "url needs a template"
+        assert_eq!(
+            required_tasks_for_render([ColumnKind::CiStatus], Listed, &no_full),
+            HashSet::from([TaskKind::CiStatus]),
+            "listing ci forces it on without --full"
         );
-        // Summary needs --full AND an LLM command AND [list] summary.
-        for gates in [
+
+        // `summary`'s presets (`--full`, `[list] summary`) gate the default set
+        // but yield to a listing; its LLM command is a data source that doesn't.
+        for preset_off in [
             ColumnGates {
                 show_full: false,
-                ..open
-            },
-            ColumnGates {
-                has_llm_command: false,
                 ..open
             },
             ColumnGates {
@@ -649,12 +674,37 @@ mod tests {
             },
         ] {
             assert!(
-                required_tasks_for_render([ColumnKind::Summary], &gates).is_empty(),
-                "summary is gated off when a precondition is missing"
+                required_tasks_for_render([ColumnKind::Summary], Default, &preset_off).is_empty(),
+                "summary stays off in the default set when a preset is off"
+            );
+            assert_eq!(
+                required_tasks_for_render([ColumnKind::Summary], Listed, &preset_off),
+                HashSet::from([TaskKind::SummaryGenerate]),
+                "listing summary overrides the preset gate"
             );
         }
+        let no_llm = ColumnGates {
+            has_llm_command: false,
+            ..open
+        };
+        assert!(
+            required_tasks_for_render([ColumnKind::Summary], Listed, &no_llm).is_empty(),
+            "summary needs an LLM command even when listed"
+        );
+
+        // `url`'s template is a data source, gating even a listed column.
+        let no_template = ColumnGates {
+            has_url_template: false,
+            ..open
+        };
+        assert!(
+            required_tasks_for_render([ColumnKind::Url], Listed, &no_template).is_empty(),
+            "url needs a template even when listed"
+        );
+
+        // Every precondition holding, a listed summary runs.
         assert_eq!(
-            required_tasks_for_render([ColumnKind::Summary], &open),
+            required_tasks_for_render([ColumnKind::Summary], Listed, &open),
             HashSet::from([TaskKind::SummaryGenerate]),
             "summary runs when every precondition holds"
         );
