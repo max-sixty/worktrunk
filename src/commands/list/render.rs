@@ -351,6 +351,25 @@ impl LayoutConfig {
                         _ => StyledLine::new(),
                     };
                 }
+                // Age (Time) and Message carry no task — their data arrives in
+                // `item.commit` from the pre-skeleton commit batch, not from a
+                // task result. Render them through the canonical cell renderer
+                // so the post-skeleton commit paint (and the 200ms reveal) fill
+                // them the moment that batch is folded in, instead of leaving
+                // them on the placeholder until the row's first task result
+                // happens to redraw it. Before the batch lands (the very first
+                // skeleton paint) `item.commit` is `None`, and `render_cell`
+                // returns the same placeholder the `_` arm below would.
+                ColumnKind::Time | ColumnKind::Message => {
+                    return col.render_cell(
+                        item,
+                        &self.status_position_mask,
+                        &self.main_worktree_path,
+                        self.max_message_len,
+                        self.max_summary_len,
+                        spinner,
+                    );
+                }
                 _ => {
                     // Show spinner for data columns (placeholder_cell handles alignment)
                     return col.placeholder_cell(spinner);
@@ -1336,6 +1355,72 @@ mod tests {
         item.summary = Some(Some("Add user authentication".into()));
         let cell = summary_col.render_cell(&item, &mask, &main_path, 50, 40, PLACEHOLDER);
         insta::assert_snapshot!(cell.render(), @"Add user authentication");
+    }
+
+    /// The skeleton renders the task-free Age/Message columns from
+    /// `item.commit` the moment the pre-skeleton commit batch is folded in,
+    /// rather than leaving them on the placeholder until the row's first task
+    /// result. Before the batch lands (`commit = None`, the very first paint)
+    /// both columns show the loading placeholder, exactly as the catch-all arm
+    /// did — so the first frame is unchanged.
+    #[test]
+    fn test_skeleton_renders_commit_columns_when_loaded() {
+        use super::super::layout::{ColumnLayout, LayoutConfig};
+        use super::super::model::{CommitDetails, ListItem, PositionMask};
+        use std::path::PathBuf;
+
+        let layout = LayoutConfig {
+            columns: vec![
+                ColumnLayout {
+                    kind: ColumnKind::Time,
+                    header: std::borrow::Cow::Borrowed("Age"),
+                    start: 0,
+                    width: 6,
+                    format: ColumnFormat::Text,
+                },
+                ColumnLayout {
+                    kind: ColumnKind::Message,
+                    header: std::borrow::Cow::Borrowed("Message"),
+                    start: 7,
+                    width: 20,
+                    format: ColumnFormat::Text,
+                },
+            ],
+            main_worktree_path: PathBuf::from("/tmp"),
+            max_message_len: 20,
+            max_summary_len: 10,
+            hidden_column_count: 0,
+            status_position_mask: PositionMask::FULL,
+        };
+
+        // commit = None (first skeleton paint, before the batch) → placeholders.
+        let mut item = ListItem::new_branch("abc123".into(), "feat".into());
+        item.commit = None;
+        let line = layout.render_skeleton_row(&item, PLACEHOLDER).render();
+        assert!(
+            line.contains('·'),
+            "Age/Message are placeholders before the commit batch: {line}"
+        );
+        assert!(
+            !line.contains("Fix the parser"),
+            "no commit subject before the batch: {line}"
+        );
+
+        // commit = Some (post-skeleton commit paint) → the subject and a
+        // relative age render without waiting for any task result.
+        item.commit = Some(CommitDetails {
+            timestamp: 1_700_000_000,
+            commit_message: "Fix the parser".into(),
+        });
+        let line = layout.render_skeleton_row(&item, PLACEHOLDER).render();
+        assert!(
+            line.contains("Fix the parser"),
+            "commit subject paints in the skeleton once the batch is in: {line}"
+        );
+        assert!(
+            !line.contains('·'),
+            "no loading placeholder once commit data is in: {line}"
+        );
     }
 
     #[test]

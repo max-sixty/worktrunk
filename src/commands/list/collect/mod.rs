@@ -127,7 +127,21 @@
 //! │  )                                          // ~10ms total (max of all spawns)
 //! ├─ populate ListItem.commit from cache        (cache-hit lookups, sub-ms)
 //! Worker thread spawns
+//! └─ paint Age/Message columns                  (workers already running)
 //! ```
+//!
+//! **Why the Age/Message paint:** those two columns carry no task — their
+//! data is the `ListItem.commit` populated above — so without an explicit
+//! repaint they'd sit on the skeleton placeholder until the row's first *task*
+//! result happened to redraw it, lagging behind the slower task-driven columns
+//! (and a cache-warm Summary preview). The paint runs *after* the worker pool
+//! is spawned — so the slow git subprocesses (the long pole) aren't delayed by
+//! it — but *before* the drain renders any result, so Age/Message still reach
+//! the screen ahead of every task-driven column. Reading `all_items` here is
+//! race-free: the worker thread only sends results through the channel, and the
+//! drain (the sole `all_items` mutator) hasn't started. `render_skeleton_row`
+//! fills Age/Message from `item.commit` while every task column keeps its
+//! placeholder.
 //!
 //! **Why fsmonitor check is sequential:** It gates whether daemon starts are needed.
 //! The check is fast (~5ms) and must complete before we know which spawns to add.
@@ -484,12 +498,16 @@ pub trait PickerProgressHandler: Send + Sync {
     /// the frozen skeleton snapshot.
     fn on_update(&self, idx: usize, rendered: String, item: &super::model::ListItem);
 
-    /// Fired at the 200ms reveal deadline. One pre-rendered line per row,
-    /// with the placeholder promoted from blank to `·`: rows that have
-    /// received real data use `format_list_item_line`, rows still at
-    /// skeleton state use the skeleton renderer. The handler writes every
-    /// slot — slot writes are idempotent.
-    fn on_reveal(&self, rendered: Vec<String>);
+    /// Rewrite every row's rendered line from `rendered` and repaint. The
+    /// handler writes one slot per row — slot writes are idempotent — then
+    /// pokes skim. Two callers, both handing over a full set of freshly
+    /// rendered rows:
+    /// - the post-skeleton commit paint (Age/Message filled from the
+    ///   pre-skeleton batch, every task column still on its placeholder),
+    /// - the 200ms reveal (placeholder promoted from blank to `·`: rows that
+    ///   have data use `format_list_item_line`, rows still at skeleton state
+    ///   use the skeleton renderer).
+    fn repaint_rows(&self, rendered: Vec<String>);
 
     /// Stash a pre-formatted warning line. Skim owns the terminal while
     /// collect runs on the picker's bg thread, so eprintln from collect
@@ -1591,6 +1609,37 @@ pub fn collect(
     // Drop the original sender so drain_results knows when all spawned threads are done
     drop(tx);
 
+    // Workers are running now — paint the commit-derived columns (Age,
+    // Message) while the git subprocesses spin up. They carry no task, so
+    // without this they'd sit on the skeleton placeholder until the row's
+    // first task result happened to redraw it, lagging behind the slower
+    // task-driven columns (and the cache-warm Summary preview, the symptom
+    // this addresses). Spawning the workers first means the slow git work (the
+    // long pole) isn't delayed by this paint, and reading `all_items` here is
+    // race-free: the worker thread only sends results through the channel —
+    // the drain below is the sole `all_items` mutator and hasn't started. The
+    // paint still lands before the drain renders any result, so Age/Message
+    // reach the screen ahead of every task-driven column. `render_skeleton_row`
+    // fills them from `item.commit` while each task column keeps its blank
+    // placeholder.
+    if progressive_table.is_some() || progressive_handler.is_some() {
+        let commit_rows: Vec<String> = all_items
+            .iter()
+            .map(|item| layout.render_skeleton_row(item, placeholder).render())
+            .collect();
+        if let Some(table) = progressive_table.as_mut() {
+            for (idx, row) in commit_rows.iter().enumerate() {
+                table.update_row(idx, row.clone());
+            }
+            if let Err(e) = table.flush() {
+                tracing::debug!(error = %e, "Progressive table commit-column paint flush failed: {}", e);
+            }
+        }
+        if let Some(handler) = progressive_handler.as_ref() {
+            handler.repaint_rows(commit_rows);
+        }
+    }
+
     // Drain task results with conditional progressive rendering.
     //
     // Progressive mutable state (table, row cache, counters) is owned by a
@@ -1707,7 +1756,7 @@ pub fn collect(
                     }
 
                     if let Some(handler) = progressive_handler.as_ref() {
-                        handler.on_reveal(updates);
+                        handler.repaint_rows(updates);
                     }
                 }
                 results::DrainEvent::Stall {
