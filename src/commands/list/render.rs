@@ -1,5 +1,5 @@
 use crate::display::{format_relative_time_short, shorten_path, truncate_to_width};
-use anstyle::Style;
+use anstyle::{Effects, Style};
 use std::path::Path;
 use unicode_width::UnicodeWidthStr;
 use worktrunk::styling::{Stream, StyledLine, hyperlink_stdout, supports_hyperlinks};
@@ -27,6 +27,21 @@ pub const PLACEHOLDER: &str = "·";
 /// 200ms threshold, `LayoutConfig::placeholder` is promoted to [`PLACEHOLDER`]
 /// and every still-pending cell is re-rendered with the dot.
 pub const PLACEHOLDER_BLANK: &str = " ";
+
+/// Step a style up one emphasis level for compact (C/K) diff notation, which
+/// flags an approximated count. A dimmed base drops the dim to land at normal;
+/// any other base gains bold. This keeps the jump uniform across subcolumns —
+/// the dimmed "behind" count (`↓6C`) steps dim → normal rather than leaping two
+/// levels to dim+bold, while the normal "ahead" count (`↑6C`) still steps
+/// normal → bold.
+fn bump_emphasis(style: Style) -> Style {
+    let effects = style.get_effects();
+    if effects.contains(Effects::DIMMED) {
+        style.effects(effects.remove(Effects::DIMMED))
+    } else {
+        style.bold()
+    }
+}
 
 impl DiffColumnConfig {
     /// Check if a value exceeds the allocated digit width
@@ -75,7 +90,9 @@ impl DiffColumnConfig {
 
     /// Render a subcolumn value with symbol and padding to fixed width
     /// Numbers are right-aligned on the ones column (e.g., " +2", "+53")
-    /// For compact notation (C/K suffix), renders bold (e.g., bold "+6C", bold "+5K")
+    /// For compact notation (C/K suffix), bumps the base style one emphasis
+    /// level (e.g. dim "↓6C" → normal, normal "↑6C" → bold) — see
+    /// [`bump_emphasis`].
     fn render_subcolumn(
         segment: &mut StyledLine,
         symbol: &str,
@@ -98,10 +115,10 @@ impl DiffColumnConfig {
             segment.push_raw(" ".repeat(padding_needed));
         }
 
-        // Add styled content - bold entire value if using compact notation (C/K suffix)
-        // to emphasize approximation
+        // Add styled content - bump emphasis one level for compact notation
+        // (C/K suffix) to flag the approximated count
         if is_compact {
-            segment.push_styled(format!("{}{}", symbol, value_str), style.bold());
+            segment.push_styled(format!("{}{}", symbol, value_str), bump_emphasis(style));
         } else {
             segment.push_styled(format!("{}{}", symbol, value_str), style);
         }
@@ -1293,6 +1310,26 @@ mod tests {
         );
         assert_eq!(arrow_overflow2.width(), arrow_total);
         insta::assert_snapshot!(arrow_overflow2.render(), @"[32m↑50[0m [1m[31m↓1K[0m");
+
+        // Case 7: dimmed base steps up one level to normal, not two to dim+bold.
+        // The `main↕` / upstream behind subcolumn is `DELETION.dimmed()`, so a
+        // compact `↓1C` drops the dim (→ plain red) instead of leaping to bold.
+        let arrow_behind_dim = format_diff_like_column(
+            0,
+            100, // 100 behind → compact "1C"
+            DiffColumnConfig {
+                positive_digits: 2,
+                negative_digits: 2,
+                total_width: arrow_total,
+                display: DiffDisplayConfig {
+                    variant: DiffVariant::Arrows,
+                    positive_style: ADDITION,
+                    negative_style: DELETION.dimmed(),
+                },
+            },
+        );
+        assert_eq!(arrow_behind_dim.width(), arrow_total);
+        insta::assert_snapshot!(arrow_behind_dim.render(), @"    [31m↓1C[0m");
     }
 
     #[test]
