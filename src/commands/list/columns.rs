@@ -227,9 +227,9 @@ fn column_renders(kind: ColumnKind, gates: &ColumnGates) -> bool {
 /// `rendered` is the column set the table will lay out — the `[list] columns`
 /// selection, or [`all_columns`] when nothing narrows it. The task set is
 /// exactly the union of the [`required_tasks`](ColumnKind::required_tasks) of
-/// the columns that survive the gates (`column_renders`); `collect` inverts it
-/// (`TaskKind::iter()` minus the result) into the skip set the spawn loop and
-/// layout filter consume, so a task runs iff some rendered column needs it.
+/// the columns that survive the gates (`column_renders`). `collect` stores this
+/// set directly on [`CollectOptions::tasks`](super::collect::CollectOptions::tasks); the spawn loops and layout filter
+/// consume it as-is, so a task runs iff some rendered column needs it.
 pub fn required_tasks_for_render(
     rendered: impl IntoIterator<Item = ColumnKind>,
     gates: &ColumnGates,
