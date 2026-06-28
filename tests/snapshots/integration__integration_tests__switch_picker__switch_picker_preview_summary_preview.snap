@@ -7,7 +7,7 @@ Enter: switch | ctrl-u/d: scroll | Tab/alt-1…7: preview | a
 
 Configure [commit.generation] command to enable LLM summari
 
-Example in ~/.config/worktrunk/config.toml:
+Example in [TEST_CONFIG]:
 
 [commit.generation]
 command = "llm -m haiku"
