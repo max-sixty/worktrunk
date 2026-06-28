@@ -12,7 +12,7 @@
 
 - **Fewer duplicate git calls in `wt list --full`**: The two integration probes per row (the conflict bit for `main-state` and the clean-merge tree for the integration column) issued a byte-identical `git merge-tree`, and the shared default-branch tip was peeled to its tree once per row. Both are now deduplicated through the in-memory cache, so each resolves once per run instead of once per worktree. ([#3288](https://github.com/max-sixty/worktrunk/pull/3288), [#3289](https://github.com/max-sixty/worktrunk/pull/3289))
 
-- **Picker `comments` tab caches across runs**: The picker's `comments` preview tab gained an on-disk cache keyed by the PR's `updatedAt` (which rides for free on the CI fetch the picker already makes), so a repeat `wt switch` skips the per-row `gh pr view --json comments` fetch when the thread is unchanged and paints the tab instantly instead of showing "Loading comments…". GitHub only. ([#3294](https://github.com/max-sixty/worktrunk/pull/3294))
+- **Picker `comments` tab avoids redundant forge fetches**: The picker's `comments` preview tab gained an on-disk cache keyed by the PR's `updatedAt` (which rides for free on the CI fetch the picker already makes), so a repeat `wt switch` skips the per-row `gh pr view --json comments` fetch when the thread is unchanged and paints the tab instantly instead of showing "Loading comments…". The cache is also primed from the `gh pr list` call the picker already makes, so the tab skips its own fetch even on a session's first open (including PRs with no comments). GitHub only. ([#3294](https://github.com/max-sixty/worktrunk/pull/3294), [#3299](https://github.com/max-sixty/worktrunk/pull/3299))
 
 ### Fixed
 
