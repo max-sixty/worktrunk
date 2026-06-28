@@ -193,7 +193,7 @@ No `get_*` — bare nouns follow Rust stdlib convention.
 
 ## Repository Caching
 
-`Repository` caches read-only values via `Arc<RepoCache>` (cloning shares it). What is and isn't cached, the `list_worktrees()` post-mutation invariant, and the two storage patterns: the `# Caching` section in `src/git/repository/mod.rs`.
+`Repository` caches read-only values via `Arc<RepoCache>` (cloning shares it). What is and isn't cached, the `list_worktrees()` post-mutation invariant, the two storage patterns, and the in-memory-`RepoCache`-vs-persistent-`sha_cache` decision (cheap-and-hot → in-memory get-or-create; expensive → disk; both → in-memory front over disk back): the `# Caching` section in `src/git/repository/mod.rs`.
 
 ## Releases
 
