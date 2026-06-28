@@ -526,6 +526,55 @@ enum PrPreview {
     HasPr(PrRef, PrStatus),
 }
 
+/// The three states the `pr` and `comments` tabs branch on, read from a live
+/// `pr_status` slot value without cloning the status. The discriminant mirrors
+/// [`PickerRow::pr_preview`] exactly. The `comments` pane is byte-identical
+/// within `HasPr` (its thread is branch-keyed and surfaced by `notify_filled`),
+/// so the collect handler re-renders that tab on a *presence* change, not on
+/// every `pr_status` field — re-running it for an unchanged body would only
+/// reset the user's scroll. See [`PreviewNotifier`](super::preview_notify::PreviewNotifier).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PrPresence {
+    Loading,
+    NoPr,
+    HasPr,
+}
+
+/// The [`PrPresence`] a live `pr_status` slot value resolves to — the same
+/// three-way split [`PickerRow::pr_preview`] renders.
+pub(super) fn pr_presence(pr_status: &Option<Option<PrStatus>>) -> PrPresence {
+    match pr_status {
+        None => PrPresence::Loading,
+        Some(None) => PrPresence::NoPr,
+        Some(Some(status)) if status.number.is_some() => PrPresence::HasPr,
+        Some(Some(_)) => PrPresence::NoPr,
+    }
+}
+
+/// Whether two live `pr_status` slot values render the *same* `pr` pane. Equal
+/// under the `PrStatus` derive means identical; the only field the pane ignores
+/// is `is_priming` — a list-cell dim hint [`render_pr_pane_body`] never reads —
+/// so a cache-prime→live flip that merely clears it is not a pane change and
+/// must not re-run the preview (which would reset its scroll). Every other field
+/// (CI badge, title, body, review, comment count, …) shows in the pane, so any
+/// of them differing is a real change. The lone change-path clone keeps the
+/// no-change case (the common repeated `on_update`) allocation-free.
+pub(super) fn pr_status_pane_eq(
+    a: &Option<Option<PrStatus>>,
+    b: &Option<Option<PrStatus>>,
+) -> bool {
+    match (a, b) {
+        (Some(Some(x)), Some(Some(y))) => {
+            x == y
+                || PrStatus {
+                    is_priming: y.is_priming,
+                    ..x.clone()
+                } == *y
+        }
+        _ => a == b,
+    }
+}
+
 /// Live, content-aware availability for the local-checkout tabs whose pane is a
 /// diff — `working_tree`, `branch_diff`, and `upstream`. Each tab dims once its
 /// diff is *known* empty, the same way the `pr` tab dims once the fetch reports
