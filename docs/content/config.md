@@ -208,7 +208,7 @@ Valid built-in names:
 - `ahead-behind` — Commits ahead of and behind the default branch (header `main↕`)
 - `branch-diff` — Line changes against the default branch (header `main…±`)
 - `summary` — An LLM-generated summary of the branch
-- `upstream` — The upstream tracking branch
+- `upstream` — Commits ahead of and behind the upstream tracking branch (header `Remote⇅`)
 - `ci` — CI status of the head commit
 - `path` — The worktree's path
 - `url` — Dev-server URL from the `[list] url` template

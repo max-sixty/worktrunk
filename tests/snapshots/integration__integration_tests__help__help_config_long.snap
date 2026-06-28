@@ -234,7 +234,7 @@ Valid built-in names:
 - [2mahead-behind[0m — Commits ahead of and behind the default branch (header [2mmain↕[0m)
 - [2mbranch-diff[0m — Line changes against the default branch (header [2mmain…±[0m)
 - [2msummary[0m — An LLM-generated summary of the branch
-- [2mupstream[0m — The upstream tracking branch
+- [2mupstream[0m — Commits ahead of and behind the upstream tracking branch (header [2mRemote⇅[0m)
 - [2mci[0m — CI status of the head commit
 - [2mpath[0m — The worktree's path
 - [2murl[0m — Dev-server URL from the [2m[list] url[0m template
