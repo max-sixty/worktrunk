@@ -27,6 +27,28 @@ use super::types::{ErrorCause, TaskError, TaskKind, TaskResult};
 /// across all clones via `Arc<RepoCache>`, so parallel tasks benefit from
 /// cached merge-base results, ahead/behind counts, default branch, and
 /// integration targets.
+///
+/// # Comparison bases
+///
+/// Three accessors expose "the mainline ref" a task compares against, and
+/// which one to use is decided by the question the task answers:
+///
+/// - [`default_branch`](Self::default_branch) is the local ref. Conflict
+///   prediction (`WouldConflict`) and the `wt merge` / `wt switch --base`
+///   writes use it, since that is the branch the merge actually updates and
+///   a remote-tracking ref is not writable.
+/// - [`comparison_base`](Self::comparison_base) is the upstream-aware
+///   superset tip. The ahead/behind (`main↕`) and branch-diff (`main…±`)
+///   columns measure against it, so a local default that lags its upstream
+///   does not inflate the distance from the real mainline.
+/// - [`integration_targets`](Self::integration_targets) is that superset
+///   plus, when local and upstream diverge, both sides. Integration status
+///   checks whether the work has landed in the mainline on either.
+///
+/// All three resolve the upstream from the default branch's configured
+/// `@{upstream}` alone ([`RefSnapshot::upstream_of`]); there is no
+/// remote-name heuristic. The superset selection itself lives on
+/// [`Repository::integration_targets`].
 #[derive(Clone)]
 pub struct TaskContext {
     /// Shared repository handle. All clones share the same cache via Arc.
@@ -95,14 +117,11 @@ impl TaskContext {
         TaskError::new(self.item_idx, kind, message, cause)
     }
 
-    /// Get the default branch resolved for this list invocation.
-    ///
-    /// The conflict columns (`WouldConflict`) compare against this local
-    /// ref because it is the branch `wt merge` actually targets. The
-    /// informational stat columns go through [`Self::comparison_base`]
-    /// instead, which prefers the upstream tip. Returns `None` if the
-    /// default branch cannot be determined, or if the persisted value is
-    /// stale (see `TaskContext::default_branch` docs).
+    /// Get the default branch resolved for this list invocation: the local
+    /// ref, used by conflict prediction and the merge/`--base` writes (see
+    /// the type-level "Comparison bases" note). Returns `None` if the default
+    /// branch cannot be determined, or if the persisted value is stale (see
+    /// the `default_branch` field docs).
     pub(super) fn default_branch(&self) -> Option<String> {
         self.default_branch.clone()
     }
