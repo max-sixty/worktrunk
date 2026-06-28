@@ -293,6 +293,13 @@ Interpreting results:
 
 - **No issues reported**: any bump level is valid from the library's perspective. Choose based on CLI changes and new features.
 - **Breaking changes reported**: while pre-1.0, these require at minimum a minor bump (e.g., 0.37.0 → 0.38.0). A patch release is not allowed.
-- **Tool fails to run** (e.g., missing baseline): likely the crate hasn't been published yet or the registry cache is stale. Try `cargo semver-checks check-release -p worktrunk --baseline-version <last-published>`.
+- **No baseline found**: the last version isn't on crates.io yet, or the registry index is stale. Add `--baseline-version <last-published>`.
+- **Baseline fails to build** (`failed to build rustdoc for crate worktrunk v<last>`): a pin this release added to fix a broken transitive dep isn't in the published baseline, which resolves its dependencies fresh. Build the baseline from the published source with the pin applied (currently `petname-macros`; see `Cargo.toml`):
+
+  ```bash
+  B="$(mktemp -d)/base"; cp -R ~/.cargo/registry/src/*/worktrunk-<last> "$B"; chmod -R u+w "$B"
+  printf '\n[dependencies.petname-macros]\nversion = "=3.0.0"\n' >> "$B/Cargo.toml"
+  cargo semver-checks check-release -p worktrunk --baseline-root "$B"
+  ```
 
 This check validates the chosen bump — it doesn't distinguish patch vs. minor when no breakage exists. Continue using the commit review to decide between patch (fixes only) and minor (new features).
