@@ -1311,8 +1311,8 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
         &[
             // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
             // for the matcher-lag rationale.
-            ("\x1b[B", None),             // Down: move cursor to `feature`
-            ("\x1b5", Some("Configure")), // Alt-5: summary panel; wait for hint
+            ("\x1b[B", None),                     // Down: move cursor to `feature`
+            ("\x1b5", Some("commit.generation")), // Alt-5: summary panel; wait for hint
         ],
     );
 
@@ -1323,6 +1323,49 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
     settings.bind(|| {
         assert_snapshot!("switch_picker_preview_summary_list", list);
         assert_snapshot!("switch_picker_preview_summary_preview", preview);
+    });
+}
+
+/// The summary panel's "enable summaries" hint — shown when commit.generation
+/// IS configured but `[list] summary = false`. Covers the second hint arm (the
+/// first is exercised by `test_switch_picker_preview_panel_summary`), and pins
+/// that both hints point at the resolved config path: under the test's
+/// `WORKTRUNK_CONFIG_PATH` isolation that path redacts to `[TEST_CONFIG]`, not
+/// a hardcoded `~/.config/worktrunk/config.toml`.
+#[rstest]
+fn test_switch_picker_preview_panel_summary_disabled(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    // Remove origin so snapshots don't show origin/main
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.add_worktree("feature");
+
+    // commit.generation configured, but summaries off — the picker seeds the
+    // Summary tab with the "enable summaries" hint rather than generating one.
+    repo.write_test_config(
+        "[commit.generation]\ncommand = \"llm -m haiku\"\n\n[list]\nsummary = false\n",
+    );
+
+    let env_vars = repo.test_env_vars();
+    // Select `feature`, then Alt-5 for the summary panel. Wait for the hint.
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
+            // for the matcher-lag rationale.
+            ("\x1b[B", None),          // Down: move cursor to `feature`
+            ("\x1b5", Some("Enable")), // Alt-5: summary panel; wait for hint
+        ],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+
+    let (_, preview) = result.panels();
+    let settings = switch_picker_settings(&repo);
+    settings.bind(|| {
+        assert_snapshot!("switch_picker_preview_summary_disabled_preview", preview);
     });
 }
 
@@ -2784,6 +2827,67 @@ fn test_switch_picker_alt_x_last_row_refreshes_preview(mut repo: TestRepo) {
     assert!(
         !preview.contains(&format!("{remove_target} has no uncommitted changes")),
         "the preview must not keep showing the removed row `{remove_target}`.\nPreview:\n{preview}"
+    );
+
+    let _ = abort_and_exit_code(child, writer, rx);
+}
+
+/// alt-r refreshes the preview pane, not just the row list. The in-memory preview
+/// cache is keyed by `(branch, mode)` with no SHA, so a warm working-tree diff
+/// would otherwise survive an edit and re-serve stale content; the refresh clears
+/// it so the pane recomputes against the current tree. Targets the pinned current
+/// worktree (the top row), so the cursor sits on it before and after the reload
+/// regardless of skim's reload cursor behavior — no navigation needed.
+#[rstest]
+fn test_switch_picker_alt_r_refreshes_preview(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // A committed, tracked file in the current worktree so `git diff HEAD` has
+    // something to show once it's edited (untracked files don't appear in it).
+    let tracked = repo.root_path().join("tracked.txt");
+    std::fs::write(&tracked, "original\n").unwrap();
+    repo.run_git(&["add", "tracked.txt"]);
+    repo.run_git(&["commit", "-m", "add tracked file"]);
+
+    let env_vars = repo.test_env_vars();
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--no-cd", "--format=json"],
+        repo.root_path(),
+        &env_vars,
+    );
+    let send = |bytes: &[u8]| {
+        let mut w = writer.lock().unwrap();
+        w.write_all(bytes).unwrap();
+        w.flush().unwrap();
+    };
+
+    // The picker opens on the working-tree tab with the cursor on the pinned
+    // current worktree (`main`), whose tree is clean.
+    wait_for_stable_with_content(&rx, &mut parser, Some("has no uncommitted changes"));
+
+    // Edit the tracked file *while the picker is open*. Without the refresh clearing
+    // the warm cache, alt-r would re-serve the cached "no uncommitted changes" pane.
+    std::fs::write(&tracked, "original\nedited\n").unwrap();
+
+    send(b"\x1br"); // alt-r: refresh
+    wait_for_stable_with_content(&rx, &mut parser, Some("diff --git"));
+
+    let preview = preview_pane_text(parser.screen());
+    assert!(
+        preview.contains("diff --git"),
+        "alt-r must recompute the working-tree preview to show the new edit.\nPreview:\n{preview}"
+    );
+    assert!(
+        !preview.contains("has no uncommitted changes"),
+        "the stale clean preview must not survive the refresh.\nPreview:\n{preview}"
     );
 
     let _ = abort_and_exit_code(child, writer, rx);
