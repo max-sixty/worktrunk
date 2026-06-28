@@ -80,6 +80,8 @@ $ wt list --format=json
 
 The `main` header label is used regardless of the default branch's actual name.
 
+`main↕` and `main…±` measure against the default branch's upstream tip when the local copy lags it — so in a fork whose local `main` trails `origin/main`, a branch reads as ahead of the real mainline, not of a stale local checkout. The `↑`/`↓`/`↕` Status symbols derive from these counts, so they track the upstream tip too.
+
 ### Gutter
 
 The leftmost column marks each row by physical presence, from most present to least:
