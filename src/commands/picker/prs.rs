@@ -51,8 +51,8 @@ use worktrunk::git::{CiPlatform, Repository};
 use worktrunk::styling::{HINT_SYMBOL, INFO_SYMBOL, StyledLine, WARNING_SYMBOL, warning_message};
 
 use super::super::list::ci_status::{
-    CiSource, CiStatus, GitHubPrInfo, PrRef, PrStatus, ReviewState, non_interactive_cmd,
-    tool_available,
+    CiSource, CiStatus, GitHubComment, GitHubPrInfo, PrRef, PrStatus, ReviewState,
+    non_interactive_cmd, tool_available,
 };
 use super::super::list::columns::ColumnKind;
 use super::super::list::layout::ColumnGrid;
@@ -646,12 +646,6 @@ struct GhPr {
     info: GitHubPrInfo,
 }
 
-#[derive(Deserialize, Default)]
-struct GhAuthor {
-    #[serde(default)]
-    login: String,
-}
-
 fn fetch_github(repo_root: &Path) -> anyhow::Result<Vec<PrEntry>> {
     if !tool_available("gh", &["--version"]) {
         anyhow::bail!("gh CLI not found; install gh to browse PRs with --prs");
@@ -1077,13 +1071,21 @@ fn compute_pr_comments(
 ) -> Option<String> {
     // Disk cache hit: the cached entry is the raw parsed thread, re-rendered
     // here at the live width and current relative time (the pane folds in both),
-    // so a hit returns with no forge call.
+    // so a hit returns with no forge call. GitHub worktree rows usually hit even
+    // on the first `wt switch` of a session — the CI call primed this entry from
+    // the thread it already carried (see `ci_status::github::prime_comments_cache`).
     if let Some(ts) = updated_at
         && let Some(cached) = super::preview_cache::read_comments(repo, number, ts)
     {
         return Some(render_comment_blocks(&cached, width));
     }
 
+    // TODO(gitlab-comments-cache): GitLab MRs always reach the fetch below —
+    // their `updated_at` can't key the cache (throttled to ~1/min and blind to
+    // note deletion). If MR comment fetches become a quota concern, synthesize a
+    // signature from a cheap `notes?per_page=1` probe — the `X-Total` header plus
+    // the newest note's `updated_at` both move on any add/edit/delete — and
+    // disk-cache MRs the same way GitHub PRs are cached here.
     let number_str = number.to_string();
     let endpoint = format!("projects/:fullpath/merge_requests/{number_str}/notes?sort=asc");
     let stdout = fetch_forge_json(
@@ -1113,34 +1115,16 @@ fn compute_pr_comments(
 #[derive(Deserialize)]
 struct GhCommentsResponse {
     #[serde(default)]
-    comments: Vec<GhComment>,
-}
-
-#[derive(Deserialize)]
-struct GhComment {
-    #[serde(default)]
-    author: GhAuthor,
-    #[serde(default)]
-    body: String,
-    #[serde(rename = "createdAt", default)]
-    created_at: String,
+    comments: Vec<GitHubComment>,
 }
 
 /// Parse `gh pr view <n> --json comments` into the normalized thread. gh returns
 /// the comments oldest-first, which reads top-to-bottom; the order is preserved.
+/// The per-comment shape is shared with the worktree CI call, so this reuses
+/// [`GitHubComment`] rather than a parallel struct (see its `From<&_>` impl).
 fn parse_github_comments(stdout: &[u8]) -> Option<Vec<CommentEntry>> {
     let parsed: GhCommentsResponse = serde_json::from_slice(stdout).ok()?;
-    Some(
-        parsed
-            .comments
-            .into_iter()
-            .map(|c| CommentEntry {
-                author: c.author.login,
-                body: c.body,
-                created_at: c.created_at,
-            })
-            .collect(),
-    )
+    Some(parsed.comments.iter().map(CommentEntry::from).collect())
 }
 
 #[derive(Deserialize)]

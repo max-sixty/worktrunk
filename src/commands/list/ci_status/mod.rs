@@ -83,8 +83,10 @@ impl CiBranchName {
 
 // Re-export public types
 pub(crate) use cache::{CachedCiStatus, MaxPrNumber};
-// Only the `--prs` picker consumes this re-export.
-pub(crate) use github::GitHubPrInfo;
+// Only the `--prs` picker consumes these re-exports: `GitHubPrInfo` to parse the
+// `gh pr list` payload, `GitHubComment` to parse `gh pr view --json comments`
+// into the shared comment shape (the worktree CI call reuses the same type).
+pub(crate) use github::{GitHubComment, GitHubPrInfo};
 
 /// Maximum number of PRs/MRs to fetch when filtering by source repository.
 ///

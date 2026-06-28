@@ -18,7 +18,14 @@
 //! review-comment (not deletion — see [`comments_key`]). So a matching key lets
 //! a later `wt switch` skip the per-row `gh pr view --json comments` fetch.
 //! `updatedAt` rides the `gh pr list` / `gh pr view` call the picker already
-//! makes (CI column / `--prs` list), so the signal costs no extra network. Like
+//! makes (CI column / `--prs` list), so the signal costs no extra network. The
+//! worktree-row CI call (`gh pr list --head`) goes one better: it already
+//! transfers the whole comment thread (it counts it for the `pr` pane's
+//! `comments` line), so [`list::ci_status`](crate::commands::list::ci_status)
+//! *primes* this cache from that otherwise-discarded data — turning even the
+//! *first* `wt switch`'s comments fetch into a hit, including the common
+//! zero-comment PR (an empty thread is cached, so the tab resolves to
+//! "No comments" with no fetch). Like
 //! Log (and unlike the diff modes), Comments caches the *raw* parsed thread
 //! ([`CommentEntry`]s) rather than the rendered pane, and re-renders on read —
 //! the pane folds in width-dependent wrapping and `epoch_now()`-relative times,
@@ -170,15 +177,16 @@ pub(super) fn write_upstream_diff(
 }
 
 /// One cached PR comment — the deterministic, render-independent fields parsed
-/// from the forge (`gh pr view --json comments`). Stored as a `Vec` and
-/// re-rendered on every read, mirroring [`LogCacheEntry`]: the rendered pane
-/// folds in the pane *width* (body wrapping) and *relative time* ("2h", "3d",
-/// against `epoch_now()`), neither of which is stable, so caching the rendered
-/// string would freeze both. Caching the raw comments instead keeps width and
-/// relative time out of the key and correct as the terminal resizes and
-/// wall-clock advances.
+/// from the forge (`gh pr view --json comments`, or the same thread riding the
+/// worktree-row `gh pr list --head` call — see [`write_comments`]). Stored as a
+/// `Vec` and re-rendered on every read, mirroring [`LogCacheEntry`]: the
+/// rendered pane folds in the pane *width* (body wrapping) and *relative time*
+/// ("2h", "3d", against `epoch_now()`), neither of which is stable, so caching
+/// the rendered string would freeze both. Caching the raw comments instead keeps
+/// width and relative time out of the key and correct as the terminal resizes
+/// and wall-clock advances.
 #[derive(Serialize, Deserialize)]
-pub(super) struct CommentEntry {
+pub(crate) struct CommentEntry {
     pub author: String,
     pub body: String,
     /// RFC-3339 timestamp; rendered as relative time at display.
@@ -205,7 +213,7 @@ fn comments_key(number: u32, updated_at: &str) -> String {
     format!("comments-{number}-{ts}.json")
 }
 
-pub(super) fn read_comments(
+pub(crate) fn read_comments(
     repo: &Repository,
     number: u32,
     updated_at: &str,
@@ -213,7 +221,14 @@ pub(super) fn read_comments(
     cache::read(repo, KIND, &comments_key(number, updated_at))
 }
 
-pub(super) fn write_comments(
+/// Write a PR's comment thread to the on-disk cache. Called from two places:
+/// the picker's own lazy `gh pr view --json comments` fetch ([`super::prs`]),
+/// and [`list::ci_status`](crate::commands::list::ci_status), which primes it
+/// from the thread the worktree-row `gh pr list --head` CI call already
+/// transferred — so the lazy fetch never has to run for a worktree row whose
+/// `updatedAt` matches. An empty `value` is a valid entry (a zero-comment PR),
+/// and writing it lets that common case skip the fetch too.
+pub(crate) fn write_comments(
     repo: &Repository,
     number: u32,
     updated_at: &str,
