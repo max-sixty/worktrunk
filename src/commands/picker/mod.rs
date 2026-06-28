@@ -1666,13 +1666,9 @@ pub fn handle_picker(
         if config.list.summary() && config.commit_generation.is_configured() {
             (config.commit_generation.command.clone(), None)
         } else {
-            // Point at the config file wt actually loads from — respecting
-            // --config, WORKTRUNK_CONFIG_PATH, and $XDG_CONFIG_HOME — rather
-            // than a hardcoded default. Fall back to the canonical path on the
-            // rare occasion no location can be determined.
-            let config_path = worktrunk::config::config_path()
-                .map(|p| format_path_for_display(&p))
-                .unwrap_or_else(|| "~/.config/worktrunk/config.toml".to_string());
+            // Point at the config file wt actually loads from, not a hardcoded
+            // default (resolution + fallback live in `config_path_for_display`).
+            let config_path = worktrunk::config::config_path_for_display();
             // Keep every prose line short and put the resolved path on its own
             // line. `render_summary` word-wraps prose to the preview width, and
             // that width is a column narrower under Windows' PTY — so a sentence

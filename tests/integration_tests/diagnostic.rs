@@ -254,17 +254,17 @@ fn test_diagnostic_trace_log_contains_git_commands(mut repo: TestRepo) {
         trace_section.contains("git worktree list"),
         "Trace log should contain git worktree list command"
     );
+    // Records are humanized: a ✓/✗ glyph reports each command's outcome with a
+    // compact duration, replacing the old `[wt-trace] … dur_us=… ok=…` grammar.
     assert!(
-        trace_section.contains("[wt-trace]"),
-        "Trace log should contain wt-trace entries"
+        trace_section.contains("✓ git worktree list")
+            || trace_section.contains("✗ git worktree list"),
+        "Trace log should contain the humanized git worktree list completion record"
     );
+    // In-process spans are humanized too (◷ glyph + duration).
     assert!(
-        trace_section.contains("dur_us="),
-        "Trace log should contain command durations in microseconds"
-    );
-    assert!(
-        trace_section.contains("ok="),
-        "Trace log should contain success/failure indicators"
+        trace_section.contains("◷ init_logging"),
+        "Trace log should contain the init_logging span record"
     );
 }
 
@@ -332,8 +332,8 @@ fn test_log_files_created(mut repo: TestRepo) {
     let trace = fs::read_to_string(&trace_log).unwrap();
     assert!(!trace.is_empty(), "trace.log should not be empty");
     assert!(
-        trace.contains("[wt-trace]"),
-        "trace.log should contain trace entries"
+        trace.contains("◷ init_logging"),
+        "trace.log should contain humanized trace records"
     );
 }
 
@@ -349,8 +349,8 @@ fn test_vv_splits_full_and_bounded_output(repo: TestRepo) {
     let output = fs::read_to_string(logs_dir.join("subprocess.log")).unwrap();
 
     assert!(
-        trace.contains("[wt-trace]"),
-        "trace.log should contain [wt-trace] records at -vv"
+        trace.contains("◷ init_logging"),
+        "trace.log should contain humanized trace records at -vv"
     );
     // Captured stdout is emitted line-by-line with the `  ` / `  ! `
     // continuation prefix used by log_output. Full subprocess output lives
@@ -359,25 +359,27 @@ fn test_vv_splits_full_and_bounded_output(repo: TestRepo) {
         output.lines().any(|l| l.contains("  worktree ")),
         "subprocess.log should contain `git worktree list --porcelain` stdout lines at -vv"
     );
-    // Structured trace records stay in trace.log only, not subprocess.log.
+    // Trace records stay in trace.log only, not subprocess.log (which holds
+    // raw bodies under their `$ cmd … [seq=N tid=T]` headers).
     assert!(
-        !output.contains("[wt-trace]"),
-        "subprocess.log should not contain [wt-trace] records"
+        !output.contains("◷ init_logging"),
+        "subprocess.log should not contain trace records"
     );
 }
 
 /// Each command's block in `subprocess.log` is introduced by a
 /// `$ cmd … [seq=N tid=T]` header, and that `seq` also tags the command's
-/// `[wt-trace]` record in `trace.log` — so an otherwise-undelimited raw output
-/// block can be segmented and joined back to its timed command record. Guards
-/// the segmentation + correlation contract the two files share.
+/// record in the machine `trace.jsonl` — so an otherwise-undelimited raw output
+/// block can be segmented and joined back to its timed command record. (The
+/// humanized `trace.log` drops `seq`; the join lives in `trace.jsonl`.) Guards
+/// the segmentation + correlation contract the files share.
 #[rstest]
 fn test_vv_subprocess_log_headers_join_trace(repo: TestRepo) {
     repo.wt_command().args(["list", "-vv"]).output().unwrap();
 
     let logs_dir = repo.root_path().join(".git").join("wt/logs");
     let subprocess = fs::read_to_string(logs_dir.join("subprocess.log")).unwrap();
-    let trace = fs::read_to_string(logs_dir.join("trace.log")).unwrap();
+    let trace = fs::read_to_string(logs_dir.join("trace.jsonl")).unwrap();
 
     // Pick a known captured command (`wt list` runs `git worktree list
     // --porcelain`) so the join can be checked by command identity, not just by
@@ -396,16 +398,14 @@ fn test_vv_subprocess_log_headers_join_trace(repo: TestRepo) {
         .and_then(|s| s.parse().ok())
         .expect("the subprocess.log header should carry a numeric seq");
 
-    // The [wt-trace] record carrying that seq must be the SAME command —
+    // The trace.jsonl record carrying that seq must be the SAME command —
     // asserting both `seq` and `cmd` closes the gap where a dense seq coincides
-    // with an unrelated record.
+    // with an unrelated record. (serde_json emits compact `"key":value`.)
     assert!(
         trace.lines().any(|l| {
-            l.contains("[wt-trace]")
-                && l.contains(&format!("seq={seq} "))
-                && l.contains(r#"cmd="git worktree list"#)
+            l.contains(&format!(r#""seq":{seq},"#)) && l.contains(r#""cmd":"git worktree list"#)
         }),
-        "trace.log should carry the [wt-trace] record for `git worktree list` with seq={seq} to join the subprocess.log block:\n{header}"
+        "trace.jsonl should carry the record for `git worktree list` with seq={seq} to join the subprocess.log block:\n{header}"
     );
 }
 
@@ -543,15 +543,15 @@ fn test_vv_debug_pipeline_silent_on_stderr(repo: TestRepo) {
     );
 
     // The full subprocess stdout still lands in subprocess.log, and trace.log
-    // still captures the `$ cmd` / `[wt-trace]` records — confirm both so a
+    // still captures the humanized trace records — confirm both so a
     // regression that disables the file sinks fails loudly here too.
     assert!(
         raw.lines().any(|l| l.contains("refs/heads/many-branch-")),
         "subprocess.log should contain the captured for-each-ref stdout"
     );
     assert!(
-        trace.contains("[wt-trace]"),
-        "trace.log should contain [wt-trace] records at -vv"
+        trace.contains("◷ init_logging"),
+        "trace.log should contain humanized trace records at -vv"
     );
 
     // Stderr at -vv should announce each file's full path on its own line, so
@@ -578,16 +578,17 @@ fn test_vv_debug_pipeline_silent_on_stderr(repo: TestRepo) {
 /// where `-v`/`-vv` hardcoded `filter_level(...)` and silently dropped
 /// `RUST_LOG`.
 ///
-/// The probe is the `[wt-trace]` grammar — those records are emitted at
-/// `log::debug!`, so they're suppressed at the Info baseline `-v` selects
-/// and surface when `RUST_LOG=debug` raises it. (At `-v 0` the same
+/// The probe is the `◷ init_logging` span record — emitted at `log::debug!`,
+/// unique to the trace stream (so it can't be confused with normal output),
+/// and present on every run. It's suppressed at the Info baseline `-v` selects
+/// and surfaces when `RUST_LOG=debug` raises it. (At `-v 0` the same
 /// `RUST_LOG=debug` path is already covered by
 /// `test_rust_log_debug_fallback_without_vv`; at `-vv` the baseline is
 /// already Debug so there's no flag/env conflict to assert.)
 #[rstest]
 fn test_rust_log_overrides_verbose_flag(repo: TestRepo) {
-    // Baseline: -v alone caps at Info, so debug-level [wt-trace] records
-    // are dropped from stderr.
+    // Baseline: -v alone caps at Info, so debug-level trace records are
+    // dropped from stderr.
     let info_only = repo
         .wt_command()
         .args(["list", "-v"])
@@ -597,11 +598,11 @@ fn test_rust_log_overrides_verbose_flag(repo: TestRepo) {
         .expect("wt list -v");
     let info_stderr = String::from_utf8_lossy(&info_only.stderr);
     assert!(
-        !info_stderr.contains("[wt-trace]"),
-        "-v alone (Info baseline) should not surface [wt-trace] records: {info_stderr}"
+        !info_stderr.contains("init_logging"),
+        "-v alone (Info baseline) should not surface trace records: {info_stderr}"
     );
 
-    // RUST_LOG=debug + -v raises the level: [wt-trace] records appear.
+    // RUST_LOG=debug + -v raises the level: trace records appear.
     let with_env = repo
         .wt_command()
         .args(["list", "-v"])
@@ -611,8 +612,8 @@ fn test_rust_log_overrides_verbose_flag(repo: TestRepo) {
         .expect("wt list -v");
     let env_stderr = String::from_utf8_lossy(&with_env.stderr);
     assert!(
-        env_stderr.contains("[wt-trace]"),
-        "RUST_LOG=debug at -v should surface [wt-trace] records on stderr: {env_stderr}"
+        env_stderr.contains("init_logging"),
+        "RUST_LOG=debug at -v should surface trace records on stderr: {env_stderr}"
     );
 }
 

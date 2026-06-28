@@ -220,8 +220,11 @@ and is exhaustive: only the listed columns render. Omit `columns` to keep the
 default set, where custom columns append automatically. A built-in name wins a
 header collision; the gutter type indicator always shows.
 
-Listing a column requests it but cannot force it on: a gated column stays hidden
-(`ci` needs `--full`, `summary` needs `[commit.generation]`).
+Listing a column forces it on, space permitting: `ci` shows without `--full`,
+since `--full` only bundles columns into the default table rather than gating a
+named one. A column whose data source is missing still stays hidden — `summary`
+needs an LLM command (`[commit.generation]`), `url` needs a `[list] url`
+template — since listing can't supply the data.
 
 The selection drives the table and the `wt switch` picker; `wt list --format
 json` ignores it and emits every field.
@@ -1091,10 +1094,11 @@ All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the
 | File | Created when |
 |------|-------------|
 | `trace.log` | Running with `-vv` |
+| `trace.jsonl` | Running with `-vv` |
 | `subprocess.log` | Running with `-vv` |
 | `diagnostic.md` | Running with `-vv` |
 
-`trace.log` captures debug-level records at `-vv` — commands, `[wt-trace]` records, bounded subprocess previews. `wt config state logs profile` summarizes one into a performance report (where time went, parallelism, redundant commands). `subprocess.log` holds the raw uncapped subprocess stdout/stderr bodies. `diagnostic.md` is a markdown bug-report bundle that inlines `trace.log` and a rendered performance profile; `wt` prints a `gh gist create` command pointing at it. All three are overwritten on each `-vv` run.
+`trace.log` is the human-readable trace at `-vv` — each command's start (`$ …`) and completion (`✓`/`✗ … 12.3ms`), in-process spans, milestones, and bounded subprocess previews. `trace.jsonl` is the same event stream as one JSON object per line, for machines (`jq`, chrome://tracing); `wt config state logs profile` reads it to summarize a performance report (where time went, parallelism, redundant commands). `subprocess.log` holds the raw uncapped subprocess stdout/stderr bodies. `diagnostic.md` is a markdown bug-report bundle that inlines `trace.log` and a rendered performance profile; `wt` prints a `gh gist create` command pointing at it. All four are overwritten on each `-vv` run.
 
 ### Location
 
@@ -1130,7 +1134,7 @@ Usage: <b><span class=c>wt config state logs</span></b> <span class=c>[OPTIONS]<
 
 <b><span class=g>Commands:</span></b>
   <b><span class=c>get</span></b>      List all log file paths
-  <b><span class=c>profile</span></b>  Performance profile from a trace log
+  <b><span class=c>profile</span></b>  Performance profile from a trace
   <b><span class=c>clear</span></b>    Clear all log files
 
 <b><span class=g>Options:</span></b>

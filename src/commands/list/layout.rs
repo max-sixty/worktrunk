@@ -105,12 +105,13 @@
 //!
 //! Some columns have non-standard behavior that extends beyond the basic two-tier model:
 //!
-//! 1. **CiStatus** and **Summary** - Visibility gate (`show_full` flag)
-//!    - Both require `show_full=true` — they reach off-machine (CI status over
-//!      the network, branch summaries via the LLM), so they're hidden by default
-//!    - Gated via the run plan (`tasks`): when `show_full=false`, their
-//!      `TaskKind` is absent from `tasks`, so `renders_given_run` filters the
-//!      column out entirely (bypasses the tier system)
+//! 1. **CiStatus** and **Summary** - Hidden in the default table without `--full`
+//!    - Both reach off-machine (CI status over the network, branch summaries via
+//!      the LLM), so the default table hides them until `--full`
+//!    - Gated via the run plan (`tasks`): the planner omits their `TaskKind` when
+//!      they're gated off, so `renders_given_run` filters the column out entirely
+//!      (bypasses the tier system). A `[list] columns` listing forces them on —
+//!      the planner then includes the task and the column renders
 //!    - **BranchDiff** (`main…±`) is pure local git, so it is *not* gated — it
 //!      shows by default and follows the normal two-tier priority (6/16);
 //!      CiStatus is 5/15
@@ -784,10 +785,11 @@ fn allocate_columns_with_priority(
         .collect();
 
     // Build candidates with priorities.
-    // - Filter out columns whose tasks were all left out of the run plan (gated
-    //   off by `--full`, a missing template/LLM). `renders_given_run` reads the
-    //   same `required_tasks()` map that chose the plan, so a rendered column's
-    //   tasks always ran and only a gated-off column drops here.
+    // - Filter out columns whose tasks were all left out of the run plan (a
+    //   default-set column gated off by `--full`, or a missing template/LLM).
+    //   `renders_given_run` reads the same `required_tasks()` map that chose the
+    //   plan, so a rendered column's tasks always ran and only a gated-off column
+    //   drops here.
     // - When `[list] columns` selects a subset, keep only the chosen built-ins
     //   (Gutter is structural — always kept). This filters WITHOUT renumbering
     //   base_priority, so the Summary drop loop and EMPTY_PENALTY tiers below
@@ -1937,14 +1939,18 @@ mod tests {
     }
 
     #[test]
-    fn test_selected_columns_cannot_force_a_gated_column() {
-        // Selection narrows the candidate set; it can't force on a column gated
-        // off by the run plan. `ci` needs --full: with CiStatus absent from the
-        // plan, selecting it leaves a gutter-only table (renders_given_run runs
-        // first).
+    fn test_layout_renders_column_iff_task_planned() {
+        // The layout stage honors the run plan literally: a column renders iff one
+        // of its tasks is planned, whatever the selection. Policy — which tasks to
+        // plan, including forcing a listed `ci` on without `--full` — lives in the
+        // planner (`required_tasks_for_render`); here we feed the layout a plan
+        // directly to test the filter in isolation.
         let items = vec![make_test_item("feature-branch")];
         let selected = [ColumnKind::CiStatus];
-        let gated = calculate_layout_with_width(
+
+        // CiStatus absent from the plan: the column drops even though it's
+        // selected, leaving a gutter-only table.
+        let unplanned = calculate_layout_with_width(
             &items,
             &non_full_run_tasks(),
             200,
@@ -1957,15 +1963,14 @@ mod tests {
             },
         );
         assert!(
-            find_column(&gated, ColumnKind::CiStatus).is_none(),
-            "a gated column stays hidden even when selected"
+            find_column(&unplanned, ColumnKind::CiStatus).is_none(),
+            "a column whose task wasn't planned stays hidden, even when selected"
         );
-        let kinds: Vec<ColumnKind> = gated.columns.iter().map(|c| c.kind).collect();
+        let kinds: Vec<ColumnKind> = unplanned.columns.iter().map(|c| c.kind).collect();
         assert_eq!(kinds, vec![ColumnKind::Gutter], "only the gutter survives");
 
-        // Once the gate opens (full mode, nothing skipped), the same selection
-        // renders CI.
-        let full = calculate_layout_with_width(
+        // CiStatus in the plan: the same selection renders it.
+        let planned = calculate_layout_with_width(
             &items,
             &full_run_tasks(),
             200,
@@ -1978,8 +1983,8 @@ mod tests {
             },
         );
         assert!(
-            find_column(&full, ColumnKind::CiStatus).is_some(),
-            "the selected column renders once its task is no longer skipped"
+            find_column(&planned, ColumnKind::CiStatus).is_some(),
+            "the selected column renders once its task is planned"
         );
     }
 

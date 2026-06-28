@@ -172,10 +172,10 @@ cargo run -p wt-perf -- invalidate /tmp/wt-perf-typical-8/main
 
 ### Generating traces
 
-`wt-perf timeline` runs a `wt` invocation, captures `[wt-trace]` records,
-and renders. Default mode is a sorted text timeline; `--chrome` emits
-Chrome Trace Format JSON for Perfetto/chrome://tracing. `--cold`
-invalidates caches first.
+`wt-perf timeline` runs a `wt` invocation with `-vv` (which writes the
+machine `trace.jsonl`), reads that back, and renders. Default mode is a
+sorted text timeline; `--chrome` emits Chrome Trace Format JSON for
+Perfetto/chrome://tracing. `--cold` invalidates caches first.
 
 ```bash
 # Text timeline of one wt invocation
@@ -194,16 +194,16 @@ cargo run -p wt-perf -- timeline --chrome -- list --progressive > trace.json
 piped to /dev/null, so TTY-gated events (`Skeleton rendered`, `First
 result received`) won't fire without it.
 
-For Chrome JSON from a log already captured to disk (e.g. a CI artifact),
-pipe through `wt-perf trace` instead:
+For Chrome JSON from a `trace.jsonl` already captured to disk (e.g. a CI
+artifact), feed it to `wt-perf trace` instead:
 
 ```bash
-RUST_LOG=debug wt list --progressive --branches 2> captured.log
-cargo run -p wt-perf -- trace < captured.log > trace.json
+wt -vv list --progressive --branches
+cargo run -p wt-perf -- trace .git/wt/logs/trace.jsonl > trace.json
 ```
 
-The text-timeline summary reports `traced` (first → last `[wt-trace]`
-record, what the spans actually cover) and `wall` (externally-measured
+The text-timeline summary reports `traced` (first → last record, what the
+spans actually cover) and `wall` (externally-measured
 spawn → wait, the true process duration). The gap between them is
 prelude/epilogue not visible to the trace — process spawn, dyld, code
 that runs before `init_logging` registers the trace epoch, and the exit
@@ -311,8 +311,8 @@ trace_processor trace.json -q /tmp/q.sql
 
 ```bash
 # Trace on rust-lang/rust (must run benchmark first to clone)
-RUST_LOG=debug cargo run --release -q -- -C target/bench-repos/rust list --progressive --branches 2>&1 \
-  | cargo run -p wt-perf -- trace > rust-trace.json
+cargo run --release -q -- -vv -C target/bench-repos/rust list --progressive --branches
+cargo run -p wt-perf -- trace target/bench-repos/rust/.git/wt/logs/trace.jsonl > rust-trace.json
 ```
 
 ## Key Performance Insights

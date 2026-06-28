@@ -2,20 +2,22 @@
 //!
 //! At `-vv`, three files are written in the repo's `.git/wt/logs/` directory:
 //!
-//!   - [`TRACE`] → `trace.log`: structured records, `$ cmd [context]`
-//!     headers, and bounded subprocess previews. High-signal, bounded size —
-//!     safe to embed in `diagnostic.md` bug reports.
+//!   - [`TRACE`] → `trace.log`: the human trace — a command's start echo
+//!     `$ cmd [context]` paired with its finish line `✓ cmd [context]  dur`
+//!     (`✗` on failure), in-process spans (`◷ name  dur`), milestones
+//!     (`· event`), and bounded subprocess previews. High-signal, bounded
+//!     size — safe to embed in `diagnostic.md` bug reports.
 //!   - [`TRACE_JSONL`] → `trace.jsonl`: the same event stream as `trace.log`
-//!     (minus the command output), but one JSON object per line instead of the
-//!     text grammar. Each event's fields serialize generically: a `[wt-trace]`
+//!     (minus the command output), but one JSON object per line — the machine
+//!     format. Each event's fields serialize generically: a `[wt-trace]`
 //!     record comes through rich (`cmd`, `seq`, `dur_us`, …), a free-form
 //!     `log::*` line as `{"message":…}` until its call site is given fields.
-//!     Machine-first (agents, `jq`); written alongside `trace.log`, not in
-//!     place of it.
+//!     Machine-first (agents, `jq`, `src/trace/parse.rs`); written alongside
+//!     `trace.log`, not in place of it.
 //!   - [`SUBPROCESS`] → `subprocess.log`: raw, uncapped subprocess
 //!     stdout/stderr bodies captured by `shell_exec::Cmd`, each block
 //!     introduced by a `$ cmd … [seq=N tid=T]` header whose `seq` joins it to
-//!     the command's `[wt-trace]` record in `trace.log`. Potentially multi-MB
+//!     the command's record in `trace.jsonl`. Potentially multi-MB
 //!     (full `git log -p` / patch-id output); opt-in for deep dives.
 //!
 //! Direct user-facing output (`info_message` / `eprintln!` from command

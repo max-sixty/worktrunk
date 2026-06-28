@@ -1,33 +1,31 @@
-//! Parse wt-trace log lines into structured entries.
+//! Parse `trace.jsonl` records into structured entries.
 //!
-//! Trace lines are emitted by `shell_exec::Cmd` with this format:
+//! `trace.jsonl` is the machine-readable trace sink (`-vv` writes it alongside
+//! the human `trace.log`). Each line is one JSON object — a `[wt-trace]` record
+//! serialized by `src/logging.rs::TraceJsonlFormat`. The objects dispatch on a
+//! `kind` field:
+//!
 //! ```text
-//! [wt-trace] ts=1234567 tid=3 seq=1 context=worktree cmd="git status" dur_us=12300 ok=true
-//! [wt-trace] ts=1234567 tid=3 seq=2 cmd="gh pr list" dur_us=45200 ok=false
-//! [wt-trace] ts=1234567 tid=3 seq=3 context=main cmd="git merge-base" dur_us=100000 err="fatal: ..."
-//! [wt-trace] ts=1234567 tid=3 seq=4 cmd="git patch-id --verbatim" dur_us=640 ok=true stdin=true
+//! {"kind":"cmd_completed","ts":1234567,"tid":3,"seq":1,"context":"worktree","cmd":"git status","dur_us":12300,"ok":true}
+//! {"kind":"cmd_errored","ts":1234567,"tid":3,"seq":3,"context":"main","cmd":"git merge-base","dur_us":100000,"err":"fatal: ..."}
+//! {"kind":"instant","ts":1234567,"tid":3,"event":"Showed skeleton"}
+//! {"kind":"span","ts":1234567,"tid":3,"span":"build_hook_context","dur_us":8200}
 //! ```
 //!
-//! `stdin=true` (command records only) flags a command that consumed stdin not
-//! captured in `cmd` — a `stdin_bytes` buffer or an upstream pipe. It trails the
-//! `ok`/`err` field and is omitted entirely when false, so older records parse
-//! as `reads_stdin: false`. The cache analysis uses it to skip dedup for
-//! commands whose real input the command string doesn't show.
+//! `seq` (a per-command counter, command records only) is ignored here — no
+//! consumer needs it; it correlates a record with its raw output block in
+//! `subprocess.log`. `stdin` (bool, command records, omitted → `false`) flags a
+//! command that consumed stdin the `cmd` string doesn't capture; the cache
+//! analysis skips such commands from dedup.
 //!
-//! `seq` (a per-command counter, command records only) is parsed leniently —
-//! it's dropped as an unknown key, since no consumer needs it; it correlates a
-//! `trace.log` record with its raw output block in `subprocess.log`.
+//! `trace.jsonl` also carries free-form `log::*` / `tracing::*` lines as
+//! `{"message":...}` (no `kind`); those — and the `$ cmd` start echoes — are
+//! skipped, since they aren't trace records.
 //!
-//! Instant events (milestones without duration) use this format:
-//! ```text
-//! [wt-trace] ts=1234567 tid=3 event="Showed skeleton"
-//! ```
-//!
-//! The `ts` (timestamp in microseconds since trace epoch) and `tid` (thread ID) fields
-//! enable concurrency analysis and Chrome Trace Format export for visualizing
-//! thread utilization in tools like chrome://tracing or Perfetto.
-//!
-//! Duration is specified in microseconds via `dur_us`.
+//! The `ts` (microseconds since trace epoch) and `tid` (thread ID) fields enable
+//! concurrency analysis and Chrome Trace Format export for visualizing thread
+//! utilization in tools like chrome://tracing or Perfetto. Duration is `dur_us`,
+//! in microseconds.
 
 use std::time::Duration;
 
@@ -42,10 +40,11 @@ pub enum TraceEntryKind {
         duration: Duration,
         /// Command result
         result: TraceResult,
-        /// Whether the command consumed stdin not captured in `command` (a
-        /// `stdin_bytes` buffer or an upstream pipe). `false` for older records
-        /// without the `stdin` field. The cache analysis treats a stdin-reading
-        /// command as inherently unique — its real input isn't in `command`.
+        /// Whether the command consumed stdin the `command` string doesn't
+        /// capture (a `stdin_bytes` buffer or an upstream pipe). The cache
+        /// analysis skips these — two runs with identical `(command, context)`
+        /// may be entirely different work. From the `stdin` JSON field
+        /// (omitted → `false`).
         reads_stdin: bool,
     },
     /// An instant event (milestone marker with no duration)
@@ -64,7 +63,7 @@ pub enum TraceEntryKind {
     },
 }
 
-/// A parsed trace entry from a wt-trace log line.
+/// A parsed trace entry from a `trace.jsonl` record.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TraceEntry {
     /// Optional context (typically worktree name for git commands)
@@ -101,110 +100,70 @@ impl TraceEntry {
     }
 }
 
-/// Parse a single trace line.
+/// Parse a single `trace.jsonl` line into a [`TraceEntry`].
 ///
-/// Returns `None` if the line doesn't match the expected format.
-/// The `[wt-trace]` marker can appear anywhere in the line (to handle log prefixes).
-///
-/// Supports three entry types:
-/// - Command events: `cmd="..." dur_us=... ok=true/false` or `err="..."`
-/// - Instant events: `event="..."`
-/// - Span events: `span="..." dur_us=...`
+/// Returns `None` when the line isn't a JSON object, carries no recognized
+/// `kind`, or is missing a field that `kind` requires. Non-record lines
+/// (free-form `{"message":...}`, the `$ cmd` echoes) have no `kind` and are
+/// skipped this way.
 fn parse_line(line: &str) -> Option<TraceEntry> {
-    // Find the [wt-trace] marker anywhere in the line
-    let marker = "[wt-trace] ";
-    let marker_pos = line.find(marker)?;
-    let rest = &line[marker_pos + marker.len()..];
-
-    // Parse key=value pairs
-    let mut context = None;
-    let mut command = None;
-    let mut event = None;
-    let mut span = None;
-    let mut duration = None;
-    let mut result = None;
-    let mut start_time_us = None;
-    let mut thread_id = None;
-    let mut reads_stdin = false;
-
-    let mut remaining = rest;
-
-    while !remaining.is_empty() {
-        remaining = remaining.trim_start();
-        if remaining.is_empty() {
-            break;
-        }
-
-        // Find key=
-        let eq_pos = remaining.find('=')?;
-        let key = &remaining[..eq_pos];
-        remaining = &remaining[eq_pos + 1..];
-
-        // Parse value (quoted or unquoted)
-        let value = if remaining.starts_with('"') {
-            // Quoted value - find closing quote
-            remaining = &remaining[1..];
-            let end_quote = remaining.find('"')?;
-            let val = &remaining[..end_quote];
-            remaining = &remaining[end_quote + 1..];
-            val
-        } else {
-            // Unquoted value - ends at space or end
-            let end = remaining.find(' ').unwrap_or(remaining.len());
-            let val = &remaining[..end];
-            remaining = &remaining[end..];
-            val
-        };
-
-        match key {
-            "context" => context = Some(value.to_string()),
-            "cmd" => command = Some(value.to_string()),
-            "event" => event = Some(value.to_string()),
-            "span" => span = Some(value.to_string()),
-            "dur_us" => {
-                let us: u64 = value.parse().ok()?;
-                duration = Some(Duration::from_micros(us));
-            }
-            "ok" => {
-                let success = value == "true";
-                result = Some(TraceResult::Completed { success });
-            }
-            "err" => {
-                result = Some(TraceResult::Error {
-                    message: value.to_string(),
-                });
-            }
-            "ts" => {
-                start_time_us = value.parse().ok();
-            }
-            "tid" => {
-                thread_id = value.parse().ok();
-            }
-            "stdin" => {
-                reads_stdin = value == "true";
-            }
-            _ => {} // Ignore unknown keys for forward compatibility
-        }
+    let line = line.trim();
+    // Cheap reject before handing the line to serde — most non-record lines
+    // (start echoes, blank lines) don't even start with `{`.
+    if !line.starts_with('{') {
+        return None;
     }
+    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    let obj = value.as_object()?;
 
-    // Determine the entry kind based on what was parsed
-    let kind = if let Some(event_name) = event {
-        // Instant event
-        TraceEntryKind::Instant { name: event_name }
-    } else if let Some(span_name) = span {
-        // In-process span - requires span and dur_us
-        TraceEntryKind::Span {
-            name: span_name,
-            duration: duration?,
-        }
-    } else {
-        // Command event - requires cmd, dur_us, and result
-        TraceEntryKind::Command {
-            command: command?,
-            duration: duration?,
-            result: result?,
+    let context = obj
+        .get("context")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let start_time_us = obj.get("ts").and_then(serde_json::Value::as_u64);
+    let thread_id = obj.get("tid").and_then(serde_json::Value::as_u64);
+
+    let dur = || -> Option<Duration> {
+        obj.get("dur_us")
+            .and_then(serde_json::Value::as_u64)
+            .map(Duration::from_micros)
+    };
+
+    // `stdin` is omitted from records that didn't read it → `false`.
+    let reads_stdin = obj
+        .get("stdin")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+
+    let kind = match obj.get("kind")?.as_str()? {
+        "cmd_completed" => TraceEntryKind::Command {
+            command: obj.get("cmd")?.as_str()?.to_string(),
+            duration: dur()?,
+            result: TraceResult::Completed {
+                success: obj.get("ok")?.as_bool()?,
+            },
             reads_stdin,
-        }
+        },
+        "cmd_errored" => TraceEntryKind::Command {
+            command: obj.get("cmd")?.as_str()?.to_string(),
+            duration: dur()?,
+            result: TraceResult::Error {
+                message: obj
+                    .get("err")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+            },
+            reads_stdin,
+        },
+        "instant" => TraceEntryKind::Instant {
+            name: obj.get("event")?.as_str()?.to_string(),
+        },
+        "span" => TraceEntryKind::Span {
+            name: obj.get("span")?.as_str()?.to_string(),
+            duration: dur()?,
+        },
+        _ => return None, // Unknown kind — forward-compatible skip
     };
 
     Some(TraceEntry {
@@ -215,7 +174,7 @@ fn parse_line(line: &str) -> Option<TraceEntry> {
     })
 }
 
-/// Parse multiple lines, filtering to only valid trace entries.
+/// Parse multiple lines, filtering to only valid trace records.
 pub fn parse_lines(input: &str) -> Vec<TraceEntry> {
     input.lines().filter_map(parse_line).collect()
 }
@@ -226,7 +185,7 @@ mod tests {
 
     #[test]
     fn test_parse_basic() {
-        let line = r#"[wt-trace] cmd="git status" dur_us=12300 ok=true"#;
+        let line = r#"{"kind":"cmd_completed","cmd":"git status","dur_us":12300,"ok":true}"#;
         let entry = parse_line(line).unwrap();
 
         assert_eq!(entry.context, None);
@@ -243,8 +202,7 @@ mod tests {
 
     #[test]
     fn test_parse_with_context() {
-        let line =
-            r#"[wt-trace] context=main cmd="git merge-base HEAD origin/main" dur_us=45200 ok=true"#;
+        let line = r#"{"kind":"cmd_completed","context":"main","cmd":"git merge-base HEAD origin/main","dur_us":45200,"ok":true}"#;
         let entry = parse_line(line).unwrap();
 
         assert_eq!(entry.context, Some("main".to_string()));
@@ -256,7 +214,7 @@ mod tests {
 
     #[test]
     fn test_parse_error() {
-        let line = r#"[wt-trace] cmd="git rev-list" dur_us=100000 err="fatal: bad revision""#;
+        let line = r#"{"kind":"cmd_errored","cmd":"git rev-list","dur_us":100000,"err":"fatal: bad revision"}"#;
         let entry = parse_line(line).unwrap();
 
         assert!(!entry.is_success());
@@ -268,7 +226,7 @@ mod tests {
 
     #[test]
     fn test_parse_ok_false() {
-        let line = r#"[wt-trace] cmd="git diff" dur_us=5000 ok=false"#;
+        let line = r#"{"kind":"cmd_completed","cmd":"git diff","dur_us":5000,"ok":false}"#;
         let entry = parse_line(line).unwrap();
 
         assert!(!entry.is_success());
@@ -282,70 +240,69 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_non_trace_line() {
-        assert!(parse_line("some random log line").is_none());
-        assert!(parse_line("[other-tag] something").is_none());
-    }
-
-    #[test]
-    fn test_parse_with_log_prefix() {
-        // Real output has thread ID prefix like "[a] "
-        let line = r#"[a] [wt-trace] cmd="git status" dur_us=5000 ok=true"#;
-        let entry = parse_line(line).unwrap();
+    fn test_parse_reads_stdin() {
+        // `stdin:true` is carried onto the Command; omitted → false.
+        let with = parse_line(
+            r#"{"kind":"cmd_completed","cmd":"git patch-id","dur_us":640,"ok":true,"stdin":true}"#,
+        )
+        .unwrap();
         assert!(matches!(
-            &entry.kind,
-            TraceEntryKind::Command { command, .. } if command == "git status"
+            with.kind,
+            TraceEntryKind::Command {
+                reads_stdin: true,
+                ..
+            }
+        ));
+        let without =
+            parse_line(r#"{"kind":"cmd_completed","cmd":"git status","dur_us":10,"ok":true}"#)
+                .unwrap();
+        assert!(matches!(
+            without.kind,
+            TraceEntryKind::Command {
+                reads_stdin: false,
+                ..
+            }
         ));
     }
 
     #[test]
-    fn test_parse_stdin_marker() {
-        // `stdin=true` marks a command whose input came via stdin; its absence
-        // (older records, stdin-less commands) parses as `reads_stdin: false`.
-        let with = r#"[wt-trace] cmd="git patch-id --verbatim" dur_us=640 ok=true stdin=true"#;
-        let TraceEntryKind::Command { reads_stdin, .. } = parse_line(with).unwrap().kind else {
+    fn test_parse_embedded_quote_in_command() {
+        // The escaping win JSON buys us: a literal `"` in the command, where
+        // the old `cmd="value"` text grammar would truncate the parse.
+        let line = r#"{"kind":"cmd_completed","cmd":"git commit -m \"wip\"","dur_us":1,"ok":true}"#;
+        let entry = parse_line(line).unwrap();
+        let TraceEntryKind::Command { command, .. } = &entry.kind else {
             panic!("expected command");
         };
-        assert!(reads_stdin);
-
-        let without = r#"[wt-trace] cmd="git status" dur_us=5000 ok=true"#;
-        let TraceEntryKind::Command { reads_stdin, .. } = parse_line(without).unwrap().kind else {
-            panic!("expected command");
-        };
-        assert!(!reads_stdin);
+        assert_eq!(command, r#"git commit -m "wip""#);
     }
 
     #[test]
-    fn test_parse_unknown_keys_ignored() {
-        // Unknown keys should be ignored for forward compatibility
-        let line =
-            r#"[wt-trace] future_field=xyz cmd="git status" dur_us=5000 ok=true extra=ignored"#;
-        let entry = parse_line(line).unwrap();
-        assert!(matches!(
-            &entry.kind,
-            TraceEntryKind::Command { command, .. } if command == "git status"
-        ));
-        assert!(entry.is_success());
+    fn test_parse_non_record_lines() {
+        // Not JSON at all (a `$ cmd` echo, a blank line).
+        assert!(parse_line("$ git status [main]").is_none());
+        assert!(parse_line("").is_none());
+        // JSON, but a free-form `log::*` message with no `kind`.
+        assert!(parse_line(r#"{"message":"fsmonitor: skipping","level":"warn"}"#).is_none());
+        // JSON with an unknown future kind — skipped, not an error.
+        assert!(parse_line(r#"{"kind":"future_kind","ts":1}"#).is_none());
     }
 
     #[test]
-    fn test_parse_trailing_whitespace() {
-        // Trailing whitespace should be handled (exercises trim_start + break)
-        let line = "[wt-trace] cmd=\"git status\" dur_us=5000 ok=true   ";
-        let entry = parse_line(line).unwrap();
-        assert!(matches!(
-            &entry.kind,
-            TraceEntryKind::Command { command, .. } if command == "git status"
-        ));
+    fn test_parse_missing_required_field() {
+        // `cmd_completed` without `dur_us` / `ok` can't form a Command.
+        assert!(parse_line(r#"{"kind":"cmd_completed","cmd":"git status"}"#).is_none());
+        // `span` without `dur_us`.
+        assert!(parse_line(r#"{"kind":"span","span":"config_load"}"#).is_none());
     }
 
     #[test]
     fn test_parse_lines() {
         let input = r#"
 DEBUG some other log
-[wt-trace] cmd="git status" dur_us=10000 ok=true
-more noise
-[wt-trace] cmd="git diff" dur_us=20000 ok=true
+{"kind":"cmd_completed","cmd":"git status","dur_us":10000,"ok":true}
+{"message":"noise","level":"debug"}
+{"kind":"cmd_completed","cmd":"git diff","dur_us":20000,"ok":true}
 "#;
         let entries = parse_lines(input);
         assert_eq!(entries.len(), 2);
@@ -361,7 +318,7 @@ more noise
 
     #[test]
     fn test_parse_with_timestamp_and_thread_id() {
-        let line = r#"[wt-trace] ts=1736600000000000 tid=5 context=feature cmd="git status" dur_us=12300 ok=true"#;
+        let line = r#"{"kind":"cmd_completed","ts":1736600000000000,"tid":5,"context":"feature","cmd":"git status","dur_us":12300,"ok":true}"#;
         let entry = parse_line(line).unwrap();
 
         assert_eq!(entry.start_time_us, Some(1736600000000000));
@@ -376,8 +333,8 @@ more noise
 
     #[test]
     fn test_parse_without_timestamp_and_thread_id() {
-        // Traces without ts/tid should parse with None values
-        let line = r#"[wt-trace] cmd="git status" dur_us=12300 ok=true"#;
+        // Records without ts/tid parse with None values.
+        let line = r#"{"kind":"cmd_completed","cmd":"git status","dur_us":12300,"ok":true}"#;
         let entry = parse_line(line).unwrap();
 
         assert_eq!(entry.start_time_us, None);
@@ -388,23 +345,13 @@ more noise
         ));
     }
 
-    #[test]
-    fn test_parse_partial_new_fields() {
-        // Only ts provided, no tid
-        let line = r#"[wt-trace] ts=1736600000000000 cmd="git status" dur_us=12300 ok=true"#;
-        let entry = parse_line(line).unwrap();
-
-        assert_eq!(entry.start_time_us, Some(1736600000000000));
-        assert_eq!(entry.thread_id, None);
-    }
-
     // ========================================================================
     // Instant event tests
     // ========================================================================
 
     #[test]
     fn test_parse_instant_event() {
-        let line = r#"[wt-trace] ts=1736600000000000 tid=3 event="Showed skeleton""#;
+        let line = r#"{"kind":"instant","ts":1736600000000000,"tid":3,"event":"Showed skeleton"}"#;
         let entry = parse_line(line).unwrap();
 
         assert_eq!(entry.start_time_us, Some(1736600000000000));
@@ -418,7 +365,7 @@ more noise
 
     #[test]
     fn test_parse_instant_event_with_context() {
-        let line = r#"[wt-trace] ts=1736600000000000 tid=3 context=main event="Skeleton rendered""#;
+        let line = r#"{"kind":"instant","ts":1736600000000000,"tid":3,"context":"main","event":"Skeleton rendered"}"#;
         let entry = parse_line(line).unwrap();
 
         assert_eq!(entry.context, Some("main".to_string()));
@@ -428,27 +375,14 @@ more noise
         ));
     }
 
-    #[test]
-    fn test_parse_instant_event_minimal() {
-        // Instant event with only the required field
-        let line = r#"[wt-trace] event="Started""#;
-        let entry = parse_line(line).unwrap();
-
-        assert!(matches!(
-            &entry.kind,
-            TraceEntryKind::Instant { name } if name == "Started"
-        ));
-        assert_eq!(entry.start_time_us, None);
-        assert_eq!(entry.thread_id, None);
-    }
-
     // ========================================================================
     // Span event tests
     // ========================================================================
 
     #[test]
     fn test_parse_span_event() {
-        let line = r#"[wt-trace] ts=1736600000000000 tid=3 span="config_load" dur_us=8200"#;
+        let line =
+            r#"{"kind":"span","ts":1736600000000000,"tid":3,"span":"config_load","dur_us":8200}"#;
         let entry = parse_line(line).unwrap();
 
         assert_eq!(entry.start_time_us, Some(1736600000000000));
@@ -462,25 +396,13 @@ more noise
     }
 
     #[test]
-    fn test_parse_span_minimal() {
-        let line = r#"[wt-trace] span="repo_open" dur_us=1500"#;
-        let entry = parse_line(line).unwrap();
-
-        let TraceEntryKind::Span { name, duration } = &entry.kind else {
-            panic!("expected span");
-        };
-        assert_eq!(name, "repo_open");
-        assert_eq!(*duration, Duration::from_micros(1500));
-    }
-
-    #[test]
     fn test_parse_lines_mixed() {
         let input = r#"
-[wt-trace] event="Started"
-[wt-trace] cmd="git status" dur_us=10000 ok=true
-[wt-trace] event="Showed skeleton"
-[wt-trace] cmd="git diff" dur_us=20000 ok=true
-[wt-trace] event="Done"
+{"kind":"instant","event":"Started"}
+{"kind":"cmd_completed","cmd":"git status","dur_us":10000,"ok":true}
+{"kind":"instant","event":"Showed skeleton"}
+{"kind":"cmd_completed","cmd":"git diff","dur_us":20000,"ok":true}
+{"kind":"span","span":"repo_open","dur_us":1500}
 "#;
         let entries = parse_lines(input);
         assert_eq!(entries.len(), 5);
@@ -494,6 +416,8 @@ more noise
         assert!(
             matches!(&entries[3].kind, TraceEntryKind::Command { command, .. } if command == "git diff")
         );
-        assert!(matches!(&entries[4].kind, TraceEntryKind::Instant { name } if name == "Done"));
+        assert!(
+            matches!(&entries[4].kind, TraceEntryKind::Span { name, .. } if name == "repo_open")
+        );
     }
 }

@@ -6,10 +6,16 @@
 //!
 //! | layer            | filter                                              | format            |
 //! | ---------------- | --------------------------------------------------- | ----------------- |
-//! | stderr           | `$RUST_LOG` or flag baseline (`Off`/`Info`/`Info`)  | styled with ANSI  |
-//! | `trace.log`      | `-vv` only, excludes `SUBPROCESS_FULL_TARGET`       | plain text        |
-//! | `trace.jsonl`    | `-vv` only, excludes both subprocess targets        | one JSON object per event |
+//! | stderr           | `$RUST_LOG` or flag baseline (`Off`/`Info`/`Info`)  | human, ANSI-styled |
+//! | `trace.log`      | `-vv` only, excludes `SUBPROCESS_FULL_TARGET`       | human, plain text |
+//! | `trace.jsonl`    | `-vv` only, excludes both subprocess targets        | one JSON object per event (machine) |
 //! | `subprocess.log` | `-vv` only, includes only `SUBPROCESS_FULL_TARGET`  | raw bodies + `$ cmd … seq=N` headers |
+//!
+//! The two human routes (stderr, `trace.log`) render `[wt-trace]` records as
+//! readable lines (`✓ git status [wt]  12.3ms`); `trace.jsonl` is the sole
+//! machine sink, carrying the full structured fields that `src/trace/parse.rs`
+//! and `wt-perf` consume. So the human and machine formats are decoupled — the
+//! human lines never carry `key=value` clutter, and a parser never reads them.
 //!
 //! At `-vv` the stderr layer keeps its Info baseline — `-vv` is a strict
 //! superset of `-v`, with Debug-level records (the noisy ones, including
@@ -30,6 +36,7 @@
 
 use std::borrow::Cow;
 use std::fmt::{self, Write as _};
+use std::time::Duration;
 
 use color_print::cformat;
 use tracing::{Event, Subscriber};
@@ -101,16 +108,31 @@ fn event_message(event: &Event<'_>) -> String {
 
 /// Pure helper: render a single log message for stderr with the thread
 /// label and the styling rules `StderrFormat` applies. Factored out so the
-/// branches (`$ cmd [ctx]`, `$ cmd`, `  ! err`, plain) can be unit-tested
-/// without standing up a `tracing` subscriber.
+/// branches (`$ cmd [ctx]`, `✓ cmd [ctx]  dur`, `  ! err`, plain) can be
+/// unit-tested without standing up a `tracing` subscriber.
 fn style_stderr_line(thread_num: char, msg: &str) -> String {
-    if let Some(rest) = msg.strip_prefix("$ ") {
-        // Standalone tools (gh, glab) emit no `[ctx]` suffix.
-        let (command, worktree) = match rest.find(" [") {
+    // Command framing lines share one shape: a leading glyph, then the
+    // command, then an optional `[context]` and trailing detail. `$` opens a
+    // command; `✓`/`✗` report its completion (the humanized wt-trace records).
+    // Bolding the command on all three makes a start line and its finish line
+    // read as a pair.
+    let framed = ['$', '✓', '✗'].into_iter().find_map(|glyph| {
+        msg.strip_prefix(glyph)?
+            .strip_prefix(' ')
+            .map(|r| (glyph, r))
+    });
+    if let Some((glyph, rest)) = framed {
+        // The command ends at the earliest separator: ` [` before a context,
+        // or `  ` before a duration (standalone tools like gh emit neither).
+        let boundary = [rest.find(" ["), rest.find("  ")]
+            .into_iter()
+            .flatten()
+            .min();
+        let (command, tail) = match boundary {
             Some(pos) => (&rest[..pos], &rest[pos..]),
             None => (rest, ""),
         };
-        cformat!("<dim>[{thread_num}]</> $ <bold>{command}</>{worktree}")
+        cformat!("<dim>[{thread_num}]</> {glyph} <bold>{command}</>{tail}")
     } else if msg.starts_with("  ! ") {
         cformat!("<dim>[{thread_num}]</> <red>{msg}</>")
     } else {
@@ -118,11 +140,12 @@ fn style_stderr_line(thread_num: char, msg: &str) -> String {
     }
 }
 
-/// Stderr formatter: replicates the legacy env_logger styling pre-migration.
+/// Stderr formatter for the human routes.
 ///
-/// `$ cmd [worktree]` headers bold the command. `  ! …` continuation lines
-/// (subprocess stderr) are reddened. Everything else gets the thread-label
-/// prefix.
+/// `$ cmd [worktree]` start lines and `✓`/`✗ cmd …` finish lines bold the
+/// command (so a command's start and finish read as a pair). `  ! …`
+/// continuation lines (subprocess stderr) are reddened. Everything else gets
+/// the thread-label prefix.
 struct StderrFormat;
 
 impl<S, N> FormatEvent<S, N> for StderrFormat
@@ -142,15 +165,16 @@ where
     }
 }
 
-/// Render an event to its single-line text payload — `[wt-trace]` grammar
-/// for events under [`WT_TRACE_TARGET`], the raw `message` field for
-/// everything else. Shared between the stderr and `trace.log` formatters so
-/// `[wt-trace]` records appear in both routes (`-vv` writes to the file;
-/// `RUST_LOG=debug -v` surfaces them on stderr).
+/// Render an event to its single-line human text payload — the humanized
+/// `[wt-trace]` line ([`format_wt_trace`]) for events under
+/// [`WT_TRACE_TARGET`], the raw `message` field for everything else. Shared
+/// between the stderr and `trace.log` formatters so `[wt-trace]` records read
+/// the same in both routes (`-vv` writes to the file; `RUST_LOG=debug -v`
+/// surfaces them on stderr).
 ///
 /// Control bytes are escaped here ([`escape_controls`]) — this is the single
 /// chokepoint feeding both human-facing routes, so raw NUL/ESC from subprocess
-/// output (e.g. the bounded preview of `git … -z`, or a `cmd=`/`err=` field
+/// output (e.g. the bounded preview of `git … -z`, or a `cmd`/`err` field
 /// carrying captured bytes) can't ride into the terminal or `trace.log`, and
 /// thus can't break the gist upload of the `diagnostic.md` that inlines
 /// `trace.log`. `subprocess.log` keeps raw bytes verbatim: it renders via
@@ -173,13 +197,13 @@ fn render_event_message(event: &Event<'_>) -> String {
 }
 
 /// `trace.log` formatter: plain `[<thread>] <message>`, no ANSI, one line
-/// per event. Matches the on-disk layout pre-migration.
+/// per event — the human-readable trace artifact.
 ///
-/// Events under [`WT_TRACE_TARGET`] are rendered via the dedicated
-/// `[wt-trace] key=value` grammar in [`format_wt_trace`]; everything else
-/// falls through to the legacy message-prefix shape. This is the only place
-/// the `[wt-trace]` text format lives — emit sites in `trace::emit` carry
-/// structured fields, not pre-formatted strings.
+/// Events under [`WT_TRACE_TARGET`] are rendered as humanized lines by
+/// [`format_wt_trace`]; everything else falls through to the message-prefix
+/// shape. This is the only place the human trace line lives — emit sites in
+/// `trace::emit` carry structured fields, not pre-formatted strings, and the
+/// machine grammar lives in `trace.jsonl`.
 struct TraceFileFormat;
 
 impl<S, N> FormatEvent<S, N> for TraceFileFormat
@@ -199,24 +223,21 @@ where
     }
 }
 
-/// Captured fields from a single `WT_TRACE_TARGET` event. The visitor reads
-/// each field by name and stores its value typed — the layer renderer then
-/// composes the final `[wt-trace] …` line in the exact field order
-/// downstream parsers expect.
+/// Captured fields from a single `WT_TRACE_TARGET` event, for the human
+/// `trace.log` / stderr render. The visitor reads each field by name and
+/// stores its value typed; the layer renderer then composes the humanized
+/// line.
 ///
-/// Unknown fields are dropped; the wt-trace grammar is closed (every key
-/// has a fixed meaning).
+/// Only the fields the human line shows are captured — `ts`/`tid`/`seq` are
+/// machine-only (the `[thread]` prefix already names the thread) and stay in
+/// `trace.jsonl`, which serializes every field via its own generic visitor.
+/// Unknown fields are dropped; the wt-trace grammar is closed (every key has
+/// a fixed meaning).
 #[derive(Default)]
 struct WtTraceFields {
     kind: Option<String>,
-    ts: Option<u64>,
-    tid: Option<u64>,
-    seq: Option<u64>,
     dur_us: Option<u64>,
     ok: Option<bool>,
-    /// `true` when the command consumed stdin uncaptured by `cmd`; rendered as a
-    /// trailing `stdin=true` only when true (omitted otherwise, like `context`).
-    stdin: Option<bool>,
     context: Option<String>,
     cmd: Option<String>,
     err: Option<String>,
@@ -226,20 +247,14 @@ struct WtTraceFields {
 
 impl tracing::field::Visit for WtTraceFields {
     fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
-        match field.name() {
-            "ts" => self.ts = Some(value),
-            "tid" => self.tid = Some(value),
-            "seq" => self.seq = Some(value),
-            "dur_us" => self.dur_us = Some(value),
-            _ => {}
+        if field.name() == "dur_us" {
+            self.dur_us = Some(value);
         }
     }
 
     fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
-        match field.name() {
-            "ok" => self.ok = Some(value),
-            "stdin" => self.stdin = Some(value),
-            _ => {}
+        if field.name() == "ok" {
+            self.ok = Some(value);
         }
     }
 
@@ -273,77 +288,47 @@ impl WtTraceFields {
     }
 }
 
-/// Render structured fields as the `[wt-trace] key=value …` text wt-perf
-/// and the integration tests parse. The field order per `kind` is the
-/// contract; see `src/trace/parse.rs` for the consumer.
+/// Render a `[wt-trace]` event as a human line for `trace.log` / stderr, with
+/// one rendering of `cmd [context]` across every line type so a command's
+/// start echo (`$ …`) and finish record (`✓ …`/`✗ …`) read as a pair:
 ///
-/// A malformed event (missing required fields, unknown `kind`) renders the
-/// best-effort string `[wt-trace] kind=<…> <repr>` so a future-added kind
-/// produces a noticeable but parseable line rather than silently vanishing.
+/// ```text
+/// ✓ git status [worktree]  12.3ms          cmd_completed, ok=true
+/// ✗ git merge-base [main]  1.1s            cmd_completed, ok=false
+/// ✗ git rev-list [.]  100ms  fatal: …      cmd_errored
+/// · Showed skeleton                        instant (milestone)
+/// ◷ build_hook_context  8.2ms              span (in-process)
+/// ```
+///
+/// The leading glyph names the line type at a glance; durations render via
+/// `Duration`'s compact `Debug` (`999µs`/`12.3ms`/`1.5s`). Machine fields
+/// (`ts`/`tid`/`seq`) live only in `trace.jsonl` (see [`event_json`]). A
+/// malformed or future `kind` renders a best-effort `· <kind>` line rather
+/// than vanishing.
 fn format_wt_trace(f: &WtTraceFields) -> String {
-    // `ts` and `tid` are required for every kind; default to 0 to keep the
-    // line shape valid if a future emit site forgets one — the parser will
-    // still accept it, and the missing field shows up as `0` in the
-    // timeline rather than disappearing.
-    let ts = f.ts.unwrap_or(0);
-    let tid = f.tid.unwrap_or(0);
+    let dur = |dur_us: Option<u64>| format!("{:?}", Duration::from_micros(dur_us.unwrap_or(0)));
+    let with_context = |cmd: &str| match &f.context {
+        Some(ctx) => format!("{cmd} [{ctx}]"),
+        None => cmd.to_string(),
+    };
+    let cmd = || with_context(f.cmd.as_deref().unwrap_or(""));
 
     match f.kind.as_deref() {
         Some("cmd_completed") => {
-            let seq = f.seq.unwrap_or(0);
-            let cmd = f.cmd.as_deref().unwrap_or("");
-            let dur_us = f.dur_us.unwrap_or(0);
-            let ok = f.ok.unwrap_or(false);
-            // Only commands that read stdin carry the marker; omit it otherwise
-            // so the overwhelmingly common no-stdin record stays lean.
-            let stdin = if f.stdin == Some(true) {
-                " stdin=true"
-            } else {
-                ""
-            };
-            match &f.context {
-                Some(ctx) => format!(
-                    r#"[wt-trace] ts={ts} tid={tid} seq={seq} context={ctx} cmd="{cmd}" dur_us={dur_us} ok={ok}{stdin}"#
-                ),
-                None => {
-                    format!(
-                        r#"[wt-trace] ts={ts} tid={tid} seq={seq} cmd="{cmd}" dur_us={dur_us} ok={ok}{stdin}"#
-                    )
-                }
-            }
+            let glyph = if f.ok.unwrap_or(false) { '✓' } else { '✗' };
+            format!("{glyph} {}  {}", cmd(), dur(f.dur_us))
         }
         Some("cmd_errored") => {
-            let seq = f.seq.unwrap_or(0);
-            let cmd = f.cmd.as_deref().unwrap_or("");
-            let dur_us = f.dur_us.unwrap_or(0);
-            let err = f.err.as_deref().unwrap_or("");
-            let stdin = if f.stdin == Some(true) {
-                " stdin=true"
-            } else {
-                ""
-            };
-            match &f.context {
-                Some(ctx) => format!(
-                    r#"[wt-trace] ts={ts} tid={tid} seq={seq} context={ctx} cmd="{cmd}" dur_us={dur_us} err="{err}"{stdin}"#
-                ),
-                None => format!(
-                    r#"[wt-trace] ts={ts} tid={tid} seq={seq} cmd="{cmd}" dur_us={dur_us} err="{err}"{stdin}"#
-                ),
-            }
+            format!(
+                "✗ {}  {}  {}",
+                cmd(),
+                dur(f.dur_us),
+                f.err.as_deref().unwrap_or("")
+            )
         }
-        Some("instant") => {
-            let event = f.event.as_deref().unwrap_or("");
-            format!(r#"[wt-trace] ts={ts} tid={tid} event="{event}""#)
-        }
-        Some("span") => {
-            let name = f.span.as_deref().unwrap_or("");
-            let dur_us = f.dur_us.unwrap_or(0);
-            format!(r#"[wt-trace] ts={ts} tid={tid} span="{name}" dur_us={dur_us}"#)
-        }
-        other => format!(
-            r#"[wt-trace] ts={ts} tid={tid} kind={kind:?}"#,
-            kind = other.unwrap_or("<unknown>")
-        ),
+        Some("instant") => format!("· {}", f.event.as_deref().unwrap_or("")),
+        Some("span") => format!("◷ {}  {}", f.span.as_deref().unwrap_or(""), dur(f.dur_us)),
+        other => format!("· {}", other.unwrap_or("<unknown>")),
     }
 }
 
@@ -831,28 +816,46 @@ mod tests {
     /// the assertions don't tangle with `cformat!`'s exact escape bytes.
     #[test]
     fn style_stderr_covers_each_shape() {
-        // `$ cmd [ctx]` — git path with worktree context.
-        let cmd_ctx = style_stderr_line('a', "$ git status [feature]")
-            .ansi_strip()
-            .into_owned();
-        assert_eq!(cmd_ctx, "[a] $ git status [feature]");
+        let stripped = |t, msg| style_stderr_line(t, msg).ansi_strip().into_owned();
 
-        // `$ cmd` with no `[ctx]` — standalone tools (gh, glab) emit this
-        // shape; was line 109 in the codecov gap.
-        let cmd_no_ctx = style_stderr_line('b', "$ gh pr list")
-            .ansi_strip()
-            .into_owned();
-        assert_eq!(cmd_no_ctx, "[b] $ gh pr list");
+        // `$ cmd [ctx]` — git path with worktree context.
+        assert_eq!(
+            stripped('a', "$ git status [feature]"),
+            "[a] $ git status [feature]"
+        );
+
+        // `$ cmd` with no `[ctx]` — standalone tools (gh, glab) emit this shape.
+        assert_eq!(stripped('b', "$ gh pr list"), "[b] $ gh pr list");
+
+        // `✓ cmd [ctx]  dur` — a finish line pairs with its `$` start line
+        // (same `cmd [ctx]` rendering, command bolded under the new glyph).
+        assert_eq!(
+            stripped('c', "✓ git status [feature]  12.3ms"),
+            "[c] ✓ git status [feature]  12.3ms"
+        );
+
+        // `✗ cmd [ctx]  dur  err` — a failed command; the duration and error
+        // tail stay unbolded (command boundary is the earliest of ` [` / `  `).
+        assert_eq!(
+            stripped('d', "✗ git rev-list [.]  100ms  fatal: bad revision"),
+            "[d] ✗ git rev-list [.]  100ms  fatal: bad revision"
+        );
+
+        // `✓ cmd  dur` with no `[ctx]` — boundary falls on the `  ` before dur.
+        assert_eq!(
+            stripped('e', "✓ gh pr list  45ms"),
+            "[e] ✓ gh pr list  45ms"
+        );
 
         // `  ! …` — subprocess stderr continuation, red-styled.
-        let err = style_stderr_line('c', "  ! fatal: bad ref")
-            .ansi_strip()
-            .into_owned();
-        assert_eq!(err, "[c]   ! fatal: bad ref");
+        assert_eq!(
+            stripped('f', "  ! fatal: bad ref"),
+            "[f]   ! fatal: bad ref"
+        );
 
-        // Plain — everything else falls through with just the thread prefix.
-        let plain = style_stderr_line('d', "hello").ansi_strip().into_owned();
-        assert_eq!(plain, "[d] hello");
+        // `· event` (instant) and plain text fall through with just the prefix.
+        assert_eq!(stripped('g', "· Showed skeleton"), "[g] · Showed skeleton");
+        assert_eq!(stripped('h', "hello"), "[h] hello");
     }
 
     /// Drive `WtTraceFields::Visit` end-to-end via a temporary subscriber:
@@ -883,12 +886,12 @@ mod tests {
         let events: Arc<Mutex<Vec<WtTraceFields>>> = Arc::new(Mutex::new(Vec::new()));
         let subscriber = Registry::default().with(Capture(events.clone()));
         tracing::subscriber::with_default(subscriber, || {
-            // u64 (ts/tid/dur_us) + unknown_u64 → `_` arm in record_u64
+            // u64 (dur_us) + ignored u64 (ts/tid are machine-only now, dropped
+            // by the human visitor's non-`dur_us` arm)
             tracing::debug!(
                 target: WT_TRACE_TARGET,
+                dur_us = 12300u64,
                 ts = 7u64,
-                tid = 3u64,
-                unknown_u64 = 42u64,
             );
             // bool (ok)
             tracing::debug!(target: WT_TRACE_TARGET, ok = true);
@@ -904,164 +907,88 @@ mod tests {
         });
 
         let captured = events.lock().unwrap();
-        assert_eq!(captured[0].ts, Some(7));
-        assert_eq!(captured[0].tid, Some(3));
+        assert_eq!(captured[0].dur_us, Some(12300));
         assert_eq!(captured[1].ok, Some(true));
         assert_eq!(captured[2].cmd.as_deref(), Some("git status"));
         assert_eq!(captured[3].err.as_deref(), Some("fatal: bad ref"));
     }
 
-    /// Lock the `[wt-trace]` wire grammar produced by `format_wt_trace`.
-    /// wt-perf and the integration suite parse these lines; any drift here
-    /// breaks downstream tooling, so each `kind` gets a fixture assertion.
+    /// Lock the humanized line `format_wt_trace` produces for each `kind`.
+    /// This is the human `trace.log` / stderr render; the machine grammar
+    /// lives in `trace.jsonl` (`event_json`), parsed by `src/trace/parse.rs`.
     #[test]
     fn format_wt_trace_renders_each_kind() {
-        // cmd_completed with context
+        // cmd_completed with context (ok=true → ✓), duration compacted by
+        // Duration's Debug (12300µs → 12.3ms).
         let f = WtTraceFields {
             kind: Some("cmd_completed".into()),
-            ts: Some(100),
-            tid: Some(3),
-            seq: Some(1),
             context: Some("worktree".into()),
             cmd: Some("git status".into()),
             dur_us: Some(12300),
             ok: Some(true),
             ..Default::default()
         };
-        assert_eq!(
-            format_wt_trace(&f),
-            r#"[wt-trace] ts=100 tid=3 seq=1 context=worktree cmd="git status" dur_us=12300 ok=true"#
-        );
+        assert_eq!(format_wt_trace(&f), "✓ git status [worktree]  12.3ms");
 
-        // cmd_completed without context
+        // cmd_completed without context (ok=false → ✗)
         let f = WtTraceFields {
             kind: Some("cmd_completed".into()),
-            ts: Some(100),
-            tid: Some(3),
-            seq: Some(2),
             cmd: Some("gh pr list".into()),
             dur_us: Some(45200),
             ok: Some(false),
             ..Default::default()
         };
-        assert_eq!(
-            format_wt_trace(&f),
-            r#"[wt-trace] ts=100 tid=3 seq=2 cmd="gh pr list" dur_us=45200 ok=false"#
-        );
+        assert_eq!(format_wt_trace(&f), "✗ gh pr list  45.2ms");
 
-        // cmd_errored with context
+        // cmd_errored with context — the error message tails the line
         let f = WtTraceFields {
             kind: Some("cmd_errored".into()),
-            ts: Some(100),
-            tid: Some(3),
-            seq: Some(3),
             context: Some("main".into()),
             cmd: Some("git merge-base".into()),
             dur_us: Some(100000),
-            err: Some("fatal: ...".into()),
+            err: Some("fatal: no merge base".into()),
             ..Default::default()
         };
         assert_eq!(
             format_wt_trace(&f),
-            r#"[wt-trace] ts=100 tid=3 seq=3 context=main cmd="git merge-base" dur_us=100000 err="fatal: ...""#
+            "✗ git merge-base [main]  100ms  fatal: no merge base"
         );
 
         // cmd_errored without context (standalone tools like gh)
         let f = WtTraceFields {
             kind: Some("cmd_errored".into()),
-            ts: Some(100),
-            tid: Some(3),
-            seq: Some(4),
             cmd: Some("gh pr list".into()),
             dur_us: Some(1000),
             err: Some("network down".into()),
             ..Default::default()
         };
-        assert_eq!(
-            format_wt_trace(&f),
-            r#"[wt-trace] ts=100 tid=3 seq=4 cmd="gh pr list" dur_us=1000 err="network down""#
-        );
+        assert_eq!(format_wt_trace(&f), "✗ gh pr list  1ms  network down");
 
-        // cmd_completed reading stdin — `stdin=true` trails the record; a
-        // stdin-less record (stdin None/Some(false)) omits the field entirely,
-        // as every fixture above shows.
-        let f = WtTraceFields {
-            kind: Some("cmd_completed".into()),
-            ts: Some(100),
-            tid: Some(3),
-            seq: Some(5),
-            cmd: Some("git patch-id --verbatim".into()),
-            dur_us: Some(640),
-            ok: Some(true),
-            stdin: Some(true),
-            ..Default::default()
-        };
-        assert_eq!(
-            format_wt_trace(&f),
-            r#"[wt-trace] ts=100 tid=3 seq=5 cmd="git patch-id --verbatim" dur_us=640 ok=true stdin=true"#
-        );
-
-        // cmd_errored reading stdin — `stdin=true` trails the err field.
-        let f = WtTraceFields {
-            kind: Some("cmd_errored".into()),
-            ts: Some(100),
-            tid: Some(3),
-            seq: Some(6),
-            cmd: Some("claude -p".into()),
-            dur_us: Some(900),
-            err: Some("boom".into()),
-            stdin: Some(true),
-            ..Default::default()
-        };
-        assert_eq!(
-            format_wt_trace(&f),
-            r#"[wt-trace] ts=100 tid=3 seq=6 cmd="claude -p" dur_us=900 err="boom" stdin=true"#
-        );
-
-        // instant
+        // instant (milestone) — `·`, no duration
         let f = WtTraceFields {
             kind: Some("instant".into()),
-            ts: Some(100),
-            tid: Some(3),
             event: Some("Showed skeleton".into()),
             ..Default::default()
         };
-        assert_eq!(
-            format_wt_trace(&f),
-            r#"[wt-trace] ts=100 tid=3 event="Showed skeleton""#
-        );
+        assert_eq!(format_wt_trace(&f), "· Showed skeleton");
 
-        // span
+        // span (in-process) — `◷` with duration
         let f = WtTraceFields {
             kind: Some("span".into()),
-            ts: Some(100),
-            tid: Some(3),
             span: Some("build_hook_context".into()),
             dur_us: Some(8200),
             ..Default::default()
         };
-        assert_eq!(
-            format_wt_trace(&f),
-            r#"[wt-trace] ts=100 tid=3 span="build_hook_context" dur_us=8200"#
-        );
+        assert_eq!(format_wt_trace(&f), "◷ build_hook_context  8.2ms");
 
-        // Defensive fallback: a future kind not yet known to the renderer
-        // emits a parseable record rather than silently vanishing.
+        // Defensive fallback: a future/unknown kind renders a visible line
+        // rather than silently vanishing.
         let f = WtTraceFields {
             kind: Some("future_kind".into()),
-            ts: Some(100),
-            tid: Some(3),
             ..Default::default()
         };
-        assert_eq!(
-            format_wt_trace(&f),
-            r#"[wt-trace] ts=100 tid=3 kind="future_kind""#
-        );
-        let f = WtTraceFields::default();
-        assert_eq!(
-            format_wt_trace(&f),
-            r#"[wt-trace] ts=0 tid=0 kind="<unknown>""#
-        );
+        assert_eq!(format_wt_trace(&f), "· future_kind");
+        assert_eq!(format_wt_trace(&WtTraceFields::default()), "· <unknown>");
     }
 
     /// `event_json` serializes whatever typed fields an event carries, then

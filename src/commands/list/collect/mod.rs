@@ -476,13 +476,19 @@ impl CollectOptions {
     /// need (e.g. `CollectOptions { url_template, ..for_columns(cols, &gates) }`).
     ///
     /// `collect` builds its options directly — it has the context fields already
-    /// resolved — so this is for the single-item callers (statusline).
+    /// resolved — so this is for the single-item callers (statusline). They
+    /// render the default column set, not a `[list] columns` selection, so the
+    /// plan uses [`ColumnSource::Default`](super::columns::ColumnSource).
     pub fn for_columns(
         rendered: impl IntoIterator<Item = super::columns::ColumnKind>,
         gates: &super::columns::ColumnGates,
     ) -> Self {
         Self {
-            tasks: super::columns::required_tasks_for_render(rendered, gates),
+            tasks: super::columns::required_tasks_for_render(
+                rendered,
+                super::columns::ColumnSource::Default,
+                gates,
+            ),
             url_template: None,
             llm_command: None,
             default_branch: None,
@@ -1184,32 +1190,57 @@ pub fn collect(
         };
 
     // Decide, in one place, which background tasks to run: the union of the
-    // tasks every column the table will render needs. This is the canonical
-    // "what do we need" stage — the spawn loop fires exactly this set, and the
-    // layout filter renders exactly the columns it feeds.
+    // tasks every column the rendered table needs. This is the canonical "what
+    // do we need" stage — the spawn loop fires exactly this set, and the layout
+    // filter renders exactly the columns it feeds. Three shapes:
     //
-    // The rendered set is the `[list] columns` selection for the table; the
-    // picker and JSON ignore it (`all_columns`) because their consumers — the
-    // picker's preview tabs, JSON's every-field contract in `src/cli/mod.rs` —
-    // need the full data set, not just what renders. The gates (`--full`,
-    // `[list] summary` + `[commit.generation]`, a url template) then drop a
-    // column and its tasks regardless of selection.
+    // - `wt list` table → the `[list] columns` selection (source `Listed`), or
+    //   `all_columns` (source `Default`) when nothing narrows it. The `Listed`
+    //   source lets an explicit selection override the preset gates (`--full`,
+    //   `[list] summary`): listing `ci` runs its task without `--full`. The
+    //   data-source gates (`[commit.generation]`, a url template) still drop a
+    //   column whose data can't be produced, however it was requested.
+    // - picker → `all_columns` for its preview tabs, unioned with the selection's
+    //   forced-on columns so its table matches `wt list`'s. The union matters for
+    //   a listed `summary` that `Default` alone wouldn't plan (LLM command set,
+    //   `[list] summary` off): without it the picker would hide a column `wt list`
+    //   shows. CI is already covered — the picker is always `show_full`.
+    // - `--format json` → `all_columns` (source `Default`), ignoring the
+    //   selection: its every-field contract (`src/cli/mod.rs`) needs the full set.
     //
     // So a branch/path `ls` alias over many dirty worktrees runs no `git status`
-    // / diffs / ahead-behind walks (#3133), while a column gated off elsewhere
-    // stays off — selection narrows the work, never forces it on.
+    // / diffs / ahead-behind walks (#3133), while a default column gated off by
+    // `--full` stays off until the user passes `--full` or lists it.
     let gates = super::columns::ColumnGates {
         show_full,
         summary_enabled: config.list.summary(),
         has_llm_command: llm_command.is_some(),
         has_url_template: url_template.is_some(),
     };
+    let listed_plan = || {
+        super::columns::required_tasks_for_render(
+            selected_columns.iter().copied(),
+            super::columns::ColumnSource::Listed,
+            &gates,
+        )
+    };
+    let full_plan = || {
+        super::columns::required_tasks_for_render(
+            super::columns::all_columns(),
+            super::columns::ColumnSource::Default,
+            &gates,
+        )
+    };
     let prune_to_selection =
         render_table && progressive_handler.is_none() && !selected_columns.is_empty();
     let tasks = if prune_to_selection {
-        super::columns::required_tasks_for_render(selected_columns.iter().copied(), &gates)
+        listed_plan()
+    } else if progressive_handler.is_some() {
+        let mut tasks = full_plan();
+        tasks.extend(listed_plan());
+        tasks
     } else {
-        super::columns::required_tasks_for_render(super::columns::all_columns(), &gates)
+        full_plan()
     };
 
     // The picker primes its CI cells from the local cache so the column paints

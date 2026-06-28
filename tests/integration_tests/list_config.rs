@@ -1048,6 +1048,55 @@ columns = ["branch", "age"]
     );
 }
 
+/// A listed column overrides the `--full` preset gate — the positive counterpart
+/// to the prune above. `--full` bundles `ci`/`summary` into the default table; it
+/// doesn't gate a column named outright. So `columns = ["branch", "ci"]` renders
+/// the CI column with no `--full`, where the default set hides it. Asserted on the
+/// rendered header row (column enrolment, independent of whether `gh` is on PATH).
+#[rstest]
+fn test_list_config_listed_column_overrides_full_gate(repo: TestRepo) {
+    let header_of = |config: &str| -> String {
+        if config.is_empty() {
+            let _ = fs::remove_file(repo.test_config_path());
+        } else {
+            fs::write(repo.test_config_path(), config).unwrap();
+        }
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(repo.root_path());
+        let output = cmd.output().unwrap();
+        assert!(
+            output.status.success(),
+            "exit code should be 0 for config {config:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // The header row is the line naming the Branch column.
+        stdout
+            .lines()
+            .find(|line| line.contains("Branch"))
+            .unwrap_or_default()
+            .to_string()
+    };
+
+    // Control: the default set without `--full` hides CI.
+    assert!(
+        !header_of("").contains("CI"),
+        "the default non-full table should not show the CI column"
+    );
+
+    // Listing `ci` forces the column on without `--full`.
+    let listed = header_of(
+        r#"[list]
+columns = ["branch", "ci"]
+"#,
+    );
+    assert!(
+        listed.contains("CI"),
+        "listing `ci` should render the CI column without --full:\n{listed:?}"
+    );
+}
+
 /// The task prune must not reach the JSON path. `wt list --format json` ignores
 /// `[list] columns` and always emits every field (the `after_long_help`
 /// contract in `src/cli/mod.rs`), so a narrowed selection that drops the Status
