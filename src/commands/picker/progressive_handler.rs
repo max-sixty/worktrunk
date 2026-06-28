@@ -195,6 +195,17 @@ impl PickerHandler {
             return;
         };
         let Some(pr_ref) = status.number else { return };
+        // Skip the expired-cache prime: `populate_from_cache` carries an
+        // unbounded-stale `updated_at` on a `is_priming` placeholder, and since
+        // the fetch is deduped by PR number, keying off it here would lock the
+        // comments cache to a wrong signature for the whole session (a stale
+        // disk hit, or a mis-keyed write) — the live `CiStatus` fetch
+        // (`is_priming: false`, within-TTL/fresh `updated_at`) re-runs this and
+        // spawns with the right key. A valid (within-TTL) prime is not priming,
+        // so it still warms the tab at skeleton.
+        if status.is_priming {
+            return;
+        }
         let Some(slots) = self.comments_fetched.get() else {
             return;
         };
@@ -1031,6 +1042,63 @@ mod tests {
         assert!(
             handler.preview_cache.contains_key(&key),
             "the re-fetch repopulated the comments cache for #42"
+        );
+    }
+
+    /// An expired-cache prime (`is_priming: true`) carries an unbounded-stale
+    /// `updated_at`; spawning the comments fetch off it would lock the disk cache
+    /// to a wrong signature for the whole session. The prime is skipped, so the
+    /// comments cache stays empty until the live (`is_priming: false`) fetch
+    /// lands and spawns with a fresh timestamp.
+    #[test]
+    fn comments_skip_priming_prime_until_live() {
+        use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef, PrStatus};
+
+        let (handler, _test, rx) = make_handler();
+        handler.on_skeleton(
+            vec![ListItem::new_branch("aaa".into(), "feature".into())],
+            vec!["s".into()],
+            header("hdr"),
+            grid(),
+        );
+        let _ = rx.recv();
+
+        let status = |is_priming: bool, updated_at: &str| {
+            let mut item = ListItem::new_branch("aaa".into(), "feature".into());
+            item.pr_status = Some(Some(PrStatus {
+                ci_status: CiStatus::Passed,
+                source: CiSource::PullRequest,
+                is_stale: false,
+                is_priming,
+                url: None,
+                number: Some(PrRef::pr(7)),
+                review_state: None,
+                title: None,
+                body: None,
+                author: None,
+                comment_count: None,
+                updated_at: Some(updated_at.to_string()),
+            }));
+            item
+        };
+        let key = ("feature".to_string(), PreviewMode::Comments);
+
+        // Expired prime → skipped: no comments fetch, cache stays empty. (The
+        // prime also must not consume the dedup slot, or the live update below
+        // would short-circuit.)
+        handler.on_update(0, "r".into(), &status(true, "2020-01-01T00:00:00Z"));
+        handler.orchestrator.wait_for_idle();
+        assert!(
+            !handler.preview_cache.contains_key(&key),
+            "an is_priming prime must not spawn the comments fetch"
+        );
+
+        // Live fetch (not priming) with a fresh timestamp → spawns and caches.
+        handler.on_update(0, "r".into(), &status(false, "2026-06-28T00:00:00Z"));
+        handler.orchestrator.wait_for_idle();
+        assert!(
+            handler.preview_cache.contains_key(&key),
+            "the live fetch spawns the comments fetch with a fresh signature"
         );
     }
 
