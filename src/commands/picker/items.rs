@@ -545,14 +545,19 @@ pub(super) struct LocalContent {
     /// `git diff HEAD` doesn't show). `Some(false)` for a branch-only row (no
     /// working tree to diff).
     working_tree: Option<bool>,
-    /// `branch_diff`: the branch has commits ahead of the **local** default
-    /// branch — the same base `compute_branch_diff_preview`'s pane diffs against
-    /// (`default_branch_sha()`). Deliberately NOT `has_file_changes`, which
-    /// measures against the *integration target*: when the local default is
-    /// behind or diverged from its upstream, that target is the upstream, so a
-    /// branch already integrated upstream resolves `has_file_changes = false`
+    /// `branch_diff`: the branch has commits ahead of the mainline tip
+    /// (`counts.ahead > 0`), or it is an orphan (no merge base — see
+    /// [`Self::from_item`]). `counts` is `AheadBehindTask`'s answer, measured
+    /// against the **upstream-aware** comparison base
+    /// (`TaskContext::comparison_base` — the upstream ref when the local default
+    /// lags it), so a stale fork default doesn't inflate it. The branch-diff and
+    /// summary panes instead diff the **local** default (`default_branch_sha()`,
+    /// `compute_combined_diff`'s `repo.default_branch()`); the two bases coincide
+    /// unless the local default lags upstream, where this can read `ahead = 0`
     /// while the pane (vs the stale local default) still shows a diff — dimming
-    /// over a non-empty pane, the one case the invariant rules out.
+    /// the number over a non-empty pane. That fork-only skew is shared by the
+    /// branch-diff and summary tabs and is purely cosmetic (navigation and the
+    /// pane itself are unaffected).
     branch_diff: Option<bool>,
     /// `upstream`: the branch is ahead of or behind its tracking ref. Combined
     /// with the synchronous `has_upstream` floor (no tracking ref dims the tab
@@ -576,11 +581,12 @@ impl LocalContent {
         };
         Self {
             working_tree,
-            // Commits ahead of the local default (matching the pane's base). An
-            // orphan has no merge base with the default, so its three-dot diff is
-            // ill-defined — keep the tab available rather than dim a pane that may
-            // show content. `counts` and `is_orphan` land together (one task), so
-            // when `counts` is known `is_orphan` is too.
+            // Commits ahead of the upstream-aware comparison base (see the
+            // `branch_diff` field doc). An orphan has no merge base with the
+            // default, so its three-dot diff is ill-defined — keep the tab
+            // available rather than dim a pane that may show content. `counts`
+            // and `is_orphan` land together (one task), so when `counts` is
+            // known `is_orphan` is too.
             branch_diff: item
                 .counts
                 .map(|c| c.ahead > 0 || item.is_orphan == Some(true)),
@@ -614,11 +620,9 @@ impl LocalTabs {
     /// (`crate::summary::compute_combined_diff` = commits ahead of the default +
     /// working-tree changes), so it reuses the `branch_diff` and `working_tree`
     /// signals that gate tabs 3 and 1 — dimming in concert with them once both
-    /// are known empty, not only when summaries are disabled. Like tab 3,
-    /// `branch_diff` measures against the upstream-aware comparison base while the
-    /// summary pane diffs the local default, so a fork whose local default lags
-    /// upstream can hold the number a step out of sync with the pane; the common
-    /// case (local default current) matches.
+    /// are known empty, not only when summaries are disabled. Like tab 3, it
+    /// inherits `branch_diff`'s fork-only base skew (see the
+    /// [`LocalContent::branch_diff`] field doc).
     fn worktree(content: LocalContent, has_upstream: bool, summaries_enabled: bool) -> Self {
         let working_tree = content.working_tree.unwrap_or(true);
         let branch_diff = content.branch_diff.unwrap_or(true);
