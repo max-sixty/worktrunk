@@ -320,21 +320,17 @@ fn warn_if_branch_retained(
             // compare-and-swap refused — fail-closed — so the unmerged
             // commits are preserved. Always surface, regardless of planner
             // prediction.
-            eprintln!(
-                "{}",
-                warning_message(cformat!(
-                    "Removed worktree but kept branch <bold>{branch}</> (moved during deletion); inspect commits, then run <bold>wt remove --force-delete {branch}</> if safe"
-                ))
-            );
+            eprintln!("{}", retained_raced_branch_message(branch, true));
         }
         Ok(r)
             if matches!(r.outcome, BranchDeletionOutcome::NotDeleted)
                 && !planner_expected_retention =>
         {
+            let cmd = suggest_command("remove", &[branch], &["-D"]);
             eprintln!(
                 "{}",
                 warning_message(cformat!(
-                    "Removed worktree but kept branch <bold>{branch}</> (not integrated); to remove it, run <bold>wt remove --force-delete {branch}</>"
+                    "Removed worktree but kept branch <bold>{branch}</> (not integrated); to delete, run <bold>{cmd}</>"
                 ))
             );
         }
@@ -670,12 +666,36 @@ fn print_retained_unmerged_branch(branch_name: &str) {
     eprintln!("{hint}");
 }
 
+/// The canonical "branch retained because the atomic CAS delete was refused"
+/// warning. The ref moved between the integration check and the delete (a hook
+/// commit, a concurrent push), so the integrated branch is kept fail-closed
+/// rather than dropping the new commits. Shared across the worktree-removal and
+/// branch-only emit paths so the wording, flag, and styling can't drift.
+///
+/// `removed_worktree` selects the lead-in: the worktree has already been removed
+/// on the worktree-removal paths, but the branch-only path never had one.
+fn retained_raced_branch_message(branch_name: &str, removed_worktree: bool) -> String {
+    let lead_in = if removed_worktree {
+        "Removed worktree but kept branch"
+    } else {
+        "Kept branch"
+    };
+    let cmd = suggest_command("remove", &[branch_name], &["-D"]);
+    warning_message(cformat!(
+        "{lead_in} <bold>{branch_name}</> (moved during deletion); inspect commits, then run <bold>{cmd}</> if safe"
+    ))
+    .to_string()
+}
+
 /// Handle the result of a branch deletion attempt.
 ///
 /// Converts a deletion attempt into structured display data:
-/// - `NotDeleted`: We checked and chose not to delete (not integrated)
-/// - `RetainedRaced`: Integration check passed but the atomic CAS delete was
-///   refused because the ref moved (a hook or concurrent process advanced it)
+/// - `NotDeleted`: We checked and chose not to delete (not integrated) — sets
+///   `show_unmerged_hint`.
+/// - `RetainedRaced`: integration check passed but the atomic CAS delete was
+///   refused because the ref moved (a hook or concurrent process advanced it).
+///   Callers surface this with [`retained_raced_branch_message`], not the
+///   unmerged hint, so it is *not* folded into `show_unmerged_hint`.
 /// - `Err(e)`: Git command failed - show warning with actual error
 fn handle_branch_deletion_result(
     result: anyhow::Result<BranchDeletionResult>,
@@ -683,10 +703,7 @@ fn handle_branch_deletion_result(
 ) -> anyhow::Result<BranchDeletionDisplay> {
     match result {
         Ok(result) => Ok(BranchDeletionDisplay {
-            show_unmerged_hint: matches!(
-                result.outcome,
-                BranchDeletionOutcome::NotDeleted | BranchDeletionOutcome::RetainedRaced
-            ),
+            show_unmerged_hint: matches!(result.outcome, BranchDeletionOutcome::NotDeleted),
             result,
         }),
         Err(e) => {
@@ -1136,12 +1153,7 @@ fn handle_branch_only_output(
             deletion.result.outcome,
             BranchDeletionOutcome::RetainedRaced
         ) {
-            eprintln!(
-                "{}",
-                warning_message(cformat!(
-                    "Kept branch <bold>{branch_name}</> (moved during deletion); inspect commits, then run <bold>wt remove --force-delete {branch_name}</> if safe"
-                ))
-            );
+            eprintln!("{}", retained_raced_branch_message(branch_name, false));
         } else if deletion.show_unmerged_hint {
             print_retained_unmerged_branch(branch_name);
         }
@@ -1426,6 +1438,16 @@ impl RemovalDisplayInfo {
         pre_computed_integration: Option<IntegrationReason>,
     ) -> anyhow::Result<()> {
         if self.branch_deleted() {
+            return Ok(());
+        }
+
+        // A raced retention isn't "unmerged" — the branch was integrated but
+        // its tip moved during the delete. Surface the dedicated message
+        // (inspect commits, then force-delete if safe) rather than falling
+        // through to the generic unmerged hint, whose bare `-D` would drop the
+        // racing commits.
+        if matches!(self.outcome, BranchDeletionOutcome::RetainedRaced) {
+            eprintln!("{}", retained_raced_branch_message(branch_name, true));
             return Ok(());
         }
 
@@ -2060,6 +2082,21 @@ mod tests {
             &Err(anyhow::anyhow!("simulated git failure")),
             false,
         );
+    }
+
+    /// The shared raced-retention message varies its lead-in with
+    /// `removed_worktree` and always suggests the canonical `-D` recovery.
+    #[test]
+    fn retained_raced_branch_message_lead_in_varies() {
+        let removed = retained_raced_branch_message("feature", true);
+        assert!(removed.contains("Removed worktree but kept branch"));
+        assert!(removed.contains("moved during deletion"));
+        assert!(removed.contains("wt remove -D feature"));
+
+        let branch_only = retained_raced_branch_message("feature", false);
+        assert!(branch_only.contains("Kept branch"));
+        assert!(!branch_only.contains("Removed worktree"));
+        assert!(branch_only.contains("wt remove -D feature"));
     }
 
     #[test]

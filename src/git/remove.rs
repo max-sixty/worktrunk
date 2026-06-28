@@ -423,10 +423,12 @@ pub fn delete_branch_if_safe(
             // advanced the branch), `git update-ref -d <ref> <expected>` fails
             // closed: the branch is retained and we surface a `RetainedRaced`
             // outcome rather than dropping the unmerged commits silently.
-            match snapshot_sha(snapshot, branch_name) {
-                Some(expected_sha) => {
-                    cas_delete_branch_outcome(repo, branch_name, expected_sha, r)?
-                }
+            //
+            // Read the SHA from the snapshot inventory (`local_branch`) rather
+            // than `resolve()`, so it reflects the same `refs/heads/` walk
+            // `integration_reason` consulted.
+            match snapshot.local_branch(branch_name) {
+                Some(b) => cas_delete_branch_outcome(repo, branch_name, &b.commit_sha, r)?,
                 // Snapshot doesn't carry the branch SHA — extremely unusual
                 // (the caller just captured refs, the branch is present in the
                 // integration check). Fall through to a non-CAS delete rather
@@ -446,14 +448,6 @@ pub fn delete_branch_if_safe(
         outcome,
         integration_target: effective_target,
     })
-}
-
-/// Look up a local branch's tip SHA in the snapshot.
-///
-/// Pulls from the inventory rather than `resolve()` so the result reflects the
-/// scanned `refs/heads/` walk, the same source `integration_reason` consulted.
-fn snapshot_sha<'a>(snapshot: &'a crate::git::RefSnapshot, branch: &str) -> Option<&'a str> {
-    snapshot.local_branch(branch).map(|b| b.commit_sha.as_str())
 }
 
 /// Atomically delete `refs/heads/<branch>` iff it currently points at
@@ -613,7 +607,7 @@ mod tests {
 
     /// When the branch is integrated but absent from the captured snapshot
     /// (created after capture), `integration_reason` still resolves it via the
-    /// live `rev-parse` fallback, yet `snapshot_sha` finds no SHA to CAS
+    /// live `rev-parse` fallback, yet the snapshot carries no SHA to CAS
     /// against. The delete falls back to a plain `branch -D` and reports
     /// `Integrated` — the non-CAS arm that exists for exactly this skew.
     #[test]
@@ -622,7 +616,7 @@ mod tests {
         let repo = Repository::at(test.root_path()).unwrap();
 
         // Capture refs BEFORE `feature` exists, so the snapshot carries no SHA
-        // for it (forcing the `snapshot_sha == None` arm).
+        // for it (forcing the snapshot-miss, non-CAS arm).
         let snapshot = repo.capture_refs().unwrap();
         assert!(
             snapshot.local_branch("feature").is_none(),
