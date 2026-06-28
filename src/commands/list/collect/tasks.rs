@@ -558,8 +558,9 @@ impl Task for WorkingTreeDiffTask {
 /// **Skip-when-dirty optimization:** for worktree items, peek at the shared
 /// porcelain cache. When the worktree is dirty (and has no unmerged
 /// entries), `WorkingTreeConflictsTask` will produce a `Some(Some(_))`
-/// dirty-tree result that is authoritative for tier 3 (`tier_would_conflict`
-/// short-circuits on `Some(Some(_))` and ignores the HEAD probe). Returning
+/// dirty-tree result that is authoritative for the WouldConflict tier
+/// (`tier_would_conflict` short-circuits on `Some(Some(_))` and ignores the
+/// HEAD probe). Returning
 /// the redundant HEAD probe in that case would mean a second `git merge-tree`
 /// call against HEAD for the same row. Skip with a sentinel `false` —
 /// the value is ignored by the gate, and seeding `Some(false)` keeps the

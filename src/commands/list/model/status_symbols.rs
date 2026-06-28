@@ -86,19 +86,19 @@
 //! # Gate 3: Main state (position 4)
 //!
 //! **Renders:** at most one of `^ ✗ _ – ⊂ ↕ ↑ ↓`. Priority:
-//! `IsMain > Orphan > WouldConflict > Empty(_) > SameCommitDirty(–) >
-//! Integrated(⊂) > Diverged(↕) > Ahead(↑) > Behind(↓) > None`.
+//! `IsMain > Orphan > Empty(_) > Integrated(⊂) > WouldConflict(✗) >
+//! SameCommitDirty(–) > Diverged(↕) > Ahead(↑) > Behind(↓) > None`.
 //!
 //! **Inputs:**
 //! - `is_main` (metadata)
 //! - `is_orphan` (from `AheadBehind`)
-//! - `has_merge_tree_conflicts` (from `MergeTreeConflicts`)
-//! - `has_working_tree_conflicts` (from `WorkingTreeConflicts`)
 //! - Integration signals: `is_ancestor`, `committed_trees_match`,
 //!   `has_file_changes`, `would_merge_add`, `is_patch_id_match`
+//! - `has_merge_tree_conflicts` (from `MergeTreeConflicts`)
+//! - `has_working_tree_conflicts` (from `WorkingTreeConflicts`)
 //! - `counts` (from `AheadBehind`)
 //! - `working_tree_diff` + `working_tree_status` (used for `is_clean`, which
-//!   distinguishes `Empty(_)` from `SameCommitDirty(–)`)
+//!   distinguishes `Empty(_)` from `SameCommitDirty(–)` and gates `✗`)
 //!
 //! **Rule — short-circuit on priority (same pattern as gate 2):** render as
 //! soon as the priority-winning signal can be identified.
@@ -106,16 +106,19 @@
 //! 1. `is_main == true` (metadata) → `^`. Always immediate for the main
 //!    worktree, regardless of any other field.
 //! 2. `is_orphan == Some(true)` → orphan display.
-//! 3. `has_working_tree_conflicts == Some(Some(true))` (dirty-tree probe
-//!    is authoritative when present) or `has_merge_tree_conflicts == Some(true)`
-//!    → `✗`. When the dirty-tree probe says `Some(Some(false))` it rules
-//!    out tier 3 even if the HEAD probe was skipped (see
-//!    [`tier_would_conflict`](super::state::tier_would_conflict)).
-//! 4. Distinguish Empty / SameCommitDirty / Integrated — requires `counts`,
-//!    `is_clean` (from `working_tree_diff` + `working_tree_status` for
-//!    worktrees; trivially clean for branches), and the integration signals.
-//!    Render as soon as all signals needed to pick a row have landed.
-//! 5. Otherwise fall through to `↕/↑/↓/None` from `counts`.
+//! 3. Integration (`⊂`/`_`): once `is_clean` is known, the integration
+//!    signals can fire `Empty(_)` (same commit, clean) or `Integrated(⊂)`
+//!    (content already in the default branch). This is fire-or-continue —
+//!    a not-yet-integrated branch falls through without waiting, so the gate
+//!    can still upgrade an `↑` to `⊂` on a later pass.
+//! 4. `✗` (WouldConflict): `has_working_tree_conflicts == Some(Some(true))`
+//!    (dirty-tree probe is authoritative) or `has_merge_tree_conflicts ==
+//!    Some(true)` → `✗`, but only once the integration verdict is final and
+//!    negative (`integration_resolved`). While integration is still pending,
+//!    a detected conflict holds at `·` rather than flashing `✗` for a branch
+//!    that may settle to `⊂`. See
+//!    [`tier_would_conflict`](super::state::tier_would_conflict).
+//! 5. Otherwise fall through to `–/↕/↑/↓/None` from `counts` + `is_clean`.
 //!
 //! **Exception — unborn items (`HEAD == NULL_OID`):** all commit-dependent
 //! tasks are skipped at spawn time. Their fields are seeded with "no commits"
@@ -272,7 +275,7 @@ impl PositionMask {
             1, // MODIFIED: ! (1 char)
             1, // UNTRACKED: ? (1 char)
             1, // WORKTREE_STATE: ✘⤴⤵/⚑⊟⊞ (1 char, priority: conflicts > rebase > merge > branch_worktree_mismatch > prunable > locked > branch)
-            1, // MAIN_STATE: ^✗_–⊂↕↑↓ (1 char, priority: is_main > orphan > would_conflict > empty > same_commit > integrated > diverged > ahead > behind)
+            1, // MAIN_STATE: ^✗_–⊂↕↑↓ (1 char, priority: is_main > orphan > empty > integrated > would_conflict > same_commit > diverged > ahead > behind)
             1, // UPSTREAM_DIVERGENCE: |⇡⇣⇅ (1 char)
             2, // USER_MARKER: single emoji or two chars (allocate 2)
         ],
@@ -366,12 +369,12 @@ impl WorkingTreeStatus {
 /// - /: Branch without worktree
 ///
 /// **Main state (single position with priority):**
-/// Priority: ^ > ✗ > _ > – > ⊂ > ↕ > ↑ > ↓
+/// Priority: ^ > _ > ⊂ > ✗ > – > ↕ > ↑ > ↓
 /// - ^: This IS the main worktree
-/// - ✗: Would conflict if merged to default branch
 /// - _: Same commit as default branch, clean working tree (removable)
-/// - –: Same commit as default branch, uncommitted changes (NOT removable)
 /// - ⊂: Content integrated (removable)
+/// - ✗: Would conflict if merged to default branch, and NOT already integrated
+/// - –: Same commit as default branch, uncommitted changes (NOT removable)
 /// - ↕: Diverged from default branch
 /// - ↑: Ahead of default branch
 /// - ↓: Behind default branch
