@@ -23,7 +23,7 @@
 //! | 1 | `MODIFIED`          | `!`                  | Are there unstaged modifications?     |
 //! | 2 | `UNTRACKED`         | `?`                  | Are there untracked files?            |
 //! | 3 | `WORKTREE_STATE`    | `✘ ⤴ ⤵ ⚑ ⊟ ⊞ /`      | Operation / worktree attribute        |
-//! | 4 | `MAIN_STATE`        | `^ ✗ _ – ⊂ ↕ ↑ ↓`    | Relationship to the default branch    |
+//! | 4 | `MAIN_STATE`        | `^ _ ⊂ ✗ – ↕ ↑ ↓`    | Relationship to the default branch    |
 //! | 5 | `UPSTREAM_DIVERGENCE` | \| ⇅ ⇡ ⇣           | Relationship to the tracked remote    |
 //! | 6 | `USER_MARKER`       | emoji / text         | User-defined annotation               |
 //!
@@ -85,7 +85,7 @@
 //!
 //! # Gate 3: Main state (position 4)
 //!
-//! **Renders:** at most one of `^ ✗ _ – ⊂ ↕ ↑ ↓`. Priority:
+//! **Renders:** at most one of `^ _ ⊂ ✗ – ↕ ↑ ↓`. Priority:
 //! `IsMain > Orphan > Empty(_) > Integrated(⊂) > WouldConflict(✗) >
 //! SameCommitDirty(–) > Diverged(↕) > Ahead(↑) > Behind(↓) > None`.
 //!
@@ -263,7 +263,7 @@ impl PositionMask {
     pub(crate) const MODIFIED: usize = 1; // ! (modified files)
     pub(crate) const UNTRACKED: usize = 2; // ? (untracked files)
     pub(crate) const WORKTREE_STATE: usize = 3; // Worktree: ✘⤴⤵/⚑⊟⊞
-    pub(crate) const MAIN_STATE: usize = 4; // Main relationship: ^✗_⊂↕↑↓
+    pub(crate) const MAIN_STATE: usize = 4; // Main relationship: ^_⊂✗↕↑↓
     pub(crate) const UPSTREAM_DIVERGENCE: usize = 5; // Remote: |⇅⇡⇣
     pub(crate) const USER_MARKER: usize = 6;
 
@@ -275,7 +275,7 @@ impl PositionMask {
             1, // MODIFIED: ! (1 char)
             1, // UNTRACKED: ? (1 char)
             1, // WORKTREE_STATE: ✘⤴⤵/⚑⊟⊞ (1 char, priority: conflicts > rebase > merge > branch_worktree_mismatch > prunable > locked > branch)
-            1, // MAIN_STATE: ^✗_–⊂↕↑↓ (1 char, priority: is_main > orphan > empty > integrated > would_conflict > same_commit > diverged > ahead > behind)
+            1, // MAIN_STATE: ^_⊂✗–↕↑↓ (1 char, priority: is_main > orphan > empty > integrated > would_conflict > same_commit > diverged > ahead > behind)
             1, // UPSTREAM_DIVERGENCE: |⇡⇣⇅ (1 char)
             2, // USER_MARKER: single emoji or two chars (allocate 2)
         ],
