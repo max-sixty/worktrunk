@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.63.0
+
+### Improved
+
+- **`[list] columns` can force a column on past `--full`**: Listing a column now overrides the `--full` / `[list] summary` presets — `columns = ["branch", "ci"]` shows the CI column without `--full`. Hard data-source prerequisites still apply: a listed `summary` with no `[commit.generation]` command, or `url` with no template, stays hidden, since listing can't conjure data that isn't configured. ([#3295](https://github.com/max-sixty/worktrunk/pull/3295))
+
+- **`Alt-r` in the picker refreshes the preview panes, not just the rows**: `Alt-r` re-collected the rows but kept serving cached preview content, so editing a tracked file and refreshing still showed the pre-edit diff. It now clears the preview cache too, recomputing the working-tree / log / branch-diff / upstream / summary tabs and re-fetching `pr` / `comments`. Unchanged branches re-read from the content-keyed on-disk cache, so only genuinely changed content pays a recompute. ([#3293](https://github.com/max-sixty/worktrunk/pull/3293))
+
+- **A narrowed `wt list` is now actually faster**: A narrowed `[list] columns` selection (e.g. `["branch", "path"]`) now runs only the git work its columns need. It previously ran every per-worktree `git status`, diff, and ahead/behind walk regardless, then discarded the unselected results — so a trimmed view was no faster than the full table, and on a repo with many dirty worktrees that discarded work was the bulk of the wall-clock cost. ([#3274](https://github.com/max-sixty/worktrunk/pull/3274), thanks @jtaby for reporting)
+
+- **Fewer duplicate git calls in `wt list --full`**: The two integration probes per row (the conflict bit for `main-state` and the clean-merge tree for the integration column) issued a byte-identical `git merge-tree`, and the shared default-branch tip was peeled to its tree once per row. Both are now deduplicated through the in-memory cache, so each resolves once per run instead of once per worktree. ([#3288](https://github.com/max-sixty/worktrunk/pull/3288), [#3289](https://github.com/max-sixty/worktrunk/pull/3289))
+
+- **Picker `comments` tab caches across runs**: The picker's `comments` preview tab gained an on-disk cache keyed by the PR's `updatedAt` (which rides for free on the CI fetch the picker already makes), so a repeat `wt switch` skips the per-row `gh pr view --json comments` fetch when the thread is unchanged and paints the tab instantly instead of showing "Loading comments…". GitHub only. ([#3294](https://github.com/max-sixty/worktrunk/pull/3294))
+
+### Fixed
+
+- **`wt list` diff and ahead/behind columns use the upstream default tip**: The `main↕` (ahead/behind) and `main…±` (diff) columns measured every branch against the *local* default-branch tip, so in a fork whose local `main` lagged its upstream they reported inflated counts — one fork branch showed `↑44` and `+∞ / -5K` when it was ~2 commits past the real upstream tip. They now diff against the same upstream-aware base the integration column already uses. ([#3280](https://github.com/max-sixty/worktrunk/pull/3280))
+
+- **Integrated branches no longer flash `✗` in `wt list`**: A squash-merged branch whose default branch later re-edited the same lines showed `✗` (would-conflict), even though `wt step prune` classified it as `⊂` (fully integrated) and removed it. The list now ranks the integration verdict above the downstream conflict, matching prune; a genuinely un-integrated conflict still shows `✗`. ([#3278](https://github.com/max-sixty/worktrunk/pull/3278))
+
+- **Branch deletion on removal is atomic**: `wt remove` and prune now delete a branch with a compare-and-swap (`git update-ref -d <ref> <expected-sha>`) against the SHA the integration check already read, closing the window where a branch whose tip moved in between (e.g. a hook landing a commit) could be deleted. Such a branch is now retained with a clear message and a `wt remove -D <branch>` recovery hint. This also unifies the previously divergent safe-delete paths; explicit force-delete still uses `git branch -D`. ([#2903](https://github.com/max-sixty/worktrunk/pull/2903))
+
+- **`wt list` and picker Age/Message columns paint as soon as the commit batch lands**: These columns carry no async task — their data arrives with the initial `git log` batch — but stayed on the `·` placeholder until some slower task happened to redraw the row, so the commit message lagged behind a cache-warm Summary preview. They now paint the moment the batch lands. ([#3287](https://github.com/max-sixty/worktrunk/pull/3287))
+
+- **Picker `Alt-x` removal: no cursor flash, `--prs` rows preserved**: Removing a row with `Alt-x` flashed the `>` pointer to the top of the list for a frame, and in `--prs` mode made the streamed PR/MR rows vanish until the next `Alt-r`. Removal is now a synchronous in-place pool resync: the cursor lands on the row that slid up with no flash, and the PR/MR rows survive. ([#3268](https://github.com/max-sixty/worktrunk/pull/3268), [#3275](https://github.com/max-sixty/worktrunk/pull/3275))
+
+- **Removable rows stay gray when selected in the picker**: A safe-to-delete worktree (integrated, or clean and even with the default branch) renders its row gray, but the gray vanished under the selection highlight — exactly when you're about to act on it. The gray now survives selection (selected row only; `wt list` and unselected rows are unchanged). ([#3267](https://github.com/max-sixty/worktrunk/pull/3267))
+
+- **Picker preview keeps its scroll when CI status arrives**: Scrolling down a diff and waiting a couple of seconds snapped it back to the top when the live CI fetch landed and re-rendered the pane. The re-render is now precise — a tab re-runs only when its own content would actually change — so a CI update no longer throws away the scroll position of an unrelated tab. ([#3292](https://github.com/max-sixty/worktrunk/pull/3292))
+
+- **Picker summary tab dims when there's nothing to summarize**: The summary preview tab (`5`) stayed lit on a clean branch with no commits ahead, unlike the diff tabs (1/3/4), which dim once their diff is known empty. It now dims in concert with them once both the branch diff and working tree are known empty. ([#3291](https://github.com/max-sixty/worktrunk/pull/3291))
+
+- **First-run hints show the config path wt actually loads from**: The picker's disabled-summary tab and the commit-generation setup prompt hardcoded `~/.config/worktrunk/config.toml`, so a user with `--config`, `WORKTRUNK_CONFIG_PATH`, or a non-default `$XDG_CONFIG_HOME` was told to edit a file wt never reads. Both now show the resolved path. ([#3290](https://github.com/max-sixty/worktrunk/pull/3290), [#3298](https://github.com/max-sixty/worktrunk/pull/3298))
+
+### Internal
+
+- **`-vv` trace and profiler accuracy**: `trace.log` is now purely human-readable, with the machine-parseable `[wt-trace]` fields living only in `trace.jsonl`; and the performance profile's cache analysis no longer reports stdin-driven commands (LLM `claude -p` calls, `git patch-id`) as duplicate re-runs, since their real input isn't captured in the command string. ([#3296](https://github.com/max-sixty/worktrunk/pull/3296), [#3297](https://github.com/max-sixty/worktrunk/pull/3297))
+
 ## 0.62.0
 
 ### Improved
