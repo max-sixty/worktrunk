@@ -7,8 +7,8 @@ Enter: switch | ctrl-u/d: scroll | Tab/alt-1…7: preview | a
 
 Summaries not configured
 
-LLM branch summaries need a [commit.generation] command. Ad
- one in [TEST_CONFIG], then enable summaries:
+Add a [commit.generation] command in:
+[TEST_CONFIG]
 
   [commit.generation]
   command = "llm -m haiku"

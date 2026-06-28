@@ -1644,28 +1644,32 @@ pub fn handle_picker(
     // Summary hint: when summaries are disabled, prime the Summary cache
     // with config guidance instead of showing a perpetual "Generating…"
     // placeholder.
-    let (llm_command, summary_hint) = if config.list.summary()
-        && config.commit_generation.is_configured()
-    {
-        (config.commit_generation.command.clone(), None)
-    } else {
-        // Point at the config file wt actually loads from — respecting
-        // --config, WORKTRUNK_CONFIG_PATH, and $XDG_CONFIG_HOME — rather
-        // than a hardcoded default. Fall back to the canonical path on the
-        // rare occasion no location can be determined.
-        let config_path = worktrunk::config::config_path()
-            .map(|p| format_path_for_display(&p))
-            .unwrap_or_else(|| "~/.config/worktrunk/config.toml".to_string());
-        // A short first line stays the bold H4 subject (`render_summary`
-        // promotes it and never wraps it, so a long sentence would clip on
-        // a narrow pane); the instruction and the resolved path live in the
-        // wrapping body, and the config block is fenced so it renders in the
-        // house gutter rather than as loose prose.
-        let hint = if !config.commit_generation.is_configured() {
-            format!(
-                r#"Summaries not configured
+    let (llm_command, summary_hint) =
+        if config.list.summary() && config.commit_generation.is_configured() {
+            (config.commit_generation.command.clone(), None)
+        } else {
+            // Point at the config file wt actually loads from — respecting
+            // --config, WORKTRUNK_CONFIG_PATH, and $XDG_CONFIG_HOME — rather
+            // than a hardcoded default. Fall back to the canonical path on the
+            // rare occasion no location can be determined.
+            let config_path = worktrunk::config::config_path()
+                .map(|p| format_path_for_display(&p))
+                .unwrap_or_else(|| "~/.config/worktrunk/config.toml".to_string());
+            // Keep every prose line short and put the resolved path on its own
+            // line. `render_summary` word-wraps prose to the preview width, and
+            // that width is a column narrower under Windows' PTY — so a sentence
+            // long enough to wrap lands its break on a different word there, and
+            // the single cross-platform snapshot can't match. A short lead line,
+            // the path alone (one unbreakable token, no wrap boundary to shift),
+            // and the fenced config block (code blocks are never wrapped) all
+            // render identically on every platform. The first line stays the bold
+            // H4 subject, which `render_summary` promotes and never wraps.
+            let hint = if !config.commit_generation.is_configured() {
+                format!(
+                    r#"Summaries not configured
 
-LLM branch summaries need a [commit.generation] command. Add one in {config_path}, then enable summaries:
+Add a [commit.generation] command in:
+{config_path}
 
 ```toml
 [commit.generation]
@@ -1675,22 +1679,23 @@ command = "llm -m haiku"
 summary = true
 ```
 "#
-            )
-        } else {
-            format!(
-                r#"Summaries off
+                )
+            } else {
+                format!(
+                    r#"Summaries off
 
-A [commit.generation] command is configured. Enable summaries in {config_path}:
+Enable summaries in:
+{config_path}
 
 ```toml
 [list]
 summary = true
 ```
 "#
-            )
+                )
+            };
+            (None, Some(hint))
         };
-        (None, Some(hint))
-    };
 
     // The picker's full row list — header, worktree/branch rows, and (in `--prs`
     // mode) PR/MR rows. `on_skeleton` fills it with the header + worktree/branch

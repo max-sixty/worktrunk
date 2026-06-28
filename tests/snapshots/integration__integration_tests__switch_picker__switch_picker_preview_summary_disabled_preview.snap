@@ -7,8 +7,8 @@ Enter: switch | ctrl-u/d: scroll | Tab/alt-1…7: preview | a
 
 Summaries off
 
-A [commit.generation] command is configured. Enable
-summaries in [TEST_CONFIG]:
+Enable summaries in:
+[TEST_CONFIG]
 
   [list]
   summary = true
