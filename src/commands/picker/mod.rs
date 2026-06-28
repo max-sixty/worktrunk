@@ -1318,7 +1318,6 @@ struct PipelineFactory {
     preview_dims: (usize, usize),
     skim_list_width: usize,
     command_timeout: Option<std::time::Duration>,
-    skip_tasks: std::collections::HashSet<collect::TaskKind>,
     llm_command: Option<String>,
     summary_hint: Option<String>,
     show_branches: bool,
@@ -1417,7 +1416,6 @@ impl PipelineFactory {
 
         let bg_handler: Arc<dyn collect::PickerProgressHandler> = handler.clone();
         let bg_repo = spawn_repo.clone();
-        let bg_skip_tasks = self.skip_tasks.clone();
         let show_branches = self.show_branches;
         let show_remotes = self.show_remotes;
         let command_timeout = self.command_timeout;
@@ -1430,7 +1428,6 @@ impl PipelineFactory {
                     collect::ShowConfig::Resolved {
                         show_branches,
                         show_remotes,
-                        skip_tasks: bg_skip_tasks,
                         command_timeout,
                         collect_deadline: None,
                         list_width: Some(skim_list_width),
@@ -1613,19 +1610,19 @@ pub fn handle_picker(
         orchestrator.spawn_preview(Arc::new(item), PreviewMode::WorkingTree, dims);
     }
 
-    // Run every task — the picker is `wt list --full`. `main…±` (BranchDiff) is
-    // now a default `wt list` column, so the picker surfaces it too; it's local
-    // git keyed by a persistent content-addressed cache, so warm rows are instant
-    // and a cold row computes once in the background (its merge-base walk streams
-    // in behind the frame, never blocking the picker). CiStatus is primed from
-    // the local cache so the first frame shows cached status (see
-    // `populate_from_cache`), then fetched live and streamed in — the same
-    // 30–60s-TTL cache plus live fetch as `wt list --full`. The picker's lifetime
-    // is bounded by the user, so a slow forge call never blocks anything (see the
-    // "Network Access" notes in CLAUDE.md). The `pr` preview tab reads the same
-    // live status. `--prs` rows carry their own number from the explicit `--prs`
-    // forge call.
-    let skip_tasks: std::collections::HashSet<collect::TaskKind> = std::collections::HashSet::new();
+    // The picker runs every task — it is `wt list --full` (`ShowConfig::Resolved`
+    // forces `show_full`, so `collect` plans the full task set from all columns).
+    // `main…±` (BranchDiff) is a default `wt list` column, so the picker surfaces
+    // it too; it's local git keyed by a persistent content-addressed cache, so
+    // warm rows are instant and a cold row computes once in the background (its
+    // merge-base walk streams in behind the frame, never blocking the picker).
+    // CiStatus is primed from the local cache so the first frame shows cached
+    // status (see `populate_from_cache`), then fetched live and streamed in — the
+    // same 30–60s-TTL cache plus live fetch as `wt list --full`. The picker's
+    // lifetime is bounded by the user, so a slow forge call never blocks anything
+    // (see the "Network Access" notes in CLAUDE.md). The `pr` preview tab reads
+    // the same live status. `--prs` rows carry their own number from the explicit
+    // `--prs` forge call.
 
     // Per-task command timeout (bounds any single git invocation) from
     // shared `[list]` config. Still applies in progressive mode.
@@ -1742,7 +1739,6 @@ pub fn handle_picker(
         preview_dims,
         skim_list_width,
         command_timeout,
-        skip_tasks,
         llm_command,
         summary_hint,
         show_branches,
@@ -2956,7 +2952,6 @@ pub mod tests {
             preview_dims: (80, 24),
             skim_list_width: 80,
             command_timeout: None,
-            skip_tasks: std::collections::HashSet::new(),
             llm_command: None,
             summary_hint: None,
             show_branches: false,

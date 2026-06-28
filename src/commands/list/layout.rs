@@ -780,11 +780,14 @@ fn allocate_columns_with_priority(
             Some(order) => order.contains(&ColumnKind::Custom(i as u8)),
             None => true,
         })
-        .map(|(i, column)| ColumnSpec::new(ColumnKind::Custom(i as u8), column.priority, None))
+        .map(|(i, column)| ColumnSpec::new(ColumnKind::Custom(i as u8), column.priority))
         .collect();
 
     // Build candidates with priorities.
-    // - Filter out columns whose required task is being skipped.
+    // - Filter out columns whose tasks were all skipped (gated off by `--full`,
+    //   a missing template/LLM). `renders_given_skipped` reads the same
+    //   `required_tasks()` map that chose the skip set, so a rendered column's
+    //   tasks always ran and only a gated-off column drops here.
     // - When `[list] columns` selects a subset, keep only the chosen built-ins
     //   (Gutter is structural — always kept). This filters WITHOUT renumbering
     //   base_priority, so the Summary drop loop and EMPTY_PENALTY tiers below
@@ -794,10 +797,7 @@ fn allocate_columns_with_priority(
     //   built-ins and customs in one ordered set.
     let mut candidates: Vec<ColumnCandidate> = COLUMN_SPECS
         .iter()
-        .filter(|spec| {
-            spec.requires_task
-                .is_none_or(|task| !skip_tasks.contains(&task))
-        })
+        .filter(|spec| spec.kind.renders_given_skipped(skip_tasks))
         .filter(|spec| match selected {
             Some(order) => spec.kind == ColumnKind::Gutter || order.contains(&spec.kind),
             None => true,

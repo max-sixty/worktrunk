@@ -290,6 +290,7 @@ use crossbeam_channel as chan;
 use dunce::canonicalize;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
+use strum::IntoEnumIterator;
 use worktrunk::git::{ErrorExt, LocalBranch, Repository, WorktreeInfo};
 use worktrunk::styling::{
     INFO_SYMBOL, eprintln, format_with_gutter, hint_message, warning_message,
@@ -405,7 +406,10 @@ pub struct CollectOptions {
     ///
     /// This controls both:
     /// - Work item generation (in `work_items_for_worktree`/`work_items_for_branch`)
-    /// - Column visibility (layout filters columns via `ColumnSpec::requires_task`)
+    /// - Column visibility (the layout filter calls `ColumnKind::renders_given_skipped`)
+    ///
+    /// It is the complement of the planning decision in `collect`: the union of
+    /// the tasks the rendered columns need, inverted. See `required_tasks_for_render`.
     pub skip_tasks: std::collections::HashSet<TaskKind>,
 
     /// URL template from project config (e.g., "http://localhost:{{ branch | hash_port }}").
@@ -521,10 +525,13 @@ pub trait PickerProgressHandler: Send + Sync {
 /// Controls how show flags (branches/remotes/full) are determined in [`collect`].
 pub enum ShowConfig {
     /// Flags already resolved by the caller (used by the picker).
+    ///
+    /// The picker is always `wt list --full` (`show_full` is implicit): it
+    /// fetches every field for its preview tabs, so it has no skip set to pass —
+    /// `collect` derives the task set from the columns like every other caller.
     Resolved {
         show_branches: bool,
         show_remotes: bool,
-        skip_tasks: HashSet<TaskKind>,
         command_timeout: Option<std::time::Duration>,
         /// Wall-clock deadline for the collect phase. `None` uses the default
         /// [`DRAIN_TIMEOUT`](results::DRAIN_TIMEOUT) and shows a warning on timeout.
@@ -783,7 +790,7 @@ pub fn collect(
     let (
         show_branches,
         show_remotes,
-        skip_tasks,
+        show_full,
         command_timeout,
         collect_deadline,
         list_width,
@@ -793,7 +800,6 @@ pub fn collect(
         ShowConfig::Resolved {
             show_branches,
             show_remotes,
-            skip_tasks,
             command_timeout,
             collect_deadline,
             list_width,
@@ -801,15 +807,16 @@ pub fn collect(
         } => (
             show_branches,
             show_remotes,
-            skip_tasks,
+            // Picker is the only `Resolved` caller and is `wt list --full`: it
+            // fetches every field for its preview tabs regardless of which
+            // columns render. Like default `wt list` (but unlike `--full`) it
+            // opts out of the untracked-inclusive working diff — the last tuple
+            // field — so the two `show_full`-shaped values aren't the same bucket.
+            true,
             command_timeout,
             collect_deadline,
             list_width,
             progressive_handler,
-            // Picker is the only `Resolved` caller. Like default `wt list` it
-            // opts out of the untracked-inclusive working diff; unlike it, the
-            // picker keeps the CiStatus task (see `handle_picker`'s skip set),
-            // so this is not the same bucket.
             false,
         ),
         ShowConfig::DeferredToParallel {
@@ -821,18 +828,6 @@ pub fn collect(
             let show_branches = cli_branches || config.list.branches();
             let show_remotes = cli_remotes || config.list.remotes();
             let show_full = cli_full || config.list.full();
-            let skip_tasks: HashSet<TaskKind> = if show_full {
-                HashSet::new()
-            } else {
-                // BranchDiff (the `main…±` column) is pure local git — a cached
-                // `git diff --shortstat` against the merge-base — so it always
-                // runs, under the non-`--full` timeout below as a backstop.
-                // `--full` gates only the off-machine columns: CI status
-                // (network) and LLM branch summaries.
-                [TaskKind::CiStatus, TaskKind::SummaryGenerate]
-                    .into_iter()
-                    .collect()
-            };
             // Resolve timeouts from merged config (--full disables both)
             let (command_timeout, collect_deadline) = if show_full {
                 (None, None)
@@ -844,7 +839,7 @@ pub fn collect(
             (
                 show_branches,
                 show_remotes,
-                skip_tasks,
+                show_full,
                 command_timeout,
                 collect_deadline,
                 None,
@@ -1091,18 +1086,10 @@ pub fn collect(
             .map(|(name, sha)| ListItem::new_remote_branch(sha.clone(), name.clone())),
     );
 
-    // If no URL template configured, add UrlStatus to skip_tasks
-    let mut effective_skip_tasks = skip_tasks.clone();
-    if url_template.is_none() {
-        effective_skip_tasks.insert(TaskKind::UrlStatus);
-    }
-
-    // Skip SummaryGenerate unless summary is enabled and an LLM command is configured
+    // Gate inputs for the task-planning decision below. `llm_command` also flows
+    // into each `TaskContext` (the per-item SummaryGenerate guard) further down.
     let config = repo.config();
     let llm_command = config.commit_generation.command.clone();
-    if !config.list.summary() || llm_command.is_none() {
-        effective_skip_tasks.insert(TaskKind::SummaryGenerate);
-    }
 
     // Custom [list.custom-columns] values expand before layout: their inputs
     // (branch, worktree identity, vars from the bulk config snapshot) are
@@ -1149,27 +1136,37 @@ pub fn collect(
             Err(e) => return Err(e),
         };
 
-    // Prune tasks no selected column consumes. When `[list] columns` names an
-    // explicit subset, the layout already hides the unselected columns; this
-    // skips the git work that fed only those hidden columns at the source, so a
-    // narrowed view (e.g. a branch/path `ls` alias over many dirty worktrees)
-    // doesn't run `git status` / diffs / ahead-behind walks just to discard them
-    // (#3133). Additive only — it never un-skips a task gated off elsewhere
-    // (`--full`, missing template/LLM), matching the layout's "select narrows,
-    // never forces" rule.
+    // Decide, in one place, which background tasks to run: the union of the
+    // tasks every column the table will render needs. This is the canonical
+    // "what do we need" stage — `effective_skip_tasks` is just its complement,
+    // and the spawn loop fires exactly the tasks that survive here.
     //
-    // The picker (`progressive_handler.is_some()`) is exempt: it fetches CI/PR
-    // data for its preview tabs regardless of which columns render, so its skip
-    // set stays as `handle_picker` chose it.
+    // The rendered set is the `[list] columns` selection for the table; the
+    // picker and JSON ignore it (`all_columns`) because their consumers — the
+    // picker's preview tabs, JSON's every-field contract in `src/cli/mod.rs` —
+    // need the full data set, not just what renders. The gates (`--full`,
+    // `[list] summary` + `[commit.generation]`, a url template) then hide a
+    // column and drop its tasks regardless of selection.
     //
-    // JSON output (`!render_table`) is also exempt: `wt list --format json`
-    // ignores `[list] columns` and always emits every field (the `after_long_help`
-    // contract in `src/cli/mod.rs`), so pruning would silently null status/main/
-    // working-tree fields it promises. Only the rendered table (`render_table`,
-    // progressive or buffered) prunes.
-    if render_table && progressive_handler.is_none() {
-        effective_skip_tasks.extend(super::columns::tasks_not_required_by(&selected_columns));
-    }
+    // So a branch/path `ls` alias over many dirty worktrees runs no `git status`
+    // / diffs / ahead-behind walks (#3133), while a column gated off elsewhere
+    // stays off — selection narrows the work, never forces it on.
+    let gates = super::columns::ColumnGates {
+        show_full,
+        summary_enabled: config.list.summary(),
+        has_llm_command: llm_command.is_some(),
+        has_url_template: url_template.is_some(),
+    };
+    let prune_to_selection =
+        render_table && progressive_handler.is_none() && !selected_columns.is_empty();
+    let needed_tasks = if prune_to_selection {
+        super::columns::required_tasks_for_render(selected_columns.iter().copied(), &gates)
+    } else {
+        super::columns::required_tasks_for_render(super::columns::all_columns(), &gates)
+    };
+    let effective_skip_tasks: HashSet<TaskKind> = TaskKind::iter()
+        .filter(|kind| !needed_tasks.contains(kind))
+        .collect();
 
     // The picker primes its CI cells from the local cache so the column paints
     // instantly, then the live `CiStatus` task (which the picker keeps — see

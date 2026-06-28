@@ -108,20 +108,22 @@ impl ColumnKind {
 
     /// Background tasks whose results feed this column.
     ///
-    /// When `[list] columns` names an explicit subset, `wt list` skips every
-    /// task no selected column consumes (see [`tasks_not_required_by`]) — the
-    /// layer below the layout filter, so a narrowed view does less git work
-    /// rather than just hiding already-computed cells.
+    /// The single source of the column→task relationship, in both directions:
+    /// [`required_tasks_for_render`] unions it over the rendered columns to
+    /// decide which tasks `wt list` runs at all, and [`ColumnKind::renders_given_skipped`]
+    /// reads it to hide a column whose tasks were skipped. So a narrowed view
+    /// does less git work rather than computing cells it then hides.
     ///
     /// `Status` aggregates almost every status-feeding task (the five
     /// `refresh_status_symbols` gates); identity columns (Branch, Path, Commit,
     /// Age, Message), the always-on Gutter, and custom columns are derived
-    /// without any task. The single-task columns mirror [`ColumnSpec::requires_task`]
-    /// — `test_required_tasks_superset_of_requires_task` pins that they agree.
+    /// without any task.
     ///
     /// Drift guard: `test_required_tasks_cover_every_task` asserts the union
     /// across all built-ins is exactly the full `TaskKind` set, so a new task
-    /// (or a new consumer of one) can't silently fall out of the mapping.
+    /// (or a new consumer of one) can't silently fall out of the mapping — and
+    /// since this map now gates spawning, a task with no consumer would never
+    /// run, not merely be computed and discarded.
     pub fn required_tasks(self) -> &'static [TaskKind] {
         match self {
             // Gate 1 (working tree) ← WorkingTreeDiff; gate 2 (operation) ←
@@ -159,32 +161,75 @@ impl ColumnKind {
             | ColumnKind::Custom(_) => &[],
         }
     }
+
+    /// Whether this column can still render given a set of skipped tasks.
+    ///
+    /// A column renders unless *every* task it consumes was skipped: an
+    /// identity column (Gutter, Branch, custom, …) consumes nothing and always
+    /// renders; a single-task column hides exactly when its task is skipped;
+    /// `Status` keeps rendering while any of its status signals still computes.
+    /// The layout filter applies this to every built-in, dropping any whose
+    /// tasks were all skipped: a column gated off (`--full`, a missing
+    /// template/LLM), or — under a `[list] columns` selection — an unselected
+    /// column (whose tasks are pruned too, though the separate selection filter
+    /// also removes it).
+    pub fn renders_given_skipped(self, skip: &std::collections::HashSet<TaskKind>) -> bool {
+        let required = self.required_tasks();
+        required.is_empty() || required.iter().any(|task| !skip.contains(task))
+    }
 }
 
-/// Tasks that no column in `selected` consumes — the set `wt list` adds to its
-/// skip set when `[list] columns` names an explicit subset.
-///
-/// The layout already hides unselected columns; this prunes the work that fed
-/// only those hidden columns so a narrowed view (e.g. an `ls`-style
-/// branch/path alias over many dirty worktrees) skips `git status`, diffs, and
-/// ahead/behind walks at the source rather than computing and discarding them.
-///
-/// Returns nothing to skip when `selected` is empty — that's the "default
-/// column set" sentinel, which shows everything and prunes nothing. The Gutter
-/// is always rendered but requires no task, so its omission from `selected`
-/// (it is never user-selectable) never keeps a task alive.
-pub fn tasks_not_required_by(selected: &[ColumnKind]) -> Vec<TaskKind> {
-    use strum::IntoEnumIterator;
+/// Every built-in column, in registry order — the rendered set when no
+/// `[list] columns` selection narrows it (and for the picker / JSON, which
+/// fetch every field regardless of selection). Custom columns are omitted: they
+/// consume no background task, so they never change the task set.
+pub fn all_columns() -> impl Iterator<Item = ColumnKind> {
+    COLUMN_SPECS.iter().map(|spec| spec.kind)
+}
 
-    if selected.is_empty() {
-        return Vec::new();
+/// Gates that hide a column independent of the `[list] columns` selection — the
+/// data source is off, so neither the column nor its tasks appear.
+#[derive(Clone, Copy, Debug)]
+pub struct ColumnGates {
+    /// `--full` (or `[list] full`): CI status and LLM summaries are off without it.
+    pub show_full: bool,
+    /// `[list] summary`: the summary column is opt-in even under `--full`.
+    pub summary_enabled: bool,
+    /// An LLM command is configured (`[commit.generation]`).
+    pub has_llm_command: bool,
+    /// A `[list] url` template is configured.
+    pub has_url_template: bool,
+}
+
+/// Whether a column's data source is available under `gates`. `false` hides the
+/// column and skips its tasks regardless of selection: `ci` and `summary` need
+/// `--full`; `summary` additionally needs an LLM command and `[list] summary`;
+/// `url` needs a template. Every other column always renders.
+fn column_renders(kind: ColumnKind, gates: &ColumnGates) -> bool {
+    match kind {
+        ColumnKind::CiStatus => gates.show_full,
+        ColumnKind::Summary => gates.show_full && gates.summary_enabled && gates.has_llm_command,
+        ColumnKind::Url => gates.has_url_template,
+        _ => true,
     }
-    let required: std::collections::HashSet<TaskKind> = selected
-        .iter()
+}
+
+/// The one place that decides which background tasks `wt list` runs.
+///
+/// `rendered` is the column set the table will lay out — the `[list] columns`
+/// selection, or [`all_columns`] when nothing narrows it. The task set is
+/// exactly the union of the [`required_tasks`](ColumnKind::required_tasks) of
+/// the columns that survive the gates (`column_renders`); `collect` inverts it
+/// (`TaskKind::iter()` minus the result) into the skip set the spawn loop and
+/// layout filter consume, so a task runs iff some rendered column needs it.
+pub fn required_tasks_for_render(
+    rendered: impl IntoIterator<Item = ColumnKind>,
+    gates: &ColumnGates,
+) -> std::collections::HashSet<TaskKind> {
+    rendered
+        .into_iter()
+        .filter(|&kind| column_renders(kind, gates))
         .flat_map(|kind| kind.required_tasks().iter().copied())
-        .collect();
-    TaskKind::iter()
-        .filter(|kind| !required.contains(kind))
         .collect()
 }
 
@@ -257,19 +302,16 @@ pub enum DiffVariant {
 pub struct ColumnSpec {
     pub kind: ColumnKind,
     pub base_priority: u8,
-    /// Task required for this column's data. If Some and task is skipped, column is hidden.
-    pub requires_task: Option<TaskKind>,
     /// If true, the column can shrink below its ideal width (down to header width)
     /// instead of being dropped entirely when space is tight.
     pub shrinkable: bool,
 }
 
 impl ColumnSpec {
-    pub const fn new(kind: ColumnKind, base_priority: u8, requires_task: Option<TaskKind>) -> Self {
+    pub const fn new(kind: ColumnKind, base_priority: u8) -> Self {
         Self {
             kind,
             base_priority,
-            requires_task,
             shrinkable: false,
         }
     }
@@ -285,20 +327,20 @@ impl ColumnSpec {
 /// Note: base_priority determines truncation order (lower = kept longer),
 /// which is independent of display order (position in array).
 pub const COLUMN_SPECS: &[ColumnSpec] = &[
-    ColumnSpec::new(ColumnKind::Gutter, 0, None),
-    ColumnSpec::new(ColumnKind::Branch, 1, None).shrinkable(),
-    ColumnSpec::new(ColumnKind::Status, 2, None),
-    ColumnSpec::new(ColumnKind::WorkingDiff, 3, None),
-    ColumnSpec::new(ColumnKind::AheadBehind, 4, None),
-    ColumnSpec::new(ColumnKind::BranchDiff, 6, Some(TaskKind::BranchDiff)),
-    ColumnSpec::new(ColumnKind::Summary, 10, Some(TaskKind::SummaryGenerate)),
-    ColumnSpec::new(ColumnKind::Upstream, 8, None),
-    ColumnSpec::new(ColumnKind::CiStatus, 5, Some(TaskKind::CiStatus)),
-    ColumnSpec::new(ColumnKind::Path, 7, None),
-    ColumnSpec::new(ColumnKind::Url, 9, Some(TaskKind::UrlStatus)),
-    ColumnSpec::new(ColumnKind::Commit, 11, None),
-    ColumnSpec::new(ColumnKind::Time, 12, None),
-    ColumnSpec::new(ColumnKind::Message, 13, None),
+    ColumnSpec::new(ColumnKind::Gutter, 0),
+    ColumnSpec::new(ColumnKind::Branch, 1).shrinkable(),
+    ColumnSpec::new(ColumnKind::Status, 2),
+    ColumnSpec::new(ColumnKind::WorkingDiff, 3),
+    ColumnSpec::new(ColumnKind::AheadBehind, 4),
+    ColumnSpec::new(ColumnKind::BranchDiff, 6),
+    ColumnSpec::new(ColumnKind::Summary, 10),
+    ColumnSpec::new(ColumnKind::Upstream, 8),
+    ColumnSpec::new(ColumnKind::CiStatus, 5),
+    ColumnSpec::new(ColumnKind::Path, 7),
+    ColumnSpec::new(ColumnKind::Url, 9),
+    ColumnSpec::new(ColumnKind::Commit, 11),
+    ColumnSpec::new(ColumnKind::Time, 12),
+    ColumnSpec::new(ColumnKind::Message, 13),
 ];
 
 /// Sort key for display order: (slot in `COLUMN_SPECS`, sub-order).
@@ -348,45 +390,34 @@ mod tests {
     }
 
     #[test]
-    fn columns_gate_on_required_tasks() {
-        let branch_diff = COLUMN_SPECS
-            .iter()
-            .find(|c| c.kind == ColumnKind::BranchDiff)
-            .unwrap();
-        assert_eq!(branch_diff.requires_task, Some(TaskKind::BranchDiff));
-
-        let url = COLUMN_SPECS
-            .iter()
-            .find(|c| c.kind == ColumnKind::Url)
-            .unwrap();
-        assert_eq!(url.requires_task, Some(TaskKind::UrlStatus));
-
-        let ci_status = COLUMN_SPECS
-            .iter()
-            .find(|c| c.kind == ColumnKind::CiStatus)
-            .unwrap();
-        assert_eq!(ci_status.requires_task, Some(TaskKind::CiStatus));
-
-        let summary = COLUMN_SPECS
-            .iter()
-            .find(|c| c.kind == ColumnKind::Summary)
-            .unwrap();
-        assert_eq!(summary.requires_task, Some(TaskKind::SummaryGenerate));
-
-        // All other columns should not require a background task to render
+    fn test_renders_given_skipped() {
+        // The layout filter hides a column iff *every* task it consumes was
+        // skipped. With nothing skipped, every column renders.
+        let none: HashSet<TaskKind> = HashSet::new();
         for spec in COLUMN_SPECS {
-            if spec.kind != ColumnKind::BranchDiff
-                && spec.kind != ColumnKind::Url
-                && spec.kind != ColumnKind::CiStatus
-                && spec.kind != ColumnKind::Summary
-            {
-                assert!(
-                    spec.requires_task.is_none(),
-                    "{:?} unexpectedly requires a task",
-                    spec.kind
-                );
-            }
+            assert!(
+                spec.kind.renders_given_skipped(&none),
+                "{:?} should render when no task is skipped",
+                spec.kind
+            );
         }
+
+        // A single-task column hides exactly when its one task is skipped; an
+        // identity column (no task) is untouched.
+        let skip_ci: HashSet<TaskKind> = [TaskKind::CiStatus].into_iter().collect();
+        assert!(!ColumnKind::CiStatus.renders_given_skipped(&skip_ci));
+        assert!(ColumnKind::Branch.renders_given_skipped(&skip_ci));
+        assert!(ColumnKind::AheadBehind.renders_given_skipped(&skip_ci));
+
+        // Status keeps rendering while any of its many signals still computes,
+        // and drops only when all of them are skipped.
+        assert!(ColumnKind::Status.renders_given_skipped(&skip_ci));
+        let skip_all_status: HashSet<TaskKind> = ColumnKind::Status
+            .required_tasks()
+            .iter()
+            .copied()
+            .collect();
+        assert!(!ColumnKind::Status.renders_given_skipped(&skip_all_status));
     }
 
     #[test]
@@ -516,23 +547,6 @@ mod tests {
     }
 
     #[test]
-    fn test_required_tasks_superset_of_requires_task() {
-        // The single-task `requires_task` gate and the fuller `required_tasks`
-        // map must agree: a column that gates on a task must also list it as a
-        // task it consumes, or selection-driven pruning could skip the task the
-        // layout still needs.
-        for spec in COLUMN_SPECS {
-            if let Some(task) = spec.requires_task {
-                assert!(
-                    spec.kind.required_tasks().contains(&task),
-                    "{:?} gates on {task:?} but required_tasks() omits it",
-                    spec.kind
-                );
-            }
-        }
-    }
-
-    #[test]
     fn test_required_tasks_cover_every_task() {
         use strum::IntoEnumIterator;
 
@@ -554,52 +568,86 @@ mod tests {
     }
 
     #[test]
-    fn test_tasks_not_required_by() {
+    fn test_required_tasks_for_render() {
         use strum::IntoEnumIterator;
 
-        // The default-set sentinel prunes nothing.
-        assert!(tasks_not_required_by(&[]).is_empty());
+        // Every gate open: every column can render.
+        let open = ColumnGates {
+            show_full: true,
+            summary_enabled: true,
+            has_llm_command: true,
+            has_url_template: true,
+        };
+        let all: HashSet<TaskKind> = TaskKind::iter().collect();
 
-        // Selecting Status keeps every status-feeding task; only the
-        // independent columns' tasks (BranchDiff, CiStatus, UrlStatus,
-        // SummaryGenerate) are prunable.
-        let pruned: HashSet<TaskKind> = tasks_not_required_by(&[ColumnKind::Status])
-            .into_iter()
-            .collect();
-        assert_eq!(
-            pruned,
-            HashSet::from([
-                TaskKind::BranchDiff,
-                TaskKind::CiStatus,
-                TaskKind::UrlStatus,
-                TaskKind::SummaryGenerate,
-            ]),
-            "Status consumes every other task"
+        // The default set (all built-ins) under open gates needs every task —
+        // the planner is exhaustive, so nothing falls out silently.
+        assert_eq!(required_tasks_for_render(all_columns(), &open), all);
+
+        // A branch/path `ls` view needs no background task at all.
+        assert!(
+            required_tasks_for_render([ColumnKind::Branch, ColumnKind::Path], &open).is_empty(),
+            "identity columns need no task"
         );
 
-        // A pure identity selection (branch + age) consumes no task, so every
-        // task is prunable.
-        let all: HashSet<TaskKind> = TaskKind::iter().collect();
-        let pruned: HashSet<TaskKind> =
-            tasks_not_required_by(&[ColumnKind::Branch, ColumnKind::Time])
-                .into_iter()
-                .collect();
-        assert_eq!(pruned, all, "branch + age need no background task");
+        // Selecting Status keeps every status-feeding task; the independent
+        // columns' tasks are not pulled in.
+        let status = required_tasks_for_render([ColumnKind::Status], &open);
+        assert!(status.contains(&TaskKind::AheadBehind));
+        assert!(status.contains(&TaskKind::WorkingTreeDiff));
+        assert!(!status.contains(&TaskKind::BranchDiff));
+        assert!(!status.contains(&TaskKind::CiStatus));
 
-        // A selected task is never pruned, and an unselected one always is.
-        let pruned = tasks_not_required_by(&[ColumnKind::AheadBehind, ColumnKind::CiStatus]);
-        assert!(!pruned.contains(&TaskKind::AheadBehind));
-        assert!(!pruned.contains(&TaskKind::CiStatus));
-        assert!(pruned.contains(&TaskKind::BranchDiff));
-        assert!(pruned.contains(&TaskKind::WorkingTreeDiff));
+        // A custom column consumes no task, like the identity columns.
+        assert!(required_tasks_for_render([ColumnKind::Custom(0)], &open).is_empty());
 
-        // Custom columns consume no task, so they prune like identity columns.
+        // Gates drop a column's tasks even when it is explicitly selected —
+        // "select narrows the work, never forces it on".
         assert_eq!(
-            tasks_not_required_by(&[ColumnKind::Custom(0)])
-                .into_iter()
-                .collect::<HashSet<_>>(),
-            all,
-            "a custom column needs no background task"
+            required_tasks_for_render([ColumnKind::CiStatus], &open),
+            HashSet::from([TaskKind::CiStatus]),
+            "ci runs under --full"
+        );
+        let no_full = ColumnGates {
+            show_full: false,
+            ..open
+        };
+        assert!(
+            required_tasks_for_render([ColumnKind::CiStatus], &no_full).is_empty(),
+            "ci is gated off without --full"
+        );
+        let no_template = ColumnGates {
+            has_url_template: false,
+            ..open
+        };
+        assert!(
+            required_tasks_for_render([ColumnKind::Url], &no_template).is_empty(),
+            "url needs a template"
+        );
+        // Summary needs --full AND an LLM command AND [list] summary.
+        for gates in [
+            ColumnGates {
+                show_full: false,
+                ..open
+            },
+            ColumnGates {
+                has_llm_command: false,
+                ..open
+            },
+            ColumnGates {
+                summary_enabled: false,
+                ..open
+            },
+        ] {
+            assert!(
+                required_tasks_for_render([ColumnKind::Summary], &gates).is_empty(),
+                "summary is gated off when a precondition is missing"
+            );
+        }
+        assert_eq!(
+            required_tasks_for_render([ColumnKind::Summary], &open),
+            HashSet::from([TaskKind::SummaryGenerate]),
+            "summary runs when every precondition holds"
         );
     }
 
