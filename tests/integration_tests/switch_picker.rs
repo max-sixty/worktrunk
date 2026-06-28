@@ -878,6 +878,50 @@ fn test_switch_picker_with_multiple_worktrees(mut repo: TestRepo) {
     });
 }
 
+/// A branch name containing `/` (`feature/auth`) must keep its place in collect
+/// order on the empty-query view — it must not sink below plainer names. skim's
+/// empty-query engine scores every row `(score=0, begin=0)`, so a `PathName`
+/// tiebreak would collapse to `path_name_offset` there and demote every
+/// slash-bearing row (a `feature/…` branch, a `/`-gutter row). The picker uses
+/// the default `[Score, Begin, End]` tiebreak precisely so the empty query keeps
+/// the order `collect` produced (current, main, newest-first). Created
+/// `feature/auth` first so collect ranks it ahead of `plain-branch` (equal test
+/// timestamps fall back to worktree-creation order). Asserts the relative order
+/// directly rather than freezing a frame, so column-layout and async-render
+/// timing can't drift it.
+#[rstest]
+fn test_switch_picker_slashed_branch_keeps_collect_order(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    // Remove origin so the list doesn't show origin/main
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.add_worktree("feature/auth");
+    repo.add_worktree("plain-branch");
+
+    let env_vars = repo.test_env_vars();
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        // Settle: wait for the last row to render before capturing.
+        &[("", Some("plain-branch"))],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+
+    let (list, _preview) = result.panels();
+    let auth = list
+        .find("feature/auth")
+        .unwrap_or_else(|| panic!("feature/auth row missing:\n{list}"));
+    let plain = list
+        .find("plain-branch")
+        .unwrap_or_else(|| panic!("plain-branch row missing:\n{list}"));
+    assert!(
+        auth < plain,
+        "slashed branch must keep collect order (feature/auth before plain-branch):\n{list}"
+    );
+}
+
 /// Alt-l / alt-h are skim's built-in horizontal-scroll keys (ScrollRight /
 /// ScrollLeft). The picker binds both to `ignore` because each row's `display()`
 /// owns its layout with a leading worktree-status sigil; an unbound alt-l slides

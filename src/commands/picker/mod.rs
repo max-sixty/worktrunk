@@ -1791,31 +1791,29 @@ summary = true
     let mut options = SkimOptionsBuilder::default()
         .height("90%".to_string())
         .reverse(true)
-        // Rank matches by a row's *distinguishing* tail, not the shared
-        // `~/workspace/` prefix every worktree path carries. `last_match` makes
-        // the matcher prefer the query's rightmost occurrence, and front-loading
-        // `PathName` in the tiebreak ranks leaf-segment matches (at/after the
-        // last `/`) above parent-directory ones — so `feature/auth` ranks on
-        // `auth`, and the worktree folder name ranks on its tail. This is skim's
-        // `Path` scheme spelled out as its two underlying knobs: a
-        // `.scheme(MatchScheme::Path)` call would also expand here (the builder's
-        // `build()` runs `SkimOptions::build`, which expands the scheme — unlike
-        // the clap-only `scrollbar` default), but it injects a duplicate `Score`
-        // criterion, so setting the knobs directly is the same effect without the
-        // artifact. (Default tiebreak is `[Score, Begin, End]`.) Paired with the
-        // distinct-path `search_text` built in `progressive_handler::on_skeleton`.
+        // skim 4.8's default tiebreak, kept explicit so a future edit can't
+        // quietly reintroduce `PathName` here. The empty-query view (no characters typed)
+        // is the picker's default frame, and it must show rows in the order
+        // `collect` produced them: current, main, newest-first worktrees, then
+        // branches, then the appended `--prs` rows. skim's empty-query engine
+        // (`MatchAllEngine`) scores every row `(score=0, begin=0)`, so with all
+        // scores tied the *whole* list is ordered by the second criterion. A
+        // `PathName` there degenerates: its key is `path_name_offset - begin`, so
+        // at `begin=0` it collapses to `path_name_offset` — sorting every row by
+        // where its last `/` sits. That pulls any slash-bearing name out of
+        // collect order regardless of row kind: a `feature/…` PR head branch, a
+        // `perf/…` worktree branch, and the `/`-gutter local-branch rows all sink
+        // together. `Begin`/`End` are `0` on the empty query, so they don't
+        // perturb it, leaving collect's input order intact.
         //
-        // `PathName` reads the whole `search_text`, including the trailing gutter
-        // glyph. Local-branch rows fold in `/` as that glyph (the gutter sigil),
-        // which `PathName` then reads as a path separator, so on a *score tie* a
-        // local-branch row sorts just under a worktree/remote row whose glyph
-        // (`+`/`@`/`^`/`|`) isn't a separator. The effect is confined to exact
-        // ties (`PathName` is the 2nd criterion) and only reorders rows, so it
-        // rides along rather than warranting a change to the gutter sigils.
-        .last_match(true)
+        // The cost of omitting `PathName` is confined to typed queries (scores
+        // only tie once a query matches): leaf-segment matches no longer win an
+        // exact tie. Two existing mechanisms already cover most of that — the
+        // shared `~/workspace/` prefix is stripped from each row's `search_text`
+        // in `progressive_handler::on_skeleton`, and frizbee penalizes
+        // non-boundary matches — so `feature/auth` still ranks well on `auth`.
         .tiebreak(vec![
             RankCriteria::Score,
-            RankCriteria::PathName,
             RankCriteria::Begin,
             RankCriteria::End,
         ])
