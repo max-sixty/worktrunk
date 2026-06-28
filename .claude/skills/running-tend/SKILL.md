@@ -102,8 +102,9 @@ Before opening a `fix/ci-*` PR, classify the failure:
   PR. The maintainer will rerun CI. Comment on the run or exit silently; a
   permanent config change for a one-off timeout is churn the maintainer will
   close.
-- **Flaky test** (known-flaky or first-seen PTY/shell test) — exit without a
-  PR (same behavior as prior test-flake ci-fix runs).
+- **Flaky test** (known-flaky or first-seen PTY/shell test) — try to fix it.
+  The right ci-fix output is a durable, maintainer-visible outcome (a focused
+  fix PR or a tracking issue), never a session that times out with nothing.
 - **Real regression** — proceed with a fix PR.
 
 **Non-required ≠ transient.** A non-required job (e.g. `collect affected coverage`, `affected tests (linux, advisory)`) can fail from a real regression. The required/non-required distinction is about merge-blocking, not about how the failure is classified. If a deterministic build error (`error[E...]`, "binary not found", "ambiguous candidates", missing target) repeats across consecutive runs of the same shape, it's a real regression even when the job is advisory. Reserve "transient" for non-deterministic causes: `BrokenPipe`, `connection reset`, runner disk full, GitHub API timeouts, host-availability blips.
