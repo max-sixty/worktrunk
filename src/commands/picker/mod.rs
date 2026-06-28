@@ -1644,35 +1644,53 @@ pub fn handle_picker(
     // Summary hint: when summaries are disabled, prime the Summary cache
     // with config guidance instead of showing a perpetual "Generating…"
     // placeholder.
-    let (llm_command, summary_hint) =
-        if config.list.summary() && config.commit_generation.is_configured() {
-            (config.commit_generation.command.clone(), None)
+    let (llm_command, summary_hint) = if config.list.summary()
+        && config.commit_generation.is_configured()
+    {
+        (config.commit_generation.command.clone(), None)
+    } else {
+        // Point at the config file wt actually loads from — respecting
+        // --config, WORKTRUNK_CONFIG_PATH, and $XDG_CONFIG_HOME — rather
+        // than a hardcoded default. Fall back to the canonical path on the
+        // rare occasion no location can be determined.
+        let config_path = worktrunk::config::config_path()
+            .map(|p| format_path_for_display(&p))
+            .unwrap_or_else(|| "~/.config/worktrunk/config.toml".to_string());
+        // A short first line stays the bold H4 subject (`render_summary`
+        // promotes it and never wraps it, so a long sentence would clip on
+        // a narrow pane); the instruction and the resolved path live in the
+        // wrapping body, and the config block is fenced so it renders in the
+        // house gutter rather than as loose prose.
+        let hint = if !config.commit_generation.is_configured() {
+            format!(
+                r#"Summaries not configured
+
+LLM branch summaries need a [commit.generation] command. Add one in {config_path}, then enable summaries:
+
+```toml
+[commit.generation]
+command = "llm -m haiku"
+
+[list]
+summary = true
+```
+"#
+            )
         } else {
-            // Point at the config file wt actually loads from — respecting
-            // --config, WORKTRUNK_CONFIG_PATH, and $XDG_CONFIG_HOME — rather
-            // than a hardcoded default. Fall back to the canonical path on the
-            // rare occasion no location can be determined.
-            let config_path = worktrunk::config::config_path()
-                .map(|p| format_path_for_display(&p))
-                .unwrap_or_else(|| "~/.config/worktrunk/config.toml".to_string());
-            let hint = if !config.commit_generation.is_configured() {
-                format!(
-                    "Configure [commit.generation] command to enable LLM summaries.\n\n\
-                     Example in {config_path}:\n\n\
-                     [commit.generation]\n\
-                     command = \"llm -m haiku\"\n\n\
-                     [list]\n\
-                     summary = true\n"
-                )
-            } else {
-                format!(
-                    "Enable summaries in {config_path}:\n\n\
-                     [list]\n\
-                     summary = true\n"
-                )
-            };
-            (None, Some(hint))
+            format!(
+                r#"Summaries off
+
+A [commit.generation] command is configured. Enable summaries in {config_path}:
+
+```toml
+[list]
+summary = true
+```
+"#
+            )
         };
+        (None, Some(hint))
+    };
 
     // The picker's full row list — header, worktree/branch rows, and (in `--prs`
     // mode) PR/MR rows. `on_skeleton` fills it with the header + worktree/branch

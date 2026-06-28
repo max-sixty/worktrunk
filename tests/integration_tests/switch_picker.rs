@@ -1311,8 +1311,8 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
         &[
             // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
             // for the matcher-lag rationale.
-            ("\x1b[B", None),             // Down: move cursor to `feature`
-            ("\x1b5", Some("Configure")), // Alt-5: summary panel; wait for hint
+            ("\x1b[B", None),                     // Down: move cursor to `feature`
+            ("\x1b5", Some("commit.generation")), // Alt-5: summary panel; wait for hint
         ],
     );
 
@@ -1323,6 +1323,49 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
     settings.bind(|| {
         assert_snapshot!("switch_picker_preview_summary_list", list);
         assert_snapshot!("switch_picker_preview_summary_preview", preview);
+    });
+}
+
+/// The summary panel's "enable summaries" hint — shown when commit.generation
+/// IS configured but `[list] summary = false`. Covers the second hint arm (the
+/// first is exercised by `test_switch_picker_preview_panel_summary`), and pins
+/// that both hints point at the resolved config path: under the test's
+/// `WORKTRUNK_CONFIG_PATH` isolation that path redacts to `[TEST_CONFIG]`, not
+/// a hardcoded `~/.config/worktrunk/config.toml`.
+#[rstest]
+fn test_switch_picker_preview_panel_summary_disabled(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    // Remove origin so snapshots don't show origin/main
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.add_worktree("feature");
+
+    // commit.generation configured, but summaries off — the picker seeds the
+    // Summary tab with the "enable summaries" hint rather than generating one.
+    repo.write_test_config(
+        "[commit.generation]\ncommand = \"llm -m haiku\"\n\n[list]\nsummary = false\n",
+    );
+
+    let env_vars = repo.test_env_vars();
+    // Select `feature`, then Alt-5 for the summary panel. Wait for the hint.
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
+            // for the matcher-lag rationale.
+            ("\x1b[B", None),          // Down: move cursor to `feature`
+            ("\x1b5", Some("Enable")), // Alt-5: summary panel; wait for hint
+        ],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+
+    let (_, preview) = result.panels();
+    let settings = switch_picker_settings(&repo);
+    settings.bind(|| {
+        assert_snapshot!("switch_picker_preview_summary_disabled_preview", preview);
     });
 }
 
