@@ -96,6 +96,13 @@ pub fn current_shell() -> Option<Shell> {
     None
 }
 
+/// Leading flags for the interactive zsh compinit probe.
+///
+/// `+m` (disable job control) is load-bearing — see the call site and issue
+/// #3322. It must precede `-ic` so zsh parses it as an option, not a command
+/// argument.
+const ZSH_PROBE_FLAGS: [&str; 2] = ["+m", "-ic"];
+
 /// Detect if user's zsh has compinit enabled by probing for the compdef function.
 ///
 /// Zsh's completion system (compinit) must be explicitly enabled - it's not on by default.
@@ -130,7 +137,13 @@ pub fn detect_zsh_compinit() -> Option<bool> {
     tracing::debug!(command = %probe_cmd, "$ zsh -ic '{}' (probe)", probe_cmd);
 
     let mut cmd = Command::new("zsh");
-    cmd.arg("-ic")
+    // `+m` disables job control so the interactive probe doesn't grab wt's
+    // controlling terminal. An interactive zsh with job control on `tcsetpgrp`s
+    // to claim the terminal foreground; if the 2s timeout kills it before it
+    // restores that, wt is left in a background process group and the next
+    // terminal write raises SIGTTOU. See issue #3322. `+m` must precede `-ic`
+    // so it's parsed as an option rather than a command argument.
+    cmd.args(ZSH_PROBE_FLAGS)
         .arg(probe_cmd)
         .stdin(Stdio::null()) // Prevent compinit from prompting interactively
         .stdout(Stdio::piped())
@@ -181,6 +194,19 @@ pub fn detect_zsh_compinit() -> Option<bool> {
 mod tests {
     use super::*;
     use rstest::rstest;
+
+    /// Regression guard for #3322: the interactive zsh compinit probe must
+    /// disable job control (`+m`) so it can't grab wt's controlling terminal —
+    /// otherwise a timeout-kill leaves the parent in a background process group
+    /// and the next terminal write raises SIGTTOU.
+    #[test]
+    fn test_zsh_probe_disables_job_control() {
+        assert_eq!(
+            ZSH_PROBE_FLAGS[0], "+m",
+            "job control must be disabled before -ic (#3322)"
+        );
+        assert!(ZSH_PROBE_FLAGS.contains(&"-ic"));
+    }
 
     // ==========================================================================
     // Path extraction tests (Issue #348)
