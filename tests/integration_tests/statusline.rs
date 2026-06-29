@@ -894,3 +894,29 @@ fn test_statusline_rate_limit_drops_at_narrow_width(repo: TestRepo) {
         assert_snapshot!("rate_limit_drops_at_narrow_width", out);
     });
 }
+
+#[rstest]
+fn test_statusline_zero_columns_renders_untruncated(repo: TestRepo) {
+    // Regression: `COLUMNS=0` is an absurd width. It must be treated as "no
+    // detectable width" and fall through to the untruncated render — not
+    // collapse the content budget to zero (after the statusline subtracts its
+    // UI margin) and drop every segment. Compare against a wide terminal,
+    // which also renders untruncated: the two must be identical and non-empty.
+    let json = build_claude_code_json(
+        repo.root_path(),
+        Some("Opus"),
+        Some(42.0),
+        TEST_NOW_THU_1PM,
+        &[("five_hour", 80.0, 2 * 3600)],
+    );
+    let zero = run_statusline_at_time(&repo, &json, TEST_NOW_THU_1PM, Some(0));
+    let wide = run_statusline_at_time(&repo, &json, TEST_NOW_THU_1PM, Some(500));
+    assert!(
+        !zero.trim().is_empty(),
+        "COLUMNS=0 must not collapse the statusline to empty"
+    );
+    assert_eq!(
+        zero, wide,
+        "COLUMNS=0 should render untruncated, identical to a wide terminal"
+    );
+}

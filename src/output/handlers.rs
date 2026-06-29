@@ -1126,7 +1126,7 @@ fn handle_branch_only_output(
         handle_branch_deletion_result(result, branch_name)?
     } else if deletion_mode.is_force() {
         let repo = worktrunk::git::Repository::current()?;
-        let result = repo.run_command(&["branch", "-D", branch_name]);
+        let result = repo.run_command(&["branch", "-D", "--", branch_name]);
         handle_branch_deletion_result(
             result.map(|_| BranchDeletionResult {
                 outcome: BranchDeletionOutcome::ForceDeleted,

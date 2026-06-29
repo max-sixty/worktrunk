@@ -21,3 +21,11 @@ updates:
     schedule:
       interval: daily
     labels: []
+    ignore:
+      # v1.6.2 normalizes any multi-package list to an empty string and then
+      # aborts with "Packages argument is empty" (upstream PR #177 quoted
+      # `${packages}` so apt_query treats the whole list as one package name).
+      # Tracked at awalsh128/cache-apt-pkgs-action#210. Drop this entry once a
+      # fixed release ships so Dependabot can bump forward again.
+      - dependency-name: "awalsh128/cache-apt-pkgs-action"
+        versions: ["1.6.2"]
