@@ -440,7 +440,7 @@ jobs:
         save-if: ${{ github.ref == 'refs/heads/main' }}
 
     - name: Install shells (zsh, fish)
-      uses: awalsh128/cache-apt-pkgs-action@v1.6.2
+      uses: awalsh128/cache-apt-pkgs-action@v1.6.1
       with:
         packages: zsh fish
         version: 1.0
