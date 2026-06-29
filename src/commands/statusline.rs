@@ -817,7 +817,7 @@ pub fn run(format: StatuslineFormat) -> Result<()> {
     }
 
     // Fit segments to terminal width using priority-based dropping; with no
-    // detectable width (even via the parent-TTY walk), render everything
+    // detectable width (no `COLUMNS` from Claude Code), render everything
     let max_width = terminal_width_for_statusline().unwrap_or(usize::MAX);
     // Reserve 1 char for leading space (ellipsis handled by truncate_visible fallback)
     let content_budget = max_width.saturating_sub(1);
