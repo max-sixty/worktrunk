@@ -19,6 +19,12 @@ Shell integration: inactive
 </details>
 
 <details>
+<summary>Environment variables</summary>
+
+[ENV_VARS_CONTENT]
+</details>
+
+<details>
 <summary>Worktrees</summary>
 
 ```
