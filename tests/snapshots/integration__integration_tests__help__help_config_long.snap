@@ -268,19 +268,29 @@ renders each row's cell.
 [107m [0m [2m                                 [0m[2m# lower = kept longer (default: 9, the URL band)[0m
 
 Templates may reference [2m{{ branch }}[0m, [2m{{ worktree_path }}[0m,
-[2m{{ worktree_name }}[0m (empty for branch-only rows), and [2m{{ vars.* }}[0m —
-per-branch values stored with
-[2mwt config state vars set[0m.
+[2m{{ worktree_name }}[0m (empty for branch-only rows), and two per-branch
+namespaces:
+
+- [2m{{ vars.* }}[0m — values stored with
+  [2mwt config state vars set[0m.
+- [2m{{ git.branch.* }}[0m — the branch's own git config under [2mbranch.<name>.*[0m,
+  read straight from [2mgit config[0m (e.g. [2m{{ git.branch.jira }}[0m for a key you
+  set yourself, or the git-native [2mdescription[0m). Git lowercases config variable
+  names, so [2mbranch.<name>.nvciShelf[0m reads as [2m{{ git.branch.nvcishelf }}[0m.
+
 All standard filters work ([2msanitize[0m, [2mhash_port[0m, [2mcodename[0m, …). A row
-where the template renders empty (e.g. a branch without the vars key) shows an
+where the template renders empty (e.g. a branch without the key) shows an
 empty cell; a column that is empty for every row is dropped from the table.
 [2mwt list --format json[0m includes the rendered values under [2mcolumns[0m.
 
-A [2mNote[0m column showing free-form descriptions, set per branch with
-[2mwt config state vars set note "Bug fix for production fire"[0m:
+A [2mJira[0m column reading a key kept in git config, and a [2mSummary[0m column
+showing just the first line of the git-native branch description:
 
-[107m [0m [2m[36m[list.custom-columns.Note][0m
-[107m [0m [2mtemplate = [0m[2m[32m"{{ vars.note }}"[0m
+[107m [0m [2m[36m[list.custom-columns.Jira][0m
+[107m [0m [2mtemplate = [0m[2m[32m"{{ git.branch.jira }}"[0m
+[107m [0m 
+[107m [0m [2m[36m[list.custom-columns.Summary][0m
+[107m [0m [2mtemplate = [0m[2m[32m"{{ git.branch.description | lines | first }}"[0m
 
 [32mCommit[0m
 

@@ -247,7 +247,7 @@ petname = { version = "=3.0.1", default-features = false, features = ["default-w
 # `cargo update` (pulling 3.0.0) and a plain `cargo update` would pull 3.1.0 —
 # both broken. This direct `=3.0.1` requirement unifies the shared resolution
 # to 3.0.1. Bump in lockstep whenever `petname` itself is bumped.
-petname-macros = "=3.0.1"
+petname-macros = "=3.1.0"
 
 tempfile = "3.27"
 wait-timeout = "0.2"

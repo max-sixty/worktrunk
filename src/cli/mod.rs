@@ -865,7 +865,7 @@ Reuses the [`commit.generation`](@/config.md#commit) command — the same LLM th
 
 ### Custom columns [experimental]
 
-Each `[list.custom-columns]` entry in user config adds a column: the key is the header, the template renders each row's cell. Templates can reference per-branch `{{ vars.* }}` stored with [`wt config state vars set`](@/config.md#wt-config-state-vars) — useful for tracking what each of many (often agent-driven) branches is for:
+Each `[list.custom-columns]` entry in user config adds a column: the key is the header, the template renders each row's cell. Templates read two per-branch namespaces — `{{ vars.* }}`, stored with [`wt config state vars set`](@/config.md#wt-config-state-vars), and `{{ git.branch.* }}`, the branch's own git config under `branch.<name>.*` (a `jira` key you set yourself, or the git-native `description`) — useful for tracking what each of many (often agent-driven) branches is for:
 
 ```toml
 [list.custom-columns.Ticket]
@@ -1970,20 +1970,30 @@ priority = 9                     # Optional drop order when the terminal narrows
 ```
 
 Templates may reference `{{ branch }}`, `{{ worktree_path }}`,
-`{{ worktree_name }}` (empty for branch-only rows), and `{{ vars.* }}` —
-per-branch values stored with
-[`wt config state vars set`](@/config.md#wt-config-state-vars).
+`{{ worktree_name }}` (empty for branch-only rows), and two per-branch
+namespaces:
+
+- `{{ vars.* }}` — values stored with
+  [`wt config state vars set`](@/config.md#wt-config-state-vars).
+- `{{ git.branch.* }}` — the branch's own git config under `branch.<name>.*`,
+  read straight from `git config` (e.g. `{{ git.branch.jira }}` for a key you
+  set yourself, or the git-native `description`). Git lowercases config variable
+  names, so `branch.<name>.nvciShelf` reads as `{{ git.branch.nvcishelf }}`.
+
 All standard filters work (`sanitize`, `hash_port`, `codename`, …). A row
-where the template renders empty (e.g. a branch without the vars key) shows an
+where the template renders empty (e.g. a branch without the key) shows an
 empty cell; a column that is empty for every row is dropped from the table.
 `wt list --format json` includes the rendered values under `columns`.
 
-A `Note` column showing free-form descriptions, set per branch with
-`wt config state vars set note "Bug fix for production fire"`:
+A `Jira` column reading a key kept in git config, and a `Summary` column
+showing just the first line of the git-native branch description:
 
 ```toml
-[list.custom-columns.Note]
-template = "{{ vars.note }}"
+[list.custom-columns.Jira]
+template = "{{ git.branch.jira }}"
+
+[list.custom-columns.Summary]
+template = "{{ git.branch.description | lines | first }}"
 ```
 
 ### Commit

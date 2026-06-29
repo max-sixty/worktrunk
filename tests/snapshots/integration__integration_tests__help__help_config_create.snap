@@ -220,19 +220,29 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#                                  # lower = kept longer (default: 9, the URL band)[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Templates may reference `{{ branch }}`, `{{ worktree_path }}`,[0m
-[107m [0m [2m# `{{ worktree_name }}` (empty for branch-only rows), and `{{ vars.* }}` —[0m
-[107m [0m [2m# per-branch values stored with[0m
-[107m [0m [2m# `wt config state vars set` (https://worktrunk.dev/config/#wt-config-state-vars).[0m
+[107m [0m [2m# `{{ worktree_name }}` (empty for branch-only rows), and two per-branch[0m
+[107m [0m [2m# namespaces:[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# - `{{ vars.* }}` — values stored with[0m
+[107m [0m [2m#   `wt config state vars set` (https://worktrunk.dev/config/#wt-config-state-vars).[0m
+[107m [0m [2m# - `{{ git.branch.* }}` — the branch's own git config under `branch.<name>.*`,[0m
+[107m [0m [2m#   read straight from `git config` (e.g. `{{ git.branch.jira }}` for a key you[0m
+[107m [0m [2m#   set yourself, or the git-native `description`). Git lowercases config variable[0m
+[107m [0m [2m#   names, so `branch.<name>.nvciShelf` reads as `{{ git.branch.nvcishelf }}`.[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# All standard filters work (`sanitize`, `hash_port`, `codename`, …). A row[0m
-[107m [0m [2m# where the template renders empty (e.g. a branch without the vars key) shows an[0m
+[107m [0m [2m# where the template renders empty (e.g. a branch without the key) shows an[0m
 [107m [0m [2m# empty cell; a column that is empty for every row is dropped from the table.[0m
 [107m [0m [2m# `wt list --format json` includes the rendered values under `columns`.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# A `Note` column showing free-form descriptions, set per branch with[0m
-[107m [0m [2m# `wt config state vars set note "Bug fix for production fire"`:[0m
+[107m [0m [2m# A `Jira` column reading a key kept in git config, and a `Summary` column[0m
+[107m [0m [2m# showing just the first line of the git-native branch description:[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# [list.custom-columns.Note][0m
-[107m [0m [2m# template = "{{ vars.note }}"[0m
+[107m [0m [2m# [list.custom-columns.Jira][0m
+[107m [0m [2m# template = "{{ git.branch.jira }}"[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# [list.custom-columns.Summary][0m
+[107m [0m [2m# template = "{{ git.branch.description | lines | first }}"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Commit[0m
 [107m [0m [2m#[0m
