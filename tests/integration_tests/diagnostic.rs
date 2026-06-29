@@ -12,6 +12,7 @@
 //! - `test_diagnostic_context_has_no_ansi_codes`: ANSI stripped for GitHub
 //! - `test_diagnostic_trace_log_contains_git_commands`: Log has useful data
 //! - `test_diagnostic_saved_message_with_vv`: Output shows "Diagnostic saved" with -vv
+//! - `test_profile_file_created_and_announced`: profile.txt written and announced with -vv
 //! - `test_diagnostic_written_to_correct_location`: File in .git/wt/logs/
 //! - `test_diagnostic_gh_hint_with_vv`: Hint shows gist and issue URL when gh installed
 
@@ -337,6 +338,38 @@ fn test_log_files_created(mut repo: TestRepo) {
     );
 }
 
+/// At `-vv`, the standalone `profile.txt` is written with the rendered
+/// performance report, and stderr announces it (separately from the diagnostic
+/// bundle). Covers the `write_profile_file` path and its announcement.
+#[rstest]
+fn test_profile_file_created_and_announced(repo: TestRepo) {
+    let output = repo.wt_command().args(["list", "-vv"]).output().unwrap();
+
+    let profile_path = repo
+        .root_path()
+        .join(".git")
+        .join("wt/logs")
+        .join("profile.txt");
+    assert!(
+        profile_path.exists(),
+        "profile.txt should be created with -vv"
+    );
+
+    // The file is the rendered performance report, not the markdown bundle.
+    let content = fs::read_to_string(&profile_path).unwrap();
+    assert!(
+        content.contains("PERFORMANCE PROFILE"),
+        "profile.txt should hold the rendered performance report: {content}"
+    );
+
+    // stderr names the saved profile, distinct from the "Diagnostic saved" line.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Performance profile saved"),
+        "stderr should announce the saved performance profile. stderr: {stderr}"
+    );
+}
+
 /// At `-vv`, the full (uncapped) subprocess stdout/stderr should land in
 /// `subprocess.log` via `shell_exec::SUBPROCESS_FULL_TARGET` — not in `trace.log`.
 /// `trace.log` gets the bounded preview alongside trace records.
@@ -562,7 +595,12 @@ fn test_vv_debug_pipeline_silent_on_stderr(repo: TestRepo) {
         stderr.contains("Writing to"),
         "missing pointer header: {stderr}"
     );
-    for file in ["trace.log", "subprocess.log", "diagnostic.md"] {
+    for file in [
+        "trace.log",
+        "subprocess.log",
+        "profile.txt",
+        "diagnostic.md",
+    ] {
         assert!(
             stderr.contains(&format!("wt/logs/{file}")),
             "stderr should list the full path to {file}: {stderr}"
@@ -826,7 +864,8 @@ fn test_vv_pointer_handles_split_init(repo: TestRepo) {
 }
 
 /// With just -v, info-level logging goes to stderr but no log files are written.
-/// `-vv` is the threshold for `trace.log`, `subprocess.log`, and `diagnostic.md`.
+/// `-vv` is the threshold for `trace.log`, `subprocess.log`, `profile.txt`, and
+/// `diagnostic.md`.
 #[rstest]
 fn test_v_does_not_write_log_files(repo: TestRepo) {
     // Run a successful command with just -v
@@ -836,7 +875,12 @@ fn test_v_does_not_write_log_files(repo: TestRepo) {
 
     // None of the -vv diagnostic files should exist with just -v
     let wt_logs = repo.root_path().join(".git").join("wt/logs");
-    for name in ["diagnostic.md", "trace.log", "subprocess.log"] {
+    for name in [
+        "diagnostic.md",
+        "profile.txt",
+        "trace.log",
+        "subprocess.log",
+    ] {
         assert!(
             !wt_logs.join(name).exists(),
             "{name} should NOT be created with just -v (requires -vv)"

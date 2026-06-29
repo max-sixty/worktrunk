@@ -710,10 +710,10 @@ fn announce_trace_destination() {
     // rare but real (path-type mismatch, fs quota); the reverse is possible
     // too, but the pointer is anchored on trace.log's path (we derive the logs
     // dir from it below) and subprocess.log's uncapped raw bodies aren't worth
-    // surfacing on their own, so we stay silent there. `diagnostic.md` is named
-    // even though it's written
-    // at exit (not init) — by the time the user reads the pointer and looks
-    // for files, all three will be there.
+    // surfacing on their own, so we stay silent there. `profile.txt` and
+    // `diagnostic.md` are named even though they're written at exit (not
+    // init) — by the time the user reads the pointer and looks for files,
+    // all of them will be there.
     let Some(trace_path) = log_files::TRACE.path() else {
         return;
     };
@@ -736,6 +736,7 @@ fn announce_trace_destination() {
         }
         None => "Writing to (subprocess.log unavailable):",
     };
+    paths.push(dir.join("profile.txt"));
     paths.push(dir.join("diagnostic.md"));
 
     let gutter = paths

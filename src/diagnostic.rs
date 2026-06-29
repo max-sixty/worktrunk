@@ -7,9 +7,10 @@
 //! # When Diagnostics Are Generated
 //!
 //! Diagnostic files are written on every `-vv` run (one file per command,
-//! overwritten each time). Without `-vv`, the hint simply tells users to
-//! rerun with `-vv`. This ensures the diagnostic file contains the trace
-//! the report inlines.
+//! overwritten each time): the `diagnostic.md` bundle, plus a standalone
+//! `profile.txt` whenever the capture held trace records. Without `-vv`, the
+//! hint simply tells users to rerun with `-vv`. This ensures the diagnostic
+//! file contains the trace the report inlines.
 //!
 //! # Report Format
 //!
@@ -35,7 +36,8 @@
 //! # File Location
 //!
 //! Reports are written to `<git-common-dir>/wt/logs/diagnostic.md` (typically
-//! `.git/wt/logs/diagnostic.md`). Companion log files (`trace.log`, `trace.jsonl`, `subprocess.log`) live in the same directory.
+//! `.git/wt/logs/diagnostic.md`), with the standalone performance profile beside
+//! it as `profile.txt`. Companion log files (`trace.log`, `trace.jsonl`, `subprocess.log`) live in the same directory.
 //!
 //! # Usage
 //!
@@ -131,6 +133,10 @@ Full captured stdout/stderr is in `{{ subprocess_log_path }}`.
 pub(crate) struct DiagnosticReport {
     /// Formatted markdown content
     content: String,
+    /// The rendered performance profile (ANSI-stripped), or `None` when the
+    /// capture held no trace records. The same text is inlined in `content`
+    /// and written verbatim to the standalone `profile.txt`.
+    profile: Option<String>,
 }
 
 impl DiagnosticReport {
@@ -141,12 +147,24 @@ impl DiagnosticReport {
     /// * `command` - The command that was run (e.g., "wt list -vv")
     /// * `context` - Context describing the result (error message or success)
     pub fn collect(repo: &Repository, command: &str, context: String) -> Self {
-        let content = Self::format_report(repo, command, &context);
-        Self { content }
+        // Render the profile once from `trace.jsonl`; both the markdown bundle
+        // and the standalone `profile.txt` reuse this text.
+        let profile = crate::log_files::TRACE_JSONL
+            .path()
+            .and_then(|path| std::fs::read_to_string(&path).ok())
+            .as_deref()
+            .and_then(render_trace_profile);
+        let content = Self::format_report(repo, command, &context, profile.as_deref());
+        Self { content, profile }
     }
 
     /// Format the complete diagnostic report as markdown using minijinja template.
-    fn format_report(repo: &Repository, command: &str, context: &str) -> String {
+    fn format_report(
+        repo: &Repository,
+        command: &str,
+        context: &str,
+        performance_profile: Option<&str>,
+    ) -> String {
         // Strip ANSI codes from context - the diagnostic is a markdown file for GitHub
         let context = context.ansi_strip();
 
@@ -181,13 +199,6 @@ impl DiagnosticReport {
             .as_deref()
             .map(|content| truncate_log(content.trim()))
             .filter(|s| !s.is_empty());
-        // The profile is derived from the machine `trace.jsonl` (the human
-        // `trace.log` inlined above is no longer parseable).
-        let performance_profile = crate::log_files::TRACE_JSONL
-            .path()
-            .and_then(|path| std::fs::read_to_string(&path).ok())
-            .as_deref()
-            .and_then(render_trace_profile);
         // Forward slashes on both platforms so the rendered markdown reads the
         // same in bug reports regardless of where it was produced.
         let subprocess_log_path = crate::log_files::SUBPROCESS
@@ -239,6 +250,22 @@ impl DiagnosticReport {
 
         Some(path)
     }
+
+    /// Write the standalone performance profile to `profile.txt`.
+    ///
+    /// Returns `None` when the capture held no trace records (nothing to
+    /// profile) or the write failed. The same rendered text is also inlined in
+    /// `diagnostic.md`; this is the directly catable, un-wrapped copy.
+    pub fn write_profile_file(&self, repo: &Repository) -> Option<PathBuf> {
+        let profile = self.profile.as_deref()?;
+        let log_dir = repo.wt_logs_dir();
+        std::fs::create_dir_all(&log_dir).ok()?;
+
+        let path = log_dir.join("profile.txt");
+        std::fs::write(&path, profile).ok()?;
+
+        Some(path)
+    }
 }
 
 /// Return hint telling users to run with `-vv` for diagnostics.
@@ -286,6 +313,24 @@ pub(crate) fn write_if_verbose(verbose: u8, command_line: &str, error_msg: Optio
 
     // Collect and write diagnostic
     let report = DiagnosticReport::collect(&repo, command_line, context);
+
+    // Standalone performance profile — present whenever the capture held trace
+    // records. Announced first: it's the headline for a `-vv` profiling run,
+    // where the diagnostic bundle below is the bug-report companion.
+    if let Some(profile_path) = report.write_profile_file(&repo) {
+        let path_display = format_path_for_display(&profile_path);
+        eprintln!(
+            "{}",
+            success_message(format!("Performance profile saved @ {path_display}"))
+        );
+        eprintln!(
+            "{}",
+            hint_message(cformat!(
+                "Render it live with <underline>wt config state logs profile</>"
+            ))
+        );
+    }
+
     match report.write_diagnostic_file(&repo) {
         Some(path) => {
             let path_display = format_path_for_display(&path);
