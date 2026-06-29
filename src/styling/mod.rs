@@ -79,7 +79,8 @@ pub fn verbosity() -> u8 {
 /// 2. The `COLUMNS` env var, for scripts and piped contexts where detection
 ///    fails. `COLUMNS` carries a width but has no height counterpart, so the
 ///    height comes back `None`; callers that need a height supply their own
-///    fallback.
+///    fallback. A `COLUMNS` of `0` is treated as no width at all (returns
+///    `None`), so absurd values fall through to untruncated rendering.
 ///
 /// Under Claude Code the statusline subprocess inherits no TTY, so direct
 /// detection fails and the `COLUMNS` fallback supplies the width — Claude Code
@@ -97,8 +98,16 @@ pub fn terminal_dimensions() -> Option<(usize, Option<usize>)> {
     }
 
     // Fall back to COLUMNS (width only — there is no height equivalent) for
-    // scripts, piped contexts, or when detection fails.
-    let columns = std::env::var("COLUMNS").ok()?.parse::<usize>().ok()?;
+    // scripts, piped contexts, or when detection fails. A zero width is as
+    // undetectable as no `COLUMNS` at all, so treat it as absent — otherwise
+    // callers that subtract a margin (e.g. the statusline) collapse the
+    // content budget to zero and drop every segment instead of falling
+    // through to an untruncated render.
+    let columns = std::env::var("COLUMNS")
+        .ok()?
+        .parse::<usize>()
+        .ok()
+        .filter(|c| *c > 0)?;
     Some((columns, None))
 }
 
