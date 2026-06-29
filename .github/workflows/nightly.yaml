@@ -110,6 +110,14 @@ jobs:
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
+      with:
+        # Restore the shared `test` cache (registry + deps), never save.
+        # Nightly-only jobs riding main's cache aren't worth their own entry
+        # against the 10 GB repo cap.
+        prefix-key: v1-rust
+        shared-key: shared
+        cache-bin: "false"
+        save-if: false
 
     - name: Install cargo-hack
       uses: taiki-e/install-action@v2.82.4
@@ -173,6 +181,11 @@ jobs:
       run: sudo apt-get update && sudo apt-get install -y musl-tools
 
     - uses: ./.github/actions/test-setup
+      with:
+        # Cross-compiles musl/Intel targets the shared cache never builds, so
+        # it restore-misses anyway — and we don't want these one-off release
+        # triples writing their own caches against the 10 GB cap.
+        save-cache: "false"
 
     - name: Add target
       run: rustup target add ${{ matrix.target }}
@@ -196,6 +209,14 @@ jobs:
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
+      with:
+        # Restore the shared `test` cache (registry + deps), never save —
+        # `cargo bench` is release-profile so it rebuilds its own artifacts,
+        # but the dependency download/extract is still worth restoring.
+        prefix-key: v1-rust
+        shared-key: shared
+        cache-bin: "false"
+        save-if: false
 
     - name: Install shells (zsh, fish)
       uses: awalsh128/cache-apt-pkgs-action@v1.6.1
@@ -260,6 +281,13 @@ jobs:
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
+      with:
+        # Never save. Runs on the nightly toolchain, whose rustc hash can't
+        # match the shared (stable) cache, so a per-job cache would only ever
+        # serve the next nightly — near-zero hit under the 10 GB cap. Cold
+        # builds here are absorbed by the nightly cadence.
+        cache-bin: "false"
+        save-if: false
 
     - uses: baptiste0928/cargo-install@v3
       with:
@@ -289,7 +317,11 @@ jobs:
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
       with:
-        key: minimal-versions
+        # Never save — nightly toolchain (can't match the shared stable cache)
+        # plus a minimized lockfile that's unique to this run, so a saved cache
+        # would never be reused.
+        cache-bin: "false"
+        save-if: false
 
     - name: Resolve to minimum versions
       # `direct`, not full `-Z minimal-versions`: minimize only worktrunk's own
@@ -324,6 +356,12 @@ jobs:
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
+      with:
+        # Restore the shared `test` cache (registry + deps), never save.
+        prefix-key: v1-rust
+        shared-key: shared
+        cache-bin: "false"
+        save-if: false
 
     - name: 🧪 Build crates.io archive without .git
       run: cargo test --test integration crate_io_archive_builds_and_versions_without_git -- --ignored

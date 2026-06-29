@@ -35,6 +35,11 @@ jobs:
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
+      with:
+        # Own cache (clippy builds check artifacts the shared test cache can't
+        # supply), gated to main so PRs restore but never write.
+        cache-bin: "false"
+        save-if: ${{ github.ref == 'refs/heads/main' }}
 
     - name: Install lychee
       uses: baptiste0928/cargo-install@v3
@@ -58,6 +63,11 @@ jobs:
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
+      with:
+        # Own cache (its `--no-default-features` builds want a smaller dep set
+        # than the shared test cache), gated to main.
+        cache-bin: "false"
+        save-if: ${{ github.ref == 'refs/heads/main' }}
 
     - name: Library builds without any features
       run: cargo check --lib --no-default-features
@@ -168,6 +178,12 @@ jobs:
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
+      with:
+        # Own cache — `cargo msrv verify` builds with older toolchains whose
+        # rustc hash never matches the shared (stable) test cache. Gated to
+        # main; this job only runs when Cargo/toolchain files change.
+        cache-bin: "false"
+        save-if: ${{ github.ref == 'refs/heads/main' }}
 
     - uses: baptiste0928/cargo-install@v3
       with:
@@ -272,6 +288,11 @@ jobs:
         fetch-depth: 0
 
     - uses: ./.github/actions/test-setup
+      with:
+        # Restore-only: collect builds coverage-instrumented artifacts (it adds
+        # llvm-tools below), which must not overwrite the shared cache that
+        # `test` saves for everyone else.
+        save-cache: "false"
 
     - name: "Use fast D: drive for temp files (Windows)"
       if: runner.os == 'Windows'
@@ -362,6 +383,11 @@ jobs:
         echo "merge-base with origin/main: $sha"
 
     - uses: ./.github/actions/test-setup
+      with:
+        # PR-only job: restore `test`'s shared main cache, never save. This is
+        # the job that most needs the shared key — a per-job cache would have
+        # no main baseline (it never runs on main) and cold-build every PR.
+        save-cache: "false"
 
     - name: "Use fast D: drive for temp files (Windows)"
       if: runner.os == 'Windows'
@@ -437,6 +463,9 @@ jobs:
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
       with:
+        # Own cache — coverage-instrumented builds differ from the shared test
+        # cache. Already main-gated; cache-bin:false matches everywhere else.
+        cache-bin: "false"
         save-if: ${{ github.ref == 'refs/heads/main' }}
 
     - name: Install shells (zsh, fish)

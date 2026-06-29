@@ -4,6 +4,17 @@ description: |
   Used by the test matrix and the cargo-affected jobs (which add their own
   cargo-affected + llvm-tools steps after this).
 
+inputs:
+  save-cache:
+    description: >-
+      Whether this job may save the shared rust cache (and then only on main).
+      `test` is the canonical saver and leaves this at the default; everyone
+      else (collect-affected, affected-tests, release-target) passes 'false' so
+      they restore main's cache but never write — keeps instrumented
+      (collect-affected) and cross-compiled (release-target) artifacts out of
+      the shared cache, and stops PR runs depositing single-use caches.
+    default: "true"
+
 runs:
   using: composite
   steps:
@@ -31,6 +42,16 @@ runs:
         cache-bin: false
         # Bumped to invalidate caches that already include the stale bin.
         prefix-key: v1-rust
+        # One shared cache per OS (rust-cache appends os/arch) across the test
+        # family — `test`, `affected-tests`, `collect-affected`. The PR-only
+        # `affected-tests` job restores `test`'s main cache instead of a cache
+        # of its own (it never runs on main, so a per-job key would have no
+        # baseline and miss every time).
+        shared-key: shared
+        # Only `test` on main writes the shared cache; see the `save-cache`
+        # input. PRs restore main's cache and never deposit single-use ones,
+        # which is what keeps the repo under the 10 GB cache cap.
+        save-if: ${{ inputs.save-cache == 'true' && github.ref == 'refs/heads/main' }}
 
     - name: Install shells (zsh, fish) - Ubuntu
       if: runner.os == 'Linux'
