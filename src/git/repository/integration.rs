@@ -24,6 +24,65 @@ pub struct IntegrationTargets {
     pub secondary: Option<String>,
 }
 
+/// Select the comparison-base name from resolved integration targets: the
+/// primary target ([`IntegrationTargets::primary`]), falling back to the raw
+/// default branch name when targets couldn't be resolved (snapshot capture
+/// failed / no upstream relationship known).
+///
+/// The single home for the "primary-else-default" rule shared by the `wt list`
+/// comparison columns (the list collector's `comparison_base`) and the
+/// diff/summary preview panes ([`Repository::branch_diff_spec`]) — so the
+/// dimmed column number and the pane can't drift onto different bases.
+pub fn select_comparison_base<'a>(
+    targets: Option<&'a IntegrationTargets>,
+    default_branch: Option<&'a str>,
+) -> Option<&'a str> {
+    targets.map(|t| t.primary.as_str()).or(default_branch)
+}
+
+/// Git's well-known empty-tree object. Diffing a commit against it yields the
+/// commit's full content as additions — the orphan-branch fallback for the
+/// diff/summary preview panes, which can't three-dot-diff a branch that shares
+/// no history with the comparison base.
+pub(super) const EMPTY_TREE_SHA: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+/// The upstream-aware base a branch's content is measured against in the
+/// diff/summary preview panes — [`IntegrationTargets::primary`], resolved once
+/// per repo. Carries both the display name (for "no file changes vs X"
+/// messages) and its resolved SHA (for disk-cache keying).
+#[derive(Debug, Clone)]
+pub(in crate::git) struct ComparisonBase {
+    /// Display name of the base (e.g. `main`, or `origin/main` when the local
+    /// default lags its upstream).
+    pub name: String,
+    /// The base's resolved commit SHA. `resolve_comparison_base` returns `None`
+    /// rather than a base whose SHA won't resolve, so this is always present.
+    pub sha: String,
+}
+
+/// How a branch's content is diffed against the mainline for the diff and
+/// summary preview panes.
+///
+/// The base is the **upstream-aware comparison base** — the same ref the
+/// ahead/behind and branch-diff columns measure against — so a stale fork
+/// default can't make the panes describe upstream commits as the
+/// branch's own changes. Orphan branches (no merge base with the base) fall
+/// back to a full diff against the empty tree, so a root-style branch shows its
+/// content instead of "no file changes". Built by
+/// [`Repository::branch_diff_spec`].
+#[derive(Debug, Clone)]
+pub struct BranchDiffSpec {
+    /// The `git diff` revision arguments to splice in after `diff` and any
+    /// options: a single three-dot range `["{base}...{head}"]` normally, or
+    /// `["{empty-tree}", "{head}"]` for an orphan.
+    pub revs: Vec<String>,
+    /// Display name of the comparison base, for "no file changes vs X".
+    pub base_name: String,
+    /// Stable SHA identifying the base for disk-cache keying: the base's commit
+    /// SHA, or the empty-tree SHA for an orphan.
+    pub cache_sha: String,
+}
+
 /// Result of the combined merge-tree + patch-id integration probe.
 ///
 /// Encapsulates the two-step sequence: first try `merge-tree --write-tree` to
@@ -76,7 +135,10 @@ const PATCH_ID_SCAN_MAX_COMMITS: usize = 500;
 /// Exit 0 → `Clean` carrying the resulting tree SHA; exit 1 → `Conflict`;
 /// anything else is an error (the helper bails). Both merge-tree callers
 /// share this dispatch; they differ only in what they do with a clean tree.
-enum MergeTreeOutcome {
+/// `Clone` + `Debug` so the outcome can be memoized in
+/// [`RepoCache::merge_tree`](super::RepoCache::merge_tree).
+#[derive(Debug, Clone)]
+pub(in crate::git) enum MergeTreeOutcome {
     Clean { tree: String },
     Conflict,
 }
@@ -138,23 +200,13 @@ impl Repository {
     /// Useful for detecting squash merges or rebases where the content has been
     /// integrated but commit ancestry doesn't show the relationship.
     ///
-    /// Resolves each commit SHA to its tree SHA in a single `git rev-parse`
-    /// call and compares. The commit→tree resolution is itself uncached
-    /// (trees are cheap and not stale-prone), but the inputs are SHAs so
-    /// the call is immune to ref-name staleness.
+    /// Both commit→tree resolutions go through `commit_to_tree_sha`, so the
+    /// shared target side (the default-branch tip, identical across every
+    /// `wt list` row) is peeled once per process and shared with
+    /// `would_merge_add_to_target`'s lookup. Inputs are commit SHAs, so the
+    /// mapping is content-addressed and immune to ref-name staleness.
     pub fn trees_match_by_sha(&self, commit_sha1: &str, commit_sha2: &str) -> anyhow::Result<bool> {
-        let output = self.run_command(&[
-            "rev-parse",
-            &format!("{commit_sha1}^{{tree}}"),
-            &format!("{commit_sha2}^{{tree}}"),
-        ])?;
-        let mut lines = output.lines();
-        let tree1 = lines.next().context("rev-parse returned no output")?.trim();
-        let tree2 = lines
-            .next()
-            .context("rev-parse returned only one line")?
-            .trim();
-        Ok(tree1 == tree2)
+        Ok(self.commit_to_tree_sha(commit_sha1)? == self.commit_to_tree_sha(commit_sha2)?)
     }
 
     /// Check if merging `head_sha` into `base_sha` would result in conflicts.
@@ -205,11 +257,40 @@ impl Repository {
         self.run_merge_tree(base_sha, head_commit, base_sha, &cache_head)
     }
 
-    /// Run `git merge-tree --write-tree <a> <b>` and classify the outcome by
-    /// exit code. Exit 1 → [`MergeTreeOutcome::Conflict`]; anything other than
-    /// success is an error; exit 0 → [`MergeTreeOutcome::Clean`] with the
-    /// resulting tree SHA (first line of stdout).
+    /// Run `git merge-tree --write-tree <a> <b>`, memoizing the outcome in the
+    /// in-memory [`RepoCache::merge_tree`](super::RepoCache::merge_tree) cache.
+    ///
+    /// `git merge-tree` is the costliest operation in `wt list`, and the two
+    /// integration probes ask it the same question per row:
+    /// [`Self::run_merge_tree`] wants the conflict bit (for the `WouldConflict`
+    /// column) and [`Self::would_merge_add_to_target`] wants the resulting tree
+    /// (for the integration column) — both run `merge-tree --write-tree
+    /// <target> <branch>`. Their persistent caches (`merge-tree-conflicts` vs
+    /// `merge-add-probe`) are keyed separately, so on a cold run neither sees
+    /// the other and the subprocess fires twice. The shared entry lock
+    /// collapses both — and any cross-row repeat of the same pair — to a single
+    /// spawn, mirroring [`Self::merge_base_by_sha`].
     fn merge_tree_outcome(&self, a: &str, b: &str) -> anyhow::Result<MergeTreeOutcome> {
+        use dashmap::mapref::entry::Entry;
+
+        // Keyed in call order, not normalized: both dedup call sites pass
+        // `(target, branch)`, so they already share a key, and the cached
+        // outcome (a conflict flag, or the order-independent clean-merge tree)
+        // doesn't depend on argument order — a symmetric key would buy nothing.
+        match self.cache.merge_tree.entry((a.to_string(), b.to_string())) {
+            Entry::Occupied(e) => Ok(e.get().clone()),
+            Entry::Vacant(e) => {
+                let outcome = self.compute_merge_tree_outcome(a, b)?;
+                Ok(e.insert(outcome).clone())
+            }
+        }
+    }
+
+    /// Compute a fresh `git merge-tree --write-tree <a> <b>` outcome, classified
+    /// by exit code. Exit 1 → [`MergeTreeOutcome::Conflict`]; anything other
+    /// than success is an error; exit 0 → [`MergeTreeOutcome::Clean`] with the
+    /// resulting tree SHA (first line of stdout).
+    fn compute_merge_tree_outcome(&self, a: &str, b: &str) -> anyhow::Result<MergeTreeOutcome> {
         // Exit codes: 0 = clean merge, 1 = conflicts, 128+ = error (invalid ref, corrupt repo)
         let output = self.run_command_output(&["merge-tree", "--write-tree", a, b])?;
 
@@ -271,8 +352,11 @@ impl Repository {
             MergeTreeOutcome::Conflict => Ok(None),
             MergeTreeOutcome::Clean { tree } => {
                 // If the merge result differs from target's tree, merging would
-                // add something (the branch is not already integrated).
-                let target_tree = self.rev_parse_tree(&format!("{target}^{{tree}}"))?;
+                // add something (the branch is not already integrated). The
+                // target is shared across every `wt list` row, so resolve its
+                // tree through the in-memory repo cache — peeled once, not once
+                // per row (see [`Self::commit_to_tree_sha`]).
+                let target_tree = self.commit_to_tree_sha(target)?;
                 Ok(Some(tree != target_tree))
             }
         }
@@ -495,14 +579,106 @@ impl Repository {
         Some(IntegrationTargets { primary, secondary })
     }
 
+    /// The upstream-aware comparison base for the diff/summary preview panes,
+    /// resolved once and memoized (the base is repo-wide, like the default
+    /// branch). Returns `None` when no default branch can be determined.
+    ///
+    /// Selects the base via the shared [`select_comparison_base`] rule
+    /// ([`IntegrationTargets::primary`] else the raw local default), so the
+    /// preview panes and the `wt list` columns can't pick different bases.
+    /// Captures a [`RefSnapshot`] on first call; safe in the read-only preview
+    /// contexts that use it (wt doesn't move refs there). Fully local — no
+    /// network.
+    fn comparison_base(&self) -> Option<&ComparisonBase> {
+        self.cache
+            .comparison_base
+            .get_or_init(|| self.resolve_comparison_base())
+            .as_ref()
+    }
+
+    fn resolve_comparison_base(&self) -> Option<ComparisonBase> {
+        // No default branch → no comparison base; skip the ref scan entirely.
+        self.default_branch()?;
+        let snapshot = self.capture_refs().ok()?;
+        let targets = self.integration_targets(&snapshot);
+        let default_branch = self.default_branch();
+        let name = select_comparison_base(targets.as_ref(), default_branch.as_deref())?.to_string();
+        // No usable base if the name won't resolve (a stale
+        // `worktrunk.default-branch` pointing at a deleted branch) — return
+        // `None` so the panes skip the branch diff rather than render a
+        // guaranteed-empty range against a missing ref.
+        let sha = snapshot_resolve(self, &snapshot, &name).ok()?;
+        Some(ComparisonBase { name, sha })
+    }
+
+    /// Resolve how to diff a branch's content against the mainline for the
+    /// diff/summary preview panes. `head` is a resolved commit SHA. See
+    /// [`BranchDiffSpec`]. Returns `None` when there's no comparison base (no
+    /// default branch, or its ref won't resolve).
+    pub fn branch_diff_spec(&self, head: &str) -> Option<BranchDiffSpec> {
+        let base = self.comparison_base()?;
+        let base_sha = base.sha.as_str();
+
+        // Orphan (no merge base with the base): a three-dot range is
+        // ill-defined, so diff the full content against the empty tree. A
+        // merge-base *error* (invalid/unreachable object) is NOT an orphan —
+        // fall through to the normal three-dot range and let the diff surface
+        // the failure rather than dumping the whole tree as "the branch".
+        let (revs, cache_sha) = if matches!(self.merge_base_by_sha(base_sha, head), Ok(None)) {
+            (
+                vec![EMPTY_TREE_SHA.to_string(), head.to_string()],
+                EMPTY_TREE_SHA.to_string(),
+            )
+        } else {
+            (vec![format!("{base_sha}...{head}")], base_sha.to_string())
+        };
+
+        Some(BranchDiffSpec {
+            revs,
+            base_name: base.name.clone(),
+            cache_sha,
+        })
+    }
+
     /// Resolve a tree spec (e.g. `"refs/heads/main^{tree}"`) to its tree SHA.
     /// Uncached — tree resolution is cheap (~1 ms) and stale-prone if memoized
-    /// against a moving ref name.
+    /// against a moving ref name. When the input is a commit SHA, prefer
+    /// [`Self::commit_to_tree_sha`], which memoizes the immutable commit→tree
+    /// mapping.
     pub(super) fn rev_parse_tree(&self, spec: &str) -> anyhow::Result<String> {
         Ok(self
             .run_command(&["rev-parse", "--verify", "--end-of-options", spec])?
             .trim()
             .to_string())
+    }
+
+    /// Resolve a commit SHA to its tree SHA, memoized in the in-memory repo
+    /// cache (get-or-create — the same lock-free pattern as
+    /// [`Self::merge_base_by_sha`]).
+    ///
+    /// Unlike [`Self::rev_parse_tree`], the input is a commit SHA, so the
+    /// commit→tree mapping is content-addressed and never stale within a
+    /// process — a `git` object's tree is immutable. Caching it dedups the
+    /// `wt list` hot path, where every branch row peels the *same*
+    /// default-branch tip to its tree inside
+    /// [`Self::would_merge_add_to_target`]; without the cache that is one
+    /// identical `rev-parse` subprocess per row.
+    ///
+    /// In-memory rather than the persistent `sha_cache`: the resolution is
+    /// ~1 ms, so cross-run persistence saves almost nothing, while the `Entry`
+    /// match holds the shard lock across check-and-insert so the first miss
+    /// computes once and every concurrent row reads it — no cold-start race.
+    /// The disk cache is reserved for results expensive enough that persisting
+    /// them across invocations outweighs a one-off recompute.
+    fn commit_to_tree_sha(&self, commit_sha: &str) -> anyhow::Result<String> {
+        use dashmap::mapref::entry::Entry;
+        match self.cache.commit_tree.entry(commit_sha.to_string()) {
+            Entry::Occupied(e) => Ok(e.get().clone()),
+            Entry::Vacant(e) => {
+                let tree = self.rev_parse_tree(&format!("{commit_sha}^{{tree}}"))?;
+                Ok(e.insert(tree).clone())
+            }
+        }
     }
 
     /// Resolve a ref to its commit SHA. Uncached — callers that want
@@ -683,6 +859,50 @@ mod snapshot_resolve_tests {
         // Bogus ref → error (not a confusing "unknown option" — `--verify`
         // surfaces a clean "Needed a single revision" / "bad revision").
         assert!(snapshot_resolve(&repo, &snapshot, "no-such-ref").is_err());
+    }
+}
+
+#[cfg(test)]
+mod commit_tree_cache_tests {
+    use super::*;
+    use crate::testing::TestRepo;
+
+    /// The integration probe peels the target commit to its tree once and
+    /// memoizes it in the in-memory repo cache, keyed by the target commit
+    /// SHA — so the many `wt list` rows sharing one target don't each spawn
+    /// `git rev-parse <target>^{tree}`.
+    #[test]
+    fn probe_caches_target_tree_in_memory() {
+        let test = TestRepo::with_initial_commit();
+
+        // Feature adds a file; main is unchanged. The merge is clean but adds
+        // changes, so the probe reaches the Clean arm of
+        // would_merge_add_to_target and resolves the target (main) tree.
+        test.run_git(&["checkout", "-b", "feature"]);
+        std::fs::write(test.root_path().join("new.txt"), "content\n").unwrap();
+        test.run_git(&["add", "new.txt"]);
+        test.run_git(&["commit", "-m", "Feature"]);
+        test.run_git(&["checkout", "main"]);
+
+        let feature_sha = test.git_output(&["rev-parse", "feature"]);
+        let main_sha = test.git_output(&["rev-parse", "main"]);
+        let main_tree = test.git_output(&["rev-parse", "main^{tree}"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        assert!(!repo.cache.commit_tree.contains_key(&main_sha));
+
+        let probe = repo
+            .merge_integration_probe_by_sha(&feature_sha, &main_sha)
+            .unwrap();
+        assert!(probe.would_merge_add, "clean merge adds the new file");
+
+        // Target tree resolved once and cached under the target commit SHA.
+        let cached = repo
+            .cache
+            .commit_tree
+            .get(&main_sha)
+            .map(|e| e.value().clone());
+        assert_eq!(cached, Some(main_tree));
     }
 }
 
@@ -880,6 +1100,65 @@ mod patch_id_tests {
             check_integration(&signals),
             Some(IntegrationReason::PatchIdMatch),
             "squash merge must be detected via patch-id regardless of diff.* config"
+        );
+    }
+}
+
+#[cfg(test)]
+mod merge_tree_cache_tests {
+    use super::*;
+    use crate::testing::TestRepo;
+
+    /// The conflict probe ([`Repository::has_merge_conflicts_by_sha`], driving
+    /// the `WouldConflict` column) and the integration probe
+    /// ([`Repository::merge_integration_probe_by_sha`], driving the
+    /// integration column) both run `git merge-tree --write-tree <target>
+    /// <branch>` for the same row but extract different answers — the conflict
+    /// bit versus the resulting tree. They must key the in-memory cache
+    /// identically, in `(target, branch)` order, so the subprocess fires once
+    /// per row rather than once per probe. An argument-order regression on
+    /// either call site would split this into two entries (two spawns); this
+    /// pins it at one.
+    #[test]
+    fn conflict_and_integration_probes_share_one_merge_tree_spawn() {
+        let test = TestRepo::with_initial_commit();
+
+        // feature: one commit ahead of main, clean-mergeable, not integrated.
+        test.run_git(&["checkout", "-b", "feature"]);
+        std::fs::write(test.root_path().join("new.txt"), "content\n").unwrap();
+        test.run_git(&["add", "new.txt"]);
+        test.run_git(&["commit", "-m", "feature"]);
+        test.run_git(&["checkout", "main"]);
+
+        let main_sha = test.git_output(&["rev-parse", "main"]);
+        let feature_sha = test.git_output(&["rev-parse", "feature"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        // Conflict probe: a clean merge has no conflicts.
+        assert!(
+            !repo
+                .has_merge_conflicts_by_sha(&main_sha, &feature_sha)
+                .unwrap()
+        );
+        // Integration probe: merging adds new.txt, so it would change main —
+        // not yet integrated, and no patch-id fallback (merge was clean).
+        let probe = repo
+            .merge_integration_probe_by_sha(&feature_sha, &main_sha)
+            .unwrap();
+        assert!(probe.would_merge_add);
+        assert!(!probe.is_patch_id_match);
+
+        // Both probes resolved through a single shared merge-tree entry, keyed
+        // (target, branch) = (main, feature).
+        assert_eq!(
+            repo.cache.merge_tree.len(),
+            1,
+            "conflict + integration probes must share one merge-tree cache entry"
+        );
+        assert!(
+            repo.cache.merge_tree.contains_key(&(main_sha, feature_sha)),
+            "the shared entry must be keyed (target, branch)"
         );
     }
 }

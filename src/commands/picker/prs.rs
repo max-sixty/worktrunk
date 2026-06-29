@@ -35,17 +35,15 @@
 //! GitHub and GitLab only. Gitea and Azure DevOps support `pr:{N}` for a
 //! single known number but have no listing path here yet.
 
-use std::borrow::Cow;
 use std::collections::HashSet;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
 use anstyle::{Reset, Style};
 use anyhow::Context;
 use color_print::cformat;
-use ratatui::text::Line;
 use serde::Deserialize;
 use skim::prelude::*;
 use unicode_width::UnicodeWidthStr;
@@ -53,17 +51,15 @@ use worktrunk::git::{CiPlatform, Repository};
 use worktrunk::styling::{HINT_SYMBOL, INFO_SYMBOL, StyledLine, WARNING_SYMBOL, warning_message};
 
 use super::super::list::ci_status::{
-    CiSource, CiStatus, GitHubPrInfo, PrRef, PrStatus, ReviewState, non_interactive_cmd,
-    tool_available,
+    CiSource, CiStatus, GitHubComment, GitHubPrInfo, PrRef, PrStatus, ReviewState,
+    non_interactive_cmd, tool_available,
 };
 use super::super::list::columns::ColumnKind;
 use super::super::list::layout::ColumnGrid;
-use super::items::{
-    PreviewCache, RowShortcutData, RowUrl, ShortcutTable, TabAvailability, WorktreeSkimItem,
-    ansi_to_line, push_pr_search_tokens, render_preview_tabs,
-};
+use super::items::{PickerRow, PreviewCache, RowShortcutData, RowUrl, ShortcutTable};
 use super::pr_pane;
-use super::preview::{PreviewMode, PreviewStateData};
+use super::preview::PreviewMode;
+use super::preview_cache::CommentEntry;
 use super::preview_notify::PreviewNotifier;
 use super::preview_orchestrator::PreviewOrchestrator;
 
@@ -170,6 +166,12 @@ struct PrEntry {
     /// `None` when the forge can't supply it in one call (the row then keeps
     /// its `#N` in the title instead of the CI column).
     status: Option<PrStatus>,
+    /// GitHub PR `updatedAt`, riding the one list call — keys the row's on-disk
+    /// comments cache so a repeat `--prs` open skips the per-row comments fetch
+    /// when nothing changed (see [`compute_pr_comments`]). `None` for GitLab MRs
+    /// (their `updated_at` is throttled and delete-blind, so MR comments aren't
+    /// disk-cached).
+    updated_at: Option<String>,
 }
 
 impl PrEntry {
@@ -187,6 +189,43 @@ impl PrEntry {
     /// names, so it can never collide with a worktree row's branch-name key.
     fn output_token(&self) -> String {
         format!("{}:{}", self.kind.shortcut(), self.number)
+    }
+
+    /// The `PrStatus` a listed `--prs` row feeds into the unified row's static
+    /// PR slot. Its CI status (or a no-CI base when the forge couldn't supply
+    /// one in the list call) is overlaid with the entry's display fields —
+    /// number, title, author, body, url, and draft state — so the unified
+    /// `text()` and `pr` pane read every field from the slot exactly as a
+    /// worktree row does. Unlike the worktree slot (which `on_update`
+    /// overwrites as the live CI fetch lands), this one is built once and never
+    /// mutated, so its `(pr:N, Pr)` preview memo stays valid for the row's life.
+    fn display_status(&self) -> PrStatus {
+        let mut status = self.status.clone().unwrap_or(PrStatus {
+            ci_status: CiStatus::NoCI,
+            source: CiSource::PullRequest,
+            is_stale: false,
+            is_priming: false,
+            url: None,
+            number: None,
+            review_state: None,
+            title: None,
+            body: None,
+            author: None,
+            comment_count: None,
+            updated_at: None,
+        });
+        status.number = status.number.or_else(|| Some(self.pr_ref()));
+        status.title = Some(self.title.clone()).filter(|t| !t.is_empty());
+        status.author = Some(self.author.clone()).filter(|a| !a.is_empty());
+        status.body = Some(self.body.clone()).filter(|b| !b.is_empty());
+        status.url = self.url.clone();
+        // The `--prs` pane's draft line keys off `is_draft` directly; mirror it
+        // onto the slot's `review_state` so the unified `render_pr_pane_body`
+        // renders the `state: draft` line for listed rows too.
+        if self.is_draft {
+            status.review_state = Some(ReviewState::Draft);
+        }
+        status
     }
 }
 
@@ -211,12 +250,31 @@ pub(super) struct PrsLayout {
 }
 
 /// The structures the `--prs` thread coordinates with the collect side: the
-/// column-geometry handoff that aligns PR rows with the worktree grid, and the
-/// `alt-y` / `alt-o` shortcut table it extends with PR/MR rows. Bundled so the
-/// streaming entry points stay within the argument budget.
+/// column-geometry handoff that aligns PR rows with the worktree grid, the
+/// `alt-y` / `alt-o` shortcut table it extends with PR/MR rows, and the picker's
+/// shared row list it appends those rows into. Bundled so the streaming entry
+/// points stay within the argument budget.
 pub(super) struct PrsShared {
     pub grid_slot: Arc<GridSlot>,
     pub shortcut_table: ShortcutTable,
+    /// The picker's row list (`shared_items` — what `resync_pool` rebuilds skim's
+    /// pool from on an `alt-x` removal). `on_skeleton` fills it with the
+    /// worktree/branch rows; the `--prs` thread appends its PR/MR rows here too,
+    /// so a removal's pool rebuild keeps the streamed rows (they reach skim
+    /// through its own channel, which `resync_pool` never reads). Appended after
+    /// the skeleton has populated it — the `grid_slot.wait` below is gated on
+    /// that — so PR rows always land after the worktree rows, never in the
+    /// reserved header slot.
+    pub shared_items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>>,
+    /// Session-shared spawn counter (`PipelineFactory::prs_epoch`); each spawn
+    /// bumps it. Read together with `current_epoch` to decide whether this
+    /// thread's append is still wanted — see the append in [`fetch_and_stream`].
+    pub epoch: Arc<AtomicUsize>,
+    /// This spawn's `epoch` value, captured when the thread was spawned. The
+    /// append into `shared_items` runs only while `epoch` still equals it, so a
+    /// stale forge call from a pre-refresh spawn (whose skim channel is already
+    /// dropped) can't pollute the list a newer spawn rebuilt.
+    pub current_epoch: usize,
 }
 
 /// Stream the open PRs/MRs into the picker, then clear the header's "loading…"
@@ -310,7 +368,7 @@ fn fetch_and_stream(
     // Drop PRs already on screen as a worktree/branch row, so `--prs` only adds
     // PRs not already represented — the two pickers differ solely by the extra
     // rows. A worktree row folds the same number/title/author into its matcher
-    // text (see `WorktreeSkimItem::text`), so the dropped PR stays just as
+    // text (see `PickerRow::text`), so the dropped PR stays just as
     // filterable under its worktree row.
     let entries = additional_prs(entries, shown_branches.as_ref());
     if entries.is_empty() {
@@ -335,22 +393,86 @@ fn fetch_and_stream(
                 RowShortcutData {
                     branch: Some(entry.head_branch.clone()),
                     url: RowUrl::Static(entry.url.clone()),
+                    // A `--prs` row has no local worktree to remove, so `alt-x`
+                    // can't morph it.
+                    morph: None,
                 },
             );
-            Arc::new(PrSkimItem::new(
-                entry,
-                layout.list_width,
+            Arc::new(listed_pr_row(
+                &entry,
                 grid.as_ref(),
-                &orchestrator.cache,
-                orchestrator.notifier(),
+                layout.list_width,
+                Arc::clone(&orchestrator.cache),
+                Arc::clone(orchestrator.notifier()),
             )) as Arc<dyn SkimItem>
         })
         .collect();
+
+    // Record the PR rows in the picker's shared list so an `alt-x` removal's
+    // pool rebuild (`resync_pool`) keeps them — they reach skim through its own
+    // channel below, which the rebuild never reads. The skeleton has already
+    // populated `shared_items` (the `grid_slot.wait` above gates on it), so this
+    // appends after the worktree rows. Done under the lock and gated on the spawn
+    // epoch: a stale forge call from a pre-refresh spawn (its skim channel already
+    // dropped) must not add rows to the list a newer spawn rebuilt — reading the
+    // epoch inside the lock pairs the check with the next spawn's `on_skeleton`
+    // overwrite, which holds the same lock. Ordered before `tx.send` so the rows
+    // reach `shared_items` no later than they reach skim's pool.
+    {
+        let mut list = shared.shared_items.lock().unwrap();
+        if shared.epoch.load(Ordering::SeqCst) == shared.current_epoch {
+            list.extend(items.iter().map(Arc::clone));
+        }
+    }
     let _ = tx.send(items);
 }
 
+/// Build a listed `--prs` row: a [`PickerRow`] with `local: None` and a static
+/// PR slot pre-filled from `entry` via [`PrEntry::display_status`], which
+/// overlays the entry's number/title/author/body/url/draft onto its CI status
+/// so `text()` folds the same tokens and `render_pr_pane_body` renders the same
+/// pane a worktree row's PR does. The gutter glyph is the trimmed
+/// `PR_GUTTER_SIGIL` (`#`), kept last in `text()` so typing `#` filters to
+/// PR/MR rows. Both the `--prs` fetch thread and the row tests build rows here,
+/// so the two constructions can't drift.
+///
+/// The `pr` pane renders lazily from that static metadata and is memoized in
+/// the shared `preview_cache` under `(pr:N, Pr)`. That cache outlives any one
+/// row, so a fresh build — an `alt-r` reload re-running `fetch_and_stream` —
+/// drops the prior entry for this `pr:N`; otherwise the rebuilt row would serve
+/// the pre-reload pane after the PR changed upstream. A worktree row gets the
+/// equivalent invalidation from `progressive_handler::on_update` when its live
+/// slot changes; a `--prs` row has no live slot, so construction is the analog.
+fn listed_pr_row(
+    entry: &PrEntry,
+    grid: Option<&ColumnGrid>,
+    list_width: usize,
+    preview_cache: PreviewCache,
+    notifier: Arc<PreviewNotifier>,
+) -> PickerRow {
+    let output_token = entry.output_token();
+    preview_cache.remove(&(output_token.clone(), PreviewMode::Pr));
+    // The display line is built once and never mutated (a `--prs` row has no
+    // live list pipeline behind it).
+    let rendered = match grid {
+        Some(grid) => render_grid_row(entry, grid, list_width),
+        None => render_freeform_row(entry, list_width),
+    };
+    PickerRow {
+        search_base: entry.head_branch.clone(),
+        gutter: '#',
+        rendered: Arc::new(Mutex::new(rendered)),
+        branch_name: entry.head_branch.clone(),
+        output_token,
+        preview_cache,
+        pr_status: Arc::new(Mutex::new(Some(Some(entry.display_status())))),
+        notifier,
+        local: None,
+    }
+}
+
 /// Spawn the deferred per-row preview fetches for one `--prs` row, keyed by the
-/// row's `pr:{N}` / `mr:{N}` token so [`PrSkimItem::preview`] reads them back.
+/// row's `pr:{N}` / `mr:{N}` token so the row's `preview()` reads them back.
 /// Each is fire-and-forget on `COLLECT_POOL`, spawned once per row. `preview()`
 /// only reads the cache, and the fetch runs once per row with no in-session
 /// retry, so each closure resolves to a terminal pane: the rendered content, or
@@ -361,7 +483,7 @@ fn fetch_and_stream(
 /// Both tabs are spawned eagerly, once per row, for all rows — so a `--prs` open
 /// queues up to `2 × MAX_PRS` (~100) per-PR forge calls. This is deliberate and
 /// mirrors how the picker already fetches per-row CI status: spawning once here
-/// (not from `preview()`) keeps [`PrSkimItem::preview`] a pure cache read with no
+/// (not from `preview()`) keeps the row's `preview()` a pure cache read with no
 /// in-flight bookkeeping, so skim's UI thread never blocks and a row can't spawn
 /// a duplicate fetch on every repaint. `COLLECT_POOL` bounds how many run at once,
 /// and the picker's lifetime is user-bounded, so a slow forge call never blocks
@@ -395,7 +517,14 @@ fn spawn_pr_previews(
             .unwrap_or_else(|| pr_unavailable_pane("commit log")),
         )
     });
-    spawn_comments_fetch(orchestrator, token, entry.kind, entry.number, width);
+    spawn_comments_fetch(
+        orchestrator,
+        token,
+        entry.kind,
+        entry.number,
+        entry.updated_at.clone(),
+        width,
+    );
 }
 
 /// Spawn the background `comments` fetch keyed by `key_token`, fetching through
@@ -409,16 +538,23 @@ fn spawn_pr_previews(
 /// keyspaces can't collide. A failed fetch caches a terminal [`pr_unavailable_pane`]
 /// (not `None`), so the tab never strands on its loading placeholder — see
 /// [`spawn_pr_previews`] and [`PreviewOrchestrator::spawn_compute`].
+///
+/// `updated_at` is the GitHub PR's `updatedAt` content signature (riding the
+/// forge call the picker already made), used to disk-cache the rendered pane so
+/// a later `wt switch` skips this fetch when it's unchanged. `None` for GitLab
+/// (or any forge whose timestamp can't key the cache) means the fetch always
+/// runs and nothing is written to disk — see [`compute_pr_comments`].
 fn spawn_comments_fetch(
     orchestrator: &PreviewOrchestrator,
     key_token: String,
     kind: RefKind,
     number: u32,
+    updated_at: Option<String>,
     width: usize,
 ) {
     orchestrator.spawn_compute((key_token, PreviewMode::Comments), move |repo| {
         Some(
-            compute_pr_comments(repo, kind, number, width)
+            compute_pr_comments(repo, kind, number, updated_at.as_deref(), width)
                 .unwrap_or_else(|| pr_unavailable_pane("comments")),
         )
     });
@@ -438,6 +574,7 @@ pub(super) fn spawn_worktree_comments_fetch(
     orchestrator: &PreviewOrchestrator,
     branch: String,
     number: u32,
+    updated_at: Option<String>,
     width: usize,
 ) {
     let kind = match orchestrator.repo().ci_platform(None) {
@@ -451,7 +588,7 @@ pub(super) fn spawn_worktree_comments_fetch(
             return;
         }
     };
-    spawn_comments_fetch(orchestrator, branch, kind, number, width);
+    spawn_comments_fetch(orchestrator, branch, kind, number, updated_at, width);
 }
 
 /// The `comments` tab pane for a worktree row whose branch has a PR on a forge
@@ -500,19 +637,13 @@ struct GhPr {
     head_ref_oid: String,
     /// CI/review and display fields reused via the shared `gh pr list` mapping:
     /// number, `title`, `body`, `author`, `isDraft`, `url`, `statusCheckRollup`,
-    /// `reviewDecision`, `mergeStateStatus`. Flattened so one parse feeds the
-    /// row display, the `pr` preview pane, and the CI-column status. `title`/
-    /// `body`/`author` live on [`GitHubPrInfo`] (not here) so the worktree-row
-    /// fetch, which parses `GitHubPrInfo` directly, gets them from the same
-    /// widened call.
+    /// `reviewDecision`, `mergeStateStatus`, `updatedAt`. Flattened so one parse
+    /// feeds the row display, the `pr` preview pane, the CI-column status, and the
+    /// comments-cache key. `title`/`body`/`author` live on [`GitHubPrInfo`] (not
+    /// here) so the worktree-row fetch, which parses `GitHubPrInfo` directly, gets
+    /// them from the same widened call.
     #[serde(flatten)]
     info: GitHubPrInfo,
-}
-
-#[derive(Deserialize, Default)]
-struct GhAuthor {
-    #[serde(default)]
-    login: String,
 }
 
 fn fetch_github(repo_root: &Path) -> anyhow::Result<Vec<PrEntry>> {
@@ -530,7 +661,7 @@ fn fetch_github(repo_root: &Path) -> anyhow::Result<Vec<PrEntry>> {
             &MAX_PRS.to_string(),
             "--json",
             // CI/review fields and the description ride the one call; no extra round-trip.
-            "number,title,headRefName,headRefOid,author,isDraft,url,body,statusCheckRollup,reviewDecision,mergeStateStatus",
+            "number,title,headRefName,headRefOid,author,isDraft,url,body,statusCheckRollup,reviewDecision,mergeStateStatus,updatedAt",
         ])
         .current_dir(repo_root)
         .run()
@@ -566,6 +697,7 @@ fn parse_github_prs(stdout: &[u8]) -> anyhow::Result<Vec<PrEntry>> {
             url: pr.info.url.clone(),
             kind: RefKind::Pr,
             body: pr.info.body.clone().unwrap_or_default(),
+            updated_at: pr.info.updated_at.clone(),
             status: Some(pr.info.open_pr_status()),
         })
         .collect())
@@ -651,6 +783,9 @@ fn parse_gitlab_mrs(stdout: &[u8]) -> anyhow::Result<Vec<PrEntry>> {
                 url: mr.web_url,
                 kind: RefKind::Mr,
                 body: mr.description,
+                // GitLab's MR `updated_at` is throttled and delete-blind, so it
+                // can't key a comments cache — MR comments stay uncached.
+                updated_at: None,
                 status: Some(status),
             }
         })
@@ -694,119 +829,7 @@ fn gitlab_mr_status(
         body: None,
         author: None,
         comment_count: None,
-    }
-}
-
-/// A picker row for one open PR/MR. Distinct from `WorktreeSkimItem`: it
-/// carries no `ListItem` and resolves to a `pr:`/`mr:` shortcut rather than a
-/// branch or worktree path.
-pub(super) struct PrSkimItem {
-    /// What skim's fuzzy matcher sees: head branch, then the PR/MR reference,
-    /// title, and author — the same fields a worktree row folds in.
-    search_text: String,
-    /// ANSI-colored display line — cells on the worktree rows' column grid,
-    /// or a freeform line when no grid is available.
-    rendered: String,
-    /// Selection result — the `pr:{N}` / `mr:{N}` shortcut. Routed verbatim
-    /// through `resolve_identifier` → `SwitchPipeline`.
-    output_token: String,
-    /// The tab-6 (`pr`) pane: PR/MR metadata and web URL, built once at
-    /// construction from already-fetched data. A `--prs` row has no local
-    /// worktree, so the working-tree/branch-diff/upstream tabs render an empty
-    /// placeholder instead.
-    pr_pane: String,
-    /// Shared preview cache (same map the worktree rows use), read by the
-    /// deferred `log` tab. Keyed by `(output_token, mode)`; the background
-    /// fetch spawned in [`spawn_pr_previews`] populates it off-thread, and a
-    /// miss falls back to a loading placeholder (auto-surfaced once the fetch
-    /// lands — see `notifier`).
-    preview_cache: PreviewCache,
-    /// Surfaces a deferred-tab fetch without a keystroke. `preview()` records
-    /// the row's awaited `(output_token, mode)` here; the orchestrator pokes a
-    /// repaint when that tab's background fetch lands (see [`PreviewNotifier`]).
-    notifier: Arc<PreviewNotifier>,
-}
-
-impl PrSkimItem {
-    fn new(
-        entry: PrEntry,
-        list_width: usize,
-        grid: Option<&ColumnGrid>,
-        preview_cache: &PreviewCache,
-        notifier: &Arc<PreviewNotifier>,
-    ) -> Self {
-        let output_token = entry.output_token();
-
-        // Same matcher text a worktree row builds (see `WorktreeSkimItem::text`
-        // and `push_pr_search_tokens`): head branch, then the PR/MR reference,
-        // title, and author, so a PR filters identically however it's shown.
-        // The trailing gutter glyph (`#` from `PR_GUTTER_SIGIL`, sans pad) stays
-        // last so typing `#` filters to PR/MR rows, matching the worktree/branch
-        // rows' folded sigils.
-        let gutter = PR_GUTTER_SIGIL.trim_end();
-        let mut search_text = entry.head_branch.clone();
-        push_pr_search_tokens(
-            &mut search_text,
-            entry.pr_ref(),
-            Some(&entry.title),
-            Some(&entry.author),
-        );
-        search_text.push(' ');
-        search_text.push_str(gutter);
-
-        let rendered = match grid {
-            Some(grid) => render_grid_row(&entry, grid, list_width),
-            None => render_freeform_row(&entry, list_width),
-        };
-
-        let pr_ref = entry.pr_ref();
-        let PrEntry {
-            title,
-            head_branch,
-            author,
-            is_draft,
-            url,
-            body,
-            ..
-        } = entry;
-        // The shared `pr_pane` helpers build the same header / metadata / body
-        // shape as the worktree-row pane (see `items::render_worktree_pr`), so
-        // the two read alike. They close each styled span with a full `{reset}`
-        // (\x1b[0m) because skim's ANSI parser drops color_print's `</>` (SGR
-        // 22/24/39 — bold/underline/color); the `draft` value below does the same.
-        let reset = Reset;
-        let mut pr_pane = pr_pane::header(pr_ref, Some(&title));
-        pr_pane.push_str(&pr_pane::branch_line(&head_branch));
-        pr_pane.push_str(&pr_pane::metadata_line("author", &format!("@{author}")));
-        if is_draft {
-            pr_pane.push_str(&pr_pane::metadata_line(
-                "state",
-                &cformat!("<yellow>draft</>{reset}"),
-            ));
-        }
-        if let Some(url) = url {
-            pr_pane.push_str(&pr_pane::url_line(&url));
-        }
-        pr_pane.push_str(&pr_pane::description(&body, list_width));
-
-        Self {
-            search_text,
-            rendered,
-            output_token,
-            pr_pane,
-            preview_cache: Arc::clone(preview_cache),
-            notifier: Arc::clone(notifier),
-        }
-    }
-
-    /// Read a deferred tab's pane from the shared cache, or a loading
-    /// placeholder on a miss. The background fetch (see [`spawn_pr_previews`])
-    /// keys by this row's `output_token`, the same as [`PrEntry::output_token`].
-    fn cached_pane(&self, mode: PreviewMode) -> String {
-        self.preview_cache
-            .get(&(self.output_token.clone(), mode))
-            .map(|v| v.value().clone())
-            .unwrap_or_else(|| pr_deferred_loading(mode))
+        updated_at: None,
     }
 }
 
@@ -815,7 +838,7 @@ impl PrSkimItem {
 /// out locally, so there's no working tree or diff to show; point the user at
 /// the `pr` tab, which holds the PR/MR metadata. The `log` tab (2) is *not*
 /// empty — it loads commits in the background (see [`compute_pr_log`]).
-fn pr_row_empty_placeholder() -> String {
+pub(super) fn pr_row_empty_placeholder() -> String {
     let reset = Reset;
     cformat!(
         "{INFO_SYMBOL}{reset} Not checked out locally — press <bold>alt-6</>{reset} for PR details, Enter to fetch & switch\n"
@@ -824,13 +847,13 @@ fn pr_row_empty_placeholder() -> String {
 
 /// Placeholder for a deferred forge-fetch tab while its background fetch is still
 /// in flight. The pane fills in on its own once the fetch lands — the orchestrator
-/// pokes a repaint for the awaited tab (see [`PreviewNotifier`]) — so the
+/// pokes a repaint for the awaited tab (see `PreviewNotifier`) — so the
 /// placeholder just states what's loading, the same contract as the worktree
 /// rows' `loading_placeholder`. Shown only during the in-flight window: once the
 /// fetch resolves, a terminal pane replaces it — the rendered content or
 /// [`pr_unavailable_pane`] on failure — so it never persists past the fetch.
 /// Shared with worktree rows' `comments` tab (see
-/// [`super::items::WorktreeSkimItem::render_comments_pane`]) so both row types
+/// [`super::items::PickerRow::render_comments_pane`]) so both row types
 /// show the identical in-flight pane.
 pub(super) fn pr_deferred_loading(mode: PreviewMode) -> String {
     let label = match mode {
@@ -951,7 +974,7 @@ fn local_log(
     {
         return None;
     }
-    let rendered = WorktreeSkimItem::compute_log_for_head(repo, oid, head_branch, width, height);
+    let rendered = PickerRow::compute_log_for_head(repo, oid, head_branch, width, height);
     (!rendered.is_empty()).then_some(rendered)
 }
 
@@ -1031,64 +1054,77 @@ fn render_commit_lines(commits: &[(String, String)], width: usize) -> String {
 /// `--paginate` follows every page so a long thread isn't capped at GitLab's
 /// default page size. Returns `None` on any failure; the caller maps that to a
 /// terminal [`pr_unavailable_pane`] (see [`spawn_pr_previews`]).
+///
+/// `updated_at` is the GitHub PR's `updatedAt` content signature. When present
+/// (GitHub only), the parsed thread is read from / written to the on-disk
+/// comments cache keyed by `(number, updated_at)` — a hit re-renders the cached
+/// [`CommentEntry`]s at the live width with no forge call, so a repeat
+/// `wt switch` skips the `gh pr view --json comments` fetch when nothing changed.
+/// `None` (GitLab, whose `updated_at` can't key a cache) takes the always-fetch
+/// path and writes nothing to disk. See [`super::preview_cache::read_comments`].
 fn compute_pr_comments(
     repo: &Repository,
     kind: RefKind,
     number: u32,
+    updated_at: Option<&str>,
     width: usize,
 ) -> Option<String> {
-    let number = number.to_string();
-    let endpoint = format!("projects/:fullpath/merge_requests/{number}/notes?sort=asc");
+    // Disk cache hit: the cached entry is the raw parsed thread, re-rendered
+    // here at the live width and current relative time (the pane folds in both),
+    // so a hit returns with no forge call. GitHub worktree rows usually hit even
+    // on the first `wt switch` of a session — the CI call primed this entry from
+    // the thread it already carried (see `ci_status::github::prime_comments_cache`).
+    if let Some(ts) = updated_at
+        && let Some(cached) = super::preview_cache::read_comments(repo, number, ts)
+    {
+        return Some(render_comment_blocks(&cached, width));
+    }
+
+    // TODO(gitlab-comments-cache): GitLab MRs always reach the fetch below —
+    // their `updated_at` can't key the cache (throttled to ~1/min and blind to
+    // note deletion). If MR comment fetches become a quota concern, synthesize a
+    // signature from a cheap `notes?per_page=1` probe — the `X-Total` header plus
+    // the newest note's `updated_at` both move on any add/edit/delete — and
+    // disk-cache MRs the same way GitHub PRs are cached here.
+    let number_str = number.to_string();
+    let endpoint = format!("projects/:fullpath/merge_requests/{number_str}/notes?sort=asc");
     let stdout = fetch_forge_json(
         repo,
         kind,
-        &["pr", "view", &number, "--json", "comments"],
+        &["pr", "view", &number_str, "--json", "comments"],
         &["api", "--paginate", &endpoint],
     )?;
-    match kind {
-        RefKind::Pr => render_github_comments(&stdout, width),
-        RefKind::Mr => render_gitlab_notes(&stdout, width),
+    let comments = match kind {
+        RefKind::Pr => parse_github_comments(&stdout),
+        RefKind::Mr => parse_gitlab_notes(&stdout),
+    }?;
+
+    // Persist the raw thread for the next session, keyed by the content
+    // signature. Only GitHub PRs carry a usable `updated_at`; GitLab skips it.
+    if let Some(ts) = updated_at {
+        super::preview_cache::write_comments(repo, number, ts, &comments);
     }
+    Some(render_comment_blocks(&comments, width))
 }
 
-/// One PR/MR comment, normalized across forges for the `comments` pane.
-struct Comment {
-    author: String,
-    body: String,
-    /// RFC 3339 timestamp; rendered as relative time when parseable.
-    created_at: String,
-}
-
+// The normalized per-comment type is [`CommentEntry`] (author/body/created_at):
+// the parse functions below produce it, the disk cache stores it, and
+// `render_comment_blocks` renders it. Caching the raw fields (not the rendered
+// pane) keeps width and relative time out of the cache, so the thread re-renders
+// correctly at the live width and current time on every read.
 #[derive(Deserialize)]
 struct GhCommentsResponse {
     #[serde(default)]
-    comments: Vec<GhComment>,
+    comments: Vec<GitHubComment>,
 }
 
-#[derive(Deserialize)]
-struct GhComment {
-    #[serde(default)]
-    author: GhAuthor,
-    #[serde(default)]
-    body: String,
-    #[serde(rename = "createdAt", default)]
-    created_at: String,
-}
-
-/// Map `gh pr view <n> --json comments` to the `comments` pane. gh returns the
-/// thread oldest-first, which reads top-to-bottom.
-fn render_github_comments(stdout: &[u8], width: usize) -> Option<String> {
+/// Parse `gh pr view <n> --json comments` into the normalized thread. gh returns
+/// the comments oldest-first, which reads top-to-bottom; the order is preserved.
+/// The per-comment shape is shared with the worktree CI call, so this reuses
+/// [`GitHubComment`] rather than a parallel struct (see its `From<&_>` impl).
+fn parse_github_comments(stdout: &[u8]) -> Option<Vec<CommentEntry>> {
     let parsed: GhCommentsResponse = serde_json::from_slice(stdout).ok()?;
-    let comments: Vec<Comment> = parsed
-        .comments
-        .into_iter()
-        .map(|c| Comment {
-            author: c.author.login,
-            body: c.body,
-            created_at: c.created_at,
-        })
-        .collect();
-    Some(render_comment_blocks(&comments, width))
+    Some(parsed.comments.iter().map(CommentEntry::from).collect())
 }
 
 #[derive(Deserialize)]
@@ -1105,20 +1141,21 @@ struct GlabNote {
     system: bool,
 }
 
-/// Map `glab api …/notes` to the `comments` pane, dropping system notes (label
-/// changes, description edits, …) so only human comments show.
-fn render_gitlab_notes(stdout: &[u8], width: usize) -> Option<String> {
+/// Parse `glab api …/notes` into the normalized thread, dropping system notes
+/// (label changes, description edits, …) so only human comments show.
+fn parse_gitlab_notes(stdout: &[u8]) -> Option<Vec<CommentEntry>> {
     let notes: Vec<GlabNote> = serde_json::from_slice(stdout).ok()?;
-    let comments: Vec<Comment> = notes
-        .into_iter()
-        .filter(|n| !n.system)
-        .map(|n| Comment {
-            author: n.author.username,
-            body: n.body,
-            created_at: n.created_at,
-        })
-        .collect();
-    Some(render_comment_blocks(&comments, width))
+    Some(
+        notes
+            .into_iter()
+            .filter(|n| !n.system)
+            .map(|n| CommentEntry {
+                author: n.author.username,
+                body: n.body,
+                created_at: n.created_at,
+            })
+            .collect(),
+    )
 }
 
 /// Render the `comments` pane: each comment as a header line (author + relative
@@ -1126,7 +1163,7 @@ fn render_gitlab_notes(stdout: &[u8], width: usize) -> Option<String> {
 /// [`pr_pane::markdown_in_gutter`] the PR/MR body uses. An empty thread renders
 /// an info line so `spawn_compute` caches a terminal value rather than leaving
 /// the slot empty (an empty string is skipped, which would keep the loading placeholder).
-fn render_comment_blocks(comments: &[Comment], width: usize) -> String {
+fn render_comment_blocks(comments: &[CommentEntry], width: usize) -> String {
     let reset = Reset;
     if comments.is_empty() {
         return cformat!("{INFO_SYMBOL}{reset} No comments\n");
@@ -1182,8 +1219,8 @@ fn relative_time(iso: &str) -> Option<String> {
 /// The PR title and author are NOT on the row — they have no worktree-column
 /// equivalent, so showing them would either misalign PR rows against worktree
 /// rows or overrun the status columns. They live in the `pr` preview tab
-/// instead (see `PrSkimItem::pr_pane`); the title still feeds `search_text`, so
-/// fuzzy matching on it works even though it isn't displayed. The other
+/// instead (see `render_pr_pane_body`); the title still feeds the row's matcher
+/// text, so fuzzy matching on it works even though it isn't displayed. The other
 /// worktree-data columns PR rows leave blank (status, diffs, URL, age) are a
 /// follow-up — see TODO(pr-row-columns).
 fn render_grid_row(entry: &PrEntry, grid: &ColumnGrid, list_width: usize) -> String {
@@ -1256,57 +1293,40 @@ fn render_freeform_row(entry: &PrEntry, list_width: usize) -> String {
 // summary would feed those commits (or the PR body) through the same
 // `[commit.generation]` LLM path the worktree `summary` tab uses, keyed and
 // cached the same way via `spawn_pr_previews`.
-impl SkimItem for PrSkimItem {
-    fn text(&self) -> Cow<'_, str> {
-        Cow::Borrowed(&self.search_text)
-    }
-
-    fn display(&self, _context: DisplayContext) -> Line<'_> {
-        ansi_to_line(&self.rendered)
-    }
-
-    fn output(&self) -> Cow<'_, str> {
-        Cow::Borrowed(&self.output_token)
-    }
-
-    fn preview(&self, context: PreviewContext<'_>) -> ItemPreview {
-        // Share the worktree rows' tab bar. A `--prs` row has content on the
-        // `pr` tab (built at construction) and the `log` / `comments` tabs
-        // (fetched in the background, read from the shared cache); the
-        // working-tree/branch-diff/upstream/summary tabs are de-emphasized and
-        // show a placeholder. The active tab is the same global digit, so an
-        // empty tab shows its placeholder until the user switches with alt-N / Tab.
-        let mode = PreviewStateData::read_mode();
-        // Record what this (selected) row is showing before reading the cache, so
-        // a deferred-tab fetch that lands after a miss pokes a repaint (see
-        // `PreviewNotifier`). Keyed by the row's `output_token`, matching the
-        // cache key the fetch fills.
-        self.notifier.note_awaiting(&self.output_token, mode);
-        let mut result = render_preview_tabs(mode, TabAvailability::listed_pr(), context.width);
-        match mode {
-            PreviewMode::Pr => result.push_str(&self.pr_pane),
-            PreviewMode::Log | PreviewMode::Comments => result.push_str(&self.cached_pane(mode)),
-            _ => result.push_str(&pr_row_empty_placeholder()),
-        }
-        ItemPreview::AnsiText(result)
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use super::super::items::PreviewCache;
+    use super::super::preview_notify::PreviewNotifier;
     use super::*;
     use dashmap::DashMap;
 
-    /// Build a `PrSkimItem` with a throwaway empty preview cache — the deferred
+    /// Build a listed-`--prs` `PickerRow` (`local: None`) with a throwaway empty
+    /// preview cache — the same shape `fetch_and_stream` builds. The deferred
     /// `log` tab is exercised separately (see `log_tab_reads_cache_then_placeholder`).
-    fn pr_item(entry: PrEntry, list_width: usize, grid: Option<&ColumnGrid>) -> PrSkimItem {
-        PrSkimItem::new(
-            entry,
-            list_width,
+    fn pr_item(entry: PrEntry, list_width: usize, grid: Option<&ColumnGrid>) -> PickerRow {
+        pr_item_with_cache(entry, list_width, grid, Arc::new(DashMap::new()))
+    }
+
+    /// As [`pr_item`], but sharing an explicit cache so a test can pre-seed a
+    /// deferred-tab pane and then read it back.
+    fn pr_item_with_cache(
+        entry: PrEntry,
+        list_width: usize,
+        grid: Option<&ColumnGrid>,
+        preview_cache: PreviewCache,
+    ) -> PickerRow {
+        listed_pr_row(
+            &entry,
             grid,
-            &Arc::new(DashMap::new()),
-            &PreviewNotifier::detached(),
+            list_width,
+            preview_cache,
+            PreviewNotifier::detached(),
         )
+    }
+
+    /// Read a row's current display line (the `rendered` slot).
+    fn rendered_of(row: &PickerRow) -> String {
+        row.rendered.lock().unwrap().clone()
     }
 
     fn entry(kind: RefKind, number: u32, title: &str) -> PrEntry {
@@ -1324,6 +1344,7 @@ mod tests {
             url: Some("https://github.com/owner/repo/pull/123".to_string()),
             kind,
             body: String::new(),
+            updated_at: None,
             status: Some(PrStatus {
                 ci_status: CiStatus::Passed,
                 source: CiSource::PullRequest,
@@ -1336,6 +1357,7 @@ mod tests {
                 body: None,
                 author: None,
                 comment_count: None,
+                updated_at: None,
             }),
         }
     }
@@ -1427,7 +1449,7 @@ mod tests {
         // and author have no column, so they stay off the row — but the title
         // still feeds `search_text`.
         let pr = pr_item(entry(RefKind::Pr, 1, "Retry the flaky test"), 80, None);
-        let row = plain(&pr.rendered);
+        let row = plain(&rendered_of(&pr));
         assert!(row.contains("feature/auth"), "branch on the row: {row:?}");
         assert!(row.contains("#1"), "reference on the row: {row:?}");
         assert!(
@@ -1448,7 +1470,7 @@ mod tests {
         let mut e = entry(RefKind::Pr, 1, "Title");
         e.head_branch = "a-very-long-branch-name-that-would-otherwise-overflow".to_string();
         let pr = pr_item(e, 40, None);
-        let row = plain(&pr.rendered);
+        let row = plain(&rendered_of(&pr));
         assert!(row.contains("#1"), "reference survives: {row:?}");
         assert!(row.contains('…'), "branch truncated: {row:?}");
         assert!(row.width() <= 40, "row within pane: {row:?}");
@@ -1462,7 +1484,35 @@ mod tests {
         let mut e = entry(RefKind::Pr, 9, "WIP refactor");
         e.is_draft = true;
         let pr = pr_item(e, 120, None);
-        assert!(pr.pr_pane.contains("draft"));
+        assert!(pr.render_pr_pane_cached(120).contains("draft"));
+    }
+
+    /// An `alt-r` reload rebuilds a `--prs` row for the same `pr:N` against the
+    /// session-long preview cache. The rebuilt row must render the freshly
+    /// fetched metadata, not the `pr` pane the previous build memoized: a
+    /// worktree row gets this invalidation from `on_update` when its live slot
+    /// changes, a `--prs` row from its construction in `listed_pr_row`.
+    #[test]
+    fn rebuilt_listed_pr_row_drops_the_stale_pr_pane() {
+        let cache: PreviewCache = Arc::new(DashMap::new());
+
+        // First build: PR #42 is a draft; rendering its `pr` tab memoizes the
+        // draft pane under (pr:42, Pr).
+        let mut draft = entry(RefKind::Pr, 42, "WIP refactor");
+        draft.is_draft = true;
+        let row = pr_item_with_cache(draft, 120, None, Arc::clone(&cache));
+        assert!(
+            row.render_pr_pane_cached(120).contains("draft"),
+            "first build caches the draft pane"
+        );
+
+        // Reload: #42 is now marked ready. The rebuilt row shares the cache.
+        let ready = entry(RefKind::Pr, 42, "WIP refactor");
+        let row = pr_item_with_cache(ready, 120, None, Arc::clone(&cache));
+        assert!(
+            !row.render_pr_pane_cached(120).contains("draft"),
+            "the rebuilt row must re-render, not serve the stale draft pane"
+        );
     }
 
     use super::super::super::list::layout::GridColumn;
@@ -1509,7 +1559,7 @@ mod tests {
             120,
             Some(&grid()),
         );
-        let text = plain(&pr.rendered);
+        let text = plain(&rendered_of(&pr));
         // The dim `#` gutter sigil sits at column 0; branch in the Branch column.
         assert!(text.starts_with("# feature/auth"));
         assert_eq!(display_col(&text, "feature/auth"), 2, "branch column");
@@ -1530,7 +1580,7 @@ mod tests {
         let mut e = entry(RefKind::Pr, 5, "Title");
         e.head_branch = "a-very-long-branch-name-overflowing".to_string();
         let pr = pr_item(e, 120, Some(&grid_with_ci()));
-        let text = plain(&pr.rendered);
+        let text = plain(&rendered_of(&pr));
         // The branch is shortened to its column; the number still lands in CI.
         assert!(text.contains('…'));
         assert_eq!(display_col(&text, "#5"), 34, "number in CI column");
@@ -1546,17 +1596,20 @@ mod tests {
             120,
             Some(&grid_with_ci()),
         );
-        let row = plain(&mr.rendered);
+        let row = plain(&rendered_of(&mr));
         assert!(row.contains("!42"), "grid row uses ! for MRs: {row:?}");
         assert!(
             !row.contains("#42"),
             "grid row must not use # for MRs: {row:?}"
         );
-        assert!(mr.pr_pane.contains("!42"), "preview uses ! for MRs");
+        assert!(
+            mr.render_pr_pane_cached(120).contains("!42"),
+            "preview uses ! for MRs"
+        );
 
         let mr_freeform = pr_item(entry(RefKind::Mr, 42, "Add caching"), 120, None);
         assert!(
-            plain(&mr_freeform.rendered).contains("!42"),
+            plain(&rendered_of(&mr_freeform)).contains("!42"),
             "freeform row uses !"
         );
 
@@ -1567,7 +1620,7 @@ mod tests {
             Some(&grid_with_ci()),
         );
         assert!(
-            plain(&pr.rendered).contains("#42"),
+            plain(&rendered_of(&pr)).contains("#42"),
             "grid row uses # for PRs"
         );
     }
@@ -1585,7 +1638,7 @@ mod tests {
         let mut e = entry(RefKind::Pr, 1, "Title");
         e.head_branch = "a-very-long-branch-name-that-runs-past-the-edge".to_string();
         let pr = pr_item(e, 60, Some(&no_flexible));
-        let text = plain(&pr.rendered);
+        let text = plain(&rendered_of(&pr));
         assert!(text.width() <= 60);
         // Skim's overflow check uses CJK widths, where the truncation `…`
         // counts as 2 — the row must pass it too or skim repaints the last
@@ -1600,7 +1653,7 @@ mod tests {
             120,
             Some(&grid_with_ci()),
         );
-        let text = plain(&pr.rendered);
+        let text = plain(&rendered_of(&pr));
         // The number sits in the CI column (start 34), aligned with worktree
         // rows; the title is not on the row at all.
         assert_eq!(display_col(&text, "#123"), 34, "number in CI column");
@@ -1625,7 +1678,7 @@ mod tests {
             120,
             Some(&grid),
         );
-        let text = plain(&pr.rendered);
+        let text = plain(&rendered_of(&pr));
         assert_eq!(display_col(&text, "feature/auth"), 2, "branch");
         assert_eq!(display_col(&text, "#42"), 24, "number in CI column");
         assert!(
@@ -1644,7 +1697,7 @@ mod tests {
             status.review_state = Some(ReviewState::Draft);
         }
         let pr = pr_item(e, 120, Some(&grid_with_ci()));
-        let text = plain(&pr.rendered);
+        let text = plain(&rendered_of(&pr));
         assert!(
             !text.contains("draft"),
             "no draft flag on the row: {text:?}"
@@ -1793,6 +1846,9 @@ mod tests {
         let shared = PrsShared {
             grid_slot: Arc::new(GridSlot::new()),
             shortcut_table: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            shared_items: Arc::new(Mutex::new(Vec::new())),
+            epoch: Arc::new(AtomicUsize::new(1)),
+            current_epoch: 1,
         };
         let (rtx, mut rrx) = tokio::sync::mpsc::channel(8);
         let render_tx = OnceLock::new();
@@ -1860,36 +1916,29 @@ mod tests {
         let mut with_body = entry(RefKind::Pr, 1, "t");
         with_body.body = "A short summary of the change.".to_string();
         let pr = pr_item(with_body, 120, Some(&grid()));
-        assert!(pr.pr_pane.contains("A short summary of the change."));
+        let pane = pr.render_pr_pane_cached(120);
+        assert!(pane.contains("A short summary of the change."));
         // The body renders flush, not quoted in a gutter bar; `description`
         // prefixes its block with a blank line + full reset.
-        assert!(
-            !pr.pr_pane.contains("\x1b[107m"),
-            "no gutter bar: {:?}",
-            pr.pr_pane
-        );
-        assert!(
-            pr.pr_pane.contains("\n\n\x1b[0m"),
-            "description block present"
-        );
+        assert!(!pane.contains("\x1b[107m"), "no gutter bar: {pane:?}");
+        assert!(pane.contains("\n\n\x1b[0m"), "description block present");
         // The block is headed by a cyan `DESCRIPTION` label, matching branch/url.
         assert!(
-            pr.pr_pane.contains("DESCRIPTION"),
-            "DESCRIPTION label present: {:?}",
-            pr.pr_pane
+            pane.contains("DESCRIPTION"),
+            "DESCRIPTION label present: {pane:?}"
         );
 
         // The base fixture has an empty body — the description block is skipped,
         // label and all.
         let plain_pr = pr_item(entry(RefKind::Pr, 2, "t"), 120, Some(&grid()));
+        let plain_pane = plain_pr.render_pr_pane_cached(120);
         assert!(
-            !plain_pr.pr_pane.contains("\n\n\x1b[0m"),
+            !plain_pane.contains("\n\n\x1b[0m"),
             "no description block when empty"
         );
         assert!(
-            !plain_pr.pr_pane.contains("DESCRIPTION"),
-            "no DESCRIPTION label when empty: {:?}",
-            plain_pr.pr_pane
+            !plain_pane.contains("DESCRIPTION"),
+            "no DESCRIPTION label when empty: {plain_pane:?}"
         );
     }
 
@@ -1933,22 +1982,16 @@ mod tests {
         // alt-2); once the background fetch lands a value under that key, the
         // pane shows it.
         let cache: PreviewCache = Arc::new(DashMap::new());
-        let pr = PrSkimItem::new(
-            entry(RefKind::Pr, 42, "t"),
-            120,
-            None,
-            &cache,
-            &PreviewNotifier::detached(),
-        );
+        let pr = pr_item_with_cache(entry(RefKind::Pr, 42, "t"), 120, None, Arc::clone(&cache));
 
-        let miss = pr.cached_pane(PreviewMode::Log);
+        let miss = pr.cached_or_loading(PreviewMode::Log);
         assert!(miss.contains("Loading commit log"), "miss: {miss:?}");
 
         cache.insert(
             ("pr:42".to_string(), PreviewMode::Log),
             "abc12345  Fix it\n".to_string(),
         );
-        assert_eq!(pr.cached_pane(PreviewMode::Log), "abc12345  Fix it\n");
+        assert_eq!(pr.cached_or_loading(PreviewMode::Log), "abc12345  Fix it\n");
     }
 
     #[test]
@@ -2060,22 +2103,19 @@ mod tests {
         // keyed by the row's output token, with a loading placeholder (pointing
         // at alt-7) on a miss.
         let cache: PreviewCache = Arc::new(DashMap::new());
-        let pr = PrSkimItem::new(
-            entry(RefKind::Mr, 7, "t"),
-            120,
-            None,
-            &cache,
-            &PreviewNotifier::detached(),
-        );
+        let pr = pr_item_with_cache(entry(RefKind::Mr, 7, "t"), 120, None, Arc::clone(&cache));
 
-        let miss = pr.cached_pane(PreviewMode::Comments);
+        let miss = pr.cached_or_loading(PreviewMode::Comments);
         assert!(miss.contains("Loading comments"), "miss: {miss:?}");
 
         cache.insert(
             ("mr:7".to_string(), PreviewMode::Comments),
             "rendered thread".to_string(),
         );
-        assert_eq!(pr.cached_pane(PreviewMode::Comments), "rendered thread");
+        assert_eq!(
+            pr.cached_or_loading(PreviewMode::Comments),
+            "rendered thread"
+        );
     }
 
     #[test]
@@ -2101,6 +2141,19 @@ mod tests {
             "points at the only retry: {stripped:?}"
         );
         assert!(stripped.contains('▲'), "warning glyph: {stripped:?}");
+    }
+
+    /// Test helpers composing the parse + render split the production path now
+    /// runs in two steps (parse to cache, render on read): these exercise both
+    /// at once so the existing end-to-end assertions stay unchanged.
+    fn render_github_comments(stdout: &[u8], width: usize) -> Option<String> {
+        Some(render_comment_blocks(
+            &parse_github_comments(stdout)?,
+            width,
+        ))
+    }
+    fn render_gitlab_notes(stdout: &[u8], width: usize) -> Option<String> {
+        Some(render_comment_blocks(&parse_gitlab_notes(stdout)?, width))
     }
 
     #[test]

@@ -171,30 +171,41 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disables[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# `columns` selects and orders the columns to render; omit it for the default set.[0m
-[107m [0m [2m# It is designed to be driven by an alias (https://worktrunk.dev/extending/#aliases) that sets it[0m
-[107m [0m [2m# per invocation — a body like `wt --config-set 'list.columns=[…]' list` gives a[0m
-[107m [0m [2m# named view (run as `wt <alias>`) without disturbing the default `wt list`.[0m
-[107m [0m [2m# Setting it statically in the config file uses the same key and works, but is not[0m
-[107m [0m [2m# the intended use: it pins one layout over a table that otherwise adapts to[0m
-[107m [0m [2m# `--full` and terminal width.[0m
+[107m [0m [2m# It is meant to drive a per-invocation alias (https://worktrunk.dev/extending/#aliases)[0m
+[107m [0m [2m# (`wt --config-set 'list.columns=[…]' list`), giving a named view without[0m
+[107m [0m [2m# disturbing the default `wt list`. A static setting works but pins one layout[0m
+[107m [0m [2m# over a table that otherwise adapts to `--full` and terminal width.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Valid built-in names are `branch`, `status`, `working-diff`, `ahead-behind`,[0m
-[107m [0m [2m# `branch-diff`, `summary`, `upstream`, `ci`, `path`, `url`, `commit`, `age`, and[0m
-[107m [0m [2m# `message`. A custom column (#custom-columns) is named by its `[list.custom-columns]`[0m
-[107m [0m [2m# header, so a selection mixes built-ins and custom columns in one ordered list[0m
-[107m [0m [2m# (`columns = ["branch", "Ticket", "ci"]`). When `columns` is set it is exhaustive[0m
-[107m [0m [2m# — only the listed columns render, so a custom column omitted from a non-empty[0m
-[107m [0m [2m# list is hidden (omit `columns` entirely to keep the default set, where custom[0m
-[107m [0m [2m# columns append automatically). A built-in name wins over a custom header that[0m
-[107m [0m [2m# collides with it. The gutter type indicator always shows.[0m
+[107m [0m [2m# Valid built-in names:[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Listing a column requests it but does not force it on: a column gated off[0m
-[107m [0m [2m# elsewhere stays hidden — `ci` needs `--full`, `summary` needs[0m
-[107m [0m [2m# `[commit.generation]` — so `columns` only narrows which columns may appear.[0m
+[107m [0m [2m# - `branch` — The branch name[0m
+[107m [0m [2m# - `status` — Git status symbols, plus any user-defined status[0m
+[107m [0m [2m# - `working-diff` — Uncommitted line changes against `HEAD` (header `HEAD±`)[0m
+[107m [0m [2m# - `ahead-behind` — Commits ahead of and behind the default branch (header `main↕`)[0m
+[107m [0m [2m# - `branch-diff` — Line changes against the default branch (header `main…±`)[0m
+[107m [0m [2m# - `summary` — An LLM-generated summary of the branch[0m
+[107m [0m [2m# - `upstream` — Commits ahead of and behind the upstream tracking branch (header `Remote⇅`)[0m
+[107m [0m [2m# - `ci` — CI status of the head commit[0m
+[107m [0m [2m# - `path` — The worktree's path[0m
+[107m [0m [2m# - `url` — Dev-server URL from the `[list] url` template[0m
+[107m [0m [2m# - `commit` — The head commit's short hash[0m
+[107m [0m [2m# - `age` — Time since the last commit[0m
+[107m [0m [2m# - `message` — The head commit's subject[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# The selection drives the rendered table and the `wt switch` picker.[0m
-[107m [0m [2m# `wt list --format json` ignores it, always emitting every field, built-in and[0m
-[107m [0m [2m# custom.[0m
+[107m [0m [2m# A selection mixes built-ins with custom columns (#custom-columns), each named[0m
+[107m [0m [2m# by its `[list.custom-columns]` header (`columns = ["branch", "Ticket", "ci"]`),[0m
+[107m [0m [2m# and is exhaustive: only the listed columns render. Omit `columns` to keep the[0m
+[107m [0m [2m# default set, where custom columns append automatically. A built-in name wins a[0m
+[107m [0m [2m# header collision; the gutter type indicator always shows.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Listing a column forces it on, space permitting: `ci` shows without `--full`,[0m
+[107m [0m [2m# since `--full` only bundles columns into the default table rather than gating a[0m
+[107m [0m [2m# named one. A column whose data source is missing still stays hidden — `summary`[0m
+[107m [0m [2m# needs an LLM command (`[commit.generation]`), `url` needs a `[list] url`[0m
+[107m [0m [2m# template — since listing can't supply the data.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# The selection drives the table and the `wt switch` picker; `wt list --format[0m
+[107m [0m [2m# json` ignores it and emits every field.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# #### Custom columns [experimental][0m
 [107m [0m [2m#[0m

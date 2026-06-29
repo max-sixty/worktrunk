@@ -1,4 +1,99 @@
-//! Background preview pre-compute orchestration.
+//! Picker preview caching — the whole system.
+//!
+//! This module orchestrates the picker's preview content and sits on top of two
+//! cache tiers whose pieces live across several modules; this docstring is the
+//! map that ties them together. The disk tiers are in [`super::preview_cache`]
+//! and [`crate::summary`], the repaint loop in [`super::preview_notify`], the
+//! synchronous read path in [`super::items`], and the cross-spawn lifetime in
+//! the picker's `PipelineFactory` (`src/commands/picker/mod.rs`).
+//!
+//! # Two tiers
+//!
+//! **In-memory** — [`PreviewCache`], an `Arc<DashMap<(row-key, mode), String>>`.
+//! The only *cache tier* `SkimItem::preview` reads (a lock-free `get`; it never
+//! touches disk) — a miss renders a loading placeholder. (`preview()` also reads
+//! the row's live `pr_status` / `local_content` slots for tab availability and
+//! the Pr/Comments panes, but those aren't cache reads.) Session-scoped, and
+//! **shared across every
+//! `alt-r` spawn** (the one `Arc` is reused). The key is `(row-key, mode)`,
+//! where row-key is the branch for a worktree row or the `pr:N` / `mr:N` token
+//! for a `--prs` row — with **no SHA or content hash**. Two consequences: every
+//! mode shares one key shape (a `--prs` row's forge fetches and a worktree
+//! row's git diffs coexist), and a `git fetch` or new commit that moves a
+//! branch does *not* invalidate the entry — the key is unchanged, so a warm
+//! entry can outlive the content it was computed from. That staleness is
+//! reconciled two ways, both below: per-event invalidation for the PR tabs, and
+//! a wholesale clear on refresh.
+//!
+//! **On-disk** — content-addressed, cross-session, consulted only on an
+//! in-memory miss. [`super::preview_cache`] holds Log / BranchDiff /
+//! UpstreamDiff keyed by git SHA(s) + dimensions; [`crate::summary`] holds
+//! summaries keyed by a hash of the diff. WorkingTree, Pr, and Comments have no
+//! disk tier. Because these keys *are* content-addressed, moved content yields a
+//! fresh key and a natural miss — the disk tier is never stale, which is what
+//! makes clearing the in-memory tier above it cheap (an unchanged branch
+//! re-reads disk; only changed content recomputes).
+//!
+//! # What backs an in-memory miss, per mode
+//!
+//! | Mode | Disk tier | Recompute on miss |
+//! |------|-----------|-------------------|
+//! | WorkingTree | none (a dirty tree has no stable hash) | live `git diff HEAD` |
+//! | Log / BranchDiff / UpstreamDiff | [`super::preview_cache`], SHA-keyed | `git`, then write disk |
+//! | Summary | [`crate::summary`], diff-hash-keyed | LLM, then write disk |
+//! | Pr | none | render from the already-fetched CI/PR data |
+//! | Comments | [`super::preview_cache`], `updatedAt`-keyed (GitHub PRs only) | forge fetch, then write disk |
+//!
+//! # Invalidation
+//!
+//! - **Pr / Comments** self-invalidate on the CI path: `on_update` drops the
+//!   `(branch, Pr)` entry when a row's live status changes, `--prs` rows drop
+//!   theirs on rebuild, and a corrected PR number drops the stale `Comments`
+//!   thread (see [`super::progressive_handler`]).
+//! - **WorkingTree / Log / BranchDiff / UpstreamDiff / Summary** have *no*
+//!   per-event in-memory invalidation. Within a session they are reconciled with
+//!   moved content only by a refresh.
+//! - **Refresh (`alt-r`)** clears the entire in-memory cache (in
+//!   `PipelineFactory::spawn`, gated on `rebuild_repo`). What then refreshes is
+//!   bounded by what the recompute sees: the rebuilt inventory gives each row a
+//!   current `item.head()`, so the live working-tree diff, the log, and a branch
+//!   whose own commits moved all recompute correctly. But precompute runs against
+//!   the orchestrator's *startup* repo — it's built once and shared (`Arc`),
+//!   never rebuilt — so values read from its `RepoCache`, notably the
+//!   default-branch base SHA for BranchDiff, stay at session start; a default
+//!   branch that moved externally isn't picked up until the picker reopens. The
+//!   disk tiers keep an unchanged branch cheap; only genuinely changed content
+//!   pays.
+//!
+//!   Two known limitations follow from that once-built orchestrator: (1) the
+//!   stale base SHA above; (2) a narrow race — a prior spawn's still-draining
+//!   precompute task computes against its captured (now stale) `item.head()` and,
+//!   because the clear emptied the cache, *fills* it instead of short-circuiting,
+//!   after which the new spawn's task short-circuits on that stale entry, which
+//!   then persists until the next refresh. The window opens only when a refresh
+//!   fires while a prior spawn's precompute is still draining (large repo / slow
+//!   summaries) and the row's content moved in that window — the common "I edited
+//!   the branch I'm viewing" case doesn't hit it, since that branch's precompute
+//!   finished when the picker opened. The structural fix for both is to give the
+//!   orchestrator the current spawn's repo plus a spawn generation (mirroring
+//!   `prs_epoch`) so a superseded fill drops.
+//!
+//! # Filling and surfacing
+//!
+//! Every background producer routes through the one [`PreviewOrchestrator::fill`]
+//! choke point: it inserts into the cache and pokes [`super::preview_notify`] so a
+//! compute that lands after skim already drew the pane repaints without a
+//! keystroke. Precompute is tiered — [`PreviewOrchestrator::spawn_initial_precompute`]
+//! at skeleton time (item 0 × the four local modes + summary, plus every row's
+//! default tab) and [`PreviewOrchestrator::spawn_deferred_precompute`] after the
+//! row drain (the rest); Pr and Comments are never precomputed. Both tiers re-run
+//! on every spawn, including a refresh (after its clear). `spawn_preview` and
+//! `spawn_compute` short-circuit on an in-memory hit, so a refresh must clear
+//! first or their recompute is a no-op; `spawn_summary` has no such guard and
+//! always recomputes — cheap, since `crate::summary` is gated by its own
+//! diff-hash disk cache.
+//!
+//! # Orchestration
 //!
 //! Routes preview tasks to the dedicated [`COLLECT_POOL`] (shared with the
 //! row pipeline) and tracks the in-memory cache. A single pool lets workers
@@ -25,7 +120,7 @@ use skim::prelude::Event;
 use tokio::sync::mpsc::Sender;
 use worktrunk::git::Repository;
 
-use super::items::{PreviewCache, PreviewCacheKey, WorktreeSkimItem};
+use super::items::{PickerRow, PreviewCache, PreviewCacheKey};
 use super::preview::PreviewMode;
 use super::preview_notify::PreviewNotifier;
 use super::summary;
@@ -69,10 +164,10 @@ pub(super) struct PreviewOrchestrator {
     /// process CWD.
     ///
     /// Cloned into each spawned task so they share the underlying
-    /// `Arc<RepoCache>` — including the local-branch inventory that
-    /// [`Repository::default_branch_sha`] reads from. That's how the
-    /// BranchDiff preview avoids forking `git rev-parse` per item:
-    /// the inventory's single `for-each-ref` scan serves every task.
+    /// `Arc<RepoCache>` — including the memoized comparison base that
+    /// [`Repository::branch_diff_spec`] resolves from a single `for-each-ref`
+    /// scan. That shared cache is how the BranchDiff preview avoids
+    /// re-scanning refs per item.
     repo: Repository,
 }
 
@@ -148,7 +243,7 @@ impl PreviewOrchestrator {
                 return;
             }
             let (value, log_disk_hit) =
-                WorktreeSkimItem::compute_and_page_preview(&repo, &item, mode, w, h);
+                PickerRow::compute_and_page_preview(&repo, &item, mode, w, h);
             Self::fill(&cache, &notifier, cache_key, value);
             if log_disk_hit {
                 pending.fetch_add(1, Ordering::SeqCst);
@@ -159,7 +254,7 @@ impl PreviewOrchestrator {
                 let repo = repo.clone();
                 rayon::spawn_fifo(move || {
                     let _g = guard;
-                    let rendered = WorktreeSkimItem::refresh_log_preview(&repo, &item, w, h);
+                    let rendered = PickerRow::refresh_log_preview(&repo, &item, w, h);
                     // Skip empty results so a transient `git log` failure
                     // doesn't poison the in-memory cache with "" and wipe
                     // out the value the producer just inserted.
@@ -196,8 +291,8 @@ impl PreviewOrchestrator {
     ///
     /// The general-purpose companion to [`Self::spawn_preview`]: that method
     /// computes a worktree `ListItem`'s preview via the local-git
-    /// `compute_and_page_preview`, whereas `--prs` rows (`PrSkimItem`) have no
-    /// local worktree, so they fetch their `log` / `comments` panes through a
+    /// `compute_and_page_preview`, whereas `--prs` rows (no local checkout) have
+    /// no local worktree, so they fetch their `log` / `comments` panes through a
     /// forge CLI and pass that work in as `compute`. Both share the same
     /// [`PreviewCache`], the same `COLLECT_POOL` routing, and the same
     /// pending-counter accounting (so the dry-run path's `wait_for_idle` and

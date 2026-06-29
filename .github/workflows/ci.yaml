@@ -92,7 +92,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: worktrunk
-        version: "=0.60.0"
+        version: "=0.62.0"
 
     - name: "Use fast D: drive for temp files (Windows)"
       if: runner.os == 'Windows'
@@ -186,7 +186,7 @@ jobs:
       uses: actions/checkout@v7
 
     - name: Setup Zola
-      uses: taiki-e/install-action@v2.82.3
+      uses: taiki-e/install-action@v2.82.4
       with:
         tool: zola@0.22.1
 

@@ -9,7 +9,9 @@ use std::time::Duration;
 use std::sync::Arc;
 
 use anyhow::Context;
-use worktrunk::git::{ErrorExt, IntegrationTargets, LineDiff, RefSnapshot, Repository};
+use worktrunk::git::{
+    ErrorExt, IntegrationTargets, LineDiff, RefSnapshot, Repository, select_comparison_base,
+};
 
 use super::super::ci_status::{CiBranchName, PrStatus};
 use super::super::model::{
@@ -27,6 +29,28 @@ use super::types::{ErrorCause, TaskError, TaskKind, TaskResult};
 /// across all clones via `Arc<RepoCache>`, so parallel tasks benefit from
 /// cached merge-base results, ahead/behind counts, default branch, and
 /// integration targets.
+///
+/// # Comparison bases
+///
+/// Three accessors expose "the mainline ref" a task compares against, and
+/// which one to use is decided by the question the task answers:
+///
+/// - [`default_branch`](Self::default_branch) is the local ref. Conflict
+///   prediction (`WouldConflict`) and the `wt merge` / `wt switch --base`
+///   writes use it, since that is the branch the merge actually updates and
+///   a remote-tracking ref is not writable.
+/// - [`comparison_base`](Self::comparison_base) is the upstream-aware
+///   superset tip. The ahead/behind (`main↕`) and branch-diff (`main…±`)
+///   columns measure against it, so a local default that lags its upstream
+///   does not inflate the distance from the real mainline.
+/// - [`integration_targets`](Self::integration_targets) is that superset
+///   plus, when local and upstream diverge, both sides. Integration status
+///   checks whether the work has landed in the mainline on either.
+///
+/// All three resolve the upstream from the default branch's configured
+/// `@{upstream}` alone ([`RefSnapshot::upstream_of`]); there is no
+/// remote-name heuristic. The superset selection itself lives on
+/// [`Repository::integration_targets`].
 #[derive(Clone)]
 pub struct TaskContext {
     /// Shared repository handle. All clones share the same cache via Arc.
@@ -95,13 +119,40 @@ impl TaskContext {
         TaskError::new(self.item_idx, kind, message, cause)
     }
 
-    /// Get the default branch resolved for this list invocation.
-    ///
-    /// Used for informational stats (ahead/behind, branch diff). Returns
-    /// `None` if default branch cannot be determined, or if the persisted
-    /// value is stale (see `TaskContext::default_branch` docs).
+    /// Get the default branch resolved for this list invocation: the local
+    /// ref, used by conflict prediction and the merge/`--base` writes (see
+    /// the type-level "Comparison bases" note). Returns `None` if the default
+    /// branch cannot be determined, or if the persisted value is stale (see
+    /// the `default_branch` field docs).
     pub(super) fn default_branch(&self) -> Option<String> {
         self.default_branch.clone()
+    }
+
+    /// The base ref the informational comparison columns — ahead/behind
+    /// (`main↕`) and branch diff (`main…±`) — measure a branch against.
+    ///
+    /// This is the same upstream-aware "superset" mainline ref the
+    /// integration column already uses ([`IntegrationTargets::primary`]):
+    /// the local default branch when it is up to date with (or ahead of)
+    /// its upstream or has no upstream, and the upstream ref when the local
+    /// default *lags* it. The lagging case is the one that matters — a fork
+    /// whose local `master` sits dozens of commits behind `origin/master`
+    /// would otherwise make every feature read as dozens of commits and
+    /// thousands of lines ahead of "main", measuring each branch against a
+    /// stale base instead of the real mainline tip. Routing these columns
+    /// through `primary` keeps them consistent with the integration symbol
+    /// and immune to a stale local default.
+    ///
+    /// Resolved via the shared `select_comparison_base` rule — the same one the
+    /// diff/summary preview panes use — so the column number and the pane can't
+    /// drift onto different bases. Falls back to the raw default branch name
+    /// when integration targets could not be resolved (snapshot capture failed)
+    /// so the columns still render in that degraded mode.
+    pub(super) fn comparison_base(&self) -> Option<&str> {
+        select_comparison_base(
+            self.integration_targets.as_ref(),
+            self.default_branch.as_deref(),
+        )
     }
 
     /// Get the integration targets resolved for this list invocation.
@@ -172,15 +223,18 @@ pub trait Task: Send + Sync + 'static {
 // Task Implementations
 // ============================================================================
 
-/// Task: Ahead/behind counts vs local default branch (informational stats)
+/// Task: Ahead/behind counts vs the mainline tip (informational stats).
+///
+/// Measures against [`TaskContext::comparison_base`] — the upstream-aware
+/// default-branch tip — so a stale local default doesn't inflate the counts.
 pub struct AheadBehindTask;
 
 impl Task for AheadBehindTask {
     const KIND: TaskKind = TaskKind::AheadBehind;
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
-        // When default_branch is None, return zero counts (cells show empty)
-        let Some(base) = ctx.default_branch() else {
+        // When no comparison base resolves, return zero counts (cells show empty)
+        let Some(base) = ctx.comparison_base() else {
             return Ok(TaskResult::AheadBehind {
                 item_idx: ctx.item_idx,
                 counts: AheadBehind::default(),
@@ -190,7 +244,7 @@ impl Task for AheadBehindTask {
         let repo = &ctx.repo;
 
         let base_sha = ctx
-            .resolve_sha(&base)
+            .resolve_sha(base)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
         // Compare against the branch tip via its full ref when present —
         // see `branch_check_sha` for the rebase-in-progress rationale.
@@ -220,7 +274,7 @@ impl Task for AheadBehindTask {
             .unwrap_or(&ctx.branch_ref.commit_sha);
         let counts = ctx
             .snapshot()
-            .and_then(|s| s.ahead_behind(&base, head_ref))
+            .and_then(|s| s.ahead_behind(base, head_ref))
             .map(Ok)
             .unwrap_or_else(|| repo.ahead_behind_by_sha(&base_sha, &head_sha))
             .map_err(|e| ctx.error(Self::KIND, &e))?;
@@ -466,15 +520,18 @@ impl Task for IsAncestorTask {
     }
 }
 
-/// Task 4: Branch diff stats vs local default branch (informational stats)
+/// Task 4: Branch diff stats vs the mainline tip (informational stats).
+///
+/// Measures against [`TaskContext::comparison_base`] — the upstream-aware
+/// default-branch tip — so a stale local default doesn't inflate the diff.
 pub struct BranchDiffTask;
 
 impl Task for BranchDiffTask {
     const KIND: TaskKind = TaskKind::BranchDiff;
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
-        // When default_branch is None, return empty diff (cells show empty)
-        let Some(base) = ctx.default_branch() else {
+        // When no comparison base resolves, return empty diff (cells show empty)
+        let Some(base) = ctx.comparison_base() else {
             return Ok(TaskResult::BranchDiff {
                 item_idx: ctx.item_idx,
                 branch_diff: BranchDiffTotals::default(),
@@ -484,7 +541,7 @@ impl Task for BranchDiffTask {
         // Resolve via snapshot — see `branch_check_sha` for the
         // rebase-in-progress rationale.
         let base_sha = ctx
-            .resolve_sha(&base)
+            .resolve_sha(base)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
         let head_sha = ctx
             .branch_check_sha()
@@ -558,8 +615,9 @@ impl Task for WorkingTreeDiffTask {
 /// **Skip-when-dirty optimization:** for worktree items, peek at the shared
 /// porcelain cache. When the worktree is dirty (and has no unmerged
 /// entries), `WorkingTreeConflictsTask` will produce a `Some(Some(_))`
-/// dirty-tree result that is authoritative for tier 3 (`tier_would_conflict`
-/// short-circuits on `Some(Some(_))` and ignores the HEAD probe). Returning
+/// dirty-tree result that is authoritative for the WouldConflict tier
+/// (`tier_would_conflict` short-circuits on `Some(Some(_))` and ignores the
+/// HEAD probe). Returning
 /// the redundant HEAD probe in that case would mean a second `git merge-tree`
 /// call against HEAD for the same row. Skip with a sentinel `false` —
 /// the value is ignored by the gate, and seeding `Some(false)` keeps the

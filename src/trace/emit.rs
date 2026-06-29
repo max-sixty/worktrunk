@@ -1,38 +1,38 @@
-//! Authoritative emitter for the `[wt-trace]` log grammar.
-//!
-//! `[wt-trace]` records are structured single-line `key=value` text emitted on
-//! top of `tracing` and parsed downstream by [`super::parse`] and the
-//! `wt-perf` binary. This module is the single source of truth for the
-//! grammar — any field or formatting change happens here and in `parse.rs`
-//! together.
-//!
-//! # Format
-//!
-//! ```text
-//! [wt-trace] ts=1234567 tid=3 seq=1 context=worktree cmd="git status" dur_us=12300 ok=true
-//! [wt-trace] ts=1234567 tid=3 seq=2 cmd="gh pr list" dur_us=45200 ok=false
-//! [wt-trace] ts=1234567 tid=3 seq=3 context=main cmd="git merge-base" dur_us=100000 err="fatal: ..."
-//! [wt-trace] ts=1234567 tid=3 event="Showed skeleton"
-//! [wt-trace] ts=1234567 tid=3 span="build_hook_context" dur_us=8200
-//! ```
-//!
-//! `seq` is a process-global monotonic command counter (command records only).
-//! The same value is printed into the per-command header in `subprocess.log`,
-//! so a raw output block there joins back to its command record here.
-//!
-//! # Emission model
+//! Authoritative emitter for `[wt-trace]` records.
 //!
 //! Records emit as `tracing` events under [`WT_TRACE_TARGET`] with typed
-//! structured fields (`kind`, `ts`, `tid`, `seq`, `cmd`, `dur_us`, `ok`, `err`,
-//! `event`, `span`, `context`). The text grammar is produced downstream by
-//! the `trace.log` layer's `FormatEvent` impl in
-//! `src/logging.rs::TraceFileFormat`, which reads the structured fields
-//! and renders the exact `[wt-trace] key=value …` lines wt-perf and the
-//! integration suite parse.
+//! structured fields; the logging layers in `src/logging.rs` render them two
+//! ways. This module is the single source of truth for the fields — any field
+//! change happens here.
 //!
-//! This split — structured fields at the emission site, grammar rendering
-//! at the layer — means the wire format lives in one place
-//! (`logging.rs`) and emit sites carry no string-formatting noise.
+//! # Two renderings, decoupled
+//!
+//! - **Human** (`trace.log`, and stderr at `RUST_LOG=debug`): a readable line
+//!   per record, where a command's start echo and finish record pair up —
+//!   `✓ git status [worktree]  12.3ms` / `✗ …`, `· Showed skeleton`,
+//!   `◷ build_hook_context  8.2ms`. Rendered by `logging.rs::format_wt_trace`.
+//! - **Machine** (`trace.jsonl`): one JSON object per record, carrying every
+//!   field — `{"kind":"cmd_completed","ts":…,"tid":…,"seq":…,"cmd":…,"dur_us":…,"ok":…}`.
+//!   Rendered by `logging.rs::event_json`, and parsed back by [`super::parse`]
+//!   and the `wt-perf` binary. This is the sole format any tool reads.
+//!
+//! Keeping the human and machine formats separate means the readable lines
+//! never carry `key=value` clutter and a parser never reads them.
+//!
+//! # Fields
+//!
+//! Typed structured fields on each event: `kind`, `ts`, `tid`, `seq`, `cmd`,
+//! `dur_us`, `ok`, `err`, `event`, `span`, `context`, `stdin`. `seq` is a
+//! process-global monotonic command counter (command records only); the same
+//! value is printed into the per-command header in `subprocess.log`, so a raw
+//! output block there joins back to its command record via the `seq` field in
+//! `trace.jsonl`. `stdin` (command records, [`CommandTrace::reads_stdin`])
+//! marks a command that consumed stdin the `cmd` string doesn't capture, so the
+//! cache analysis in `super::profile` can skip it — `trace.jsonl` carries it;
+//! the human line omits it.
+//!
+//! This split — structured fields at the emission site, rendering at the
+//! layer — means emit sites carry no string-formatting noise.
 //!
 //! # The subprocess chokepoint: [`CommandTrace`]
 //!
@@ -116,28 +116,25 @@ pub fn thread_id() -> u64 {
 }
 
 /// Process-global monotonic command counter. Each [`CommandTrace`] claims the
-/// next value at construction; the same `seq` is printed into the `[wt-trace]`
-/// record in `trace.log` and the per-command header in `subprocess.log`, so a
-/// raw output block can be joined back to its command record. Claimed at
+/// next value at construction; the same `seq` is recorded in the `trace.jsonl`
+/// record and the per-command header in `subprocess.log`, so a raw output block
+/// can be joined back to its command record. Claimed at
 /// construction (outside any verbosity gate) so the sequence is dense
 /// regardless of whether the file layers are active. Starts at 1.
 static CMD_SEQ: AtomicU64 = AtomicU64::new(1);
 
 /// Emit a completed-command record (`ok=true`/`ok=false`).
 ///
-/// Private: the sole caller is [`CommandTrace::complete`]. Keeping the writer
-/// module-private makes [`CommandTrace`] the only way to emit a command
-/// record — see the module-level "subprocess chokepoint" note.
-fn command_completed(
-    context: Option<&str>,
-    cmd: &str,
-    ts: u64,
-    tid: u64,
-    seq: u64,
-    dur_us: u64,
-    ok: bool,
-) {
-    match context {
+/// Private and taking `&CommandTrace`: every per-command field but the
+/// resolution-time `dur_us`/`ok` already lives on the guard, so the writer reads
+/// them off it rather than restating the grammar's columns as parameters. The
+/// sole caller is [`CommandTrace::complete`]; keeping the writer module-private
+/// makes [`CommandTrace`] the only way to emit a command record — see the
+/// module-level "subprocess chokepoint" note.
+fn command_completed(trace: &CommandTrace, dur_us: u64, ok: bool) {
+    let cmd = trace.cmd.as_str();
+    let (ts, tid, seq, stdin) = (trace.start_ts_us, trace.tid, trace.seq, trace.reads_stdin);
+    match trace.context.as_deref() {
         Some(ctx) => tracing::debug!(
             target: WT_TRACE_TARGET,
             kind = "cmd_completed",
@@ -148,6 +145,7 @@ fn command_completed(
             cmd,
             dur_us,
             ok,
+            stdin,
         ),
         None => tracing::debug!(
             target: WT_TRACE_TARGET,
@@ -158,24 +156,20 @@ fn command_completed(
             cmd,
             dur_us,
             ok,
+            stdin,
         ),
     }
 }
 
 /// Emit a failed-command record (the command didn't run to completion).
 ///
-/// Private: the sole caller is [`CommandTrace::fail`]. See [`command_completed`].
-fn command_errored(
-    context: Option<&str>,
-    cmd: &str,
-    ts: u64,
-    tid: u64,
-    seq: u64,
-    dur_us: u64,
-    err: impl Display,
-) {
+/// Takes `&CommandTrace` for the same reason as [`command_completed`]. The sole
+/// caller is [`CommandTrace::fail`].
+fn command_errored(trace: &CommandTrace, dur_us: u64, err: impl Display) {
     let err = err.to_string();
-    match context {
+    let cmd = trace.cmd.as_str();
+    let (ts, tid, seq, stdin) = (trace.start_ts_us, trace.tid, trace.seq, trace.reads_stdin);
+    match trace.context.as_deref() {
         Some(ctx) => tracing::debug!(
             target: WT_TRACE_TARGET,
             kind = "cmd_errored",
@@ -186,6 +180,7 @@ fn command_errored(
             cmd,
             dur_us,
             err = %err,
+            stdin,
         ),
         None => tracing::debug!(
             target: WT_TRACE_TARGET,
@@ -196,6 +191,7 @@ fn command_errored(
             cmd,
             dur_us,
             err = %err,
+            stdin,
         ),
     }
 }
@@ -235,6 +231,11 @@ pub struct CommandTrace {
     start: Instant,
     tid: u64,
     seq: u64,
+    /// Whether the command consumed stdin not captured in its command string
+    /// (a `stdin_bytes` buffer or an upstream pipe). Marks the record so the
+    /// cache analysis never treats it as a duplicate — its real input isn't in
+    /// `cmd`, so two runs with identical `cmd` may be entirely different work.
+    reads_stdin: bool,
     resolved: bool,
 }
 
@@ -249,12 +250,22 @@ impl CommandTrace {
             start: Instant::now(),
             tid: thread_id(),
             seq: CMD_SEQ.fetch_add(1, Ordering::Relaxed),
+            reads_stdin: false,
             resolved: false,
         }
     }
 
+    /// Mark this command as consuming stdin not captured in its command string.
+    /// Set by spawn sites that feed a `stdin_bytes` buffer or pipe an upstream
+    /// command's output in — the record then carries `stdin=true`, and the
+    /// cache analysis excludes it from duplicate detection.
+    pub fn reads_stdin(mut self, yes: bool) -> Self {
+        self.reads_stdin = yes;
+        self
+    }
+
     /// The command's monotonic sequence number — the key shared by this
-    /// command's `[wt-trace]` record (`trace.log`) and its raw output block
+    /// command's `trace.jsonl` record and its raw output block
     /// (`subprocess.log`).
     pub(crate) fn seq(&self) -> u64 {
         self.seq
@@ -279,23 +290,17 @@ impl CommandTrace {
     /// `ok=true`/`ok=false` record with the elapsed duration.
     pub fn complete(&mut self, success: bool) {
         let dur_us = self.start.elapsed().as_micros() as u64;
-        command_completed(
-            self.context.as_deref(),
-            &self.cmd,
-            self.start_ts_us,
-            self.tid,
-            self.seq,
-            dur_us,
-            success,
-        );
+        command_completed(self, dur_us, success);
         self.resolved = true;
     }
 
     /// Emit a failed record for a command that never produced a child to hold
     /// a guard against — a precondition failure before spawn, where there is
     /// nothing to time. Equivalent to `new` immediately followed by `fail`.
-    pub fn record_failed(context: Option<&str>, cmd: &str, err: impl Display) {
-        let mut trace = Self::new(context, cmd);
+    /// `reads_stdin` records the same stdin shape a successful run would have, so
+    /// a precondition-failed stdin command is excluded from dedup like any other.
+    pub fn record_failed(context: Option<&str>, cmd: &str, reads_stdin: bool, err: impl Display) {
+        let mut trace = Self::new(context, cmd).reads_stdin(reads_stdin);
         trace.fail(err);
     }
 
@@ -303,15 +308,7 @@ impl CommandTrace {
     /// Emits an `err=…` record with the elapsed duration.
     pub fn fail(&mut self, err: impl Display) {
         let dur_us = self.start.elapsed().as_micros() as u64;
-        command_errored(
-            self.context.as_deref(),
-            &self.cmd,
-            self.start_ts_us,
-            self.tid,
-            self.seq,
-            dur_us,
-            err,
-        );
+        command_errored(self, dur_us, err);
         self.resolved = true;
     }
 }
@@ -422,7 +419,7 @@ mod tests {
         failed.fail(std::io::Error::other("boom"));
         drop(failed);
 
-        CommandTrace::record_failed(None, "git nope", "precondition");
+        CommandTrace::record_failed(None, "git nope", false, "precondition");
     }
 
     // A guard that reaches drop without complete()/fail() is a spawn site that

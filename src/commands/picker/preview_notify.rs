@@ -18,13 +18,36 @@
 //! off-screen row, or a tab the user isn't looking at — matches nothing and
 //! injects nothing, so background pre-compute never re-runs the visible preview.
 //!
-//! Some panes aren't fed by an orchestrator cache fill: the `pr` / `comments`
-//! panes read the row's live `pr_status`, and the diff tabs' dim state reads its
-//! `local_content` — both mirrored by the collect handler's `on_update` as the
-//! list pipeline lands. [`notify_row_changed`](PreviewNotifier::notify_row_changed)
-//! covers those: it re-runs the selected row's preview (whatever tab is showing)
-//! when that row's live data changes, so e.g. the `pr` tab flips from "Fetching
-//! PR status…" to the resolved PR on its own.
+//! Two panes are fed by live row data rather than an orchestrator cache fill:
+//! the `pr` and `comments` panes render from the row's live `pr_status`,
+//! mirrored by the collect handler's `on_update` as the `CiStatus` fetch lands.
+//! [`notify_pr_status_changed`](PreviewNotifier::notify_pr_status_changed) covers
+//! them: when that row is selected, it re-runs the preview so e.g. the `pr` tab
+//! flips from "Fetching PR status…" to the resolved PR on its own.
+//!
+//! It re-runs only when the *visible* tab's body would actually differ, because
+//! a re-run resets the preview scroll to the top (skim clears it on every
+//! content swap), and yanking the user out of a scrolled pane to repaint
+//! identical bytes is the bug this guards against. That makes the gate
+//! per-tab, matching what each body reads:
+//!
+//! - **diff / log / summary tabs** — body comes from the orchestrator cache, not
+//!   `pr_status`, so an `on_update` never re-runs them (their fills ride
+//!   `notify_filled`). `on_update` also mirrors `local_content`, but that only
+//!   re-dims the diff tabs' tab-bar number — chrome the user can wait a keystroke
+//!   for, never worth a scroll reset.
+//! - **`pr` tab** — body renders every shown `PrStatus` field, so it re-runs on
+//!   any real change. The collect handler excludes `is_priming` (a list-cell dim
+//!   hint the pane never draws — see `items::pr_status_pane_eq`) so a
+//!   cache-prime→live flip that only clears it doesn't reset scroll.
+//! - **`comments` tab** — body is the branch-keyed thread (surfaced by
+//!   `notify_filled`), invariant to `PrStatus` fields once a PR exists, so it
+//!   re-runs only on a [`PrPresence`](super::items::PrPresence) change
+//!   (Loading/NoPr/HasPr), not on every field.
+//!
+//! The collect handler computes those two change signals and passes them as a
+//! [`PrStatusDelta`]; this notifier maps the awaited tab to the one it cares
+//! about.
 //!
 //! ## Why recording happens before the cache read
 //!
@@ -42,6 +65,22 @@ use tokio::sync::mpsc::Sender;
 
 use super::items::PreviewCacheKey;
 use super::preview::PreviewMode;
+
+/// What about a row's live `pr_status` changed, at the granularity each
+/// `pr_status`-backed tab's body cares about. The collect handler computes both
+/// from the old and new slot values; [`PreviewNotifier::notify_pr_status_changed`]
+/// reads the one matching the visible tab.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct PrStatusDelta {
+    /// The rendered `pr` pane would differ — any shown field changed (CI badge,
+    /// title, body, review, …), ignoring the `is_priming` dim hint the pane
+    /// never draws. Gates the `pr` tab. See `items::pr_status_pane_eq`.
+    pub(super) pane_changed: bool,
+    /// The [`PrPresence`](super::items::PrPresence) (Loading/NoPr/HasPr) changed.
+    /// Gates the `comments` tab, whose body is otherwise the branch-keyed thread
+    /// surfaced by [`PreviewNotifier::notify_filled`]. Implies `pane_changed`.
+    pub(super) presence_changed: bool,
+}
 
 /// Bridges a background [`PreviewCache`](super::items::PreviewCache) fill to
 /// skim's event loop. See the module docstring for the full contract.
@@ -91,21 +130,25 @@ impl PreviewNotifier {
         }
     }
 
-    /// Inject an `Event::RunPreview` if the selected row is `row_key` on *any*
-    /// tab, so a change to that row's live data re-renders its preview without a
-    /// keystroke. Unlike [`Self::notify_filled`] this matches the row regardless
-    /// of mode, because the data it covers feeds several panes at once: the
-    /// collect handler's `on_update` mirrors the live `pr_status` (the `pr` /
-    /// `comments` panes) and `local_content` (the diff tabs' dim state), none of
-    /// which is an orchestrator cache fill.
-    pub(super) fn notify_row_changed(&self, row_key: &str) {
-        if self
-            .awaiting
-            .lock()
-            .unwrap()
-            .as_ref()
-            .is_some_and(|(k, _)| k == row_key)
-        {
+    /// Inject an `Event::RunPreview` if the selected row is `row_key` *and* the
+    /// part of `pr_status` its visible tab renders actually changed, so the live
+    /// `CiStatus` fetch surfaces on its own without resetting the scroll of an
+    /// unchanged pane. `delta` carries the two per-tab change signals the collect
+    /// handler computed (see [`PrStatusDelta`]); a diff / log / summary tab reads
+    /// neither, so it matches nothing and injects nothing.
+    pub(super) fn notify_pr_status_changed(&self, row_key: &str, delta: PrStatusDelta) {
+        let relevant = {
+            let awaiting = self.awaiting.lock().unwrap();
+            awaiting.as_ref().is_some_and(|(k, mode)| {
+                k == row_key
+                    && match mode {
+                        PreviewMode::Pr => delta.pane_changed,
+                        PreviewMode::Comments => delta.presence_changed,
+                        _ => false,
+                    }
+            })
+        };
+        if relevant {
             self.poke();
         }
     }
@@ -131,33 +174,71 @@ impl PreviewNotifier {
 mod tests {
     use super::*;
 
-    /// `notify_row_changed` re-runs the selected row's preview on *any* tab when
-    /// that row's live data lands (the `on_update` path), and stays silent for
-    /// other rows — so a CI-status / diff-content update surfaces on the visible
-    /// row without thrashing off-screen ones. (`notify_filled`'s exact-key
-    /// scoping is covered by the orchestrator's `fill_notifies_only_awaited_key`.)
+    /// `notify_pr_status_changed` re-runs the selected row's preview only when
+    /// the *visible* tab's own change signal fired: the `pr` tab on a pane
+    /// change, the `comments` tab on a presence change, and never a diff tab.
+    /// It stays silent for other rows. (`notify_filled`'s exact-key scoping is
+    /// covered by `fill_notifies_only_awaited_key`.)
     #[test]
-    fn notify_row_changed_pokes_only_the_selected_row() {
+    fn notify_pr_status_changed_pokes_only_the_visible_tabs_signal() {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<Event>(8);
         let render_tx = Arc::new(OnceLock::new());
         render_tx.set(tx).unwrap();
         let notifier = PreviewNotifier::new(render_tx);
 
-        // The selected row is on the `pr` tab (still "Fetching PR status…").
-        notifier.note_awaiting("feature", PreviewMode::Pr);
+        let pane_only = PrStatusDelta {
+            pane_changed: true,
+            presence_changed: false,
+        };
+        let presence_too = PrStatusDelta {
+            pane_changed: true,
+            presence_changed: true,
+        };
+        let drain = |rx: &mut tokio::sync::mpsc::Receiver<Event>| {
+            let mut n = 0;
+            while let Ok(Event::RunPreview) = rx.try_recv() {
+                n += 1;
+            }
+            n
+        };
 
-        // That row's CI status lands → re-run, even though the awaited tab (Pr)
-        // isn't an orchestrator-filled mode.
-        notifier.notify_row_changed("feature");
-        assert!(
-            matches!(rx.try_recv(), Ok(Event::RunPreview)),
-            "the selected row's update re-runs its preview"
+        // `pr` tab: any pane change re-runs it (e.g. "Fetching…" → resolved PR).
+        notifier.note_awaiting("feature", PreviewMode::Pr);
+        notifier.notify_pr_status_changed("feature", pane_only);
+        assert_eq!(drain(&mut rx), 1, "a pr-pane change re-runs the pr tab");
+
+        // `comments` tab: a pane-only change (no presence flip) does NOT re-run —
+        // its body is the unchanged branch-keyed thread, so re-running would only
+        // reset the scroll. A presence change (e.g. NoPr → HasPr) does re-run.
+        notifier.note_awaiting("feature", PreviewMode::Comments);
+        notifier.notify_pr_status_changed("feature", pane_only);
+        assert_eq!(
+            drain(&mut rx),
+            0,
+            "a pane-only change must not reset a scrolled comments thread"
+        );
+        notifier.notify_pr_status_changed("feature", presence_too);
+        assert_eq!(
+            drain(&mut rx),
+            1,
+            "a presence change re-runs the comments tab"
+        );
+
+        // A diff tab reads neither signal → never re-runs (preserves diff scroll).
+        notifier.note_awaiting("feature", PreviewMode::WorkingTree);
+        notifier.notify_pr_status_changed("feature", presence_too);
+        assert_eq!(
+            drain(&mut rx),
+            0,
+            "a CI update while a diff tab is showing must not reset its scroll"
         );
 
         // A different row's update injects nothing.
-        notifier.notify_row_changed("other");
-        assert!(
-            rx.try_recv().is_err(),
+        notifier.note_awaiting("feature", PreviewMode::Pr);
+        notifier.notify_pr_status_changed("other", presence_too);
+        assert_eq!(
+            drain(&mut rx),
+            0,
             "an off-screen row's update doesn't thrash the visible preview"
         );
     }

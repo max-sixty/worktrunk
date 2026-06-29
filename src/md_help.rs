@@ -111,10 +111,19 @@ fn render_markdown(help: &str, width: Option<usize>, code_blocks: CodeBlocks) ->
                 // flush-left; the gutter mode quotes it in the house bar.
                 let content = code_block_lines.join("\n");
                 let formatted = if code_blocks == CodeBlocks::Flush {
+                    // Flush code feeds the gutter-free `pr`/comments panes. Wrap each
+                    // line to width (word-wrap, preserving indent) and dim every
+                    // resulting piece, so a long line doesn't overflow the pane — and,
+                    // when the comments pane re-quotes this in the house gutter, every
+                    // wrapped piece already fits, keeping the gutter's own wrap a no-op
+                    // and the dim consistent rather than landing only on the first line.
                     let dim = Style::new().dimmed();
                     code_block_lines
                         .iter()
-                        .map(|l| format!("{dim}{l}{dim:#}"))
+                        .flat_map(|l| {
+                            width.map_or_else(|| vec![l.to_string()], |w| wrap_styled_text(l, w))
+                        })
+                        .map(|piece| format!("{dim}{piece}{dim:#}"))
                         .collect::<Vec<_>>()
                         .join("\n")
                 } else {

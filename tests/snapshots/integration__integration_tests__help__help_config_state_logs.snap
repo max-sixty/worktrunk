@@ -40,7 +40,7 @@ Usage: [1m[36mwt config state logs[0m [36m[OPTIONS][0m [36m[COMMAND][0m
 
 [1m[32mCommands:[0m
   [1m[36mget[0m      List all log file paths
-  [1m[36mprofile[0m  Performance profile from a trace log
+  [1m[36mprofile[0m  Performance profile from a trace
   [1m[36mclear[0m    Clear all log files
 
 [1m[32mOptions:[0m
@@ -104,10 +104,12 @@ All [2mpost-*[0m hooks (post-start, post-switch, post-commit, post-merge) run 
       File        Created when   
  ────────────── ──────────────── 
  [2mtrace.log[0m      Running with [2m-vv[0m 
+ [2mtrace.jsonl[0m    Running with [2m-vv[0m 
  [2msubprocess.log[0m Running with [2m-vv[0m 
  [2mdiagnostic.md[0m  Running with [2m-vv[0m 
 
-[2mtrace.log[0m captures debug-level records at [2m-vv[0m — commands, [2m[wt-trace][0m records, bounded subprocess previews. [2mwt config state logs profile[0m summarizes one into a performance report (where time went, parallelism, redundant commands). [2msubprocess.log[0m holds the raw uncapped subprocess stdout/stderr bodies. [2mdiagnostic.md[0m is a markdown bug-report bundle that inlines [2mtrace.log[0m and a rendered performance profile; [2mwt[0m prints a [2mgh gist create[0m command pointing at it. All three are overwritten on each [2m-vv[0m run.
+[2mtrace.log[0m is the human-readable trace at [2m-vv[0m — each command's start ([2m$ …[0m) and completion ([2m✓[0m/[2m✗ … 12.3ms[0m), in-process spans, milestones, and bounded subprocess previews. [2mtrace.jsonl[0m is the same event stream as one JSON object per line, for machines ([2mjq[0m, chrome://tracing); [2mwt config state logs profile[0m reads it to summarize a performance report (where time went, parallelism, redundant commands). [2msubprocess.log[0m holds the raw uncapped subprocess stdout/stderr bodies. [2mdiagnostic.md[0m is a markdown 
+bug-report bundle that inlines [2mtrace.log[0m and a rendered performance profile; [2mwt[0m prints a [2mgh gist create[0m command pointing at it. All four are overwritten on each [2m-vv[0m run.
 
 [1m[32mLocation[0m
 

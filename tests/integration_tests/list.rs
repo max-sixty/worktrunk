@@ -715,6 +715,117 @@ fn test_list_with_upstream_tracking(mut repo: TestRepo) {
     });
 }
 
+/// When the local default branch lags its upstream (a fork whose `main` sits
+/// behind `origin/main`), the `main↕`/`main…±` columns must measure each
+/// branch against the upstream tip, not the stale local tip. Otherwise every
+/// branch reads as ahead by every commit the local default is missing.
+#[rstest]
+fn test_list_branch_stats_use_upstream_when_local_default_lags(mut repo: TestRepo) {
+    repo.commit("c0");
+    repo.setup_remote("main");
+    // Persist the default branch so detection is deterministic.
+    repo.run_git(&["config", "worktrunk.default-branch", "main"]);
+
+    // Advance origin/main three commits ahead, then pin local main back so it
+    // lags its upstream by three commits (the stale-fork shape).
+    repo.commit("upstream 1");
+    repo.commit("upstream 2");
+    repo.commit("upstream 3");
+    repo.run_git(&["push", "origin", "main"]);
+    repo.run_git(&["reset", "--hard", "HEAD~3"]);
+    repo.run_git(&["fetch", "origin"]);
+
+    // Feature branch off the real upstream tip, two commits ahead.
+    let feature_wt = repo.add_worktree("feature");
+    repo.run_git_in(&feature_wt, &["reset", "--hard", "origin/main"]);
+    std::fs::write(feature_wt.join("feat.txt"), "a\n").unwrap();
+    repo.run_git_in(&feature_wt, &["add", "."]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "feature commit 1"]);
+    std::fs::write(feature_wt.join("feat.txt"), "a\nb\n").unwrap();
+    repo.run_git_in(&feature_wt, &["add", "."]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "feature commit 2"]);
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--branches", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "wt list should succeed");
+
+    let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let feature = json
+        .iter()
+        .find(|w| w["branch"] == "feature")
+        .expect("feature row should be present");
+
+    // Two commits ahead of the upstream tip — not five (3 stale + 2 feature).
+    assert_eq!(
+        feature["main"]["ahead"].as_u64(),
+        Some(2),
+        "ahead must be measured against origin/main, not the stale local main: {feature:#?}"
+    );
+    assert_eq!(feature["main"]["behind"].as_u64(), Some(0));
+    // The diff reflects only the feature's own additions, not the three
+    // upstream commits the local default is missing.
+    assert_eq!(
+        feature["main"]["diff"]["added"].as_u64(),
+        Some(2),
+        "branch diff must be measured against origin/main: {feature:#?}"
+    );
+}
+
+/// The mirror of the lagging-fork case: when the local default branch is
+/// *ahead* of its upstream (local commits not yet pushed, e.g. just after a
+/// local `wt merge`), the base must stay local. Otherwise a sibling branch
+/// would show those unpushed default-branch commits in its own counts. This
+/// pins the contract that `comparison_base` reuses `integration_targets`'
+/// superset selection rather than naively preferring the upstream ref.
+#[rstest]
+fn test_list_branch_stats_stay_local_when_default_ahead_of_upstream(mut repo: TestRepo) {
+    repo.commit("c0");
+    repo.setup_remote("main");
+    repo.run_git(&["config", "worktrunk.default-branch", "main"]);
+
+    // Advance local main three commits past origin/main, leaving them unpushed
+    // so the local default is ahead of its upstream.
+    repo.commit("local main 1");
+    repo.commit("local main 2");
+    repo.commit("local main 3");
+    repo.run_git(&["fetch", "origin"]);
+
+    // Feature off the local default tip, two commits ahead.
+    let feature_wt = repo.add_worktree("feature");
+    std::fs::write(feature_wt.join("feat.txt"), "a\n").unwrap();
+    repo.run_git_in(&feature_wt, &["add", "."]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "feature commit 1"]);
+    std::fs::write(feature_wt.join("feat.txt"), "a\nb\n").unwrap();
+    repo.run_git_in(&feature_wt, &["add", "."]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "feature commit 2"]);
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--branches", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "wt list should succeed");
+
+    let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let feature = json
+        .iter()
+        .find(|w| w["branch"] == "feature")
+        .expect("feature row should be present");
+
+    // Two commits ahead of the LOCAL default tip — not five (which would
+    // wrongly fold in the three unpushed local-main commits by measuring
+    // against origin/main).
+    assert_eq!(
+        feature["main"]["ahead"].as_u64(),
+        Some(2),
+        "ahead must stay measured against local main when it leads origin/main: {feature:#?}"
+    );
+    assert_eq!(feature["main"]["behind"].as_u64(), Some(0));
+}
+
 #[rstest]
 fn test_list_primary_on_different_branch(mut repo: TestRepo) {
     repo.switch_primary_to("develop");

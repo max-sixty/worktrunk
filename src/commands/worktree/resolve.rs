@@ -246,9 +246,7 @@ pub fn offer_bare_repo_worktree_path_fix(
     let example_bad = format!("{parent_name}/{repo_name}.{sanitized}");
     let example_good = format!("{parent_name}/{sanitized}");
 
-    let config_path_display = worktrunk::config::config_path()
-        .map(|p| format_path_for_display(&p).to_string())
-        .unwrap_or_else(|| "~/.config/worktrunk/config.toml".to_string());
+    let config_path_display = worktrunk::config::config_path_for_display();
 
     // Non-interactive: warn and show the config to add.
     if !std::io::stdin().is_terminal() {

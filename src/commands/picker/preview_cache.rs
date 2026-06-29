@@ -1,4 +1,8 @@
-//! Persistent cache for picker preview content, keyed by SHA + dimensions.
+//! Persistent cache for picker preview content, keyed by a stable content
+//! signature + dimensions.
+//!
+//! This is the on-disk tier for three of the modes; the in-memory tier above it
+//! and the system-wide invalidation rules live in [`super::preview_orchestrator`].
 //!
 //! Three of the picker's preview modes are deterministic functions of git
 //! object SHAs at a given terminal width: Log on `(branch_head_sha)`,
@@ -9,7 +13,29 @@
 //! cached — its inputs include the mutable working tree, which has no cheap
 //! stable hash. Summary has its own cache (`crate::summary`).
 //!
-//! Layout: `.git/wt/cache/picker-preview/{mode}-{sha}[-{sha}]-{w}[-{h}].json`.
+//! The Comments mode has no git SHA, but a GitHub PR's `updatedAt` is the
+//! equivalent content signature: it bumps on comment add, edit, review, and
+//! review-comment (not deletion — see [`comments_key`]). So a matching key lets
+//! a later `wt switch` skip the per-row `gh pr view --json comments` fetch.
+//! `updatedAt` rides the `gh pr list` / `gh pr view` call the picker already
+//! makes (CI column / `--prs` list), so the signal costs no extra network. The
+//! worktree-row CI call (`gh pr list --head`) goes one better: it already
+//! transfers the whole comment thread (it counts it for the `pr` pane's
+//! `comments` line), so [`list::ci_status`](crate::commands::list::ci_status)
+//! *primes* this cache from that otherwise-discarded data — turning even the
+//! *first* `wt switch`'s comments fetch into a hit, including the common
+//! zero-comment PR (an empty thread is cached, so the tab resolves to
+//! "No comments" with no fetch). Like
+//! Log (and unlike the diff modes), Comments caches the *raw* parsed thread
+//! ([`CommentEntry`]s) rather than the rendered pane, and re-renders on read —
+//! the pane folds in width-dependent wrapping and `epoch_now()`-relative times,
+//! so baking those into the cache would freeze them. Only GitHub PRs are cached;
+//! see [`comments_key`] and `PrStatus::updated_at` for why GitLab MRs are not.
+//! The repo-scoped cache dir isolates by repository, so the PR number alone
+//! disambiguates within it.
+//!
+//! Layout: `.git/wt/cache/picker-preview/{mode}-{sig}[-{sig}][-{w}[-{h}]].json`
+//! (the Comments key carries no width — its entry is width-independent raw data).
 //! The diff modes cache the pre-pager rendered string; the pager step in
 //! `compute_and_page_preview` runs on every read, so changing the
 //! configured pager invalidates nothing — the cache is pager-agnostic.
@@ -32,6 +58,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use worktrunk::cache;
 use worktrunk::git::Repository;
+use worktrunk::path::sanitize_for_filename;
 
 const KIND: &str = "picker-preview";
 
@@ -71,7 +98,12 @@ pub(super) struct LogCacheEntry {
 }
 
 /// 500 entries × tens-of-KB rendered diffs ≈ tens of MB. Tunable; the
-/// user-visible knob is `wt config state clear`.
+/// user-visible knob is `wt config state clear`. Comments entries share this
+/// single count-based bound and KIND with the diff/log entries (so one
+/// `clear_all`/`count_all` covers them), but are small raw-comment JSON; the
+/// mtime sweep can evict either type to hold the count, which is benign — an
+/// evicted entry is just recomputed (a git subprocess for a diff, a forge fetch
+/// for comments) on its next visit.
 const MAX_ENTRIES: usize = 500;
 
 fn log_key(sha: &str, w: usize, h: usize) -> String {
@@ -139,6 +171,73 @@ pub(super) fn write_upstream_diff(
         repo,
         KIND,
         &upstream_diff_key(branch_sha, upstream_sha, w),
+        &value,
+        MAX_ENTRIES,
+    );
+}
+
+/// One cached PR comment — the deterministic, render-independent fields parsed
+/// from the forge (`gh pr view --json comments`, or the same thread riding the
+/// worktree-row `gh pr list --head` call — see [`write_comments`]). Stored as a
+/// `Vec` and re-rendered on every read, mirroring [`LogCacheEntry`]: the
+/// rendered pane folds in the pane *width* (body wrapping) and *relative time*
+/// ("2h", "3d", against `epoch_now()`), neither of which is stable, so caching
+/// the rendered string would freeze both. Caching the raw comments instead keeps
+/// width and relative time out of the key and correct as the terminal resizes
+/// and wall-clock advances.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct CommentEntry {
+    pub author: String,
+    pub body: String,
+    /// RFC-3339 timestamp; rendered as relative time at display.
+    pub created_at: String,
+}
+
+/// Cache key for a PR's comment thread: PR `number` + the GitHub PR's
+/// `updated_at` content signature. The timestamp is `sanitize_for_filename`'d
+/// because RFC-3339 strings carry `:`. The repo-scoped cache dir isolates by
+/// repository, so `number` alone disambiguates the PR within it. Width is
+/// deliberately absent — the entry holds raw [`CommentEntry`]s re-rendered at
+/// the live width on read, so one entry serves every pane width.
+///
+/// Only GitHub PRs reach this path: a GitHub PR's `updated_at` bumps on comment
+/// add, edit, review, and review-comment, so a stable key means the thread is
+/// unchanged — *except* deletion, which GitHub does not reflect in `updated_at`
+/// (the same delete-blindness, plus a 1-minute throttle, that excludes GitLab
+/// MRs entirely; see `PrStatus::updated_at`). A deleted GitHub comment can
+/// therefore linger in the cached thread until the next add/edit/review bumps
+/// the timestamp — an accepted best-effort gap for a read-only preview, matching
+/// the Log tab's documented ref-decoration drift.
+fn comments_key(number: u32, updated_at: &str) -> String {
+    let ts = sanitize_for_filename(updated_at);
+    format!("comments-{number}-{ts}.json")
+}
+
+pub(crate) fn read_comments(
+    repo: &Repository,
+    number: u32,
+    updated_at: &str,
+) -> Option<Vec<CommentEntry>> {
+    cache::read(repo, KIND, &comments_key(number, updated_at))
+}
+
+/// Write a PR's comment thread to the on-disk cache. Called from two places:
+/// the picker's own lazy `gh pr view --json comments` fetch ([`super::prs`]),
+/// and [`list::ci_status`](crate::commands::list::ci_status), which primes it
+/// from the thread the worktree-row `gh pr list --head` CI call already
+/// transferred — so the lazy fetch never has to run for a worktree row whose
+/// `updatedAt` matches. An empty `value` is a valid entry (a zero-comment PR),
+/// and writing it lets that common case skip the fetch too.
+pub(crate) fn write_comments(
+    repo: &Repository,
+    number: u32,
+    updated_at: &str,
+    value: &[CommentEntry],
+) {
+    cache::write_with_lru(
+        repo,
+        KIND,
+        &comments_key(number, updated_at),
         &value,
         MAX_ENTRIES,
     );
@@ -257,6 +356,59 @@ mod tests {
             "upstream-diff-value"
         );
         assert_eq!(count_all(&repo), 3);
+    }
+
+    fn sample_comments() -> Vec<CommentEntry> {
+        vec![CommentEntry {
+            author: "alice".to_string(),
+            body: "looks good".to_string(),
+            created_at: "2026-06-28T18:30:00Z".to_string(),
+        }]
+    }
+
+    #[test]
+    fn comments_roundtrip_and_keyed_by_signature() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let ts = "2026-06-28T18:36:07Z";
+        assert!(read_comments(&repo, 42, ts).is_none());
+        write_comments(&repo, 42, ts, &sample_comments());
+        let read = read_comments(&repo, 42, ts).expect("entry exists");
+        assert_eq!(read.len(), 1);
+        assert_eq!(read[0].author, "alice");
+        assert_eq!(read[0].created_at, "2026-06-28T18:30:00Z");
+
+        // A different `updated_at` (a new/edited comment) misses, so the next
+        // visit re-fetches rather than serving a stale thread.
+        assert!(read_comments(&repo, 42, "2026-06-28T19:00:00Z").is_none());
+        // A different number is a different key. Width is NOT in the key — the
+        // raw entry is re-rendered at the live width on read.
+        assert!(read_comments(&repo, 43, ts).is_none());
+    }
+
+    #[test]
+    fn comments_share_kind_without_colliding_with_diffs() {
+        // Comments live under the same `picker-preview` kind as the diff modes
+        // (so `clear_all`/`count_all` cover them) but the `comments-` filename
+        // prefix keeps them distinct from `log-`/`branch-diff-`/`upstream-diff-`.
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        write_log(&repo, "x", 80, 24, &sample_log_entry());
+        write_comments(&repo, 1, "2026-06-28T00:00:00Z", &sample_comments());
+
+        assert_eq!(
+            read_log(&repo, "x", 80, 24).unwrap().raw_log,
+            "raw log content"
+        );
+        assert_eq!(
+            read_comments(&repo, 1, "2026-06-28T00:00:00Z")
+                .expect("entry exists")
+                .len(),
+            1
+        );
+        assert_eq!(count_all(&repo), 2);
     }
 
     #[test]

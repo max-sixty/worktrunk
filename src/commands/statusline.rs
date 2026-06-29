@@ -817,7 +817,7 @@ pub fn run(format: StatuslineFormat) -> Result<()> {
     }
 
     // Fit segments to terminal width using priority-based dropping; with no
-    // detectable width (even via the parent-TTY walk), render everything
+    // detectable width (no `COLUMNS` from Claude Code), render everything
     let max_width = terminal_width_for_statusline().unwrap_or(usize::MAX);
     // Reserve 1 char for leading space (ellipsis handled by truncate_visible fallback)
     let content_budget = max_width.saturating_sub(1);
@@ -879,16 +879,23 @@ fn run_json() -> Result<()> {
     // Load URL template from project config (if configured)
     let url_template = repo.url_template();
 
-    // Build collect options with URL template (compute everything for complete data)
+    // The statusline renders the full column set condensed (status, diffs,
+    // ahead/behind, upstream, CI, URL — see `format_statusline_segments`) but no
+    // LLM summary, so its plan is every column's tasks under full gates: CI runs,
+    // summary doesn't. URL is gated on a configured template like everywhere else.
+    let gates = list::columns::ColumnGates {
+        show_full: true,
+        summary_enabled: false,
+        has_llm_command: false,
+        has_url_template: url_template.is_some(),
+    };
     let options = CollectOptions {
         url_template,
         // Match `wt list --full`: include untracked files in the working
         // diff (`HEAD±`) so the segment counts the same lines `wt step
-        // diff` would show. Statusline already runs the full task set;
-        // this keeps the diff number consistent with the rest of the
-        // statusline data.
+        // diff` would show, consistent with the rest of the statusline data.
         include_untracked_in_working_diff: true,
-        ..Default::default()
+        ..CollectOptions::for_columns(list::columns::all_columns(), &gates)
     };
 
     // Populate computed fields (parallel git operations)
@@ -1000,20 +1007,25 @@ fn git_status_segments(
     // Load URL template from project config (if configured)
     let url_template = repo.url_template();
 
-    // Build collect options with URL template
+    // Same plan as the other statusline path: the full column set condensed
+    // (CI included), no LLM summary. See `format_statusline_segments`.
+    let gates = list::columns::ColumnGates {
+        show_full: true,
+        summary_enabled: false,
+        has_llm_command: false,
+        has_url_template: url_template.is_some(),
+    };
     let options = CollectOptions {
         url_template,
         // Match `wt list --full`: include untracked files in the working
         // diff (`HEAD±`) so the segment counts the same lines `wt step
-        // diff` would show. Statusline already runs the full task set;
-        // this keeps the diff number consistent with the rest of the
-        // statusline data.
+        // diff` would show, consistent with the rest of the statusline data.
         include_untracked_in_working_diff: true,
-        ..Default::default()
+        ..CollectOptions::for_columns(list::columns::all_columns(), &gates)
     };
 
-    // Populate computed fields (parallel git operations)
-    // Compute everything (same as --full) for complete status symbols
+    // Populate computed fields (parallel git operations) — the full plan above
+    // gives complete status symbols.
     list::populate_item(repo, &mut item, options)?;
 
     // Get prioritized segments

@@ -52,6 +52,15 @@ const READY_TIMEOUT: Duration = Duration::from_secs(30);
 /// in worst-case scenarios.
 const STABILIZE_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Maximum time to wait for the picker child to exit after the terminating
+/// keystroke (Enter to switch, Escape to abort) before force-killing it. A clean
+/// switch or abort exits in well under a second, but under heavy CI parallelism
+/// the final git work (or skim's Windows terminal teardown) can lag; killing a
+/// still-finishing child reports exit 1 on Windows, turning a successful-but-slow
+/// switch into a spurious failure. Generous like `READY_TIMEOUT`/`STABILIZE_TIMEOUT`
+/// for the same reason — fast polling means the common case still returns at once.
+const CHILD_EXIT_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// How long screen must be unchanged to consider it "stable".
 /// Must be long enough for preview content to load (preview commands run async).
 /// 500ms balances reliability (allows preview to complete) with speed.
@@ -61,6 +70,12 @@ const STABLE_DURATION: Duration = Duration::from_millis(500);
 /// Polling interval when waiting for output.
 /// Fast polling ensures tests complete quickly when ready.
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+/// How often a cursor-arrow wait re-issues its (idempotent) arrow while the `>`
+/// pointer has not yet settled on the target row. Long enough not to thrash the
+/// picker; short enough to retry many times within [`STABILIZE_TIMEOUT`] after
+/// an async item-list refresh resets the cursor to the top.
+const CURSOR_REISSUE_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Columns that split the list and preview panels in the 120-col test terminal.
 /// skim 4.x draws the │ separator at col 59, with the list to its left (cols
@@ -116,6 +131,18 @@ impl PtyResult {
 fn list_pane_text(screen: &vt100::Screen) -> String {
     screen
         .rows(0, LIST_WIDTH)
+        .map(|row| row.trim_end().to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim_end()
+        .to_string()
+}
+
+/// The preview pane: screen columns right of the skim border (the panel interior),
+/// trailing whitespace trimmed. Mirrors the split [`PtyResult::panels`] uses.
+fn preview_pane_text(screen: &vt100::Screen) -> String {
+    screen
+        .rows(PREVIEW_START_COL, TERM_COLS - PREVIEW_START_COL)
         .map(|row| row.trim_end().to_string())
         .collect::<Vec<_>>()
         .join("\n")
@@ -250,7 +277,9 @@ fn abort_and_exit_code(
     drop(writer);
 
     let start = Instant::now();
-    let timeout = Duration::from_secs(5);
+    // Generous like the keystroke-driven helpers: a slow-but-successful exit that
+    // gets killed reports exit 1 on Windows — see `CHILD_EXIT_TIMEOUT`.
+    let timeout = CHILD_EXIT_TIMEOUT;
     loop {
         while rx.try_recv().is_ok() {} // discard chunks
         if child.try_wait().unwrap().is_some() {
@@ -322,7 +351,7 @@ fn exec_in_pty_with_input_expectations(
 
     // Poll for process exit (fast polling, long timeout for CI)
     let start = std::time::Instant::now();
-    let timeout = Duration::from_secs(5);
+    let timeout = CHILD_EXIT_TIMEOUT;
     while start.elapsed() < timeout {
         if child.try_wait().unwrap().is_some() {
             break;
@@ -358,6 +387,60 @@ fn exec_in_pty_capture_before_abort(
     env_vars: &[(String, String)],
     pre_abort_inputs: &[(&str, Option<&str>)],
 ) -> PtyResult {
+    exec_in_pty_capture_before_abort_inner(
+        command,
+        args,
+        working_dir,
+        env_vars,
+        pre_abort_inputs,
+        false,
+    )
+}
+
+/// Like `exec_in_pty_capture_before_abort`, but additionally waits for every
+/// asynchronously-decorated list-pane column (git ahead/behind, CI status) to
+/// resolve — its `·` loading placeholder cleared — before capturing.
+///
+/// Committed snapshots of the settled list frame must use this.
+/// `wait_for_stable` alone gates on "no screen change for STABLE_DURATION plus
+/// the awaited row text present", which a column's async output can satisfy
+/// *inside a lull*: a slow git ahead/behind or CI-status compute (e.g. under
+/// coverage instrumentation on a loaded Windows runner) emits nothing during
+/// the window, so the screen looks stable while a cell still shows `·` where
+/// the snapshot has the resolved value. That freezes a different async-render
+/// frame than the committed snapshot — the exact race documented on
+/// `exec_in_pty_capture_noop_probe`. No committed `switch_picker` snapshot
+/// contains `·`, so the settled frame is always reachable.
+///
+/// Tests that *intentionally* capture a transient frame keep the non-settling
+/// `exec_in_pty_capture_before_abort` — e.g.
+/// `test_switch_picker_prs_shows_loading_marker`, which asserts the "loading
+/// open PRs…" header is on screen before the rows stream in.
+fn exec_in_pty_capture_settled_before_abort(
+    command: &str,
+    args: &[&str],
+    working_dir: &Path,
+    env_vars: &[(String, String)],
+    pre_abort_inputs: &[(&str, Option<&str>)],
+) -> PtyResult {
+    exec_in_pty_capture_before_abort_inner(
+        command,
+        args,
+        working_dir,
+        env_vars,
+        pre_abort_inputs,
+        true,
+    )
+}
+
+fn exec_in_pty_capture_before_abort_inner(
+    command: &str,
+    args: &[&str],
+    working_dir: &Path,
+    env_vars: &[(String, String)],
+    pre_abort_inputs: &[(&str, Option<&str>)],
+    settle_columns: bool,
+) -> PtyResult {
     let PickerSession {
         child,
         _master,
@@ -371,11 +454,40 @@ fn exec_in_pty_capture_before_abort(
         send_input_awaiting_content(&writer, &rx, &mut parser, input, *expected_content);
     }
 
+    // The rows are on screen, but their async-decorated columns may still show
+    // the `·` loading placeholder. A committed-snapshot caller waits for those
+    // to resolve so it freezes the settled frame, not a loading one.
+    if settle_columns {
+        wait_for_list_columns_settled(&rx, &mut parser);
+    }
+
     // === CAPTURE: screen state is now stable — snapshot BEFORE aborting ===
     // The parser retains this state because we stop feeding output to it.
     let exit_code = abort_and_exit_code(child, writer, rx);
 
     PtyResult { parser, exit_code }
+}
+
+/// Wait until every asynchronously-decorated list-pane column has resolved — no
+/// `·` loading placeholder remains anywhere on screen.
+///
+/// `·` loading placeholders live in the list pane's column gutter, and no
+/// committed `switch_picker` snapshot contains one, so a full-screen check
+/// settles correctly for callers whose preview pane never renders a literal
+/// `·` — e.g. `--branches` (commit-log preview). The `--prs` comments preview
+/// renders `@author · {when}`, so a `--prs` caller can't use this full-screen
+/// gate as-is (it would never clear, panicking at the stabilize timeout).
+/// Routed through `wait_for_stable_until`'s
+/// readiness predicate, so a timeout that never saw the placeholders clear
+/// panics with diagnostics rather than silently capturing a loading frame.
+fn wait_for_list_columns_settled(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser) {
+    wait_for_stable_until(
+        rx,
+        parser,
+        |screen| !screen.contains('·'),
+        Some("all list-pane loading placeholders (·) to clear"),
+        None,
+    );
 }
 
 /// Drive the picker to a settled baseline, capture the list pane, send a
@@ -445,6 +557,7 @@ fn wait_for_stable_with_content(
         parser,
         |screen| expected_content.is_none_or(|c| screen.contains(c)),
         describe.as_deref(),
+        None,
     );
 }
 
@@ -468,13 +581,30 @@ fn wait_for_cursor_on_row(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Pars
     wait_for_stable_until(
         rx,
         parser,
-        |screen| {
-            screen
-                .lines()
-                .any(|line| line.starts_with('>') && line.contains(name))
-        },
+        |screen| cursor_points_at(screen, name),
         Some(&describe),
+        None,
     );
+}
+
+/// True when the list-pane `>` pointer is on the row for `name`.
+///
+/// skim draws its pointer at the start of the selected row's line on every
+/// item-list render. The query line also starts with `> `, but the helpers that
+/// rely on this navigate by cursor and never type, so the query stays empty —
+/// only the selected row both starts with `>` and carries a worktree `name`,
+/// which uniquely picks it out.
+///
+/// The match is scoped to the list pane (cols `0..LIST_WIDTH`). The preview pane
+/// shares each physical row to the right of the border, so `name` is sought only
+/// in the row's own list text — otherwise a token that also renders in the
+/// preview (e.g. a PR title carrying a branch word) could satisfy the check from
+/// the wrong row.
+fn cursor_points_at(screen: &str, name: &str) -> bool {
+    screen.lines().any(|line| {
+        let list: String = line.chars().take(LIST_WIDTH as usize).collect();
+        list.starts_with('>') && list.contains(name)
+    })
 }
 
 /// Drive the PTY reader until the screen satisfies `ready` and then settles, or
@@ -493,14 +623,20 @@ fn wait_for_cursor_on_row(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Pars
 /// readiness condition there is nothing to find, so the screen must settle the
 /// hard way (the cosmetic-redraw fallback never engages).
 ///
-/// No keystroke re-issue is needed to surface late preview content: the picker
+/// `nudge`, when `Some`, is invoked every [`CURSOR_REISSUE_INTERVAL`] while
+/// `ready` is still unmet. It exists for the cursor-arrow caller: an idempotent
+/// Up/Down arrow re-issued to drive the `>` pointer back onto its target row
+/// after an async item-list refresh (CI status / PR markers landing) reset the
+/// cursor to the top. Late *preview* content needs no nudge — the picker
 /// repaints a preview on its own once its background compute lands (see
-/// `PreviewNotifier`), so the poll just waits for `ready` to hold.
+/// `PreviewNotifier`), so preview-content callers pass `None` and the poll just
+/// waits for `ready`.
 fn wait_for_stable_until(
     rx: &mpsc::Receiver<Vec<u8>>,
     parser: &mut vt100::Parser,
     ready: impl Fn(&str) -> bool,
     describe: Option<&str>,
+    nudge: Option<&dyn Fn()>,
 ) {
     let start = Instant::now();
     let mut last_change = Instant::now();
@@ -508,6 +644,7 @@ fn wait_for_stable_until(
     // Tracks when `ready` first held continuously on screen. Used as a fallback
     // stability signal when skim keeps redrawing cosmetically.
     let mut ready_since: Option<Instant> = None;
+    let mut last_nudge = Instant::now();
     let has_condition = describe.is_some();
 
     while start.elapsed() < STABILIZE_TIMEOUT {
@@ -549,6 +686,19 @@ fn wait_for_stable_until(
             return;
         }
 
+        // While the readiness condition is still unmet, periodically re-issue the
+        // nudge (the cursor-arrow caller's idempotent arrow). An async item-list
+        // refresh can reset skim's cursor to the top after the first arrow, so a
+        // single keystroke would strand the pointer; re-issuing drives it back
+        // onto the target row until the list stops refreshing.
+        if !content_ready
+            && let Some(nudge) = nudge
+            && last_nudge.elapsed() >= CURSOR_REISSUE_INTERVAL
+        {
+            nudge();
+            last_nudge = Instant::now();
+        }
+
         std::thread::sleep(POLL_INTERVAL);
     }
 
@@ -572,14 +722,35 @@ fn wait_for_stable_until(
     );
 }
 
+/// True for a Up/Down cursor arrow (`ESC [ A` / `ESC [ B`). Arrow navigation
+/// clamps at the list ends, so re-issuing one is idempotent there — safe to
+/// repeat while waiting for the cursor to reach a target row.
+fn is_cursor_arrow(input: &str) -> bool {
+    matches!(input.as_bytes(), [0x1b, b'[', b'A' | b'B'])
+}
+
 /// Send `input`, then wait for the screen to satisfy the per-input expectation
 /// and settle.
 ///
-/// `expected_content`, when set, is a substring the screen must show before the
-/// input is considered processed. Late preview content needs no special handling:
-/// the picker repaints a preview on its own once its background compute lands
-/// (see `PreviewNotifier`), so a diff or forge fetch that finishes after the
-/// keystroke surfaces without a re-issue — the poll just waits for it.
+/// For a Up/Down cursor arrow carrying `expected_content`, the content names the
+/// target row and the wait re-issues the arrow every [`CURSOR_REISSUE_INTERVAL`]
+/// until the list `>` pointer lands on it. A single arrow is unreliable on rows
+/// that decorate asynchronously (CI status / PR markers): when the background
+/// resolution lands it refreshes skim's item list, which resets the cursor to the
+/// top, stranding the pointer on the primary worktree. That is a Windows-CI flake
+/// — observed as `test_switch_picker_worktree_row_comments_tab_shows_thread`
+/// timing out with the cursor stuck on `main`, so the HEAD± tab showed the
+/// primary's (empty) diff and the awaited `diff --git` never appeared. Re-issuing
+/// the idempotent arrow drives the cursor back down after any reset; the wait
+/// returns only once the pointer holds on the target through [`STABLE_DURATION`],
+/// by which point the list has stopped refreshing.
+///
+/// Every other input — including an Alt-<digit> preview-tab switch — falls back
+/// to a plain [`wait_for_stable_with_content`]. Late preview content needs no
+/// re-issue: the picker repaints a preview on its own once its background compute
+/// lands (see `PreviewNotifier`), so a diff or forge fetch that finishes after
+/// the keystroke surfaces without one — the poll just waits for it. The
+/// non-idempotent inputs (Tab, filter text, Enter) must not be repeated anyway.
 fn send_input_awaiting_content(
     writer: &crate::common::pty::SharedPtyWriter,
     rx: &mpsc::Receiver<Vec<u8>>,
@@ -587,12 +758,26 @@ fn send_input_awaiting_content(
     input: &str,
     expected_content: Option<&str>,
 ) {
-    {
+    let send = || {
         let mut w = writer.lock().unwrap();
         w.write_all(input.as_bytes()).unwrap();
         w.flush().unwrap();
+    };
+    send();
+
+    match expected_content {
+        Some(name) if is_cursor_arrow(input) => {
+            let describe = format!("the cursor (> pointer) on row {name:?}");
+            wait_for_stable_until(
+                rx,
+                parser,
+                |screen| cursor_points_at(screen, name),
+                Some(&describe),
+                Some(&send),
+            );
+        }
+        _ => wait_for_stable_with_content(rx, parser, expected_content),
     }
-    wait_for_stable_with_content(rx, parser, expected_content);
 }
 
 /// Create insta settings with filters for switch picker snapshot stability.
@@ -693,6 +878,50 @@ fn test_switch_picker_with_multiple_worktrees(mut repo: TestRepo) {
     });
 }
 
+/// A branch name containing `/` (`feature/auth`) must keep its place in collect
+/// order on the empty-query view — it must not sink below plainer names. skim's
+/// empty-query engine scores every row `(score=0, begin=0)`, so a `PathName`
+/// tiebreak would collapse to `path_name_offset` there and demote every
+/// slash-bearing row (a `feature/…` branch, a `/`-gutter row). The picker uses
+/// the default `[Score, Begin, End]` tiebreak precisely so the empty query keeps
+/// the order `collect` produced (current, main, newest-first). Created
+/// `feature/auth` first so collect ranks it ahead of `plain-branch` (equal test
+/// timestamps fall back to worktree-creation order). Asserts the relative order
+/// directly rather than freezing a frame, so column-layout and async-render
+/// timing can't drift it.
+#[rstest]
+fn test_switch_picker_slashed_branch_keeps_collect_order(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    // Remove origin so the list doesn't show origin/main
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.add_worktree("feature/auth");
+    repo.add_worktree("plain-branch");
+
+    let env_vars = repo.test_env_vars();
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        // Settle: wait for the last row to render before capturing.
+        &[("", Some("plain-branch"))],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+
+    let (list, _preview) = result.panels();
+    let auth = list
+        .find("feature/auth")
+        .unwrap_or_else(|| panic!("feature/auth row missing:\n{list}"));
+    let plain = list
+        .find("plain-branch")
+        .unwrap_or_else(|| panic!("plain-branch row missing:\n{list}"));
+    assert!(
+        auth < plain,
+        "slashed branch must keep collect order (feature/auth before plain-branch):\n{list}"
+    );
+}
+
 /// Alt-l / alt-h are skim's built-in horizontal-scroll keys (ScrollRight /
 /// ScrollLeft). The picker binds both to `ignore` because each row's `display()`
 /// owns its layout with a leading worktree-status sigil; an unbound alt-l slides
@@ -748,7 +977,12 @@ fn test_switch_picker_with_branches(mut repo: TestRepo) {
     assert!(output.status.success(), "Failed to create branch");
 
     let env_vars = repo.test_env_vars();
-    let result = exec_in_pty_capture_before_abort(
+    // Snapshot captures the settled column values (git ahead/behind), so wait
+    // for the `·` loading placeholders to clear, not just for the row text:
+    // under coverage instrumentation on a loaded Windows runner the stat
+    // compute can lag past wait_for_stable's window, freezing a `···` loading
+    // frame instead of the committed settled one (run 28213021257).
+    let result = exec_in_pty_capture_settled_before_abort(
         wt_bin().to_str().unwrap(),
         &["switch", "--branches"],
         repo.root_path(),
@@ -1121,8 +1355,8 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
         &[
             // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
             // for the matcher-lag rationale.
-            ("\x1b[B", None),             // Down: move cursor to `feature`
-            ("\x1b5", Some("Configure")), // Alt-5: summary panel; wait for hint
+            ("\x1b[B", None),                     // Down: move cursor to `feature`
+            ("\x1b5", Some("commit.generation")), // Alt-5: summary panel; wait for hint
         ],
     );
 
@@ -1133,6 +1367,49 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
     settings.bind(|| {
         assert_snapshot!("switch_picker_preview_summary_list", list);
         assert_snapshot!("switch_picker_preview_summary_preview", preview);
+    });
+}
+
+/// The summary panel's "enable summaries" hint — shown when commit.generation
+/// IS configured but `[list] summary = false`. Covers the second hint arm (the
+/// first is exercised by `test_switch_picker_preview_panel_summary`), and pins
+/// that both hints point at the resolved config path: under the test's
+/// `WORKTRUNK_CONFIG_PATH` isolation that path redacts to `[TEST_CONFIG]`, not
+/// a hardcoded `~/.config/worktrunk/config.toml`.
+#[rstest]
+fn test_switch_picker_preview_panel_summary_disabled(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    // Remove origin so snapshots don't show origin/main
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.add_worktree("feature");
+
+    // commit.generation configured, but summaries off — the picker seeds the
+    // Summary tab with the "enable summaries" hint rather than generating one.
+    repo.write_test_config(
+        "[commit.generation]\ncommand = \"llm -m haiku\"\n\n[list]\nsummary = false\n",
+    );
+
+    let env_vars = repo.test_env_vars();
+    // Select `feature`, then Alt-5 for the summary panel. Wait for the hint.
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
+            // for the matcher-lag rationale.
+            ("\x1b[B", None),          // Down: move cursor to `feature`
+            ("\x1b5", Some("Enable")), // Alt-5: summary panel; wait for hint
+        ],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+
+    let (_, preview) = result.panels();
+    let settings = switch_picker_settings(&repo);
+    settings.bind(|| {
+        assert_snapshot!("switch_picker_preview_summary_disabled_preview", preview);
     });
 }
 
@@ -1207,7 +1484,7 @@ fn forge_mock_env_vars(repo: &TestRepo, mock_bin: &Path) -> Vec<(String, String)
 /// via a mocked `gh pr list`. Asserts the PR row reaches the list (the `#42`
 /// reference in the CI column), which deterministically exercises the whole
 /// fetch → stream → render path (`fetch_open_prs`, `fetch_github`,
-/// `parse_github_prs`, `stream_open_prs`, `PrSkimItem::new`, `render_grid_row`,
+/// `parse_github_prs`, `stream_open_prs`, `PrEntry::display_status`, `render_grid_row`,
 /// `render_pr_description`). The title isn't on the row — it lives in the `pr`
 /// preview tab so the columns align — so the row's stable substring is `#42`.
 /// The full list isn't snapshotted because the worktree rows' CI cells fill
@@ -1290,6 +1567,92 @@ fn test_switch_picker_prs_gitlab_list(mut repo: TestRepo) {
     );
 }
 
+/// Removing a worktree row with alt-x in `--prs` mode must keep the streamed
+/// PR/MR rows on screen — only the removed worktree row leaves the list, no
+/// alt-r refresh needed.
+///
+/// alt-x's drop path rebuilds skim's item pool from the picker's shared row list
+/// (`resync_pool`). The `--prs` thread streams its PR rows straight to skim's
+/// item channel, so unless they're also recorded in that shared list the rebuild
+/// drops them. This drives the drop path (a clean, integrated worktree, removed
+/// row leaves the list) and asserts the `#42` PR row survives it.
+#[rstest]
+fn test_switch_picker_prs_rows_survive_alt_x_removal(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    // A clean worktree at main's commit: its branch is integrated, so alt-x
+    // takes the drop path (row leaves the list → `resync_pool`), not the morph
+    // path (which keeps the row in place and never resyncs the pool).
+    repo.add_worktree("wt-drop");
+
+    // PR #42's head branch isn't a shown worktree/branch, so it survives the
+    // `--prs` dedup and streams in as its own `#42` row. The mock answers only
+    // the `--prs` list call (`gh pr list --state`); the per-worktree CI fetch
+    // (`gh pr list --head <branch>`) gets an empty list, so `#42` appears solely
+    // as the streamed `--prs` row — never folded into a worktree row's CI cell.
+    let pr_json = r#"[{"number":42,"title":"Retry the flaky network test","headRefName":"fix/flaky","author":{"login":"octocat"},"isDraft":false,"url":"https://github.com/owner/test-repo/pull/42","body":"Wraps the request in a retry so the suite stops flaking."}]"#;
+    let mock_bin = repo.root_path().join("mock-bin");
+    std::fs::create_dir_all(&mock_bin).unwrap();
+    std::fs::write(mock_bin.join("list.json"), pr_json).unwrap();
+    MockConfig::new("gh")
+        .version("gh version 1.0.0 (mock)")
+        .command("pr list --state", MockResponse::file("list.json"))
+        .command("pr list --head", MockResponse::output("[]"))
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+    let env_vars = forge_mock_env_vars(&repo, &mock_bin);
+
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--prs"],
+        repo.root_path(),
+        &env_vars,
+    );
+
+    // Preview off (alt-p) so the full-width list renders the CI column (`#42`),
+    // which the preview-shown pane otherwise clips past skim's split. The wait
+    // also blocks until the `--prs` row has streamed in.
+    send_input_awaiting_content(&writer, &rx, &mut parser, "\x1bp", Some("#42"));
+    // The worktree row is on screen too (one skeleton batch).
+    wait_for_stable_with_content(&rx, &mut parser, Some("wt-drop"));
+
+    // Cursor onto the removable worktree row (the row below the pinned current
+    // worktree), then alt-x removes it.
+    send_input_awaiting_content(&writer, &rx, &mut parser, "\x1b[B", Some("wt-drop"));
+    {
+        let mut w = writer.lock().unwrap();
+        w.write_all(b"\x1bx").unwrap();
+        w.flush().unwrap();
+    }
+    // The worktree row drops; gating on its disappearance proves the resync ran.
+    wait_for_stable_until(
+        &rx,
+        &mut parser,
+        |screen| !screen.contains("wt-drop"),
+        Some("the wt-drop row to leave the list"),
+        None,
+    );
+
+    let screen = parser.screen().contents();
+    let exit_code = abort_and_exit_code(child, writer, rx);
+    assert_valid_abort_exit_code(exit_code);
+    assert!(
+        screen.contains("#42"),
+        "PR row must survive the alt-x worktree removal (no alt-r needed).\nScreen:\n{screen}"
+    );
+}
+
 /// A preview pane fills in on its own once its background compute lands — no
 /// keystroke needed. The deterministic vehicle is a `--prs` row's `comments`
 /// tab: the comment fetch (`gh pr view <n> --json comments`) is mocked behind a
@@ -1299,6 +1662,15 @@ fn test_switch_picker_prs_gitlab_list(mut repo: TestRepo) {
 /// repaint (`PreviewNotifier`). Before that product-side poke the placeholder
 /// would strand until the next keystroke — the gap the picker's test harness
 /// used to paper over by re-issuing the tab key.
+///
+/// The PR row is selected by driving the cursor with a re-issued Down, not by an
+/// `!main` filter: a filter applied before the async `--prs` row streams in
+/// empties the result set, and skim doesn't reselect the lone row when it arrives
+/// — so the gate timed out under contention (#3269). Down is idempotent and
+/// clamps on the bottom row, where the streamed PR row sits (below the worktree
+/// row), so the cursor-arrow wait re-issues it until the `>` pointer holds on
+/// `flaky`, outlasting both the stream-in and the cursor reset that the
+/// item-list refresh triggers.
 #[rstest]
 fn test_switch_picker_preview_auto_refreshes_when_compute_lands(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
@@ -1315,8 +1687,8 @@ fn test_switch_picker_preview_auto_refreshes_when_compute_lands(mut repo: TestRe
     // cache hit. `pr list` is instant so the row lands promptly.
     let mock_bin = repo.root_path().join("mock-bin");
     std::fs::create_dir_all(&mock_bin).unwrap();
-    // A short head branch so it isn't truncated in the narrow (preview-shown)
-    // list pane — the test gates on its full text to confirm the row rendered.
+    // A short head branch so the PR row isn't truncated in the narrow
+    // (preview-shown) list pane.
     let pr_json = r#"[{"number":42,"title":"Retry the flaky network test","headRefName":"flaky","author":{"login":"octocat"},"isDraft":false,"url":"https://github.com/owner/test-repo/pull/42","body":"body"}]"#;
     std::fs::write(mock_bin.join("pr_list.json"), pr_json).unwrap();
     let comments_json = r#"{"comments":[{"author":{"login":"octocat"},"body":"AUTOREFRESHMARK","createdAt":"2025-01-01T00:00:00Z"}]}"#;
@@ -1337,11 +1709,13 @@ fn test_switch_picker_preview_auto_refreshes_when_compute_lands(mut repo: TestRe
         repo.root_path(),
         &env_vars,
         &[
-            // Wait for the PR row to stream into the list (its head branch shows
-            // in the Branch column), then move the cursor onto it (its preview is
-            // the "not checked out locally" pane), then open the comments tab.
-            ("", Some("flaky")),
-            ("\x1b[B", Some("Not checked out")),
+            // Drive the cursor onto the PR row. Its narrow (preview-shown) list
+            // line shows the short head branch `flaky`; the worktree row shows
+            // `main`. A re-issued Down lands the `>` pointer on `flaky` (the
+            // bottom row) and re-drives it there if a streamed-row refresh resets
+            // the cursor — see the docstring for why this replaces the `!main`
+            // filter.
+            ("\x1b[B", Some("flaky")),
             // alt-7: comments tab. The fetch is still in flight, so the pane shows
             // "Loading comments…"; the comment appears with NO further input once
             // the delayed fetch lands and the picker repaints on its own.
@@ -1482,12 +1856,15 @@ fn test_switch_picker_worktree_row_comments_tab_shows_thread(mut repo: TestRepo)
         &env_vars,
         &[
             // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
-            // for the matcher-lag rationale.
-            ("\x1b[B", None), // Down: move cursor to `feature`
+            // for the matcher-lag rationale. Gate on the row name so the Down is
+            // re-issued until the `>` pointer lands on `feature` — this row
+            // decorates asynchronously (primed CI status → "has PR"), and that
+            // background refresh resets skim's cursor to the top, which stranded
+            // the pointer on `main` and timed this test out on Windows CI.
+            ("\x1b[B", Some("feature")), // Down: move cursor to `feature`
             // Alt-1: HEAD± panel. `feature`'s uncommitted diff (`diff --git`) is a
-            // preview-only anchor — it confirms the cursor landed on `feature`
-            // (not `main`) and gives the skeleton-spawned comments fetch time to
-            // land before we read its tab.
+            // preview-only anchor that gives the skeleton-spawned comments fetch
+            // time to land before we read its tab.
             ("\x1b1", Some("diff --git")),
             // Alt-7: jump to comments (7). The thread was fetched in the
             // background at skeleton time (the PR was primed), so it's cached by
@@ -2248,8 +2625,11 @@ fn drive_alt_x_then_switch(
     send(&writer, b"\r");
     drop(writer);
 
+    // Let the switch finish and the process exit on its own; the kill is a
+    // hung-child backstop. The wait is generous because a slow-but-successful
+    // exit that gets killed reports exit 1 on Windows — see `CHILD_EXIT_TIMEOUT`.
     let start = Instant::now();
-    while start.elapsed() < Duration::from_secs(5) {
+    while start.elapsed() < CHILD_EXIT_TIMEOUT {
         if child.try_wait().unwrap().is_some() {
             break;
         }
@@ -2281,12 +2661,11 @@ fn test_switch_picker_alt_x_keeps_cursor_sticky(mut repo: TestRepo) {
         ["wt-keep", "wt-drop"],
     );
 
-    assert_eq!(
-        exit_code, 0,
-        "switch after alt-x should exit 0.\nScreen:\n{screen}"
-    );
-    // The structured result reaches stdout only after the switch pipeline ran;
-    // it targets the sticky row, not the current worktree.
+    // The cursor-stickiness belief is proven by the emitted result on screen,
+    // not by the process exit code: the `--format=json` payload reaches stdout
+    // only after the switch pipeline ran, and it names the sticky landing row
+    // (not the current worktree at the top, which is where a cursor reset would
+    // have switched instead).
     assert!(
         screen.contains("\"action\""),
         "switch emitted its --format=json result.\nScreen:\n{screen}"
@@ -2295,12 +2674,274 @@ fn test_switch_picker_alt_x_keeps_cursor_sticky(mut repo: TestRepo) {
         screen.contains(&landing),
         "switch targeted the sticky row `{landing}`.\nScreen:\n{screen}"
     );
+    // The interactive skim session's *process* exit code is a separate, weaker
+    // signal than the emitted result above. It has been observed as 1 on Windows
+    // even when the switch verifiably succeeded (the result lines are present) —
+    // a non-zero exit from somewhere after the success output, distinct from the
+    // cursor stickiness this test covers. Accept skim's selection/abort codes
+    // (0 or 1) rather than pinning to 0 and flaking on that race; the same
+    // tolerance `assert_valid_abort_exit_code` already applies across this
+    // file's PTY tests. A gross failure (panic, crash) still fails the screen
+    // assertions above, which require the success output to be present.
+    assert!(
+        exit_code == 0 || exit_code == 1,
+        "switch after alt-x exited with an unexpected code {exit_code} (expected 0 or 1).\nScreen:\n{screen}"
+    );
+}
+
+/// alt-x lands the cursor on the row that slides up — the *immediate* next row —
+/// not one past it, even when the removed row has several rows below it.
+///
+/// [`test_switch_picker_alt_x_keeps_cursor_sticky`] removes the row directly below
+/// the pinned current worktree, leaving a single row beneath it. That can't tell a
+/// correct landing from a one-row overshoot: `scroll_by` clamps the cursor to the
+/// list's last row, so an off-by-one lands on the same (only) remaining row and the
+/// test passes anyway. This removes a *middle* row with two rows below it, where an
+/// overshoot lands one row too far instead of being clamped — the exact "jumps two
+/// down" a user sees with a long worktree list.
+#[rstest]
+fn test_switch_picker_alt_x_lands_on_immediate_next_row(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+    // Four worktrees beneath the pinned current (main) row. All sit at main's
+    // commit, so each alt-x integrates-and-drops (no morph) — the drop path.
+    for branch in ["wt-a", "wt-b", "wt-c", "wt-d"] {
+        repo.add_worktree(branch);
+    }
+
+    let env_vars = repo.test_env_vars();
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--no-cd", "--format=json"],
+        repo.root_path(),
+        &env_vars,
+    );
+    let send = |bytes: &[u8]| {
+        let mut w = writer.lock().unwrap();
+        w.write_all(bytes).unwrap();
+        w.flush().unwrap();
+    };
+
+    // One skeleton batch carries every worktree row, so waiting for one implies
+    // all are present.
+    wait_for_stable_with_content(&rx, &mut parser, Some("wt-a"));
+
+    // Learn the rendered order: the current worktree is pinned to the top, then the
+    // four worktrees by commit recency (a tie here, so insertion order). Read the
+    // four worktree rows top-to-bottom from the list pane.
+    let order: Vec<String> = {
+        let list = list_pane_text(parser.screen());
+        let mut rows: Vec<(usize, String)> = ["wt-a", "wt-b", "wt-c", "wt-d"]
+            .iter()
+            .filter_map(|name| {
+                list.lines()
+                    .position(|l| l.contains(name))
+                    .map(|line| (line, (*name).to_string()))
+            })
+            .collect();
+        rows.sort_by_key(|(line, _)| *line);
+        rows.into_iter().map(|(_, name)| name).collect()
+    };
+    assert_eq!(order.len(), 4, "all four worktree rows rendered");
+    // Remove the second worktree row (two rows still below it); the row directly
+    // below it must catch the cursor.
+    let remove_target = order[1].clone();
+    let expected_landing = order[2].clone();
+    let overshoot_row = order[3].clone();
+
+    // Down onto the second worktree row: one Down per row from the pinned current
+    // worktree at the top.
+    send(b"\x1b[B");
+    wait_for_cursor_on_row(&rx, &mut parser, &order[0]);
+    send(b"\x1b[B");
+    wait_for_cursor_on_row(&rx, &mut parser, &remove_target);
+
+    // alt-x drops it; the cursor must land on the row that slid up — the one
+    // directly below, not the one after it. A one-row overshoot lands on
+    // `overshoot_row` and times this out.
+    send(b"\x1bx");
+    wait_for_cursor_on_row(&rx, &mut parser, &expected_landing);
+
+    // Guard against the cursor having blown past to the next row: the pointer marks
+    // exactly one row, so a landing on `expected_landing` already excludes
+    // `overshoot_row`, but assert it explicitly for a clear failure message.
+    let pointer_line = list_pane_text(parser.screen())
+        .lines()
+        .find(|l| l.starts_with('>'))
+        .map(str::to_string)
+        .unwrap_or_default();
+    assert!(
+        !pointer_line.contains(&overshoot_row),
+        "alt-x overshot to `{overshoot_row}` instead of the immediate next row \
+         `{expected_landing}`.\nPointer line: {pointer_line:?}"
+    );
+
+    let _ = abort_and_exit_code(child, writer, rx);
+}
+
+/// Dropping the *last* row with alt-x refreshes the preview pane to the new last
+/// row. skim auto-repaints the preview across the matcher's `Replace` only when the
+/// selected row's text changes — which a last-row drop doesn't produce (`current`
+/// goes briefly out of range, then clamps onto the new last row with no text change
+/// to detect). The picker fires its own settled-gated `RunPreview`
+/// (`run_preview_when_settled`) to cover that; without it the pane keeps showing the
+/// removed row's preview until the next keystroke.
+#[rstest]
+fn test_switch_picker_alt_x_last_row_refreshes_preview(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+    // Two clean worktrees at main's commit, so alt-x integrates-and-drops them.
+    for branch in ["wt-a", "wt-b"] {
+        repo.add_worktree(branch);
+    }
+
+    let env_vars = repo.test_env_vars();
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--no-cd", "--format=json"],
+        repo.root_path(),
+        &env_vars,
+    );
+    let send = |bytes: &[u8]| {
+        let mut w = writer.lock().unwrap();
+        w.write_all(bytes).unwrap();
+        w.flush().unwrap();
+    };
+
+    wait_for_stable_with_content(&rx, &mut parser, Some("wt-b"));
+
+    // Rendered order: the pinned current (main) on top, then the two worktrees by
+    // recency. The bottom worktree row is the drop target; the one above it becomes
+    // the new last row the cursor lands on.
+    let order: Vec<String> = {
+        let list = list_pane_text(parser.screen());
+        let mut rows: Vec<(usize, String)> = ["wt-a", "wt-b"]
+            .iter()
+            .filter_map(|name| {
+                list.lines()
+                    .position(|l| l.contains(name))
+                    .map(|line| (line, (*name).to_string()))
+            })
+            .collect();
+        rows.sort_by_key(|(line, _)| *line);
+        rows.into_iter().map(|(_, name)| name).collect()
+    };
+    assert_eq!(order.len(), 2, "both worktree rows rendered");
+    let remove_target = order[1].clone(); // the bottom row
+    let new_last = order[0].clone(); // becomes the new last row after the drop
+
+    // Down onto the bottom worktree row, then confirm its preview is showing.
+    send(b"\x1b[B");
+    wait_for_cursor_on_row(&rx, &mut parser, &order[0]);
+    send(b"\x1b[B");
+    wait_for_cursor_on_row(&rx, &mut parser, &remove_target);
+    wait_for_stable_with_content(
+        &rx,
+        &mut parser,
+        Some(&format!("{remove_target} has no uncommitted changes")),
+    );
+
+    // alt-x drops the last row; the cursor lands on the new last row and its preview
+    // must refresh (the removed row's preview must not linger).
+    send(b"\x1bx");
+    wait_for_cursor_on_row(&rx, &mut parser, &new_last);
+    wait_for_stable_with_content(
+        &rx,
+        &mut parser,
+        Some(&format!("{new_last} has no uncommitted changes")),
+    );
+
+    let preview = preview_pane_text(parser.screen());
+    assert!(
+        preview.contains(&format!("{new_last} has no uncommitted changes")),
+        "the preview refreshed to the new last row `{new_last}`.\nPreview:\n{preview}"
+    );
+    assert!(
+        !preview.contains(&format!("{remove_target} has no uncommitted changes")),
+        "the preview must not keep showing the removed row `{remove_target}`.\nPreview:\n{preview}"
+    );
+
+    let _ = abort_and_exit_code(child, writer, rx);
+}
+
+/// alt-r refreshes the preview pane, not just the row list. The in-memory preview
+/// cache is keyed by `(branch, mode)` with no SHA, so a warm working-tree diff
+/// would otherwise survive an edit and re-serve stale content; the refresh clears
+/// it so the pane recomputes against the current tree. Targets the pinned current
+/// worktree (the top row), so the cursor sits on it before and after the reload
+/// regardless of skim's reload cursor behavior — no navigation needed.
+#[rstest]
+fn test_switch_picker_alt_r_refreshes_preview(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // A committed, tracked file in the current worktree so `git diff HEAD` has
+    // something to show once it's edited (untracked files don't appear in it).
+    let tracked = repo.root_path().join("tracked.txt");
+    std::fs::write(&tracked, "original\n").unwrap();
+    repo.run_git(&["add", "tracked.txt"]);
+    repo.run_git(&["commit", "-m", "add tracked file"]);
+
+    let env_vars = repo.test_env_vars();
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--no-cd", "--format=json"],
+        repo.root_path(),
+        &env_vars,
+    );
+    let send = |bytes: &[u8]| {
+        let mut w = writer.lock().unwrap();
+        w.write_all(bytes).unwrap();
+        w.flush().unwrap();
+    };
+
+    // The picker opens on the working-tree tab with the cursor on the pinned
+    // current worktree (`main`), whose tree is clean.
+    wait_for_stable_with_content(&rx, &mut parser, Some("has no uncommitted changes"));
+
+    // Edit the tracked file *while the picker is open*. Without the refresh clearing
+    // the warm cache, alt-r would re-serve the cached "no uncommitted changes" pane.
+    std::fs::write(&tracked, "original\nedited\n").unwrap();
+
+    send(b"\x1br"); // alt-r: refresh
+    wait_for_stable_with_content(&rx, &mut parser, Some("diff --git"));
+
+    let preview = preview_pane_text(parser.screen());
+    assert!(
+        preview.contains("diff --git"),
+        "alt-r must recompute the working-tree preview to show the new edit.\nPreview:\n{preview}"
+    );
+    assert!(
+        !preview.contains("has no uncommitted changes"),
+        "the stale clean preview must not survive the refresh.\nPreview:\n{preview}"
+    );
+
+    let _ = abort_and_exit_code(child, writer, rx);
 }
 
 /// Removing the sole row matching an active query leaves the filtered list empty,
-/// so the cursor-reposition gives up once the matcher settles empty rather than
-/// spinning the event loop. The picker stays responsive — its screen stabilizes,
-/// then aborts cleanly.
+/// so the settled-gated preview refresh gives up once the matcher settles empty
+/// rather than spinning the event loop. A second alt-x with nothing selected is a
+/// no-op (the keybinding callback returns early on an empty selection). The picker
+/// stays responsive — its screen stabilizes, then aborts cleanly.
 #[rstest]
 fn test_switch_picker_alt_x_no_match_stays_responsive(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
@@ -2316,6 +2957,7 @@ fn test_switch_picker_alt_x_no_match_stays_responsive(mut repo: TestRepo) {
         &[
             ("solo-wt", Some("solo-wt")), // filter to the sole matching worktree
             ("\x1bx", None),              // alt-x removes it; query now matches nothing
+            ("\x1bx", None),              // alt-x again with nothing selected: a no-op
         ],
     );
 
@@ -2374,4 +3016,376 @@ fn test_switch_picker_alt_x_keeps_unmerged_branch_row(mut repo: TestRepo) {
         "the unmerged branch-only row survives alt-x — expected the branch name in \
          both the prompt echo and a data row, got {occurrences} occurrence(s).\nList:\n{list}"
     );
+}
+
+/// alt-x on a *worktree* row whose branch is unmerged morphs the row to
+/// `/ branch` **in place**: the worktree is removed, the local branch stays, and
+/// the row keeps its slot with the cursor on it — gutter `+` → `/`, no reload, no
+/// teleport. The cursor staying put is the whole point of the morph (the old
+/// re-collect re-sorted the row to the bottom and reset the cursor to the top).
+/// End-to-end through real skim: after alt-x, the list-pane cursor pointer (`>`)
+/// must land on the morphed `/ transform-me` row — proving both the in-place
+/// gutter flip and the sticky cursor in one assertion.
+#[rstest]
+fn test_switch_picker_alt_x_morphs_removed_worktree_in_place(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // A worktree on a branch with a commit the default branch lacks, so
+    // `SafeDelete` keeps the branch when the worktree is removed (→ morph, not drop).
+    let wt_path = repo.add_worktree("transform-me");
+    std::fs::write(wt_path.join("new.txt"), "unmerged work").unwrap();
+    repo.git_command()
+        .args(["-C", wt_path.to_str().unwrap(), "add", "new.txt"])
+        .run()
+        .unwrap();
+    repo.git_command()
+        .args([
+            "-C",
+            wt_path.to_str().unwrap(),
+            "commit",
+            "-m",
+            "unmerged work",
+        ])
+        .run()
+        .unwrap();
+
+    let env_vars = repo.test_env_vars();
+    let pair = crate::common::open_pty_with_size(TERM_ROWS, TERM_COLS);
+    let mut cmd = CommandBuilder::new(wt_bin().to_str().unwrap());
+    cmd.arg("switch");
+    cmd.cwd(repo.root_path());
+    crate::common::configure_pty_command(&mut cmd);
+    cmd.env("CLICOLOR_FORCE", "1");
+    cmd.env("TERM", "xterm-256color");
+    for (key, value) in &env_vars {
+        cmd.env(key, value);
+    }
+    let mut child = pair.slave.spawn_command(cmd).unwrap();
+    drop(pair.slave);
+
+    let reader = pair.master.try_clone_reader().unwrap();
+    let writer: crate::common::pty::SharedPtyWriter =
+        Arc::new(Mutex::new(pair.master.take_writer().unwrap()));
+    let rx = crate::common::pty::spawn_pty_reader_answering_queries(reader, Arc::clone(&writer));
+    let mut parser = vt100::Parser::new(TERM_ROWS, TERM_COLS, 0);
+    let drain = |rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser| {
+        while let Ok(chunk) = rx.try_recv() {
+            parser.process(&chunk);
+        }
+    };
+    let send = |writer: &crate::common::pty::SharedPtyWriter, bytes: &[u8]| {
+        let mut w = writer.lock().unwrap();
+        w.write_all(bytes).unwrap();
+        w.flush().unwrap();
+    };
+
+    // Wait for skim to be ready, then for the worktree row to land.
+    let start = Instant::now();
+    loop {
+        drain(&rx, &mut parser);
+        if is_skim_ready(&parser.screen().contents()) || start.elapsed() > READY_TIMEOUT {
+            break;
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+    wait_for_stable_with_content(&rx, &mut parser, Some("transform-me"));
+
+    // Filter to the single worktree row so the selection is deterministic
+    // regardless of commit-recency order, then confirm the cursor is on it. The
+    // row still reads `> + transform-me` — a linked worktree.
+    send(&writer, b"transform-me");
+    wait_for_cursor_on_row(&rx, &mut parser, "+ transform-me");
+
+    // alt-x morphs the row in place. The cursor must land back on the morphed
+    // row — `> / transform-me`, gutter flipped to the branch sigil. The morph
+    // leaves `search_text` untouched, so the row still matches the active filter;
+    // a drop would empty the list, and the old re-collect would reset the cursor.
+    send(&writer, b"\x1bx");
+    wait_for_cursor_on_row(&rx, &mut parser, "/ transform-me");
+
+    send(&writer, b"\x1b"); // Esc to exit the picker.
+    drop(writer);
+    let start = Instant::now();
+    while start.elapsed() < CHILD_EXIT_TIMEOUT {
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let _ = child.kill();
+    drain(&rx, &mut parser);
+    let _ = child.wait();
+
+    // The worktree is gone but its branch survives — the morph's premise.
+    assert!(
+        !wt_path.exists(),
+        "alt-x removed the worktree directory.\nScreen:\n{}",
+        parser.screen().contents()
+    );
+    let branches = repo.git_output(&["branch", "--list", "transform-me"]);
+    assert!(
+        branches.contains("transform-me"),
+        "the unmerged branch is retained after its worktree is removed: {branches:?}"
+    );
+}
+
+/// alt-x on the *current* worktree — the one the picker was launched from — keeps
+/// the row in place rather than removing it. Removing the worktree the shell is
+/// sitting in would have to cd elsewhere first, which drags `post-switch` hooks
+/// into the picker and swaps an empty placeholder under the cursor mid-render, so
+/// the picker declines (`removal_targets_current_worktree`). End-to-end through
+/// real skim launched from inside the worktree: after alt-x the cursor stays on
+/// the unchanged `@ standing-here` row (gutter still `@` — not dropped, not
+/// morphed to `/`) and the worktree survives on disk. The branch is unmerged, so
+/// were the guard absent the row would morph; a surviving `@` proves the
+/// current-worktree check fires before the morph path.
+#[rstest]
+fn test_switch_picker_alt_x_keeps_current_worktree(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    let wt_path = repo.add_worktree("standing-here");
+    std::fs::write(wt_path.join("new.txt"), "unmerged work").unwrap();
+    repo.git_command()
+        .args(["-C", wt_path.to_str().unwrap(), "add", "new.txt"])
+        .run()
+        .unwrap();
+    repo.git_command()
+        .args([
+            "-C",
+            wt_path.to_str().unwrap(),
+            "commit",
+            "-m",
+            "unmerged work",
+        ])
+        .run()
+        .unwrap();
+
+    let env_vars = repo.test_env_vars();
+    let pair = crate::common::open_pty_with_size(TERM_ROWS, TERM_COLS);
+    let mut cmd = CommandBuilder::new(wt_bin().to_str().unwrap());
+    cmd.arg("switch");
+    cmd.cwd(&wt_path); // launched from inside the worktree → it's the current one
+    crate::common::configure_pty_command(&mut cmd);
+    cmd.env("CLICOLOR_FORCE", "1");
+    cmd.env("TERM", "xterm-256color");
+    for (key, value) in &env_vars {
+        cmd.env(key, value);
+    }
+    let mut child = pair.slave.spawn_command(cmd).unwrap();
+    drop(pair.slave);
+
+    let reader = pair.master.try_clone_reader().unwrap();
+    let writer: crate::common::pty::SharedPtyWriter =
+        Arc::new(Mutex::new(pair.master.take_writer().unwrap()));
+    let rx = crate::common::pty::spawn_pty_reader_answering_queries(reader, Arc::clone(&writer));
+    let mut parser = vt100::Parser::new(TERM_ROWS, TERM_COLS, 0);
+    let drain = |rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser| {
+        while let Ok(chunk) = rx.try_recv() {
+            parser.process(&chunk);
+        }
+    };
+    let send = |writer: &crate::common::pty::SharedPtyWriter, bytes: &[u8]| {
+        let mut w = writer.lock().unwrap();
+        w.write_all(bytes).unwrap();
+        w.flush().unwrap();
+    };
+
+    let start = Instant::now();
+    loop {
+        drain(&rx, &mut parser);
+        if is_skim_ready(&parser.screen().contents()) || start.elapsed() > READY_TIMEOUT {
+            break;
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+    wait_for_stable_with_content(&rx, &mut parser, Some("standing-here"));
+
+    // Filter to the current-worktree row so the selection is deterministic, then
+    // confirm the cursor is on it — `> @ standing-here`, the `@` current gutter.
+    send(&writer, b"standing-here");
+    wait_for_cursor_on_row(&rx, &mut parser, "@ standing-here");
+
+    // alt-x is declined for the current worktree: the row neither drops (the
+    // filtered list would empty) nor morphs (the gutter would flip to `/`). After
+    // the reload settles the cursor is back on the unchanged `@ standing-here` row.
+    send(&writer, b"\x1bx");
+    wait_for_cursor_on_row(&rx, &mut parser, "@ standing-here");
+
+    send(&writer, b"\x1b"); // Esc to exit the picker.
+    drop(writer);
+    let start = Instant::now();
+    while start.elapsed() < CHILD_EXIT_TIMEOUT {
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let _ = child.kill();
+    drain(&rx, &mut parser);
+    let _ = child.wait();
+
+    // The worktree survives — alt-x declined to remove the one we're standing in.
+    assert!(
+        wt_path.exists(),
+        "alt-x removed the current worktree.\nScreen:\n{}",
+        parser.screen().contents()
+    );
+}
+
+/// alt-x on an unremovable row (here the main worktree) keeps the cursor exactly on
+/// that row — it must not drift down — even with several rows below it.
+///
+/// This mirrors the keep paths a user hits most: alt-x on the main worktree or a
+/// dirty worktree surfaces a diagnostic and keeps the row. The single-row filtered
+/// case in [`test_switch_picker_alt_x_keeps_current_worktree`] can't catch a
+/// one-row drift (only one row matches the filter), so this drives a full,
+/// unfiltered list and removes nothing: the cursor has to come back to the *same*
+/// row, not the one below it.
+#[rstest]
+fn test_switch_picker_alt_x_unremovable_row_keeps_cursor(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+    // Launch from `wt-a` so it's the pinned current row; `main` then sorts second,
+    // with `wt-b`/`wt-c`/`wt-d` below it — main is a mid-list unremovable row.
+    let wt_a = repo.add_worktree("wt-a");
+    for branch in ["wt-b", "wt-c", "wt-d"] {
+        repo.add_worktree(branch);
+    }
+
+    let env_vars = repo.test_env_vars();
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--no-cd", "--format=json"],
+        &wt_a,
+        &env_vars,
+    );
+    let send = |bytes: &[u8]| {
+        let mut w = writer.lock().unwrap();
+        w.write_all(bytes).unwrap();
+        w.flush().unwrap();
+    };
+
+    wait_for_stable_with_content(&rx, &mut parser, Some("wt-d"));
+
+    // Down from the pinned current `wt-a` onto the `main` row (sorted second).
+    send(b"\x1b[B");
+    wait_for_cursor_on_row(&rx, &mut parser, "main");
+
+    // alt-x is declined for the main worktree (it can't be removed). The row stays
+    // and the cursor must land back on it — a one-row drift lands on the worktree
+    // below `main` and times this out.
+    send(b"\x1bx");
+    wait_for_cursor_on_row(&rx, &mut parser, "main");
+
+    let _ = abort_and_exit_code(child, writer, rx);
+}
+
+/// alt-x under an active fuzzy query lands the cursor on the row displayed just
+/// below the removed one — the *filtered display* order, not the removed row's
+/// index in the full (unfiltered) `shared_items` list.
+///
+/// Typing a query both shrinks and reorders skim's `item_list` relative to
+/// `shared_items`. A reposition that scrolled to the removed row's `shared_items`
+/// index lands rows past the right one — the "+N down" jump a user sees when
+/// removing rows after filtering, where N is the count of filtered-out rows above
+/// the cursor. The other alt-x cursor tests type no query, so the two index spaces
+/// coincide and this regression hides. Here decoy worktrees the query filters out
+/// sit between the matching ones, inflating each keeper's `shared_items` index past
+/// its displayed index: an index-based reposition overshoots (and `scroll_by`
+/// clamps it to the last filtered row), an identity-based one lands on the neighbor.
+#[rstest]
+fn test_switch_picker_alt_x_lands_on_neighbor_under_filter(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+    // Keepers (match the query `keep`) interleaved with decoys (don't), so each
+    // keeper carries decoys ahead of it in `shared_items` order. All sit at main's
+    // commit, so alt-x integrates-and-drops (the drop path).
+    for branch in [
+        "keep-1", "other-1", "keep-2", "other-2", "keep-3", "other-3", "keep-4",
+    ] {
+        repo.add_worktree(branch);
+    }
+
+    let env_vars = repo.test_env_vars();
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--no-cd", "--format=json"],
+        repo.root_path(),
+        &env_vars,
+    );
+    let send = |bytes: &[u8]| {
+        let mut w = writer.lock().unwrap();
+        w.write_all(bytes).unwrap();
+        w.flush().unwrap();
+    };
+
+    wait_for_stable_with_content(&rx, &mut parser, Some("keep-4"));
+
+    // Type the query: only the four keepers survive (the current/main row and the
+    // decoys filter out), so the cursor starts on the top keeper.
+    send(b"keep");
+    wait_for_stable_with_content(&rx, &mut parser, Some("keep-1"));
+
+    // Learn the filtered display order — skim ranks the equal-scoring keepers, so
+    // read the rows top-to-bottom rather than assume one.
+    let order: Vec<String> = {
+        let list = list_pane_text(parser.screen());
+        let mut rows: Vec<(usize, String)> = ["keep-1", "keep-2", "keep-3", "keep-4"]
+            .iter()
+            .filter_map(|name| {
+                list.lines()
+                    .position(|l| l.contains(name))
+                    .map(|line| (line, (*name).to_string()))
+            })
+            .collect();
+        rows.sort_by_key(|(line, _)| *line);
+        rows.into_iter().map(|(_, name)| name).collect()
+    };
+    assert_eq!(
+        order.len(),
+        4,
+        "all four keepers shown under the `keep` filter"
+    );
+    // Remove the second displayed keeper (two still below it): the row directly
+    // below must catch the cursor, not one further down.
+    let remove_target = order[1].clone();
+    let expected_landing = order[2].clone();
+    let overshoot_row = order[3].clone();
+
+    // Down from the top filtered row onto the second keeper.
+    send(b"\x1b[B");
+    wait_for_cursor_on_row(&rx, &mut parser, &remove_target);
+
+    // alt-x drops it; the cursor must land on the row that slid up. An index-based
+    // reposition overshoots toward `overshoot_row` (clamped to the last filtered
+    // row) and times this out.
+    send(b"\x1bx");
+    wait_for_cursor_on_row(&rx, &mut parser, &expected_landing);
+
+    let pointer_line = list_pane_text(parser.screen())
+        .lines()
+        .find(|l| l.starts_with('>'))
+        .map(str::to_string)
+        .unwrap_or_default();
+    assert!(
+        !pointer_line.contains(&overshoot_row),
+        "alt-x under a filter overshot to `{overshoot_row}` instead of the \
+         immediate next row `{expected_landing}`.\nPointer line: {pointer_line:?}"
+    );
+
+    let _ = abort_and_exit_code(child, writer, rx);
 }

@@ -1,5 +1,5 @@
 use crate::display::{format_relative_time_short, shorten_path, truncate_to_width};
-use anstyle::Style;
+use anstyle::{Effects, Style};
 use std::path::Path;
 use unicode_width::UnicodeWidthStr;
 use worktrunk::styling::{Stream, StyledLine, hyperlink_stdout, supports_hyperlinks};
@@ -27,6 +27,21 @@ pub const PLACEHOLDER: &str = "·";
 /// 200ms threshold, `LayoutConfig::placeholder` is promoted to [`PLACEHOLDER`]
 /// and every still-pending cell is re-rendered with the dot.
 pub const PLACEHOLDER_BLANK: &str = " ";
+
+/// Step a style up one emphasis level for compact (C/K) diff notation, which
+/// flags an approximated count. A dimmed base drops the dim to land at normal;
+/// any other base gains bold. This keeps the jump uniform across subcolumns —
+/// the dimmed "behind" count (`↓6C`) steps dim → normal rather than leaping two
+/// levels to dim+bold, while the normal "ahead" count (`↑6C`) still steps
+/// normal → bold.
+fn bump_emphasis(style: Style) -> Style {
+    let effects = style.get_effects();
+    if effects.contains(Effects::DIMMED) {
+        style.effects(effects.remove(Effects::DIMMED))
+    } else {
+        style.bold()
+    }
+}
 
 impl DiffColumnConfig {
     /// Check if a value exceeds the allocated digit width
@@ -75,7 +90,9 @@ impl DiffColumnConfig {
 
     /// Render a subcolumn value with symbol and padding to fixed width
     /// Numbers are right-aligned on the ones column (e.g., " +2", "+53")
-    /// For compact notation (C/K suffix), renders bold (e.g., bold "+6C", bold "+5K")
+    /// For compact notation (C/K suffix), bumps the base style one emphasis
+    /// level (e.g. dim "↓6C" → normal, normal "↑6C" → bold) — see
+    /// [`bump_emphasis`].
     fn render_subcolumn(
         segment: &mut StyledLine,
         symbol: &str,
@@ -98,10 +115,10 @@ impl DiffColumnConfig {
             segment.push_raw(" ".repeat(padding_needed));
         }
 
-        // Add styled content - bold entire value if using compact notation (C/K suffix)
-        // to emphasize approximation
+        // Add styled content - bump emphasis one level for compact notation
+        // (C/K suffix) to flag the approximated count
         if is_compact {
-            segment.push_styled(format!("{}{}", symbol, value_str), style.bold());
+            segment.push_styled(format!("{}{}", symbol, value_str), bump_emphasis(style));
         } else {
             segment.push_styled(format!("{}{}", symbol, value_str), style);
         }
@@ -351,6 +368,25 @@ impl LayoutConfig {
                         _ => StyledLine::new(),
                     };
                 }
+                // Age (Time) and Message carry no task — their data arrives in
+                // `item.commit` from the pre-skeleton commit batch, not from a
+                // task result. Render them through the canonical cell renderer
+                // so the post-skeleton commit paint (and the 200ms reveal) fill
+                // them the moment that batch is folded in, instead of leaving
+                // them on the placeholder until the row's first task result
+                // happens to redraw it. Before the batch lands (the very first
+                // skeleton paint) `item.commit` is `None`, and `render_cell`
+                // returns the same placeholder the `_` arm below would.
+                ColumnKind::Time | ColumnKind::Message => {
+                    return col.render_cell(
+                        item,
+                        &self.status_position_mask,
+                        &self.main_worktree_path,
+                        self.max_message_len,
+                        self.max_summary_len,
+                        spinner,
+                    );
+                }
                 _ => {
                     // Show spinner for data columns (placeholder_cell handles alignment)
                     return col.placeholder_cell(spinner);
@@ -422,9 +458,9 @@ impl ColumnLayout {
                 //
                 // PR rows (open PRs with no local branch, `wt switch --prs`)
                 // also carry a gutter sigil — a dim `#` — but they're a picker
-                // source (`PrSkimItem`), not a `ListItem`, so they render their
-                // gutter in `commands::picker::prs` (`PR_GUTTER_SIGIL`) rather
-                // than through this `ItemKind` match.
+                // row built without a `ListItem`, so they render their gutter in
+                // `commands::picker::prs` (`PR_GUTTER_SIGIL`) rather than through
+                // this `ItemKind` match.
                 let mut cell = StyledLine::new();
                 // `glyph` + trailing space = the two-cell sigil; the bare glyph
                 // also feeds the picker's fuzzy-search text (`gutter_glyph`).
@@ -1274,6 +1310,26 @@ mod tests {
         );
         assert_eq!(arrow_overflow2.width(), arrow_total);
         insta::assert_snapshot!(arrow_overflow2.render(), @"[32m↑50[0m [1m[31m↓1K[0m");
+
+        // Case 7: dimmed base steps up one level to normal, not two to dim+bold.
+        // The `main↕` / upstream behind subcolumn is `DELETION.dimmed()`, so a
+        // compact `↓1C` drops the dim (→ plain red) instead of leaping to bold.
+        let arrow_behind_dim = format_diff_like_column(
+            0,
+            100, // 100 behind → compact "1C"
+            DiffColumnConfig {
+                positive_digits: 2,
+                negative_digits: 2,
+                total_width: arrow_total,
+                display: DiffDisplayConfig {
+                    variant: DiffVariant::Arrows,
+                    positive_style: ADDITION,
+                    negative_style: DELETION.dimmed(),
+                },
+            },
+        );
+        assert_eq!(arrow_behind_dim.width(), arrow_total);
+        insta::assert_snapshot!(arrow_behind_dim.render(), @"    [31m↓1C[0m");
     }
 
     #[test]
@@ -1336,6 +1392,72 @@ mod tests {
         item.summary = Some(Some("Add user authentication".into()));
         let cell = summary_col.render_cell(&item, &mask, &main_path, 50, 40, PLACEHOLDER);
         insta::assert_snapshot!(cell.render(), @"Add user authentication");
+    }
+
+    /// The skeleton renders the task-free Age/Message columns from
+    /// `item.commit` the moment the pre-skeleton commit batch is folded in,
+    /// rather than leaving them on the placeholder until the row's first task
+    /// result. Before the batch lands (`commit = None`, the very first paint)
+    /// both columns show the loading placeholder, exactly as the catch-all arm
+    /// did — so the first frame is unchanged.
+    #[test]
+    fn test_skeleton_renders_commit_columns_when_loaded() {
+        use super::super::layout::{ColumnLayout, LayoutConfig};
+        use super::super::model::{CommitDetails, ListItem, PositionMask};
+        use std::path::PathBuf;
+
+        let layout = LayoutConfig {
+            columns: vec![
+                ColumnLayout {
+                    kind: ColumnKind::Time,
+                    header: std::borrow::Cow::Borrowed("Age"),
+                    start: 0,
+                    width: 6,
+                    format: ColumnFormat::Text,
+                },
+                ColumnLayout {
+                    kind: ColumnKind::Message,
+                    header: std::borrow::Cow::Borrowed("Message"),
+                    start: 7,
+                    width: 20,
+                    format: ColumnFormat::Text,
+                },
+            ],
+            main_worktree_path: PathBuf::from("/tmp"),
+            max_message_len: 20,
+            max_summary_len: 10,
+            hidden_column_count: 0,
+            status_position_mask: PositionMask::FULL,
+        };
+
+        // commit = None (first skeleton paint, before the batch) → placeholders.
+        let mut item = ListItem::new_branch("abc123".into(), "feat".into());
+        item.commit = None;
+        let line = layout.render_skeleton_row(&item, PLACEHOLDER).render();
+        assert!(
+            line.contains('·'),
+            "Age/Message are placeholders before the commit batch: {line}"
+        );
+        assert!(
+            !line.contains("Fix the parser"),
+            "no commit subject before the batch: {line}"
+        );
+
+        // commit = Some (post-skeleton commit paint) → the subject and a
+        // relative age render without waiting for any task result.
+        item.commit = Some(CommitDetails {
+            timestamp: 1_700_000_000,
+            commit_message: "Fix the parser".into(),
+        });
+        let line = layout.render_skeleton_row(&item, PLACEHOLDER).render();
+        assert!(
+            line.contains("Fix the parser"),
+            "commit subject paints in the skeleton once the batch is in: {line}"
+        );
+        assert!(
+            !line.contains('·'),
+            "no loading placeholder once commit data is in: {line}"
+        );
     }
 
     #[test]

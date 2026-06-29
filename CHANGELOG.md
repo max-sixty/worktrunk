@@ -1,5 +1,117 @@
 # Changelog
 
+## 0.63.0
+
+### Improved
+
+- **`[list] columns` can force a column on past `--full`**: Listing a column now overrides the `--full` / `[list] summary` presets — `columns = ["branch", "ci"]` shows the CI column without `--full`. Hard data-source prerequisites still apply: a listed `summary` with no `[commit.generation]` command, or `url` with no template, stays hidden, since listing can't conjure data that isn't configured. ([#3295](https://github.com/max-sixty/worktrunk/pull/3295))
+
+- **`Alt-r` in the picker refreshes the preview panes, not just the rows**: `Alt-r` re-collected the rows but kept serving cached preview content, so editing a tracked file and refreshing still showed the pre-edit diff. It now clears the preview cache too, recomputing the working-tree / log / branch-diff / upstream / summary tabs and re-fetching `pr` / `comments`. Unchanged branches re-read from the content-keyed on-disk cache, so only genuinely changed content pays a recompute. ([#3293](https://github.com/max-sixty/worktrunk/pull/3293))
+
+- **A narrowed `wt list` is now actually faster**: A narrowed `[list] columns` selection (e.g. `["branch", "path"]`) now runs only the git work its columns need. It previously ran every per-worktree `git status`, diff, and ahead/behind walk regardless, then discarded the unselected results — so a trimmed view was no faster than the full table, and on a repo with many dirty worktrees that discarded work was the bulk of the wall-clock cost. ([#3274](https://github.com/max-sixty/worktrunk/pull/3274), thanks @jtaby for reporting)
+
+- **Fewer duplicate git calls in `wt list --full`**: The two integration probes per row (the conflict bit for `main-state` and the clean-merge tree for the integration column) issued a byte-identical `git merge-tree`, and the shared default-branch tip was peeled to its tree once per row. Both are now deduplicated through the in-memory cache, so each resolves once per run instead of once per worktree. ([#3288](https://github.com/max-sixty/worktrunk/pull/3288), [#3289](https://github.com/max-sixty/worktrunk/pull/3289))
+
+- **Picker `comments` tab avoids redundant forge fetches**: The picker's `comments` preview tab gained an on-disk cache keyed by the PR's `updatedAt` (which rides for free on the CI fetch the picker already makes), so a repeat `wt switch` skips the per-row `gh pr view --json comments` fetch when the thread is unchanged and paints the tab instantly instead of showing "Loading comments…". The cache is also primed from the `gh pr list` call the picker already makes, so the tab skips its own fetch even on a session's first open (including PRs with no comments). GitHub only. ([#3294](https://github.com/max-sixty/worktrunk/pull/3294), [#3299](https://github.com/max-sixty/worktrunk/pull/3299))
+
+### Fixed
+
+- **`wt list` diff and ahead/behind columns use the upstream default tip**: The `main↕` (ahead/behind) and `main…±` (diff) columns measured every branch against the *local* default-branch tip, so in a fork whose local `main` lagged its upstream they reported inflated counts — one fork branch showed `↑44` and `+∞ / -5K` when it was ~2 commits past the real upstream tip. They now diff against the same upstream-aware base the integration column already uses. ([#3280](https://github.com/max-sixty/worktrunk/pull/3280))
+
+- **Integrated branches no longer flash `✗` in `wt list`**: A squash-merged branch whose default branch later re-edited the same lines showed `✗` (would-conflict), even though `wt step prune` classified it as `⊂` (fully integrated) and removed it. The list now ranks the integration verdict above the downstream conflict, matching prune; a genuinely un-integrated conflict still shows `✗`. ([#3278](https://github.com/max-sixty/worktrunk/pull/3278))
+
+- **`wt list` divergence-overflow marker uses one emphasis level**: When an ahead/behind count overflows its digit budget, the `main↕` column's compact `C`/`K`/`∞` marker rendered the "behind" subcolumn as dim + bold (reading as bold red) instead of a clean one-level step. It now steps exactly one level — dim red → normal red — matching the "ahead" subcolumn, across `wt list` and the picker. ([#3303](https://github.com/max-sixty/worktrunk/pull/3303))
+
+- **Branch deletion on removal is atomic**: `wt remove` and prune now delete a branch with a compare-and-swap (`git update-ref -d <ref> <expected-sha>`) against the SHA the integration check already read, closing the window where a branch whose tip moved in between (e.g. a hook landing a commit) could be deleted. Such a branch is now retained with a clear message and a `wt remove -D <branch>` recovery hint. This also unifies the previously divergent safe-delete paths; explicit force-delete still uses `git branch -D`. ([#2903](https://github.com/max-sixty/worktrunk/pull/2903))
+
+- **`wt list` and picker Age/Message columns paint as soon as the commit batch lands**: These columns carry no async task — their data arrives with the initial `git log` batch — but stayed on the `·` placeholder until some slower task happened to redraw the row, so the commit message lagged behind a cache-warm Summary preview. They now paint the moment the batch lands. ([#3287](https://github.com/max-sixty/worktrunk/pull/3287))
+
+- **Picker `Alt-x` removal: no cursor flash, `--prs` rows preserved**: Removing a row with `Alt-x` flashed the `>` pointer to the top of the list for a frame, and in `--prs` mode made the streamed PR/MR rows vanish until the next `Alt-r`. Removal is now a synchronous in-place pool resync: the cursor lands on the row that slid up with no flash, and the PR/MR rows survive. ([#3268](https://github.com/max-sixty/worktrunk/pull/3268), [#3275](https://github.com/max-sixty/worktrunk/pull/3275))
+
+- **Removable rows stay gray when selected in the picker**: A safe-to-delete worktree (integrated, or clean and even with the default branch) renders its row gray, but the gray vanished under the selection highlight — exactly when you're about to act on it. The gray now survives selection (selected row only; `wt list` and unselected rows are unchanged). ([#3267](https://github.com/max-sixty/worktrunk/pull/3267))
+
+- **Picker preview keeps its scroll when CI status arrives**: Scrolling down a diff and waiting a couple of seconds snapped it back to the top when the live CI fetch landed and re-rendered the pane. The re-render is now precise — a tab re-runs only when its own content would actually change — so a CI update no longer throws away the scroll position of an unrelated tab. ([#3292](https://github.com/max-sixty/worktrunk/pull/3292))
+
+- **Picker summary tab dims when there's nothing to summarize**: The summary preview tab (`5`) stayed lit on a clean branch with no commits ahead, unlike the diff tabs (1/3/4), which dim once their diff is known empty. It now dims in concert with them once both the branch diff and working tree are known empty. ([#3291](https://github.com/max-sixty/worktrunk/pull/3291))
+
+- **First-run hints show the config path wt actually loads from**: The picker's disabled-summary tab and the commit-generation setup prompt hardcoded `~/.config/worktrunk/config.toml`, so a user with `--config`, `WORKTRUNK_CONFIG_PATH`, or a non-default `$XDG_CONFIG_HOME` was told to edit a file wt never reads. Both now show the resolved path. ([#3290](https://github.com/max-sixty/worktrunk/pull/3290), [#3298](https://github.com/max-sixty/worktrunk/pull/3298))
+
+### Internal
+
+- **`-vv` trace and profiler accuracy**: `trace.log` is now purely human-readable, with the machine-parseable `[wt-trace]` fields living only in `trace.jsonl`; and the performance profile's cache analysis no longer reports stdin-driven commands (LLM `claude -p` calls, `git patch-id`) as duplicate re-runs, since their real input isn't captured in the command string. ([#3296](https://github.com/max-sixty/worktrunk/pull/3296), [#3297](https://github.com/max-sixty/worktrunk/pull/3297))
+
+## 0.62.0
+
+### Improved
+
+- **Browse open PRs/MRs in the `wt switch` picker, with live CI**: The picker now streams a live CI/review-status column per row — priming from the local cache, then fetching live (it previously showed only cached numbers with no network). A new `--prs` flag adds the repository's open PRs (GitHub) / MRs (GitLab) as rows alongside your worktrees, each with `pr` / `comments` / `log` preview tabs loaded from the forge in the background; selecting one fetches its branch and switches. Rows whose branch is already shown aren't duplicated, so `--prs` differs from plain `wt switch` only by the extra rows. [Docs](https://worktrunk.dev/switch/) ([#3128](https://github.com/max-sixty/worktrunk/pull/3128), [#3169](https://github.com/max-sixty/worktrunk/pull/3169), [#3189](https://github.com/max-sixty/worktrunk/pull/3189), [#3252](https://github.com/max-sixty/worktrunk/pull/3252))
+
+- **`main…±` diff column shows by default in `wt list`**: The `main…±` column (lines changed since the merge-base with the default branch) now renders in the default `wt list` and picker, served from a persistent cache rather than a history walk. `--full` now adds only the columns that reach off-machine — CI status and LLM branch summaries — and `wt list --format=json` populates `main.diff` for every item, not just under `--full`. ([#3236](https://github.com/max-sixty/worktrunk/pull/3236))
+
+- **`[list] columns` selects and orders the columns `wt list` shows**: A new `[list] columns` user-config key (also settable via `--config-set`) takes an ordered array of column names — built-in (`branch`, `status`, `ci`, `path`, …) and `[list.custom-columns]` headers alike — and renders exactly those, in that order. Where v0.61.0's custom columns *add* columns, this *selects and reorders* the whole set; omit the key for the default layout. (`WORKTRUNK__LIST__COLUMNS` isn't supported yet and warns if set.) ([#3141](https://github.com/max-sixty/worktrunk/pull/3141))
+
+- **Picker PR preview shows full PR/MR detail**: The `pr` tab now renders the PR/MR title, markdown description, author, draft state, comment count, bold branch name, and underlined URL for any row whose branch has an open PR — not just `--prs` rows — and the `comments` tab fetches the real thread. The title and description ride the CI fetch the picker already makes; the comment thread is fetched lazily in the background, once per row. ([#3167](https://github.com/max-sixty/worktrunk/pull/3167), [#3197](https://github.com/max-sixty/worktrunk/pull/3197), [#3223](https://github.com/max-sixty/worktrunk/pull/3223), [#3195](https://github.com/max-sixty/worktrunk/pull/3195), [#3231](https://github.com/max-sixty/worktrunk/pull/3231))
+
+- **Interactive picker runs on Windows**: The `wt switch` picker was Unix-only because its preview-tab keys shelled out through a per-process state file `cmd.exe` lacks; tab state moved to an in-memory atomic with native skim callbacks, lifting the platform gate. ([#3217](https://github.com/max-sixty/worktrunk/pull/3217))
+
+- **Picker keyboard shortcuts**: `Alt-y` copies the selected branch name, `Alt-o` opens the row's PR/MR in the browser, and `Alt-r` refreshes the list (picking up worktrees created or removed elsewhere). (Breaking: in the picker, remove moved from `Alt-r` to `Alt-x`) ([#3233](https://github.com/max-sixty/worktrunk/pull/3233))
+
+- **Picker uses the full terminal**: List height scales with the terminal (a roughly even split with the preview, minimum 3 rows) instead of a fixed 12-row cap, the table lays out at full width so toggling the preview off with `Alt-p` reveals the freed columns with no reflow, and a scrollbar appears when the list overflows. ([#3205](https://github.com/max-sixty/worktrunk/pull/3205), [#3214](https://github.com/max-sixty/worktrunk/pull/3214), [#3198](https://github.com/max-sixty/worktrunk/pull/3198))
+
+- **Picker filters on more of each row**: Typing a gutter sigil filters by row kind (`+` for linked worktrees, `@` for the current one), the fuzzy matcher ranks on the distinguishing path segment rather than the shared parent prefix, and rows with a PR/MR also match on its number, title, and author. ([#3143](https://github.com/max-sixty/worktrunk/pull/3143), [#3208](https://github.com/max-sixty/worktrunk/pull/3208), [#3252](https://github.com/max-sixty/worktrunk/pull/3252))
+
+- **Picker visual polish**: The legend recolored to dim-cyan and reordered so navigation leads, and preview loading placeholders moved to the dim-hint style (`↳` transient, `○` settled, `▲` failed). ([#3237](https://github.com/max-sixty/worktrunk/pull/3237), [#3253](https://github.com/max-sixty/worktrunk/pull/3253))
+
+- **"Still waiting" status for slow commit-message generation**: A configured `commit.generation` command captures stdout, so a slow or hung LLM previously showed nothing while `wt step commit`/`squash` waited. After a 2s delay worktrunk now shows a dim, in-place `○ Waiting for the commit message (Ns)` status, escalating at 10s to reveal the exact shell-escaped invocation in a gutter beneath it; the block clears on completion, mirroring `wt list`'s stall footer. ([#3178](https://github.com/max-sixty/worktrunk/pull/3178))
+
+- **"Still waiting" status extended to more slow commands**: The same waiting status now covers three more foreground commands that were silent while a captured subprocess ran — the `wt config show --full` commit-generation self-test, the `wt switch pr:`/`mr:` host lookup, and the `wt config show --full` version check. The version check no longer caps its fetch at an aggressive 5s, instead showing the status while a slow-but-working request completes (with a generous ceiling so a non-interactive run can't hang). ([#3183](https://github.com/max-sixty/worktrunk/pull/3183))
+
+- **`wt config state logs profile` performance profiler**: A new subcommand turns a `-vv` `[wt-trace]` capture (a path argument, `-` for stdin, or the default `trace.log`) into a performance profile: subprocess time by command shape, the slowest calls, parallelism and peak concurrency, redundant cache-miss re-runs, and — for `wt list`/picker captures — derived latencies and a collect timeline. `--format=json` emits the same data, and every `-vv` bug-report bundle now inlines a rendered profile. ([#3184](https://github.com/max-sixty/worktrunk/pull/3184), [#3186](https://github.com/max-sixty/worktrunk/pull/3186))
+
+- **`WORKTRUNK_VERBOSE` env var**: `WORKTRUNK_VERBOSE=0|1|2` mirrors `-v`/`-vv`, combined with any flag via `max` (the env sets a floor the flag can raise). Unlike the flags it's honored on the shell-completion path, which returns before flag parsing — so a slow tab-completion can be profiled for the first time. ([#3166](https://github.com/max-sixty/worktrunk/pull/3166))
+
+- **Aliases inherit the wrapped command's completion**: An alias that forwards `{{ args }}` to a single `wt` command (`co = "wt switch {{ args }}"`) now completes that command's arguments and flags — `wt co <Tab>` completes branches like `wt switch <Tab>` — instead of a generic stub. Bare dispatchers and multi-`{{ args }}` aliases keep the stub. ([#3172](https://github.com/max-sixty/worktrunk/pull/3172), thanks @yzx9)
+
+- **`wt step copy-ignored --require-include`**: A new `--require-include` flag makes the copy a no-op unless a `.worktreeinclude` file exists in the source worktree (matching Claude Code desktop, where that file is required), reporting why it skipped as a hint in text mode and a `reason` field in `--format=json`. ([#3196](https://github.com/max-sixty/worktrunk/pull/3196), thanks @yzx9)
+
+- **`wt step tether` honors `-C`**: The global `-C <path>` flag now sets the tethered command's working directory (`wt step tether -C frontend -- npm run dev`); teardown still watches the worktree root, so the command is reaped when the worktree is removed. ([#3207](https://github.com/max-sixty/worktrunk/pull/3207))
+
+- **Statusline rate-limit pace color grades by severity**: The pace segment's color now deepens (dim → dim-yellow → yellow) with the projected throttling severity, so an early-window burst stays muted while a costly projected lockout stands out. The displayed pace number is unchanged. ([#3229](https://github.com/max-sixty/worktrunk/pull/3229))
+
+- **Statusline width comes from `COLUMNS`, not a parent-process walk**: `wt list statusline` used to spawn up to 10 `ps` calls plus `stty` per render to recover a terminal width, because Claude Code piped the subprocess with no inherited TTY. Claude Code now sets `COLUMNS`/`LINES` to the terminal dimensions before running the script (since v2.1.153), so the width comes straight from there — less a fixed 5-column margin for Claude Code's own UI — and the `ps`/`stty` walk is gone. On an older Claude Code that doesn't set `COLUMNS`, the line renders untruncated rather than walking the process tree. ([#3286](https://github.com/max-sixty/worktrunk/pull/3286), closes [#2950](https://github.com/max-sixty/worktrunk/issues/2950))
+
+### Fixed
+
+- **Picker `Alt-x` removal updates the row in place**: Removing a worktree no longer re-collects the whole list (a flicker that reset the cursor to the top): an unmerged worktree's row morphs into a branch-only row while the worktree is removed in the background, and a merged worktree's row drops with the cursor landing on the row that slid up. A removal that can't safely happen — the current or main worktree, or a dirty or locked one — is declined with the same diagnostic `wt remove` prints, rather than a dead keypress or a disruptive `cd` home. The post-removal cursor lands by row identity, so it stays correct even under an active filter. ([#3262](https://github.com/max-sixty/worktrunk/pull/3262), [#3199](https://github.com/max-sixty/worktrunk/pull/3199), [#3211](https://github.com/max-sixty/worktrunk/pull/3211), [#3225](https://github.com/max-sixty/worktrunk/pull/3225))
+
+- **Picker preview refreshes when its background fetch lands**: A diff/log/PR-view fetch that completed after its triggering keystroke used to sit unshown until the next keypress; the pane now updates on its own when the fetch lands. ([#3247](https://github.com/max-sixty/worktrunk/pull/3247))
+
+- **Picker rows stay aligned while filtering**: Typing a filter no longer slides the matched row left and drops its leading sigil, and `Alt-l`/`Alt-h` no longer scroll the list off its gutter. ([#3213](https://github.com/max-sixty/worktrunk/pull/3213), [#3226](https://github.com/max-sixty/worktrunk/pull/3226))
+
+- **fish completions no longer recurse to the call-stack limit**: With worktrunk's fish lazy-load wrapper installed, completion could re-enter the wrapper and recurse until fish hit its call-stack limit. The package-manager registration now resolves the real binary via `type -P` instead of calling the bare `wt`, and the wrapper stub short-circuits in completion mode the way the bash and zsh wrappers already did. ([#3241](https://github.com/max-sixty/worktrunk/pull/3241), [#3250](https://github.com/max-sixty/worktrunk/pull/3250); fixes [#3240](https://github.com/max-sixty/worktrunk/issues/3240), thanks @maciej-lech for reporting)
+
+- **`wt switch` changes directory under fish with `zoxide.fish`**: The fish integration used a bare `cd`, which the `kidonng/zoxide.fish` plugin intercepts as a fuzzy query, so a switch reported success but failed with `zoxide: no match found`. The wrapper now uses `builtin cd`, bypassing any user `cd` override. ([#3160](https://github.com/max-sixty/worktrunk/pull/3160), fixes [#3159](https://github.com/max-sixty/worktrunk/issues/3159), thanks @anon-legion for reporting)
+
+- **`wt switch pr:N` resolves Azure DevOps projects with encoded path segments**: Azure returns decoded project names while git remotes store them URL-encoded, so a project like `project with spaces` failed to match. Path segments are now canonicalized before comparing remotes and building Azure URLs. ([#3204](https://github.com/max-sixty/worktrunk/pull/3204), fixes [#3203](https://github.com/max-sixty/worktrunk/issues/3203), thanks @jonasherfort)
+
+- **Recommended Claude Code commit command preserves `apiKeyHelper` auth**: The suggested `[commit.generation]` command for Claude Code used `--setting-sources=''`, which dropped user settings and broke authentication for setups that get their key via `apiKeyHelper`. It now uses `--safe-mode --setting-sources='user'`: the run stays hermetic (no hooks, plugins, MCP, skills, or CLAUDE.md) but loads user settings so `apiKeyHelper` works (requires Claude Code ≥ 2.1.169). Existing user configs are not rewritten. ([#3170](https://github.com/max-sixty/worktrunk/pull/3170))
+
+- **Claude Code paths honor `CLAUDE_CONFIG_DIR`**: worktrunk hardcoded `~/.claude` for every Claude Code path, so on a machine that relocates the config tree via `CLAUDE_CONFIG_DIR`, `wt config show` wrongly reported the plugin and statusline as not installed and `install-statusline` wrote to a stray file Claude Code never reads. All three call sites now resolve through `CLAUDE_CONFIG_DIR`, falling back to `~/.claude`. ([#3215](https://github.com/max-sixty/worktrunk/pull/3215), thanks @tftio)
+
+- **Deprecated config keys migrate in `--config-set`, env vars, and inline tables**: Deprecated keys were rewritten to canonical form only in config files; passed any other way they fell through as unknown fields and were silently dropped. `wt --config-set 'merge.no-ff=true'`, `WORKTRUNK__MERGE__NO_FF=true`, and the inline `merge = { no-ff = true }` form now all migrate and take effect. ([#3152](https://github.com/max-sixty/worktrunk/pull/3152), [#3158](https://github.com/max-sixty/worktrunk/pull/3158))
+
+- **`wt config show` can't hang on the zsh compinit probe**: The interactive `zsh -ic` probe that checks whether compinit is configured could hang indefinitely on compinit's insecure-directories prompt; it now has a 2s kill-on-timeout, declining to warn on timeout. ([#3165](https://github.com/max-sixty/worktrunk/pull/3165))
+
+- **Empty branch-name arguments rejected at the parse boundary**: An empty value (e.g. `wt step diff --branch=`) was accepted and produced a garbled downstream diagnostic; all branch-name arguments now reject empty or whitespace-only values at the CLI edge with a standard usage error. A real missing branch still gets its normal "no worktree" diagnostic. ([#3179](https://github.com/max-sixty/worktrunk/pull/3179))
+
+### Documentation
+
+- **`wt list` JSON and help-text accuracy**: The `wt list` help text and web docs now note which `--format=json` objects (`ci`, `summary`) require `--full`, and the status-symbol reference tables name each JSON field by type — correcting a wrong "only the first matching symbol is shown" note and an unreachable `worktree.state` value. ([#3139](https://github.com/max-sixty/worktrunk/pull/3139), [#3220](https://github.com/max-sixty/worktrunk/pull/3220), [#3224](https://github.com/max-sixty/worktrunk/pull/3224))
+
+### Internal
+
+- **Richer `-vv` diagnostics**: `-vv` now also writes a machine-readable `trace.jsonl` (one JSON object per event) alongside `trace.log`, segments `subprocess.log` into per-command blocks joined to the trace by a `seq` field, and lists each log path on its own line; worktrunk's own log sites moved to native `tracing`. ([#3232](https://github.com/max-sixty/worktrunk/pull/3232), [#3182](https://github.com/max-sixty/worktrunk/pull/3182), [#3163](https://github.com/max-sixty/worktrunk/pull/3163))
+
 ## 0.61.0
 
 ### Improved
@@ -11,10 +123,6 @@
 - **Picker shows cached PR/MR numbers**: The `wt switch` picker skips the networked CI-status fetch, so it previously had no CI column. It now fills PR/MR numbers from the local `.git/wt/cache/ci-status/` cache populated by earlier `wt list --full` or statusline runs, with zero network access. A stale entry (TTL passed or branch head moved) keeps its number dimmed; expired entries without a number are dropped. ([#3073](https://github.com/max-sixty/worktrunk/pull/3073))
 
 - **Faster file copies on macOS**: After a reflink (`clonefile` on APFS, which already preserves mode bits), worktrunk now skips the redundant follow-up `chmod` on macOS, saving one syscall per file in `wt step copy-ignored` and every other copy path. Linux (btrfs/XFS) still sets permissions, since `FICLONE` clones data extents only and drops the execute bit. ([#3149](https://github.com/max-sixty/worktrunk/pull/3149))
-
-- **"Still waiting" status for slow commit-message generation**: A configured `commit.generation` command captures stdout, so a slow or hung LLM previously showed nothing while `wt step commit`/`squash` waited. After a 2s delay worktrunk now shows a dim, in-place `○ Waiting for the commit message (Ns)` status, escalating at 10s to reveal the exact shell-escaped invocation in a gutter beneath it; the block clears on completion, mirroring `wt list`'s stall footer. ([#3178](https://github.com/max-sixty/worktrunk/pull/3178))
-
-- **"Still waiting" status extended to more slow commands**: The same waiting status now covers three more foreground commands that were silent while a captured subprocess ran — the `wt config show --full` commit-generation self-test, the `wt switch pr:`/`mr:` host lookup, and the `wt config show --full` version check. The version check no longer caps its fetch at an aggressive 5s, instead showing the status while a slow-but-working request completes (with a generous ceiling so a non-interactive run can't hang). ([#3183](https://github.com/max-sixty/worktrunk/pull/3183))
 
 ### Internal
 

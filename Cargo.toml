@@ -48,7 +48,7 @@ filterset = "test(/readme_sync/)"
 
 [package]
 name = "worktrunk"
-version = "0.61.0"
+version = "0.63.0"
 edition = "2024"
 rust-version = "1.95"
 build = "build.rs"
@@ -64,8 +64,11 @@ allow-branch = ["*"]
 consolidate-commits = true
 
 [package.metadata.cargo-udeps.ignore]
-# Used only on Windows (#[cfg(windows)] in src/shell_exec.rs)
-normal = ["which"]
+# `which` is used only on Windows (#[cfg(windows)] in src/shell_exec.rs).
+# `petname-macros` is not referenced in code — it's pinned only to constrain
+# the transitive resolution of `petname`'s proc-macro (see the dependency
+# comment above).
+normal = ["which", "petname-macros"]
 
 [features]
 # Disabled: Enable testing for shells that require extra installation steps (nushell, powershell, elvish, xonsh, oil)
@@ -233,6 +236,15 @@ sha2 = "0.11"
 # `src/config/expansion.rs::codename`). We use only the static wordlists,
 # not the random-name generator, so `default-rng` and `clap` stay off.
 petname = { version = "=3.0.0", default-features = false, features = ["default-words"] }
+# PINNED EXACT to match the `petname` pin above. `petname` 3.0.0 declares a
+# caret range (`petname-macros = "3.0.0"` => `^3.0.0`), but petname-macros 3.0.1
+# and 3.1.0 are SemVer-incompatible patch/minor releases: their `petnames!`
+# macro emits `::petname::lang::…` references that don't exist in petname 3.0.0,
+# so the pair fails to compile (E0433). The committed lockfile keeps 3.0.0, but
+# the nightly `minimal-versions` job re-resolves with `cargo update` and would
+# pull the broken macros crate. This direct `=3.0.0` requirement unifies the
+# shared resolution back to 3.0.0. Remove if/when `petname` itself is bumped.
+petname-macros = "=3.0.0"
 
 tempfile = "3.27"
 wait-timeout = "0.2"

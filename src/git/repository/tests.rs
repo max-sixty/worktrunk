@@ -951,8 +951,7 @@ fn build_worktree_config_bare_layout() -> (tempfile::TempDir, std::path::PathBuf
             "commit-tree",
             "-m",
             "init",
-            // Empty tree SHA.
-            "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+            super::integration::EMPTY_TREE_SHA,
         ])
         .run()
         .unwrap();

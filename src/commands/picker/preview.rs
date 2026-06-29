@@ -19,12 +19,12 @@ use std::sync::atomic::{AtomicU8, Ordering};
 ///
 /// A mode whose content is structurally absent for the current row is rendered
 /// de-emphasized in the tab bar (see `TabAvailability` / `render_preview_tabs`):
-/// tab 4 when the branch has no upstream, tab 5 when summaries are disabled, the
-/// working-tree/branch-diff/upstream/summary tabs on a `--prs` row (no local
-/// worktree), and the PR-backed tabs 6 (pr) and 7 (comments) when the row's
-/// branch has no PR. The PR-backed tabs are available together, by the same
-/// rule, on every row — `--prs` only decides whether a PR row is listed, not how
-/// these tabs behave.
+/// tab 4 when the branch has no upstream, tab 5 when summaries are disabled or
+/// the branch has nothing to summarize, the working-tree/branch-diff/upstream/
+/// summary tabs on a `--prs` row (no local worktree), and the PR-backed tabs 6
+/// (pr) and 7 (comments) when the row's branch has no PR. The PR-backed tabs are
+/// available together, by the same rule, on every row — `--prs` only decides
+/// whether a PR row is listed, not how these tabs behave.
 ///
 /// Loosely aligned with `wt list` columns, though not a perfect match:
 /// - Tab 1 corresponds to "HEAD±" column
@@ -213,7 +213,7 @@ impl PreviewLayout {
 /// The active preview tab, shared across the picker session.
 ///
 /// One picker runs per process, so a single process-wide value is the source of
-/// truth: `WorktreeSkimItem::preview` / `PrSkimItem::preview` read it to choose
+/// truth: `PickerRow::preview` reads it to choose
 /// what to render, and the keymap's `Action::Custom` callbacks (installed in
 /// `super::install_preview_tab_keybindings`) write it on alt-1…alt-7 / tab /
 /// shift-tab, then re-run the preview.

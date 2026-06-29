@@ -83,8 +83,10 @@ impl CiBranchName {
 
 // Re-export public types
 pub(crate) use cache::{CachedCiStatus, MaxPrNumber};
-// Only the `--prs` picker consumes this re-export.
-pub(crate) use github::GitHubPrInfo;
+// Only the `--prs` picker consumes these re-exports: `GitHubPrInfo` to parse the
+// `gh pr list` payload, `GitHubComment` to parse `gh pr view --json comments`
+// into the shared comment shape (the worktree CI call reuses the same type).
+pub(crate) use github::{GitHubComment, GitHubPrInfo};
 
 /// Maximum number of PRs/MRs to fetch when filtering by source repository.
 ///
@@ -362,7 +364,7 @@ pub enum ReviewState {
 }
 
 /// CI status from PR/MR or branch workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrStatus {
     pub ci_status: CiStatus,
     /// Source of the CI status (PR/MR or branch workflow)
@@ -411,6 +413,23 @@ pub struct PrStatus {
     /// for cache entries written before this field existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comment_count: Option<u32>,
+    /// PR `updatedAt` (GitHub) — the forge's "last modified" timestamp, an
+    /// RFC-3339 string. Rides the same `gh pr list` / `gh pr view` call as
+    /// `title` / `body`, and keys the picker's on-disk `comments` cache
+    /// (`picker::preview_cache::comments_key`): a GitHub PR's `updatedAt` bumps
+    /// on comment add, edit, review, and review-comment, so a stable value means
+    /// the thread is unchanged and a later `wt switch` can skip the per-row
+    /// `gh pr view --json comments` fetch. Comment *deletion* is the one event
+    /// GitHub doesn't reflect here, so a deleted comment can linger in the cache
+    /// until the next bump — an accepted best-effort gap for a read-only preview.
+    ///
+    /// `None` for GitLab MRs — their `updated_at` is throttled to once per minute
+    /// for note activity (so it misses a quick reply) *and* never moves on note
+    /// deletion, so it can't key a comments cache; the MR comments tab stays
+    /// uncached. Also `None` for branch workflows (no PR) and for cache entries
+    /// written before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
 }
 
 impl CiStatus {
@@ -534,6 +553,7 @@ impl PrStatus {
             body: None,
             author: None,
             comment_count: None,
+            updated_at: None,
         }
     }
 
@@ -756,6 +776,7 @@ mod tests {
             body: None,
             author: None,
             comment_count: None,
+            updated_at: None,
         };
         assert_eq!(pr_passed.indicator(), "#");
 
@@ -771,6 +792,7 @@ mod tests {
             body: None,
             author: None,
             comment_count: None,
+            updated_at: None,
         };
         assert_eq!(branch_running.indicator(), "#");
 
@@ -786,6 +808,7 @@ mod tests {
             body: None,
             author: None,
             comment_count: None,
+            updated_at: None,
         };
         assert_eq!(error_status.indicator(), "⚠");
     }
@@ -806,6 +829,7 @@ mod tests {
             body: None,
             author: None,
             comment_count: None,
+            updated_at: None,
         };
 
         // Number fits → PR reference, hyperlinked when supported
@@ -903,6 +927,7 @@ mod tests {
             body: None,
             author: None,
             comment_count: None,
+            updated_at: None,
         };
         let green = "\u{1b}[32m";
         let dim = "\u{1b}[2m";
@@ -945,6 +970,7 @@ mod tests {
             body: None,
             author: None,
             comment_count: None,
+            updated_at: None,
         };
 
         // Changes-requested outranks running and passed — waiting can't clear it
@@ -1060,6 +1086,7 @@ mod tests {
             body: None,
             author: None,
             comment_count: None,
+            updated_at: None,
         }
     }
 

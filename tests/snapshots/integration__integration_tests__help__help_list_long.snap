@@ -150,6 +150,8 @@ Output as JSON for scripting:
 
 The [2mmain[0m header label is used regardless of the default branch's actual name.
 
+[2mmain↕[0m and [2mmain…±[0m measure against the default branch's upstream tip when the local copy lags it — so in a fork whose local [2mmain[0m trails [2morigin/main[0m, a branch reads as ahead of the real mainline, not of a stale local checkout. The [2m↑[0m/[2m↓[0m/[2m↕[0m Status symbols derive from these counts, so they track the upstream tip too.
+
 [32mGutter[0m
 
 The leftmost column marks each row by physical presence, from most present to least:
@@ -232,17 +234,17 @@ An in-progress git operation, a worktree-location attribute, or a branch with no
 
 The single highest-priority state describing the branch's relation to the default branch; blank when none applies (a normal up-to-date branch). Each symbol is one [2mmain_state[0m value:
 
- Symbol    main_state                                                                     Meaning                                                                  
- ────── ──────────────── ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
- [2m^[0m      [2m"is_main"[0m        The main worktree (the repo's home worktree)                                                                                              
- [2m∅[0m      [2m"orphan"[0m         No common ancestor with the default branch                                                                                                
- [33m✗[0m      [2m"would_conflict"[0m Merging into the default branch would conflict (simulated with [2mgit merge-tree[0m); with [2m--full[0m, the check includes uncommitted changes       
- [2m_[0m      [2m"empty"[0m          Same commit as the default branch, working tree clean — safe to remove; row dimmed                                                        
- [2m–[0m      [2m"same_commit"[0m    Same commit as the default branch, but with uncommitted changes                                                                           
- [2m⊂[0m      [2m"integrated"[0m     Content integrated into the default branch or merge target via different history; the matching check is in [2mintegration_reason[0m; row dimmed 
- [2m↕[0m      [2m"diverged"[0m       Both ahead of and behind the default branch                                                                                               
- [2m↑[0m      [2m"ahead"[0m          Has commits the default branch doesn't                                                                                                    
- [2m↓[0m      [2m"behind"[0m         Missing commits the default branch has                                                                                                    
+ Symbol    main_state                                                                                      Meaning                                                                                   
+ ────── ──────────────── ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
+ [2m^[0m      [2m"is_main"[0m        The main worktree (the repo's home worktree)                                                                                                                                
+ [2m∅[0m      [2m"orphan"[0m         No common ancestor with the default branch                                                                                                                                  
+ [2m_[0m      [2m"empty"[0m          Same commit as the default branch, working tree clean — safe to remove; row dimmed                                                                                          
+ [2m⊂[0m      [2m"integrated"[0m     Content integrated into the default branch or merge target via different history; the matching check is in [2mintegration_reason[0m; row dimmed                                   
+ [33m✗[0m      [2m"would_conflict"[0m Merging into the default branch would conflict (simulated with [2mgit merge-tree[0m) and the branch isn't already integrated; with [2m--full[0m, the check includes uncommitted changes 
+ [2m–[0m      [2m"same_commit"[0m    Same commit as the default branch, but with uncommitted changes                                                                                                             
+ [2m↕[0m      [2m"diverged"[0m       Both ahead of and behind the default branch                                                                                                                                 
+ [2m↑[0m      [2m"ahead"[0m          Has commits the default branch doesn't                                                                                                                                      
+ [2m↓[0m      [2m"behind"[0m         Missing commits the default branch has                                                                                                                                      
 
 Rows are dimmed when safe to delete — [2m_[0m ([2m"empty"[0m) or [2m⊂[0m ([2m"integrated"[0m).
 
@@ -404,7 +406,7 @@ Top-level [2mrepo[0m describes the local checkout's repository as derived from
 
 [32mmain_state values[0m
 
-The single highest-priority state describing the branch's relation to the default branch; absent when none applies (a normal up-to-date branch). Each value is one Default-branch symbol — see Default branch for the symbol and the full meaning of each value ([2m"is_main"[0m, [2m"orphan"[0m, [2m"would_conflict"[0m, [2m"empty"[0m, [2m"same_commit"[0m, [2m"integrated"[0m, [2m"diverged"[0m, [2m"ahead"[0m, [2m"behind"[0m).
+The single highest-priority state describing the branch's relation to the default branch; absent when none applies (a normal up-to-date branch). Each value is one Default-branch symbol — see Default branch for the symbol and the full meaning of each value ([2m"is_main"[0m, [2m"orphan"[0m, [2m"empty"[0m, [2m"integrated"[0m, [2m"would_conflict"[0m, [2m"same_commit"[0m, [2m"diverged"[0m, [2m"ahead"[0m, [2m"behind"[0m).
 
 [32mintegration_reason values[0m
 

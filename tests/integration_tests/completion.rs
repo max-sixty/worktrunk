@@ -57,10 +57,11 @@ fn test_complete_switch_shows_branches(repo: TestRepo) {
 /// `WORKTRUNK_VERBOSE` reaches the completion subprocess, which exits before
 /// `main`'s `logging::init` and is otherwise silent. It is the env-var
 /// equivalent of `-v`/`-vv`, so at level 2 completion writes the same
-/// `[wt-trace]` timing and `$ git …` records to `.git/wt/logs/trace.log` that
-/// `-vv` produces — the only way to profile a slow tab-completion, since the
-/// shell invokes completion with nowhere to pass `-vv`. Unset, completion
-/// writes nothing and keeps the candidate output clean.
+/// humanized timing (`✓ git …`) and `$ git …` start records to
+/// `.git/wt/logs/trace.log` that `-vv` produces — the only way to profile a
+/// slow tab-completion, since the shell invokes completion with nowhere to
+/// pass `-vv`. Unset, completion writes nothing and keeps the candidate output
+/// clean.
 #[rstest]
 fn test_completion_honors_worktrunk_verbose(repo: TestRepo) {
     repo.commit("initial");
@@ -102,8 +103,8 @@ fn test_completion_honors_worktrunk_verbose(repo: TestRepo) {
     let trace = std::fs::read_to_string(&trace_log)
         .expect("WORKTRUNK_VERBOSE=2 should write trace.log during completion");
     assert!(
-        trace.contains("[wt-trace]"),
-        "completion trace should capture [wt-trace] timing: {trace}"
+        trace.contains("✓ git"),
+        "completion trace should capture humanized command timing: {trace}"
     );
     assert!(
         trace.contains("$ git"),

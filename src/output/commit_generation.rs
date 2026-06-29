@@ -190,15 +190,18 @@ pub fn prompt_commit_generation(config: &mut UserConfig) -> anyhow::Result<bool>
     let formatted_command = format_command_for_display(command);
     let config_preview = format!("[commit.generation]\ncommand = {formatted_command}");
 
+    // Point at the config file wt actually writes to — respecting --config,
+    // WORKTRUNK_CONFIG_PATH, and $XDG_CONFIG_HOME — rather than a hardcoded
+    // default. The save below resolves the same path via require_config_path.
+    let config_path = worktrunk::config::config_path_for_display();
+
     // Show prompt with preview on ?
     let response = prompt_yes_no_preview(
         &cformat!("Configure <bold>{tool}</> for commit messages?"),
         || {
             eprintln!(
                 "{}",
-                info_message(cformat!(
-                    "Would add to <bold>~/.config/worktrunk/config.toml</>:"
-                ))
+                info_message(cformat!("Would add to <bold>{config_path}</>:"))
             );
             eprintln!("{}", format_toml(&config_preview));
             eprintln!();
@@ -216,7 +219,7 @@ pub fn prompt_commit_generation(config: &mut UserConfig) -> anyhow::Result<bool>
                 eprintln!(
                     "{}",
                     hint_message(cformat!(
-                        "Config save failed; add manually to <underline>~/.config/worktrunk/config.toml</>"
+                        "Config save failed; add manually to <underline>{config_path}</>"
                     ))
                 );
                 return Ok(false);

@@ -33,7 +33,25 @@
 //!   of `main` and have every later `Repository::current()` (each builds a
 //!   fresh `RepoCache`) reuse the result.
 //!
-//! **Lifetime.** Neither layer is ever invalidated. `RepoCache` lives as
+//! **Persistence: in-memory vs on-disk.** Both layers above are in-memory and
+//! die with the process. A third store — the persistent on-disk [`sha_cache`]
+//! (SHA-keyed JSON under `.git/wt/cache/`) — survives across invocations.
+//! Which store a git result belongs in turns on recompute cost and parallelism:
+//! - *Cheap, resolved many times per run* (commit→tree, merge-base) → in-memory
+//!   `RepoCache` `DashMap`, get-or-create. The `Entry` match holds the shard
+//!   lock across check-and-insert, so parallel `wt list` rows sharing a key
+//!   spawn one git process, not one each; recompute is ~1 ms, so cross-run
+//!   persistence isn't worth a file. Exemplars:
+//!   [`Repository::merge_base_by_sha`], [`Repository::commit_to_tree_sha`].
+//! - *Expensive, worth persisting across invocations* (merge-tree, patch-id,
+//!   diff stats, ahead/behind) → the disk [`sha_cache`]; content-addressed by
+//!   SHA, so never stale.
+//! - *Both expensive and hot-in-parallel* → an in-memory `DashMap` front over
+//!   the disk back, so parallel tasks don't race through the file cache for the
+//!   same key (the in-memory layer pays the first miss once; the disk layer
+//!   persists it). Exemplar: the `diff_stats` field below.
+//!
+//! **Lifetime.** Neither in-memory layer is ever invalidated. `RepoCache` lives as
 //! long as the `Repository` it's attached to (typically the command).
 //! Process-wide statics live for the process. For the CLI that's the same
 //! thing — one command per process — but tests run many commands in one
@@ -121,7 +139,7 @@ mod worktrees;
 // Re-export WorkingTree, Branch, IntegrationTargets, and RefSnapshot
 pub use branch::Branch;
 pub use diff::CommitMessageDetail;
-pub use integration::IntegrationTargets;
+pub use integration::{BranchDiffSpec, IntegrationTargets, select_comparison_base};
 pub use ref_snapshot::RefSnapshot;
 pub(super) use working_tree::path_to_logging_context;
 pub use working_tree::{TempIndex, WorkingTree};
@@ -197,6 +215,11 @@ pub(super) struct RepoCache {
     pub(super) repo_path: OnceCell<PathBuf>,
     /// Default branch (main, master, etc.)
     pub(super) default_branch: OnceCell<Option<String>>,
+    /// Upstream-aware comparison base for the diff/summary preview panes —
+    /// [`integration::IntegrationTargets::primary`], resolved once. Repo-wide
+    /// like `default_branch`; captures a [`RefSnapshot`] on first access via
+    /// [`Repository::branch_diff_spec`]. `None` when no default branch resolves.
+    pub(super) comparison_base: OnceCell<Option<integration::ComparisonBase>>,
     /// Project identifier derived from remote URL
     pub(super) project_identifier: OnceCell<String>,
     /// Project config (loaded from .config/wt.toml in main worktree)
@@ -221,6 +244,23 @@ pub(super) struct RepoCache {
     /// a [`RefSnapshot`] before consulting. The key order is normalized
     /// (`(min, max)`) since merge-base is symmetric.
     pub(super) merge_base: DashMap<(String, String), Option<String>>,
+    /// Commit→tree cache: commit_sha -> tree_sha. Keys are commit SHAs by
+    /// contract; a commit's tree is immutable, so the mapping is never stale
+    /// within a process. Dedups the `wt list` integration probe, where every
+    /// branch row peels the same default-branch tip to its tree. Resolved via
+    /// [`Repository::commit_to_tree_sha`].
+    pub(super) commit_tree: DashMap<String, String>,
+    /// In-memory merge-tree outcome cache: (a_sha, b_sha) -> outcome.
+    /// `git merge-tree --write-tree` is the costliest op in `wt list`, and the
+    /// conflict probe (`has_merge_conflicts_by_sha`) and the integration probe
+    /// (`merge_integration_probe_by_sha` via `would_merge_add_to_target`) run
+    /// the identical `(target, branch)` merge per row for two different
+    /// answers. Their persistent caches (`merge-tree-conflicts` vs
+    /// `merge-add-probe`) are keyed separately, so a cold run would spawn the
+    /// subprocess twice; this front collapses both to one via the entry-lock
+    /// pattern (same as [`Self::merge_base`]). Keys are commit SHAs in call
+    /// order — see `Repository::merge_tree_outcome`.
+    pub(super) merge_tree: DashMap<(String, String), integration::MergeTreeOutcome>,
     /// Effective remote URLs: remote_name -> effective URL (with `url.insteadOf` applied).
     /// Separate from `all_config` because `git remote get-url` applies
     /// `url.insteadOf` rewrites that aren't visible in raw config.

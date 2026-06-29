@@ -26,7 +26,7 @@ use super::super::model::{
 #[strum_discriminants(
     name(TaskKind),
     vis(pub),
-    derive(Hash, Ord, PartialOrd, strum::IntoStaticStr),
+    derive(Hash, Ord, PartialOrd, strum::IntoStaticStr, strum::EnumIter),
     strum(serialize_all = "kebab-case")
 )]
 pub(crate) enum TaskResult {

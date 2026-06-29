@@ -73,6 +73,7 @@ fn snapshot_help(test_name: &str, args: &[&str]) {
 #[case("help_step_short", "step -h")]
 #[case("help_step_long", "step --help")]
 #[case("help_step_promote", "step promote --help")]
+#[case("help_step_copy_ignored", "step copy-ignored --help")]
 // Config subcommands (long help only - these are less frequently accessed)
 #[case("help_config_shell", "config shell --help")]
 #[case("help_config_create", "config create --help")]

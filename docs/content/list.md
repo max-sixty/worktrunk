@@ -91,6 +91,8 @@ Output as JSON for scripting:
 
 The `main` header label is used regardless of the default branch's actual name.
 
+`main↕` and `main…±` measure against the default branch's upstream tip when the local copy lags it — so in a fork whose local `main` trails `origin/main`, a branch reads as ahead of the real mainline, not of a stale local checkout. The `↑`/`↓`/`↕` Status symbols derive from these counts, so they track the upstream tip too.
+
 ### Gutter
 
 The leftmost column marks each row by physical presence, from most present to least:
@@ -182,10 +184,10 @@ The single highest-priority state describing the branch's relation to the defaul
 |--------|------------|---------|
 | `^` | `"is_main"` | The main worktree (the repo's home worktree) |
 | `∅` | `"orphan"` | No common ancestor with the default branch |
-| `✗` | `"would_conflict"` | Merging into the default branch would conflict (simulated with `git merge-tree`); with `--full`, the check includes uncommitted changes |
 | `_` | `"empty"` | Same commit as the default branch, working tree clean — safe to remove; row dimmed |
-| `–` | `"same_commit"` | Same commit as the default branch, but with uncommitted changes |
 | `⊂` | `"integrated"` | Content [integrated](@/remove.md#branch-cleanup) into the default branch or merge target via different history; the matching check is in `integration_reason`; row dimmed |
+| `✗` | `"would_conflict"` | Merging into the default branch would conflict (simulated with `git merge-tree`) and the branch isn't already integrated; with `--full`, the check includes uncommitted changes |
+| `–` | `"same_commit"` | Same commit as the default branch, but with uncommitted changes |
 | `↕` | `"diverged"` | Both ahead of and behind the default branch |
 | `↑` | `"ahead"` | Has commits the default branch doesn't |
 | `↓` | `"behind"` | Missing commits the default branch has |
@@ -328,7 +330,7 @@ Top-level `repo` describes the local checkout's repository as derived from the p
 
 ### main_state values
 
-The single highest-priority state describing the branch's relation to the default branch; absent when none applies (a normal up-to-date branch). Each value is one Default-branch symbol — see [Default branch](#default-branch) for the symbol and the full meaning of each value (`"is_main"`, `"orphan"`, `"would_conflict"`, `"empty"`, `"same_commit"`, `"integrated"`, `"diverged"`, `"ahead"`, `"behind"`).
+The single highest-priority state describing the branch's relation to the default branch; absent when none applies (a normal up-to-date branch). Each value is one Default-branch symbol — see [Default branch](#default-branch) for the symbol and the full meaning of each value (`"is_main"`, `"orphan"`, `"empty"`, `"integrated"`, `"would_conflict"`, `"same_commit"`, `"diverged"`, `"ahead"`, `"behind"`).
 
 ### integration_reason values
 

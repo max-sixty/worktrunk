@@ -677,6 +677,8 @@ The CI column shows each row's PR/MR CI and review status, the same as [`wt list
 
 `Alt-o` is a no-op on a row with no PR/MR (or whose status hasn't loaded yet).
 
+`Alt-x` is a no-op on the current worktree (the `@` row) — removing the worktree in use would have to switch elsewhere first, so switch away and remove it from there.
+
 Each row filters by its branch, path, and — when it has a PR/MR — the PR/MR's number, title, and author, the same fields whether the PR is checked out (a worktree row) or listed via `--prs`. Plain digits go to the filter, so a number can be typed directly and the preview tabs move to `Alt`.
 
 Typing a gutter sigil filters by row kind: `+` narrows to linked worktrees and `@` to the current worktree. The other sigils don't filter cleanly — `^` and `|` are skim's prefix-anchor and OR query operators (so `^` matches every row and `|` none), and `/` matches most rows because every worktree path contains it.
@@ -821,6 +823,8 @@ $ wt list --format=json
 
 The `main` header label is used regardless of the default branch's actual name.
 
+`main↕` and `main…±` measure against the default branch's upstream tip when the local copy lags it — so in a fork whose local `main` trails `origin/main`, a branch reads as ahead of the real mainline, not of a stale local checkout. The `↑`/`↓`/`↕` Status symbols derive from these counts, so they track the upstream tip too.
+
 ### Gutter
 
 The leftmost column marks each row by physical presence, from most present to least:
@@ -908,10 +912,10 @@ The single highest-priority state describing the branch's relation to the defaul
 |--------|------------|---------|
 | `^` | `"is_main"` | The main worktree (the repo's home worktree) |
 | `∅` | `"orphan"` | No common ancestor with the default branch |
-| `✗` | `"would_conflict"` | Merging into the default branch would conflict (simulated with `git merge-tree`); with `--full`, the check includes uncommitted changes |
 | `_` | `"empty"` | Same commit as the default branch, working tree clean — safe to remove; row dimmed |
-| `–` | `"same_commit"` | Same commit as the default branch, but with uncommitted changes |
 | `⊂` | `"integrated"` | Content [integrated](@/remove.md#branch-cleanup) into the default branch or merge target via different history; the matching check is in `integration_reason`; row dimmed |
+| `✗` | `"would_conflict"` | Merging into the default branch would conflict (simulated with `git merge-tree`) and the branch isn't already integrated; with `--full`, the check includes uncommitted changes |
+| `–` | `"same_commit"` | Same commit as the default branch, but with uncommitted changes |
 | `↕` | `"diverged"` | Both ahead of and behind the default branch |
 | `↑` | `"ahead"` | Has commits the default branch doesn't |
 | `↓` | `"behind"` | Missing commits the default branch has |
@@ -1078,7 +1082,7 @@ Top-level `repo` describes the local checkout's repository as derived from the p
 
 ### main_state values
 
-The single highest-priority state describing the branch's relation to the default branch; absent when none applies (a normal up-to-date branch). Each value is one Default-branch symbol — see [Default branch](#default-branch) for the symbol and the full meaning of each value (`"is_main"`, `"orphan"`, `"would_conflict"`, `"empty"`, `"same_commit"`, `"integrated"`, `"diverged"`, `"ahead"`, `"behind"`).
+The single highest-priority state describing the branch's relation to the default branch; absent when none applies (a normal up-to-date branch). Each value is one Default-branch symbol — see [Default branch](#default-branch) for the symbol and the full meaning of each value (`"is_main"`, `"orphan"`, `"empty"`, `"integrated"`, `"would_conflict"`, `"same_commit"`, `"diverged"`, `"ahead"`, `"behind"`).
 
 ### integration_reason values
 
@@ -1915,30 +1919,41 @@ timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disabl
 ```
 
 `columns` selects and orders the columns to render; omit it for the default set.
-It is designed to be driven by an [alias](@/extending.md#aliases) that sets it
-per invocation — a body like `wt --config-set 'list.columns=[…]' list` gives a
-named view (run as `wt <alias>`) without disturbing the default `wt list`.
-Setting it statically in the config file uses the same key and works, but is not
-the intended use: it pins one layout over a table that otherwise adapts to
-`--full` and terminal width.
+It is meant to drive a per-invocation [alias](@/extending.md#aliases)
+(`wt --config-set 'list.columns=[…]' list`), giving a named view without
+disturbing the default `wt list`. A static setting works but pins one layout
+over a table that otherwise adapts to `--full` and terminal width.
 
-Valid built-in names are `branch`, `status`, `working-diff`, `ahead-behind`,
-`branch-diff`, `summary`, `upstream`, `ci`, `path`, `url`, `commit`, `age`, and
-`message`. A [custom column](#custom-columns) is named by its `[list.custom-columns]`
-header, so a selection mixes built-ins and custom columns in one ordered list
-(`columns = ["branch", "Ticket", "ci"]`). When `columns` is set it is exhaustive
-— only the listed columns render, so a custom column omitted from a non-empty
-list is hidden (omit `columns` entirely to keep the default set, where custom
-columns append automatically). A built-in name wins over a custom header that
-collides with it. The gutter type indicator always shows.
+Valid built-in names:
 
-Listing a column requests it but does not force it on: a column gated off
-elsewhere stays hidden — `ci` needs `--full`, `summary` needs
-`[commit.generation]` — so `columns` only narrows which columns may appear.
+- `branch` — The branch name
+- `status` — Git status symbols, plus any user-defined status
+- `working-diff` — Uncommitted line changes against `HEAD` (header `HEAD±`)
+- `ahead-behind` — Commits ahead of and behind the default branch (header `main↕`)
+- `branch-diff` — Line changes against the default branch (header `main…±`)
+- `summary` — An LLM-generated summary of the branch
+- `upstream` — Commits ahead of and behind the upstream tracking branch (header `Remote⇅`)
+- `ci` — CI status of the head commit
+- `path` — The worktree's path
+- `url` — Dev-server URL from the `[list] url` template
+- `commit` — The head commit's short hash
+- `age` — Time since the last commit
+- `message` — The head commit's subject
 
-The selection drives the rendered table and the `wt switch` picker.
-`wt list --format json` ignores it, always emitting every field, built-in and
-custom.
+A selection mixes built-ins with [custom columns](#custom-columns), each named
+by its `[list.custom-columns]` header (`columns = ["branch", "Ticket", "ci"]`),
+and is exhaustive: only the listed columns render. Omit `columns` to keep the
+default set, where custom columns append automatically. A built-in name wins a
+header collision; the gutter type indicator always shows.
+
+Listing a column forces it on, space permitting: `ci` shows without `--full`,
+since `--full` only bundles columns into the default table rather than gating a
+named one. A column whose data source is missing still stays hidden — `summary`
+needs an LLM command (`[commit.generation]`), `url` needs a `[list] url`
+template — since listing can't supply the data.
+
+The selection drives the table and the `wt switch` picker; `wt list --format
+json` ignores it and emits every field.
 
 #### Custom columns [experimental]
 

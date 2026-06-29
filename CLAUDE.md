@@ -95,15 +95,17 @@ When no structured alternative exists, document the fragility inline.
 
 ### Network Access
 
-worktrunk is local-first: the network is touched only when the user asked for it. **One detection helper is exempt:** the *first* `Repository::default_branch()` per repo may fall through to `git ls-remote`; the result caches in `worktrunk.default-branch` and every later call is local. No other detection helper may add a similar fallback.
+worktrunk is local-first: the network is touched only when the user asked for it, and only where reaching the wire directly serves that request. **One detection helper is exempt:** the *first* `Repository::default_branch()` per repo may fall through to `git ls-remote`; the result caches in `worktrunk.default-branch` and every later call is local. No other detection helper may add a similar fallback.
 
 Why: silent "lookup" paths that walk to the wire (alias dispatch, hook context build, recovery) stall commands the user wouldn't expect to do network work, worst on a fresh clone. The `default_branch()` bootstrap keeps a fresh clone usable while bounding the exception to one helper firing at most once per repo.
 
-Before adding an accessor that could reach the wire (`gh`, `glab`, `git fetch`, `git ls-remote`, HTTP), confirm the command that calls it is not intended to be fast. A foreground command the user runs and waits on absorbs the latency; a command in a synchronous hot path like a shell prompt cannot, and must not reach the wire. `wt list statusline` is not a fast command despite running on every prompt: Claude Code consumes its output asynchronously.
+**Network never blocks the first write.** Fast output to the terminal is the priority (Real-time Output Streaming, above): every command paints from local data first, then network-derived detail streams in progressively behind it. A command that can't render its first frame until `gh` or `git fetch` returns is the failure mode, worst on a fresh clone or a slow link. Before adding an accessor that could reach the wire (`gh`, `glab`, `git fetch`, `git ls-remote`, HTTP), confirm it renders progressively and never gates the first paint. A synchronous hot path like a shell prompt is stricter: it must not reach the wire at all, even progressively. `wt list statusline` is not such a path despite running on every prompt, because Claude Code consumes its output asynchronously.
+
+**The picker is the most forgiving home for network work, because its lifetime is bounded by the user, not the job.** It paints immediately, the user browses, and a slow forge call streams into the rows whenever it arrives; if the user picks first, the unfinished request is simply abandoned, so its latency never costs anything. A run-to-completion command is less forgiving: `wt list` renders progressively but still cannot *finish* until every task returns, so a slow `gh` call extends the command the user is waiting on. Prefer the picker for live forge data, and fetch it there progressively.
 
 What currently reaches the wire:
 
-- `wt list --full`, `wt list statusline` — CI status
+- `wt list --full`, `wt list statusline` — CI status; also plain `wt list` when `[list] columns` names `ci`, which forces the column (and its fetch) on without `--full`
 - `wt switch` (interactive picker, no target) — per-row CI status, primed from the local cache then fetched live and streamed into the rows; once a row's CI fetch surfaces an open PR/MR, a per-row background `gh pr view <n> --json comments` (`glab api …/notes` on GitLab) fills that row's `comments` preview tab — the same fetch a `--prs` row makes, spawned once per row from `progressive_handler` (see `picker::prs::spawn_comments_fetch`). The `comments` tab is the only PR data fetched lazily here; `pr` rides the CI call and `log` is the local `git log`
 - generating a branch summary with a `commit.generation` command
 - generating a commit message with a `commit.generation` command
@@ -191,7 +193,7 @@ No `get_*` — bare nouns follow Rust stdlib convention.
 
 ## Repository Caching
 
-`Repository` caches read-only values via `Arc<RepoCache>` (cloning shares it). What is and isn't cached, the `list_worktrees()` post-mutation invariant, and the two storage patterns: the `# Caching` section in `src/git/repository/mod.rs`.
+`Repository` caches read-only values via `Arc<RepoCache>` (cloning shares it). What is and isn't cached, the `list_worktrees()` post-mutation invariant, the two storage patterns, and the in-memory-`RepoCache`-vs-persistent-`sha_cache` decision (cheap-and-hot → in-memory get-or-create; expensive → disk; both → in-memory front over disk back): the `# Caching` section in `src/git/repository/mod.rs`.
 
 ## Releases
 

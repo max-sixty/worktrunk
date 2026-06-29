@@ -364,8 +364,16 @@ fn handle_step_command(
             to,
             dry_run,
             force,
+            require_include,
             format,
-        } => step_copy_ignored(from.as_deref(), to.as_deref(), dry_run, force, format),
+        } => step_copy_ignored(
+            from.as_deref(),
+            to.as_deref(),
+            dry_run,
+            force,
+            require_include,
+            format,
+        ),
         StepCommand::Eval { template, format } => step_eval(&template, format),
         StepCommand::ForEach { format, args } => step_for_each(args, format),
         StepCommand::Promote { branch } => {

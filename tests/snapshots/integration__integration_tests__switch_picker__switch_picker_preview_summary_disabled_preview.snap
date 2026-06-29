@@ -5,13 +5,10 @@ expression: preview
 1 2 3 4 5: summary 6 7
 Enter: switch | ctrl-u/d: scroll | Tab/alt-1…7: preview | a
 
-Summaries not configured
+Summaries off
 
-Add a [commit.generation] command in:
+Enable summaries in:
 [TEST_CONFIG]
-
-  [commit.generation]
-  command = "llm -m haiku"
 
   [list]
   summary = true
