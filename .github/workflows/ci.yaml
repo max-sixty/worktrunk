@@ -440,7 +440,7 @@ jobs:
         save-if: ${{ github.ref == 'refs/heads/main' }}
 
     - name: Install shells (zsh, fish)
-      uses: awalsh128/cache-apt-pkgs-action@v1.6.1
+      uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f # v1.6.1 — pin SHA; upstream force-moves tags (v1.6.1 now resolves to the broken v1.6.2, awalsh128/cache-apt-pkgs-action#210)
       with:
         packages: zsh fish
         version: 1.0
