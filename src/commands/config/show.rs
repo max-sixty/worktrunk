@@ -260,6 +260,16 @@ const ZSH_COMPINIT_PROBE_ARGS: [&str; 4] =
 ///
 /// Returns true if compinit is NOT enabled (i.e., user needs to add it).
 /// Returns false if compinit is enabled or we can't determine (fail-safe: don't warn).
+///
+// TODO(zsh-compinit-probe-unify): this duplicates `shell::detect_zsh_compinit`
+// — both spawn an interactive `zsh -ic` to probe for the `compdef` function, and
+// #3322 had to add the `+m` job-control fix to both. They diverge on purpose, so
+// folding them into one parameterized probe isn't a mechanical rename: this one
+// passes `--no-globalrcs` (checks the USER's config so we only nudge when *they*
+// haven't enabled compinit) while `detect_zsh_compinit` intentionally sources
+// global rcs (so shell setup won't re-add what /etc/zshrc already enables); they
+// also differ in result type (bool vs Option<bool>) and runner (`Cmd` vs raw
+// `Command`). Unify behind one `probe_zsh_compdef(no_globalrcs: bool)` helper.
 fn check_zsh_compinit_missing() -> bool {
     // Allow tests to bypass this check since zsh subprocess behavior varies across CI envs
     if std::env::var("WORKTRUNK_TEST_COMPINIT_CONFIGURED").is_ok() {

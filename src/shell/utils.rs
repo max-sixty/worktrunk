@@ -117,6 +117,11 @@ const ZSH_PROBE_FLAGS: [&str; 2] = ["+m", "-ic"];
 /// - `Some(true)` if compinit is enabled (compdef function exists)
 /// - `Some(false)` if compinit is NOT enabled
 /// - `None` if detection failed (zsh not installed, timeout, error)
+///
+// TODO(zsh-compinit-probe-unify): see `config::show::check_zsh_compinit_missing`
+// for the matching probe and why the two haven't been merged (intentional
+// `--no-globalrcs` divergence, different result types and runners). #3322 had to
+// apply the `+m` job-control fix in both places.
 pub fn detect_zsh_compinit() -> Option<bool> {
     // Allow tests to bypass this check since zsh subprocess behavior varies across CI envs
     if std::env::var("WORKTRUNK_TEST_COMPINIT_CONFIGURED").is_ok() {
