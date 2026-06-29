@@ -440,10 +440,7 @@ jobs:
         save-if: ${{ github.ref == 'refs/heads/main' }}
 
     - name: Install shells (zsh, fish)
-      uses: awalsh128/cache-apt-pkgs-action@v1.6.2
-      with:
-        packages: zsh fish
-        version: 1.0
+      run: sudo apt-get update && sudo apt-get install -y zsh fish
 
     - name: Install nushell
       uses: hustcer/setup-nu@v3
