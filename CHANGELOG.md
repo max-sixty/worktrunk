@@ -34,6 +34,12 @@
 
 - **Picker summary tab dims when there's nothing to summarize**: The summary preview tab (`5`) stayed lit on a clean branch with no commits ahead, unlike the diff tabs (1/3/4), which dim once their diff is known empty. It now dims in concert with them once both the branch diff and working tree are known empty. ([#3291](https://github.com/max-sixty/worktrunk/pull/3291))
 
+- **Picker default view keeps collect order**: With no query typed, the `wt switch` picker reordered rows by where each name's last `/` falls, so slash-bearing branches (`feature/…`, `perf/…`) sank toward the bottom and intermixed with other row kinds. The default view now preserves collect order. ([#3301](https://github.com/max-sixty/worktrunk/pull/3301))
+
+- **Picker branch-diff preview and summary use the upstream-aware base**: Like the `wt list` columns above, the picker's branch-diff preview pane and the LLM branch summary diffed against the raw local default branch, so a fork whose local default lagged upstream made them describe dozens of already-merged commits. They now use the same upstream-aware comparison base. ([#3305](https://github.com/max-sixty/worktrunk/pull/3305))
+
+- **Picker comment previews render fenced code blocks cleanly**: A fenced code block inside a PR/MR comment rendered as a garbled double gutter in the `wt switch` comments preview — alternating bar/no-bar lines with broken alignment. The code block now renders without the nested gutter. ([#3306](https://github.com/max-sixty/worktrunk/pull/3306))
+
 - **First-run hints show the config path wt actually loads from**: The picker's disabled-summary tab and the commit-generation setup prompt hardcoded `~/.config/worktrunk/config.toml`, so a user with `--config`, `WORKTRUNK_CONFIG_PATH`, or a non-default `$XDG_CONFIG_HOME` was told to edit a file wt never reads. Both now show the resolved path. ([#3290](https://github.com/max-sixty/worktrunk/pull/3290), [#3298](https://github.com/max-sixty/worktrunk/pull/3298))
 
 ### Internal
