@@ -128,9 +128,10 @@ jobs:
     # zsh/fish and probe nushell; match the test matrix's shell setup
     # (.github/actions/test-setup) so those combinations run, not just compile.
     - name: Install shells (zsh, fish)
-      # Direct apt — the cached-apt action's tag moved onto a broken release
-      # (see .github/actions/test-setup for the full note).
-      run: sudo apt-get update && sudo apt-get install -y zsh fish
+      uses: awalsh128/cache-apt-pkgs-action@v1.6.1
+      with:
+        packages: zsh fish
+        version: 1.0
 
     - name: Install nushell
       uses: hustcer/setup-nu@v3
@@ -218,9 +219,10 @@ jobs:
         save-if: false
 
     - name: Install shells (zsh, fish)
-      # Direct apt — the cached-apt action's tag moved onto a broken release
-      # (see .github/actions/test-setup for the full note).
-      run: sudo apt-get update && sudo apt-get install -y zsh fish
+      uses: awalsh128/cache-apt-pkgs-action@v1.6.1
+      with:
+        packages: zsh fish
+        version: 1.0
 
     - name: Install nushell
       uses: hustcer/setup-nu@v3
