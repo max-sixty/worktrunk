@@ -14,6 +14,8 @@
 
 - **Picker `comments` tab avoids redundant forge fetches**: The picker's `comments` preview tab gained an on-disk cache keyed by the PR's `updatedAt` (which rides for free on the CI fetch the picker already makes), so a repeat `wt switch` skips the per-row `gh pr view --json comments` fetch when the thread is unchanged and paints the tab instantly instead of showing "Loading comments…". The cache is also primed from the `gh pr list` call the picker already makes, so the tab skips its own fetch even on a session's first open (including PRs with no comments). GitHub only. ([#3294](https://github.com/max-sixty/worktrunk/pull/3294), [#3299](https://github.com/max-sixty/worktrunk/pull/3299))
 
+- **Statusline width comes from `COLUMNS`, not a parent-process walk**: `wt list statusline` used to spawn up to 10 `ps` calls plus `stty` per render to recover a terminal width, because Claude Code piped the subprocess with no inherited TTY. Claude Code now sets `COLUMNS`/`LINES` to the terminal dimensions before running the script (since v2.1.153), so the width comes straight from there — less a fixed 5-column margin for Claude Code's own UI — and the `ps`/`stty` walk is gone. On an older Claude Code that doesn't set `COLUMNS`, the line renders untruncated rather than walking the process tree. ([#3286](https://github.com/max-sixty/worktrunk/pull/3286), closes [#2950](https://github.com/max-sixty/worktrunk/issues/2950))
+
 ### Fixed
 
 - **`wt list` diff and ahead/behind columns use the upstream default tip**: The `main↕` (ahead/behind) and `main…±` (diff) columns measured every branch against the *local* default-branch tip, so in a fork whose local `main` lagged its upstream they reported inflated counts — one fork branch showed `↑44` and `+∞ / -5K` when it was ~2 commits past the real upstream tip. They now diff against the same upstream-aware base the integration column already uses. ([#3280](https://github.com/max-sixty/worktrunk/pull/3280))
@@ -83,8 +85,6 @@
 - **`wt step tether` honors `-C`**: The global `-C <path>` flag now sets the tethered command's working directory (`wt step tether -C frontend -- npm run dev`); teardown still watches the worktree root, so the command is reaped when the worktree is removed. ([#3207](https://github.com/max-sixty/worktrunk/pull/3207))
 
 - **Statusline rate-limit pace color grades by severity**: The pace segment's color now deepens (dim → dim-yellow → yellow) with the projected throttling severity, so an early-window burst stays muted while a costly projected lockout stands out. The displayed pace number is unchanged. ([#3229](https://github.com/max-sixty/worktrunk/pull/3229))
-
-- **Statusline width comes from `COLUMNS`, not a parent-process walk**: `wt list statusline` used to spawn up to 10 `ps` calls plus `stty` per render to recover a terminal width, because Claude Code piped the subprocess with no inherited TTY. Claude Code now sets `COLUMNS`/`LINES` to the terminal dimensions before running the script (since v2.1.153), so the width comes straight from there — less a fixed 5-column margin for Claude Code's own UI — and the `ps`/`stty` walk is gone. On an older Claude Code that doesn't set `COLUMNS`, the line renders untruncated rather than walking the process tree. ([#3286](https://github.com/max-sixty/worktrunk/pull/3286), closes [#2950](https://github.com/max-sixty/worktrunk/issues/2950))
 
 ### Fixed
 
