@@ -586,9 +586,9 @@ impl Repository {
     /// Selects the base via the shared [`select_comparison_base`] rule
     /// ([`IntegrationTargets::primary`] else the raw local default), so the
     /// preview panes and the `wt list` columns can't pick different bases.
-    /// Captures a [`RefSnapshot`] on first call; safe in the read-only preview
-    /// contexts that use it (wt doesn't move refs there). Fully local — no
-    /// network.
+    /// Captures a [`RefSnapshot`] on first call unless already primed via
+    /// [`Self::prime_comparison_base`]; safe in the read-only preview contexts
+    /// that use it (wt doesn't move refs there). Fully local — no network.
     fn comparison_base(&self) -> Option<&ComparisonBase> {
         self.cache
             .comparison_base
@@ -596,18 +596,38 @@ impl Repository {
             .as_ref()
     }
 
+    /// Seed the memoized comparison base from an already-captured snapshot, so
+    /// the diff/summary preview panes reuse the `wt list` collector's ref scan
+    /// instead of capturing their own (both share one `Arc<RepoCache>`).
+    /// Idempotent — a no-op once the base is resolved; the lazy
+    /// `comparison_base` path remains the fallback for callers that preview
+    /// without collecting first.
+    pub fn prime_comparison_base(&self, snapshot: &RefSnapshot) {
+        self.cache
+            .comparison_base
+            .get_or_init(|| self.comparison_base_from(snapshot));
+    }
+
     fn resolve_comparison_base(&self) -> Option<ComparisonBase> {
         // No default branch → no comparison base; skip the ref scan entirely.
         self.default_branch()?;
         let snapshot = self.capture_refs().ok()?;
-        let targets = self.integration_targets(&snapshot);
+        self.comparison_base_from(&snapshot)
+    }
+
+    /// Resolve the comparison base from a captured snapshot. The shared core of
+    /// the lazy [`Self::resolve_comparison_base`] (captures its own snapshot)
+    /// and [`Self::prime_comparison_base`] (reuses the collector's), so both
+    /// select the base by the same [`select_comparison_base`] rule.
+    fn comparison_base_from(&self, snapshot: &RefSnapshot) -> Option<ComparisonBase> {
+        let targets = self.integration_targets(snapshot);
         let default_branch = self.default_branch();
         let name = select_comparison_base(targets.as_ref(), default_branch.as_deref())?.to_string();
         // No usable base if the name won't resolve (a stale
         // `worktrunk.default-branch` pointing at a deleted branch) — return
         // `None` so the panes skip the branch diff rather than render a
         // guaranteed-empty range against a missing ref.
-        let sha = snapshot_resolve(self, &snapshot, &name).ok()?;
+        let sha = snapshot_resolve(self, snapshot, &name).ok()?;
         Some(ComparisonBase { name, sha })
     }
 

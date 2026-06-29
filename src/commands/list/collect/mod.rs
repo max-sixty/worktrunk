@@ -1546,6 +1546,14 @@ pub fn collect(
         .as_deref()
         .and_then(|s| repo.integration_targets(s));
 
+    // Seed the repo-wide comparison-base cache from this snapshot so the
+    // diff/summary preview panes reuse this ref scan instead of capturing their
+    // own. They run on `repo` (`wt list --full`'s summary column) or a clone of
+    // it (the picker's panes), both sharing this `Arc<RepoCache>`.
+    if let Some(s) = snapshot.as_deref() {
+        repo.prime_comparison_base(s);
+    }
+
     // Patch integration_targets and snapshot into options. When
     // default_branch is None (unset or stale), null integration_targets
     // out — tasks otherwise see a target derived from the stale value

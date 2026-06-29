@@ -2673,6 +2673,44 @@ mod tests {
     }
 
     #[test]
+    fn prime_comparison_base_feeds_branch_diff_spec() {
+        // Priming the comparison base from the collector's already-captured
+        // snapshot must seed the same upstream-aware base the lazy path would
+        // resolve, so the preview pane reuses that scan instead of capturing
+        // its own. Same upstream-aware setup as the test above: local main
+        // lags origin-main, so the base is origin-main, not the stale local.
+        let (t, repo) = repo_with_main();
+        repo.run_command(&["branch", "origin-main"]).unwrap();
+        repo.run_command(&["checkout", "origin-main"]).unwrap();
+        std::fs::write(t.path().join("upstream.txt"), "from upstream\n").unwrap();
+        repo.run_command(&["add", "upstream.txt"]).unwrap();
+        repo.run_command(&["commit", "-m", "upstream commit"])
+            .unwrap();
+        repo.run_command(&["checkout", "-b", "feature"]).unwrap();
+        std::fs::write(t.path().join("feature.txt"), "feature work\n").unwrap();
+        repo.run_command(&["add", "feature.txt"]).unwrap();
+        repo.run_command(&["commit", "-m", "feature commit"])
+            .unwrap();
+        repo.run_command(&["branch", "--set-upstream-to=origin-main", "main"])
+            .unwrap();
+
+        let head = repo
+            .run_command(&["rev-parse", "refs/heads/feature"])
+            .unwrap();
+        let snapshot = repo.capture_refs().unwrap();
+        repo.prime_comparison_base(&snapshot);
+
+        let spec = repo
+            .branch_diff_spec(head.trim())
+            .expect("primed base resolves a spec");
+        assert_eq!(
+            spec.base_name, "origin-main",
+            "primed base must be the upstream-aware comparison base, got: {:?}",
+            spec.base_name
+        );
+    }
+
+    #[test]
     fn branch_diff_cache_short_circuits_recompute() {
         // Pre-populate the disk cache with a sentinel value, then call
         // compute — a hit must return the sentinel verbatim instead of

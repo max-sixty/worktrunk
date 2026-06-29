@@ -1544,12 +1544,11 @@ pub fn handle_picker(
     // Wrapped in `Arc` because the progressive handler (running on the
     // collect background thread) also calls `spawn_preview`.
     //
-    // BranchDiff previews resolve the default branch's SHA via
-    // `Repository::default_branch_sha`, which sources it from the
-    // local-branch inventory cached on the shared `RepoCache`. N parallel
-    // preview tasks share one inventory scan instead of each forking
-    // `git rev-parse`. Read-only for the picker session — see the
-    // accessor's docstring for the staleness contract.
+    // BranchDiff previews resolve the upstream-aware comparison base via
+    // `Repository::branch_diff_spec`, memoized on the shared `RepoCache` and
+    // primed by `collect::collect` from its ref scan, so N parallel preview
+    // tasks share one resolution instead of each capturing refs. Read-only for
+    // the picker session — see `branch_diff_spec` for the staleness contract.
     //
     // skim 4.x repaints on demand, so the orchestrator needs a handle to skim's
     // event loop to surface a preview compute that lands after the keystroke that
