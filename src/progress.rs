@@ -54,6 +54,7 @@ mod imp {
     };
 
     use super::{format_bytes, format_count};
+    use crate::styling::HINT_SYMBOL;
 
     const SPINNER_FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
     const TICK_INTERVAL: Duration = Duration::from_millis(100);
@@ -291,12 +292,12 @@ mod imp {
     ///
     /// Unlike [`Progress`] (which counts work units), `Watchdog` just tracks
     /// elapsed time. After a startup delay it renders a dim one-line status —
-    /// `○ Waiting for the commit message (4s)` — redrawn in place each second;
+    /// `↳ Waiting for the commit message (4s)` — redrawn in place each second;
     /// the ticking counter is the "still alive" signal. After a longer delay it
     /// escalates, revealing the exact command in a gutter beneath the status:
     ///
     /// ```text
-    /// ○ Waiting for the commit message (12s)
+    /// ↳ Waiting for the commit message (12s)
     ///    sh -c 'claude -p --model=haiku'
     /// ```
     ///
@@ -475,7 +476,7 @@ mod imp {
         command: Option<&str>,
         width: Option<usize>,
     ) -> Vec<String> {
-        let status = cformat!("<dim>○ Waiting for {waiting_for} ({secs}s)</>");
+        let status = cformat!("{HINT_SYMBOL} <dim>Waiting for {waiting_for} ({secs}s)</>");
         let status = match width {
             Some(w) => crate::styling::truncate_visible(&status, w),
             None => status,
@@ -633,7 +634,7 @@ mod imp {
             assert_eq!(block.len(), 1);
             assert!(block[0].contains("Waiting for the commit message"));
             assert!(block[0].contains("(4s)"));
-            assert!(block[0].contains('○'));
+            assert!(block[0].contains('↳'));
             assert!(!block[0].contains('…'));
         }
 
