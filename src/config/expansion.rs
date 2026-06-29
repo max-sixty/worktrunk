@@ -1073,13 +1073,15 @@ pub fn vars_map_to_value(entries: &std::collections::BTreeMap<String, String>) -
     Value::from_serialize(&vars_map)
 }
 
-/// A vars stand-in that answers every key with a placeholder string.
+/// A stand-in for the `vars` / `git.branch` maps that answers every key
+/// with a placeholder string.
 ///
 /// Used only by [`validate_list_column_template`]'s trial render: list
-/// columns lean on `{{ vars.key }}` for keys that only some branches set, so
-/// validating against an empty map (as [`validate_template`] does) would
-/// wrongly reject the dominant pattern. Answering every key keeps the trial
-/// render exercising filters without constraining which keys exist.
+/// columns lean on `{{ vars.key }}` / `{{ git.branch.key }}` for keys that
+/// only some branches set, so validating against an empty map (as
+/// [`validate_template`] does) would wrongly reject the dominant pattern.
+/// Answering every key keeps the trial render exercising filters without
+/// constraining which keys exist.
 #[derive(Debug)]
 struct AnyKeyVars;
 
@@ -1092,10 +1094,10 @@ impl Object for AnyKeyVars {
 /// Validate a `wt list` custom-column template.
 ///
 /// Checks syntax, restricts top-level variables to `LIST_COLUMN_VARS` ∪
-/// `vars`, and trial-renders with placeholder values so filter errors (e.g. a
-/// misspelled filter name) surface at config resolution rather than as
-/// silently empty cells. `vars.*` access is unconstrained — any key
-/// validates, since which keys exist is per-branch runtime state.
+/// `{vars, git}`, and trial-renders with placeholder values so filter errors
+/// (e.g. a misspelled filter name) surface at config resolution rather than as
+/// silently empty cells. `vars.*` and `git.branch.*` access is unconstrained —
+/// any key validates, since which keys exist is per-branch runtime state.
 pub fn validate_list_column_template(
     template: &str,
     repo: &Repository,
@@ -1109,12 +1111,13 @@ pub fn validate_list_column_template(
     let mut undefined: Vec<String> = tmpl
         .undeclared_variables(false)
         .into_iter()
-        .filter(|var| var != "vars" && !LIST_COLUMN_VARS.contains(&var.as_str()))
+        .filter(|var| var != "vars" && var != "git" && !LIST_COLUMN_VARS.contains(&var.as_str()))
         .collect();
     undefined.sort();
     if !undefined.is_empty() {
         let mut available = LIST_COLUMN_VARS.to_vec();
         available.push("vars.<key>");
+        available.push("git.branch.<key>");
         return Err(build_undefined_vars_error(
             name,
             &undefined,
@@ -1127,6 +1130,10 @@ pub fn validate_list_column_template(
         .map(|&k| (k.to_string(), Value::from("PLACEHOLDER")))
         .collect();
     context.insert("vars".to_string(), Value::from_object(AnyKeyVars));
+    // git.branch.<key> resolves to a placeholder; nesting AnyKeyVars under
+    // `branch` lets the trial render exercise `{{ git.branch.* }}` filters.
+    let git = HashMap::from([("branch".to_string(), Value::from_object(AnyKeyVars))]);
+    context.insert("git".to_string(), Value::from_object(git));
     match tmpl.render(Value::from_object(context)) {
         Ok(_) => Ok(()),
         // At runtime an undefined value renders as an empty cell by design
@@ -3016,13 +3023,27 @@ mod tests {
         // Nested vars access (JSON values at runtime) must not be rejected
         // even though the trial render's placeholder vars are flat strings
         validate_list_column_template("{{ vars.config.port }}", &test.repo, "t").unwrap();
+        // git.branch.* mirrors vars.*: any key validates, filters apply
+        validate_list_column_template("{{ git.branch.jira }}", &test.repo, "t").unwrap();
+        validate_list_column_template(
+            "{{ git.branch.description | lines | first }}",
+            &test.repo,
+            "t",
+        )
+        .unwrap();
 
-        // Unknown top-level variables list the available set, vars included
+        // Unknown top-level variables list the available set, both namespaces included
         let err = validate_list_column_template("{{ branhc }}", &test.repo, "t").unwrap_err();
         assert!(err.message.contains("branhc"), "got: {}", err.message);
         assert_eq!(
             err.available_vars,
-            vec!["branch", "vars.<key>", "worktree_name", "worktree_path"]
+            vec![
+                "branch",
+                "git.branch.<key>",
+                "vars.<key>",
+                "worktree_name",
+                "worktree_path"
+            ]
         );
 
         // Syntax errors fail

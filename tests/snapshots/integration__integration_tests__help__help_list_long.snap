@@ -193,7 +193,7 @@ Reuses the [2mcommit.generation[0m command — the same LLM that generates com
 
 [32mCustom columns [experimental][0m
 
-Each [2m[list.custom-columns][0m entry in user config adds a column: the key is the header, the template renders each row's cell. Templates can reference per-branch [2m{{ vars.* }}[0m stored with [2mwt config state vars set[0m — useful for tracking what each of many (often agent-driven) branches is for:
+Each [2m[list.custom-columns][0m entry in user config adds a column: the key is the header, the template renders each row's cell. Templates read two per-branch namespaces — [2m{{ vars.* }}[0m, stored with [2mwt config state vars set[0m, and [2m{{ git.branch.* }}[0m, the branch's own git config under [2mbranch.<name>.*[0m (a [2mjira[0m key you set yourself, or the git-native [2mdescription[0m) — useful for tracking what each of many (often agent-driven) branches is for:
 
 [107m [0m [2m[36m[list.custom-columns.Ticket][0m
 [107m [0m [2mtemplate = [0m[2m[32m"{{ vars.ticket }}"[0m

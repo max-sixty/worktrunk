@@ -1145,9 +1145,10 @@ pub fn collect(
     let llm_command = config.commit_generation.command.clone();
 
     // Custom [list.custom-columns] values expand before layout: their inputs
-    // (branch, worktree identity, vars from the bulk config snapshot) are
-    // already in memory, so cells paint with the skeleton and column widths
-    // are measured from content like Branch/Path. Pure CPU — no subprocess.
+    // (branch, worktree identity, vars and branch_config from the bulk config
+    // snapshot) are already in memory, so cells paint with the skeleton and
+    // column widths are measured from content like Branch/Path. Pure CPU — no
+    // subprocess.
     //
     // A broken column definition aborts `wt list` with the error. The picker
     // shares this path but runs collect on a background thread while skim
@@ -1164,10 +1165,12 @@ pub fn collect(
         };
     if !custom_columns.is_empty() {
         let all_vars = repo.all_vars_from_snapshot()?;
+        let all_branch_config = repo.all_branch_config_from_snapshot()?;
         super::custom_columns::expand_custom_columns(
             &custom_columns,
             &mut all_items,
             &all_vars,
+            &all_branch_config,
             repo,
         );
     }
