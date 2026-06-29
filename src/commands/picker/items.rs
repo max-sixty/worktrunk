@@ -553,13 +553,9 @@ pub(super) struct LocalContent {
     /// against the **upstream-aware** comparison base
     /// (`TaskContext::comparison_base` — the upstream ref when the local default
     /// lags it), so a stale fork default doesn't inflate it. The branch-diff and
-    /// summary panes instead diff the **local** default (`default_branch_sha()`,
-    /// `compute_combined_diff`'s `repo.default_branch()`); the two bases coincide
-    /// unless the local default lags upstream, where this can read `ahead = 0`
-    /// while the pane (vs the stale local default) still shows a diff — dimming
-    /// the number over a non-empty pane. That fork-only skew is shared by the
-    /// branch-diff and summary tabs and is purely cosmetic (navigation and the
-    /// pane itself are unaffected).
+    /// summary panes diff against the **same** base
+    /// (`Repository::branch_diff_spec`), so the dimmed number and the pane agree
+    /// even on a fork whose local default lags upstream.
     branch_diff: Option<bool>,
     /// `upstream`: the branch is ahead of or behind its tracking ref. Combined
     /// with the synchronous `has_upstream` floor (no tracking ref dims the tab
@@ -619,12 +615,10 @@ impl LocalTabs {
     /// synchronous `has_upstream` floor (no tracking ref → dim with no loading
     /// window). `summary` requires the process-wide `[commit.generation]` flag
     /// *and* something to summarize: its pane is generated from the combined diff
-    /// (`crate::summary::compute_combined_diff` = commits ahead of the default +
-    /// working-tree changes), so it reuses the `branch_diff` and `working_tree`
-    /// signals that gate tabs 3 and 1 — dimming in concert with them once both
-    /// are known empty, not only when summaries are disabled. Like tab 3, it
-    /// inherits `branch_diff`'s fork-only base skew (see the
-    /// [`LocalContent::branch_diff`] field doc).
+    /// (`crate::summary::compute_combined_diff` = commits ahead of the comparison
+    /// base + working-tree changes), so it reuses the `branch_diff` and
+    /// `working_tree` signals that gate tabs 3 and 1 — dimming in concert with
+    /// them once both are known empty, not only when summaries are disabled.
     fn worktree(content: LocalContent, has_upstream: bool, summaries_enabled: bool) -> Self {
         let working_tree = content.working_tree.unwrap_or(true);
         let branch_diff = content.branch_diff.unwrap_or(true);
@@ -1230,54 +1224,47 @@ impl PickerRow {
         )
     }
 
-    /// Compute Tab 3: Branch diff preview (line diffs in commits ahead of default branch)
+    /// Compute Tab 3: Branch diff preview (line diffs vs the comparison base)
     ///
     /// Independent of `item.counts` — `compute_diff_preview`'s empty-diff
     /// fallback covers the ahead=0 case, so the preview is correct even
     /// before the list-row pipeline has populated counts.
     ///
-    /// The default branch's SHA comes from [`Repository::default_branch_sha`],
-    /// which sources it from the already-warmed local-branch inventory. N
-    /// parallel preview tasks all share one inventory scan instead of each
-    /// forking `git rev-parse`. The SHA also keeps the disk cache invariant
-    /// across `git fetch` (which moves the *ref* but not the captured SHA).
-    /// When the SHA isn't available (no default branch, or stale config
-    /// pointing at a deleted branch), we fall through to the uncached path
-    /// with the branch name in the diff range — same git behavior as
-    /// before, just no cache read/write.
+    /// The base comes from [`Repository::branch_diff_spec`], which measures
+    /// against the **upstream-aware comparison base** — the same ref the
+    /// ahead/behind and branch-diff columns use — so a stale fork default
+    /// can't show upstream commits as this branch's changes. Its resolved SHA
+    /// keys the disk cache (stable across `git fetch`, which moves the *ref*
+    /// but not the captured SHA), and orphan branches diff their full content
+    /// against the empty tree.
     fn compute_branch_diff_preview(repo: &Repository, item: &ListItem, width: usize) -> String {
         let branch = item.branch_name();
         let reset = Reset;
-        let Some(default_branch) = repo.default_branch() else {
+        let Some(spec) = repo.branch_diff_spec(item.head()) else {
             return cformat!(
                 "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no commits ahead of main\n"
             );
         };
 
-        let base_sha = repo.default_branch_sha();
-
-        if let Some(ref base) = base_sha
-            && let Some(cached) = preview_cache::read_branch_diff(repo, base, item.head(), width)
+        if let Some(cached) =
+            preview_cache::read_branch_diff(repo, &spec.cache_sha, item.head(), width)
         {
             return cached;
         }
 
-        // Use the resolved SHA in the diff range when available so the
-        // cache key and the diff agree on which commit was the base.
-        let base_ref = base_sha.as_deref().unwrap_or(&default_branch);
-        let merge_base = format!("{base_ref}...{}", item.head());
+        let mut diff_args = vec!["diff"];
+        diff_args.extend(spec.revs.iter().map(String::as_str));
+        let base_name = &spec.base_name;
         let result = compute_diff_preview(
             repo,
-            &["diff", &merge_base],
+            &diff_args,
             &cformat!(
-                "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no file changes vs <bold>{default_branch}</>{reset}"
+                "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no file changes vs <bold>{base_name}</>{reset}"
             ),
             width,
         );
 
-        if let Some(ref base) = base_sha {
-            preview_cache::write_branch_diff(repo, base, item.head(), width, &result);
-        }
+        preview_cache::write_branch_diff(repo, &spec.cache_sha, item.head(), width, &result);
         result
     }
 
@@ -2568,6 +2555,62 @@ mod tests {
         assert!(
             output.contains("feat.txt"),
             "expected diff to mention feat.txt, got: {output:?}"
+        );
+    }
+
+    #[test]
+    fn branch_diff_orphan_shows_full_content() {
+        // An orphan branch shares no history with the comparison base, so its
+        // three-dot diff has no merge base. The pane must fall back to the
+        // orphan's full content (vs the empty tree) rather than "no file
+        // changes" — matching the dim signal, which keeps tab 3 available for
+        // orphans.
+        let (t, repo) = repo_with_main();
+        repo.run_command(&["checkout", "--orphan", "orphan-feature"])
+            .unwrap();
+        repo.run_command(&["rm", "-rf", "."]).unwrap();
+        std::fs::write(t.path().join("orphan.txt"), "orphan\n").unwrap();
+        repo.run_command(&["add", "orphan.txt"]).unwrap();
+        repo.run_command(&["commit", "-m", "orphan root"]).unwrap();
+        let item = item_at(&repo, "orphan-feature");
+        let output = PickerRow::compute_branch_diff_preview(&repo, &item, 80);
+        assert!(
+            output.contains("orphan.txt"),
+            "orphan pane should show full content, got: {output:?}"
+        );
+    }
+
+    #[test]
+    fn branch_diff_uses_upstream_aware_base() {
+        // When the local default lags its upstream, the pane must diff against
+        // the upstream tip (the comparison base), not the stale local default —
+        // otherwise it shows upstream commits as this branch's own changes.
+        let (t, repo) = repo_with_main();
+        // origin-main: one commit ahead of main, with main's tracking ref
+        // pointed at it so local main lags by that commit.
+        repo.run_command(&["branch", "origin-main"]).unwrap();
+        repo.run_command(&["checkout", "origin-main"]).unwrap();
+        std::fs::write(t.path().join("upstream.txt"), "from upstream\n").unwrap();
+        repo.run_command(&["add", "upstream.txt"]).unwrap();
+        repo.run_command(&["commit", "-m", "upstream commit"])
+            .unwrap();
+        // feature branches off the upstream tip and adds its own commit.
+        repo.run_command(&["checkout", "-b", "feature"]).unwrap();
+        std::fs::write(t.path().join("feature.txt"), "feature work\n").unwrap();
+        repo.run_command(&["add", "feature.txt"]).unwrap();
+        repo.run_command(&["commit", "-m", "feature commit"])
+            .unwrap();
+        repo.run_command(&["branch", "--set-upstream-to=origin-main", "main"])
+            .unwrap();
+        let item = item_at(&repo, "feature");
+        let output = PickerRow::compute_branch_diff_preview(&repo, &item, 80);
+        assert!(
+            output.contains("feature.txt"),
+            "expected feature.txt, got: {output:?}"
+        );
+        assert!(
+            !output.contains("upstream.txt"),
+            "must diff vs the upstream-aware base, not the stale local default; got: {output:?}"
         );
     }
 

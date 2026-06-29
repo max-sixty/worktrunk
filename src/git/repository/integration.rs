@@ -24,6 +24,65 @@ pub struct IntegrationTargets {
     pub secondary: Option<String>,
 }
 
+/// Select the comparison-base name from resolved integration targets: the
+/// primary target ([`IntegrationTargets::primary`]), falling back to the raw
+/// default branch name when targets couldn't be resolved (snapshot capture
+/// failed / no upstream relationship known).
+///
+/// The single home for the "primary-else-default" rule shared by the `wt list`
+/// comparison columns (the list collector's `comparison_base`) and the
+/// diff/summary preview panes ([`Repository::branch_diff_spec`]) — so the
+/// dimmed column number and the pane can't drift onto different bases.
+pub fn select_comparison_base<'a>(
+    targets: Option<&'a IntegrationTargets>,
+    default_branch: Option<&'a str>,
+) -> Option<&'a str> {
+    targets.map(|t| t.primary.as_str()).or(default_branch)
+}
+
+/// Git's well-known empty-tree object. Diffing a commit against it yields the
+/// commit's full content as additions — the orphan-branch fallback for the
+/// diff/summary preview panes, which can't three-dot-diff a branch that shares
+/// no history with the comparison base.
+pub(super) const EMPTY_TREE_SHA: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+/// The upstream-aware base a branch's content is measured against in the
+/// diff/summary preview panes — [`IntegrationTargets::primary`], resolved once
+/// per repo. Carries both the display name (for "no file changes vs X"
+/// messages) and its resolved SHA (for disk-cache keying).
+#[derive(Debug, Clone)]
+pub(in crate::git) struct ComparisonBase {
+    /// Display name of the base (e.g. `main`, or `origin/main` when the local
+    /// default lags its upstream).
+    pub name: String,
+    /// The base's resolved commit SHA. `resolve_comparison_base` returns `None`
+    /// rather than a base whose SHA won't resolve, so this is always present.
+    pub sha: String,
+}
+
+/// How a branch's content is diffed against the mainline for the diff and
+/// summary preview panes.
+///
+/// The base is the **upstream-aware comparison base** — the same ref the
+/// ahead/behind and branch-diff columns measure against — so a stale fork
+/// default can't make the panes describe upstream commits as the
+/// branch's own changes. Orphan branches (no merge base with the base) fall
+/// back to a full diff against the empty tree, so a root-style branch shows its
+/// content instead of "no file changes". Built by
+/// [`Repository::branch_diff_spec`].
+#[derive(Debug, Clone)]
+pub struct BranchDiffSpec {
+    /// The `git diff` revision arguments to splice in after `diff` and any
+    /// options: a single three-dot range `["{base}...{head}"]` normally, or
+    /// `["{empty-tree}", "{head}"]` for an orphan.
+    pub revs: Vec<String>,
+    /// Display name of the comparison base, for "no file changes vs X".
+    pub base_name: String,
+    /// Stable SHA identifying the base for disk-cache keying: the base's commit
+    /// SHA, or the empty-tree SHA for an orphan.
+    pub cache_sha: String,
+}
+
 /// Result of the combined merge-tree + patch-id integration probe.
 ///
 /// Encapsulates the two-step sequence: first try `merge-tree --write-tree` to
@@ -518,6 +577,67 @@ impl Repository {
         };
 
         Some(IntegrationTargets { primary, secondary })
+    }
+
+    /// The upstream-aware comparison base for the diff/summary preview panes,
+    /// resolved once and memoized (the base is repo-wide, like the default
+    /// branch). Returns `None` when no default branch can be determined.
+    ///
+    /// Selects the base via the shared [`select_comparison_base`] rule
+    /// ([`IntegrationTargets::primary`] else the raw local default), so the
+    /// preview panes and the `wt list` columns can't pick different bases.
+    /// Captures a [`RefSnapshot`] on first call; safe in the read-only preview
+    /// contexts that use it (wt doesn't move refs there). Fully local — no
+    /// network.
+    fn comparison_base(&self) -> Option<&ComparisonBase> {
+        self.cache
+            .comparison_base
+            .get_or_init(|| self.resolve_comparison_base())
+            .as_ref()
+    }
+
+    fn resolve_comparison_base(&self) -> Option<ComparisonBase> {
+        // No default branch → no comparison base; skip the ref scan entirely.
+        self.default_branch()?;
+        let snapshot = self.capture_refs().ok()?;
+        let targets = self.integration_targets(&snapshot);
+        let default_branch = self.default_branch();
+        let name = select_comparison_base(targets.as_ref(), default_branch.as_deref())?.to_string();
+        // No usable base if the name won't resolve (a stale
+        // `worktrunk.default-branch` pointing at a deleted branch) — return
+        // `None` so the panes skip the branch diff rather than render a
+        // guaranteed-empty range against a missing ref.
+        let sha = snapshot_resolve(self, &snapshot, &name).ok()?;
+        Some(ComparisonBase { name, sha })
+    }
+
+    /// Resolve how to diff a branch's content against the mainline for the
+    /// diff/summary preview panes. `head` is a resolved commit SHA. See
+    /// [`BranchDiffSpec`]. Returns `None` when there's no comparison base (no
+    /// default branch, or its ref won't resolve).
+    pub fn branch_diff_spec(&self, head: &str) -> Option<BranchDiffSpec> {
+        let base = self.comparison_base()?;
+        let base_sha = base.sha.as_str();
+
+        // Orphan (no merge base with the base): a three-dot range is
+        // ill-defined, so diff the full content against the empty tree. A
+        // merge-base *error* (invalid/unreachable object) is NOT an orphan —
+        // fall through to the normal three-dot range and let the diff surface
+        // the failure rather than dumping the whole tree as "the branch".
+        let (revs, cache_sha) = if matches!(self.merge_base_by_sha(base_sha, head), Ok(None)) {
+            (
+                vec![EMPTY_TREE_SHA.to_string(), head.to_string()],
+                EMPTY_TREE_SHA.to_string(),
+            )
+        } else {
+            (vec![format!("{base_sha}...{head}")], base_sha.to_string())
+        };
+
+        Some(BranchDiffSpec {
+            revs,
+            base_name: base.name.clone(),
+            cache_sha,
+        })
     }
 
     /// Resolve a tree spec (e.g. `"refs/heads/main^{tree}"`) to its tree SHA.

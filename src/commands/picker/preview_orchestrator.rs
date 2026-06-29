@@ -164,10 +164,10 @@ pub(super) struct PreviewOrchestrator {
     /// process CWD.
     ///
     /// Cloned into each spawned task so they share the underlying
-    /// `Arc<RepoCache>` — including the local-branch inventory that
-    /// [`Repository::default_branch_sha`] reads from. That's how the
-    /// BranchDiff preview avoids forking `git rev-parse` per item:
-    /// the inventory's single `for-each-ref` scan serves every task.
+    /// `Arc<RepoCache>` — including the memoized comparison base that
+    /// [`Repository::branch_diff_spec`] resolves from a single `for-each-ref`
+    /// scan. That shared cache is how the BranchDiff preview avoids
+    /// re-scanning refs per item.
     repo: Repository,
 }
 
