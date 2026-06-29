@@ -114,15 +114,55 @@ pub(super) fn description(body: &str, width: usize) -> String {
 /// off from its author header. The markdown wraps to the gutter's inner width
 /// (the bar plus its pad take two columns) so the gutter's own wrap is a no-op
 /// rather than re-breaking the already-styled lines.
+///
+/// The body renders *flush* ([`render_markdown_flush`](crate::md_help::render_markdown_flush)),
+/// not gutter-quoted: a comment's own fenced code block would otherwise get its
+/// own house gutter from the markdown renderer, and quoting that inside this
+/// gutter nests two bars — the outer re-wrap then strands continuation lines
+/// without a bar and drops their dim. Flush keeps a single gutter, and flush
+/// code blocks pre-wrap to the inner width so this gutter's wrap stays a no-op.
 pub(super) fn markdown_in_gutter(body: &str, width: usize) -> String {
-    let rendered =
-        crate::md_help::render_markdown_in_help_with_width(body, Some(width.saturating_sub(2)));
+    let rendered = crate::md_help::render_markdown_flush(body, Some(width.saturating_sub(2)));
     format_with_gutter(&rendered, Some(width))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn markdown_in_gutter_code_block_stays_single_guttered_and_dim() {
+        use worktrunk::styling::GUTTER;
+        // A comment whose body wraps a long line in a fenced code block. The
+        // renderer must not nest a second house bar (the code block's own gutter
+        // inside this one), which used to strand continuation lines bar-less and
+        // un-dimmed and break the alignment.
+        let body = "Some intro prose.\n\n```\nfirst second third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth\n```";
+        let out = markdown_in_gutter(body, 40);
+        let bar = format!("{GUTTER}"); // the house bar's opening SGR
+
+        for line in out.lines() {
+            // Exactly one gutter bar per rendered line: the screenshot bug put two
+            // on some lines (nested) and zero on the stranded continuations.
+            assert_eq!(
+                line.matches(&bar).count(),
+                1,
+                "every line carries exactly one gutter bar: {line:?}"
+            );
+        }
+
+        // Every wrapped piece of the code block stays dim — the bug dropped the
+        // dim on every line after the first.
+        let dim = anstyle::Style::new().dimmed();
+        let dim_open = format!("{dim}");
+        for word in ["first", "seventh", "twelfth"] {
+            let line = out
+                .lines()
+                .find(|l| l.contains(word))
+                .unwrap_or_else(|| panic!("code word {word:?} present in {out:?}"));
+            assert!(line.contains(&dim_open), "code line stays dim: {line:?}");
+        }
+    }
 
     #[test]
     fn header_with_and_without_title() {
