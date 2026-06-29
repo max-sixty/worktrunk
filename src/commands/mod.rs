@@ -194,6 +194,9 @@ pub(crate) fn show_diffstat(repo: &worktrunk::git::Repository, range: &str) -> a
         stat_width_arg = format!("--stat-width={stat_width}");
         args.push(&stat_width_arg);
     }
+    // Fence the range positional so a target branch named like a flag
+    // (`-x..HEAD`) can't be misparsed as an option.
+    args.push("--end-of-options");
     args.push(range);
     let diff_stat = repo.run_command(&args)?.trim_end().to_string();
 

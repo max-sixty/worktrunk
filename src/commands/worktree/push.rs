@@ -127,7 +127,12 @@ impl MergeContext {
         let commit_count = repo.count_commits(&target_branch, "HEAD")?;
 
         let stats_summary = if commit_count > 0 {
-            repo.diff_stats_summary(&["diff", "--shortstat", &format!("{}..HEAD", target_branch)])
+            repo.diff_stats_summary(&[
+                "diff",
+                "--shortstat",
+                "--end-of-options",
+                &format!("{}..HEAD", target_branch),
+            ])
         } else {
             Vec::new()
         };
@@ -183,6 +188,7 @@ impl MergeContext {
             "--color=always",
             "--graph",
             "--oneline",
+            "--end-of-options",
             &format!("{}..HEAD", self.target_branch),
         ])?;
         eprintln!("{}", format_with_gutter(&log_output, None));

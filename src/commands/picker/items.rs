@@ -282,29 +282,44 @@ impl SkimItem for HeaderSkimItem {
 }
 
 /// Common diff rendering: check stat, show stat + full diff if non-empty.
+/// Render a `git diff` preview (stat header, then the colored diff). `prefix`
+/// is the command through the `diff` subcommand (e.g. `["diff"]` or
+/// `["-C", path, "diff"]`); `revs` are the positional revisions.
+///
+/// The diff options precede an `--end-of-options` sentinel, which fences the
+/// positional `revs` so a ref that looks like a flag (a branch literally named
+/// `-x` or `--foo`) can't be misparsed as an option. Today's callers pass
+/// resolved SHAs and `HEAD`, but the fence keeps the helper safe for any future
+/// caller that passes a raw name.
 fn compute_diff_preview(
     repo: &Repository,
-    args: &[&str],
+    prefix: &[&str],
+    revs: &[&str],
     no_changes_msg: &str,
     width: usize,
 ) -> String {
     let mut output = String::new();
+    let stat_width_arg = format!("--stat-width={width}");
 
-    // Check stat output first
-    let mut stat_args = args.to_vec();
-    stat_args.push("--stat");
-    stat_args.push("--color=always");
-    let stat_width_arg = format!("--stat-width={}", width);
-    stat_args.push(&stat_width_arg);
+    // Check stat output first.
+    let mut stat_args = prefix.to_vec();
+    stat_args.extend([
+        "--stat",
+        "--color=always",
+        stat_width_arg.as_str(),
+        "--end-of-options",
+    ]);
+    stat_args.extend_from_slice(revs);
 
     if let Ok(stat) = repo.run_command(&stat_args)
         && !stat.trim().is_empty()
     {
         output.push_str(&stat);
 
-        // Build diff args with color
-        let mut diff_args = args.to_vec();
-        diff_args.push("--color=always");
+        // Build diff args with color.
+        let mut diff_args = prefix.to_vec();
+        diff_args.extend(["--color=always", "--end-of-options"]);
+        diff_args.extend_from_slice(revs);
 
         if let Ok(diff) = repo.run_command(&diff_args) {
             output.push_str(&diff);
@@ -1269,7 +1284,8 @@ impl PickerRow {
         let reset = Reset;
         compute_diff_preview(
             repo,
-            &["-C", &path, "diff", "HEAD"],
+            &["-C", &path, "diff"],
+            &["HEAD"],
             &cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no uncommitted changes"),
             width,
         )
@@ -1303,12 +1319,12 @@ impl PickerRow {
             return cached;
         }
 
-        let mut diff_args = vec!["diff"];
-        diff_args.extend(spec.revs.iter().map(String::as_str));
+        let revs: Vec<&str> = spec.revs.iter().map(String::as_str).collect();
         let base_name = &spec.base_name;
         let result = compute_diff_preview(
             repo,
-            &diff_args,
+            &["diff"],
+            &revs,
             &cformat!(
                 "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no file changes vs <bold>{base_name}</>{reset}"
             ),
@@ -1380,7 +1396,8 @@ impl PickerRow {
             let range = format!("{upstream_sha}...{}", item.head());
             compute_diff_preview(
                 repo,
-                &["diff", &range],
+                &["diff"],
+                &[&range],
                 &cformat!(
                     "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has diverged (⇡{ahead} ⇣{behind}) but no unique file changes"
                 ),
@@ -1390,7 +1407,8 @@ impl PickerRow {
             let range = format!("{upstream_sha}...{}", item.head());
             compute_diff_preview(
                 repo,
-                &["diff", &range],
+                &["diff"],
+                &[&range],
                 &cformat!(
                     "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no unpushed file changes"
                 ),
@@ -1400,7 +1418,8 @@ impl PickerRow {
             let range = format!("{}...{upstream_sha}", item.head());
             compute_diff_preview(
                 repo,
-                &["diff", &range],
+                &["diff"],
+                &[&range],
                 &cformat!(
                     "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} is behind upstream (⇣{behind}) but no file changes"
                 ),
@@ -2707,6 +2726,31 @@ mod tests {
             spec.base_name, "origin-main",
             "primed base must be the upstream-aware comparison base, got: {:?}",
             spec.base_name
+        );
+    }
+
+    #[test]
+    fn diff_preview_fences_flag_like_refs() {
+        // A ref whose name starts with `-` must reach git as a positional, not
+        // an option. Without the `--end-of-options` fence, `git diff <sha>
+        // -weird` misparses `-weird` as a flag and errors out; the fence lets
+        // it resolve as a ref. `git branch` rejects leading-dash names, so the
+        // ref is created via `update-ref`.
+        let (t, repo) = repo_with_main();
+        std::fs::write(t.path().join("fenced.txt"), "fenced\n").unwrap();
+        repo.run_command(&["add", "fenced.txt"]).unwrap();
+        repo.run_command(&["commit", "-m", "fenced commit"])
+            .unwrap();
+        let head = repo.run_command(&["rev-parse", "HEAD"]).unwrap();
+        let root = repo.run_command(&["rev-parse", "HEAD~1"]).unwrap();
+        repo.run_command(&["update-ref", "refs/heads/-weird", head.trim()])
+            .unwrap();
+
+        let out =
+            compute_diff_preview(&repo, &["diff"], &[root.trim(), "-weird"], "NO CHANGES", 80);
+        assert!(
+            out.contains("fenced.txt"),
+            "the --end-of-options fence must let `-weird` resolve as a ref; got: {out:?}"
         );
     }
 

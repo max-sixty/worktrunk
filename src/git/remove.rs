@@ -407,7 +407,7 @@ pub fn delete_branch_if_safe(
     // Force-delete: skip integration check entirely (matches compute_integration_reason
     // behavior for the Worktree path). The user explicitly chose -D.
     if force_delete {
-        repo.run_command(&["branch", "-D", branch_name])?;
+        repo.run_command(&["branch", "-D", "--", branch_name])?;
         return Ok(BranchDeletionResult {
             outcome: BranchDeletionOutcome::ForceDeleted,
             integration_target: target.to_string(),
@@ -436,7 +436,7 @@ pub fn delete_branch_if_safe(
                 // pre-CAS behavior in a corner case rather than introducing a
                 // new error class.
                 None => {
-                    repo.run_command(&["branch", "-D", branch_name])?;
+                    repo.run_command(&["branch", "-D", "--", branch_name])?;
                     BranchDeletionOutcome::Integrated(r)
                 }
             }
@@ -580,6 +580,30 @@ mod tests {
             .status()
             .unwrap();
         assert!(!exit.success(), "branch should have been deleted");
+    }
+
+    /// A branch whose name starts with `-` must still force-delete: the
+    /// `git branch -D -- <name>` separator stops git from parsing `-x` as an
+    /// option. Created via `update-ref` since `git branch` rejects leading-dash
+    /// names.
+    #[test]
+    fn force_delete_handles_flag_like_branch_name() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        let head = repo.run_command(&["rev-parse", "HEAD"]).unwrap();
+        test.run_git(&["update-ref", "refs/heads/-x", head.trim()]);
+
+        let snapshot = repo.capture_refs().unwrap();
+        let result = delete_branch_if_safe(&repo, &snapshot, "-x", "main", true).unwrap();
+        assert!(
+            matches!(result.outcome, BranchDeletionOutcome::ForceDeleted),
+            "expected ForceDeleted, got a different outcome"
+        );
+        assert!(
+            repo.run_command(&["rev-parse", "--verify", "--quiet", "refs/heads/-x"])
+                .is_err(),
+            "flag-like branch should have been force-deleted"
+        );
     }
 
     /// When the branch ref vanishes between snapshot capture and the CAS
