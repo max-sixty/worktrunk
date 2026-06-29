@@ -218,33 +218,39 @@ pub(crate) fn hash_diff(diff: &str) -> String {
 
 /// Compute the combined diff for a branch (branch diff + working tree diff).
 ///
-/// Returns None if there's nothing to summarize (default branch with no changes,
-/// or no default branch known and no working tree diff available).
+/// The branch diff measures against the upstream-aware comparison base (see
+/// [`Repository::branch_diff_spec`]) — the same ref the `wt list` columns use,
+/// not the raw local default — so a stale fork default can't describe upstream
+/// commits as the branch's own changes; orphan branches contribute their full
+/// content rather than nothing. Returns `None` if there's nothing to summarize
+/// (default branch with no changes, or no comparison base and no working tree
+/// diff).
 pub(crate) fn compute_combined_diff(
     branch: &str,
     head: &str,
     worktree_path: Option<&Path>,
     repo: &Repository,
 ) -> Option<CombinedDiff> {
-    let default_branch = repo.default_branch();
-
     let mut diff = String::new();
     let mut stat = String::new();
 
-    // Branch diff: what's ahead of default branch (skipped if default branch unknown)
-    if let Some(ref default_branch) = default_branch {
-        let is_default_branch = branch == *default_branch;
-        if !is_default_branch {
-            let merge_base = format!("{}...{}", default_branch, head);
-            if let Ok(branch_stat) =
-                repo.run_command(&["diff", "--stat", "--end-of-options", &merge_base])
-            {
-                stat.push_str(&branch_stat);
+    // Branch diff vs the comparison base — skipped for the default-branch row
+    // itself (the baseline) and when no comparison base resolves.
+    let is_default_branch = repo.default_branch().as_deref() == Some(branch);
+    if !is_default_branch && let Some(spec) = repo.branch_diff_spec(head) {
+        // `--end-of-options` guards a base name that could begin with `-`; the
+        // stat and full-diff invocations differ only by the `--stat` flag.
+        let run_branch_diff = |opts: &[&str], out: &mut String| {
+            let mut args = vec!["diff"];
+            args.extend_from_slice(opts);
+            args.push("--end-of-options");
+            args.extend(spec.revs.iter().map(String::as_str));
+            if let Ok(text) = repo.run_command(&args) {
+                out.push_str(&text);
             }
-            if let Ok(branch_diff) = repo.run_command(&["diff", "--end-of-options", &merge_base]) {
-                diff.push_str(&branch_diff);
-            }
-        }
+        };
+        run_branch_diff(&["--stat"], &mut stat);
+        run_branch_diff(&[], &mut diff);
     }
 
     // Working tree diff: uncommitted changes

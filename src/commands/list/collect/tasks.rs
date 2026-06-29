@@ -9,7 +9,9 @@ use std::time::Duration;
 use std::sync::Arc;
 
 use anyhow::Context;
-use worktrunk::git::{ErrorExt, IntegrationTargets, LineDiff, RefSnapshot, Repository};
+use worktrunk::git::{
+    ErrorExt, IntegrationTargets, LineDiff, RefSnapshot, Repository, select_comparison_base,
+};
 
 use super::super::ci_status::{CiBranchName, PrStatus};
 use super::super::model::{
@@ -141,14 +143,16 @@ impl TaskContext {
     /// through `primary` keeps them consistent with the integration symbol
     /// and immune to a stale local default.
     ///
-    /// Falls back to the raw default branch name when integration targets
-    /// could not be resolved (snapshot capture failed) so the columns still
-    /// render in that degraded mode.
+    /// Resolved via the shared `select_comparison_base` rule — the same one the
+    /// diff/summary preview panes use — so the column number and the pane can't
+    /// drift onto different bases. Falls back to the raw default branch name
+    /// when integration targets could not be resolved (snapshot capture failed)
+    /// so the columns still render in that degraded mode.
     pub(super) fn comparison_base(&self) -> Option<&str> {
-        self.integration_targets
-            .as_ref()
-            .map(|t| t.primary.as_str())
-            .or(self.default_branch.as_deref())
+        select_comparison_base(
+            self.integration_targets.as_ref(),
+            self.default_branch.as_deref(),
+        )
     }
 
     /// Get the integration targets resolved for this list invocation.

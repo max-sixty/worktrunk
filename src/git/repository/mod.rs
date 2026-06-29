@@ -139,7 +139,7 @@ mod worktrees;
 // Re-export WorkingTree, Branch, IntegrationTargets, and RefSnapshot
 pub use branch::Branch;
 pub use diff::CommitMessageDetail;
-pub use integration::IntegrationTargets;
+pub use integration::{BranchDiffSpec, IntegrationTargets, select_comparison_base};
 pub use ref_snapshot::RefSnapshot;
 pub(super) use working_tree::path_to_logging_context;
 pub use working_tree::{TempIndex, WorkingTree};
@@ -215,6 +215,11 @@ pub(super) struct RepoCache {
     pub(super) repo_path: OnceCell<PathBuf>,
     /// Default branch (main, master, etc.)
     pub(super) default_branch: OnceCell<Option<String>>,
+    /// Upstream-aware comparison base for the diff/summary preview panes —
+    /// [`integration::IntegrationTargets::primary`], resolved once. Repo-wide
+    /// like `default_branch`; captures a [`RefSnapshot`] on first access via
+    /// [`Repository::branch_diff_spec`]. `None` when no default branch resolves.
+    pub(super) comparison_base: OnceCell<Option<integration::ComparisonBase>>,
     /// Project identifier derived from remote URL
     pub(super) project_identifier: OnceCell<String>,
     /// Project config (loaded from .config/wt.toml in main worktree)
