@@ -51,7 +51,7 @@ jobs:
 
       - uses: ./.github/actions/claude-setup
 
-      - uses: max-sixty/tend/claude@0.1.8
+      - uses: max-sixty/tend/claude@0.1.9
         with:
           github_token: ${{ secrets.TEND_BOT_TOKEN }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
