@@ -2,6 +2,8 @@ name: nightly
 # Slower checks that aren't worth running on every PR but should run before a
 # release. Jobs:
 #   - feature-powerset: feature-flag unification, check + test suite (motivated by #2442)
+#   - full-tests: full nextest suite on the linux/macos/windows matrix — the
+#     cargo-affected safety net (see the job comment and ci.yaml's affected block)
 #   - release-target: PTY+shell suite on the release triples ci.yaml doesn't cover
 #   - benchmarks: full criterion suite + time-series gist append (cron only)
 #   - check-unused-dependencies: cargo-udeps on nightly toolchain
@@ -133,6 +135,64 @@ jobs:
     - run: cargo hack check --feature-powerset --no-dev-deps
 
     - run: cargo hack test --feature-powerset
+
+  full-tests:
+    # The full nextest suite on the standard linux/macos/windows matrix —
+    # mirrors ci.yaml's PR `test` job. This is the safety net for the gaps
+    # cargo-affected can't cover: tests it under-selects, plus the non-Rust /
+    # build inputs it can't trace (`include_str!`, templates, build.rs,
+    # rust-toolchain.toml, proc-macros). It also hosts the Linux
+    # `--unreferenced reject` orphan check, which is intrinsically full-suite.
+    # It lives in `nightly`, NOT on push-to-main, on purpose: a failure here
+    # means affected missed something, and that must not redden main — nightly
+    # failures are non-blocking and Tend-fixable. Complements feature-powerset
+    # (Linux, feature combos) and release-target (cross triples) by covering
+    # the standard 3-OS matrix that neither runs. At the affected-only flip,
+    # ci.yaml's `test` job is deleted and this becomes the sole full run.
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            name: linux
+          - os: macos-15
+            name: macos
+          - os: windows-2022
+            name: windows
+    runs-on: ${{ matrix.os }}
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v7
+
+    - uses: ./.github/actions/test-setup
+
+    - name: Install wt
+      uses: baptiste0928/cargo-install@v3
+      with:
+        crate: worktrunk
+        version: "=0.62.0"
+
+    - name: "Use fast D: drive for temp files (Windows)"
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force -Path "D:\tmp" | Out-Null
+        echo "TEMP=D:\tmp" >> $env:GITHUB_ENV
+        echo "TMP=D:\tmp" >> $env:GITHUB_ENV
+
+    - name: 🧪 Full test suite
+      run: wt hook pre-merge --yes insta
+
+    - name: 🧹 Verify clean working tree
+      shell: bash
+      run: |
+        if [ -n "$(git status --porcelain)" ]; then
+          echo "::error::tests left files behind in the working tree:"
+          git status --porcelain
+          exit 1
+        fi
 
   release-target:
     # Build and run the test suite on the release triples that ci.yaml's

@@ -102,8 +102,15 @@ jobs:
         echo "TEMP=D:\tmp" >> $env:GITHUB_ENV
         echo "TMP=D:\tmp" >> $env:GITHUB_ENV
 
-    - name: 🧪 Pre-merge hooks
-      run: wt hook pre-merge --yes lockfile insta doctest doc
+    # The full nextest suite (snapshots included) — CI's long-pole. The fast
+    # pre-merge gates (lockfile/doctest/rustdoc) live in the `fast-checks` job,
+    # so this job is now just the suite and can later be swapped for the
+    # cargo-affected legs on PRs without disturbing those gates. The `insta`
+    # step runs `--unreferenced reject` on Linux (orphan-snapshot detection) —
+    # an intrinsically full-suite check that rides this job on push-to-main and,
+    # after the flip, stays there.
+    - name: 🧪 Full test suite
+      run: wt hook pre-merge --yes insta
 
     # Anything tests leave behind in the working tree is a leak we want to see
     # before it lands. `target/` is gitignored, so a normal run is clean —
@@ -132,6 +139,31 @@ jobs:
         token: ${{ secrets.CODECOV_TOKEN }}
         files: target/nextest/default/junit.xml
         report_type: test_results
+
+  # The pre-merge gates that aren't the nextest suite: Cargo.lock freshness,
+  # doctests, and the rustdoc `-Dwarnings` build. Split out of `test` so the
+  # full suite (the long-pole) can later be replaced on PRs by the
+  # cargo-affected legs without dropping these — they stay required and
+  # untouched by that flip. Linux-only: all three are platform-independent. The
+  # one blind spot is doc/doctest inside `#[cfg(windows)]` / `#[cfg(target_os
+  # = …)]` code, which only the full `test` matrix compiles; acceptable for a
+  # gate whose job is broken links and stale locks, not platform behavior.
+  fast-checks:
+    runs-on: ubuntu-24.04
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v7
+
+    - uses: ./.github/actions/test-setup
+
+    - name: Install wt
+      uses: baptiste0928/cargo-install@v3
+      with:
+        crate: worktrunk
+        version: "=0.62.0"
+
+    - name: 🧪 Lockfile, doctests, rustdoc
+      run: wt hook pre-merge --yes lockfile doctest doc
 
   # Check if Cargo/CI files changed (for conditional jobs below)
   changes:
@@ -204,12 +236,16 @@ jobs:
   # cache-misses on the others — each OS's `affected-tests` leg pairs with a
   # `collect-affected` DB from the same OS via the `runner.os` cache key.
   #
-  # TODO(affected-only PRs): once `affected tests (linux/macos/windows)` has a
-  # track record of catching every failure the required full suite catches on
-  # all three OSes, drop the full `test` matrix from PRs and let cargo-affected
-  # be the PR test path. Confidence bar: a sustained stretch of PRs where the
-  # advisory legs and the required full matrix agree — no failure the full
-  # suite caught that affected selection missed.
+  # TODO(affected-only PRs): the fast pre-merge gates are already split into the
+  # `fast-checks` job, so `test (linux/macos/windows)` is now purely the full
+  # nextest suite — the long-pole, and a drop-in shape for the affected legs.
+  # Once `affected tests (*)` has a track record of catching every failure the
+  # full suite catches on all three OSes, flip: make the affected legs required
+  # and delete this PR `test` job — its full-matrix coverage already runs as
+  # `full-tests` in the `nightly` workflow. `fast-checks` stays required and
+  # unchanged. Confidence bar: a sustained stretch of PRs where the advisory
+  # legs and the required full matrix agree — no failure the full suite caught
+  # that affected selection missed.
   #
   # Until then the full `test` matrix stays required and runs on every PR,
   # unchanged. Do NOT reach affected-only by making the required `test (*)`
@@ -217,11 +253,15 @@ jobs:
   # branch-protection change owned by the repo admin (see `.github/CLAUDE.md`),
   # not a silent workflow skip.
   #
-  # When the gate is flipped, keep periodic full runs (push-to-main, and fold
-  # into the `nightly` workflow, which already hosts slower checks) —
-  # cargo-affected misses non-Rust inputs (`include_str!`, templates, SQL),
-  # build-time inputs not in its fingerprint (build.rs, rust-toolchain.toml,
-  # .cargo/config.toml), and proc-macro source edits.
+  # The full suite must keep running after the flip, because cargo-affected
+  # misses non-Rust inputs (`include_str!`, templates, SQL), build-time inputs
+  # not in its fingerprint (build.rs, rust-toolchain.toml, .cargo/config.toml),
+  # and proc-macro source edits. Its home is the `full-tests` matrix in the
+  # `nightly` workflow (nightly cron, the `nightly` label, and before a
+  # release) — NOT push-to-main: a failure there means affected under-selected,
+  # and that must not redden main. Nightly failures are non-blocking and
+  # Tend-fixable. The Linux `--unreferenced reject` orphan check, intrinsically
+  # full-suite, rides `full-tests` too.
   #
   # Cache strategy:
   # - `collect-affected` (push to main) saves `target/affected/coverage.db`
