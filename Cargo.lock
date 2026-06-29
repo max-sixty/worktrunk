@@ -2818,9 +2818,9 @@ dependencies = [
 
 [[package]]
 name = "petname-macros"
-version = "3.0.1"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff2fb9973505377f85e28c339aaad18df99c32ee8aa3d3565534eec89b7cad76"
+checksum = "c9b4bcfb5a86125ae8f1342b95f8b64d050f0a4385c9533c5a17970b9e0479e7"
 dependencies = [
  "proc-macro2",
  "quote",
