@@ -235,7 +235,7 @@ sha2 = "0.11"
 # breaking-change rollout (see `test_codename_outputs_are_stable` and
 # `src/config/expansion.rs::codename`). We use only the static wordlists,
 # not the random-name generator, so `default-rng` and `clap` stay off.
-petname = { version = "=3.0.0", default-features = false, features = ["default-words"] }
+petname = { version = "=3.0.1", default-features = false, features = ["default-words"] }
 # PINNED EXACT to match the `petname` pin above. `petname` 3.0.0 declares a
 # caret range (`petname-macros = "3.0.0"` => `^3.0.0`), but petname-macros 3.0.1
 # and 3.1.0 are SemVer-incompatible patch/minor releases: their `petnames!`

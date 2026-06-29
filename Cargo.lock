@@ -2811,9 +2811,9 @@ dependencies = [
 
 [[package]]
 name = "petname"
-version = "3.0.0"
+version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ce610bff48dd7b6a127e45631795fbb0b302b99a39bef7e6da3d297e8eb2b6b"
+checksum = "1f54cb040158697d07953ea14e1f659e738197161c04cc8a34bcd9b21c9c0772"
 dependencies = [
  "petname-macros",
  "rand 0.10.1",
