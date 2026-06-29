@@ -1051,16 +1051,16 @@ fn normalize_report(content: &str) -> String {
     // LANG, PAGER, …) are inherited from the host and differ per machine, so
     // exact comparison is non-deterministic. We assert specific lines appear in
     // a dedicated test instead.
-    if let Some(start) = result.find("<summary>Environment variables</summary>") {
-        if let Some(end_offset) = result[start..].find("</details>") {
-            let end = start + end_offset + "</details>".len();
-            let before = &result[..start];
-            let after = &result[end..];
-            result = format!(
-                "{}<summary>Environment variables</summary>\n\n[ENV_VARS_CONTENT]\n</details>{}",
-                before, after
-            );
-        }
+    if let Some(start) = result.find("<summary>Environment variables</summary>")
+        && let Some(end_offset) = result[start..].find("</details>")
+    {
+        let end = start + end_offset + "</details>".len();
+        let before = &result[..start];
+        let after = &result[end..];
+        result = format!(
+            "{}<summary>Environment variables</summary>\n\n[ENV_VARS_CONTENT]\n</details>{}",
+            before, after
+        );
     }
 
     // Truncate performance profile section - its durations and by-type/slowest
