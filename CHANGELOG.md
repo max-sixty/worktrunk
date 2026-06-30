@@ -12,7 +12,7 @@
 
 - **Refs that look like flags can't inject git options**: `wt`'s `git diff` previews and diffstats (picker diff previews, `show_diffstat`, push diffstat) now fence user-controlled refs behind `--end-of-options`, and branch removal (`git branch -D`) passes them after `--`, so a branch literally named like a flag (`-x`, `--foo`) reaches git as a positional ref instead of being misparsed as an option. ([#3317](https://github.com/max-sixty/worktrunk/pull/3317))
 
-- **Statusline renders untruncated when `COLUMNS=0`**: `wt list statusline` treated `COLUMNS=0` as a zero-width budget and dropped every segment, rendering an empty line. A zero or unparseable `COLUMNS` is now treated as no detectable width, so the line renders everything untruncated — as the statusline sizing already documented for a missing width. ([#3318](https://github.com/max-sixty/worktrunk/pull/3318))
+- **Statusline renders untruncated when `COLUMNS=0`**: `wt list statusline` treated `COLUMNS=0` as a zero-width budget and dropped every segment, rendering an empty line. A zero or unparsable `COLUMNS` is now treated as no detectable width, so the line renders everything untruncated — as the statusline sizing already documented for a missing width. ([#3318](https://github.com/max-sixty/worktrunk/pull/3318))
 
 - **Watchdog "still waiting" line uses the hint symbol**: The transient `Waiting for the commit message (Ns)` line shown during a slow `wt step commit` LLM call now uses the hint prefix (`↳`) instead of the info symbol (`○`), matching the convention for fully-dim status lines. ([#3330](https://github.com/max-sixty/worktrunk/pull/3330))
 
