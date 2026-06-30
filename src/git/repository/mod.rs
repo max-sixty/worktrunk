@@ -37,19 +37,27 @@
 //! die with the process. A third store — the persistent on-disk [`sha_cache`]
 //! (SHA-keyed JSON under `.git/wt/cache/`) — survives across invocations.
 //! Which store a git result belongs in turns on recompute cost and parallelism:
-//! - *Cheap, resolved many times per run* (commit→tree, merge-base) → in-memory
+//! - *Cheap per call, but primeable in bulk* (commit→tree) → in-memory
 //!   `RepoCache` `DashMap`, get-or-create. The `Entry` match holds the shard
 //!   lock across check-and-insert, so parallel `wt list` rows sharing a key
-//!   spawn one git process, not one each; recompute is ~1 ms, so cross-run
-//!   persistence isn't worth a file. Exemplars:
-//!   [`Repository::merge_base_by_sha`], [`Repository::commit_to_tree_sha`].
+//!   spawn one git process, not one each. On the `wt list` path the per-row
+//!   lookups never fork at all: the pre-skeleton commit-details `git log`
+//!   batch reads `%T` and primes this map in one round trip
+//!   ([`Repository::commit_details_many`]), so cross-run disk persistence
+//!   would save only the rare off-batch miss. Exemplar:
+//!   [`Repository::commit_to_tree_sha`].
 //! - *Expensive, worth persisting across invocations* (merge-tree, patch-id,
 //!   diff stats, ahead/behind) → the disk [`sha_cache`]; content-addressed by
 //!   SHA, so never stale.
 //! - *Both expensive and hot-in-parallel* → an in-memory `DashMap` front over
 //!   the disk back, so parallel tasks don't race through the file cache for the
 //!   same key (the in-memory layer pays the first miss once; the disk layer
-//!   persists it). Exemplar: the `diff_stats` field below.
+//!   persists it). Exemplars: the `diff_stats` field below, and
+//!   [`Repository::merge_base_by_sha`] — `wt list`'s orphan check forks
+//!   `merge-base` once per row even when the ahead/behind counts are already
+//!   cache-warm, so without the disk back every re-run re-pays N forks; per-row
+//!   recompute also runs 10–25 ms on macOS, not the ~1 ms a fast Linux box
+//!   sees.
 //!
 //! **Lifetime.** Neither in-memory layer is ever invalidated. `RepoCache` lives as
 //! long as the `Repository` it's attached to (typically the command).
@@ -242,7 +250,9 @@ pub(super) struct RepoCache {
     /// Merge-base cache: (sha1, sha2) -> merge_base_sha (None = no common ancestor).
     /// Keys are commit SHAs by contract — callers must resolve refs through
     /// a [`RefSnapshot`] before consulting. The key order is normalized
-    /// (`(min, max)`) since merge-base is symmetric.
+    /// (`(min, max)`) since merge-base is symmetric. This is the in-memory
+    /// front over the persistent `merge-base/` [`sha_cache`] back; see
+    /// [`Repository::merge_base_by_sha`].
     pub(super) merge_base: DashMap<(String, String), Option<String>>,
     /// Commit→tree cache: commit_sha -> tree_sha. Keys are commit SHAs by
     /// contract; a commit's tree is immutable, so the mapping is never stale
@@ -940,6 +950,76 @@ impl Repository {
         let raw = path.into();
         let path = canonicalize(&raw).unwrap_or(raw);
         WorkingTree { repo: self, path }
+    }
+
+    /// Prime the per-worktree path caches (`WORKTREE_ROOTS` and `GIT_DIRS`)
+    /// for every worktree in `worktrees`, from data already in hand.
+    ///
+    /// `git worktree list` already gives each worktree's top-level path, so
+    /// `root()` is just its canonical form, and each worktree's `.git` entry
+    /// gives its git dir without a fork. On the `wt list` path this elides the
+    /// per-worktree `git rev-parse --show-toplevel` / `--git-dir` subprocesses
+    /// (one each per linked worktree, both on the dirty-worktree
+    /// `WorkingTreeConflicts` / `GitOperation` critical chain) in favor of
+    /// cheap local fs reads — the same facts [`Self::prewarm`] caches for the
+    /// discovery worktree, generalized to all of them.
+    ///
+    /// Seeds via `or_insert`, so an entry the prewarm or a prior call already
+    /// resolved is left untouched. A worktree whose git dir can't be derived
+    /// cleanly (missing/odd `.git`, un-canonicalizable path) is left for the
+    /// `git rev-parse` fallback in [`WorkingTree::git_dir`] — seeding is an
+    /// optimization, never a correctness dependency. Prunable worktrees (gone
+    /// from disk) are skipped: nothing on disk to read, and their tasks don't
+    /// run.
+    pub fn prime_worktree_path_caches(&self, worktrees: &[WorktreeInfo]) {
+        for wt in worktrees {
+            if wt.is_prunable() {
+                continue;
+            }
+            // Key on the canonical path, matching `worktree_at` (and the
+            // membership invariant on `WORKTREE_ROOTS`). Skip when the path
+            // can't be canonicalized — same guard as `worktree_at`'s callers.
+            let Ok(key) = canonicalize(&wt.path) else {
+                continue;
+            };
+            // A worktree's top-level path is its own `root()`.
+            WORKTREE_ROOTS.entry(key.clone()).or_insert(key.clone());
+
+            if let Some(git_dir) = self.derive_worktree_git_dir(&key) {
+                GIT_DIRS.entry(key).or_insert(git_dir);
+            }
+        }
+    }
+
+    /// Resolve a worktree's git dir from its `.git` entry without forking
+    /// `git rev-parse --git-dir`. A `.git` directory *is* the git dir (the main
+    /// worktree, whose common dir we already hold); a `.git` file holds
+    /// `gitdir: <path>` pointing at `<common>/worktrees/<id>` (a linked
+    /// worktree). Returns the canonicalized git dir, or `None` when the entry
+    /// is missing, unreadable, or in a form not worth second-guessing — the
+    /// caller then leaves it to the subprocess. Mirrors the `--git-dir`
+    /// canonicalization in [`Self::prewarm`] (`prewarm_rev_parse`).
+    fn derive_worktree_git_dir(&self, worktree: &Path) -> Option<PathBuf> {
+        let dot_git = worktree.join(".git");
+        let file_type = std::fs::symlink_metadata(&dot_git).ok()?.file_type();
+        if file_type.is_dir() {
+            // Main worktree: git dir is the common dir (already canonicalized).
+            return Some(self.git_common_dir().to_path_buf());
+        }
+        if !file_type.is_file() {
+            return None;
+        }
+        // `.git` file: `gitdir: <path>` (git writes it absolute; resolve a
+        // relative form against the worktree, as `prewarm_rev_parse` does).
+        let content = std::fs::read_to_string(&dot_git).ok()?;
+        let gitdir = content.lines().find_map(|l| l.strip_prefix("gitdir: "))?;
+        let path = PathBuf::from(gitdir.trim());
+        let absolute = if path.is_relative() {
+            worktree.join(path)
+        } else {
+            path
+        };
+        canonicalize(&absolute).ok()
     }
 
     /// Get a branch handle for branch-specific operations.

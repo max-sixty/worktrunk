@@ -9,7 +9,9 @@ use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
 use worktrunk::trace::{TraceEntry, TraceEntryKind, TraceResult};
-use wt_perf::{canonicalize, create_repo_at, invalidate_caches_auto, parse_config};
+use wt_perf::{
+    canonicalize, create_mixed_repo_at, create_repo_at, invalidate_caches_auto, parse_config,
+};
 
 #[derive(Parser)]
 #[command(name = "wt-perf")]
@@ -23,7 +25,7 @@ struct Cli {
 enum Commands {
     /// Set up a benchmark repository
     Setup {
-        /// Config name: typical-N, branches-N, branches-N-M, divergent, picker-test
+        /// Config name: typical-N, branches-N, branches-N-M, divergent, mixed-W-B, picker-test
         config: String,
 
         /// Directory to create repo in (default: temp directory)
@@ -122,19 +124,31 @@ fn main() {
             path,
             persist,
         } => {
-            let repo_config = parse_config(&config).unwrap_or_else(|| {
-                eprintln!("Unknown config: {}", config);
-                eprintln!();
-                eprintln!("Available configs:");
-                eprintln!(
-                    "  typical-N       - Typical repo with N worktrees (500 commits, 100 files)"
-                );
-                eprintln!("  branches-N      - N branches with 1 commit each");
-                eprintln!("  branches-N-M    - N branches with M commits each");
-                eprintln!("  divergent       - 200 branches × 20 commits (GH #461 scenario)");
-                eprintln!("  picker-test     - Config for wt switch interactive picker testing");
-                std::process::exit(1);
-            });
+            // `mixed-W-B`: W worktrees + B branches in varied states (warm
+            // re-run benchmark fixture); handled separately since it doesn't
+            // map onto the flat `RepoConfig`.
+            let mixed = parse_mixed(&config);
+
+            let repo_config = if mixed.is_some() {
+                None
+            } else {
+                Some(parse_config(&config).unwrap_or_else(|| {
+                    eprintln!("Unknown config: {}", config);
+                    eprintln!();
+                    eprintln!("Available configs:");
+                    eprintln!(
+                        "  typical-N       - Typical repo with N worktrees (500 commits, 100 files)"
+                    );
+                    eprintln!("  branches-N      - N branches with 1 commit each");
+                    eprintln!("  branches-N-M    - N branches with M commits each");
+                    eprintln!("  divergent       - 200 branches × 20 commits (GH #461 scenario)");
+                    eprintln!("  mixed-W-B       - W worktrees + B branches in varied states");
+                    eprintln!(
+                        "  picker-test     - Config for wt switch interactive picker testing"
+                    );
+                    std::process::exit(1);
+                }))
+            };
 
             let base_path = if let Some(p) = path {
                 std::fs::create_dir_all(&p).unwrap();
@@ -149,14 +163,24 @@ fn main() {
             };
 
             eprintln!("Creating {} repo...", config);
-            create_repo_at(&repo_config, &base_path);
+            let (worktrees, branches) = match (mixed, &repo_config) {
+                (Some((w, b)), _) => {
+                    create_mixed_repo_at(w, b, &base_path);
+                    (w, b)
+                }
+                (None, Some(cfg)) => {
+                    create_repo_at(cfg, &base_path);
+                    (cfg.worktrees, cfg.branches)
+                }
+                (None, None) => unreachable!("repo_config is Some when mixed is None"),
+            };
 
             let mut parts = vec![format!("main @ {}", base_path.display())];
-            if repo_config.worktrees > 1 {
-                parts.push(format!("{} worktrees", repo_config.worktrees));
+            if worktrees > 1 {
+                parts.push(format!("{} worktrees", worktrees));
             }
-            if repo_config.branches > 0 {
-                parts.push(format!("{} branches", repo_config.branches));
+            if branches > 0 {
+                parts.push(format!("{} branches", branches));
             }
             eprintln!("Created: {}", parts.join(", "));
             eprintln!();
@@ -217,6 +241,13 @@ fn main() {
             wt_args,
         } => run_timeline(cold, repo, chrome, &wt_args),
     }
+}
+
+/// Parse a `mixed-W-B` config string into `(worktrees, branches)`.
+fn parse_mixed(config: &str) -> Option<(usize, usize)> {
+    let rest = config.strip_prefix("mixed-")?;
+    let (w, b) = rest.split_once('-')?;
+    Some((w.parse().ok()?, b.parse().ok()?))
 }
 
 /// Resolve the `wt` binary as a sibling of the current executable

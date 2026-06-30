@@ -51,7 +51,7 @@
 //!
 //! ```text
 //! git log --no-walk --no-show-signature \
-//!   --format=%H%x00%h%x00%ct%x00%s \
+//!   --format=%H%x00%h%x00%ct%x00%T%x00%s \
 //!   SHA₁ SHA₂ … SHA_N
 //! ```
 //!
@@ -62,10 +62,10 @@
 //! - `--no-show-signature` — skip GPG verification. If `gpg.program` is set
 //!   and any of these commits are signed, the default forks `gpg` per
 //!   commit; disabled here.
-//! - `--format=%H%x00%h%x00%ct%x00%s` — four fields per commit,
+//! - `--format=%H%x00%h%x00%ct%x00%T%x00%s` — five fields per commit,
 //!   NUL-separated because subjects can contain anything except NUL:
 //!   - `%H` full SHA, `%h` abbreviated SHA, `%ct` committer date (Unix
-//!     epoch), `%s` subject (first line of message).
+//!     epoch), `%T` tree SHA, `%s` subject (first line of message).
 //!
 //! SHAs come from #4 (worktree HEADs) ∪ #5 (branch tips), deduplicated.
 //! Argv length scales with N — Linux `ARG_MAX` (~128 KB) bounds the
@@ -77,13 +77,16 @@
 //! - `%ct` again, post-skeleton — Age column ("3 hours ago").
 //! - `%s` post-skeleton — Message column.
 //! - `%h` post-skeleton — abbreviated-SHA cell.
+//! - `%T` post-skeleton — primes the `commit_tree` cache so the per-row
+//!   `CommittedTreesMatch` / `WouldMergeAdd` tree lookups never fork
+//!   `git rev-parse <sha>^{tree}` (see [`Repository::commit_details_many`]).
 //!
-//! Subjects and abbreviated SHAs ride along for free: git resolves each
-//! commit object to read its timestamp anyway, so the extra bytes add no
-//! measurable latency to the round trip. Without this batch you'd be
-//! forking `git log -1` per SHA later — same data, N forks instead of one.
-//! The full `(timestamp, subject)` map is handed to the post-skeleton loop
-//! that populates `ListItem.commit` directly.
+//! Tree SHAs, subjects, and abbreviated SHAs ride along for free: git resolves
+//! each commit object to read its timestamp anyway, so the extra bytes add no
+//! measurable latency to the round trip. Without this batch you'd be forking
+//! `git log -1` (and `rev-parse ^{tree}`) per SHA later — same data, N forks
+//! instead of one. The full `(timestamp, subject)` map is handed to the
+//! post-skeleton loop that populates `ListItem.commit` directly.
 //!
 //! When the batch fails (e.g., a listed SHA was deleted mid-run), the
 //! failure is surfaced once and Age/Message cells render placeholders for
@@ -223,6 +226,7 @@
 //! | `has-added-changes/` | `git::repository::sha_cache` | `{branch_sha}-{target_sha}.json` | Never — content-addressed |
 //! | `diff-stats/` | `git::repository::sha_cache` | `{base_sha}-{head_sha}.json` | Never — content-addressed |
 //! | `ahead-behind/` | `git::repository::sha_cache` | `{base_sha}-{head_sha}.json` | Never — content-addressed |
+//! | `merge-base/` | `git::repository::sha_cache` | `{sha1}-{sha2}.json` (sorted) | Never — content-addressed |
 //! | `ci-status/` | `commands::list::ci_status::cache` | `{branch}.json` | TTL 30–60s + HEAD SHA check |
 //! | `summary/{branch}/` | `summary` | `{diff_hash}.json` | Miss if no file exists for the current hash; siblings pruned on write |
 //!
@@ -230,7 +234,7 @@
 //!
 //! - **SHA-pair**: pure function of two commit SHAs. Never stale, no TTL, no invalidation.
 //!   Used by all `sha_cache` kinds (merge-tree conflicts, merge-add probes, ancestry
-//!   checks, file-change probes, diff stats, ahead/behind counts).
+//!   checks, file-change probes, diff stats, ahead/behind counts, merge-base).
 //! - **Branch + TTL + HEAD**: external mutable state (CI API, remote refs). TTL bounds
 //!   staleness; the HEAD check invalidates early when the branch moves.
 //! - **Branch + content-addressed hash in filename**: content hash (SHA-256
@@ -249,7 +253,7 @@
 //! | `IsAncestor` | `sha_cache` (is-ancestor) |
 //! | `HasFileChanges` | `sha_cache` (has-added-changes) |
 //! | `BranchDiff` | `sha_cache` (diff-stats, skipped when sparse checkout is active) |
-//! | `AheadBehind`, `Upstream` | `sha_cache` (ahead-behind); on a cold cache both columns are pre-filled from `for-each-ref %(ahead-behind:SHA)` walks — one against the default branch (`main↕`, in `RefSnapshot::capture_ahead_behind`) and one per unique upstream SHA (`Remote⇅`, in `Repository::prime_upstream_ahead_behind_cache`) |
+//! | `AheadBehind`, `Upstream` | `sha_cache` (ahead-behind for counts, merge-base for the orphan check); on a cold cache both columns are pre-filled from `for-each-ref %(ahead-behind:SHA)` walks — one against the default branch (`main↕`, in `RefSnapshot::capture_ahead_behind`) and one per unique upstream SHA (`Remote⇅`, in `Repository::prime_upstream_ahead_behind_cache`) |
 //! | `CiStatus` | `ci_status::cache` |
 //! | `SummaryGenerate` | `summary` |
 //!
@@ -257,7 +261,11 @@
 //!
 //! ### Already optimized (not cache candidates)
 //!
-//! - `CommittedTreesMatch` — single `git rev-parse` resolving both tree SHAs (~1ms)
+//! - `CommittedTreesMatch` — resolves both commit→tree SHAs through the
+//!   in-memory `commit_tree` cache, which the pre-skeleton commit-details
+//!   `git log` batch primes via `%T` (see [`Repository::commit_details_many`]).
+//!   So on the `wt list` path it forks nothing per row — the tree SHAs are
+//!   already in memory.
 //!
 //! ### Cached via tree SHA
 //!
@@ -1415,6 +1423,15 @@ pub fn collect(
     //
     // These operations run in parallel using rayon::scope with single-level parallelism.
     // See module docs for the timing diagram.
+
+    // Seed root/git-dir for every worktree from the list we already fetched, so
+    // the per-worktree tasks below don't each fork `git rev-parse
+    // --show-toplevel` / `--git-dir`. Deferred to post-skeleton: only the
+    // worker-pool tasks consume these (the pre-skeleton current-worktree probe
+    // uses the prewarmed discovery-worktree root), so seeding here keeps the
+    // local fs reads off the skeleton critical path — and skips them entirely
+    // on the `WORKTRUNK_SKELETON_ONLY` exit above, which runs no tasks.
+    repo.prime_worktree_path_caches(worktrees);
 
     // Collect worktree paths for fsmonitor starts (macOS only, fast, no git commands).
     // Git's builtin fsmonitor has race conditions under parallel load - pre-starting
