@@ -684,12 +684,17 @@ impl Repository {
     /// [`Self::would_merge_add_to_target`]; without the cache that is one
     /// identical `rev-parse` subprocess per row.
     ///
-    /// In-memory rather than the persistent `sha_cache`: the resolution is
-    /// ~1 ms, so cross-run persistence saves almost nothing, while the `Entry`
-    /// match holds the shard lock across check-and-insert so the first miss
-    /// computes once and every concurrent row reads it — no cold-start race.
-    /// The disk cache is reserved for results expensive enough that persisting
-    /// them across invocations outweighs a one-off recompute.
+    /// On the `wt list` path this cache is **primed in bulk** by
+    /// [`Self::commit_details_many`] (the pre-skeleton `git log` batch reads
+    /// `%T` for every item head + the default-branch tip), so the per-row
+    /// lookups here are memory hits and fire no subprocess at all. This method
+    /// remains the fallback for any SHA the batch didn't cover.
+    ///
+    /// In-memory rather than the persistent `sha_cache`: on the hot path the
+    /// batch above already resolves it fork-free, so disk persistence would
+    /// save only the rare off-batch miss. The `Entry` match holds the shard
+    /// lock across check-and-insert so the first miss computes once and every
+    /// concurrent row reads it — no cold-start race.
     fn commit_to_tree_sha(&self, commit_sha: &str) -> anyhow::Result<String> {
         use dashmap::mapref::entry::Entry;
         match self.cache.commit_tree.entry(commit_sha.to_string()) {

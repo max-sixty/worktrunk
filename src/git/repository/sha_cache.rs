@@ -9,9 +9,9 @@
 //!
 //! Layout: `.git/wt/cache/{kind}/{key}.json` where `kind` is one of
 //! `merge-tree-conflicts`, `merge-add-probe`, `is-ancestor`,
-//! `has-added-changes`, `diff-stats`, or `ahead-behind`. Symmetric kinds
-//! sort the SHA pair so `(A, B)` and `(B, A)` hit the same entry;
-//! asymmetric kinds preserve ordering. See [`crate::cache`] for
+//! `has-added-changes`, `diff-stats`, `ahead-behind`, or `merge-base`.
+//! Symmetric kinds sort the SHA pair so `(A, B)` and `(B, A)` hit the same
+//! entry; asymmetric kinds preserve ordering. See [`crate::cache`] for
 //! read/write/clear mechanics, torn-write semantics, and the
 //! user-initiated clear error policy.
 
@@ -31,6 +31,7 @@ const KIND_IS_ANCESTOR: &str = "is-ancestor";
 const KIND_HAS_ADDED_CHANGES: &str = "has-added-changes";
 const KIND_DIFF_STATS: &str = "diff-stats";
 const KIND_AHEAD_BEHIND: &str = "ahead-behind";
+const KIND_MERGE_BASE: &str = "merge-base";
 
 /// All cache kind identifiers, used by [`clear_all`].
 const ALL_KINDS: &[&str] = &[
@@ -40,6 +41,7 @@ const ALL_KINDS: &[&str] = &[
     KIND_HAS_ADDED_CHANGES,
     KIND_DIFF_STATS,
     KIND_AHEAD_BEHIND,
+    KIND_MERGE_BASE,
 ];
 
 /// Build a symmetric filename from a SHA pair (order-independent).
@@ -233,6 +235,30 @@ where
         cache::write_json(&dir.join(asymmetric_key(base_sha, head_sha)), &value);
     }
     cache::sweep_lru(&dir, MAX_ENTRIES_PER_KIND);
+}
+
+// merge-base (symmetric)
+
+/// Look up a cached `merge_base_by_sha(sha1, sha2)` result.
+///
+/// The value is `Option<String>`: `Some(sha)` is the common ancestor,
+/// `None` is an orphan pair (no common ancestor). So the return type is
+/// `Option<Option<String>>`: the outer `None` is a cache miss, the inner
+/// `None` is a cached orphan. Symmetric — `(A, B)` and `(B, A)` hit the
+/// same entry, matching `merge-base(A, B) == merge-base(B, A)`.
+pub(super) fn merge_base(repo: &Repository, sha1: &str, sha2: &str) -> Option<Option<String>> {
+    cache::read(repo, KIND_MERGE_BASE, &symmetric_key(sha1, sha2))
+}
+
+/// Store a `merge_base_by_sha(sha1, sha2)` result.
+pub(super) fn put_merge_base(repo: &Repository, sha1: &str, sha2: &str, value: &Option<String>) {
+    cache::write_with_lru(
+        repo,
+        KIND_MERGE_BASE,
+        &symmetric_key(sha1, sha2),
+        value,
+        MAX_ENTRIES_PER_KIND,
+    );
 }
 
 // Maintenance
@@ -791,9 +817,10 @@ mod tests {
             },
         );
         put_ahead_behind(&repo, "a", "b", (1, 0));
+        put_merge_base(&repo, "a", "b", &Some("c".to_string()));
 
         let cleared = clear_all(&repo).unwrap();
-        assert_eq!(cleared, 6, "should clear one entry per kind");
+        assert_eq!(cleared, 7, "should clear one entry per kind");
 
         // All kinds should be empty
         assert_eq!(merge_conflicts(&repo, "a", "b"), None);
@@ -802,5 +829,68 @@ mod tests {
         assert_eq!(has_added_changes(&repo, "a", "b"), None);
         assert_eq!(diff_stats(&repo, "a", "b"), None);
         assert_eq!(ahead_behind(&repo, "a", "b"), None);
+        assert_eq!(merge_base(&repo, "a", "b"), None);
+    }
+
+    #[test]
+    fn test_merge_base_roundtrip() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        assert_eq!(merge_base(&repo, "aaaa", "bbbb"), None);
+
+        // A common ancestor: outer Some, inner Some(sha).
+        put_merge_base(&repo, "aaaa", "bbbb", &Some("cccc".to_string()));
+        assert_eq!(
+            merge_base(&repo, "aaaa", "bbbb"),
+            Some(Some("cccc".to_string()))
+        );
+        // Symmetric: swapped args hit the same entry.
+        assert_eq!(
+            merge_base(&repo, "bbbb", "aaaa"),
+            Some(Some("cccc".to_string()))
+        );
+
+        // An orphan pair: outer Some (cached), inner None (no ancestor).
+        put_merge_base(&repo, "dddd", "eeee", &None);
+        assert_eq!(merge_base(&repo, "dddd", "eeee"), Some(None));
+    }
+
+    #[test]
+    fn test_merge_base_reads_cache() {
+        let test = TestRepo::with_initial_commit();
+
+        test.run_git(&["checkout", "-b", "feature"]);
+        fs::write(test.root_path().join("new.txt"), "content\n").unwrap();
+        test.run_git(&["add", "new.txt"]);
+        test.run_git(&["commit", "-m", "Feature"]);
+
+        let main_sha = test.git_output(&["rev-parse", "main"]);
+        let feature_sha = test.git_output(&["rev-parse", "feature"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        // Real computation: feature descends from main, so the merge base is main.
+        assert_eq!(
+            repo.merge_base_by_sha(&main_sha, &feature_sha).unwrap(),
+            Some(main_sha.clone())
+        );
+
+        // Tamper with the persisted entry; a fresh repo (cold in-memory front)
+        // reads the disk back.
+        let dir = cache::cache_dir(&repo, KIND_MERGE_BASE);
+        let entries: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_str().is_some_and(|s| s.ends_with(".json")))
+            .collect();
+        assert_eq!(entries.len(), 1);
+        fs::write(entries[0].path(), "\"deadbeef\"").unwrap();
+
+        let repo2 = Repository::at(test.root_path()).unwrap();
+        assert_eq!(
+            repo2.merge_base_by_sha(&main_sha, &feature_sha).unwrap(),
+            Some("deadbeef".to_string())
+        );
     }
 }
