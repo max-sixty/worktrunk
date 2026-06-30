@@ -123,7 +123,7 @@ use worktrunk::config::Approvals;
 use worktrunk::git::{ErrorExt, Repository, current_or_recover};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
-    eprintln, hint_message, info_message, strip_osc8_hyperlinks, warning_message,
+    eprintln, error_message, hint_message, info_message, strip_osc8_hyperlinks, warning_message,
 };
 
 use super::hook_plan::{ApprovedHookPlan, HookPlanBuilder};
@@ -305,7 +305,18 @@ struct AltXRemover {
     /// renders the `/ branch` row on this grid so it lines up with the worktree
     /// rows. Shared with the handler (which fills it).
     layout_slot: Arc<Mutex<Option<crate::commands::list::layout::LayoutConfig>>>,
+    /// The header's transient-message slot, shared with the header item. A
+    /// declined `alt-x` (current worktree, or an unmerged branch-only row) keeps
+    /// its row in place, so [`flash_header`](Self::flash_header) drops a short
+    /// "couldn't remove" line into the header for a beat — the *why* lands
+    /// immediately, not only when the stash drains on exit. See
+    /// [`items::HeaderFlash`].
+    header_flash: Arc<items::HeaderFlash>,
 }
+
+/// How long a declined-`alt-x` header flash stays up before it self-clears and
+/// the column labels return — long enough to read, short enough not to linger.
+const HEADER_FLASH_DURATION: std::time::Duration = std::time::Duration::from_millis(2500);
 
 impl AltXRemover {
     /// Build removal state from a fresh `Repository` so picker reloads after a
@@ -508,6 +519,36 @@ impl AltXRemover {
             });
     }
 
+    /// Flash a one-line message in the header for a beat, then restore the column
+    /// labels. The slot is shared with the header item (see [`items::HeaderFlash`]),
+    /// so this sets it, repaints, and spawns a short-lived timer that clears it and
+    /// repaints again. The timer's `clear_if_current` is generation-guarded, so a
+    /// second flash arriving mid-beat replaces this one and isn't wiped early by
+    /// this timer.
+    ///
+    /// A no-op until skim's `render_tx` is published — but `alt-x` can only fire
+    /// once the TUI is showing rows, so it's always live by the time a keep path
+    /// calls this.
+    fn flash_header(&self, message: String) {
+        let Some(tx) = self.render_tx.get() else {
+            return;
+        };
+        let generation = self.header_flash.set(message);
+        let _ = tx.try_send(Event::Render);
+
+        let header_flash = Arc::clone(&self.header_flash);
+        let render_tx = Arc::clone(&self.render_tx);
+        let _ = std::thread::Builder::new()
+            .name("picker-header-flash".into())
+            .spawn(move || {
+                std::thread::sleep(HEADER_FLASH_DURATION);
+                header_flash.clear_if_current(generation);
+                if let Some(tx) = render_tx.get() {
+                    let _ = tx.try_send(Event::Render);
+                }
+            });
+    }
+
     /// Keep the selected row in place and explain why its target wasn't removed.
     ///
     /// Called from [`apply`](Self::apply) when [`removal_will_remove_target`]
@@ -515,12 +556,13 @@ impl AltXRemover {
     /// is unmerged, which `SafeDelete` declines to delete (data safety). Deciding
     /// this up front from `prepare_removal`'s already-computed integration check
     /// means the row never drops (no flicker) and no background `do_removal` runs
-    /// for a no-op. The row stays in its slot under the (un-reset) cursor; this just
-    /// stashes the canonical "retained; unmerged" info + hint pair `wt remove`
-    /// itself prints (see `print_retained_unmerged_branch`), deduped and drained to
-    /// stderr when the picker exits. (This is a by-design retain, not a failure —
-    /// distinct from [`restore_failed_removal`]'s `kept … could not remove it`
-    /// warning.)
+    /// for a no-op. The row stays in its slot under the (un-reset) cursor, so this
+    /// flashes a terse "branch is unmerged" line in the header (the *why*, where the
+    /// user is looking) and stashes the canonical "retained; unmerged" info + hint
+    /// pair `wt remove` itself prints (see `print_retained_unmerged_branch`), deduped
+    /// and drained to stderr when the picker exits. (This is a by-design retain, not
+    /// a failure — distinct from [`restore_failed_removal`]'s `kept … could not
+    /// remove it` warning.)
     fn keep_unremovable_row(&self, branch_name: &str) {
         // The canonical "retained; unmerged" info + hint `wt remove` prints,
         // shared so the picker copy can't drift (see
@@ -528,6 +570,11 @@ impl AltXRemover {
         // `RemoveResult`) makes it unrepresentable for this keep path to be handed
         // a `RemovedWorktree`, which always removes — see the dispatch in
         // [`apply`](Self::apply) and [`removal_will_remove_target`].
+        // A by-design retain, not a failure — info (○), matching the canonical
+        // `info_message` this path stashes (see `stash_retained_unmerged_branch`).
+        self.flash_header(
+            info_message(cformat!("Kept <bold>{branch_name}</> — branch is unmerged")).to_string(),
+        );
         stash_retained_unmerged_branch(&self.stashed_warnings, branch_name);
     }
 
@@ -538,10 +585,14 @@ impl AltXRemover {
     /// is true — alt-x on the worktree the picker was launched from. Removing it
     /// would have to switch the shell elsewhere first (see
     /// `removal_targets_current_worktree` for why that's disruptive mid-picker), so
-    /// the row stays put and a hint to switch away first is stashed, drained to
-    /// stderr when the picker exits. The row never drops and no `do_removal` runs,
-    /// so this is the only removal path that never reaches a background thread.
+    /// the row stays put: this flashes a terse "current worktree" line in the header
+    /// and stashes the fuller hint to switch away first, drained to stderr when the
+    /// picker exits. The row never drops and no `do_removal` runs, so this is the
+    /// only removal path that never reaches a background thread.
     fn keep_current_worktree_row(&self) {
+        // A by-design decline, not a failure — info (○), matching the canonical
+        // `info_message` this path stashes (see `stash_current_worktree_hint`).
+        self.flash_header(info_message("Can't remove the current worktree").to_string());
         stash_current_worktree_hint(&self.stashed_warnings);
     }
 
@@ -718,6 +769,16 @@ impl AltXRemover {
                         stashed.push(diagnostic);
                     }
                 }
+                // Flash the terse headline in the header too, so the *why* lands
+                // at alt-x time and not only when the stash drains on exit. Unlike
+                // the keep paths (by-design retains → info ○), this arm is a genuine
+                // rejection — error (✗), matching the `render_diagnostic` error this
+                // path stashes. `to_string()` is the typed error's short single-line
+                // label (ANSI-stripped); take its first line so a multi-line chain
+                // can't smear the header.
+                let headline = e.to_string();
+                let headline = headline.lines().next().unwrap_or(&headline);
+                self.flash_header(error_message(headline).to_string());
                 RemovalEffect::Kept
             }
         }
@@ -1266,6 +1327,11 @@ struct PipelineFactory {
     /// `/ branch` row on the same grid at `alt-x` time. Filled by the handler's
     /// `provide_layout`, read by [`PickerCollector`]. See [`items::LayoutSlot`].
     layout_slot: items::LayoutSlot,
+    /// Shared picker-lifetime with the header item and [`AltXRemover`]: a declined
+    /// `alt-x` flashes a transient "couldn't remove this row" line in the header
+    /// (see [`items::HeaderFlash`]). One slot for the picker's life, re-shared into
+    /// each spawn's header item, so a reload reads the same (cleared) flash.
+    header_flash: Arc<items::HeaderFlash>,
     preview_dims: (usize, usize),
     skim_list_width: usize,
     command_timeout: Option<std::time::Duration>,
@@ -1382,6 +1448,7 @@ impl PipelineFactory {
                 grid_slot: Arc::clone(&grid_slot),
                 layout_slot: Arc::clone(&self.layout_slot),
                 prs_loading: prs_loading.clone(),
+                header_flash: Arc::clone(&self.header_flash),
             });
 
         let bg_handler: Arc<dyn collect::PickerProgressHandler> = handler.clone();
@@ -1746,6 +1813,7 @@ summary = true
         // Full-layout handoff: the handler fills it in `provide_layout`, the
         // collector reads it to render the `alt-x` `/ branch` row on this grid.
         layout_slot: Arc::new(Mutex::new(None)),
+        header_flash: Arc::new(items::HeaderFlash::default()),
         preview_dims,
         skim_list_width,
         command_timeout,
@@ -1777,6 +1845,7 @@ summary = true
         stashed_warnings: Arc::clone(&stashed_warnings),
         shortcut_table: Arc::clone(&shortcut_table),
         layout_slot: Arc::clone(&factory.layout_slot),
+        header_flash: Arc::clone(&factory.header_flash),
     };
 
     // Half-page preview scroll: half of skim's usable height.
@@ -2936,6 +3005,7 @@ pub mod tests {
             orchestrator,
             stashed_warnings: Arc::new(Mutex::new(Vec::new())),
             layout_slot: Arc::new(Mutex::new(None)),
+            header_flash: Arc::new(super::items::HeaderFlash::default()),
             preview_dims: (80, 24),
             skim_list_width: 80,
             command_timeout: None,
@@ -2965,6 +3035,7 @@ pub mod tests {
             stashed_warnings: Arc::clone(&factory.stashed_warnings),
             shortcut_table: Arc::clone(&factory.shortcut_table),
             layout_slot: Arc::clone(&factory.layout_slot),
+            header_flash: Arc::clone(&factory.header_flash),
         }
     }
 
@@ -3399,6 +3470,7 @@ pub mod tests {
             stashed_warnings: Arc::clone(&stashed),
             shortcut_table: Arc::new(Mutex::new(std::collections::HashMap::new())),
             layout_slot: Arc::new(Mutex::new(None)),
+            header_flash: Arc::new(super::items::HeaderFlash::default()),
         };
 
         remover.apply(token.clone());
@@ -3956,6 +4028,71 @@ pub mod tests {
         );
     }
 
+    /// The header flash a declined alt-x sets self-clears after the beat: the timer
+    /// thread `flash_header` spawns runs `clear_if_current` + repaints once
+    /// `HEADER_FLASH_DURATION` elapses. Also pins the keep-path symbol — a by-design
+    /// decline flashes as info (○), not a warning. Polls for the clear (driving the
+    /// detached timer to completion) rather than racing a fixed sleep.
+    #[test]
+    fn test_header_flash_set_then_self_clears() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+
+        let item = branched_picker_item("current", &test.path().join("current"));
+        let items = Arc::new(Mutex::new(vec![Arc::clone(&item)]));
+        // A live sender so `flash_header` sets the flash and its timer can repaint.
+        let render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<skim::prelude::Event>>> =
+            Arc::new(OnceLock::new());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        render_tx.set(tx).unwrap();
+        let header_flash = Arc::new(super::items::HeaderFlash::default());
+        let remover = AltXRemover {
+            items,
+            repo,
+            approvals: Arc::new(Approvals::default()),
+            render_tx: Arc::clone(&render_tx),
+            stashed_warnings: Arc::new(Mutex::new(Vec::new())),
+            shortcut_table: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            layout_slot: Arc::new(Mutex::new(None)),
+            header_flash: Arc::clone(&header_flash),
+        };
+
+        remover.keep_current_worktree_row();
+
+        // The flash is up, styled as info (○ — a by-design decline, not a warning),
+        // and `flash_header` queued a repaint.
+        let flash = header_flash.current();
+        assert!(
+            flash
+                .as_deref()
+                .is_some_and(|f| f.contains('○') && f.contains("current worktree")),
+            "the decline flashes as info in the header: {flash:?}"
+        );
+        assert!(rx.try_recv().is_ok(), "flash_header queues a repaint");
+
+        // The timer clears it after the beat. Poll (don't fixed-sleep) so the test
+        // tracks the detached thread's completion causally; the deadline is a safety
+        // net well above `HEADER_FLASH_DURATION`.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while header_flash.current().is_some() {
+            assert!(Instant::now() < deadline, "flash never auto-cleared");
+            std::thread::sleep(Duration::from_millis(25));
+        }
+
+        // The auto-clear queues its own repaint (sent right after the clear); poll
+        // briefly so the assertion doesn't race the timer thread's final send.
+        let repaint_deadline = Instant::now() + Duration::from_secs(2);
+        let mut saw_repaint = false;
+        while Instant::now() < repaint_deadline {
+            if rx.try_recv().is_ok() {
+                saw_repaint = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(saw_repaint, "the auto-clear queues a repaint");
+    }
+
     /// alt-x on an unremovable target surfaces the same diagnostic `wt remove`
     /// prints rather than swallowing it: `prepare_removal` errors (here the main
     /// worktree can't be removed), so the dispatch's `Err` arm stashes the rendered
@@ -3969,7 +4106,22 @@ pub mod tests {
         let item = branched_picker_item("main", test.path());
         let token = item.output().to_string();
         let items = Arc::new(Mutex::new(vec![Arc::clone(&item)]));
-        let remover = test_remover(Arc::clone(&items), repo.clone());
+        // A live sender so the Err arm's `flash_header` sets the header flash.
+        let render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<skim::prelude::Event>>> =
+            Arc::new(OnceLock::new());
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        render_tx.set(tx).unwrap();
+        let header_flash = Arc::new(super::items::HeaderFlash::default());
+        let remover = AltXRemover {
+            items: Arc::clone(&items),
+            repo: repo.clone(),
+            approvals: Arc::new(Approvals::default()),
+            render_tx: Arc::clone(&render_tx),
+            stashed_warnings: Arc::new(Mutex::new(Vec::new())),
+            shortcut_table: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            layout_slot: Arc::new(Mutex::new(None)),
+            header_flash: Arc::clone(&header_flash),
+        };
 
         remover.apply(token.clone());
 
@@ -3991,6 +4143,14 @@ pub mod tests {
                 .iter()
                 .any(|w| w.contains("main worktree cannot be removed")),
             "the unremovable diagnostic is stashed for the user: {warnings:?}"
+        );
+        // The terse headline also flashes in the header at alt-x time.
+        let flash = header_flash.current();
+        assert!(
+            flash
+                .as_deref()
+                .is_some_and(|f| f.contains("main worktree")),
+            "the unremovable reason flashes in the header: {flash:?}"
         );
     }
 
@@ -4017,14 +4177,22 @@ pub mod tests {
         let token = item.output().to_string();
         let items = Arc::new(Mutex::new(vec![Arc::clone(&item)]));
         let stashed: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        // A live sender so `flash_header` sets the header flash rather than
+        // taking its no-`render_tx` early return.
+        let render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<skim::prelude::Event>>> =
+            Arc::new(OnceLock::new());
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        render_tx.set(tx).unwrap();
+        let header_flash = Arc::new(super::items::HeaderFlash::default());
         let remover = AltXRemover {
             items: Arc::clone(&items),
             repo: repo.clone(),
             approvals: Arc::new(Approvals::default()),
-            render_tx: Arc::new(OnceLock::new()),
+            render_tx: Arc::clone(&render_tx),
             stashed_warnings: Arc::clone(&stashed),
             shortcut_table: Arc::new(Mutex::new(std::collections::HashMap::new())),
             layout_slot: Arc::new(Mutex::new(None)),
+            header_flash: Arc::clone(&header_flash),
         };
 
         remover.apply(token.clone());
@@ -4052,6 +4220,15 @@ pub mod tests {
         assert!(
             warnings.iter().any(|w| w.contains("wt remove -D unmerged")),
             "a kept unmerged branch stashes the actionable `-D` hint: {warnings:?}"
+        );
+        // The *why* also flashes in the header immediately (the in-picker echo of
+        // the stash), not only on exit.
+        let flash = header_flash.current();
+        assert!(
+            flash
+                .as_deref()
+                .is_some_and(|f| f.contains("Kept") && f.contains("unmerged")),
+            "the keep path flashes the reason in the header: {flash:?}"
         );
 
         // A second alt-x on the same kept row dedups — the stash doesn't grow.

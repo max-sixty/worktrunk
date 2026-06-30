@@ -6,7 +6,7 @@
 
 use std::borrow::Cow;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use ansi_to_tui::IntoText;
@@ -252,11 +252,63 @@ pub(super) struct HeaderLoading {
     pub marker_ansi: String,
 }
 
+/// A transient header line shown in place of the column labels for a beat, then
+/// cleared — the in-picker echo of an `alt-x` that declined to remove a row (the
+/// current worktree, or an unmerged branch-only row). The same reason still
+/// drains to stderr on exit (the stash stays the fallback); this just lands it
+/// immediately, in the header where the user is looking, so the *why* isn't
+/// missed when the row visibly stays put.
+///
+/// Shared picker-lifetime between the header item (which renders it) and
+/// [`AltXRemover`](super::AltXRemover) (which sets it and schedules the clear).
+/// `generation` bumps on every `set`, and a clear only fires when its captured
+/// generation still matches — so a newer flash can't be wiped early by an older
+/// flash's timer.
+#[derive(Default)]
+pub(super) struct HeaderFlash {
+    message: Mutex<Option<String>>,
+    generation: AtomicU64,
+}
+
+impl HeaderFlash {
+    /// Show `message` (pre-rendered ANSI) and return this set's generation, to
+    /// be handed to the clear timer.
+    pub fn set(&self, message: String) -> u64 {
+        let generation = self.generation.fetch_add(1, Ordering::Relaxed) + 1;
+        *self.message.lock().unwrap() = Some(message);
+        generation
+    }
+
+    /// Clear the flash, but only if no newer `set` happened since `generation`.
+    ///
+    /// The generation is read *under* the message lock so the check and the clear
+    /// are atomic against a concurrent `set` (which bumps the generation before it
+    /// takes this same lock): an interleaved `set` either bumps the generation
+    /// before this load (so the check fails and the new flash survives) or installs
+    /// its message strictly after this clear releases the lock (so it wins). A read
+    /// outside the lock could pass the check, then have a newer `set` slip in before
+    /// the clear, wiping a brand-new flash.
+    pub fn clear_if_current(&self, generation: u64) {
+        let mut message = self.message.lock().unwrap();
+        if self.generation.load(Ordering::Relaxed) == generation {
+            *message = None;
+        }
+    }
+
+    /// The flash line currently showing, if any.
+    pub fn current(&self) -> Option<String> {
+        self.message.lock().unwrap().clone()
+    }
+}
+
 /// Header item for column names (non-selectable)
 pub(super) struct HeaderSkimItem {
     pub display_text: String,
     pub display_text_with_ansi: String,
     pub loading: Option<HeaderLoading>,
+    /// Transient "couldn't remove this row" message; shown in place of the
+    /// labels for a beat after a declined `alt-x` (see [`HeaderFlash`]).
+    pub flash: Arc<HeaderFlash>,
 }
 
 impl SkimItem for HeaderSkimItem {
@@ -265,6 +317,12 @@ impl SkimItem for HeaderSkimItem {
     }
 
     fn display(&self, _context: DisplayContext) -> Line<'_> {
+        // A declined-removal flash takes the slot first: it's the most recent
+        // user action and self-clears after a beat. `ansi_to_line` returns an
+        // owned `Line<'static>`, so rendering from the cloned local is fine.
+        if let Some(flash) = self.flash.current() {
+            return ansi_to_line(&flash);
+        }
         // While the --prs fetch is in flight, show the loading line in place of
         // the column labels — appending would clip off the right edge of a
         // full-width header. The labels return when the rows land.
@@ -2081,8 +2139,9 @@ mod tests {
             display_text_with_ansi: "Branch  CI".to_string(),
             loading: Some(HeaderLoading {
                 pending: Arc::clone(&pending),
-                marker_ansi: "  loading open PRs…".to_string(),
+                marker_ansi: "↳ Loading open PRs…".to_string(),
             }),
+            flash: Arc::new(HeaderFlash::default()),
         };
         let text = |h: &HeaderSkimItem| {
             h.display(DisplayContext::default())
@@ -2093,19 +2152,84 @@ mod tests {
         };
 
         assert!(
-            text(&header).contains("loading open PRs"),
+            text(&header).contains("Loading open PRs"),
             "marker shows while pending"
         );
 
         pending.store(false, Ordering::Relaxed);
         let cleared = text(&header);
         assert!(
-            !cleared.contains("loading"),
+            !cleared.contains("Loading"),
             "marker gone once cleared: {cleared:?}"
         );
         assert!(
             cleared.contains("Branch"),
             "column header remains: {cleared:?}"
+        );
+    }
+
+    #[test]
+    fn header_flash_takes_the_slot_then_clears() {
+        // A declined-`alt-x` flash shows in place of the column labels (and over
+        // an in-flight loading marker), then yields back once cleared.
+        let pending = Arc::new(AtomicBool::new(true));
+        let flash = Arc::new(HeaderFlash::default());
+        let header = HeaderSkimItem {
+            display_text: "Branch  CI".to_string(),
+            display_text_with_ansi: "Branch  CI".to_string(),
+            loading: Some(HeaderLoading {
+                pending: Arc::clone(&pending),
+                marker_ansi: "↳ Loading open PRs…".to_string(),
+            }),
+            flash: Arc::clone(&flash),
+        };
+        let text = |h: &HeaderSkimItem| {
+            h.display(DisplayContext::default())
+                .spans
+                .iter()
+                .map(|s| s.content.as_ref().to_string())
+                .collect::<String>()
+        };
+
+        // No flash yet → the loading marker holds the slot.
+        assert!(text(&header).contains("Loading open PRs"));
+
+        // The flash takes priority even over an in-flight loading marker.
+        let generation = flash.set("Can't remove the current worktree".to_string());
+        let shown = text(&header);
+        assert!(
+            shown.contains("Can't remove the current worktree"),
+            "flash takes the slot over the loading marker: {shown:?}"
+        );
+        assert!(
+            !shown.contains("Loading"),
+            "flash hides the marker: {shown:?}"
+        );
+
+        // A newer flash bumps the generation, so the first flash's clear is a
+        // no-op — the second message stays put.
+        flash.set("Kept feature — branch is unmerged".to_string());
+        flash.clear_if_current(generation);
+        let still = text(&header);
+        assert!(
+            still.contains("Kept feature — branch is unmerged"),
+            "stale clear can't wipe a newer flash: {still:?}"
+        );
+
+        // Clearing at the current generation yields the slot back — here to the
+        // still-pending loading marker.
+        let latest = flash.set("Kept feature — branch is unmerged".to_string());
+        flash.clear_if_current(latest);
+        assert!(
+            text(&header).contains("Loading open PRs"),
+            "the loading marker returns once the flash clears while still pending"
+        );
+
+        // With nothing else claiming the slot, the column labels return.
+        pending.store(false, Ordering::Relaxed);
+        assert!(
+            text(&header).contains("Branch"),
+            "the column labels return once flash and loading are both clear"
         );
     }
 

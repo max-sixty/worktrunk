@@ -41,7 +41,7 @@ use std::time::{Duration, Instant};
 use color_print::cformat;
 use skim::prelude::*;
 use worktrunk::git::Repository;
-use worktrunk::styling::{StyledLine, strip_osc8_hyperlinks};
+use worktrunk::styling::{HINT_SYMBOL, StyledLine, strip_osc8_hyperlinks};
 
 use super::super::list::ci_status::PrStatus;
 
@@ -52,9 +52,9 @@ use super::super::list::ci_status::PrStatus;
 const RENDER_THROTTLE: Duration = Duration::from_millis(16);
 
 use super::items::{
-    HeaderLoading, HeaderSkimItem, LayoutSlot, LocalCheckout, LocalContent, LocalContentSlot,
-    MorphHandle, PickerRow, PrStatusSlot, PreviewCache, RowShortcutData, RowUrl, ShortcutTable,
-    pr_presence, pr_status_pane_eq, worktree_output_token,
+    HeaderFlash, HeaderLoading, HeaderSkimItem, LayoutSlot, LocalCheckout, LocalContent,
+    LocalContentSlot, MorphHandle, PickerRow, PrStatusSlot, PreviewCache, RowShortcutData, RowUrl,
+    ShortcutTable, pr_presence, pr_status_pane_eq, worktree_output_token,
 };
 use super::preview::PreviewMode;
 use super::preview_notify::PrStatusDelta;
@@ -149,6 +149,10 @@ pub(super) struct PickerHandler {
     /// flight, so the header shows a "loading…" marker. The `--prs` thread
     /// clears it when the fetch resolves. `None` on non-`--prs` pickers.
     pub(super) prs_loading: Option<Arc<AtomicBool>>,
+    /// Shared picker-lifetime with the header and [`AltXRemover`](super::AltXRemover):
+    /// a declined `alt-x` sets a transient "couldn't remove this row" message
+    /// here, shown in place of the column labels for a beat (see [`HeaderFlash`]).
+    pub(super) header_flash: Arc<HeaderFlash>,
 }
 
 impl PickerHandler {
@@ -322,20 +326,22 @@ impl PickerProgressHandler for PickerHandler {
             .and_then(|wt| wt.path.parent().map(Path::to_path_buf));
 
         // Header row — non-selectable via `header_lines(1)` on the options.
-        // In `--prs` mode it shows a dim "loading open PRs…" line (in place of
+        // In `--prs` mode it shows a dim "↳ Loading open PRs…" line (in place of
         // the column labels) until the forge call's rows land — wording mirrors
-        // the empty-list "No open PRs found".
+        // the empty-list "No open PRs found", styled as a hint (the dim `↳` sits
+        // in the pointer gutter, the text aligned with the row content at col 2).
         let loading = self.prs_loading.as_ref().map(|pending| {
             let noun = super::prs::forge_noun(self.orchestrator.repo());
             HeaderLoading {
                 pending: Arc::clone(pending),
-                marker_ansi: cformat!("  <dim>loading open {noun}…</>"),
+                marker_ansi: cformat!("{HINT_SYMBOL} <dim>Loading open {noun}…</>"),
             }
         });
         skim_items.push(Arc::new(HeaderSkimItem {
             display_text: header.plain_text(),
             display_text_with_ansi: header.render(),
             loading,
+            flash: Arc::clone(&self.header_flash),
         }) as Arc<dyn SkimItem>);
 
         for (item, rendered_line) in items.into_iter().zip(rendered) {
@@ -654,6 +660,7 @@ mod tests {
             grid_slot: Arc::new(super::super::prs::GridSlot::new()),
             layout_slot: Arc::new(Mutex::new(None)),
             prs_loading: None,
+            header_flash: Arc::new(HeaderFlash::default()),
         }
     }
 
