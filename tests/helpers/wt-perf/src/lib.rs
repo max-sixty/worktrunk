@@ -536,15 +536,17 @@ fn append_line(path: &Path, rel: &str, line: &str) {
 }
 
 /// Create a repo with `worktrees` linked worktrees AND `branches` branchless
-/// branches, each in a deterministic rotation of states, for the warm-cache
-/// `wt list` re-run benchmark.
+/// branches, each in a deterministic rotation of states, for the combined
+/// full-surface `wt list` benchmark (`full` in `benches/list.rs`).
 ///
 /// Unlike [`RepoConfig`] (every worktree/branch identical), this exercises the
-/// full spread of `wt list` gates and tasks — clean vs dirty working trees,
-/// merged vs ahead vs diverged branches — which is the realistic shape of "a
-/// huge number of worktrees & branches, all in various states". Returns the
-/// `TempDir`; the main worktree is at `temp.path().join("repo")`, linked
-/// worktrees are siblings (`repo.wt-NNNN`).
+/// full spread of `wt list` gates and tasks at once — clean vs dirty working
+/// trees, merged vs ahead vs diverged branches, *and* divergence spread across
+/// history depth — the realistic shape of "a huge number of worktrees &
+/// branches, all in various states". Returns the `TempDir`; the main worktree
+/// is at `temp.path().join("repo")`, linked worktrees are siblings
+/// (`repo.wt-NNNN`). Either dimension may be `0` (e.g. `mixed-W-0` for a
+/// worktrees-only repo).
 ///
 /// Worktree states cycle by index % 4:
 /// 0. clean, several commits ahead of base
@@ -552,10 +554,15 @@ fn append_line(path: &Path, rel: &str, line: &str) {
 /// 2. staged + unstaged + untracked (full dirty mix)
 /// 3. clean, sitting exactly at base
 ///
-/// Branch states cycle by index % 4:
-/// 0. at an older checkpoint (ancestor of base — integration-positive)
+/// Branch states cycle by index % 4 (states 0 and 2 fork at a checkpoint that
+/// slides from the oldest base commit toward the tip as the index grows, so
+/// fork depth fans out across the whole history — the GH #461 deep-divergence
+/// shape that drives the O(commits) `git for-each-ref %(ahead-behind)` walk):
+/// 0. behind: at an older checkpoint (ancestor of base —
+///    integration-positive / merged shape)
 /// 1. ahead of base with its own commits (unmerged)
-/// 2. diverged: own commits from an older checkpoint while base advanced
+/// 2. diverged: a short own-commit chain forked from an older checkpoint
+///    while base advanced (deep two-sided divergence)
 /// 3. identical to the base tip (trees match — squash-merge shape)
 pub fn create_mixed_repo(worktrees: usize, branches: usize) -> TempDir {
     let temp = tempfile::tempdir().unwrap();
@@ -568,7 +575,14 @@ pub fn create_mixed_repo(worktrees: usize, branches: usize) -> TempDir {
 /// siblings.
 pub fn create_mixed_repo_at(worktrees: usize, branches: usize, repo: &Path) {
     const FILES: usize = 50;
-    const BASE_COMMITS: usize = 120;
+    // Deep enough that fork points spread across history give the
+    // `%(ahead-behind)` walk real commits to traverse (GH #461 shape), while
+    // staying far cheaper to build than the dedicated `divergent` stress
+    // (`RepoConfig::many_divergent_branches`, 200 branches × 20 commits).
+    const BASE_COMMITS: usize = 200;
+    // Record a checkpoint every few commits so behind/diverged branches fork
+    // at many distinct depths rather than a handful of fixed points.
+    const CHECKPOINT_EVERY: usize = 5;
 
     let repo = repo.to_path_buf();
     std::fs::create_dir_all(&repo).unwrap();
@@ -603,21 +617,25 @@ pub fn create_mixed_repo_at(worktrees: usize, branches: usize, repo: &Path) {
         );
         run_git(&repo, &["add", "."]);
         run_git(&repo, &["commit", "-q", "-m", &format!("Commit {c}")]);
-        if c % 20 == 0 {
+        if c % CHECKPOINT_EVERY == 0 {
             checkpoints.push(head_sha(&repo));
         }
     }
     let base_tip = head_sha(&repo);
+    // `checkpoints[0]` is the oldest (initial commit); the last is near the
+    // tip. Index `i` of `branches` maps linearly across them, so behind/
+    // diverged branches fork at points fanned across history depth rather than
+    // a few repeated checkpoints.
+    let deepest = checkpoints.len() - 1;
 
     // Branches without worktrees, in varied states. States 1 and 2 check out
     // in the main worktree and return to main; the loop always ends on main.
     for i in 0..branches {
         let name = format!("br-{i:04}");
+        // `branches >= 1` inside this loop, so the divisor is never zero.
+        let fork = &checkpoints[i * deepest / branches];
         match i % 4 {
-            0 => run_git(
-                &repo,
-                &["branch", &name, &checkpoints[i % checkpoints.len()]],
-            ),
+            0 => run_git(&repo, &["branch", &name, fork]),
             1 => {
                 run_git(&repo, &["checkout", "-q", "-b", &name, &base_tip]);
                 for j in 0..=(i % 3) {
@@ -632,23 +650,19 @@ pub fn create_mixed_repo_at(worktrees: usize, branches: usize, repo: &Path) {
                 run_git(&repo, &["checkout", "-q", "main"]);
             }
             2 => {
-                run_git(
-                    &repo,
-                    &[
-                        "checkout",
-                        "-q",
-                        "-b",
-                        &name,
-                        &checkpoints[i % checkpoints.len()],
-                    ],
-                );
-                std::fs::write(
-                    repo.join(format!("br_{i}_d.rs")),
-                    format!("// diverge {i}\n"),
-                )
-                .unwrap();
-                run_git(&repo, &["add", "."]);
-                run_git(&repo, &["commit", "-q", "-m", &format!("br {i} diverge")]);
+                run_git(&repo, &["checkout", "-q", "-b", &name, fork]);
+                for j in 0..=(i % 3) {
+                    std::fs::write(
+                        repo.join(format!("br_{i}_{j}_d.rs")),
+                        format!("// diverge {i}/{j}\n"),
+                    )
+                    .unwrap();
+                    run_git(&repo, &["add", "."]);
+                    run_git(
+                        &repo,
+                        &["commit", "-q", "-m", &format!("br {i} diverge {j}")],
+                    );
+                }
                 run_git(&repo, &["checkout", "-q", "main"]);
             }
             _ => run_git(&repo, &["branch", &name, &base_tip]),
