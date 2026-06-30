@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.64.0
+
+### Improved
+
+- **`{{ git.branch.* }}` template namespace for custom columns**: `wt list` custom columns can now read a branch's own git config via `{{ git.branch.<key> }}` — both convention keys you set yourself (`branch.<name>.jira`) and the git-native `branch.<name>.description` — without re-storing the values through `wt config state vars set`. It complements `{{ vars.* }}`, which reads only worktrunk's own state namespace. ([#3319](https://github.com/max-sixty/worktrunk/pull/3319), thanks @cazador481 for the request)
+
+- **Faster warm-cache `wt list` re-runs**: A repeat `wt list` (with `.git/wt/cache/` already populated) is ~36% faster, by removing redundant per-row git subprocesses — priming the commit→tree cache from the `%ct` batch already issued, persisting merge-base results to a content-addressed on-disk cache, and seeding worktree roots and git-dirs from the single `git worktree list` instead of re-forking `git rev-parse` per worktree. ([#3334](https://github.com/max-sixty/worktrunk/pull/3334))
+
+### Fixed
+
+- **Refs that look like flags can't inject git options**: `wt`'s `git diff` previews and diffstats (picker diff previews, `show_diffstat`, push diffstat) now fence user-controlled refs behind `--end-of-options`, and branch removal (`git branch -D`) passes them after `--`, so a branch literally named like a flag (`-x`, `--foo`) reaches git as a positional ref instead of being misparsed as an option. ([#3317](https://github.com/max-sixty/worktrunk/pull/3317))
+
+- **Statusline renders untruncated when `COLUMNS=0`**: `wt list statusline` treated `COLUMNS=0` as a zero-width budget and dropped every segment, rendering an empty line. A zero or unparseable `COLUMNS` is now treated as no detectable width, so the line renders everything untruncated — as the statusline sizing already documented for a missing width. ([#3318](https://github.com/max-sixty/worktrunk/pull/3318))
+
+- **Watchdog "still waiting" line uses the hint symbol**: The transient `Waiting for the commit message (Ns)` line shown during a slow `wt step commit` LLM call now uses the hint prefix (`↳`) instead of the info symbol (`○`), matching the convention for fully-dim status lines. ([#3330](https://github.com/max-sixty/worktrunk/pull/3330))
+
 ## 0.63.0
 
 ### Improved
