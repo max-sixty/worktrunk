@@ -5,7 +5,6 @@ name: nightly
 #   - full-tests: full nextest suite on the linux/macos/windows matrix — the
 #     cargo-affected safety net (see the job comment and ci.yaml's affected block)
 #   - release-target: PTY+shell suite on the release triples ci.yaml doesn't cover
-#   - benchmarks: full criterion suite + time-series gist append (cron only)
 #   - check-unused-dependencies: cargo-udeps on nightly toolchain
 #   - minimal-versions: cargo check against minimum-version dep resolution
 #   - nix-flake: nix flake check (packaging-environment bugs, motivated by #2624)
@@ -252,73 +251,6 @@ jobs:
         NEXTEST_NO_INPUT_HANDLER: 1
       run: cargo nextest run --target ${{ matrix.target }}
 
-  benchmarks:
-    # Full criterion suite. Moved here from ci.yaml — runs ~80 min, was
-    # already advisory non-required (CLAUDE.md: "Don't wait for CI
-    # benchmarks before merging"). The cron run also appends results to the
-    # time-series gist so we have daily perf history on main.
-    needs: gate
-    if: needs.gate.outputs.run == 'true'
-    runs-on: ubuntu-24.04
-    steps:
-    - name: 📂 Checkout code
-      uses: actions/checkout@v7
-
-    - name: 💰 Cache
-      uses: Swatinem/rust-cache@v2
-      with:
-        # Restore the shared `test` cache (registry + deps), never save —
-        # `cargo bench` is release-profile so it rebuilds its own artifacts,
-        # but the dependency download/extract is still worth restoring.
-        prefix-key: v1-rust
-        shared-key: shared
-        cache-bin: "false"
-        save-if: false
-
-    - name: Install shells (zsh, fish)
-      run: sudo apt-get update && sudo apt-get install -y zsh fish
-
-    - name: Install nushell
-      uses: hustcer/setup-nu@v3
-      with:
-        version: '0.113.1'
-
-    - name: 💰 Rust repo cache
-      uses: actions/cache@v6
-      with:
-        path: target/bench-repos
-        key: bench-repos-rust-${{ runner.os }}
-
-    - name: 📊 Run benchmarks
-      run: cargo bench
-
-    - name: 📦 Upload benchmark results
-      uses: actions/upload-artifact@v7
-      with:
-        name: benchmark-results-${{ github.run_id }}
-        path: target/criterion
-
-    # Time-series benchmark store, owned by worktrunk-bot:
-    # https://gist.github.com/worktrunk-bot/19bb23cb9658722abfe69479d0a4f9bf
-    #
-    # Cron-only: PR/push runs aren't appended (would pollute the time
-    # series). Skipped on forks: `TEND_BOT_TOKEN` is not exposed there.
-    - name: 💾 Append results to gist
-      if: github.repository_owner == 'max-sixty' && github.event_name == 'schedule'
-      env:
-        GITHUB_TOKEN: ${{ secrets.TEND_BOT_TOKEN }}
-        GIST_ID: 19bb23cb9658722abfe69479d0a4f9bf
-      run: |
-        set -euo pipefail
-        python3 .github/scripts/criterion-to-jsonl.py --sha "$GITHUB_SHA" > new-rows.jsonl
-        git clone "https://x-access-token:${GITHUB_TOKEN}@gist.github.com/${GIST_ID}.git" /tmp/gist
-        cat new-rows.jsonl >> /tmp/gist/results.jsonl
-        git -C /tmp/gist \
-          -c user.name=worktrunk-bot \
-          -c user.email=worktrunk-bot@users.noreply.github.com \
-          commit -am "benchmarks: ${GITHUB_SHA::7}"
-        git -C /tmp/gist push
-
   check-unused-dependencies:
     # Moved from ci.yaml — `cargo udeps` requires nightly toolchain anyway,
     # so it's already in the "nightly concern" bucket; rarely flips between
@@ -453,7 +385,6 @@ jobs:
     needs:
       - feature-powerset
       - release-target
-      - benchmarks
       - check-unused-dependencies
       - minimal-versions
       - nix-flake

@@ -143,7 +143,7 @@ Why: wt installs a `signal_hook` SIGINT/SIGTERM handler so it can forward signal
 
 ## Benchmarks & Traces
 
-`cargo bench --bench list <filter>` (Criterion takes a positional substring filter; there's no `--skip`). `cargo run -p wt-perf -- timeline -- <args>` traces one `wt` invocation. Real-repo benchmarks clone rust-lang/rust on first run. The `benchmarks` CI job is non-required — only `test (linux|macos|windows)` block merge; `mergeStateStatus: UNSTABLE` from a still-pending bench run is mergeable. Filter map, expected numbers, and trace queries: `benches/CLAUDE.md`.
+`cargo bench --bench list <filter>` (Criterion takes a positional substring filter; there's no `--skip`). `cargo run -p wt-perf -- timeline -- <args>` traces one `wt` invocation. Real-repo benchmarks clone rust-lang/rust on first run. Benchmarks run as a standalone scheduled workflow (`.github/workflows/benchmarks.yaml`, daily cron plus `workflow_dispatch`), not on PRs, so they never gate a merge; only `test (linux|macos|windows)` block it. Filter map, expected numbers, and trace queries: `benches/CLAUDE.md`.
 
 ## Code Quality
 
