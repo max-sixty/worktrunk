@@ -1657,7 +1657,7 @@ fn test_switch_picker_prs_rows_survive_alt_x_removal(mut repo: TestRepo) {
 /// alt-x time, not only when the stash drains on exit. The current worktree is
 /// the picker's pinned top row, so launching from the main worktree and pressing
 /// alt-x (no cursor move) targets it — and the main worktree can't be removed, so
-/// the header swaps the column labels for `▲ The main worktree cannot be removed`
+/// the header swaps the column labels for `✗ The main worktree cannot be removed`
 /// for a beat. The flash *clearing* after the beat is covered by the `HeaderFlash`
 /// unit tests; this asserts it paints. A presence-wait catches it before the beat
 /// elapses (`HEADER_FLASH_DURATION`), so the test never depends on the timer.
