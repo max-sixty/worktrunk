@@ -1,0 +1,120 @@
+name: benchmarks
+# Full criterion suite plus the time-series gist append. Runs ~80 min and
+# checks performance, not correctness, so it stands apart from the PR/merge
+# flow and from nightly's correctness checks: a slow or failing bench never
+# gates a merge. The daily cron is the perf-history feed (it appends to the
+# gist); workflow_dispatch covers on-demand runs against a chosen branch.
+#
+# Not run on PRs or pushes, so the daily run is the only signal that the bench
+# harness still builds — create-issue-on-benchmark-failure surfaces a break.
+#
+# Runner version pinned; see ci.yaml header comment for rationale.
+
+on:
+  schedule:
+    # 3:47 UTC daily. Off-peak, offset from nightly's 5:37 so the two long
+    # runs don't contend, and off :00 to be a good citizen w.r.t. GitHub's
+    # cron scheduler.
+    - cron: '47 3 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Match ci.yaml/nightly.yaml: Swatinem/rust-cache hashes CARGO*/RUST* into
+  # the cache key, so the shared `test` cache only restores when these agree
+  # (see .github/CLAUDE.md).
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUSTFLAGS: -C debuginfo=0
+
+jobs:
+  benchmarks:
+    runs-on: ubuntu-24.04
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v7
+
+    - name: 💰 Cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        # Restore the shared `test` cache (registry + deps), never save —
+        # `cargo bench` is release-profile so it rebuilds its own artifacts,
+        # but the dependency download/extract is still worth restoring.
+        prefix-key: v1-rust
+        shared-key: shared
+        cache-bin: "false"
+        save-if: false
+
+    - name: Install shells (zsh, fish)
+      uses: awalsh128/cache-apt-pkgs-action@v1.6.1
+      with:
+        packages: zsh fish
+        version: 1.0
+
+    - name: Install nushell
+      uses: hustcer/setup-nu@v3
+      with:
+        version: '0.113.1'
+
+    - name: 💰 Rust repo cache
+      uses: actions/cache@v6
+      with:
+        path: target/bench-repos
+        key: bench-repos-rust-${{ runner.os }}
+
+    - name: 📊 Run benchmarks
+      run: cargo bench
+
+    - name: 📦 Upload benchmark results
+      uses: actions/upload-artifact@v7
+      with:
+        name: benchmark-results-${{ github.run_id }}
+        path: target/criterion
+
+    # Time-series benchmark store, owned by worktrunk-bot:
+    # https://gist.github.com/worktrunk-bot/19bb23cb9658722abfe69479d0a4f9bf
+    #
+    # Cron-only: workflow_dispatch runs aren't appended (would pollute the
+    # time series). Skipped on forks: `TEND_BOT_TOKEN` is not exposed there.
+    - name: 💾 Append results to gist
+      if: github.repository_owner == 'max-sixty' && github.event_name == 'schedule'
+      env:
+        GITHUB_TOKEN: ${{ secrets.TEND_BOT_TOKEN }}
+        GIST_ID: 19bb23cb9658722abfe69479d0a4f9bf
+      run: |
+        set -euo pipefail
+        python3 .github/scripts/criterion-to-jsonl.py --sha "$GITHUB_SHA" > new-rows.jsonl
+        git clone "https://x-access-token:${GITHUB_TOKEN}@gist.github.com/${GIST_ID}.git" /tmp/gist
+        cat new-rows.jsonl >> /tmp/gist/results.jsonl
+        git -C /tmp/gist \
+          -c user.name=worktrunk-bot \
+          -c user.email=worktrunk-bot@users.noreply.github.com \
+          commit -am "benchmarks: ${GITHUB_SHA::7}"
+        git -C /tmp/gist push
+
+  create-issue-on-benchmark-failure:
+    needs: benchmarks
+    if: always() && contains(needs.*.result, 'failure') && github.repository_owner == 'max-sixty' && github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v7
+
+    - uses: JasonEtco/create-an-issue@v2
+      env:
+        # Use TEND_BOT_TOKEN for a consistent bot identity (per
+        # .github/CLAUDE.md) and so any future issue-triage automation can
+        # cascade off issue creation — events from the default GITHUB_TOKEN
+        # don't trigger other workflows.
+        GITHUB_TOKEN: ${{ secrets.TEND_BOT_TOKEN }}
+        LINK: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      with:
+        filename: .github/benchmark-failure.md
+        update_existing: true
+        search_existing: open
