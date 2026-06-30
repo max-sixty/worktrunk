@@ -411,8 +411,11 @@ impl Repository {
         // Acquired after cache check to avoid holding the semaphore on cache hits.
         let _guard = super::super::HEAVY_OPS_SEMAPHORE.acquire();
 
-        // Get merge-base (cached in shared repo cache)
-        let Some(merge_base) = self.merge_base(base_sha, head_sha)? else {
+        // Get merge-base (cached in shared repo cache). Inputs are already
+        // SHAs here (both callers resolve first), so use the SHA-keyed
+        // variant directly and skip the redundant ref→SHA resolution — same
+        // path `compute_ahead_behind` takes.
+        let Some(merge_base) = self.merge_base_by_sha(base_sha, head_sha)? else {
             if use_cache {
                 super::sha_cache::put_diff_stats(self, base_sha, head_sha, LineDiff::default());
             }
