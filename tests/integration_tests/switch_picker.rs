@@ -2991,31 +2991,40 @@ fn test_switch_picker_alt_x_keeps_unmerged_branch_row(mut repo: TestRepo) {
     repo.run_git(&["checkout", &default_branch]);
 
     let env_vars = repo.test_env_vars();
-    let result = exec_in_pty_capture_before_abort(
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(
         wt_bin().to_str().unwrap(),
         &["switch", "--branches"],
         repo.root_path(),
         &env_vars,
-        &[
-            ("unmerged-orphan", Some("unmerged-orphan")), // filter to the branch
-            ("\x1bx", Some("unmerged-orphan")),           // alt-x keeps it: still visible
-        ],
     );
 
-    assert_valid_abort_exit_code(result.exit_code);
-    let (list, _preview) = result.panels();
-    // `list` (cols 0..LIST_WIDTH of every row) includes skim's query-echo prompt
-    // line `> unmerged-orphan`, which holds the branch name whether or not the row
-    // survives. So `contains` alone is tautological — assert the name appears at
-    // least twice (the prompt echo PLUS the data row). A regression that dropped
-    // the row optimistically would empty the filtered list, leaving only the
-    // prompt's single occurrence, and fail here.
-    let occurrences = list.matches("unmerged-orphan").count();
-    assert!(
-        occurrences >= 2,
-        "the unmerged branch-only row survives alt-x — expected the branch name in \
-         both the prompt echo and a data row, got {occurrences} occurrence(s).\nList:\n{list}"
-    );
+    // Filter to the branch-only row, then wait for the cursor (`>`) to land on it.
+    // A local branch with no worktree carries the `/` gutter, so `/ unmerged-orphan`
+    // names the data row specifically — skim's query-echo prompt line is
+    // `> unmerged-orphan` (no gutter), which this gate ignores. Keying off the
+    // gutter rather than the bare name is what makes the wait robust: under Windows
+    // CI load the prompt echo trails its keystrokes (the final character can still
+    // be unrendered once the row is already on screen), and an assertion that
+    // counted the name across both the prompt and the row flaked when the prompt
+    // came up a character short.
+    send_input_awaiting_content(&writer, &rx, &mut parser, "unmerged-orphan", None);
+    wait_for_cursor_on_row(&rx, &mut parser, "/ unmerged-orphan");
+
+    // alt-x: `SafeDelete` refuses to drop an unmerged branch, so the row stays and
+    // the cursor holds on `/ unmerged-orphan`. A regression that dropped the row
+    // would empty the filtered list, the `/` data row would never reappear, and
+    // this wait would time out with a screen dump.
+    send_input_awaiting_content(&writer, &rx, &mut parser, "\x1bx", None);
+    wait_for_cursor_on_row(&rx, &mut parser, "/ unmerged-orphan");
+
+    let exit_code = abort_and_exit_code(child, writer, rx);
+    assert_valid_abort_exit_code(exit_code);
 }
 
 /// alt-x on a *worktree* row whose branch is unmerged morphs the row to

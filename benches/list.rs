@@ -25,8 +25,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use worktrunk::testing::isolate_subprocess_env;
 use wt_perf::{
-    RepoConfig, add_history_spread_branches, add_worktrees, clone_rust_repo, create_repo,
-    invalidate_caches_auto, run_git, setup_fake_remote,
+    RepoConfig, add_history_spread_branches, add_worktrees, clone_rust_repo, create_mixed_repo,
+    create_repo, invalidate_caches_auto, run_git, setup_fake_remote,
 };
 
 /// Benchmark configuration wrapping RepoConfig with cache state.
@@ -382,12 +382,68 @@ fn bench_real_repo_many_branches(c: &mut Criterion) {
     group.finish();
 }
 
+// TODO(bench-full-combined): promote this into one canonical "full"-scenario
+// benchmark covering lots of worktrees AND branches across cold + warm cache
+// (the existing `full` group is worktrees-only despite its name; the branch
+// groups have no worktrees). With a combined fixture, use the trace attribution
+// to isolate where the cost lands — the per-command `args.context` grouping in
+// `benches/CLAUDE.md` (query #3) buckets time per worktree, and worktree-only
+// vs branch-only variants separate worktree-side tasks (status/diff/write-tree)
+// from branch-side tasks (ahead-behind/merge-tree/integration), so a regression
+// can be pinned to a feature rather than the whole command. `rerun_warm` below
+// is the warm seed of that.
+
+/// Warm-cache re-run: many worktrees AND many branches in varied states, with
+/// `.git/wt/cache/` already populated — the steady-state "re-run `wt list`"
+/// cost a user pays on every invocation once the persistent SHA cache is warm.
+///
+/// Unlike the cold variants, this measures *irreducible per-invocation* work:
+/// the in-memory caches (`Arc<RepoCache>`, `WORKTREE_ROOTS`, `GIT_DIRS`,
+/// `commit_tree`, `merge_base`) die with each `wt` process, so every re-run
+/// re-forks whatever those cover, while the disk SHA cache (ahead-behind,
+/// is-ancestor, merge-tree, diff-stats) serves from file reads. `b.iter`
+/// (no cache invalidation) keeps the disk cache warm across iterations; the
+/// criterion warm-up populates it before the first measured run.
+///
+/// Runs `list --branches --progressive` to exercise both worktree and branch
+/// rows on the progressive render path (matching real TTY use), without the
+/// network-touching `ci` column that `--full` would add.
+fn bench_rerun_warm(c: &mut Criterion) {
+    let mut group = c.benchmark_group("rerun_warm");
+    // ~24 worktrees + 120 branches runs ~300ms/iter; the inherited 30-sample /
+    // 15s budget can't fit 30, so cap samples at criterion's minimum and give
+    // a 20s window (≈ a few iters per sample).
+    group.measurement_time(std::time::Duration::from_secs(20));
+    group.sample_size(10);
+
+    let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
+
+    let (worktrees, branches) = (24usize, 120usize);
+    group.bench_with_input(
+        BenchmarkId::from_parameter(format!("{worktrees}wt_{branches}br")),
+        &(worktrees, branches),
+        |b, &(worktrees, branches)| {
+            let temp = create_mixed_repo(worktrees, branches);
+            let repo_path = temp.path().join("repo");
+            b.iter(|| {
+                let mut cmd = Command::new(binary);
+                cmd.args(["list", "--branches", "--progressive"])
+                    .current_dir(&repo_path);
+                isolate_subprocess_env(&mut cmd, None);
+                cmd.output().unwrap();
+            });
+        },
+    );
+
+    group.finish();
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default()
         .sample_size(30)
         .measurement_time(std::time::Duration::from_secs(15))
         .warm_up_time(std::time::Duration::from_secs(3));
-    targets = bench_skeleton, bench_full, bench_worktree_scaling, bench_real_repo, bench_many_branches, bench_divergent_branches, bench_real_repo_many_branches
+    targets = bench_skeleton, bench_full, bench_worktree_scaling, bench_real_repo, bench_many_branches, bench_divergent_branches, bench_real_repo_many_branches, bench_rerun_warm
 }
 criterion_main!(benches);
