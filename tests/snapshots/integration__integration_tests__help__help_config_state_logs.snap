@@ -106,11 +106,10 @@ All [2mpost-*[0m hooks (post-start, post-switch, post-commit, post-merge) run 
  [2mtrace.log[0m      Running with [2m-vv[0m 
  [2mtrace.jsonl[0m    Running with [2m-vv[0m 
  [2msubprocess.log[0m Running with [2m-vv[0m 
- [2mprofile.txt[0m    Running with [2m-vv[0m 
  [2mdiagnostic.md[0m  Running with [2m-vv[0m 
 
-[2mtrace.log[0m is the human-readable trace at [2m-vv[0m — each command's start ([2m$ …[0m) and completion ([2m✓[0m/[2m✗ … 12.3ms[0m), in-process spans, milestones, and bounded subprocess previews. [2mtrace.jsonl[0m is the same event stream as one JSON object per line, for machines ([2mjq[0m, chrome://tracing); [2mwt config state logs profile[0m reads it to summarize a performance report (where time went, parallelism, redundant commands). [2msubprocess.log[0m holds the raw uncapped subprocess stdout/stderr bodies. [2mprofile.txt[0m is that performance 
-report saved standalone — the same rendering [2mwt config state logs profile[0m produces, ready to [2mcat[0m. [2mdiagnostic.md[0m is a markdown bug-report bundle that inlines [2mtrace.log[0m and the same profile; [2mwt[0m prints a [2mgh gist create[0m command pointing at it. All five are overwritten on each [2m-vv[0m run.
+[2mtrace.log[0m is the human-readable trace at [2m-vv[0m — each command's start ([2m$ …[0m) and completion ([2m✓[0m/[2m✗ … 12.3ms[0m), in-process spans, milestones, and bounded subprocess previews. [2mtrace.jsonl[0m is the same event stream as one JSON object per line, for machines ([2mjq[0m, chrome://tracing); [2mwt config state logs profile[0m reads it to summarize a performance report (where time went, parallelism, redundant commands). [2msubprocess.log[0m holds the raw uncapped subprocess stdout/stderr bodies. [2mdiagnostic.md[0m is a markdown 
+bug-report bundle that leads with that same performance profile and inlines [2mtrace.log[0m; [2mwt[0m prints a [2mgh gist create[0m command pointing at it. All four are overwritten on each [2m-vv[0m run.
 
 [1m[32mLocation[0m
 

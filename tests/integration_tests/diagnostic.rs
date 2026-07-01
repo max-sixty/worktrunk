@@ -11,8 +11,8 @@
 //! - `test_diagnostic_contains_required_sections`: All sections present
 //! - `test_diagnostic_context_has_no_ansi_codes`: ANSI stripped for GitHub
 //! - `test_diagnostic_trace_log_contains_git_commands`: Log has useful data
-//! - `test_diagnostic_saved_message_with_vv`: Output shows "Diagnostic saved" with -vv
-//! - `test_profile_file_created_and_announced`: profile.txt written and announced with -vv
+//! - `test_diagnostic_saved_message_with_vv`: -vv announces the saved report and its raw companions
+//! - `test_diagnostic_leads_with_profile`: Profile is the bundle's first section
 //! - `test_diagnostic_written_to_correct_location`: File in .git/wt/logs/
 //! - `test_diagnostic_gh_hint_with_vv`: Hint shows gist and issue URL when gh installed
 
@@ -90,7 +90,7 @@ fn test_diagnostic_report_file_format(mut repo: TestRepo) {
     // Verify the stderr mentions the diagnostic was saved
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Diagnostic saved"),
+        stderr.contains("performance profile, and diagnostics saved"),
         "Output should mention diagnostic was saved. stderr: {}",
         stderr
     );
@@ -269,7 +269,10 @@ fn test_diagnostic_trace_log_contains_git_commands(mut repo: TestRepo) {
     );
 }
 
-/// Diagnostic is saved with -vv and output mentions it.
+/// The `-vv` end block names what the run captured (headline mentions the
+/// performance profile) and lists the raw companions `diagnostic.md` doesn't
+/// inline — `trace.jsonl` and `subprocess.log` — while omitting the files it
+/// does carry (`trace.log`, and there's no `profile.txt`).
 #[rstest]
 fn test_diagnostic_saved_message_with_vv(mut repo: TestRepo) {
     repo.add_worktree("feature");
@@ -279,11 +282,20 @@ fn test_diagnostic_saved_message_with_vv(mut repo: TestRepo) {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Verify diagnostic was saved
+    // Headline names the profile and the diagnostic bundle.
     assert!(
-        stderr.contains("Diagnostic saved"),
-        "Should mention diagnostic was saved. stderr: {}",
-        stderr
+        stderr.contains("performance profile, and diagnostics saved"),
+        "end block should name what was captured. stderr: {stderr}"
+    );
+    // The non-duplicative raw companions are pointed at.
+    assert!(
+        stderr.contains("wt/logs/trace.jsonl") && stderr.contains("wt/logs/subprocess.log"),
+        "end block should list the raw companions diagnostic.md doesn't inline: {stderr}"
+    );
+    // Files whose content the bundle already carries are not re-listed.
+    assert!(
+        !stderr.contains("wt/logs/trace.log") && !stderr.contains("profile.txt"),
+        "end block should not list files inlined in the bundle: {stderr}"
     );
 }
 
@@ -338,35 +350,43 @@ fn test_log_files_created(mut repo: TestRepo) {
     );
 }
 
-/// At `-vv`, the standalone `profile.txt` is written with the rendered
-/// performance report, and stderr announces it (separately from the diagnostic
-/// bundle). Covers the `write_profile_file` path and its announcement.
+/// At `-vv` the performance profile is the diagnostic bundle's lead section —
+/// promoted above the raw Environment/Worktrees/Config dumps — and there is no
+/// standalone `profile.txt` (the bundle is the single human-facing doc).
 #[rstest]
-fn test_profile_file_created_and_announced(repo: TestRepo) {
+fn test_diagnostic_leads_with_profile(repo: TestRepo) {
     let output = repo.wt_command().args(["list", "-vv"]).output().unwrap();
 
-    let profile_path = repo
-        .root_path()
-        .join(".git")
-        .join("wt/logs")
-        .join("profile.txt");
+    let logs_dir = repo.root_path().join(".git").join("wt/logs");
+
+    // The standalone profile.txt is gone — the profile lives in the bundle.
     assert!(
-        profile_path.exists(),
-        "profile.txt should be created with -vv"
+        !logs_dir.join("profile.txt").exists(),
+        "profile.txt should not be written; the profile rides inside diagnostic.md"
     );
 
-    // The file is the rendered performance report, not the markdown bundle.
-    let content = fs::read_to_string(&profile_path).unwrap();
+    // The bundle leads with the profile: its section precedes Environment.
+    let content = fs::read_to_string(logs_dir.join("diagnostic.md")).unwrap();
+    let profile_at = content
+        .find("<summary>Performance profile</summary>")
+        .expect("diagnostic.md should contain the performance profile section");
+    let env_at = content
+        .find("<summary>Environment</summary>")
+        .expect("diagnostic.md should contain the Environment section");
     assert!(
-        content.contains("PERFORMANCE PROFILE"),
-        "profile.txt should hold the rendered performance report: {content}"
+        profile_at < env_at,
+        "profile section should precede Environment in diagnostic.md: {content}"
     );
 
-    // stderr names the saved profile, distinct from the "Diagnostic saved" line.
+    // The profile is no longer announced separately — only diagnostic.md is.
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Performance profile saved"),
-        "stderr should announce the saved performance profile. stderr: {stderr}"
+        !stderr.contains("Performance profile saved"),
+        "the profile is folded into diagnostic.md, not announced separately: {stderr}"
+    );
+    assert!(
+        stderr.contains("performance profile, and diagnostics saved"),
+        "stderr should announce the diagnostic bundle. stderr: {stderr}"
     );
 }
 
@@ -587,25 +607,12 @@ fn test_vv_debug_pipeline_silent_on_stderr(repo: TestRepo) {
         "trace.log should contain humanized trace records at -vv"
     );
 
-    // Stderr at -vv should announce each file's full path on its own line, so
-    // any one is copy-pasteable without joining a shared root to a filename.
-    // The `wt/logs/<file>` tails only appear contiguously when the full path
-    // is listed (the old root-plus-filenames form split them apart).
+    // Stderr at -vv opens with a one-line pointer to the log directory (the
+    // per-file rundown is deferred to the end-of-run diagnostic announcement).
     assert!(
-        stderr.contains("Writing to"),
-        "missing pointer header: {stderr}"
+        stderr.contains("Verbose logging to") && stderr.contains("wt/logs"),
+        "stderr should point at the log directory at startup: {stderr}"
     );
-    for file in [
-        "trace.log",
-        "subprocess.log",
-        "profile.txt",
-        "diagnostic.md",
-    ] {
-        assert!(
-            stderr.contains(&format!("wt/logs/{file}")),
-            "stderr should list the full path to {file}: {stderr}"
-        );
-    }
 }
 
 /// `RUST_LOG` is honored at every verbosity level — including `-v` — and
@@ -789,7 +796,7 @@ fn test_vv_writes_diagnostic_on_success(repo: TestRepo) {
     // stderr should mention diagnostic was saved
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Diagnostic saved"),
+        stderr.contains("performance profile, and diagnostics saved"),
         "stderr should mention diagnostic was saved. stderr: {}",
         stderr
     );
@@ -818,16 +825,16 @@ fn test_vv_writes_diagnostic_on_error(mut repo: TestRepo) {
     // stderr should mention diagnostic was saved
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Diagnostic saved"),
+        stderr.contains("performance profile, and diagnostics saved"),
         "stderr should mention diagnostic was saved. stderr: {}",
         stderr
     );
 }
 
-/// If one of the `-vv` log files can't be opened (here: pre-existing path
-/// of the wrong type), the user still gets a "Writing to ..." pointer for
-/// the one that opened, and the elision marker reflects the asymmetric
-/// state instead of telling a `-vv` user to "rerun with -vv".
+/// If one of the `-vv` log files can't be opened (here: subprocess.log's path
+/// is occupied by a directory), the startup pointer still appears — it's
+/// anchored on the log directory, which trace.log's open makes available — and
+/// trace.log is still written.
 #[rstest]
 fn test_vv_pointer_handles_split_init(repo: TestRepo) {
     let logs_dir = repo.root_path().join(".git").join("wt/logs");
@@ -844,18 +851,8 @@ fn test_vv_pointer_handles_split_init(repo: TestRepo) {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
-        stderr.contains("Writing to") && stderr.contains("wt/logs/trace.log"),
-        "stderr should list trace.log's full path even when subprocess.log can't open: {stderr}"
-    );
-    assert!(
-        stderr.contains("subprocess.log unavailable"),
-        "stderr should note subprocess.log is unavailable: {stderr}"
-    );
-    // subprocess.log didn't open, so it's named only in the unavailable note —
-    // never listed as a live path in the gutter.
-    assert!(
-        !stderr.contains("wt/logs/subprocess.log"),
-        "stderr should not list a path for the unavailable subprocess.log: {stderr}"
+        stderr.contains("Verbose logging to") && stderr.contains("wt/logs"),
+        "startup pointer should still name the log directory when subprocess.log can't open: {stderr}"
     );
     assert!(
         logs_dir.join("trace.log").exists(),
@@ -864,7 +861,7 @@ fn test_vv_pointer_handles_split_init(repo: TestRepo) {
 }
 
 /// With just -v, info-level logging goes to stderr but no log files are written.
-/// `-vv` is the threshold for `trace.log`, `subprocess.log`, `profile.txt`, and
+/// `-vv` is the threshold for `trace.log`, `trace.jsonl`, `subprocess.log`, and
 /// `diagnostic.md`.
 #[rstest]
 fn test_v_does_not_write_log_files(repo: TestRepo) {
@@ -877,8 +874,8 @@ fn test_v_does_not_write_log_files(repo: TestRepo) {
     let wt_logs = repo.root_path().join(".git").join("wt/logs");
     for name in [
         "diagnostic.md",
-        "profile.txt",
         "trace.log",
+        "trace.jsonl",
         "subprocess.log",
     ] {
         assert!(
@@ -929,7 +926,7 @@ fn test_vv_outside_repo_no_crash() {
     // announce_trace_destination took its early-return path.
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !stderr.contains("Writing to"),
+        !stderr.contains("Verbose logging to"),
         "no startup pointer when trace.log can't open: {stderr}"
     );
 }

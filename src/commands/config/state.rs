@@ -62,7 +62,7 @@
 //!
 //! Inside `wt_logs_dir()`, top-level *files* are shared logs (`commands.jsonl*`,
 //! `internal-*.log`, `trace.log`, `trace.jsonl`, `subprocess.log`,
-//! `diagnostic.md`, `profile.txt`) and top-level *directories* are per-branch log trees
+//! `diagnostic.md`) and top-level *directories* are per-branch log trees
 //! (`{branch}/{source|internal}/{hook-type}/{name}.log`).
 //! Categorization
 //! relies on this file-vs-directory distinction: new top-level shared entries
@@ -100,7 +100,6 @@ const DIAGNOSTIC_FILES: &[&str] = &[
     "trace.jsonl",
     "subprocess.log",
     "diagnostic.md",
-    "profile.txt",
 ];
 
 /// Whether a top-level file is a diagnostic log.
@@ -303,7 +302,7 @@ fn count_log_files_recursive(dir: &Path) -> anyhow::Result<usize> {
 ///
 /// Walks the two layers of log storage:
 ///
-/// 1. **Top-level files**: `commands.jsonl*`, `trace.log`, `trace.jsonl`, `subprocess.log`, `diagnostic.md`, `profile.txt`.
+/// 1. **Top-level files**: `commands.jsonl*`, `trace.log`, `trace.jsonl`, `subprocess.log`, `diagnostic.md`.
 ///    Also sweeps any legacy flat `.log` files left over from the pre-nested
 ///    layout so the transition is self-healing (no explicit migrator).
 /// 2. **Top-level directories**: per-branch log trees — counted recursively
