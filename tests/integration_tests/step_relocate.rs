@@ -1,9 +1,12 @@
 //! Integration tests for `wt step relocate`
 
-use crate::common::{TestRepo, make_snapshot_cmd, repo};
+use crate::common::{
+    TestRepo, configure_directive_files, directive_files, make_snapshot_cmd, repo,
+};
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
+use std::path::Path;
 
 /// Get the parent directory of the repo (where worktrees are created)
 fn worktree_parent(repo: &TestRepo) -> std::path::PathBuf {
@@ -1022,5 +1025,48 @@ worktree-path = "../{{ undefined_var }}.{{ branch }}"
     assert!(
         skipped.iter().any(|s| s["reason"] == "template_error"),
         "template_error skip missing from JSON: {parsed}"
+    );
+}
+
+/// Relocating a worktree the user is standing inside preserves their
+/// subdirectory position, routing the `cd` through the same
+/// `resolve_subdir_in_target` helper as `switch`/`remove` (issue #3343 unify).
+#[rstest]
+fn test_relocate_preserves_subdir(repo: TestRepo) {
+    let parent = worktree_parent(&repo);
+    let (cd_path, exec_path, _guard) = directive_files();
+
+    // Create a worktree at a non-standard location, with a subdirectory the
+    // user is working in.
+    let wrong_path = parent.join("wrong-location");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "feature",
+        wrong_path.to_str().unwrap(),
+    ]);
+    let subdir = Path::new("apps").join("gateway");
+    fs::create_dir_all(wrong_path.join(&subdir)).unwrap();
+
+    let mut cmd = repo.wt_command();
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    cmd.args(["step", "relocate"])
+        .current_dir(wrong_path.join(&subdir));
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt step relocate failed: {output:?}"
+    );
+
+    // The cd directive should land in the equivalent subdirectory of the
+    // worktree's new location, not at its root.
+    let cd_content = fs::read_to_string(&cd_path).unwrap_or_default();
+    let expected_subdir = parent.join("repo.feature").join(&subdir);
+    let expected_str = expected_subdir.to_string_lossy();
+    assert!(
+        cd_content.contains(&*expected_str),
+        "CD file should contain relocated subdirectory path {expected_str}, got: {cd_content}"
     );
 }
