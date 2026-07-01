@@ -535,12 +535,18 @@ impl<'a> RelocationExecutor<'a> {
         let msg = cformat!("Relocated <bold>{branch}</>: {src_display} → {dest_display}");
         eprintln!("{}", success_message(msg));
 
-        // Update shell if user is inside this worktree
+        // Update shell if user is inside this worktree, preserving their
+        // subdirectory position via the same helper as `switch`/`remove` so
+        // every path-switching command behaves identically.
         if let Some(cwd_path) = cwd
             && cwd_path.starts_with(&src_path)
         {
-            let relative = cwd_path.strip_prefix(&src_path).unwrap_or(Path::new(""));
-            crate::output::change_directory(dest_path.join(relative))?;
+            let cd_target = crate::output::handlers::resolve_subdir_in_target(
+                &dest_path,
+                Some(&src_path),
+                cwd_path,
+            );
+            crate::output::change_directory(cd_target)?;
         }
 
         self.moved.insert(idx);

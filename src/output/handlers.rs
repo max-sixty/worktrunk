@@ -859,12 +859,21 @@ fn print_switch_message_if_changed(
     Ok(())
 }
 
-/// Compute the target directory for `cd` after switching, preserving the user's
-/// subdirectory position when possible.
+/// Compute the target directory for `cd` when moving the shell between
+/// worktrees, preserving the user's subdirectory position when possible.
 ///
 /// If the user is in `source_root/apps/gateway/` and `target_root/apps/gateway/`
 /// exists, returns `target_root/apps/gateway/`. Otherwise returns `target_root`.
-fn resolve_subdir_in_target(target_root: &Path, source_root: Option<&Path>, cwd: &Path) -> PathBuf {
+///
+/// Shared by every command that relocates the shell — `switch`, `remove` (and
+/// `merge`, which lands via the same handler), and `step relocate` — so they
+/// preserve subdirectory position identically (canonicalizing to survive
+/// symlinks, and falling back to the root when the subdir is absent).
+pub(crate) fn resolve_subdir_in_target(
+    target_root: &Path,
+    source_root: Option<&Path>,
+    cwd: &Path,
+) -> PathBuf {
     if let Some(source_root) = source_root {
         // Canonicalize both paths to handle symlinks (e.g., /var -> /private/var on macOS)
         let cwd = dunce::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
