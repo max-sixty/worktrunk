@@ -1525,7 +1525,7 @@ fn test_switch_picker_prs_github_list(mut repo: TestRepo) {
     );
     // The header's loading marker is gone once the rows have streamed in.
     assert!(
-        !screen.contains("loading open PRs"),
+        !screen.contains("Loading open PRs"),
         "loading marker cleared once rows arrived:\n{screen}"
     );
 }
@@ -1653,6 +1653,59 @@ fn test_switch_picker_prs_rows_survive_alt_x_removal(mut repo: TestRepo) {
     );
 }
 
+/// alt-x on a row that can't be removed flashes the reason in the header at
+/// alt-x time, not only when the stash drains on exit. The current worktree is
+/// the picker's pinned top row, so launching from the main worktree and pressing
+/// alt-x (no cursor move) targets it — and the main worktree can't be removed, so
+/// the header swaps the column labels for `✗ The main worktree cannot be removed`
+/// for a beat. The flash *clearing* after the beat is covered by the `HeaderFlash`
+/// unit tests; this asserts it paints. A presence-wait catches it before the beat
+/// elapses (`HEADER_FLASH_DURATION`), so the test never depends on the timer.
+#[rstest]
+fn test_switch_picker_alt_x_flashes_unremovable_reason(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+    // A second worktree so the skeleton paints a distinctive row to gate on; the
+    // cursor still starts on the pinned current (main) worktree above it.
+    repo.add_worktree("wt-extra");
+
+    let env_vars = repo.test_env_vars();
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+    );
+
+    // The worktree rows have painted (one skeleton batch); the cursor is on the
+    // pinned current worktree — the main worktree, which can't be removed.
+    wait_for_stable_with_content(&rx, &mut parser, Some("wt-extra"));
+
+    // alt-x is declined, and the reason flashes in the header. The presence-wait
+    // returns as soon as the flash paints — before it self-clears.
+    send_input_awaiting_content(
+        &writer,
+        &rx,
+        &mut parser,
+        "\x1bx",
+        Some("main worktree cannot be removed"),
+    );
+
+    let screen = parser.screen().contents();
+    let exit_code = abort_and_exit_code(child, writer, rx);
+    assert_valid_abort_exit_code(exit_code);
+    assert!(
+        screen.contains("main worktree cannot be removed"),
+        "the unremovable reason flashes in the header at alt-x time:\n{screen}"
+    );
+}
+
 /// A preview pane fills in on its own once its background compute lands — no
 /// keystroke needed. The deterministic vehicle is a `--prs` row's `comments`
 /// tab: the comment fetch (`gh pr view <n> --json comments`) is mocked behind a
@@ -1731,7 +1784,7 @@ fn test_switch_picker_preview_auto_refreshes_when_compute_lands(mut repo: TestRe
     );
 }
 
-/// `wt switch --prs` shows a dim "loading open PRs…" marker on the header row
+/// `wt switch --prs` shows a dim "↳ Loading open PRs…" marker on the header row
 /// while the forge call is in flight. A delayed mock holds the PR list long
 /// enough to observe the marker on the real screen before the rows land. The
 /// picker captures and aborts at stabilize time — well before the delay
@@ -1760,13 +1813,13 @@ fn test_switch_picker_prs_shows_loading_marker(mut repo: TestRepo) {
         &env_vars,
         // The loading line paints at skeleton, before the (slow) forge call
         // returns its rows.
-        &[("", Some("loading open PRs"))],
+        &[("", Some("Loading open PRs"))],
     );
 
     assert_valid_abort_exit_code(result.exit_code);
     let (list, _preview) = result.panels();
     assert!(
-        list.contains("loading open PRs"),
+        list.contains("Loading open PRs"),
         "loading line on the header while --prs fetches:\n{list}"
     );
     // The PR row hasn't streamed in yet — still inside the delayed forge call.
