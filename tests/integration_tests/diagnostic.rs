@@ -858,6 +858,13 @@ fn test_vv_pointer_handles_split_init(repo: TestRepo) {
         logs_dir.join("trace.log").exists(),
         "trace.log should still be created"
     );
+    // The end-of-run companion list surfaces the surviving raw file and drops
+    // subprocess.log, whose sink failed to open (`SUBPROCESS.path()` → None,
+    // filtered out by the `.flatten()` in `write_if_verbose`).
+    assert!(
+        stderr.contains("wt/logs/trace.jsonl") && !stderr.contains("wt/logs/subprocess.log"),
+        "end block should list the surviving companion and omit the failed subprocess.log: {stderr}"
+    );
 }
 
 /// With just -v, info-level logging goes to stderr but no log files are written.
