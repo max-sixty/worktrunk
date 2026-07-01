@@ -15,7 +15,14 @@ metadata:
    git merge --ff-only origin/main
    ```
    `--ff-only` advances the branch when it's a strict ancestor of `origin/main` and **fails** (rather than creating a merge commit or discarding work) if it has diverged — reconcile manually before continuing. This is the release-branch equivalent of `wt up`, spelled out because the `up` alias rebases each branch onto its own upstream (`origin/release`), not `main`. Note the resulting commit SHA: this is the tip the changelog covers, and step 12 checks that nothing else reaches `main` before the tag.
-2. **Run tests**: `cargo run -- hook pre-merge --yes`
+2. **Run tests**: Two gates — the local suite and the full cross-platform suite.
+   - Local: `cargo run -- hook pre-merge --yes`.
+   - Cross-platform: dispatch the `nightly` workflow on the cut-from tip and wait for it to go green. This is where a release gets its full linux/macos/windows validation: the PR path (`ci.yaml`) is moving to cargo-affected selection and will stop running the full `test` matrix, while `nightly` hosts `full-tests` (the full 3-OS suite) alongside feature-powerset, release-target, nix-flake, and minimal-versions. Benchmarks aren't part of `nightly` — they run in their own `benchmarks.yaml` and gate nothing.
+     ```bash
+     gh workflow run nightly.yaml --ref main
+     RUN=$(gh run list --workflow=nightly.yaml --event=workflow_dispatch --branch=main --limit 1 --json databaseId --jq '.[0].databaseId')
+     ```
+     Launch a ci-reporter to monitor `$RUN` to completion (avoid `gh run watch` — it can hang). Fix any failure before continuing.
 3. **Check current version**: Read `version` in `Cargo.toml`
 4. **Review commits**: Check commits since last release to understand scope of changes. Audit the cumulative diff for the data-loss surface (see [Data-Loss Surface Review](#data-loss-surface-review)) before proceeding.
 5. **Check library API compatibility**: Run `cargo semver-checks check-release -p worktrunk` (install with `cargo install cargo-semver-checks --locked` if missing). If it reports breaking changes, the bump must be minor (pre-1.0) or major (post-1.0). See "Library API Compatibility" below.

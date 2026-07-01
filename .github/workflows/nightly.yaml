@@ -384,6 +384,7 @@ jobs:
   create-issue-on-nightly-failure:
     needs:
       - feature-powerset
+      - full-tests
       - release-target
       - check-unused-dependencies
       - minimal-versions
