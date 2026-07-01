@@ -8,6 +8,12 @@ expression: normalize_report(&content)
 **Command:** `[PROJECT_ROOT]/target/[BUILD_MODE]/wt list -vv`
 **Result:** Command completed successfully
 
+<details open>
+<summary>Performance profile</summary>
+
+[PERFORMANCE_PROFILE_CONTENT]
+</details>
+
 <details>
 <summary>Environment</summary>
 
@@ -54,12 +60,6 @@ User config: [TEST_CONFIG]
 Project config: _REPO_/.config/wt.toml
 (file not found)
 ```
-</details>
-
-<details>
-<summary>Performance profile</summary>
-
-[PERFORMANCE_PROFILE_CONTENT]
 </details>
 
 <details>
