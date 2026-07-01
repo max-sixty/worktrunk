@@ -15,6 +15,9 @@ test-concurrent.sh
 logo-variant-*.png
 test-results/
 
+# Local per-machine agent settings (gitignore'd by convention)
+.claude/settings.local.json
+
 # Nix build outputs
 /result
 /result-*

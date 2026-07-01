@@ -84,7 +84,7 @@ pub type ErrorWrapper = Box<dyn Fn(&PreparedCommand, String, Option<i32>) -> any
 /// Supplied at conversion time (`sourced_steps_to_foreground`) so a single
 /// `SourcedStep` shape can be produced by both alias and hook resolution.
 /// Drives the per-step trust model (EXEC passthrough), announce policy,
-/// stdin handling, and error wrapping. Hook-only metadata
+/// stdout redirection, and error wrapping. Hook-only metadata
 /// (`hook_type`, `display_path`) lives on the `Hook` variant — it's
 /// per-pipeline, not per-step, so the per-step shape stays neutral.
 #[derive(Clone)]
@@ -117,10 +117,6 @@ pub struct ForegroundStep {
     /// line plus the bash gutter; aliases stay silent (the caller emits one
     /// pipeline summary line).
     pub announce: PipelineKind,
-    /// Pipe `context_json` to the child's stdin (hooks); when `false`, inherit
-    /// the parent's stdin so interactive children keep the controlling tty
-    /// (aliases).
-    pub pipe_stdin: bool,
     /// Merge the child's stdout onto wt's stderr (`true`, hooks) or pass it
     /// through unchanged (`false`, aliases). Hooks merge so their output stays
     /// ordered with wt's own stderr "Running …" lines; aliases pass through so
@@ -569,15 +565,16 @@ fn run_one_command(
     };
     announce_command(cmd, &fg_step.announce, &command_str);
 
-    // Hooks get a documented JSON context on stdin; aliases inherit stdin so
-    // interactive children (e.g. `wt switch`'s picker) keep their controlling
-    // terminal. Piping JSON into an interactive alias body steals the tty.
-    let stdin_json = fg_step.pipe_stdin.then(|| cmd.context_json());
+    // Foreground steps inherit the parent's stdin so an interactive child keeps
+    // its controlling terminal — a `pre-*` hook can prompt (e.g. `gum confirm`
+    // before `mise trust`), and an alias body's `wt switch` picker keeps the
+    // tty. The JSON context still reaches concurrent and background (`post-*`)
+    // hooks, which can't be interactive, via their own stdin pipe.
     let log_label = fg_step.announce.log_label(cmd);
     let result = execute_shell_command(
         wt_path,
         &command_str,
-        stdin_json.as_deref(),
+        None,
         log_label.as_deref(),
         directives.clone(),
         fg_step.redirect_stdout_to_stderr,
