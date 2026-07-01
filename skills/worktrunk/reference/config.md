@@ -1143,7 +1143,7 @@ All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the
 | `subprocess.log` | Running with `-vv` |
 | `diagnostic.md` | Running with `-vv` |
 
-`trace.log` is the human-readable trace at `-vv` — each command's start (`$ …`) and completion (`✓`/`✗ … 12.3ms`), in-process spans, milestones, and bounded subprocess previews. `trace.jsonl` is the same event stream as one JSON object per line, for machines (`jq`, chrome://tracing); `wt config state logs profile` reads it to summarize a performance report (where time went, parallelism, redundant commands). `subprocess.log` holds the raw uncapped subprocess stdout/stderr bodies. `diagnostic.md` is a markdown bug-report bundle that inlines `trace.log` and a rendered performance profile; `wt` prints a `gh gist create` command pointing at it. All four are overwritten on each `-vv` run.
+`trace.log` is the human-readable trace at `-vv` — each command's start (`$ …`) and completion (`✓`/`✗ … 12.3ms`), in-process spans, milestones, and bounded subprocess previews. `trace.jsonl` is the same event stream as one JSON object per line, for machines (`jq`, chrome://tracing); `wt config state logs profile` reads it to summarize a performance report (where time went, parallelism, redundant commands). `subprocess.log` holds the raw uncapped subprocess stdout/stderr bodies. `diagnostic.md` is a markdown bug-report bundle that leads with that same performance profile and inlines `trace.log`; `wt` prints a `gh gist create` command pointing at it. All four are overwritten on each `-vv` run.
 
 ### Location
 

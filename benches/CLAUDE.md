@@ -11,7 +11,7 @@ Criterion's CLI takes a positional `FILTER` (substring inclusion) and `--exact`.
 cargo bench --bench list skeleton/warm
 
 # Run specific group (all variants)
-cargo bench --bench list many_branches
+cargo bench --bench list full
 
 # GH #461 scenario (200 branches on rust-lang/rust)
 cargo bench --bench list real_repo_many_branches
@@ -34,17 +34,20 @@ Real repo benchmarks clone rust-lang/rust on first run (~2-5 minutes). The clone
 
 ## Faster Iteration
 
-Criterion has no exclusion flag — narrow the run by picking a substring that matches only the variants you want. Benchmark IDs look like `<group>/<label>/<param>`, e.g. `skeleton/cold/4`, `worktree_scaling/warm/8`, `real_repo_many_branches/warm`.
+Criterion has no exclusion flag — narrow the run by picking a substring that matches only the variants you want. Benchmark IDs look like `<group>/<label>/<param>`, e.g. `skeleton/cold/4`, `worktree_scaling/warm/8`, `full/cold`, `real_repo_many_branches/warm`.
 
 **Pattern matching (positional `FILTER`):**
 ```bash
 cargo bench --bench list scaling             # All worktree_scaling/* variants
 cargo bench --bench list warm                # Every benchmark whose ID contains "warm"
 cargo bench --bench list skeleton/warm       # Just skeleton's warm variants
-cargo bench --bench list -- --exact full/cold/4   # One exact ID
+cargo bench --bench list full                # Both cache states of the combined fixture
+cargo bench --bench list -- --exact full/cold   # One exact ID
 ```
 
-To skip the slow real-repo and divergent groups, target the synthetic groups directly: `cargo bench --bench list skeleton`, `cargo bench --bench list full`, or `cargo bench --bench list worktree_scaling`. Run them sequentially if you want more than one.
+To skip the slow real-repo and divergent groups, target the synthetic groups directly: `cargo bench --bench list skeleton`, `cargo bench --bench list worktree_scaling`, or `cargo bench --bench list full`. Run them sequentially if you want more than one.
+
+The `full` group is the place to start when `wt list` regresses on a real mix of worktrees and branches: the cold/warm split says whether the cost is the persistent-cache fill (cold) or the per-process re-fork (warm). A `full` wall time can't be split by side (the git subprocesses overlap on the rayon pool), so to localize a regression, trace one invocation and bucket subprocess time per worktree (query #3 below); `worktree_scaling` and `divergent_branches` track the worktree side and branch side respectively at criterion cadence.
 
 ## WORKTRUNK_FIRST_OUTPUT
 
@@ -164,6 +167,7 @@ cargo run -p wt-perf -- setup typical-8 --persist
 #   branches-N      - N branches, 1 commit each
 #   branches-N-M    - N branches, M commits each
 #   divergent       - 200 branches × 20 commits (GH #461 scenario)
+#   mixed-W-B       - W worktrees + B branches in varied states (the `full` fixture)
 #   picker-test     - Config for wt switch interactive picker testing
 
 # Invalidate caches for cold run

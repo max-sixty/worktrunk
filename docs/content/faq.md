@@ -104,7 +104,7 @@ The `-vv` files have distinct audiences:
 - **`trace.log`** — the human trace (bounded ~1K lines, gistable): each command's start (`$ git status`) and finish (`✓ git status [wt]  12.3ms`, `✗` on failure), spans, and milestones.
 - **`trace.jsonl`** — the same records as one JSON object per line, for machines (`jq`, chrome://tracing). `wt config state logs profile` reads it.
 - **`subprocess.log`** — raw uncapped stdout/stderr of every subprocess `wt` spawns (multi-MB possible, e.g. full `git log -p` output). The deep-dive escape hatch.
-- **`diagnostic.md`** — markdown bug-report bundle that inlines `trace.log` and a rendered performance profile (subprocess time by command type, slowest calls, repeated calls). `wt` prints a `gh gist create` command pointing at it.
+- **`diagnostic.md`** — markdown bug-report bundle that leads with the performance report (subprocess time by command type, slowest calls, repeated calls — the same rendering `wt config state logs profile` produces from `trace.jsonl`) and inlines `trace.log`. `wt` prints a `gh gist create` command pointing at it.
 
 `RUST_LOG` overrides the flag baseline when set (`RUST_LOG=debug wt -v` lifts `-v` to debug-on-stderr).
 
@@ -153,14 +153,14 @@ Worktrunk stores small amounts of cache and log data in the repository's `.git/`
 | Location | Purpose | Created by |
 |----------|---------|------------|
 | `git config worktrunk.*` | Cached default branch, switch history, branch markers, custom variables | Various commands |
-| `.git/wt/cache/{kind}/*.json` | Cached CI status, the largest PR/MR number seen (sizes the `wt list` CI column), and git command results (merge-tree, integration probes, diff stats, ancestry checks, ahead/behind counts) | `wt list`, `wt merge`, `wt remove` |
+| `.git/wt/cache/{kind}/*.json` | Cached CI status, the largest PR/MR number seen (sizes the `wt list` CI column), and git command results (merge-tree, integration probes, diff stats, ancestry checks, ahead/behind counts, merge bases) | `wt list`, `wt merge`, `wt remove` |
 | `.git/wt/cache/summary/{branch}/{hash}.json` | Cached LLM branch summaries, content-addressed by diff hash | `wt list --full`, `wt switch` (when `[list] summary = true`) |
 | `.git/wt/logs/{branch}/**/*.log` | Background hook output (nested per branch) | Hooks, background `wt remove` |
 | `.git/wt/logs/commands.jsonl` | Command audit log (~2MB max) | Hooks, LLM commands |
 | `.git/wt/logs/trace.log` | Human debug trace for issue reporting | Running with `-vv` |
 | `.git/wt/logs/trace.jsonl` | Machine trace (one JSON object per record) | Running with `-vv` |
 | `.git/wt/logs/subprocess.log` | Raw uncapped subprocess stdout/stderr (may be multi-MB) | Running with `-vv` |
-| `.git/wt/logs/diagnostic.md` | Diagnostic report for issue reporting | Running with `-vv` |
+| `.git/wt/logs/diagnostic.md` | Diagnostic report for issue reporting (leads with the performance profile) | Running with `-vv` |
 | `.git/wt/trash/<name>-<timestamp>` | Staged worktree contents pending background deletion | `wt remove` |
 
 None of this is tracked by git or pushed to remotes.

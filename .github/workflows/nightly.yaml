@@ -2,8 +2,9 @@ name: nightly
 # Slower checks that aren't worth running on every PR but should run before a
 # release. Jobs:
 #   - feature-powerset: feature-flag unification, check + test suite (motivated by #2442)
+#   - full-tests: full nextest suite on the linux/macos/windows matrix — the
+#     cargo-affected safety net (see the job comment and ci.yaml's affected block)
 #   - release-target: PTY+shell suite on the release triples ci.yaml doesn't cover
-#   - benchmarks: full criterion suite + time-series gist append (cron only)
 #   - check-unused-dependencies: cargo-udeps on nightly toolchain
 #   - minimal-versions: cargo check against minimum-version dep resolution
 #   - nix-flake: nix flake check (packaging-environment bugs, motivated by #2624)
@@ -110,9 +111,17 @@ jobs:
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
+      with:
+        # Restore the shared `test` cache (registry + deps), never save.
+        # Nightly-only jobs riding main's cache aren't worth their own entry
+        # against the 10 GB repo cap.
+        prefix-key: v1-rust
+        shared-key: shared
+        cache-bin: "false"
+        save-if: false
 
     - name: Install cargo-hack
-      uses: taiki-e/install-action@v2.82.6
+      uses: taiki-e/install-action@v2.82.7
       with:
         tool: cargo-hack
 
@@ -120,10 +129,7 @@ jobs:
     # zsh/fish and probe nushell; match the test matrix's shell setup
     # (.github/actions/test-setup) so those combinations run, not just compile.
     - name: Install shells (zsh, fish)
-      uses: awalsh128/cache-apt-pkgs-action@v1.6.2
-      with:
-        packages: zsh fish
-        version: 1.0
+      run: sudo apt-get update && sudo apt-get install -y zsh fish
 
     - name: Install nushell
       uses: hustcer/setup-nu@v3
@@ -133,6 +139,64 @@ jobs:
     - run: cargo hack check --feature-powerset --no-dev-deps
 
     - run: cargo hack test --feature-powerset
+
+  full-tests:
+    # The full nextest suite on the standard linux/macos/windows matrix —
+    # mirrors ci.yaml's PR `test` job. This is the safety net for the gaps
+    # cargo-affected can't cover: tests it under-selects, plus the non-Rust /
+    # build inputs it can't trace (`include_str!`, templates, build.rs,
+    # rust-toolchain.toml, proc-macros). It also hosts the Linux
+    # `--unreferenced reject` orphan check, which is intrinsically full-suite.
+    # It lives in `nightly`, NOT on push-to-main, on purpose: a failure here
+    # means affected missed something, and that must not redden main — nightly
+    # failures are non-blocking and Tend-fixable. Complements feature-powerset
+    # (Linux, feature combos) and release-target (cross triples) by covering
+    # the standard 3-OS matrix that neither runs. At the affected-only flip,
+    # ci.yaml's `test` job is deleted and this becomes the sole full run.
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            name: linux
+          - os: macos-15
+            name: macos
+          - os: windows-2022
+            name: windows
+    runs-on: ${{ matrix.os }}
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v7
+
+    - uses: ./.github/actions/test-setup
+
+    - name: Install wt
+      uses: baptiste0928/cargo-install@v3
+      with:
+        crate: worktrunk
+        version: "=0.62.0"
+
+    - name: "Use fast D: drive for temp files (Windows)"
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force -Path "D:\tmp" | Out-Null
+        echo "TEMP=D:\tmp" >> $env:GITHUB_ENV
+        echo "TMP=D:\tmp" >> $env:GITHUB_ENV
+
+    - name: 🧪 Full test suite
+      run: wt hook pre-merge --yes insta
+
+    - name: 🧹 Verify clean working tree
+      shell: bash
+      run: |
+        if [ -n "$(git status --porcelain)" ]; then
+          echo "::error::tests left files behind in the working tree:"
+          git status --porcelain
+          exit 1
+        fi
 
   release-target:
     # Build and run the test suite on the release triples that ci.yaml's
@@ -173,6 +237,11 @@ jobs:
       run: sudo apt-get update && sudo apt-get install -y musl-tools
 
     - uses: ./.github/actions/test-setup
+      with:
+        # Cross-compiles musl/Intel targets the shared cache never builds, so
+        # it restore-misses anyway — and we don't want these one-off release
+        # triples writing their own caches against the 10 GB cap.
+        save-cache: "false"
 
     - name: Add target
       run: rustup target add ${{ matrix.target }}
@@ -181,68 +250,6 @@ jobs:
       env:
         NEXTEST_NO_INPUT_HANDLER: 1
       run: cargo nextest run --target ${{ matrix.target }}
-
-  benchmarks:
-    # Full criterion suite. Moved here from ci.yaml — runs ~80 min, was
-    # already advisory non-required (CLAUDE.md: "Don't wait for CI
-    # benchmarks before merging"). The cron run also appends results to the
-    # time-series gist so we have daily perf history on main.
-    needs: gate
-    if: needs.gate.outputs.run == 'true'
-    runs-on: ubuntu-24.04
-    steps:
-    - name: 📂 Checkout code
-      uses: actions/checkout@v7
-
-    - name: 💰 Cache
-      uses: Swatinem/rust-cache@v2
-
-    - name: Install shells (zsh, fish)
-      uses: awalsh128/cache-apt-pkgs-action@v1.6.2
-      with:
-        packages: zsh fish
-        version: 1.0
-
-    - name: Install nushell
-      uses: hustcer/setup-nu@v3
-      with:
-        version: '0.113.1'
-
-    - name: 💰 Rust repo cache
-      uses: actions/cache@v6
-      with:
-        path: target/bench-repos
-        key: bench-repos-rust-${{ runner.os }}
-
-    - name: 📊 Run benchmarks
-      run: cargo bench
-
-    - name: 📦 Upload benchmark results
-      uses: actions/upload-artifact@v7
-      with:
-        name: benchmark-results-${{ github.run_id }}
-        path: target/criterion
-
-    # Time-series benchmark store, owned by worktrunk-bot:
-    # https://gist.github.com/worktrunk-bot/19bb23cb9658722abfe69479d0a4f9bf
-    #
-    # Cron-only: PR/push runs aren't appended (would pollute the time
-    # series). Skipped on forks: `TEND_BOT_TOKEN` is not exposed there.
-    - name: 💾 Append results to gist
-      if: github.repository_owner == 'max-sixty' && github.event_name == 'schedule'
-      env:
-        GITHUB_TOKEN: ${{ secrets.TEND_BOT_TOKEN }}
-        GIST_ID: 19bb23cb9658722abfe69479d0a4f9bf
-      run: |
-        set -euo pipefail
-        python3 .github/scripts/criterion-to-jsonl.py --sha "$GITHUB_SHA" > new-rows.jsonl
-        git clone "https://x-access-token:${GITHUB_TOKEN}@gist.github.com/${GIST_ID}.git" /tmp/gist
-        cat new-rows.jsonl >> /tmp/gist/results.jsonl
-        git -C /tmp/gist \
-          -c user.name=worktrunk-bot \
-          -c user.email=worktrunk-bot@users.noreply.github.com \
-          commit -am "benchmarks: ${GITHUB_SHA::7}"
-        git -C /tmp/gist push
 
   check-unused-dependencies:
     # Moved from ci.yaml — `cargo udeps` requires nightly toolchain anyway,
@@ -260,6 +267,13 @@ jobs:
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
+      with:
+        # Never save. Runs on the nightly toolchain, whose rustc hash can't
+        # match the shared (stable) cache, so a per-job cache would only ever
+        # serve the next nightly — near-zero hit under the 10 GB cap. Cold
+        # builds here are absorbed by the nightly cadence.
+        cache-bin: "false"
+        save-if: false
 
     - uses: baptiste0928/cargo-install@v3
       with:
@@ -289,7 +303,11 @@ jobs:
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
       with:
-        key: minimal-versions
+        # Never save — nightly toolchain (can't match the shared stable cache)
+        # plus a minimized lockfile that's unique to this run, so a saved cache
+        # would never be reused.
+        cache-bin: "false"
+        save-if: false
 
     - name: Resolve to minimum versions
       # `direct`, not full `-Z minimal-versions`: minimize only worktrunk's own
@@ -324,6 +342,12 @@ jobs:
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
+      with:
+        # Restore the shared `test` cache (registry + deps), never save.
+        prefix-key: v1-rust
+        shared-key: shared
+        cache-bin: "false"
+        save-if: false
 
     - name: 🧪 Build crates.io archive without .git
       run: cargo test --test integration crate_io_archive_builds_and_versions_without_git -- --ignored
@@ -361,7 +385,6 @@ jobs:
     needs:
       - feature-powerset
       - release-target
-      - benchmarks
       - check-unused-dependencies
       - minimal-versions
       - nix-flake

@@ -35,9 +35,9 @@ use crate::styling::format_heading;
 use super::{TraceEntry, TraceEntryKind, TraceResult};
 
 /// How many individual calls [`Profile::slowest`] retains.
-const SLOWEST_LIMIT: usize = 8;
+const SLOWEST_LIMIT: usize = 20;
 /// How many cache offenders the text summary lists before collapsing the rest.
-const CACHE_OFFENDER_LIMIT: usize = 3;
+const CACHE_OFFENDER_LIMIT: usize = 10;
 
 // Milestone event strings emitted by the `wt list` / picker collect pipeline
 // (`src/commands/list/collect/mod.rs`). These literals must match the emit
@@ -1205,32 +1205,39 @@ mod tests {
             start_time_us: None,
             thread_id: None,
         };
-        // Four duplicated commands (waste aaa>bbb>ccc>ddd); ddd spans two
-        // contexts. Ten calls total, so the eight-deep slowest list truncates.
-        let entries = vec![
-            dup("git aaa", "w1", 9_000),
-            dup("git aaa", "w1", 8_000),
-            dup("git bbb", "w1", 7_000),
-            dup("git bbb", "w1", 6_000),
-            dup("git ccc", "w1", 5_000),
-            dup("git ccc", "w1", 4_000),
-            dup("git ddd", "w1", 3_000),
-            dup("git ddd", "w1", 2_000),
-            dup("git ddd", "w2", 1_500),
-            dup("git ddd", "w2", 1_000),
-        ];
+        // More distinct commands than either limit, each run twice in one
+        // context so every command is both a slow call and a same-context
+        // duplicate: 24 single-context commands plus one (`git xctx`)
+        // duplicated across two contexts = 25 offenders. The 50 slow calls
+        // truncate to SLOWEST_LIMIT (20); the 25 offenders collapse to
+        // CACHE_OFFENDER_LIMIT (10) with "… and N more". Durations strictly
+        // decrease with index for deterministic ordering.
+        let mut entries = Vec::new();
+        for i in 0..24u64 {
+            let command = format!("git cmd{i:02}");
+            let base = (50 - i) * 1_000;
+            entries.push(dup(&command, "w1", base));
+            entries.push(dup(&command, "w1", base - 100));
+        }
+        // One command across two contexts exercises the per-context sort; its
+        // durations are the smallest, so it lands in the collapsed tail.
+        entries.push(dup("git xctx", "w1", 2_000));
+        entries.push(dup("git xctx", "w1", 1_800));
+        entries.push(dup("git xctx", "w2", 1_500));
+        entries.push(dup("git xctx", "w2", 1_000));
+
         let profile = Profile::from_entries(&entries);
         assert_eq!(profile.slowest.len(), SLOWEST_LIMIT);
-        assert_eq!(profile.cache.same_context_duplicates.len(), 4);
-        // ddd's contexts sort by total time: w1 (5ms) before w2 (2.5ms).
-        let ddd = profile
+        assert_eq!(profile.cache.same_context_duplicates.len(), 25);
+        // xctx's contexts sort by total time: w1 (3.8ms) before w2 (2.5ms).
+        let xctx = profile
             .cache
             .same_context_duplicates
             .iter()
-            .find(|d| d.command == "git ddd")
+            .find(|d| d.command == "git xctx")
             .unwrap();
         assert_eq!(
-            ddd.contexts
+            xctx.contexts
                 .iter()
                 .map(|c| c.context.as_str())
                 .collect::<Vec<_>>(),

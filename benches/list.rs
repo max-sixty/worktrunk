@@ -1,22 +1,30 @@
 // Benchmarks for `wt list` command
 //
 // Benchmark groups:
-//   - skeleton: Time until skeleton appears (1, 4, 8 worktrees; warm + cold)
-//   - full: Full execution time (1, 4, 8 worktrees; warm + cold)
-//   - worktree_scaling: Worktree count scaling (1, 4, 8 worktrees; warm + cold)
+//   - skeleton: Time until the skeleton paints (1, 4, 8 worktrees; warm + cold)
+//   - worktree_scaling: Full execution, worktree-count scaling (1, 4, 8 worktrees; warm + cold)
+//   - full: One combined full-surface fixture — many worktrees AND many branches
+//       in varied states, with branch divergence spread across history depth.
+//       The realistic "everything at once" workload (warm + cold).
+//   - divergent_branches: 200 branches × 20 commits / GH #461 deep-divergence stress (warm + cold)
 //   - real_repo: rust-lang/rust clone (1, 4, 8 worktrees; warm + cold)
-//   - many_branches: 100 branches (warm + cold)
-//   - divergent_branches: 200 branches × 20 commits on synthetic repo (warm + cold)
 //   - real_repo_many_branches: 50 branches at different history depths / GH #461
 //       - warm: all branches (first run expensive; subsequent runs hit persistent cache)
 //       - warm_worktrees_only: no branch enumeration (~600ms)
-//   - timeout_effect: Compare with/without 500ms command timeout on rust repo / GH #461 fix
+//
+// Attribution: a `full` wall time can't be split by side (worktree- and
+// branch-side git subprocesses overlap on the rayon pool), so to see where a
+// regression lands, trace one invocation and bucket subprocess time per
+// worktree / task type — see `benches/CLAUDE.md` ("Performance Investigation
+// with wt-perf", query #3, `args.context`). For per-side regression tracking
+// at criterion cadence, `worktree_scaling` is the worktree side and
+// `divergent_branches` the branch side.
 //
 // Run examples (Criterion takes a positional substring FILTER; no --skip):
 //   cargo bench --bench list                         # All benchmarks
 //   cargo bench --bench list skeleton                # Progressive rendering
+//   cargo bench --bench list full                    # Combined full-surface fixture
 //   cargo bench --bench list real_repo_many_branches # GH #461 scenario (large repo + many branches)
-//   cargo bench --bench list timeout_effect          # Test timeout fix for GH #461
 //   cargo bench --bench list warm                    # Warm-cache variants (every group's warm rows)
 //   cargo bench --bench list skeleton/warm           # Skeleton group, warm only
 
@@ -25,8 +33,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use worktrunk::testing::isolate_subprocess_env;
 use wt_perf::{
-    RepoConfig, add_history_spread_branches, add_worktrees, clone_rust_repo, create_repo,
-    invalidate_caches_auto, run_git, setup_fake_remote,
+    RepoConfig, add_history_spread_branches, add_worktrees, clone_rust_repo, create_mixed_repo,
+    create_repo, invalidate_caches_auto, run_git, setup_fake_remote,
 };
 
 /// Benchmark configuration wrapping RepoConfig with cache state.
@@ -44,13 +52,6 @@ impl BenchConfig {
         }
     }
 
-    const fn branches(count: usize, commits_per_branch: usize, cold_cache: bool) -> Self {
-        Self {
-            repo: RepoConfig::branches(count, commits_per_branch),
-            cold_cache,
-        }
-    }
-
     const fn many_divergent_branches(cold_cache: bool) -> Self {
         Self {
             repo: RepoConfig::many_divergent_branches(),
@@ -63,12 +64,17 @@ impl BenchConfig {
     }
 }
 
-/// Run a benchmark with the given config.
+/// Run `wt` with `args` in `repo_path`, on a warm or cold cache.
+///
+/// Fixture-agnostic: callers build whatever repo shape they want, then pass
+/// `cold_cache` to pick the iteration strategy. Warm uses plain `b.iter`
+/// (caches stay warm across iterations); cold invalidates before every
+/// measured iteration.
 fn run_benchmark(
     b: &mut criterion::Bencher,
     binary: &Path,
     repo_path: &Path,
-    config: &BenchConfig,
+    cold_cache: bool,
     args: &[&str],
     env: Option<(&str, &str)>,
 ) {
@@ -82,7 +88,7 @@ fn run_benchmark(
         cmd
     };
 
-    if config.cold_cache {
+    if cold_cache {
         // `BatchSize::PerIteration` (not `SmallInput`): under `SmallInput`,
         // criterion calls `setup` for an entire batch up front and then runs
         // the timed routines back-to-back — so only the first `wt` per batch
@@ -123,34 +129,10 @@ fn bench_skeleton(c: &mut Criterion) {
                         b,
                         binary,
                         &repo_path,
-                        config,
+                        config.cold_cache,
                         &["list"],
                         Some(("WORKTRUNK_SKELETON_ONLY", "1")),
                     );
-                },
-            );
-        }
-    }
-
-    group.finish();
-}
-
-fn bench_full(c: &mut Criterion) {
-    let mut group = c.benchmark_group("full");
-    let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
-
-    for worktrees in [1, 4, 8] {
-        for cold in [false, true] {
-            let config = BenchConfig::typical(worktrees, cold);
-
-            group.bench_with_input(
-                BenchmarkId::new(config.label(), worktrees),
-                &config,
-                |b, config| {
-                    let temp = create_repo(&config.repo);
-                    let repo_path = temp.path().join("repo");
-                    setup_fake_remote(&repo_path);
-                    run_benchmark(b, binary, &repo_path, config, &["list"], None);
                 },
             );
         }
@@ -174,7 +156,7 @@ fn bench_worktree_scaling(c: &mut Criterion) {
                     let temp = create_repo(&config.repo);
                     let repo_path = temp.path().join("repo");
                     run_git(&repo_path, &["status"]);
-                    run_benchmark(b, binary, &repo_path, config, &["list"], None);
+                    run_benchmark(b, binary, &repo_path, config.cold_cache, &["list"], None);
                 },
             );
         }
@@ -245,31 +227,6 @@ fn bench_real_repo(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_many_branches(c: &mut Criterion) {
-    let mut group = c.benchmark_group("many_branches");
-    let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
-
-    for cold in [false, true] {
-        let config = BenchConfig::branches(100, 2, cold);
-
-        group.bench_function(config.label(), |b| {
-            let temp = create_repo(&config.repo);
-            let repo_path = temp.path().join("repo");
-            run_git(&repo_path, &["status"]);
-            run_benchmark(
-                b,
-                binary,
-                &repo_path,
-                &config,
-                &["list", "--branches", "--progressive"],
-                None,
-            );
-        });
-    }
-
-    group.finish();
-}
-
 fn bench_divergent_branches(c: &mut Criterion) {
     let mut group = c.benchmark_group("divergent_branches");
     group.measurement_time(std::time::Duration::from_secs(30));
@@ -288,7 +245,7 @@ fn bench_divergent_branches(c: &mut Criterion) {
                 b,
                 binary,
                 &repo_path,
-                &config,
+                config.cold_cache,
                 &["list", "--branches", "--progressive"],
                 None,
             );
@@ -382,12 +339,74 @@ fn bench_real_repo_many_branches(c: &mut Criterion) {
     group.finish();
 }
 
+/// Combined full-surface `wt list`: many worktrees AND many branches in varied
+/// states, with branch divergence spread across history depth — the whole
+/// command exercised by one fixture instead of several narrow ones. This is the
+/// realistic "lots of worktrees & branches, all in various states" workload.
+///
+/// `create_mixed_repo` builds the spread of `wt list` gates and tasks at once:
+/// clean/dirty/staged working trees, merged/ahead/diverged branches, and the
+/// GH #461 deep-divergence shape (branches forking at points spread across
+/// history depth, so the `git for-each-ref %(ahead-behind)` walk has real
+/// history to traverse).
+///
+/// To see *where* a regression lands, trace one invocation and bucket
+/// subprocess time per worktree / task type — see `benches/CLAUDE.md`
+/// ("Performance Investigation with wt-perf", query #3, `args.context`); a
+/// criterion wall time can't be decomposed by side because the worktree- and
+/// branch-side git subprocesses run concurrently on the rayon pool. For
+/// per-side regression tracking at criterion cadence, `worktree_scaling`
+/// isolates the worktree side and `divergent_branches` the branch-side walk.
+///
+/// Cold vs warm measure different costs. Warm (plain `b.iter`, disk SHA cache
+/// kept hot by the criterion warm-up) is the *irreducible per-invocation* work:
+/// the in-memory caches (`Arc<RepoCache>`, `WORKTREE_ROOTS`, `GIT_DIRS`,
+/// `commit_tree`, `merge_base`) die with each `wt` process, so every re-run
+/// re-forks whatever those cover while the disk SHA cache (ahead-behind,
+/// is-ancestor, merge-tree, diff-stats) serves from file reads. Cold
+/// invalidates `.git/wt/cache/` before each measured iteration, so it pays the
+/// full #461 `%(ahead-behind)` walk and every integration probe from scratch.
+///
+/// Runs `list --branches --progressive` to exercise both worktree and branch
+/// rows on the progressive render path (matching real TTY use), without the
+/// network-touching `ci` column that `--full` would add.
+fn bench_full(c: &mut Criterion) {
+    let mut group = c.benchmark_group("full");
+    // Heavy fixture (24 worktrees + 120 branches, deep history): the cold
+    // variant runs well over the inherited 30-sample / 15s budget, so cap
+    // samples at criterion's minimum and give a 20s window (≈ a few iters per
+    // sample), matching the other heavy groups.
+    group.measurement_time(std::time::Duration::from_secs(20));
+    group.sample_size(10);
+
+    let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
+    let (worktrees, branches) = (24usize, 120usize);
+
+    for cold in [false, true] {
+        let label = if cold { "cold" } else { "warm" };
+        group.bench_function(label, |b| {
+            let temp = create_mixed_repo(worktrees, branches);
+            let repo_path = temp.path().join("repo");
+            run_benchmark(
+                b,
+                binary,
+                &repo_path,
+                cold,
+                &["list", "--branches", "--progressive"],
+                None,
+            );
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default()
         .sample_size(30)
         .measurement_time(std::time::Duration::from_secs(15))
         .warm_up_time(std::time::Duration::from_secs(3));
-    targets = bench_skeleton, bench_full, bench_worktree_scaling, bench_real_repo, bench_many_branches, bench_divergent_branches, bench_real_repo_many_branches
+    targets = bench_skeleton, bench_worktree_scaling, bench_full, bench_real_repo, bench_divergent_branches, bench_real_repo_many_branches
 }
 criterion_main!(benches);

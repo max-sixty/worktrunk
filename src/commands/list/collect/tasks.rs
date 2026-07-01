@@ -1,6 +1,6 @@
 //! Task trait and implementations.
 //!
-//! Contains the `Task` trait interface and all 16 task implementations that
+//! Contains the `Task` trait interface and all task implementations that
 //! compute various git operations for worktrees and branches.
 
 use std::net::{SocketAddr, TcpStream};
@@ -396,7 +396,7 @@ impl Task for HasFileChangesTask {
     }
 }
 
-/// Task 3b: Merge simulation + patch-id fallback
+/// Task 3c: Merge simulation + patch-id fallback
 ///
 /// Delegates to [`Repository::merge_integration_probe_by_sha()`], which runs:
 ///
@@ -471,7 +471,7 @@ impl Task for WouldMergeAddTask {
     }
 }
 
-/// Task 3c: Ancestor check (is branch HEAD an ancestor of integration target?)
+/// Task 3d: Ancestor check (is branch HEAD an ancestor of integration target?)
 ///
 /// Checks if branch is an ancestor of target - runs `git merge-base --is-ancestor`.
 /// Returns true when the branch HEAD is in target's history (merged via fast-forward

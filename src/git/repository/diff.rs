@@ -95,6 +95,16 @@ impl Repository {
     /// other whitespace parse unambiguously. `%s` is the subject line only, so
     /// no multi-line handling is needed.
     ///
+    /// **Primes the commit→tree cache.** The format also reads `%T` (the
+    /// commit's tree SHA) and stores it in the in-memory `commit_tree` cache
+    /// that `commit_to_tree_sha` reads. git resolves the commit object
+    /// to read `%ct` anyway, so the tree SHA rides along for free in the same
+    /// round trip — turning the `wt list` per-row `CommittedTreesMatch` /
+    /// `WouldMergeAdd` tree lookups (every item head + the default-branch tip
+    /// are in this batch) from one `rev-parse <sha>^{tree}` fork each into
+    /// memory hits. The mapping is content-addressed (a commit's tree is
+    /// immutable), so priming it from the authoritative batch is never stale.
+    ///
     /// Fails if any SHA is invalid — `git log --no-walk` refuses the whole
     /// batch on a single bad ref. Callers should surface the error rather
     /// than fall back to per-SHA fetches: the batch is the only commit-detail
@@ -111,11 +121,13 @@ impl Repository {
         // --no-walk shows exactly the named commits without DAG walking.
         // --no-show-signature suppresses GPG verification output that otherwise
         // contaminates stdout when log.showSignature is set.
+        // %T (tree SHA) rides along to prime the commit→tree cache; it's placed
+        // before %s so the variable-length subject stays the final field.
         let mut args = vec![
             "log",
             "--no-walk",
             "--no-show-signature",
-            "--format=%H%x00%h%x00%ct%x00%s",
+            "--format=%H%x00%h%x00%ct%x00%T%x00%s",
         ];
         args.extend(commits);
 
@@ -123,17 +135,27 @@ impl Repository {
 
         let mut result = HashMap::with_capacity(commits.len());
         for line in stdout.lines() {
-            let mut parts = line.splitn(4, '\0');
-            let (Some(sha), Some(short_sha), Some(timestamp_str), Some(subject)) =
-                (parts.next(), parts.next(), parts.next(), parts.next())
-            else {
+            let mut parts = line.splitn(5, '\0');
+            let (Some(sha), Some(short_sha), Some(timestamp_str), Some(tree_sha), Some(subject)) = (
+                parts.next(),
+                parts.next(),
+                parts.next(),
+                parts.next(),
+                parts.next(),
+            ) else {
                 bail!(
-                    "Malformed git log output: expected '<sha>\\0<short>\\0<ts>\\0<subject>', got {line:?}"
+                    "Malformed git log output: expected '<sha>\\0<short>\\0<ts>\\0<tree>\\0<subject>', got {line:?}"
                 );
             };
             let timestamp: i64 = timestamp_str
                 .parse()
                 .with_context(|| format!("Failed to parse timestamp {timestamp_str:?}"))?;
+            // Prime the content-addressed commit→tree cache (get-or-insert; a
+            // concurrent resolver's entry wins, both are authoritative).
+            self.cache
+                .commit_tree
+                .entry(sha.to_string())
+                .or_insert_with(|| tree_sha.to_string());
             result.insert(
                 sha.to_string(),
                 (short_sha.to_owned(), timestamp, subject.to_owned()),
@@ -216,7 +238,22 @@ impl Repository {
     ///
     /// Inputs are commit SHAs. Skips the ambient ref→SHA conversion
     /// entirely; cache key is `(min(sha1, sha2), max(sha1, sha2))`.
+    ///
+    /// In-memory front over a persistent disk back
+    /// (`merge-base/{min}-{max}.json`): the `DashMap` dedups within one
+    /// process, the disk cache serves re-runs without re-forking. The
+    /// `wt list` orphan check (`AheadBehindTask`) calls this once per row
+    /// even when the ahead/behind counts are themselves cache-warm, so on a
+    /// repo with many branches the disk back turns that per-row
+    /// `git merge-base` fork into a file read. Content-addressed, never
+    /// stale. The `sha1 == sha2` short-circuit (a commit is its own
+    /// merge-base) skips both git and the cache for items sitting exactly at
+    /// the base tip — the common "freshly branched" case.
     pub fn merge_base_by_sha(&self, sha1: &str, sha2: &str) -> anyhow::Result<Option<String>> {
+        if sha1 == sha2 {
+            return Ok(Some(sha1.to_string()));
+        }
+
         // Normalize key order since merge-base is symmetric.
         let key = if sha1 <= sha2 {
             (sha1.to_string(), sha2.to_string())
@@ -227,6 +264,11 @@ impl Repository {
         match self.cache.merge_base.entry(key) {
             Entry::Occupied(e) => Ok(e.get().clone()),
             Entry::Vacant(e) => {
+                // Disk back: a prior run's result, served without forking git.
+                if let Some(cached) = super::sha_cache::merge_base(self, sha1, sha2) {
+                    return Ok(e.insert(cached).clone());
+                }
+
                 // Exit codes: 0 = found, 1 = no common ancestor, 128+ = invalid ref
                 let output = self.run_command_output(&["merge-base", sha1, sha2])?;
 
@@ -239,6 +281,7 @@ impl Repository {
                     bail!("git merge-base failed for {sha1} {sha2}: {}", stderr.trim());
                 };
 
+                super::sha_cache::put_merge_base(self, sha1, sha2, &result);
                 Ok(e.insert(result).clone())
             }
         }
@@ -368,8 +411,11 @@ impl Repository {
         // Acquired after cache check to avoid holding the semaphore on cache hits.
         let _guard = super::super::HEAVY_OPS_SEMAPHORE.acquire();
 
-        // Get merge-base (cached in shared repo cache)
-        let Some(merge_base) = self.merge_base(base_sha, head_sha)? else {
+        // Get merge-base (cached in shared repo cache). Inputs are already
+        // SHAs here (both callers resolve first), so use the SHA-keyed
+        // variant directly and skip the redundant ref→SHA resolution — same
+        // path `compute_ahead_behind` takes.
+        let Some(merge_base) = self.merge_base_by_sha(base_sha, head_sha)? else {
             if use_cache {
                 super::sha_cache::put_diff_stats(self, base_sha, head_sha, LineDiff::default());
             }

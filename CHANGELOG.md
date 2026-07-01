@@ -6,6 +6,22 @@
 
 - **`-vv` diagnostics surface pager and terminal environment**: The diagnostic report (`.git/wt/logs/diagnostic.md`, written on every `-vv` run) gained an "Environment variables" section listing a curated, non-secret allowlist of the pager / terminal / locale knobs (`PAGER`, `GIT_PAGER`, `TERM`, `COLUMNS`, `NO_COLOR`, `LANG`, …) plus git's resolved `core.pager`. These are the inputs that most often explain a rendering bug — like a pager interaction suspending `wt config show` ([#3322](https://github.com/max-sixty/worktrunk/issues/3322)) — and they were previously invisible in the report. The list is a strict allowlist, never a blanket `env` dump, so no credential-bearing variable can leak into an uploaded report.
 
+## 0.64.0
+
+### Improved
+
+- **`{{ git.branch.* }}` template namespace for custom columns**: `wt list` custom columns can now read a branch's own git config via `{{ git.branch.<key> }}` — both convention keys you set yourself (`branch.<name>.jira`) and the git-native `branch.<name>.description` — without re-storing the values through `wt config state vars set`. It complements `{{ vars.* }}`, which reads only worktrunk's own state namespace. ([#3319](https://github.com/max-sixty/worktrunk/pull/3319), thanks @cazador481 for the request)
+
+- **Faster warm-cache `wt list` re-runs**: A repeat `wt list` (with `.git/wt/cache/` already populated) is ~36% faster, by removing redundant per-row git subprocesses — priming the commit→tree cache from the `%ct` batch already issued, persisting merge-base results to a content-addressed on-disk cache, and seeding worktree roots and git-dirs from the single `git worktree list` instead of re-forking `git rev-parse` per worktree. ([#3334](https://github.com/max-sixty/worktrunk/pull/3334))
+
+### Fixed
+
+- **Refs that look like flags can't inject git options**: `wt`'s `git diff` previews and diffstats (picker diff previews, `show_diffstat`, push diffstat) now fence user-controlled refs behind `--end-of-options`, and branch removal (`git branch -D`) passes them after `--`, so a branch literally named like a flag (`-x`, `--foo`) reaches git as a positional ref instead of being misparsed as an option. ([#3317](https://github.com/max-sixty/worktrunk/pull/3317))
+
+- **Statusline renders untruncated when `COLUMNS=0`**: `wt list statusline` treated `COLUMNS=0` as a zero-width budget and dropped every segment, rendering an empty line. A zero or unparsable `COLUMNS` is now treated as no detectable width, so the line renders everything untruncated — as the statusline sizing already documented for a missing width. ([#3318](https://github.com/max-sixty/worktrunk/pull/3318))
+
+- **Watchdog "still waiting" line uses the hint symbol**: The transient `Waiting for the commit message (Ns)` line shown during a slow `wt step commit` LLM call now uses the hint prefix (`↳`) instead of the info symbol (`○`), matching the convention for fully-dim status lines. ([#3330](https://github.com/max-sixty/worktrunk/pull/3330))
+
 ## 0.63.0
 
 ### Improved
@@ -21,6 +37,8 @@
 - **Picker `comments` tab avoids redundant forge fetches**: The picker's `comments` preview tab gained an on-disk cache keyed by the PR's `updatedAt` (which rides for free on the CI fetch the picker already makes), so a repeat `wt switch` skips the per-row `gh pr view --json comments` fetch when the thread is unchanged and paints the tab instantly instead of showing "Loading comments…". The cache is also primed from the `gh pr list` call the picker already makes, so the tab skips its own fetch even on a session's first open (including PRs with no comments). GitHub only. ([#3294](https://github.com/max-sixty/worktrunk/pull/3294), [#3299](https://github.com/max-sixty/worktrunk/pull/3299))
 
 - **Statusline width comes from `COLUMNS`, not a parent-process walk**: `wt list statusline` used to spawn up to 10 `ps` calls plus `stty` per render to recover a terminal width, because Claude Code piped the subprocess with no inherited TTY. Claude Code now sets `COLUMNS`/`LINES` to the terminal dimensions before running the script (since v2.1.153), so the width comes straight from there — less a fixed 5-column margin for Claude Code's own UI — and the `ps`/`stty` walk is gone. On an older Claude Code that doesn't set `COLUMNS`, the line renders untruncated rather than walking the process tree. ([#3286](https://github.com/max-sixty/worktrunk/pull/3286), closes [#2950](https://github.com/max-sixty/worktrunk/issues/2950))
+
+- **`-vv` diagnostics consolidate on `diagnostic.md`, led by the performance profile**: A `-vv` run now opens with a one-line pointer to the log directory (`○ Verbose logging to .git/wt/logs/`) and closes by naming what it captured — `○ Logs, performance profile, and diagnostics saved @ diagnostic.md` — with the raw `trace.jsonl` / `subprocess.log` companions listed beneath and the `gh gist create` bug-report hint. `diagnostic.md` now leads with the performance profile, expanded by default and promoted above the environment / worktree / config dumps; that profile reports the 20 slowest calls (was 8) and 10 same-context redundant-command offenders (was 3). There is no standalone `profile.txt` — the profile lives in the bundle, and `wt config state logs profile` re-renders it live from `trace.jsonl`. ([#3329](https://github.com/max-sixty/worktrunk/pull/3329))
 
 ### Fixed
 

@@ -384,6 +384,79 @@ fn test_switch_create_preserves_subdir(#[from(repo_with_remote)] repo: TestRepo)
     );
 }
 
+#[rstest]
+fn test_remove_preserves_subdir(#[from(repo_with_remote)] mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+    let (cd_path, exec_path, _guard) = directive_files();
+
+    // Create the same subdirectory in both the feature worktree (where the
+    // user is) and the main worktree (where removal lands).
+    let subdir = "apps/gateway";
+    fs::create_dir_all(repo.root_path().join(subdir)).unwrap();
+    fs::create_dir_all(feature_wt.join(subdir)).unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    cmd.arg("remove").current_dir(feature_wt.join(subdir));
+
+    let output = cmd.output().unwrap();
+    assert!(output.status.success(), "wt remove failed: {:?}", output);
+
+    // Verify cd file lands in the equivalent subdirectory of the main
+    // worktree, not at its root — mirroring `wt switch` (issue #3343).
+    let cd_content = fs::read_to_string(&cd_path).unwrap_or_default();
+    let expected_subdir = repo.root_path().join(Path::new("apps").join("gateway"));
+    let expected_str = expected_subdir.to_string_lossy();
+    assert!(
+        cd_content.contains(&*expected_str),
+        "CD file should contain subdirectory path {}, got: {}",
+        expected_str,
+        cd_content
+    );
+}
+
+#[rstest]
+fn test_remove_falls_back_to_root_when_subdir_missing(
+    #[from(repo_with_remote)] mut repo: TestRepo,
+) {
+    let feature_wt = repo.add_worktree("feature");
+    let (cd_path, exec_path, _guard) = directive_files();
+
+    // Create the subdirectory only in the feature worktree (where the user
+    // is), not in the main worktree where removal lands.
+    let subdir = "apps/gateway";
+    fs::create_dir_all(feature_wt.join(subdir)).unwrap();
+    // Intentionally NOT creating the subdir in the main worktree.
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    cmd.arg("remove").current_dir(feature_wt.join(subdir));
+
+    let output = cmd.output().unwrap();
+    assert!(output.status.success(), "wt remove failed: {:?}", output);
+
+    // Verify cd file lands at the main worktree root (the subdir is absent
+    // there, so preservation falls back).
+    let cd_content = fs::read_to_string(&cd_path).unwrap_or_default();
+    let root_str = repo.root_path().to_string_lossy();
+    assert!(
+        cd_content.contains(&*root_str),
+        "CD file should contain main worktree root {}, got: {}",
+        root_str,
+        cd_content
+    );
+    let subdir_path = repo.root_path().join(Path::new("apps").join("gateway"));
+    let subdir_str = subdir_path.to_string_lossy();
+    assert!(
+        !cd_content.contains(&*subdir_str),
+        "CD file should NOT contain missing subdirectory path {}, got: {}",
+        subdir_str,
+        cd_content
+    );
+}
+
 // ============================================================================
 // --no-cd Tests
 // ============================================================================

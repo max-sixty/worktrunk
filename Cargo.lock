@@ -2603,13 +2603,12 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
 name = "open"
-version = "5.3.5"
+version = "5.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2fbaa89d2ddc8473c78a3adf69eea8cffa28c483b8e02a971ef31527cd0fc92c"
+checksum = "cd8d3b65c44123a56e0133d2cd06ce4361bd3ca99d41198b2f25e3c3db9b8b4a"
 dependencies = [
  "is-wsl",
  "libc",
- "pathdiff",
 ]
 
 [[package]]
@@ -2808,9 +2807,9 @@ dependencies = [
 
 [[package]]
 name = "petname"
-version = "3.0.1"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f54cb040158697d07953ea14e1f659e738197161c04cc8a34bcd9b21c9c0772"
+checksum = "1201345ec6f6630308d0549e198c58aff61df8033afe094f072def1ebe43eafa"
 dependencies = [
  "petname-macros",
  "rand 0.10.1",
@@ -5476,7 +5475,7 @@ dependencies = [
 
 [[package]]
 name = "worktrunk"
-version = "0.63.0"
+version = "0.64.0"
 dependencies = [
  "ansi-str",
  "ansi-to-html",

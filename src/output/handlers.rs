@@ -1606,10 +1606,20 @@ fn refresh_removal_safety_after_pre_remove(
 
 fn prepare_remove_directory_change(
     main_path: &Path,
+    worktree_path: &Path,
     changed_directory: bool,
 ) -> anyhow::Result<()> {
     if changed_directory {
-        super::change_directory(main_path)?;
+        // Preserve the user's subdirectory position, mirroring `wt switch`
+        // (#3343). The removal hasn't run yet, so the current directory still
+        // exists inside the worktree being removed — if the user is in
+        // `worktree/apps/gateway/` and `main/apps/gateway/` exists, cd there
+        // instead of the main worktree root. Falls back to the root when the
+        // subdir is absent in the destination or the cwd can't be read.
+        let cd_target = std::env::current_dir()
+            .map(|cwd| resolve_subdir_in_target(main_path, Some(worktree_path), &cwd))
+            .unwrap_or_else(|_| main_path.to_path_buf());
+        super::change_directory(&cd_target)?;
         stderr().flush()?; // Force flush to ensure shell processes the cd
         // Mark that the CWD worktree is being removed, so the error handler
         // can show a hint if a subsequent command (e.g., post-merge hook) fails.
@@ -1831,7 +1841,7 @@ fn handle_removed_worktree_output(
         return remove_removed_worktree_silently(&repo, &ctx, &safety, announcer);
     }
 
-    prepare_remove_directory_change(ctx.main_path, ctx.changed_directory)?;
+    prepare_remove_directory_change(ctx.main_path, ctx.worktree_path, ctx.changed_directory)?;
 
     // Handle detached HEAD case (no branch known)
     let Some(branch_name) = ctx.branch_name else {
