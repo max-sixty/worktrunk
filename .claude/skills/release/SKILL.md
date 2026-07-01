@@ -20,7 +20,10 @@ metadata:
    - Cross-platform: dispatch the `nightly` workflow on the cut-from tip and wait for it to go green. This is where a release gets its full linux/macos/windows validation: the PR path (`ci.yaml`) is moving to cargo-affected selection and will stop running the full `test` matrix, while `nightly` hosts `full-tests` (the full 3-OS suite) alongside feature-powerset, release-target, nix-flake, and minimal-versions. Benchmarks aren't part of `nightly` — they run in their own `benchmarks.yaml` and gate nothing.
      ```bash
      gh workflow run nightly.yaml --ref main
-     RUN=$(gh run list --workflow=nightly.yaml --event=workflow_dispatch --branch=main --limit 1 --json databaseId --jq '.[0].databaseId')
+     # Registration lags the dispatch, and a prior release may have left a
+     # stale completed workflow_dispatch run — filter to the in-flight one.
+     sleep 5
+     RUN=$(gh run list --workflow=nightly.yaml --event=workflow_dispatch --branch=main --limit 5 --json databaseId,status --jq 'map(select(.status != "completed")) | .[0].databaseId')
      ```
      Launch a ci-reporter to monitor `$RUN` to completion (avoid `gh run watch` — it can hang). Fix any failure before continuing.
 3. **Check current version**: Read `version` in `Cargo.toml`
