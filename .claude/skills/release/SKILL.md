@@ -177,7 +177,7 @@ Issues may have been filed months before the fix. Bug reports also appear as PR 
 
 1. **Extract every issue/PR reference from every commit** (PRIMARY):
    ```bash
-   git log v<last-version>..HEAD --format="%B" | grep -oE '#[0-9]+' | sort -un
+   git log v<last-version>..HEAD --format="%B" | grep -oE '#[0-9]+' | sort -t'#' -k2 -n -u
    ```
    For **each** referenced number: run `gh issue view N --json title,author,state`. This catches issues filed months ago — the most commonly missed credits.
 
