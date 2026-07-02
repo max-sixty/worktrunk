@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.65.0
+
+### Improved
+
+- **Picker `alt-x` flashes why a worktree wasn't removed**: When `alt-x` in the `wt switch` picker keeps a row instead of removing it, the reason now flashes in the picker header for a beat, rather than only draining to stderr after you quit — so the "why" is visible while the row is still in front of you. It covers both the by-design keeps (the current worktree; an unmerged branch-only row shows `○ Kept <branch> — branch is unmerged`) and genuine removal failures (a dirty, locked, or main worktree, shown as an error). The full diagnostic still drains on exit. The `--prs` loading marker now also matches the picker's other in-flight placeholders (`↳ Loading open PRs…`). ([#3336](https://github.com/max-sixty/worktrunk/pull/3336), [#3350](https://github.com/max-sixty/worktrunk/pull/3350))
+
+- **`-vv` diagnostics consolidate on `diagnostic.md`, led by the performance profile**: A `-vv` run now opens with a one-line pointer to the log directory (`○ Verbose logging to .git/wt/logs/`) and closes by naming what it captured — `○ Logs, performance profile, and diagnostics saved @ diagnostic.md` — with the raw `trace.jsonl` / `subprocess.log` companions listed beneath and the `gh gist create` bug-report hint. `diagnostic.md` now leads with the performance profile, expanded by default and promoted above the environment / worktree / config dumps; that profile reports the 20 slowest calls (was 8) and 10 same-context redundant-command offenders (was 3). The profile lives in the `diagnostic.md` bundle, and `wt config state logs profile` re-renders it live from `trace.jsonl`. ([#3329](https://github.com/max-sixty/worktrunk/pull/3329))
+
+### Fixed
+
+- **`wt remove` preserves your subdirectory position**: Removing a worktree from a subdirectory (e.g. `apps/gateway/`) now lands you in the equivalent subdirectory of the destination worktree rather than at its root — matching how `wt switch` already behaves, and falling back to the root when that subdirectory doesn't exist there. `wt merge` lands through the same handler, so it gains the same behavior. ([#3344](https://github.com/max-sixty/worktrunk/pull/3344), closes [#3343](https://github.com/max-sixty/worktrunk/issues/3343), thanks @caillou for reporting)
+
 ## 0.64.0
 
 ### Improved
@@ -31,8 +43,6 @@
 - **Picker `comments` tab avoids redundant forge fetches**: The picker's `comments` preview tab gained an on-disk cache keyed by the PR's `updatedAt` (which rides for free on the CI fetch the picker already makes), so a repeat `wt switch` skips the per-row `gh pr view --json comments` fetch when the thread is unchanged and paints the tab instantly instead of showing "Loading comments…". The cache is also primed from the `gh pr list` call the picker already makes, so the tab skips its own fetch even on a session's first open (including PRs with no comments). GitHub only. ([#3294](https://github.com/max-sixty/worktrunk/pull/3294), [#3299](https://github.com/max-sixty/worktrunk/pull/3299))
 
 - **Statusline width comes from `COLUMNS`, not a parent-process walk**: `wt list statusline` used to spawn up to 10 `ps` calls plus `stty` per render to recover a terminal width, because Claude Code piped the subprocess with no inherited TTY. Claude Code now sets `COLUMNS`/`LINES` to the terminal dimensions before running the script (since v2.1.153), so the width comes straight from there — less a fixed 5-column margin for Claude Code's own UI — and the `ps`/`stty` walk is gone. On an older Claude Code that doesn't set `COLUMNS`, the line renders untruncated rather than walking the process tree. ([#3286](https://github.com/max-sixty/worktrunk/pull/3286), closes [#2950](https://github.com/max-sixty/worktrunk/issues/2950))
-
-- **`-vv` diagnostics consolidate on `diagnostic.md`, led by the performance profile**: A `-vv` run now opens with a one-line pointer to the log directory (`○ Verbose logging to .git/wt/logs/`) and closes by naming what it captured — `○ Logs, performance profile, and diagnostics saved @ diagnostic.md` — with the raw `trace.jsonl` / `subprocess.log` companions listed beneath and the `gh gist create` bug-report hint. `diagnostic.md` now leads with the performance profile, expanded by default and promoted above the environment / worktree / config dumps; that profile reports the 20 slowest calls (was 8) and 10 same-context redundant-command offenders (was 3). There is no standalone `profile.txt` — the profile lives in the bundle, and `wt config state logs profile` re-renders it live from `trace.jsonl`. ([#3329](https://github.com/max-sixty/worktrunk/pull/3329))
 
 ### Fixed
 
