@@ -494,6 +494,7 @@ impl AltXRemover {
         let items = Arc::clone(&self.items);
         let render_tx = Arc::clone(&self.render_tx);
         let stashed_warnings = Arc::clone(&self.stashed_warnings);
+        let header_flash = Arc::clone(&self.header_flash);
         let _ = std::thread::Builder::new()
             .name(format!("picker-remove-{selected_output}"))
             .spawn(move || {
@@ -508,45 +509,27 @@ impl AltXRemover {
                 {
                     restore_failed_removal(
                         &items,
+                        &header_flash,
                         &render_tx,
                         &stashed_warnings,
-                        item,
-                        pos,
-                        &removal_label,
-                        removal_noun,
+                        DroppedRow {
+                            item,
+                            pos,
+                            label: removal_label,
+                            noun: removal_noun,
+                        },
                     );
                 }
             });
     }
 
-    /// Flash a one-line message in the header for a beat, then restore the column
-    /// labels. The slot is shared with the header item (see [`items::HeaderFlash`]),
-    /// so this sets it, repaints, and spawns a short-lived timer that clears it and
-    /// repaints again. The timer's `clear_if_current` is generation-guarded, so a
-    /// second flash arriving mid-beat replaces this one and isn't wiped early by
-    /// this timer.
-    ///
-    /// A no-op until skim's `render_tx` is published — but `alt-x` can only fire
-    /// once the TUI is showing rows, so it's always live by the time a keep path
-    /// calls this.
+    /// Flash a one-line message in the header for a beat (see the free
+    /// [`flash_header`] for the mechanism and generation guard). The synchronous
+    /// keep/reject paths (on skim's event loop) reach it through this method; the
+    /// background failure paths ([`restore_failed_removal`], [`revert_morph`]) call
+    /// the free function directly, off the event loop.
     fn flash_header(&self, message: String) {
-        let Some(tx) = self.render_tx.get() else {
-            return;
-        };
-        let generation = self.header_flash.set(message);
-        let _ = tx.try_send(Event::Render);
-
-        let header_flash = Arc::clone(&self.header_flash);
-        let render_tx = Arc::clone(&self.render_tx);
-        let _ = std::thread::Builder::new()
-            .name("picker-header-flash".into())
-            .spawn(move || {
-                std::thread::sleep(HEADER_FLASH_DURATION);
-                header_flash.clear_if_current(generation);
-                if let Some(tx) = render_tx.get() {
-                    let _ = tx.try_send(Event::Render);
-                }
-            });
+        flash_header(&self.header_flash, &self.render_tx, message);
     }
 
     /// Keep the selected row in place and explain why its target wasn't removed.
@@ -680,6 +663,7 @@ impl AltXRemover {
         let render_tx = Arc::clone(&self.render_tx);
         let stashed_warnings = Arc::clone(&self.stashed_warnings);
         let shortcut_table = Arc::clone(&self.shortcut_table);
+        let header_flash = Arc::clone(&self.header_flash);
         let revert = MorphRevert {
             rendered: slots.rendered,
             original_rendered,
@@ -699,7 +683,7 @@ impl AltXRemover {
                 // Only the worktree removal can realistically fail here; if it did,
                 // the worktree dir survives — undo the morph and say so.
                 if removal_target_still_present(&repo, &result) {
-                    revert_morph(revert, &stashed_warnings, &render_tx);
+                    revert_morph(revert, &header_flash, &stashed_warnings, &render_tx);
                 }
             });
 
@@ -785,6 +769,44 @@ impl AltXRemover {
     }
 }
 
+/// Flash a one-line message in the header for a beat, then clear it so the column
+/// labels return. The slot is shared with the header item (see [`items::HeaderFlash`]),
+/// so this sets it, repaints, and spawns a short-lived timer that clears it and
+/// repaints again. The timer's `clear_if_current` is generation-guarded, so a second
+/// flash arriving mid-beat replaces this one and isn't wiped early by this timer.
+///
+/// A no-op until skim's `render_tx` is published — but `alt-x` can only fire once the
+/// TUI is showing rows, so it's always live by the time a flash path calls this.
+///
+/// Every alt-x "couldn't remove" reason reaches the header through here, so the
+/// message surfaces immediately rather than only when the stash drains on exit:
+/// [`AltXRemover::flash_header`] (the synchronous keep/reject paths, on skim's event
+/// loop) and the background failure paths ([`restore_failed_removal`],
+/// [`revert_morph`], off the event loop) share this one mechanism.
+fn flash_header(
+    header_flash: &Arc<items::HeaderFlash>,
+    render_tx: &Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
+    message: String,
+) {
+    let Some(tx) = render_tx.get() else {
+        return;
+    };
+    let generation = header_flash.set(message);
+    let _ = tx.try_send(Event::Render);
+
+    let header_flash = Arc::clone(header_flash);
+    let render_tx = Arc::clone(render_tx);
+    let _ = std::thread::Builder::new()
+        .name("picker-header-flash".into())
+        .spawn(move || {
+            std::thread::sleep(HEADER_FLASH_DURATION);
+            header_flash.clear_if_current(generation);
+            if let Some(tx) = render_tx.get() {
+                let _ = tx.try_send(Event::Render);
+            }
+        });
+}
+
 /// The row's shared display slots plus the pre-rendered branch line a morph
 /// swaps in (see [`AltXRemover::morph_and_remove_in_background`]).
 struct MorphSlots {
@@ -848,13 +870,15 @@ fn build_morph_branch_row(
 /// [`morphed`](items::LocalCheckout::morphed) flag (so `output()` is the
 /// worktree token again), restore the diff-content slot, and move the
 /// `alt-y`/`alt-o` shortcut entry back to the worktree token. The row never left
-/// its slot, so a plain `Event::Render` repaints it — no reload, no cursor move
+/// its slot, so [`flash_header`]'s repaint re-shows it — no reload, no cursor move
 /// (unlike [`restore_failed_removal`], which re-inserts a dropped row). The
-/// `kept … could not remove it` warning drains to stderr when the picker exits.
+/// `kept … could not remove it` reason lands twice: flashed in the header now, and
+/// drained to stderr when the picker exits.
 fn revert_morph(
     revert: MorphRevert,
+    header_flash: &Arc<items::HeaderFlash>,
     stashed_warnings: &Mutex<Vec<String>>,
-    render_tx: &OnceLock<tokio::sync::mpsc::Sender<Event>>,
+    render_tx: &Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
 ) {
     let MorphRevert {
         rendered,
@@ -877,16 +901,19 @@ fn revert_morph(
         }
     }
 
-    stashed_warnings.lock().unwrap().push(
-        warning_message(cformat!(
-            "Kept <bold>{branch_token}</> worktree — could not remove it"
-        ))
-        .to_string(),
-    );
-
-    if let Some(tx) = render_tx.get() {
-        let _ = tx.try_send(Event::Render);
-    }
+    // Surface the "couldn't remove" reason two ways, like the drop path
+    // ([`restore_failed_removal`]): flash it in the header now (the row un-morphed
+    // under the cursor, so the *why* lands where the user is looking) and stash the
+    // same line to drain to stderr on exit. A genuine failure — the removal was
+    // attempted and the worktree survived — so warning (▲), not the keep paths'
+    // by-design info (○). `flash_header`'s repaint also re-shows the reverted row,
+    // so no separate `Event::Render` is needed.
+    let warning = warning_message(cformat!(
+        "Kept <bold>{branch_token}</> worktree — could not remove it"
+    ))
+    .to_string();
+    flash_header(header_flash, render_tx, warning.clone());
+    stashed_warnings.lock().unwrap().push(warning);
 }
 
 /// Number of leading non-selectable header rows the picker streams (the single
@@ -1163,6 +1190,18 @@ fn stash_current_worktree_hint(stashed: &Mutex<Vec<String>>) {
     }
 }
 
+/// The optimistically-dropped row [`restore_failed_removal`] puts back, plus the
+/// display subject (`label` + `noun`, from [`removal_failure_subject`]) for its
+/// `kept … could not remove it` message.
+struct DroppedRow {
+    item: Arc<dyn SkimItem>,
+    /// The row's slot before it was dropped (clamped on re-insert if the list
+    /// shrank in the meantime).
+    pos: usize,
+    label: String,
+    noun: &'static str,
+}
+
 /// Put a row back after its background removal didn't happen, closing the alt-x
 /// loop so the list never shows a removal that didn't occur.
 ///
@@ -1173,10 +1212,10 @@ fn stash_current_worktree_hint(stashed: &Mutex<Vec<String>>) {
 /// from integrated to unmerged — see [`removal_target_still_present`]; the
 /// predictably-kept unmerged branch is filtered earlier by
 /// [`removal_will_remove_target`]), the row must reappear. This re-inserts it into
-/// `shared_items` at its original slot, stashes a `kept` warning (drained to
-/// stderr once skim releases the terminal; the full error, if any, is in the
-/// `tracing::warn!` the caller emits), then queues a [`resync_pool_action`] to
-/// re-show it.
+/// `shared_items` at its original slot, flashes the `kept` reason in the header and
+/// stashes the same line (drained to stderr once skim releases the terminal; the
+/// full error, if any, is in the `tracing::warn!` the caller emits), then queues a
+/// [`resync_pool_action`] to re-show it.
 ///
 /// Re-inserting at the removed row's old slot lands the cursor back on the row for
 /// free: the drop slid the successor up into that slot under the cursor, so the
@@ -1185,32 +1224,41 @@ fn stash_current_worktree_hint(stashed: &Mutex<Vec<String>>) {
 /// touch `App` directly — the queued action does the [`resync_pool`] on the loop.
 fn restore_failed_removal(
     items: &Arc<Mutex<Vec<Arc<dyn SkimItem>>>>,
+    header_flash: &Arc<items::HeaderFlash>,
     render_tx: &Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
     stashed_warnings: &Arc<Mutex<Vec<String>>>,
-    removed_item: Arc<dyn SkimItem>,
-    removed_pos: usize,
-    label: &str,
-    noun: &str,
+    dropped: DroppedRow,
 ) {
+    let DroppedRow {
+        item,
+        pos,
+        label,
+        noun,
+    } = dropped;
     {
         let mut items = items.lock().unwrap();
-        let token = removed_item.output().into_owned();
+        let token = item.output().into_owned();
         // A concurrent restore (rapid alt-x on the same row) may have already
         // put it back; don't duplicate it.
-        if items.iter().any(|item| item.output().as_ref() == token) {
+        if items.iter().any(|it| it.output().as_ref() == token) {
             return;
         }
         // Another removal may have shrunk the list since the drop; clamp.
-        let insert_at = removed_pos.min(items.len());
-        items.insert(insert_at, removed_item);
+        let insert_at = pos.min(items.len());
+        items.insert(insert_at, item);
     }
 
-    stashed_warnings.lock().unwrap().push(
-        warning_message(cformat!(
-            "Kept <bold>{label}</> {noun} — could not remove it"
-        ))
-        .to_string(),
-    );
+    // Surface the "couldn't remove" reason two ways, like the morph revert
+    // ([`revert_morph`]): flash it in the header now (the row is back under the
+    // cursor, so the *why* lands where the user is looking) and stash the same line
+    // to drain to stderr on exit. A genuine failure — the removal was attempted and
+    // the target survived — so warning (▲), not the keep paths' by-design info (○).
+    let warning = warning_message(cformat!(
+        "Kept <bold>{label}</> {noun} — could not remove it"
+    ))
+    .to_string();
+    flash_header(header_flash, render_tx, warning.clone());
+    stashed_warnings.lock().unwrap().push(warning);
 
     let Some(event_tx) = render_tx.get() else {
         return;
@@ -3304,15 +3352,19 @@ pub mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::channel(8);
         render_tx.set(tx).unwrap();
         let stashed = Arc::new(Mutex::new(Vec::new()));
+        let header_flash = Arc::new(super::items::HeaderFlash::default());
 
         super::restore_failed_removal(
             &items,
+            &header_flash,
             &render_tx,
             &stashed,
-            branch_only_picker_item("dropped-b"),
-            2,
-            "dropped-b",
-            "worktree",
+            super::DroppedRow {
+                item: branch_only_picker_item("dropped-b"),
+                pos: 2,
+                label: "dropped-b".to_string(),
+                noun: "worktree",
+            },
         );
 
         let outputs: Vec<String> = items
@@ -3333,7 +3385,21 @@ pub mod tests {
             "warning names the kept worktree: {}",
             warnings[0]
         );
-        // The restore re-shows the row by queuing a pool-resync Custom action.
+        // The same `could not remove` reason flashes in the header, styled as a
+        // warning (▲) — a genuine failure, not the keep paths' by-design info (○).
+        let flash = header_flash.current();
+        assert!(
+            flash.as_deref().is_some_and(|f| {
+                f.contains('▲') && f.contains("dropped-b") && f.contains("could not remove")
+            }),
+            "the failed removal flashes the reason in the header: {flash:?}"
+        );
+        // The flash queues a repaint first, then the restore re-shows the row by
+        // queuing a pool-resync Custom action.
+        assert!(
+            matches!(rx.try_recv(), Ok(skim::prelude::Event::Render)),
+            "the flash queues a repaint"
+        );
         assert!(
             matches!(rx.try_recv(), Ok(skim::prelude::Event::Action(_))),
             "restore queues a resync action when the sender is live"
@@ -3348,13 +3414,119 @@ pub mod tests {
         let items = Arc::new(Mutex::new(vec![Arc::clone(&row)]));
         let render_tx = Arc::new(OnceLock::new());
         let stashed = Arc::new(Mutex::new(Vec::new()));
+        let header_flash = Arc::new(super::items::HeaderFlash::default());
 
-        super::restore_failed_removal(&items, &render_tx, &stashed, row, 0, "present", "worktree");
+        super::restore_failed_removal(
+            &items,
+            &header_flash,
+            &render_tx,
+            &stashed,
+            super::DroppedRow {
+                item: row,
+                pos: 0,
+                label: "present".to_string(),
+                noun: "worktree",
+            },
+        );
 
         assert_eq!(items.lock().unwrap().len(), 1, "no duplicate inserted");
         assert!(
             stashed.lock().unwrap().is_empty(),
             "no warning when there's nothing to restore"
+        );
+        assert!(
+            header_flash.current().is_none(),
+            "the already-present early return skips the flash too"
+        );
+    }
+
+    /// `revert_morph` undoes an optimistic morph after the worktree removal failed:
+    /// it restores the row's pre-morph display, clears the `morphed` flag, moves the
+    /// shortcut entry back to the worktree token, stashes a `kept … could not remove`
+    /// warning, and flashes the same reason in the header. The in-place-morph mirror
+    /// of `restore_failed_removal`.
+    #[test]
+    fn test_revert_morph_restores_row_and_flashes() {
+        let rendered = Arc::new(Mutex::new("/ feature".to_string()));
+        let morphed = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let local_content = Arc::new(Mutex::new(LocalContent::default()));
+
+        // A shortcut entry keyed under the branch token, as the morph left it, so the
+        // revert can move it back to the worktree token.
+        let mut table_map = std::collections::HashMap::new();
+        table_map.insert(
+            "feature".to_string(),
+            super::items::RowShortcutData {
+                branch: Some("feature".to_string()),
+                url: super::items::RowUrl::Static(None),
+                morph: None,
+            },
+        );
+        let shortcut_table = Arc::new(Mutex::new(table_map));
+
+        let revert = super::MorphRevert {
+            rendered: Arc::clone(&rendered),
+            original_rendered: "+ feature".to_string(),
+            morphed: Arc::clone(&morphed),
+            local_content: Arc::clone(&local_content),
+            original_local: LocalContent::default(),
+            shortcut_table: Arc::clone(&shortcut_table),
+            branch_token: "feature".to_string(),
+            worktree_token: "worktree-path:/tmp/wt-feature".to_string(),
+        };
+
+        // A live sender so `flash_header` sets the flash rather than early-returning.
+        let render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<skim::prelude::Event>>> =
+            Arc::new(OnceLock::new());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        render_tx.set(tx).unwrap();
+        let header_flash = Arc::new(super::items::HeaderFlash::default());
+        let stashed = Arc::new(Mutex::new(Vec::new()));
+
+        super::revert_morph(revert, &header_flash, &stashed, &render_tx);
+
+        // The row un-morphs in place: pre-morph line restored, flag cleared.
+        assert_eq!(
+            *rendered.lock().unwrap(),
+            "+ feature",
+            "the pre-morph display line is restored"
+        );
+        assert!(
+            !morphed.load(std::sync::atomic::Ordering::Relaxed),
+            "the morphed flag is cleared"
+        );
+        // The shortcut entry moves back from the branch token to the worktree token.
+        {
+            let table = shortcut_table.lock().unwrap();
+            assert!(
+                table.contains_key("worktree-path:/tmp/wt-feature")
+                    && !table.contains_key("feature"),
+                "the shortcut entry is re-keyed to the worktree token"
+            );
+        }
+        // The `could not remove` reason is stashed (drains to stderr on exit)...
+        {
+            let warnings = stashed.lock().unwrap();
+            assert_eq!(warnings.len(), 1, "one warning stashed");
+            assert!(
+                warnings[0].contains("feature") && warnings[0].contains("could not remove"),
+                "warning names the kept worktree: {}",
+                warnings[0]
+            );
+        }
+        // ...and flashes in the header now, styled as a warning (▲), not the keep
+        // paths' by-design info (○).
+        let flash = header_flash.current();
+        assert!(
+            flash.as_deref().is_some_and(|f| {
+                f.contains('▲') && f.contains("feature") && f.contains("could not remove")
+            }),
+            "the revert flashes the reason in the header: {flash:?}"
+        );
+        // `flash_header`'s repaint (which also re-shows the reverted row) is queued.
+        assert!(
+            matches!(rx.try_recv(), Ok(skim::prelude::Event::Render)),
+            "the revert queues a repaint"
         );
     }
 
