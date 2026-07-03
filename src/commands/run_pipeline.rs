@@ -23,11 +23,13 @@
 //! **Serial steps** run one at a time. If a step exits non-zero, the
 //! pipeline aborts — later steps don't run.
 //!
-//! **Concurrent groups** spawn all children at once, then wait for every
-//! child before proceeding. If any child fails, the group is reported as
-//! failed, but all children are allowed to finish. Template expansion for
-//! concurrent commands happens sequentially before any child is spawned
-//! (expansion may read git config, so order matters for `vars.*`).
+//! **Concurrent groups** spawn each child as soon as its own template is
+//! expanded, then wait for every child before proceeding. If any child fails,
+//! the group is reported as failed, but all children are allowed to finish.
+//! Expansion runs in a single sequential loop in command order — each command
+//! is expanded immediately before its own child is spawned (expansion may read
+//! git config, so order matters for `vars.*`), so a later command's expansion
+//! can run after an earlier command's child has already started.
 //!
 //! **Stdin**: every child receives the spec's context as JSON on stdin,
 //! matching the foreground hook convention. Commands that don't read stdin
