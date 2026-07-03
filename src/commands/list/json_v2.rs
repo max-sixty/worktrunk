@@ -685,11 +685,24 @@ fn pr_and_checks(
     status: &PrStatus,
     provider_override: Option<&str>,
 ) -> (Tri<JsonPr>, Tri<JsonChecks>) {
-    // A fetch error means we know neither whether a PR exists nor what the
-    // pipeline did.
-    if status.ci_status == CiStatus::Error {
-        return (Tri::Unknown, Tri::Unknown);
-    }
+    let checks = match status.ci_status {
+        // A fetch error means we know neither whether a PR exists nor what
+        // the pipeline did.
+        CiStatus::Error => return (Tri::Unknown, Tri::Unknown),
+        CiStatus::NoCI => Tri::Absent,
+        CiStatus::Conflicts => Tri::Known(JsonChecks {
+            // The fetch discards the pipeline outcome when the forge
+            // reports conflicts (see `pr.mergeable`).
+            status: None,
+            source: status.source,
+            stale: status.is_stale,
+        }),
+        CiStatus::Passed | CiStatus::Running | CiStatus::Failed => Tri::Known(JsonChecks {
+            status: Some(status.ci_status.into()),
+            source: status.source,
+            stale: status.is_stale,
+        }),
+    };
 
     let pr = if status.source == CiSource::PullRequest {
         let repo = pr_target_repo(status.url.as_deref(), provider_override);
@@ -704,23 +717,6 @@ fn pr_and_checks(
         })
     } else {
         Tri::Absent
-    };
-
-    let checks = match status.ci_status {
-        CiStatus::NoCI => Tri::Absent,
-        CiStatus::Error => unreachable!("handled above"),
-        CiStatus::Conflicts => Tri::Known(JsonChecks {
-            // The fetch discards the pipeline outcome when the forge
-            // reports conflicts (see `pr.mergeable`).
-            status: None,
-            source: status.source,
-            stale: status.is_stale,
-        }),
-        CiStatus::Passed | CiStatus::Running | CiStatus::Failed => Tri::Known(JsonChecks {
-            status: Some(status.ci_status.into()),
-            source: status.source,
-            stale: status.is_stale,
-        }),
     };
 
     (pr, checks)
@@ -860,22 +856,24 @@ mod tests {
             ..pr_status(CiStatus::Passed, CiSource::PullRequest)
         };
         let (pr, checks) = pr_and_checks(&status, None);
-        let pr = match pr {
-            Tri::Known(pr) => pr,
-            other => panic!("expected Known, got {other:?}"),
-        };
-        assert_eq!(pr.number, Some(7));
-        assert_eq!(pr.mergeable, None);
         assert_eq!(
-            pr.repo.as_ref().map(|r| r.url.as_str()),
-            Some("https://github.com/org/repo")
+            pr,
+            Tri::Known(JsonPr {
+                number: Some(7),
+                url: Some("https://github.com/org/repo/pull/7".to_string()),
+                review: Some(ReviewState::Approved),
+                mergeable: None,
+                repo: pr_target_repo(Some("https://github.com/org/repo/pull/7"), None),
+            })
         );
-        let checks = match checks {
-            Tri::Known(c) => c,
-            other => panic!("expected Known, got {other:?}"),
-        };
-        assert_eq!(checks.status, Some("passed"));
-        assert!(checks.stale);
+        assert_eq!(
+            checks,
+            Tri::Known(JsonChecks {
+                status: Some("passed"),
+                source: CiSource::PullRequest,
+                stale: true,
+            })
+        );
     }
 
     #[test]
@@ -885,14 +883,25 @@ mod tests {
             ..pr_status(CiStatus::Conflicts, CiSource::PullRequest)
         };
         let (pr, checks) = pr_and_checks(&status, None);
-        let Tri::Known(pr) = pr else {
-            panic!("expected Known pr");
-        };
-        assert_eq!(pr.mergeable, Some(false));
-        let Tri::Known(checks) = checks else {
-            panic!("expected Known checks");
-        };
-        assert_eq!(checks.status, None, "conflicts masks the pipeline outcome");
+        assert_eq!(
+            pr,
+            Tri::Known(JsonPr {
+                number: Some(9),
+                url: None,
+                review: None,
+                mergeable: Some(false),
+                repo: None,
+            })
+        );
+        // Conflicts masks the pipeline outcome.
+        assert_eq!(
+            checks,
+            Tri::Known(JsonChecks {
+                status: None,
+                source: CiSource::PullRequest,
+                stale: false,
+            })
+        );
     }
 
     #[test]
@@ -908,11 +917,14 @@ mod tests {
         let status = pr_status(CiStatus::Failed, CiSource::Branch);
         let (pr, checks) = pr_and_checks(&status, None);
         assert!(pr.is_absent());
-        let Tri::Known(checks) = checks else {
-            panic!("expected Known checks");
-        };
-        assert_eq!(checks.status, Some("failed"));
-        assert_eq!(checks.source, CiSource::Branch);
+        assert_eq!(
+            checks,
+            Tri::Known(JsonChecks {
+                status: Some("failed"),
+                source: CiSource::Branch,
+                stale: false,
+            })
+        );
     }
 
     #[test]
@@ -1085,6 +1097,147 @@ mod tests {
         item.upstream = Some(UpstreamStatus::default());
         let json = to_value(&convert(&item, Collected::default()));
         assert!(json.get("upstream").is_none());
+    }
+
+    fn worktree_item(branch: &str, data: WorktreeData) -> ListItem {
+        let mut item = item_with(branch);
+        item.kind = ItemKind::Worktree(Box::new(data));
+        item
+    }
+
+    /// The derived schema must generate cleanly — `Tri<T>`'s JsonSchema
+    /// delegation to `Option<T>` is only exercised here until the schema
+    /// export ships.
+    #[test]
+    fn test_schema_generates() {
+        let schema = schemars::schema_for!(JsonEnvelope);
+        let json = serde_json::to_value(&schema).unwrap();
+        assert!(json["properties"]["items"].is_object());
+    }
+
+    #[test]
+    fn test_integration_reason_str_covers_every_reason() {
+        let cases = [
+            (IntegrationReason::SameCommit, "same_commit"),
+            (IntegrationReason::Ancestor, "ancestor"),
+            (IntegrationReason::NoAddedChanges, "no_added_changes"),
+            (IntegrationReason::TreesMatch, "trees_match"),
+            (IntegrationReason::MergeAddsNothing, "merge_adds_nothing"),
+            (IntegrationReason::PatchIdMatch, "patch_id_match"),
+        ];
+        for (reason, expected) in cases {
+            assert_eq!(integration_reason_str(reason), expected);
+        }
+    }
+
+    #[test]
+    fn test_remote_row_without_slash_keeps_name() {
+        let mut item = item_with("weird");
+        item.kind = ItemKind::Branch(BranchScope::Remote);
+        let json = to_value(&convert(&item, Collected::default()));
+        assert_eq!(json["branch"], "weird");
+        assert!(json.get("remote").is_none());
+    }
+
+    #[test]
+    fn test_loaded_item_serializes_gated_families() {
+        // One item with every gated family loaded: PR + checks through the
+        // envelope path, dev server, and a produced summary.
+        let mut item = item_with("feature");
+        item.pr_status = Some(Some(PrStatus {
+            url: Some("https://github.com/org/repo/pull/7".to_string()),
+            number: Some(PrRef::pr(7)),
+            ..pr_status(CiStatus::Passed, CiSource::PullRequest)
+        }));
+        item.url = Some("http://127.0.0.1:3000".to_string());
+        item.url_active = Some(true);
+        item.summary = Some(Some("Adds the login page".to_string()));
+        let collected = Collected {
+            ci: true,
+            summary: true,
+        };
+        let json = to_value(&convert(&item, collected));
+        assert_eq!(json["pr"]["number"], 7);
+        assert_eq!(json["checks"]["status"], "passed");
+        assert_eq!(json["dev_server"]["url"], "http://127.0.0.1:3000");
+        assert_eq!(json["dev_server"]["listening"], true);
+        assert_eq!(json["summary"], "Adds the login page");
+    }
+
+    #[test]
+    fn test_summary_requested_arms() {
+        // Requested but pending → null; produced-nothing → absent.
+        let collected = Collected {
+            ci: false,
+            summary: true,
+        };
+        let json = to_value(&convert(&item_with("feature"), collected));
+        assert!(json.get("summary").is_some_and(|v| v.is_null()));
+
+        let mut item = item_with("feature");
+        item.summary = Some(None);
+        let json = to_value(&convert(&item, collected));
+        assert!(json.get("summary").is_none());
+    }
+
+    #[test]
+    fn test_operation_arms() {
+        let unresolved = worktree_item("feature", WorktreeData::default());
+        let json = to_value(&convert(&unresolved, Collected::default()));
+        assert!(
+            json["worktree"]
+                .get("operation")
+                .is_some_and(|v| v.is_null())
+        );
+
+        for (op, expected) in [
+            (ActiveGitOperation::Rebase, "rebase"),
+            (ActiveGitOperation::Merge, "merge"),
+        ] {
+            let item = worktree_item(
+                "feature",
+                WorktreeData {
+                    git_operation: Some(op),
+                    ..Default::default()
+                },
+            );
+            let json = to_value(&convert(&item, Collected::default()));
+            assert_eq!(json["worktree"]["operation"], expected);
+        }
+    }
+
+    #[test]
+    fn test_dirty_tree_conflict_probe_wins() {
+        let mut item = worktree_item(
+            "feature",
+            WorktreeData {
+                has_working_tree_conflicts: Some(Some(true)),
+                ..Default::default()
+            },
+        );
+        item.has_merge_tree_conflicts = Some(false);
+        let json = to_value(&convert(&item, Collected::default()));
+        assert_eq!(json["default_branch"]["merge_conflicts"], true);
+    }
+
+    #[test]
+    fn test_no_ci_checks_absent_pr_known() {
+        let status = PrStatus {
+            number: Some(PrRef::pr(4)),
+            ..pr_status(CiStatus::NoCI, CiSource::PullRequest)
+        };
+        let (pr, checks) = pr_and_checks(&status, None);
+        assert!(checks.is_absent(), "no CI configured is determined-empty");
+        assert_eq!(
+            pr,
+            Tri::Known(JsonPr {
+                number: Some(4),
+                url: None,
+                review: None,
+                mergeable: None,
+                repo: None,
+            })
+        );
     }
 
     #[test]
