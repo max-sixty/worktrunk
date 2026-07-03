@@ -1,10 +1,9 @@
 //! Schema-2 JSON output for `wt list --format=json` and
 //! `wt list statusline --format=json`.
 //!
-//! Design: `design/list-json-v2.md`. One envelope over per-item orthogonal
-//! facts, with presentation quarantined under `display`. Selected by
-//! `[list] json-schema = 2`; schema 1 is the bare-array format in
-//! [`super::json_output`].
+//! One envelope over per-item orthogonal facts, with presentation
+//! quarantined under `display`. Selected by `[list] json-schema = 2`;
+//! schema 1 is the bare-array format in [`super::json_output`].
 //!
 //! ## The absence rule
 //!

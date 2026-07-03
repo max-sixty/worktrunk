@@ -206,8 +206,7 @@ pub(crate) fn print_json<T: serde::Serialize>(value: &T) -> anyhow::Result<()> {
 /// Both messages honor warning suppression — on the statusline, stderr
 /// would corrupt the consumer's prompt, and the same user sees the nag on
 /// their next interactive run. The nag names both settings so the fix is
-/// copyable from the warning itself (see `design/list-json-v2.md`,
-/// Migration).
+/// copyable from the warning itself.
 pub(crate) fn resolve_json_schema(repo: &Repository) -> u8 {
     use std::sync::Once;
 
