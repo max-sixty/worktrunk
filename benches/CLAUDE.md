@@ -23,6 +23,10 @@ cargo bench --bench list
 cargo bench --bench time_to_first_output         # all commands
 cargo bench --bench time_to_first_output remove  # just remove
 
+# wt step prune (scan + removal on the squash-merged fixture)
+cargo bench --bench prune                        # all variants
+cargo bench --bench prune dry_run                # scan-only variants
+
 # Picker preview pre-compute (wt switch preview workload)
 cargo bench --bench picker_preview               # all variants
 cargo bench --bench picker_preview warm          # warm only
@@ -56,6 +60,12 @@ user-visible output would appear. Used by `time_to_first_output` benchmarks to m
 startup latency without output rendering or post-output work (mismatch warnings, hooks).
 
 Supported commands: `switch`, `remove`, `list`.
+
+`wt step prune` deliberately has no `WORKTRUNK_FIRST_OUTPUT` hook: its first
+output is data-dependent (the dry-run path collects and sorts every check
+result before printing anything, so e2e ≈ time-to-first-output already; the
+live path streams whichever check lands first). Use `benches/prune.rs` for
+cadence-tracked numbers and the `prune-*` spans (below) for phase attribution.
 
 ## WORKTRUNK_PREVIEW_BENCH
 
@@ -119,6 +129,7 @@ setup).
 |---------|------------|-------|
 | `wt list` | Yes | Post-skeleton tasks. Exits early under `WORKTRUNK_SKELETON_ONLY=1` / `WORKTRUNK_FIRST_OUTPUT=1` — those skip the writing phase. |
 | `wt remove` | Yes | `prepare_worktree_removal` → `compute_integration_lazy` writes `is-ancestor` / `has-added-changes` / `merge-add-probe` whenever `BranchDeletionMode` is not `ForceDelete` (CLI `--force` is `force_worktree`, not `--force-delete`). |
+| `wt step prune` | Yes | Every scanned worktree/branch runs `integration_reason` → the same probe writes as `wt remove`. First scan after new commits is cold; re-runs are warm (`prune_e2e/dry_run_cold` vs `dry_run_warm`). |
 | `wt switch <branch>` | No | No sha_cache writers on the direct-switch path. |
 | `wt switch` (picker) | Yes | Preview pre-compute writes `picker-preview/{log,branch-diff,upstream-diff}-…` entries. Exercised under `WORKTRUNK_PREVIEW_BENCH=1` / `WORKTRUNK_PICKER_DRY_RUN=1`. |
 | `wt` (completion via `COMPLETE=$SHELL`) | No | Only `for-each-ref` + worktree list. |
@@ -146,6 +157,63 @@ worth measuring at CI cadence.
 - Cold cache penalty: ~4x slower for single worktree
 - Scaling: Warm cache shows superlinear degradation, cold cache scales better
 
+## Recording `wt remove` / `wt step prune` staging
+
+The removal commands interleave serial per-target work with parallel scans and
+detached background processes; a single e2e number hides which phase moved.
+Record them in two layers:
+
+**Criterion cadence** — `benches/remove.rs` and `benches/prune.rs`. Expected
+numbers on an M-series Mac (`prune-4-8` fixture: 4 squash-merged worktrees +
+4 squash-merged branches as candidates, 8 unmerged worktrees + 8 unmerged
+branches as backdrop, 200 commits, 100 files):
+
+| Variant | Expected | What it measures |
+|---------|----------|------------------|
+| `prune_e2e/dry_run_cold` | ~153 ms | full parallel scan, integration probes uncached |
+| `prune_e2e/dry_run_warm` | ~87 ms | steady-state re-scan, probes hit sha_cache |
+| `prune_e2e/live` | ~670 ms | cold scan + serial removal of the 8 candidates (~60 ms each, under the scan write lock) |
+| `remove_e2e/first_output` | ~86 ms | single-target validation up to first output |
+
+Cold prune benches pair `invalidate_caches_auto` with `restore_worktree_indexes`:
+deleting a worktree's index makes `git status` report every tracked file as a
+staged deletion, which flips prune's clean-worktree removability gate and
+silently drops all worktree candidates from the run. The dry-run variants
+assert the listed candidate count so that degradation can't come back
+unnoticed.
+
+**Phase attribution** — `wt-perf timeline` plus the removal spans. Prune emits
+`prune-gather` (worktree+branch enumeration), `prune-scan` (the whole parallel
+check region), one `prune-check:<ref>` per scanned item, and one
+`prune-remove:<label>` per removed candidate; `wt remove` emits
+`internal-sweep` around its end-of-command janitor. The `prune-remove` spans
+sit *inside* the `prune-scan` window on the live path — each removal takes the
+scan lock's write side, so a span covers the wait for in-flight checks to
+drain *plus* the removal itself: read it as "how long this removal stalled the
+run", not as pure removal work.
+
+```bash
+cargo run -p wt-perf -- setup prune-4-8 --path /tmp/prune-repo --persist
+# A freshly built fixture is already probe-cold (empty sha_cache); don't use
+# `timeline --cold` here — it deletes worktree indexes, which flips prune's
+# clean-worktree gate and drops the worktree candidates from the run.
+cargo run -p wt-perf -- timeline -- -C /tmp/prune-repo step prune --dry-run --min-age 0s
+cargo run -p wt-perf -- timeline -- -C /tmp/prune-repo step prune --min-age 0s
+```
+
+**The `wt remove` exit-delay is machine-dependent and invisible to benches.**
+After its last message, `wt remove` runs an in-process sweep
+(`run_internal_sweep`) that enumerates `git fsmonitor--daemon` processes
+*machine-wide* and resolves each one's socket with a ~50 ms `lsof` call —
+sequential, before exit, while the shell wrapper waits on the process. On a
+machine with N live daemons that appends roughly `N × 50 ms` of post-output
+latency (measured: 115 daemons → 5.8 s after 0.4 s of actual removal output);
+on daemon-free bench/CI machines it costs nothing, so `remove_e2e` never sees
+it. To observe it, run `wt-perf timeline -- remove <branch>` on a real machine
+and read the `internal-sweep` span and its `lsof -a -p …` children; the
+`fsmonitor sweep: resolving sockets for N daemon(s)` debug line gives the
+count.
+
 ## Output Locations
 
 - Results: `target/criterion/`
@@ -168,6 +236,8 @@ cargo run -p wt-perf -- setup typical-8 --persist
 #   branches-N-M    - N branches, M commits each
 #   divergent       - 200 branches × 20 commits (GH #461 scenario)
 #   mixed-W-B       - W worktrees + B branches in varied states (the `full` fixture)
+#   prune-M-U       - M squash-merged candidates + U unmerged worktrees/branches
+#                     (the `wt step prune` workload; see benches/prune.rs)
 #   picker-test     - Config for wt switch interactive picker testing
 
 # Invalidate caches for cold run

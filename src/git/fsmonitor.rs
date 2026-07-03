@@ -307,6 +307,7 @@ impl ProcessSignaller for NixSignaller {
 fn enumerate_daemons() -> Vec<DaemonProcess> {
     use crate::shell_exec::Cmd;
 
+    let _span = crate::trace::Span::new("enumerate-fsmonitor-daemons");
     let timeout = std::time::Duration::from_secs(5);
 
     let Ok(output) = Cmd::new("pgrep")
@@ -324,6 +325,15 @@ fn enumerate_daemons() -> Vec<DaemonProcess> {
         .lines()
         .filter_map(|l| l.trim().parse::<u32>().ok())
         .collect();
+    // The per-PID `lsof` resolution below is the expensive part of the whole
+    // sweep (~50ms each on macOS), and it scales with the MACHINE-wide daemon
+    // count, not this repo — surface the count so a slow sweep is explainable
+    // from the trace.
+    tracing::debug!(
+        count = pids.len(),
+        "fsmonitor sweep: resolving sockets for {} daemon(s) via lsof",
+        pids.len()
+    );
 
     pids.into_iter()
         .filter_map(|pid| {

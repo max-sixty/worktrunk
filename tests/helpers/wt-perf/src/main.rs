@@ -10,7 +10,8 @@ use std::time::{Duration, Instant};
 use clap::{Parser, Subcommand};
 use worktrunk::trace::{TraceEntry, TraceEntryKind, TraceResult};
 use wt_perf::{
-    canonicalize, create_mixed_repo_at, create_repo_at, invalidate_caches_auto, parse_config,
+    canonicalize, create_mixed_repo_at, create_prune_repo_at, create_repo_at,
+    invalidate_caches_auto, parse_config,
 };
 
 #[derive(Parser)]
@@ -25,7 +26,7 @@ struct Cli {
 enum Commands {
     /// Set up a benchmark repository
     Setup {
-        /// Config name: typical-N, branches-N, branches-N-M, divergent, mixed-W-B, picker-test
+        /// Config name: typical-N, branches-N, branches-N-M, divergent, mixed-W-B, prune-M-U, picker-test
         config: String,
 
         /// Directory to create repo in (default: temp directory)
@@ -124,12 +125,12 @@ fn main() {
             path,
             persist,
         } => {
-            // `mixed-W-B`: W worktrees + B branches in varied states (warm
-            // re-run benchmark fixture); handled separately since it doesn't
-            // map onto the flat `RepoConfig`.
-            let mixed = parse_mixed(&config);
+            // `mixed-W-B` / `prune-M-U`: composite fixtures handled separately
+            // since they don't map onto the flat `RepoConfig`.
+            let mixed = parse_pair(&config, "mixed-");
+            let prune = parse_pair(&config, "prune-");
 
-            let repo_config = if mixed.is_some() {
+            let repo_config = if mixed.is_some() || prune.is_some() {
                 None
             } else {
                 Some(parse_config(&config).unwrap_or_else(|| {
@@ -143,6 +144,9 @@ fn main() {
                     eprintln!("  branches-N-M    - N branches with M commits each");
                     eprintln!("  divergent       - 200 branches × 20 commits (GH #461 scenario)");
                     eprintln!("  mixed-W-B       - W worktrees + B branches in varied states");
+                    eprintln!(
+                        "  prune-M-U       - M squash-merged candidates + U unmerged worktrees/branches (wt step prune workload)"
+                    );
                     eprintln!(
                         "  picker-test     - Config for wt switch interactive picker testing"
                     );
@@ -163,16 +167,20 @@ fn main() {
             };
 
             eprintln!("Creating {} repo...", config);
-            let (worktrees, branches) = match (mixed, &repo_config) {
-                (Some((w, b)), _) => {
+            let (worktrees, branches) = match (mixed, prune, &repo_config) {
+                (Some((w, b)), _, _) => {
                     create_mixed_repo_at(w, b, &base_path);
                     (w, b)
                 }
-                (None, Some(cfg)) => {
+                (None, Some((m, u)), _) => {
+                    create_prune_repo_at(m, u, &base_path);
+                    (m + u + 1, m + u)
+                }
+                (None, None, Some(cfg)) => {
                     create_repo_at(cfg, &base_path);
                     (cfg.worktrees, cfg.branches)
                 }
-                (None, None) => unreachable!("repo_config is Some when mixed is None"),
+                (None, None, None) => unreachable!("repo_config is Some when composites are None"),
             };
 
             let mut parts = vec![format!("main @ {}", base_path.display())];
@@ -243,11 +251,11 @@ fn main() {
     }
 }
 
-/// Parse a `mixed-W-B` config string into `(worktrees, branches)`.
-fn parse_mixed(config: &str) -> Option<(usize, usize)> {
-    let rest = config.strip_prefix("mixed-")?;
-    let (w, b) = rest.split_once('-')?;
-    Some((w.parse().ok()?, b.parse().ok()?))
+/// Parse a `<prefix>N-M` config string (e.g. `mixed-4-8`) into its two counts.
+fn parse_pair(config: &str, prefix: &str) -> Option<(usize, usize)> {
+    let rest = config.strip_prefix(prefix)?;
+    let (a, b) = rest.split_once('-')?;
+    Some((a.parse().ok()?, b.parse().ok()?))
 }
 
 /// Resolve the `wt` binary as a sibling of the current executable

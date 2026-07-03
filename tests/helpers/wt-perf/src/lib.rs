@@ -388,6 +388,35 @@ pub fn invalidate_caches_auto(repo_path: &Path) {
     }
 }
 
+/// Rebuild every worktree's index after [`invalidate_caches_auto`].
+///
+/// Deleting an index doesn't model a cold cache — git treats a missing index
+/// as empty, so `git status` reports every tracked file as a staged deletion.
+/// That is a *different repo state*, and it flips any clean-worktree gate:
+/// `wt step prune`'s removability check drops all worktree candidates against
+/// such a worktree. Benches that exercise those gates call this after
+/// invalidation; `git reset -q` rewrites the index from HEAD, leaving the
+/// integration probes cold but the working trees reading clean again.
+///
+/// This is deliberately NOT folded into `invalidate_caches_auto`: `git reset
+/// --mixed` discards staged-but-uncommitted index state, which the mixed
+/// fixture plants on purpose (worktree state 2) and which a real repo — the
+/// `wt-perf invalidate` / `timeline --cold` targets — may hold as the user's
+/// work in progress. Only pair it with fixtures whose dirt is untracked files.
+pub fn restore_worktree_indexes(repo_path: &Path) {
+    let output = git_command()
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "git worktree list failed");
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            run_git(Path::new(path), &["reset", "-q"]);
+        }
+    }
+}
+
 /// Resolve git's common directory for `repo_path` from the filesystem.
 ///
 /// - Normal repo: `<repo>/.git` is a directory — use it directly.
@@ -717,6 +746,117 @@ pub fn create_mixed_repo_at(worktrees: usize, branches: usize, repo: &Path) {
     }
 }
 
+/// Create a repo shaped like a `wt step prune` workload at `base_path`.
+///
+/// `wt step prune` integration-checks every linked worktree and local branch,
+/// then removes the integrated ones. Two populations drive its cost:
+///
+/// - **Candidates** (`merged` of each): squash-merged worktrees
+///   (`merged-wt-N`) and squash-merged orphan branches (`merged-br-N`). Each
+///   carries its own commits whose content also landed on main as a single
+///   squash commit, so it is integrated *by content* (the `merge-tree` probes),
+///   not by ancestry — the post-PR-squash shape prune typically removes.
+/// - **Backdrop** (`unmerged` of each): linked worktrees ahead of main with
+///   uncommitted files, and orphan branches with their own commits. Scanned on
+///   every run, never removed — the steady state that dominates scan cost.
+///
+/// The main history is mature (200 commits, 100 files) so `git status` and the
+/// integration probes pay realistic per-worktree costs.
+pub fn create_prune_repo_at(merged: usize, unmerged: usize, base_path: &Path) {
+    let config = RepoConfig {
+        commits_on_main: 200,
+        files: 100,
+        branches: unmerged,
+        commits_per_branch: 2,
+        worktrees: unmerged + 1,
+        worktree_commits_ahead: 5,
+        worktree_uncommitted_files: 2,
+    };
+    create_repo_at(&config, base_path);
+    add_squash_merged(base_path, merged, 0);
+    // The squash commits advanced main past the fake remote ref written by
+    // `create_repo_at`; refresh so origin/main tracks the final tip.
+    setup_fake_remote(base_path);
+}
+
+/// Add `count` squash-merged worktrees (`merged-wt-N`) and `count`
+/// squash-merged orphan branches (`merged-br-N`) to an existing repo.
+///
+/// Each branch gets its own commits, then main takes the same content as one
+/// `git merge --squash` commit — integrated by content, so `wt step prune`
+/// detects it via the merge-tree probes and removes it.
+///
+/// `round` uniquifies the committed file names. A live-prune benchmark removes
+/// these candidates every iteration and re-creates them with an incremented
+/// `round`; reusing a round's file names would make the squash merge empty
+/// (the content is already on main) and the `git commit` fail. Branch names
+/// intentionally do NOT carry the round: prune deletes them each iteration,
+/// and a name collision on re-creation fails loudly — surfacing a prune run
+/// that didn't remove what the benchmark expected.
+pub fn add_squash_merged(repo_path: &Path, count: usize, round: usize) {
+    let repo_name = repo_path.file_name().unwrap().to_str().unwrap();
+    let parent_dir = repo_path.parent().unwrap();
+
+    // Two commits in `dir`, each adding a round-uniquified file (the branch
+    // name already carries the candidate index).
+    let commit_branch_content = |dir: &Path, branch: &str| {
+        for j in 0..2 {
+            let file = dir.join(format!("{}_{round}_{j}.rs", branch.replace('-', "_")));
+            std::fs::write(&file, format!("// {branch} {round}/{j}\n")).unwrap();
+            run_git(dir, &["add", "."]);
+            run_git(
+                dir,
+                &[
+                    "commit",
+                    "-q",
+                    "-m",
+                    &format!("{branch} commit {j} (round {round})"),
+                ],
+            );
+        }
+    };
+    // Land the branch's content on main as a single squash commit.
+    let squash_into_main = |branch: &str| {
+        run_git(repo_path, &["merge", "--squash", "-q", branch]);
+        run_git(
+            repo_path,
+            &[
+                "commit",
+                "-q",
+                "-m",
+                &format!("Squash-merge {branch} (round {round})"),
+            ],
+        );
+    };
+
+    for i in 0..count {
+        let branch = format!("merged-wt-{i}");
+        let wt_path = parent_dir.join(format!("{repo_name}.{branch}"));
+        run_git(
+            repo_path,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                &branch,
+                wt_path.to_str().unwrap(),
+                "HEAD",
+            ],
+        );
+        commit_branch_content(&wt_path, &branch);
+        squash_into_main(&branch);
+    }
+
+    for i in 0..count {
+        let branch = format!("merged-br-{i}");
+        run_git(repo_path, &["checkout", "-q", "-b", &branch]);
+        commit_branch_content(repo_path, &branch);
+        run_git(repo_path, &["checkout", "-q", "main"]);
+        squash_into_main(&branch);
+    }
+}
+
 /// Canonicalize path without Windows `\\?\` prefix.
 pub fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
     dunce::canonicalize(path)
@@ -804,6 +944,61 @@ mod tests {
             String::from_utf8_lossy(&after.stderr)
         );
         assert_eq!(before.stdout, after.stdout);
+    }
+
+    /// The prune fixture's load-bearing property: a squash-merged branch is
+    /// integrated *by content* — `git merge-tree --write-tree main <branch>`
+    /// yields main's own tree (merging it adds nothing). That's exactly the
+    /// probe `wt step prune`'s integration check runs, so if this drifts, the
+    /// prune benchmark stops removing anything. Round 1 re-creation must keep
+    /// the property (unique file content per round).
+    #[test]
+    fn squash_merged_fixture_is_content_integrated() {
+        let temp = create_repo(&RepoConfig {
+            commits_on_main: 3,
+            files: 2,
+            branches: 0,
+            commits_per_branch: 0,
+            worktrees: 1,
+            worktree_commits_ahead: 0,
+            worktree_uncommitted_files: 0,
+        });
+        let repo_path = temp.path().join("repo");
+
+        for round in 0..2 {
+            add_squash_merged(&repo_path, 1, round);
+
+            let main_tree = git_command()
+                .args(["rev-parse", "main^{tree}"])
+                .current_dir(&repo_path)
+                .output()
+                .unwrap();
+            for branch in ["merged-wt-0", "merged-br-0"] {
+                let merged_tree = git_command()
+                    .args(["merge-tree", "--write-tree", "main", branch])
+                    .current_dir(&repo_path)
+                    .output()
+                    .unwrap();
+                assert!(
+                    merged_tree.status.success(),
+                    "merge-tree failed (round {round})"
+                );
+                assert_eq!(
+                    String::from_utf8_lossy(&merged_tree.stdout).trim(),
+                    String::from_utf8_lossy(&main_tree.stdout).trim(),
+                    "{branch} must merge into main without adding changes (round {round})"
+                );
+            }
+
+            // Simulate the live benchmark's per-iteration cleanup before the
+            // next round re-creates the candidates.
+            let wt_path = temp.path().join("repo.merged-wt-0");
+            run_git(
+                &repo_path,
+                &["worktree", "remove", "--force", wt_path.to_str().unwrap()],
+            );
+            run_git(&repo_path, &["branch", "-D", "merged-wt-0", "merged-br-0"]);
+        }
     }
 
     /// Regression: degenerate `count` values must not panic. `count == 0`

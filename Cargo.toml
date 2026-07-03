@@ -342,6 +342,10 @@ name = "remove"
 harness = false
 
 [[bench]]
+name = "prune"
+harness = false
+
+[[bench]]
 name = "picker_preview"
 harness = false
 
