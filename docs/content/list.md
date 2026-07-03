@@ -217,7 +217,84 @@ These appear across all columns while the table is loading:
 
 ## JSON output
 
-Query structured data with `--format=json`:
+`--format=json` emits structured data in one of two schemas while the format
+migrates: `[list] json-schema = 2` selects the envelope format below, `= 1`
+the original bare-array format. Unset emits schema 1 with a warning; a future
+release flips the default to schema 2 and later removes schema 1.
+
+### Schema 2
+
+One envelope object. Items carry independent facts; rendered strings
+(including the collapsed Status value) live under `display`:
+
+```json
+{
+  "schema": 2,
+  "repo": {
+    "default_branch": "main",
+    "forge": {"url": "https://github.com/org/repo", "provider": "github",
+              "host": "github.com", "owner": "org", "name": "repo", "remote": "origin"}
+  },
+  "collected": {"ci": false, "summary": false},
+  "items": [
+    {
+      "branch": "feature",
+      "head": {"sha": "05a4a45d…", "short_sha": "05a4a45", "subject": "Add login page",
+               "committed_at": "2025-01-01T08:00:00Z"},
+      "worktree": {"path": "/home/user/repo.feature", "main": false, "current": true,
+                   "previous": false, "detached": false, "branch_mismatch": false,
+                   "changes": {"staged": false, "modified": true, "untracked": false,
+                               "renamed": false, "deleted": false, "conflicted": false,
+                               "diff": {"added": 10, "deleted": 2}}},
+      "default_branch": {"ahead": 3, "behind": 1, "diff": {"added": 50, "deleted": 20},
+                         "orphan": false, "integration": null, "merge_conflicts": false},
+      "upstream": {"remote": "origin", "branch": "feature", "ahead": 0, "behind": 2},
+      "display": {"state": "diverged", "symbols": "!↕", "statusline": "feature …"}
+    }
+  ]
+}
+```
+
+How "no value" reads:
+
+- **Absent** — nothing to report: not applicable (`worktree` on a branch-only
+  row), not requested this run (the envelope's `collected` records what was),
+  or determined-empty (no PR, no lock, not integrated).
+- **`null`** — requested but not determined: a task timed out, the branch was
+  too stale for the expensive checks, or a forge fetch failed. This is the
+  JSON form of the table's `·` placeholder.
+
+jq treats absent and `null` identically in path expressions, so filters need
+no null checks; `has()` distinguishes the two when it matters.
+
+Item fields:
+
+| Field | Description |
+|-------|-------------|
+| `branch` | Branch name; null for a detached-HEAD worktree. Remote rows carry the bare name with the remote in `remote` |
+| `remote` | Remote name, present only on remote-only branch rows |
+| `head` | `{sha, short_sha, subject, committed_at}`; null for unborn branches. `committed_at` is RFC 3339 UTC |
+| `worktree` | `{path, main, current, previous, detached, locked, prunable, branch_mismatch, operation, changes}`; absent on branch-only rows. `locked`/`prunable` are `{reason}` objects and can co-occur; `operation` is `"rebase"` or `"merge"`; `changes` holds the five working-tree flags plus `conflicted` and `diff {added, deleted}` |
+| `default_branch` | Relation to the default branch: `{ahead, behind, diff, orphan, integration, merge_conflicts}`; absent on the default branch itself. `integration.reason` is one of `same_commit`, `ancestor`, `no_added_changes`, `trees_match`, `merge_adds_nothing`, `patch_id_match`; a dirty tree skips the checks, leaving `integration` null |
+| `upstream` | Tracking branch: `{remote, branch, ahead, behind}`; absent when none is configured |
+| `pr` | Open PR/MR: `{number, url, review, mergeable, repo}`; collected with `--full` or a listed `ci` column. `review` uses the schema 1 `ci.review_state` vocabulary; `mergeable` is false when the forge reports conflicts, null otherwise |
+| `checks` | CI pipeline: `{status, source, stale}`; `status` is `passed`, `running`, or `failed` — null when a conflicts report masks it |
+| `dev_server` | `{url, listening}` from the project's `list.url` template |
+| `summary` | LLM branch summary (requires `[list] summary = true`) |
+| `vars` | Per-branch variables from [`wt config state vars`](@/config.md#wt-config-state-vars) |
+| `display` | Rendered strings: `state` (schema 1's `main_state` vocabulary), `symbols`, `statusline` (with ANSI colors), `columns` (custom-column cells keyed by header) |
+
+Schema 1 names map directly: `commit` → `head`, `working_tree` →
+`worktree.changes`, `main` + `main_state` → `default_branch` +
+`display.state`, `remote` → `upstream`, `ci` → `pr` + `checks`, `url` +
+`url_active` → `dev_server`, `statusline`/`symbols`/`columns` → `display.*`,
+and the per-item `repo` moves to the envelope's `repo.forge`.
+
+{{ terminal(cmd="# Current worktree path (for scripts)|||wt list --format=json | jq -r '.items[] | select(.worktree.current) | .worktree.path'||||||# Branches with uncommitted changes|||wt list --format=json | jq '.items[] | select(.worktree.changes.modified)'||||||# Integrated branches (safe to remove)|||wt list --format=json | jq '.items[] | select(.display.state == __WT_QUOT__integrated__WT_QUOT__ or .display.state == __WT_QUOT__empty__WT_QUOT__) | .branch'||||||# Worktrees ahead of upstream (needs pushing)|||wt list --format=json | jq '.items[] | select(.upstream.ahead > 0) | .branch'") }}
+
+### Schema 1
+
+The original bare-array format, and the default while unset:
 
 {{ terminal(cmd="# Current worktree path (for scripts)|||wt list --format=json | jq -r '.[] | select(.is_current) | .path'||||||# Branches with uncommitted changes|||wt list --format=json | jq '.[] | select(.working_tree.modified)'||||||# Worktrees with merge conflicts|||wt list --format=json | jq '.[] | select(.operation_state == __WT_QUOT__conflicts__WT_QUOT__)'||||||# Branches ahead of main (needs merging)|||wt list --format=json | jq '.[] | select(.main.ahead > 0) | .branch'||||||# Integrated branches (safe to remove)|||wt list --format=json | jq '.[] | select(.main_state == __WT_QUOT__integrated__WT_QUOT__ or .main_state == __WT_QUOT__empty__WT_QUOT__) | .branch'||||||# Branches without worktrees|||wt list --format=json --branches | jq '.[] | select(.kind == __WT_QUOT__branch__WT_QUOT__) | .branch'||||||# Worktrees ahead of remote (needs pushing)|||wt list --format=json | jq '.[] | select(.remote.ahead > 0) | {branch, ahead: .remote.ahead}'||||||# Stale CI (local changes not reflected in CI)|||wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'") }}
 

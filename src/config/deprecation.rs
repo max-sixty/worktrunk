@@ -60,7 +60,10 @@ pub fn suppress_warnings() {
     let _ = SUPPRESS_WARNINGS.set(());
 }
 
-fn warnings_suppressed() -> bool {
+/// Whether [`suppress_warnings`] latched this process. Consulted by warning
+/// emitters outside this module (e.g. the `wt list` JSON schema nag) so
+/// suppressed surfaces like the statusline stay clean.
+pub fn warnings_suppressed() -> bool {
     SUPPRESS_WARNINGS.get().is_some()
 }
 

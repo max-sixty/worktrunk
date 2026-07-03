@@ -843,46 +843,16 @@ fn run_json() -> Result<()> {
 
     let repo = Repository::current().context("Not in a git repository")?;
 
-    // Verify we're in a worktree
-    if repo.worktree_at(&cwd).git_dir().is_err() {
-        // Not in a worktree - return empty array (consistent with wt list)
-        println!("[]");
-        return Ok(());
-    }
-
-    // Get current worktree info
-    // Use git rev-parse --show-toplevel (via current_worktree().root()) to correctly identify
-    // the worktree containing cwd, rather than prefix matching which fails for nested worktrees.
-    let worktrees = repo.list_worktrees()?;
-    let worktree_root = repo.current_worktree().root()?;
-    let current_worktree = worktrees.iter().find(|wt| {
-        canonicalize(&wt.path)
-            .map(|p| p == worktree_root)
-            .unwrap_or(false)
-    });
-
-    let Some(wt) = current_worktree else {
-        println!("[]");
-        return Ok(());
-    };
-
-    // Determine if this is the primary worktree
-    let is_home = repo
-        .primary_worktree()
-        .ok()
-        .flatten()
-        .is_some_and(|p| wt.path == p);
-
-    // Build item with identity fields
-    let mut item = list::build_worktree_item(wt, is_home, true, false);
-
-    // Load URL template from project config (if configured)
-    let url_template = repo.url_template();
+    // Warnings are suppressed on this surface, so an unset (or invalid) key
+    // resolves to schema 1 silently; the nag reaches the same user on their
+    // next interactive `wt list --format=json`.
+    let json_schema = list::resolve_json_schema(&repo);
 
     // The statusline renders the full column set condensed (status, diffs,
     // ahead/behind, upstream, CI, URL — see `format_statusline_segments`) but no
     // LLM summary, so its plan is every column's tasks under full gates: CI runs,
     // summary doesn't. URL is gated on a configured template like everywhere else.
+    let url_template = repo.url_template();
     let gates = list::columns::ColumnGates {
         show_full: true,
         summary_enabled: false,
@@ -897,6 +867,57 @@ fn run_json() -> Result<()> {
         include_untracked_in_working_diff: true,
         ..CollectOptions::for_columns(list::columns::all_columns(), &gates)
     };
+    // What the schema-2 envelope reports as requested — read from the task
+    // plan itself (like `collect()` does), so it can't drift from the gates.
+    let collected = list::model::Collected {
+        ci: options.tasks.contains(&list::collect::TaskKind::CiStatus),
+        summary: options
+            .tasks
+            .contains(&list::collect::TaskKind::SummaryGenerate),
+    };
+    let print_empty = || -> Result<()> {
+        if json_schema == 2 {
+            // `default_branch: None`: with no items there is no relation to
+            // report, and resolving it here could reach the network on a
+            // fresh clone — this path runs on every prompt redraw.
+            let envelope = list::json_v2::envelope_with_items(&repo, None, collected, vec![]);
+            list::print_json(&envelope)
+        } else {
+            println!("[]");
+            Ok(())
+        }
+    };
+
+    // Verify we're in a worktree
+    if repo.worktree_at(&cwd).git_dir().is_err() {
+        // Not in a worktree - emit an empty result (consistent with wt list)
+        return print_empty();
+    }
+
+    // Get current worktree info
+    // Use git rev-parse --show-toplevel (via current_worktree().root()) to correctly identify
+    // the worktree containing cwd, rather than prefix matching which fails for nested worktrees.
+    let worktrees = repo.list_worktrees()?;
+    let worktree_root = repo.current_worktree().root()?;
+    let current_worktree = worktrees.iter().find(|wt| {
+        canonicalize(&wt.path)
+            .map(|p| p == worktree_root)
+            .unwrap_or(false)
+    });
+
+    let Some(wt) = current_worktree else {
+        return print_empty();
+    };
+
+    // Determine if this is the primary worktree
+    let is_home = repo
+        .primary_worktree()
+        .ok()
+        .flatten()
+        .is_some_and(|p| wt.path == p);
+
+    // Build item with identity fields
+    let mut item = list::build_worktree_item(wt, is_home, true, false);
 
     // Populate computed fields (parallel git operations)
     list::populate_item(&repo, &mut item, options)?;
@@ -911,21 +932,36 @@ fn run_json() -> Result<()> {
     }
     // No custom columns: the statusline path never expands `[list.custom-columns]`
     // (prompt hot path; its compact format has no column grid).
-    let repo_metadata = repo.repo_info();
     let ci_provider_override = repo.forge_platform_override();
-    let json_item = json_output::JsonItem::from_list_item(
-        &item,
-        &mut all_vars,
-        repo_metadata.as_ref(),
-        ci_provider_override.as_deref(),
-        &[],
-    );
 
-    // Output as JSON array (consistent with wt list --format=json)
-    let output = serde_json::to_string_pretty(&[json_item])?;
-    println!("{output}");
-
-    Ok(())
+    // Output follows `wt list --format=json`: schema 1 is a bare
+    // single-item array, schema 2 a single-item envelope.
+    if json_schema == 2 {
+        // `populate_item` resolved the default branch for its counts, so
+        // this read is a cache hit, never a fresh detection.
+        let default_branch = repo.default_branch();
+        let json_item = list::json_v2::JsonItemV2::from_list_item(
+            &item,
+            &mut all_vars,
+            default_branch.as_deref(),
+            collected,
+            ci_provider_override.as_deref(),
+            &[],
+        );
+        let envelope =
+            list::json_v2::envelope_with_items(&repo, default_branch, collected, vec![json_item]);
+        list::print_json(&envelope)
+    } else {
+        let repo_metadata = repo.repo_info();
+        let json_item = json_output::JsonItem::from_list_item(
+            &item,
+            &mut all_vars,
+            repo_metadata.as_ref(),
+            ci_provider_override.as_deref(),
+            &[],
+        );
+        list::print_json(&[json_item])
+    }
 }
 
 /// Filter out branch segment if directory already shows it via worktrunk template.

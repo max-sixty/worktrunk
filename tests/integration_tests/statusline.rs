@@ -462,6 +462,40 @@ fn test_statusline_json_basic(repo: TestRepo) {
     );
 }
 
+/// `[list] json-schema = 2` switches the statusline JSON to the envelope,
+/// with the same single-item contract as the schema-1 array. An unset key
+/// stays silent here — the statusline surface suppresses warnings.
+#[rstest]
+fn test_statusline_json_schema_2(repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 2\n");
+
+    let output = run_statusline(&repo, &["--format=json"], None);
+    let parsed: Value = serde_json::from_str(&output).expect("should be valid JSON");
+
+    assert_eq!(parsed["schema"], 2);
+    assert_eq!(
+        parsed["collected"],
+        serde_json::json!({"ci": true, "summary": false}),
+        "statusline collects with full gates, no summaries"
+    );
+    let items = parsed["items"].as_array().expect("envelope items");
+    assert_eq!(items.len(), 1, "one item: the current worktree");
+
+    let item = &items[0];
+    assert_eq!(item["branch"], "main");
+    assert!(item["worktree"]["current"].as_bool().unwrap());
+    assert!(item["worktree"]["main"].as_bool().unwrap());
+    assert!(
+        item.get("default_branch").is_none(),
+        "the default branch row carries no relation to itself"
+    );
+    assert!(item["head"]["sha"].is_string());
+    assert!(
+        item["display"]["statusline"].is_string(),
+        "pre-rendered statusline lives under display"
+    );
+}
+
 #[rstest]
 fn test_statusline_json_with_changes(repo: TestRepo) {
     // Create uncommitted changes
