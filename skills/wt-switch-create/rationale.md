@@ -36,6 +36,17 @@ deliberately omitted — they re-minify every build.
 Two independent harness facts underlie this — re-root is repo-scoped, and `cd`
 persistence is working-directory-membership-scoped — detailed below.
 
+## Why creation is unconditional
+
+The recurring failure: handed a research or read-only task, the model decided
+it didn't need isolation and skipped creation. Two wordings fed that. Scope's
+"authorizes" read as permission, inviting a should-I test (user-level rules
+that gate worktree creation behind an explicit request answer it "no"); an
+ordering-only lead ("steps 1–3 come first") doesn't bind a model that decided
+the steps don't apply. So the lead makes the invocation the explicit request
+itself, and Scope states bounds rather than permission. Don't reintroduce
+either wording.
+
 ## wt CLI and git behavior (all live-tested)
 
 - `wt switch --create <branch>` exits 1 with `✗ Branch <branch> already
