@@ -3847,14 +3847,41 @@ fn test_codex_plugin_metadata_is_valid_json() {
             .contains("claude-code"),
         "plugin.json interface.websiteURL must point at the canonical site"
     );
-    // The Codex plugin ships no activity-marker hooks: Codex's
-    // HookEventNameWire vocabulary (codex-cli 0.130.0) has no `Stop`/turn-end
-    // event, so a 🤖 set on UserPromptSubmit could never return to 💬 within a
-    // session. Keep the Codex manifest free of a `hooks` key, and its wrapper
-    // dir manifest-only, until Codex adds a turn-end hook event — see CLAUDE.md
-    // → "Plugin Layout". (plugins/worktrunk/hooks/ exists post-consolidation,
-    // but it is the *Claude* plugin's — Codex's manifest never references it.)
-    assert_eq!(plugin.get("hooks"), None);
+    // The Codex plugin ships activity-marker hooks *inline* in its manifest
+    // (`hooks` object, not a path). This is deliberate: an absent `hooks` key
+    // makes Codex auto-discover the shared `hooks/hooks.json` (which is the
+    // *Claude* plugin's) and surface Claude-branded events in a Codex session
+    // (#3362). An inline object takes Codex's `Some(Inline)` branch, overriding
+    // discovery so only these Codex-native events fire. Codex added a `Stop`
+    // turn-end event (post codex-cli 0.130.0), so 🤖 returns to 💬 at turn end.
+    // See CLAUDE.md → "Plugin Layout".
+    let codex_hooks = plugin
+        .get("hooks")
+        .and_then(|h| h.get("hooks"))
+        .expect("Codex manifest must carry an inline `hooks` object");
+    // Exactly the Codex-native events — no `Notification`/`SessionEnd`/
+    // `WorktreeCreate`/`WorktreeRemove`, which are Claude-only and would be
+    // silently dropped by Codex.
+    for event in ["UserPromptSubmit", "PermissionRequest", "Stop"] {
+        assert!(
+            codex_hooks.get(event).is_some(),
+            "Codex hooks must define the {event} event"
+        );
+    }
+    // Commands use Codex's native `$PLUGIN_ROOT`, never the Claude-branded
+    // `$CLAUDE_PLUGIN_ROOT` compat alias — nothing Claude-branded in a Codex
+    // session (#3362).
+    let hooks_json = serde_json::to_string(codex_hooks).unwrap();
+    assert!(
+        hooks_json.contains("$PLUGIN_ROOT/hooks/wt.sh"),
+        "Codex hook commands must call the shim via $PLUGIN_ROOT"
+    );
+    assert!(
+        !hooks_json.contains("CLAUDE_PLUGIN_ROOT"),
+        "Codex hooks must not reference the Claude-branded $CLAUDE_PLUGIN_ROOT alias"
+    );
+    // Hooks are inline, so the wrapper dir still holds only plugin.json — no
+    // separate hooks file to collide with the Claude `hooks/hooks.json`.
     assert!(
         !project_root
             .join("plugins/worktrunk/.codex-plugin/hooks")
