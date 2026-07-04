@@ -80,8 +80,8 @@ pub trait RemoteRefProvider {
     /// Short, stable identifier for the platform — `"github"`, `"gitea"`,
     /// `"gitlab"`, or `"azure-devops"`. Useful for diagnostic logging and for
     /// tests that need to verify which provider was selected (the other trait
-    /// methods don't distinguish GitHub from Azure DevOps — both use
-    /// `RefType::Pr` and `pull/{N}/head`).
+    /// methods don't distinguish GitHub, Gitea, and Azure DevOps — all three
+    /// use `RefType::Pr` and `pull/{N}/head`).
     fn platform_label(&self) -> &'static str;
 
     /// Fetch ref information from the platform API.
