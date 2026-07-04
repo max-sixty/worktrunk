@@ -51,7 +51,9 @@ pub fn handle_codex_install(yes: bool) -> Result<()> {
     // → "Plugin Layout".
     eprintln!(
         "{}",
-        hint_message("Activity markers appear in <underline>wt list</> once a Codex session runs")
+        hint_message(cformat!(
+            "Activity markers appear in <underline>wt list</> once a Codex session runs"
+        ))
     );
 
     Ok(())
