@@ -388,6 +388,35 @@ pub fn invalidate_caches_auto(repo_path: &Path) {
     }
 }
 
+/// Rebuild every worktree's index after [`invalidate_caches_auto`].
+///
+/// Deleting an index doesn't model a cold cache — git treats a missing index
+/// as empty, so `git status` reports every tracked file as a staged deletion.
+/// That is a *different repo state*, and it flips any clean-worktree gate:
+/// `wt step prune`'s removability check drops all worktree candidates against
+/// such a worktree. Benches that exercise those gates call this after
+/// invalidation; `git reset -q` rewrites the index from HEAD, leaving the
+/// integration probes cold but the working trees reading clean again.
+///
+/// This is deliberately NOT folded into `invalidate_caches_auto`: `git reset
+/// --mixed` discards staged-but-uncommitted index state, which the mixed
+/// fixture plants on purpose (worktree state 2) and which a real repo — the
+/// `wt-perf invalidate` / `timeline --cold` targets — may hold as the user's
+/// work in progress. Only pair it with fixtures whose dirt is untracked files.
+pub fn restore_worktree_indexes(repo_path: &Path) {
+    let output = git_command()
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "git worktree list failed");
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            run_git(Path::new(path), &["reset", "-q"]);
+        }
+    }
+}
+
 /// Resolve git's common directory for `repo_path` from the filesystem.
 ///
 /// - Normal repo: `<repo>/.git` is a directory — use it directly.
