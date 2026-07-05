@@ -107,6 +107,14 @@ impl PipelineKind {
             Self::Alias { .. } => None,
         }
     }
+
+    /// Whether this pipeline is a hook (vs an alias). Hooks scrub inherited
+    /// git-discovery env vars from their children so a hook's `git` commands
+    /// resolve against the worktree wt targets, not an inherited `GIT_DIR`
+    /// (issue #3373).
+    fn is_hook(&self) -> bool {
+        matches!(self, Self::Hook { .. })
+    }
 }
 
 /// A pipeline step ready for foreground execution, with rendering / error policy.
@@ -522,6 +530,7 @@ fn run_concurrent_group(
         .map(|cmd| fg_step.announce.log_label(cmd))
         .collect();
 
+    let scrub_git_discovery = fg_step.announce.is_hook();
     let specs: Vec<ConcurrentCommand<'_>> = (0..cmds.len())
         .map(|i| ConcurrentCommand {
             label: labels[i],
@@ -530,6 +539,7 @@ fn run_concurrent_group(
             context_json: &context_jsons[i],
             log_label: log_labels[i].as_deref(),
             directives,
+            scrub_git_discovery,
         })
         .collect();
 
@@ -581,6 +591,7 @@ fn run_one_command(
         log_label.as_deref(),
         directives.clone(),
         fg_step.redirect_stdout_to_stderr,
+        fg_step.announce.is_hook(),
     );
 
     match result {
