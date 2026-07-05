@@ -11,7 +11,7 @@ This page is Worktrunk's **code signing policy**. It describes what gets signed,
 
 ## Why signing matters
 
-Worktrunk's Windows binary (`git-wt.exe`) is a small, native executable. Microsoft Defender's machine-learning heuristics routinely flag unsigned native executables of this shape as generic threats (for example `Trojan:Win32/Wacatac.B!ml`) — a false positive driven by the *absence of a trusted signature*, not by anything in the code. A valid [Authenticode](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/authenticode) signature gives Defender's cloud something signed to trust, which is what stops that class of false positive. Signing the Windows artifacts is the durable fix.
+Worktrunk's Windows binaries (`wt.exe` and `git-wt.exe`) are small, native executables. Microsoft Defender's machine-learning heuristics routinely flag unsigned native executables of this shape as generic threats (for example `Trojan:Win32/Wacatac.B!ml`) — a false positive driven by the *absence of a trusted signature*, not by anything in the code. A valid [Authenticode](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/authenticode) signature gives Defender's cloud something signed to trust, which is what stops that class of false positive. Signing the Windows artifacts is the durable fix.
 
 The macOS and Linux release artifacts, the crates.io source distribution, and `cargo install` builds are unaffected by this policy — `cargo install` compiles locally from source and never downloads a pre-built artifact.
 
@@ -23,7 +23,7 @@ The certificate's private key is generated and held on SignPath's Hardware Secur
 
 ## What is signed
 
-- `git-wt.exe` — the Windows binary shipped in the `x86_64-pc-windows-msvc` release archive on each [GitHub Release](https://github.com/max-sixty/worktrunk/releases) and distributed via [winget](https://github.com/microsoft/winget-pkgs) (`winget install max-sixty.worktrunk`).
+- `wt.exe` and `git-wt.exe` — the Windows binaries shipped in the `x86_64-pc-windows-msvc` release archive on each [GitHub Release](https://github.com/max-sixty/worktrunk/releases) and distributed via [winget](https://github.com/microsoft/winget-pkgs) (`winget install max-sixty.worktrunk`). `git-wt.exe` is the same program built as a git subcommand.
 
 Nothing else is signed under this policy. Signed artifacts contain only code built from this repository; any bundled third-party libraries are used unmodified.
 
