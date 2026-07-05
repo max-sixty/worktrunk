@@ -107,7 +107,7 @@ winget install max-sixty.worktrunk
 git-wt config shell install
 ```
 
-Alternatively, disable Windows Terminal's alias (Settings → Privacy & security → For developers → App Execution Aliases → disable "Windows Terminal") to use `wt` directly.
+Alternatively, disable Windows Terminal's alias (Settings → Apps → Advanced app settings → App execution aliases → "Terminal"/"Terminal Preview") to use `wt` directly.
 
 **Arch Linux:**
 
