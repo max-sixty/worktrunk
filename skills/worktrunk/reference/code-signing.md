@@ -23,7 +23,7 @@ Nothing else is signed under this policy. Signed artifacts contain only code bui
 ## Build and signing pipeline
 
 1. Every release is triggered by pushing a version tag to [`max-sixty/worktrunk`](https://github.com/max-sixty/worktrunk). No release is built from any other source.
-2. The [`release` workflow](https://github.com/max-sixty/worktrunk/blob/main/.github/workflows/release.yaml) builds the platform binaries with [cargo-dist](https://opensource.axo.dev/cargo-dist/) on GitHub-hosted runners, from the tagged commit only.
+2. The [`release` workflow](https://github.com/max-sixty/worktrunk/blob/main/.github/workflows/release.yaml) builds the platform binaries with [cargo-dist](https://axodotdev.github.io/cargo-dist/) on GitHub-hosted runners, from the tagged commit only.
 3. The Windows binary is submitted to SignPath for signing via the [SignPath GitHub Action](https://github.com/SignPath/github-action-submit-signing-request). The signed binary is returned to the workflow and published in the release archive.
 4. The build is reproducible from public source: the workflow, the toolchain pin ([`rust-toolchain.toml`](https://github.com/max-sixty/worktrunk/blob/main/rust-toolchain.toml)), and the release configuration ([`dist-workspace.toml`](https://github.com/max-sixty/worktrunk/blob/main/dist-workspace.toml)) are all tracked in this repository.
 
