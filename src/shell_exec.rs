@@ -1109,9 +1109,9 @@ impl Cmd {
     /// not a `GIT_DIR`/`GIT_WORK_TREE` `wt` inherited. See
     /// [`scrub_git_discovery_env_vars`] for the rationale (issue #3373).
     ///
-    /// Applied after [`inherited_git_env_overrides`] in `apply_common_settings`
-    /// (env-removes run last), so it also overrides the relative-path
-    /// absolutization that would otherwise re-add these vars.
+    /// Applied after the inherited-`GIT_*` absolutization in
+    /// `apply_common_settings` (env-removes run last), so it also overrides the
+    /// relative-path absolutization that would otherwise re-add these vars.
     pub fn scrub_git_discovery_env(mut self) -> Self {
         for var in INHERITED_GIT_PATH_VARS {
             self.env_removes.push(OsString::from(*var));
