@@ -154,6 +154,9 @@ mod tests {
             normalize_invocation_path(OsStr::new(r"target\debug\wt.exe")),
             "target/debug/wt.exe"
         );
-        assert_eq!(normalize_invocation_path(OsStr::new(r".\wt.exe")), "./wt.exe");
+        assert_eq!(
+            normalize_invocation_path(OsStr::new(r".\wt.exe")),
+            "./wt.exe"
+        );
     }
 }
