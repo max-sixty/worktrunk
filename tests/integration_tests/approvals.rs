@@ -325,6 +325,30 @@ fn test_clear_approvals_stale_none(repo: TestRepo) {
     snapshot_clear_approvals("clear_approvals_stale_none", &repo, &["--stale"]);
 }
 
+/// Without a project config there is no frame to compute staleness against,
+/// so `clear --stale` errors like `add` — it must NOT treat every recorded
+/// approval as stale and wipe the project's approvals.
+#[rstest]
+fn test_clear_approvals_stale_no_config(repo: TestRepo) {
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.commit("Initial commit");
+
+    let mut approvals = Approvals::default();
+    approvals
+        .approve_command(
+            repo.project_id(),
+            "orphan command".to_string(),
+            repo.test_approvals_path(),
+        )
+        .unwrap();
+
+    snapshot_clear_approvals("clear_approvals_stale_no_config", &repo, &["--stale"]);
+
+    // The recorded approval survives the failed clear.
+    let content = fs::read_to_string(repo.test_approvals_path()).unwrap();
+    assert!(content.contains("orphan command"));
+}
+
 /// `--stale` is scoped to the current project's config, so it cannot combine
 /// with `--global`.
 #[rstest]

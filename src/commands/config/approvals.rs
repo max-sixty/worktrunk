@@ -37,14 +37,16 @@ fn collect_approvable_commands(project_config: &ProjectConfig) -> Vec<Approvable
     commands
 }
 
-/// The project's current approvable commands. A missing project config just
-/// means zero configured commands — recorded approvals for the project are
-/// still meaningful (as stale), so this never errors on absence.
-fn current_approvable_commands(repo: &Repository) -> anyhow::Result<Vec<ApprovableCommand>> {
-    Ok(match repo.load_project_config()? {
-        Some(cfg) => collect_approvable_commands(&cfg),
-        None => Vec::new(),
-    })
+/// The project config, erroring when none exists. For the operations whose
+/// semantics need the config as their frame of reference (`add`, `clear
+/// --stale`); the read-only `list` instead treats absence as zero commands.
+fn require_project_config(repo: &Repository) -> anyhow::Result<ProjectConfig> {
+    let config_path = repo
+        .project_config_path()?
+        .context("Cannot determine project config location — no worktree found")?;
+    Ok(repo
+        .load_project_config()?
+        .ok_or(GitError::ProjectConfigNotFound { config_path })?)
 }
 
 /// Handle `wt config approvals list` - show approval status for all project commands
@@ -53,7 +55,12 @@ pub fn list_approvals() -> anyhow::Result<()> {
     let project_id = repo.project_identifier()?;
     let approvals = Approvals::load().context("Failed to load approvals")?;
 
-    let commands = current_approvable_commands(&repo)?;
+    // A missing project config just means zero configured commands — recorded
+    // approvals for the project still list (as stale), so this never errors.
+    let commands = match repo.load_project_config()? {
+        Some(cfg) => collect_approvable_commands(&cfg),
+        None => Vec::new(),
+    };
 
     let templates: Vec<&str> = commands
         .iter()
@@ -100,6 +107,9 @@ pub fn list_approvals() -> anyhow::Result<()> {
             "{}",
             warning_message("Approved commands no longer in project config:")
         )?;
+        // Stale approvals are bare strings — the phase isn't recorded in
+        // approvals.toml — so bash formatting is the best default even though
+        // a stale commit-template fragment is prose.
         for command in &stale {
             writeln!(out, "{}", format_bash_with_gutter(command))?;
         }
@@ -125,14 +135,7 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
     let project_id = repo.project_identifier()?;
     let approvals = Approvals::load().context("Failed to load approvals")?;
 
-    // Load project config (error if missing - this command requires it)
-    let config_path = repo
-        .project_config_path()?
-        .context("Cannot determine project config location — no worktree found")?;
-    let project_config = repo
-        .load_project_config()?
-        .ok_or(GitError::ProjectConfigNotFound { config_path })?;
-
+    let project_config = require_project_config(&repo)?;
     let commands = collect_approvable_commands(&project_config);
 
     if commands.is_empty() {
@@ -179,10 +182,15 @@ pub fn clear_approvals(global: bool, stale: bool) -> anyhow::Result<()> {
     let mut approvals = Approvals::load().context("Failed to load approvals")?;
 
     if stale {
-        // Clear only approvals whose commands left the project config
+        // Clear only approvals whose commands left the project config. A
+        // missing config is an error (matching `add`), not "everything is
+        // stale": approvals are keyed repo-wide while the config is resolved
+        // per-worktree, so a branch that merely lacks the file must not wipe
+        // the whole repo's approvals. Clearing everything is `clear`'s job.
         let repo = Repository::current()?;
         let project_id = repo.project_identifier()?;
-        let commands = current_approvable_commands(&repo)?;
+        let project_config = require_project_config(&repo)?;
+        let commands = collect_approvable_commands(&project_config);
         let templates: Vec<&str> = commands
             .iter()
             .map(|cmd| cmd.command.template.as_str())
