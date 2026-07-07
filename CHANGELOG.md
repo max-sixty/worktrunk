@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.66.0
+
+### Improved
+
+- **Opt-in JSON schema 2 for `wt list`**: `wt list --format=json` and `wt list statusline --format=json` can now emit a v2 schema, selected via the `[list] json-schema` config key. Schema 2 wraps the rows in an envelope (`schema`, `repo.default_branch`, `repo.forge`, `collected`) and separates "nothing to report" (field absent) from "requested but undetermined" (field `null` — a probe still pending, timed out, or failed). Schema 1 — the existing bare array — remains the default, byte-for-byte; with the key unset, a once-per-process stderr hint shows both values (`= 1` to pin, `= 2` to opt in; suppressed on the statusline surface). [Docs](https://worktrunk.dev/list/#json-output) ([#3357](https://github.com/max-sixty/worktrunk/pull/3357))
+
+- **`wt config approvals list` and `clear --stale`**: `list` shows every command the project config declares — hooks in lifecycle order, aliases, commit-message guidance — grouped into approved and unapproved, with approvals recorded for commands no longer in the config flagged as stale. `clear --stale` removes only those left-behind approvals, echoing each one; valid approvals survive, and a full wipe remains plain `clear`. [Docs](https://worktrunk.dev/config/#wt-config-approvals) ([#3380](https://github.com/max-sixty/worktrunk/pull/3380))
+
+### Fixed
+
+- **User hooks no longer inherit `wt`'s `GIT_*` discovery vars**: A user hook that shells out to `git` now discovers its repository from the worktree `wt` sets as its cwd, rather than an inherited `GIT_DIR`/`GIT_WORK_TREE` (e.g. from `wt` run as a `!wt` git alias, or nested under another tool's git hook). `wt` now scrubs the `GIT_*` discovery vars at every hook spawn site — foreground, background, and concurrent. Previously the inherited context leaked into hooks: with both `GIT_DIR` and `GIT_WORK_TREE` present, a hook that ran `git init` would write `core.worktree` into the inherited repo's config, silently redirecting later plain git commands there. `wt`'s own internal git plumbing keeps the inherited context (the absolutize-and-forward behavior from [#1914](https://github.com/max-sixty/worktrunk/pull/1914)); aliases keep it too, since a top-level `wt <alias>` is the user's own command. ([#3374](https://github.com/max-sixty/worktrunk/pull/3374), closes [#3373](https://github.com/max-sixty/worktrunk/issues/3373), thanks @silvanshade for reporting)
+
+### Documentation
+
+- **`/wt-switch-create` always creates a worktree**: The plugin skill's wording let a session judge that a research or read-only task didn't need isolation and skip the worktree; invoking the command now counts as the explicit request, so the worktree is created unconditionally. ([#3356](https://github.com/max-sixty/worktrunk/pull/3356))
+
 ## 0.65.0
 
 ### Improved
@@ -9,8 +25,6 @@
 - **`-vv` diagnostics consolidate on `diagnostic.md`, led by the performance profile**: A `-vv` run now opens with a one-line pointer to the log directory (`○ Verbose logging to .git/wt/logs/`) and closes by naming what it captured — `○ Logs, performance profile, and diagnostics saved @ diagnostic.md` — with the raw `trace.jsonl` / `subprocess.log` companions listed beneath and the `gh gist create` bug-report hint. `diagnostic.md` now leads with the performance profile, expanded by default and promoted above the environment / worktree / config dumps; that profile reports the 20 slowest calls (was 8) and 10 same-context redundant-command offenders (was 3). The profile lives in the `diagnostic.md` bundle, and `wt config state logs profile` re-renders it live from `trace.jsonl`. ([#3329](https://github.com/max-sixty/worktrunk/pull/3329))
 
 ### Fixed
-
-- **User hooks no longer inherit `wt`'s `GIT_*` discovery vars**: A user hook that shells out to `git` now discovers its repository from the worktree `wt` sets as its cwd, rather than an inherited `GIT_DIR`/`GIT_WORK_TREE` (e.g. from `wt` run as a `!wt` git alias, or nested under another tool's git hook). `wt` now scrubs the `GIT_*` discovery vars at every hook spawn site — foreground, background, and concurrent. Previously the inherited context leaked into hooks: with both `GIT_DIR` and `GIT_WORK_TREE` present, a hook that ran `git init` would write `core.worktree` into the inherited repo's config, silently redirecting later plain git commands there. `wt`'s own internal git plumbing keeps the inherited context (the absolutize-and-forward behavior from [#1914](https://github.com/max-sixty/worktrunk/pull/1914)); aliases keep it too, since a top-level `wt <alias>` is the user's own command. ([#3374](https://github.com/max-sixty/worktrunk/pull/3374), closes [#3373](https://github.com/max-sixty/worktrunk/issues/3373), thanks @silvanshade for reporting)
 
 - **`wt remove` preserves your subdirectory position**: Removing a worktree from a subdirectory (e.g. `apps/gateway/`) now lands you in the equivalent subdirectory of the destination worktree rather than at its root — matching how `wt switch` already behaves, and falling back to the root when that subdirectory doesn't exist there. `wt merge` lands through the same handler, so it gains the same behavior. ([#3344](https://github.com/max-sixty/worktrunk/pull/3344), closes [#3343](https://github.com/max-sixty/worktrunk/issues/3343), thanks @caillou for reporting)
 
