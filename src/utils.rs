@@ -38,6 +38,16 @@ pub fn escape_controls(s: &str) -> Cow<'_, str> {
     Cow::Owned(out)
 }
 
+/// Format a Unix timestamp as ISO 8601 UTC (e.g., "2025-01-01T00:00:00Z"),
+/// or `None` when the timestamp is out of chrono's representable range.
+///
+/// The one ISO 8601 formatter wt has — diagnostics, logs, and schema-2
+/// `wt list --format=json` all derive from it.
+pub fn format_timestamp_iso8601_opt(timestamp: i64) -> Option<String> {
+    chrono::DateTime::from_timestamp(timestamp, 0)
+        .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+}
+
 /// Format a Unix timestamp as ISO 8601 string (e.g., "2025-01-01T00:00:00Z").
 ///
 /// Used for human-readable timestamps in diagnostic reports and logs.
@@ -45,12 +55,9 @@ pub fn escape_controls(s: &str) -> Cow<'_, str> {
 /// If the timestamp is out of range for chrono's date handling, returns an
 /// explicit placeholder string rather than a misleading value.
 pub fn format_timestamp_iso8601(timestamp: u64) -> String {
-    let Ok(timestamp) = i64::try_from(timestamp) else {
-        return format!("invalid-timestamp({timestamp})");
-    };
-
-    chrono::DateTime::from_timestamp(timestamp, 0)
-        .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+    i64::try_from(timestamp)
+        .ok()
+        .and_then(format_timestamp_iso8601_opt)
         .unwrap_or_else(|| format!("invalid-timestamp({timestamp})"))
 }
 

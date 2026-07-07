@@ -276,6 +276,7 @@ fn test_list_config_serde() {
         branches: Some(false),
         remotes: None,
         summary: None,
+        json_schema: None,
         task_timeout_ms: Some(500),
         timeout_ms: None,
         columns: vec!["branch".into(), "ci".into(), "path".into()],
@@ -628,16 +629,18 @@ fn test_merge_list_config() {
         branches: Some(false),
         remotes: None,
         summary: Some(true),
+        json_schema: None,
         task_timeout_ms: Some(1000),
         timeout_ms: Some(2000),
         columns: vec!["branch".into(), "ci".into()],
         custom_columns: Default::default(),
     };
     let override_config = ListConfig {
-        full: None,            // Should fall back to base
-        branches: Some(true),  // Should override
-        remotes: Some(true),   // Should override (base was None)
-        summary: None,         // Should fall back to base
+        full: None,           // Should fall back to base
+        branches: Some(true), // Should override
+        remotes: Some(true),  // Should override (base was None)
+        summary: None,        // Should fall back to base
+        json_schema: None,
         task_timeout_ms: None, // Should fall back to base
         timeout_ms: None,      // Should fall back to base
         columns: Vec::new(),   // Empty → fall back to base
@@ -1100,6 +1103,7 @@ fn test_list_config_accessor_methods_with_values() {
         branches: Some(true),
         remotes: Some(false),
         summary: Some(true),
+        json_schema: None,
         task_timeout_ms: Some(5000),
         timeout_ms: Some(3000),
         columns: Vec::new(),

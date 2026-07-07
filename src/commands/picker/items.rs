@@ -1943,6 +1943,7 @@ mod tests {
                 remote: remote.map(String::from),
                 ahead: a,
                 behind: b,
+                ..Default::default()
             });
             LocalContent::from_item(&item).upstream_diverged
         };

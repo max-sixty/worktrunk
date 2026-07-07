@@ -292,8 +292,34 @@ pub struct ListItem {
     /// columns are configured.
     pub custom_values: Vec<String>,
 
+    /// Which fact families hold *seeded* conservative defaults rather than
+    /// computed results (see `seed_skipped_task_defaults`). The table wants
+    /// the conservative values; schema-2 JSON reports the seeded families as
+    /// null (undetermined) instead of presenting a seed as a determined fact.
+    pub seeded: SeededFacts,
+
     // Type-specific data (worktree vs branch)
     pub kind: ItemKind,
+}
+
+/// Per-fact-family record of seeded (not computed) values on a [`ListItem`].
+///
+/// Set by `seed_skipped_task_defaults` when a task is skipped (unborn
+/// branch, collect timeout, unplanned task). Consumed by schema-2 JSON
+/// output, whose absence rule distinguishes "determined" from
+/// "undetermined" — a distinction the conservative seeds would otherwise
+/// erase.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SeededFacts {
+    /// `is_orphan` was seeded (`AheadBehind` skipped).
+    pub orphan: bool,
+    /// `upstream` was seeded (`Upstream` skipped).
+    pub upstream: bool,
+    /// `has_merge_tree_conflicts` was seeded (`MergeTreeConflicts` skipped).
+    pub merge_conflicts: bool,
+    /// One of the integration signals was seeded (`IsAncestor`,
+    /// `CommittedTreesMatch`, `HasFileChanges`, or `WouldMergeAdd` skipped).
+    pub integration: bool,
 }
 
 /// Container for list command results.
@@ -302,6 +328,23 @@ pub struct ListData {
     /// Resolved `[list.custom-columns]` definitions; each item's `custom_values`
     /// uses the same indexing.
     pub custom_columns: Vec<crate::commands::list::custom_columns::ResolvedCustomColumn>,
+    /// Which gated fact families this run's task plan requested. Lets JSON
+    /// output distinguish "absent because not requested" from "requested but
+    /// undetermined".
+    pub collected: Collected,
+}
+
+/// Fact families whose collection is gated (`--full`, `[list] summary`,
+/// a listed `ci`/`summary` column). Ungated families (working tree, counts,
+/// diffs) are always requested. Serialized as-is into the schema-2 JSON
+/// envelope's `collected` field, disambiguating "absent because not
+/// requested".
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, schemars::JsonSchema)]
+pub struct Collected {
+    /// Forge CI/PR data was fetched.
+    pub ci: bool,
+    /// LLM branch summaries were generated.
+    pub summary: bool,
 }
 
 impl ListItem {
@@ -339,6 +382,7 @@ impl ListItem {
             status_symbols: StatusSymbols::default(),
             statusline: None,
             custom_values: Vec::new(),
+            seeded: SeededFacts::default(),
             kind: ItemKind::Branch(scope),
         }
     }

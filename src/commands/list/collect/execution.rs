@@ -159,13 +159,18 @@ impl ExpectedResults {
 /// default up front lets the gate resolve normally instead of showing `·`
 /// forever.
 ///
-/// **Not seeded by this function:** `item.counts`. The ahead/behind counts
-/// are the only field that leaks directly into JSON output (`JsonMain` at
-/// `json_output.rs:~305`), so seeding them with `(0, 0)` would falsely
-/// claim "in sync" in `wt list --format=json` output. Callers that need to
-/// resolve gate 3 (main_state) for items without counts should instead
-/// pre-seed `status_symbols.main_state` directly — see
-/// [`seed_unborn_main_state`].
+/// **Not seeded by this function:** `item.counts`. Seeding the ahead/behind
+/// counts with `(0, 0)` would falsely claim "in sync" in JSON output
+/// (`JsonMain` / `JsonDefaultBranch`). Callers that need to resolve gate 3
+/// (main_state) for items without counts should instead pre-seed
+/// `status_symbols.main_state` directly — see [`seed_unborn_main_state`].
+///
+/// **Seeds are recorded on [`ListItem::seeded`]**: several seeded fields DO
+/// reach schema-2 JSON (`orphan`, `upstream`, `merge_conflicts`, the
+/// integration signals), where a conservative default would read as a
+/// determined fact. `json_v2` consults the flags and emits null
+/// (undetermined) for seeded families; the table keeps rendering the
+/// conservative value.
 ///
 /// Non-status-feeding tasks (`BranchDiff`, `CiStatus`, `UrlStatus`,
 /// `SummaryGenerate`) are rendered by their own columns with their own
@@ -181,37 +186,43 @@ pub(super) fn seed_skipped_task_defaults(item: &mut ListItem, kind: TaskKind) {
         | TaskKind::SummaryGenerate => {}
 
         TaskKind::AheadBehind => {
-            // Seed `is_orphan` (safe — not in JSON) but NOT `counts`
-            // (leaks to `JsonMain`). Gate 3 callers that need counts-less
-            // resolution use `seed_unborn_main_state` to pre-seed
+            // Seed `is_orphan` but NOT `counts` (leaks to JSON as a false
+            // "in sync"). Gate 3 callers that need counts-less resolution
+            // use `seed_unborn_main_state` to pre-seed
             // `status_symbols.main_state` directly.
             item.is_orphan = Some(false);
+            item.seeded.orphan = true;
         }
         TaskKind::Upstream => {
-            // Safe to seed: `UpstreamStatus::default()` has
-            // `remote: None`, so `active()` returns `None` and
-            // `upstream_to_json` elides the `remote` JSON key. No leak.
+            // `UpstreamStatus::default()` has `remote: None`, so `active()`
+            // returns `None` and the upstream renders as "no upstream".
             item.upstream = Some(UpstreamStatus::default());
+            item.seeded.upstream = true;
         }
         TaskKind::CommittedTreesMatch => {
             // Conservative: don't claim integrated if we haven't checked.
             item.committed_trees_match = Some(false);
+            item.seeded.integration = true;
         }
         TaskKind::HasFileChanges => {
             // Conservative: assume unique changes exist.
             item.has_file_changes = Some(true);
+            item.seeded.integration = true;
         }
         TaskKind::WouldMergeAdd => {
             // Conservative: assume the merge would add changes.
             item.would_merge_add = Some(true);
             item.is_patch_id_match = Some(false);
+            item.seeded.integration = true;
         }
         TaskKind::IsAncestor => {
             // Conservative: don't claim merged if we haven't checked.
             item.is_ancestor = Some(false);
+            item.seeded.integration = true;
         }
         TaskKind::MergeTreeConflicts => {
             item.has_merge_tree_conflicts = Some(false);
+            item.seeded.merge_conflicts = true;
         }
         TaskKind::UserMarker => {
             item.user_marker = Some(None);
@@ -540,6 +551,82 @@ pub fn work_items_for_branch(
 mod tests {
     use super::*;
     use crate::commands::list::collect::build_worktree_item;
+
+    /// Every seed arm must point the negative direction: `json_v2` trusts a
+    /// positive `check_integration` match even when sibling signals were
+    /// seeded, which is only sound while no seed can fabricate a match.
+    #[test]
+    fn test_seeds_never_fabricate_integration() {
+        use strum::IntoEnumIterator;
+        use worktrunk::git::{IntegrationSignals, check_integration};
+
+        for kind in TaskKind::iter() {
+            let mut item = ListItem::new_branch("a".repeat(40), "feature".to_string());
+            seed_skipped_task_defaults(&mut item, kind);
+            let signals = IntegrationSignals {
+                is_same_commit: item.counts.map(|c| c.ahead == 0 && c.behind == 0),
+                is_ancestor: item.is_ancestor,
+                has_added_changes: item.has_file_changes,
+                trees_match: item.committed_trees_match,
+                would_merge_add: item.would_merge_add,
+                is_patch_id_match: item.is_patch_id_match,
+            };
+            assert!(
+                check_integration(&signals).is_none(),
+                "{kind:?} seed must not fabricate an integration match"
+            );
+        }
+    }
+
+    /// Producer → consumer: seeding marks the fact families, and schema-2
+    /// JSON reports them as null (undetermined) rather than presenting the
+    /// conservative defaults as determined facts.
+    #[test]
+    fn test_seeded_families_serialize_as_null() {
+        use strum::IntoEnumIterator;
+
+        use crate::commands::list::json_v2::JsonItemV2;
+        use crate::commands::list::model::{AheadBehind, Collected};
+
+        // Seed every skippable task on one item — the drain-timeout worst
+        // case — then load counts (never seeded) so the integration signals
+        // are all `Some`: without the flags this would read as determined
+        // not-integrated.
+        let mut item = ListItem::new_branch("a".repeat(40), "feature".to_string());
+        for kind in TaskKind::iter() {
+            seed_skipped_task_defaults(&mut item, kind);
+        }
+        item.counts = Some(AheadBehind {
+            ahead: 1,
+            behind: 0,
+        });
+
+        let mut all_vars = std::collections::HashMap::new();
+        let json = serde_json::to_value(JsonItemV2::from_list_item(
+            &item,
+            &mut all_vars,
+            Some("main"),
+            Collected::default(),
+            None,
+            &[],
+        ))
+        .unwrap();
+
+        let db = &json["default_branch"];
+        assert!(db["orphan"].is_null(), "seeded orphan must be null");
+        assert!(
+            db["merge_conflicts"].is_null(),
+            "seeded merge_conflicts must be null"
+        );
+        assert!(
+            db.get("integration").is_some_and(|v| v.is_null()),
+            "seeded integration must be null"
+        );
+        assert!(
+            json.get("upstream").is_some_and(|v| v.is_null()),
+            "seeded upstream must be null"
+        );
+    }
 
     #[test]
     fn test_skip_url_status_suppresses_placeholder_and_task() {
