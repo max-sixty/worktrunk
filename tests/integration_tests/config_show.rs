@@ -3848,13 +3848,16 @@ fn test_codex_plugin_metadata_is_valid_json() {
         "plugin.json interface.websiteURL must point at the canonical site"
     );
     // The Codex plugin ships activity-marker hooks *inline* in its manifest
-    // (`hooks` object, not a path). This is deliberate: an absent `hooks` key
-    // makes Codex auto-discover the shared `hooks/hooks.json` (which is the
-    // *Claude* plugin's) and surface Claude-branded events in a Codex session
-    // (#3362). An inline object takes Codex's `Some(Inline)` branch, overriding
-    // discovery so only these Codex-native events fire. Codex added a `Stop`
-    // turn-end event (post codex-cli 0.130.0), so 🤖 returns to 💬 at turn end.
-    // See CLAUDE.md → "Plugin Layout".
+    // (`hooks` object, not a path). This is the functional definition of its
+    // Codex-native events, and it also overrides Codex's convention discovery
+    // (an absent `hooks` key makes Codex auto-discover a `hooks/hooks.json` at
+    // the plugin root). The Claude hooks file is Claude-scoped
+    // (`hooks/claude-hooks.json`), so that discovery lookup finds nothing — the
+    // #3362 collision (Codex surfacing the *Claude* file's events) is gone
+    // structurally, and inline still overrides discovery should any file
+    // reappear at the conventional path. Codex added a `Stop` turn-end event
+    // (post codex-cli 0.130.0), so 🤖 returns to 💬 at turn end. See CLAUDE.md
+    // → "Plugin Layout".
     let codex_hooks = plugin
         .get("hooks")
         .and_then(|h| h.get("hooks"))
@@ -3881,7 +3884,7 @@ fn test_codex_plugin_metadata_is_valid_json() {
         "Codex hooks must not reference the Claude-branded $CLAUDE_PLUGIN_ROOT alias"
     );
     // Hooks are inline, so the wrapper dir still holds only plugin.json — no
-    // separate hooks file to collide with the Claude `hooks/hooks.json`.
+    // separate hooks file to collide with the Claude `hooks/claude-hooks.json`.
     assert!(
         !project_root
             .join("plugins/worktrunk/.codex-plugin/hooks")
@@ -3940,15 +3943,26 @@ fn test_plugin_layout_is_consolidated() {
 
     // Claude manifest at the plugin root (no wrapper); hooks relative to it.
     let claude = json("plugins/worktrunk/plugin.json");
-    assert_eq!(claude["hooks"], "./hooks/hooks.json");
+    assert_eq!(claude["hooks"], "./hooks/claude-hooks.json");
     assert!(
-        root.join("plugins/worktrunk/hooks/hooks.json").exists()
+        root.join("plugins/worktrunk/hooks/claude-hooks.json")
+            .exists()
             && root.join("plugins/worktrunk/hooks/wt.sh").exists(),
         "Claude hooks must live at the plugin root's hooks/"
     );
+    // The Claude hooks file is Claude-scoped (claude-hooks.json), NOT the
+    // conventional hooks/hooks.json. A file at that conventional plugin-root
+    // path would be auto-discovered by Codex's convention loader and resurface
+    // the #3362 collision; the Claude-scoped name makes that impossible
+    // structurally rather than only overriding it inline in the Codex manifest.
     assert!(
-        !read("plugins/worktrunk/hooks/hooks.json").contains(".claude-plugin/hooks/"),
-        "hooks.json must reference $CLAUDE_PLUGIN_ROOT/hooks/wt.sh, not the old wrapper path"
+        !root.join("plugins/worktrunk/hooks/hooks.json").exists(),
+        "the Claude hooks file must be Claude-scoped (hooks/claude-hooks.json), not the \
+         conventional hooks/hooks.json that Codex would auto-discover (#3362)"
+    );
+    assert!(
+        !read("plugins/worktrunk/hooks/claude-hooks.json").contains(".claude-plugin/hooks/"),
+        "claude-hooks.json must reference $CLAUDE_PLUGIN_ROOT/hooks/wt.sh, not the old wrapper path"
     );
 
     // The description is duplicated across the Claude marketplace pointer and
@@ -4024,8 +4038,8 @@ fn test_plugin_layout_is_consolidated() {
     // `--force-delete` silently discards committed-but-unpushed work — the only
     // recovery path is `git fsck`. The safe default retains unmerged branches
     // and prints a `wt remove -D <branch>` hint for the user to act on.
-    let hooks = read("plugins/worktrunk/hooks/hooks.json");
-    let hooks_json = json("plugins/worktrunk/hooks/hooks.json");
+    let hooks = read("plugins/worktrunk/hooks/claude-hooks.json");
+    let hooks_json = json("plugins/worktrunk/hooks/claude-hooks.json");
 
     // Claude hands each hook command to the user's LOGIN shell before `bash`
     // launches, so the outer command line must parse under fish/zsh/bash. fish
@@ -4103,7 +4117,7 @@ fn test_plugin_layout_is_consolidated() {
 fn test_claude_hook_commands_parse_in_all_shells() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let hooks_json: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(root.join("plugins/worktrunk/hooks/hooks.json")).unwrap(),
+        &fs::read_to_string(root.join("plugins/worktrunk/hooks/claude-hooks.json")).unwrap(),
     )
     .unwrap();
 
