@@ -759,6 +759,11 @@ Project hooks and project aliases prompt for approval on first run to prevent un
 
 ### Examples
 
+List commands and their approval status for current project:
+```bash
+$ wt config approvals list
+```
+
 Pre-approve all hook and alias commands for current project:
 ```bash
 $ wt config approvals add
@@ -767,6 +772,11 @@ $ wt config approvals add
 Clear approvals for current project:
 ```bash
 $ wt config approvals clear
+```
+
+Clear only approvals for commands no longer in the project config:
+```bash
+$ wt config approvals clear --stale
 ```
 
 Clear global approvals:
@@ -786,6 +796,7 @@ wt config approvals - Manage command approvals
 Usage: wt config approvals [OPTIONS] <COMMAND>
 
 Commands:
+  list   List project commands and their approval status
   add    Store approvals in approvals.toml
   clear  Clear approved commands from approvals.toml
 

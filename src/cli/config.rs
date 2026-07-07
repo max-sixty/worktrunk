@@ -230,9 +230,21 @@ This leaves any already-installed Worktrunk plugin unchanged."#
     Uninstall,
 }
 
-// Ordering: action + inverse adjacent (add, clear).
+// Ordering: read first (list), then action + inverse adjacent (add, clear).
 #[derive(Subcommand)]
 pub enum ApprovalsCommand {
+    /// List project commands and their approval status
+    #[command(
+        after_long_help = r#"Shows every command the project config declares — hooks, aliases, and commit-message guidance — grouped into APPROVED and UNAPPROVED sections. Approvals recorded for commands no longer in the project config (edited or removed since approval) are listed separately.
+
+## Examples
+
+```console
+$ wt config approvals list
+```"#
+    )]
+    List,
+
     /// Store approvals in approvals.toml
     #[command(
         after_long_help = r#"Prompts for approval of all project commands and saves them to approvals.toml.
@@ -251,12 +263,17 @@ including previously approved ones."#
         after_long_help = r#"Removes saved approvals, requiring re-approval on next command run.
 
 By default, clears approvals for the current project. Use `--global` to clear
-all approvals across all projects."#
+all approvals across all projects, or `--stale` to clear only approvals for
+commands no longer in the project config (edited or removed since approval)."#
     )]
     Clear {
         /// Clear global approvals
         #[arg(short, long)]
         global: bool,
+
+        /// Clear only stale approvals
+        #[arg(long, conflicts_with = "global")]
+        stale: bool,
     },
 }
 
@@ -531,6 +548,11 @@ $ wt config update --print
 
 ## Examples
 
+List commands and their approval status for current project:
+```console
+$ wt config approvals list
+```
+
 Pre-approve all hook and alias commands for current project:
 ```console
 $ wt config approvals add
@@ -539,6 +561,11 @@ $ wt config approvals add
 Clear approvals for current project:
 ```console
 $ wt config approvals clear
+```
+
+Clear only approvals for commands no longer in the project config:
+```console
+$ wt config approvals clear --stale
 ```
 
 Clear global approvals:

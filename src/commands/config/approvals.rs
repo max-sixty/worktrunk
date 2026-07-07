@@ -1,19 +1,123 @@
 //! Approvals commands for `wt config approvals` subcommand.
 //!
+//! - `list_approvals` - Show approval status for all project commands
 //! - `add_approvals` - Approve all project commands (hooks and aliases)
 //! - `clear_approvals` - Clear approved commands
 
+use std::fmt::Write;
+
 use anyhow::Context;
+use color_print::cformat;
 use strum::IntoEnumIterator;
 use worktrunk::HookType;
-use worktrunk::config::{Approvals, require_approvals_path};
+use worktrunk::config::{Approvals, ProjectConfig, require_approvals_path};
 use worktrunk::git::{GitError, Repository};
-use worktrunk::styling::{eprintln, info_message, success_message};
+use worktrunk::styling::{
+    INFO_SYMBOL, PROMPT_SYMBOL, eprintln, format_bash_with_gutter, format_heading, hint_message,
+    info_message, success_message, warning_message,
+};
 
 use crate::commands::command_approval::approve_command_batch;
 use crate::commands::project_config::{
     ApprovableCommand, collect_commands_for_aliases, collect_commands_for_hooks,
 };
+
+/// Every approvable command a project config declares: hooks in lifecycle
+/// order, then aliases (alphabetical), then any commit-message guidance.
+/// The shared collection behind `wt config approvals {list,add}`.
+fn collect_approvable_commands(project_config: &ProjectConfig) -> Vec<ApprovableCommand> {
+    let all_hooks: Vec<_> = HookType::iter().collect();
+    let mut commands = collect_commands_for_hooks(project_config, &all_hooks);
+    commands.extend(collect_commands_for_aliases(project_config));
+    if let Some(fragment) = project_config.commit_template_append() {
+        commands.push(ApprovableCommand::commit_template_append(
+            fragment.to_string(),
+        ));
+    }
+    commands
+}
+
+/// The project's current approvable commands. A missing project config just
+/// means zero configured commands — recorded approvals for the project are
+/// still meaningful (as stale), so this never errors on absence.
+fn current_approvable_commands(repo: &Repository) -> anyhow::Result<Vec<ApprovableCommand>> {
+    Ok(match repo.load_project_config()? {
+        Some(cfg) => collect_approvable_commands(&cfg),
+        None => Vec::new(),
+    })
+}
+
+/// Handle `wt config approvals list` - show approval status for all project commands
+pub fn list_approvals() -> anyhow::Result<()> {
+    let repo = Repository::current()?;
+    let project_id = repo.project_identifier()?;
+    let approvals = Approvals::load().context("Failed to load approvals")?;
+
+    let commands = current_approvable_commands(&repo)?;
+
+    let templates: Vec<&str> = commands
+        .iter()
+        .map(|cmd| cmd.command.template.as_str())
+        .collect();
+    let stale = approvals.stale_approvals(&project_id, &templates);
+
+    if commands.is_empty() && stale.is_empty() {
+        eprintln!("{}", info_message("No commands configured in project"));
+        return Ok(());
+    }
+
+    let (approved, unapproved): (Vec<_>, Vec<_>) = commands
+        .iter()
+        .partition(|cmd| approvals.is_command_approved(&project_id, &cmd.command.template));
+
+    let mut out = String::new();
+    let render_section =
+        |out: &mut String, title: &str, symbol: &str, section: &[&ApprovableCommand]| {
+            writeln!(out, "{}", format_heading(title, None))?;
+            if section.is_empty() {
+                writeln!(out, "{}", hint_message("(none)"))?;
+            }
+            for cmd in section {
+                writeln!(out, "{} {}", symbol, cmd.label())?;
+                writeln!(out, "{}", cmd.format_template())?;
+            }
+            anyhow::Ok(())
+        };
+    // Symbols match `wt hook show`: ○ approved (a state, not a success),
+    // ❯ awaiting approval.
+    if !commands.is_empty() {
+        render_section(&mut out, "APPROVED", INFO_SYMBOL, &approved)?;
+        out.push('\n');
+        render_section(&mut out, "UNAPPROVED", PROMPT_SYMBOL, &unapproved)?;
+    }
+
+    if !stale.is_empty() {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        writeln!(
+            out,
+            "{}",
+            warning_message("Approved commands no longer in project config:")
+        )?;
+        for command in &stale {
+            writeln!(out, "{}", format_bash_with_gutter(command))?;
+        }
+        writeln!(
+            out,
+            "{}",
+            hint_message(cformat!(
+                "To clear stale approvals, run <underline>wt config approvals clear --stale</>"
+            ))
+        )?;
+    }
+
+    // Human-oriented sectioned output, plausibly more than a screen — page it
+    // like `wt hook show`. The helper TTY-detects, so piping stays plain.
+    crate::help_pager::show_help_in_pager(&out, true);
+
+    Ok(())
+}
 
 /// Handle `wt config approvals add` command - approve all hook and alias commands in the project
 pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
@@ -29,16 +133,7 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
         .load_project_config()?
         .ok_or(GitError::ProjectConfigNotFound { config_path })?;
 
-    // Collect all commands from the project config: hooks first (lifecycle order),
-    // then aliases (alphabetical via BTreeMap), then any commit-message guidance.
-    let all_hooks: Vec<_> = HookType::iter().collect();
-    let mut commands = collect_commands_for_hooks(&project_config, &all_hooks);
-    commands.extend(collect_commands_for_aliases(&project_config));
-    if let Some(fragment) = project_config.commit_template_append() {
-        commands.push(ApprovableCommand::commit_template_append(
-            fragment.to_string(),
-        ));
-    }
+    let commands = collect_approvable_commands(&project_config);
 
     if commands.is_empty() {
         eprintln!("{}", info_message("No commands configured in project"));
@@ -80,10 +175,43 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
 }
 
 /// Handle `wt config approvals clear` command - clear approved commands
-pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
+pub fn clear_approvals(global: bool, stale: bool) -> anyhow::Result<()> {
     let mut approvals = Approvals::load().context("Failed to load approvals")?;
 
-    if global {
+    if stale {
+        // Clear only approvals whose commands left the project config
+        let repo = Repository::current()?;
+        let project_id = repo.project_identifier()?;
+        let commands = current_approvable_commands(&repo)?;
+        let templates: Vec<&str> = commands
+            .iter()
+            .map(|cmd| cmd.command.template.as_str())
+            .collect();
+
+        let removed = approvals
+            .revoke_stale(&project_id, &templates, &require_approvals_path()?)
+            .context("Failed to clear stale approvals")?;
+
+        if removed.is_empty() {
+            eprintln!(
+                "{}",
+                info_message("No stale approvals to clear for this project")
+            );
+            return Ok(());
+        }
+
+        eprintln!(
+            "{}",
+            success_message(format!(
+                "Cleared {} stale approval{} for this project:",
+                removed.len(),
+                if removed.len() == 1 { "" } else { "s" }
+            ))
+        );
+        for command in &removed {
+            eprintln!("{}", format_bash_with_gutter(command));
+        }
+    } else if global {
         // Count projects with approvals before clearing
         let project_count = approvals
             .projects()

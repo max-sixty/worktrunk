@@ -49,8 +49,9 @@ use commands::{
     handle_opencode_uninstall, handle_promote, handle_rebase, handle_remove_command,
     handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get,
     handle_state_set, handle_state_show, handle_switch_command, handle_unconfigure_shell,
-    handle_vars_clear, handle_vars_get, handle_vars_list, handle_vars_set, run_hook, step_commit,
-    step_copy_ignored, step_diff, step_eval, step_for_each, step_prune, step_relocate, step_tether,
+    handle_vars_clear, handle_vars_get, handle_vars_list, handle_vars_set, list_approvals,
+    run_hook, step_commit, step_copy_ignored, step_diff, step_eval, step_for_each, step_prune,
+    step_relocate, step_tether,
 };
 
 use cli::{
@@ -156,8 +157,9 @@ fn handle_hook_command(action: HookCommand, yes: bool) -> anyhow::Result<()> {
                 ))
             );
             match action {
+                ApprovalsCommand::List => list_approvals(),
                 ApprovalsCommand::Add { all } => add_approvals(all),
-                ApprovalsCommand::Clear { global } => clear_approvals(global),
+                ApprovalsCommand::Clear { global, stale } => clear_approvals(global, stale),
             }
         }
         HookCommand::Run(args) => {
@@ -612,8 +614,9 @@ fn handle_config_command(action: ConfigCommand, yes: bool) -> anyhow::Result<()>
         ConfigCommand::Show { full, format } => handle_config_show(full, format),
         ConfigCommand::Update { print } => handle_config_update(yes, print),
         ConfigCommand::Approvals { action } => match action {
+            ApprovalsCommand::List => list_approvals(),
             ApprovalsCommand::Add { all } => add_approvals(all),
-            ApprovalsCommand::Clear { global } => clear_approvals(global),
+            ApprovalsCommand::Clear { global, stale } => clear_approvals(global, stale),
         },
         ConfigCommand::Alias { action } => match action {
             ConfigAliasCommand::Show { name } => handle_alias_show(name),

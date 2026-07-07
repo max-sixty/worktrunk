@@ -757,11 +757,17 @@ Project hooks and project aliases prompt for approval on first run to prevent un
 
 ### Examples
 
+List commands and their approval status for current project:
+{{ terminal(cmd="wt config approvals list") }}
+
 Pre-approve all hook and alias commands for current project:
 {{ terminal(cmd="wt config approvals add") }}
 
 Clear approvals for current project:
 {{ terminal(cmd="wt config approvals clear") }}
+
+Clear only approvals for commands no longer in the project config:
+{{ terminal(cmd="wt config approvals clear --stale") }}
 
 Clear global approvals:
 {{ terminal(cmd="wt config approvals clear --global") }}
@@ -778,6 +784,7 @@ wt config approvals - Manage command approvals
 Usage: <b><span class=c>wt config approvals</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
 
 <b><span class=g>Commands:</span></b>
+  <b><span class=c>list</span></b>   List project commands and their approval status
   <b><span class=c>add</span></b>    Store approvals in approvals.toml
   <b><span class=c>clear</span></b>  Clear approved commands from approvals.toml
 

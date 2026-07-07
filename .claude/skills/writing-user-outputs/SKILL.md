@@ -120,11 +120,12 @@ Examples that page: `--help`, `wt config show`, `wt hook show`, `wt step {commit
 Build the whole output into a `String` first (don't stream), then:
 
 ```rust
-if let Err(e) = crate::help_pager::show_help_in_pager(&out, true) {
-    log::debug!("Pager failed, falling back to stdout: {}", e);
-    println!("{}", out);
-}
+crate::help_pager::show_help_in_pager(&out, true);
 ```
+
+The helper is infallible from the caller's perspective — it falls back to
+plain stdout itself when no pager is configured, stdout isn't a TTY, or the
+pager fails.
 
 ## Security
 
@@ -379,6 +380,13 @@ naturally come after the action.
 | "Created worktree for feature"          | "Switched to worktree for feature"    |
 | "Created new worktree for feature"      | "Already on worktree for feature"     |
 | "Commands approved & saved"             | "All commands already approved"       |
+
+The same rule governs standalone symbols used as per-row markers in listings:
+✓ marks a completed action, never a state. A listing that reports per-item
+status marks it with ○ (state acknowledged) or ❯ (awaiting approval/user
+input) — the shared vocabulary of `wt hook show` and `wt config approvals
+list`. Reserve a per-row ✓ for outcomes of work the command just performed
+(shell-install action lines, `-v` subprocess trace glyphs).
 
 **Hint vs Info:** Hints suggest user action or provide additional non-essential
 context (supplementary details the user doesn't need but may find useful). Info
