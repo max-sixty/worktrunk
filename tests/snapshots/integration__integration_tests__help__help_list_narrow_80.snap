@@ -334,7 +334,117 @@ These appear across all columns while the table is loading:
 
 [1m[32mJSON output[0m
 
-Query structured data with [2m--format=json[0m:
+[2m--format=json[0m emits structured data in one of two schemas while the format
+migrates: [2m[list] json-schema = 2[0m selects the envelope format below, [2m= 1[0m
+the original bare-array format. Unset emits schema 1 with a warning; a future
+release flips the default to schema 2 and later removes schema 1.
+
+[32mSchema 2[0m
+
+One envelope object. Items carry independent facts; rendered strings
+(including the collapsed Status value) live under [2mdisplay[0m:
+
+[107m [0m [2m{[0m
+[107m [0m [2m  "schema": 2,[0m
+[107m [0m [2m  "repo": {[0m
+[107m [0m [2m    "default_branch": "main",[0m
+[107m [0m [2m    "forge": {"url": "https://github.com/org/repo", "provider": "github",[0m
+[107m [0m [2m "host": "github.com", "owner": "org", "name": "repo", "remote": "origin"}[0m
+[107m [0m [2m  },[0m
+[107m [0m [2m  "collected": {"ci": false, "summary": false},[0m
+[107m [0m [2m  "items": [[0m
+[107m [0m [2m    {[0m
+[107m [0m [2m      "branch": "feature",[0m
+[107m [0m [2m "head": {"sha": "05a4a45d…", "short_sha": "05a4a45", "subject": "Add login
+[107m [0m page",[0m
+[107m [0m [2m               "committed_at": "2025-01-01T08:00:00Z"},[0m
+[107m [0m [2m "worktree": {"path": "/home/user/repo.feature", "main": false, "current":
+[107m [0m true,[0m
+[107m [0m [2m "previous": false, "detached": false, "branch_mismatch": false,[0m
+[107m [0m [2m "changes": {"staged": false, "modified": true, "untracked": false,[0m
+[107m [0m [2m "renamed": false, "deleted": false, "conflicted": false,[0m
+[107m [0m [2m                               "diff": {"added": 10, "deleted": 2}}},[0m
+[107m [0m [2m "default_branch": {"ahead": 3, "behind": 1, "diff": {"added": 50, "deleted":
+[107m [0m 20},[0m
+[107m [0m [2m "orphan": false, "integration": null, "merge_conflicts": false},[0m
+[107m [0m [2m "upstream": {"remote": "origin", "branch": "feature", "ahead": 0, "behind":
+[107m [0m 2},[0m
+[107m [0m [2m "display": {"state": "diverged", "symbols": "!↕", "statusline": "feature …"}[0m
+[107m [0m [2m    }[0m
+[107m [0m [2m  ][0m
+[107m [0m [2m}[0m
+
+How "no value" reads:
+
+- [1mAbsent[0m — nothing to report: not applicable ([2mworktree[0m on a branch-only
+  row), not requested this run (the envelope's [2mcollected[0m records what was),
+  or determined-empty (no PR, no lock, not integrated).
+- [1m[2mnull[0m[0m — requested but not determined: a task timed out, the branch was
+  too stale for the expensive checks, or a forge fetch failed. This is the
+  JSON form of the table's [2m·[0m placeholder.
+
+jq treats absent and [2mnull[0m identically in path expressions, so filters need
+no null checks; [2mhas()[0m distinguishes the two when it matters.
+
+Item fields:
+
+  Field                               Description                               
+ ─────── ────────────────────────────────────────────────────────────────────── 
+ [2mbranch[0m  Branch name; null for a detached-HEAD worktree. Remote rows carry the  
+         bare name with the remote in [2mremote[0m                                    
+ [2mremote[0m  Remote name, present only on remote-only branch rows                   
+ [2mhead[0m    [2m{sha, short_sha, subject, committed_at}[0m; null for unborn branches.     
+         [2mcommitted_at[0m is RFC 3339 UTC                                           
+ [2mworktre[0m [2m{path, main, current, previous, detached, locked, prunable, branch_mis[0m 
+ [2me[0m       [2mmatch, operation, changes}[0m; absent on branch-only rows. [2mlocked[0m/        
+         [2mprunable[0m are [2m{reason}[0m objects and can co-occur; [2moperation[0m is [2m"rebase"[0m  
+         or [2m"merge"[0m; [2mchanges[0m holds the five working-tree flags plus [2mconflicted[0m  
+         and [2mdiff {added, deleted}[0m                                              
+ [2mdefault[0m Relation to the default branch:                                        
+ [2m_branch[0m [2m{ahead, behind, diff, orphan, integration, merge_conflicts}[0m; absent on 
+         the default branch itself. [2mintegration.reason[0m is one of [2msame_commit[0m,   
+         [2mancestor[0m, [2mno_added_changes[0m, [2mtrees_match[0m, [2mmerge_adds_nothing[0m,           
+         [2mpatch_id_match[0m; a dirty tree skips the checks, leaving [2mintegration[0m     
+         null                                                                   
+ [2mupstrea[0m Tracking branch: [2m{remote, branch, ahead, behind}[0m; absent when none is  
+ [2mm[0m       configured                                                             
+ [2mpr[0m      Open PR/MR: [2m{number, url, review, mergeable, repo}[0m; collected with     
+         [2m--full[0m or a listed [2mci[0m column. [2mreview[0m uses the schema 1 [2mci.review_state[0m 
+         vocabulary; [2mmergeable[0m is false when the forge reports conflicts, null  
+         otherwise                                                              
+ [2mchecks[0m  CI pipeline: [2m{status, source, stale}[0m; [2mstatus[0m is [2mpassed[0m, [2mrunning[0m, or    
+         [2mfailed[0m — null when a conflicts report masks it                         
+ [2mdev_ser[0m [2m{url, listening}[0m from the project's [2mlist.url[0m template                  
+ [2mver[0m                                                                            
+ [2msummary[0m LLM branch summary (requires [2m[list] summary = true[0m)                    
+ [2mvars[0m    Per-branch variables from [2mwt config state vars[0m                         
+ [2mdisplay[0m Rendered strings: [2mstate[0m (schema 1's [2mmain_state[0m vocabulary), [2msymbols[0m,   
+         [2mstatusline[0m (with ANSI colors), [2mcolumns[0m (custom-column cells keyed by   
+         header)                                                                
+
+Schema 1 names map directly: [2mcommit[0m → [2mhead[0m, [2mworking_tree[0m →
+[2mworktree.changes[0m, [2mmain[0m + [2mmain_state[0m → [2mdefault_branch[0m +
+[2mdisplay.state[0m, [2mremote[0m → [2mupstream[0m, [2mci[0m → [2mpr[0m + [2mchecks[0m, [2murl[0m +
+[2murl_active[0m → [2mdev_server[0m, [2mstatusline[0m/[2msymbols[0m/[2mcolumns[0m → [2mdisplay.*[0m,
+and the per-item [2mrepo[0m moves to the envelope's [2mrepo.forge[0m.
+
+[107m [0m [2m# Current worktree path (for scripts)[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[36m-r[0m[2m [0m[2m[32m'.items[] | select(.worktree.current) | [0m
+[107m [0m [2m[32m.worktree.path'[0m
+[107m [0m [0m
+[107m [0m [2m# Branches with uncommitted changes[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.items[] | select(.worktree.changes.modified)'[0m
+[107m [0m [0m
+[107m [0m [2m# Integrated branches (safe to remove)[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.items[] | select(.display.state == "integrated" [0m
+[107m [0m [2m[32mor .display.state == "empty") | .branch'[0m
+[107m [0m [0m
+[107m [0m [2m# Worktrees ahead of upstream (needs pushing)[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.items[] | select(.upstream.ahead > 0) | .branch'[0m
+
+[32mSchema 1[0m
+
+The original bare-array format, and the default while unset:
 
 [107m [0m [2m# Current worktree path (for scripts)[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[36m-r[0m[2m [0m[2m[32m'.[] | select(.is_current) | .path'[0m

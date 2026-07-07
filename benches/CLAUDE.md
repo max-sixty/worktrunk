@@ -123,6 +123,20 @@ User state — `worktrunk.history`, `worktrunk.hints.*`, `worktrunk.state.<branc
 read-path performance and benches may depend on it (e.g., branch markers set during
 setup).
 
+**Deleting a worktree's index isn't a cold cache.** Git treats a missing index
+as empty, so `git status` reports every tracked file as a staged deletion — a
+*different repo state*, which flips any clean-worktree gate a benchmarked
+command exercises (e.g. `wt step prune`'s removability check would silently
+drop every worktree candidate). A benchmark exercising such a gate must pair
+`invalidate_caches_auto` with `wt_perf::restore_worktree_indexes`, which
+`git reset -q`s every worktree back to a clean `git status` while leaving the
+integration probes cold. It's a separate call, not folded into
+`invalidate_caches_auto`, because `git reset --mixed` discards
+staged-but-uncommitted index state that some fixtures plant on purpose (and
+that a real repo targeted by `wt-perf invalidate` / `timeline --cold` may hold
+as genuine work in progress) — pair it only with fixtures whose dirt is
+untracked files.
+
 **Which commands populate `.git/wt/cache/`:**
 
 | Command | Populates? | Notes |
@@ -206,12 +220,10 @@ ambient machine load (sibling builds, Spotlight): treat them as shape, not
 thresholds, and read criterion "regressed" verdicts on this bench against
 `uptime` before believing them.
 
-Cold prune benches pair `invalidate_caches_auto` with `restore_worktree_indexes`:
-deleting a worktree's index makes `git status` report every tracked file as a
-staged deletion, which flips prune's clean-worktree removability gate and
-silently drops all worktree candidates from the run. The dry-run variants
-assert the listed candidate count so that degradation can't come back
-unnoticed.
+Cold prune benches pair `invalidate_caches_auto` with
+`restore_worktree_indexes` (see "Deleting a worktree's index isn't a cold
+cache" under Cache Handling); the dry-run variants assert the listed
+candidate count so that degradation can't come back unnoticed.
 
 **Phase attribution** — `wt-perf timeline` plus the removal spans. Prune emits
 `prune-gather` (worktree+branch enumeration), `prune-scan` (the whole parallel

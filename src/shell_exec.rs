@@ -361,6 +361,28 @@ pub fn scrub_directive_env_vars(cmd: &mut std::process::Command) {
     cmd.env_remove(DIRECTIVE_FILE_ENV_VAR);
 }
 
+/// Scrub the git-discovery path vars ([`INHERITED_GIT_PATH_VARS`]) from a child
+/// `Command`, so the spawned process discovers its repository from its working
+/// directory rather than a `GIT_DIR`/`GIT_WORK_TREE` that `wt` inherited.
+///
+/// Applied when spawning **user hooks**: `wt` sets a hook's working directory to
+/// the worktree it is operating on, so the hook's own `git` commands must
+/// resolve against that worktree — not a git-discovery context `wt` happened to
+/// inherit (e.g. `wt` run as a `!wt` git alias, or nested under another tool's
+/// git hook). Forwarding the inherited context into a hook is a footgun: with
+/// both `GIT_DIR` and `GIT_WORK_TREE` present, a hook that runs `git init`
+/// writes `core.worktree` into the *inherited* repo's config, silently
+/// redirecting every later plain git command there. See issue #3373.
+///
+/// `wt`'s *own* internal git plumbing ([`Cmd`] via `Repository::run_command`)
+/// keeps the inherited context on purpose (relative values absolutized, see
+/// issue #1914), so this scrub is applied only at the hook spawn sites.
+pub fn scrub_git_discovery_env_vars(cmd: &mut std::process::Command) {
+    for var in INHERITED_GIT_PATH_VARS {
+        cmd.env_remove(var);
+    }
+}
+
 // ============================================================================
 // Directive-Payload Shell Escaping
 // ============================================================================
@@ -1078,6 +1100,22 @@ impl Cmd {
     /// Remove an environment variable.
     pub fn env_remove(mut self, key: impl AsRef<OsStr>) -> Self {
         self.env_removes.push(key.as_ref().to_os_string());
+        self
+    }
+
+    /// Scrub inherited git-discovery vars ([`INHERITED_GIT_PATH_VARS`]) from the
+    /// child environment. Applied by user-hook spawn sites so a hook's `git`
+    /// commands discover the repository from the working directory `wt` sets,
+    /// not a `GIT_DIR`/`GIT_WORK_TREE` `wt` inherited. See
+    /// [`scrub_git_discovery_env_vars`] for the rationale (issue #3373).
+    ///
+    /// Applied after the inherited-`GIT_*` absolutization in
+    /// `apply_common_settings` (env-removes run last), so it also overrides the
+    /// relative-path absolutization that would otherwise re-add these vars.
+    pub fn scrub_git_discovery_env(mut self) -> Self {
+        for var in INHERITED_GIT_PATH_VARS {
+            self.env_removes.push(OsString::from(*var));
+        }
         self
     }
 

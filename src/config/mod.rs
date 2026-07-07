@@ -138,6 +138,7 @@ pub use deprecation::format_migration_diff;
 pub use deprecation::migrate_content;
 pub use deprecation::normalize_template_vars;
 pub use deprecation::suppress_warnings;
+pub use deprecation::warnings_suppressed;
 pub use deprecation::{
     DEPRECATED_SECTION_KEYS, DeprecatedSection, UnknownKeyKind, classify_unknown_key,
     key_belongs_in, nested_key_belongs_in, warn_unknown_fields,

@@ -1938,6 +1938,16 @@ fn remove_removed_worktree_silently(
 /// maintain a single rendering state machine — if stdout writes color codes
 /// but stderr's output arrives next, the terminal applies stdout's color
 /// state to stderr's text. The reset to stderr prevents this.
+///
+/// ## Git discovery
+///
+/// `scrub_git_discovery` removes inherited `GIT_DIR`/`GIT_WORK_TREE` (and the
+/// rest of [`INHERITED_GIT_PATH_VARS`]) from the child so its `git` commands
+/// discover the repo from `working_dir`. Hooks pass `true` (they operate on the
+/// worktree wt targets); aliases pass `false` (they keep wt's inherited context,
+/// like a top-level command the user typed). See issue #3373.
+///
+/// [`INHERITED_GIT_PATH_VARS`]: worktrunk::shell_exec::INHERITED_GIT_PATH_VARS
 pub fn execute_shell_command(
     working_dir: &std::path::Path,
     command: &str,
@@ -1945,6 +1955,7 @@ pub fn execute_shell_command(
     command_log_label: Option<&str>,
     directives: DirectivePassthrough,
     redirect_stdout_to_stderr: bool,
+    scrub_git_discovery: bool,
 ) -> anyhow::Result<()> {
     // Flush stdout before executing command to ensure all our messages appear
     // before the child process output
@@ -1959,6 +1970,12 @@ pub fn execute_shell_command(
     let mut cmd = Cmd::shell(command)
         .current_dir(working_dir)
         .forward_signals();
+
+    // User hooks discover their repo from the cwd wt sets, not an inherited
+    // GIT_DIR/GIT_WORK_TREE (issue #3373). Aliases keep the inherited context.
+    if scrub_git_discovery {
+        cmd = cmd.scrub_git_discovery_env();
+    }
 
     if redirect_stdout_to_stderr {
         cmd = cmd.stdout(Stdio::from(std::io::stderr()));
