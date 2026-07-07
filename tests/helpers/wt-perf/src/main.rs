@@ -10,8 +10,9 @@ use std::time::{Duration, Instant};
 use clap::{Parser, Subcommand};
 use worktrunk::trace::{TraceEntry, TraceEntryKind, TraceResult};
 use wt_perf::{
-    canonicalize, create_mixed_repo_at, create_prune_repo_at, create_repo_at,
-    invalidate_caches_auto, parse_config,
+    PRUNE_REAL_MERGED, PRUNE_REAL_UNMERGED, canonicalize, create_mixed_repo_at,
+    create_prune_repo_at, create_repo_at, ensure_prune_real_repo, invalidate_caches_auto,
+    parse_config,
 };
 
 #[derive(Parser)]
@@ -26,7 +27,7 @@ struct Cli {
 enum Commands {
     /// Set up a benchmark repository
     Setup {
-        /// Config name: typical-N, branches-N, branches-N-M, divergent, mixed-W-B, prune-M-U, picker-test
+        /// Config name: typical-N, branches-N, branches-N-M, divergent, mixed-W-B, prune-M-U, prune-real[-M-U], picker-test
         config: String,
 
         /// Directory to create repo in (default: temp directory)
@@ -125,8 +126,49 @@ fn main() {
             path,
             persist,
         } => {
-            // `mixed-W-B` / `prune-M-U`: composite fixtures handled separately
-            // since they don't map onto the flat `RepoConfig`.
+            // `mixed-W-B` / `prune-M-U` / `prune-real[-M-U]`: composite
+            // fixtures handled separately since they don't map onto the flat
+            // `RepoConfig`. Test `prune-real` before `prune-` so the pair
+            // parser never sees it.
+            let prune_real = if config == "prune-real" {
+                Some((PRUNE_REAL_MERGED, PRUNE_REAL_UNMERGED))
+            } else {
+                parse_pair(&config, "prune-real-")
+            };
+
+            // The rust-scale fixture is cache-managed (built once under
+            // target/bench-repos/, repaired after a live prune consumes its
+            // candidates), so it takes no --path and never offers cleanup.
+            if let Some((merged, unmerged)) = prune_real {
+                if path.is_some() {
+                    eprintln!(
+                        "prune-real fixtures are cache-managed under target/bench-repos/; --path is not supported"
+                    );
+                    std::process::exit(1);
+                }
+                let repo = ensure_prune_real_repo(merged, unmerged);
+                eprintln!(
+                    "Ready: main @ {}, {} worktrees, {} branches",
+                    repo.display(),
+                    merged + unmerged + 1,
+                    merged + unmerged
+                );
+                eprintln!();
+                eprintln!(
+                    "  wt-perf timeline -- -C {} step prune --dry-run --min-age 0s",
+                    repo.display()
+                );
+                eprintln!(
+                    "  wt-perf timeline -- -C {} step prune --min-age 0s   # live; next setup/bench run re-creates the candidates",
+                    repo.display()
+                );
+                // No `wt-perf invalidate` hint: deleting this fixture's
+                // worktree indexes flips prune's clean-worktree gate and
+                // degrades every later run (ensure_prune_real_repo heals it,
+                // but only on the next setup/bench call).
+                return;
+            }
+
             let mixed = parse_pair(&config, "mixed-");
             let prune = parse_pair(&config, "prune-");
 
@@ -146,6 +188,9 @@ fn main() {
                     eprintln!("  mixed-W-B       - W worktrees + B branches in varied states");
                     eprintln!(
                         "  prune-M-U       - M squash-merged candidates + U unmerged worktrees/branches (wt step prune workload)"
+                    );
+                    eprintln!(
+                        "  prune-real[-M-U] - rust-lang/rust clone + M squash-merged candidates + U unmerged worktrees/branches, cached in target/bench-repos (default {PRUNE_REAL_MERGED}-{PRUNE_REAL_UNMERGED}; first run clones from network)"
                     );
                     eprintln!(
                         "  picker-test     - Config for wt switch interactive picker testing"
@@ -180,7 +225,9 @@ fn main() {
                     create_repo_at(cfg, &base_path);
                     (cfg.worktrees, cfg.branches)
                 }
-                (None, None, None) => unreachable!("repo_config is Some when composites are None"),
+                (None, None, None) => {
+                    unreachable!("repo_config is Some when composites are None")
+                }
             };
 
             let mut parts = vec![format!("main @ {}", base_path.display())];
@@ -192,13 +239,20 @@ fn main() {
             }
             eprintln!("Created: {}", parts.join(", "));
             eprintln!();
+            let example_args = if prune.is_some() {
+                "step prune --dry-run --min-age 0s"
+            } else {
+                "list --progressive"
+            };
             eprintln!(
-                "  wt-perf timeline -- -C {} list --progressive",
-                base_path.display()
+                "  wt-perf timeline -- -C {} {}",
+                base_path.display(),
+                example_args
             );
             eprintln!(
-                "  wt-perf timeline --chrome -- -C {} list --progressive > trace.json",
-                base_path.display()
+                "  wt-perf timeline --chrome -- -C {} {} > trace.json",
+                base_path.display(),
+                example_args
             );
             eprintln!("  wt-perf invalidate {}", base_path.display());
 

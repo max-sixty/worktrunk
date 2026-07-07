@@ -24,8 +24,8 @@ cargo bench --bench time_to_first_output         # all commands
 cargo bench --bench time_to_first_output remove  # just remove
 
 # wt step prune (scan + removal on the squash-merged fixture)
-cargo bench --bench prune                        # all variants
-cargo bench --bench prune dry_run                # scan-only variants
+cargo bench --bench prune                        # synthetic variants
+cargo bench --bench prune --features real-repo-benches prune_real_repo  # rust scale (~15 GiB cached fixture)
 
 # Picker preview pre-compute (wt switch preview workload)
 cargo bench --bench picker_preview               # all variants
@@ -165,15 +165,46 @@ Record them in two layers:
 
 **Criterion cadence** — `benches/remove.rs` and `benches/prune.rs`. Expected
 numbers on an M-series Mac (`prune-4-8` fixture: 4 squash-merged worktrees +
-4 squash-merged branches as candidates, 8 unmerged worktrees + 8 unmerged
-branches as backdrop, 200 commits, 100 files):
+4 squash-merged branches as candidates, 8 two-sided-diverged worktrees + 8
+diverged branches as backdrop, 200 commits, 100 files; `prune_real_repo` runs
+a warm dry-run on the `prune-real` fixture — a rust-lang/rust clone with 12
+squash-merged candidate pairs + 24 diverged worktrees and 24 diverged
+branches, i.e. 36 linked worktrees, cached and self-repairing in
+`target/bench-repos/rust-prune-12-24/`. That group is opt-in —
+`cargo bench --bench prune --features real-repo-benches prune_real_repo` —
+because its ~15 GiB fixture must never build on a hosted CI runner):
 
 | Variant | Expected | What it measures |
 |---------|----------|------------------|
-| `prune_e2e/dry_run_cold` | ~153 ms | full parallel scan, integration probes uncached |
-| `prune_e2e/dry_run_warm` | ~87 ms | steady-state re-scan, probes hit sha_cache |
-| `prune_e2e/live` | ~670 ms | cold scan + serial removal of the 8 candidates (~60 ms each, under the scan write lock) |
+| `prune_e2e/dry_run_cold` | ~160 ms | full parallel scan, integration probes uncached |
+| `prune_e2e/dry_run_warm` | ~90 ms | steady-state re-scan, probes hit sha_cache |
+| `prune_e2e/live` | ~620 ms | cold scan + serial removal of the 8 candidates (~60 ms each, under the scan write lock) |
+| `prune_real_repo/dry_run_warm` | ~0.3–0.8 s | steady-state scan of 72 items (36 worktrees + 36 branches) at 331k-commit scale |
 | `remove_e2e/first_output` | ~86 ms | single-target validation up to first output |
+
+Cold and live at rust scale are **one-shot timelines, not criterion groups**
+(a cold criterion iteration costs ~1 min in re-hashing statuses alone; a live
+one consumes the candidates). Expected one-shots on the `prune-real` fixture:
+
+- **cold dry-run ~5.5 s wall** (~46 s CPU over 472 subprocesses absorbed by
+  the rayon pool) — dominated by stat-cold `git status` at ~4.5 s per fresh
+  worktree; the probes are `merge-base --is-ancestor` ~40 ms and `merge-tree
+  --write-tree` ~130 ms (vs 4–25 ms synthetic, where shallow history walks
+  bottom out at subprocess-spawn cost)
+- **live ~12 s wall** — all 24 removals serialize under the scan write lock
+  inside the `prune-scan` window: each of the 12 worktree candidates takes
+  ~0.5–1.7 s (pre-remove re-checks plus drain waits), branch-only candidates
+  ~50 ms
+
+This is the "prune takes many seconds" experience users report: worktree
+count × stat-cold statuses bounds the scan, and removals extend it serially.
+The synthetic fixture can't show it — its statuses are milliseconds — so
+scale-sensitive changes need a one-shot on `prune-real` (or
+`wt-perf timeline -- -C <repo> step prune --dry-run` on a real repo) alongside
+the criterion cadence. All rust-scale numbers are I/O-bound and move with
+ambient machine load (sibling builds, Spotlight): treat them as shape, not
+thresholds, and read criterion "regressed" verdicts on this bench against
+`uptime` before believing them.
 
 Cold prune benches pair `invalidate_caches_auto` with `restore_worktree_indexes`:
 deleting a worktree's index makes `git status` report every tracked file as a
@@ -201,6 +232,24 @@ cargo run -p wt-perf -- timeline -- -C /tmp/prune-repo step prune --dry-run --mi
 cargo run -p wt-perf -- timeline -- -C /tmp/prune-repo step prune --min-age 0s
 ```
 
+**Live prune at real scale is a one-shot timeline, not a criterion group** —
+each live run consumes the candidates, and re-creating them on rust costs
+minutes per iteration. The `prune-real[-M-U]` fixture is built for this
+workflow: it lives in `target/bench-repos/` (no `--path`), and after a live
+prune the next `wt-perf setup prune-real` or `prune_real_repo` bench run
+detects the consumed candidates and re-creates just them (~1 min) instead of
+rebuilding the ~15 GiB fixture. Don't run two builders concurrently (a bench
+and a setup racing can wipe each other's half-built tree), and don't
+`wt-perf invalidate` it — deleting worktree indexes flips prune's
+clean-worktree gate; the next setup/bench call heals that, but the run you
+invalidated for measures a degraded scan:
+
+```bash
+cargo run -p wt-perf -- setup prune-real     # build or validate/repair the cache
+cargo run -p wt-perf -- timeline -- -C target/bench-repos/rust-prune-12-24/repo step prune --min-age 0s
+cargo run -p wt-perf -- setup prune-real     # repair the consumed candidates
+```
+
 **The `wt remove` exit-delay is machine-dependent and invisible to benches.**
 After its last message, `wt remove` runs an in-process sweep
 (`run_internal_sweep`) that enumerates `git fsmonitor--daemon` processes
@@ -218,6 +267,8 @@ count.
 
 - Results: `target/criterion/`
 - Cached rust repo: `target/bench-repos/rust/`
+- Cached rust prune fixture: `target/bench-repos/rust-prune-<M>-<U>/` (repo +
+  sibling worktrees + `round` counter for candidate re-creation)
 - HTML reports: `target/criterion/*/report/index.html`
 
 ## Performance Investigation with wt-perf
@@ -236,8 +287,13 @@ cargo run -p wt-perf -- setup typical-8 --persist
 #   branches-N-M    - N branches, M commits each
 #   divergent       - 200 branches × 20 commits (GH #461 scenario)
 #   mixed-W-B       - W worktrees + B branches in varied states (the `full` fixture)
-#   prune-M-U       - M squash-merged candidates + U unmerged worktrees/branches
-#                     (the `wt step prune` workload; see benches/prune.rs)
+#   prune-M-U       - M squash-merged candidates + U two-sided-diverged
+#                     worktrees/branches (the `wt step prune` workload; see
+#                     benches/prune.rs)
+#   prune-real[-M-U] - rust-lang/rust clone + M squash-merged candidate pairs
+#                     + U diverged worktrees/branches (default 12-24), cached
+#                     and self-repairing in target/bench-repos/ (no --path);
+#                     first run clones from the network
 #   picker-test     - Config for wt switch interactive picker testing
 
 # Invalidate caches for cold run
