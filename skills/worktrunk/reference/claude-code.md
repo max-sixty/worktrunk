@@ -5,11 +5,11 @@ Worktrunk ships a plugin for each supported agent CLI. What a plugin provides de
 | Capability | Claude Code | Codex | OpenCode | Gemini CLI |
 |---|:-:|:-:|:-:|:-:|
 | Configuration skill | ✓ | ✓ |  | ✓ |
-| Activity tracking (🤖/💬 in `wt list`) | ✓ |  | ✓ | ✓ |
+| Activity tracking (🤖/💬 in `wt list`) | ✓ | ✓ | ✓ | ✓ |
 | Worktree isolation | ✓ |  |  |  |
 | `/wt-switch-create` command | ✓ |  |  |  |
 
-The configuration skill is documentation the agent reads to help set up LLM commits, hooks, and troubleshooting. Activity tracking shows which worktrees have running sessions. Worktree isolation needs worktree-lifecycle hooks and `/wt-switch-create` needs session working-directory switching — both Claude Code-only, so Codex, OpenCode, and Gemini users invoke `wt switch --create` and `wt remove` directly. Codex omits activity tracking because its hooks have no turn-end event, so a 🤖 marker could never clear back to 💬.
+The configuration skill is documentation the agent reads to help set up LLM commits, hooks, and troubleshooting. Activity tracking shows which worktrees have running sessions. Worktree isolation needs worktree-lifecycle hooks and `/wt-switch-create` needs session working-directory switching — both Claude Code-only, so Codex, OpenCode, and Gemini users invoke `wt switch --create` and `wt remove` directly. Codex tracks activity through its own turn-end (`Stop`) hook, but has no session-exit event, so a marker persists after a Codex session ends until the next session or a manual `wt config state marker clear`.
 
 ## Installation
 
@@ -69,7 +69,7 @@ Claude Code is designed to load the skill automatically when it detects worktrun
 
 ## Activity tracking
 
-The Claude Code, OpenCode, and Gemini plugins track agent sessions with status markers in `wt list`:
+The Claude Code, Codex, OpenCode, and Gemini plugins track agent sessions with status markers in `wt list`:
 
 ```bash
 $ wt list
@@ -85,7 +85,7 @@ $ wt list
 - 🤖 — agent is working
 - 💬 — agent is waiting or idle
 
-The plugin clears the marker when a session ends. A stale marker can remain if the agent process is killed before its session-end hook runs; `wt config state marker clear` removes a marker manually.
+The Claude Code, OpenCode, and Gemini plugins clear the marker when a session ends. A stale marker can remain if the agent process is killed before its session-end hook runs. Codex exposes no session-exit event, so its marker always persists after a session ends. In every case, `wt config state marker clear` removes a marker manually.
 
 ### Manual status markers
 

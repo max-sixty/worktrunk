@@ -20,13 +20,15 @@ worktrunk/                          ← repo root = marketplace root
     │                                  the wrapper is marketplace-root-only)
     ├── .codex-plugin/plugin.json   ← Codex manifest (Codex's required wrapper)
     ├── hooks/hooks.json            ← Claude activity + WorktreeCreate/Remove hooks
-    ├── hooks/wt.sh                 ← canonical hook shim; Claude/Codex reach it via
-    │                                  $CLAUDE_PLUGIN_ROOT, Gemini via
+    ├── hooks/wt.sh                 ← canonical hook shim; Claude reaches it via
+    │                                  $CLAUDE_PLUGIN_ROOT, Codex via $PLUGIN_ROOT,
+    │                                  Gemini via
     │                                  ${extensionPath}/plugins/worktrunk/hooks/wt.sh
     ├── skills -> ../../skills       ← symlink; single-sources skills across all
     │                                  tools and the docs auto-sync
     ├── CLAUDE.md / README.md
-    └── (Codex ships no hooks — see Known Limitations below)
+    └── (Codex activity hooks live *inline* in .codex-plugin/plugin.json's
+        `hooks` key — see Known Limitations below)
 ```
 
 Path resolution differs by tool, all verified end-to-end against the real CLIs:
@@ -65,11 +67,20 @@ The 💬 transitions overlap deliberately: `Notification` covers the documented 
 
 **Tracking**: [claude-code#9516](https://github.com/anthropics/claude-code/issues/9516)
 
-### Codex ships no activity hooks
+### Codex activity hooks (marker persists after session end)
 
-The Claude manifest carries `hooks: "./hooks/hooks.json"`; the Codex manifest has no `hooks` key and Codex ships no hooks. Codex's `HookEventNameWire` vocabulary (codex-cli 0.130.0: `PreToolUse`, `PermissionRequest`, `PostToolUse`, `PreCompact`, `PostCompact`, `SessionStart`, `UserPromptSubmit`) has no `Stop`/turn-end event, so a 🤖 marker set on `UserPromptSubmit` could never return to 💬 — it would stick at "working" indefinitely.
+The Claude manifest carries `hooks: "./hooks/hooks.json"` (a path); the Codex manifest carries `hooks` as an **inline object**, `{ "hooks": { … } }`, embedding a Codex-tailored hooks file directly. The distinction is deliberate:
 
-Re-add a Codex `hooks.json`, the `hooks` manifest key, the install hints in `src/commands/config/codex.rs`, and the docs (`docs/content/claude-code.md` "Activity tracking", `src/cli/config.rs` plugin list) once Codex exposes a turn-end hook event.
+- **Why inline, not a path or an absent key.** Claude and Codex share one payload dir. If the Codex manifest omitted `hooks`, Codex would auto-discover `hooks/hooks.json` from the plugin root by convention (`DEFAULT_HOOKS_CONFIG_FILE`, the `None` branch of `load_plugin_hooks`) and surface Worktrunk's *Claude* events in a Codex session ([#3362](https://github.com/max-sixty/worktrunk/issues/3362)). An inline object takes Codex's `Some(Inline)` branch (`resolve_manifest_hooks` in `codex-rs/core-plugins/src/manifest.rs`), which overrides discovery — so the shared Claude file is never loaded and only these Codex-native events fire. Inline keeps the definition self-contained and avoids a second file that could collide with `hooks/hooks.json`.
+- **Why `$PLUGIN_ROOT`, not `$CLAUDE_PLUGIN_ROOT`.** Codex exports both to hook commands (`PLUGIN_ROOT` native, `CLAUDE_PLUGIN_ROOT` as an OOTB-compat alias — `codex-rs/hooks/src/engine/discovery.rs`). The Codex file uses the native `$PLUGIN_ROOT` so nothing Claude-branded appears in a Codex session.
+
+The events (Codex's `HookEventsToml` vocabulary, verified against `codex-rs/config/src/hook_config.rs`):
+- `UserPromptSubmit` → 🤖 (working)
+- `PermissionRequest`, `Stop` → 💬 (waiting for input)
+
+`Stop` fires at turn-end (Codex added it after codex-cli 0.130.0, which had no turn-end event), so 🤖 correctly returns to 💬 when a turn completes — the transition the earlier "no turn-end event" limitation lacked.
+
+**Limitation — marker persists after the session ends.** Codex's `HookEventsToml` has **no `SessionEnd`/session-exit event**, so there is no hook to *clear* the marker when a Codex session exits. The resting state after a normal exit is 💬 (set by the last `Stop`), which reads as "waiting for input" and lingers until the next session or a manual `wt config state marker clear`. This is the same class of limitation already documented above for Claude ("Status persists after user interrupt") — an accepted tradeoff, not a regression. If Codex later adds a session-exit event, add a `marker clear` handler for it here.
 
 ### Accepted tradeoff: shared `skills/` exposes `wt-switch-create`
 

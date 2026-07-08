@@ -1127,6 +1127,7 @@ pub fn collect(
                 status_symbols: StatusSymbols::default(),
                 statusline: None,
                 custom_values: Vec::new(),
+                seeded: super::model::SeededFacts::default(),
                 kind: ItemKind::Worktree(Box::new(worktree_data)),
             }
         })
@@ -1216,8 +1217,11 @@ pub fn collect(
     //   a listed `summary` that `Default` alone wouldn't plan (LLM command set,
     //   `[list] summary` off): without it the picker would hide a column `wt list`
     //   shows. CI is already covered — the picker is always `show_full`.
-    // - `--format json` → `all_columns` (source `Default`), ignoring the
-    //   selection: its every-field contract (`src/cli/mod.rs`) needs the full set.
+    // - `--format json` → `all_columns` unioned with the selection's forced-on
+    //   columns: the every-field contract (`src/cli/mod.rs`) needs the full
+    //   set, never a narrowing — but a listed `ci` forces the fetch on, so
+    //   JSON reports the same data the table shows (and `collected.ci` says
+    //   so).
     //
     // So a branch/path `ls` alias over many dirty worktrees runs no `git status`
     // / diffs / ahead-behind walks (#3133), while a default column gated off by
@@ -1246,12 +1250,12 @@ pub fn collect(
         render_table && progressive_handler.is_none() && !selected_columns.is_empty();
     let tasks = if prune_to_selection {
         listed_plan()
-    } else if progressive_handler.is_some() {
+    } else {
+        // Picker and JSON: the full set plus the selection's forced-on
+        // columns (a no-op when nothing is selected).
         let mut tasks = full_plan();
         tasks.extend(listed_plan());
         tasks
-    } else {
-        full_plan()
     };
 
     // The picker primes its CI cells from the local cache so the column paints
@@ -1295,6 +1299,13 @@ pub fn collect(
     // Single-line invariant: with no detectable width, an unlimited width
     // keeps rows untruncated rather than wrapping at a guessed width
     let max_width = crate::display::terminal_width().unwrap_or(usize::MAX);
+
+    // Which gated fact families the plan requested — recorded on `ListData`
+    // so JSON output can distinguish "not requested" from "undetermined".
+    let collected = super::model::Collected {
+        ci: tasks.contains(&TaskKind::CiStatus),
+        summary: tasks.contains(&TaskKind::SummaryGenerate),
+    };
 
     // Create collection options from the planned task set. `integration_targets`
     // is patched in after the parallel phase below extracts it — at this
@@ -2025,6 +2036,7 @@ pub fn collect(
     Ok(Some(super::model::ListData {
         items,
         custom_columns,
+        collected,
     }))
 }
 
@@ -2123,6 +2135,7 @@ pub fn build_worktree_item(
         status_symbols: StatusSymbols::default(),
         statusline: None,
         custom_values: Vec::new(),
+        seeded: super::model::SeededFacts::default(),
         kind: ItemKind::Worktree(Box::new(WorktreeData::from_worktree(
             wt,
             is_main,

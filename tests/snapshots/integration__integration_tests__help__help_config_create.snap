@@ -165,6 +165,8 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# branches = false   # Include branches without worktrees (--branches)[0m
 [107m [0m [2m# remotes = false    # Include remote-only branches (--remotes)[0m
 [107m [0m [2m#[0m
+[107m [0m [2m# json-schema = 1    # JSON output schema: 1 (current, bare array) or 2 (envelope); unset emits 1 with a warning[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# columns = ["branch", "status", "ci", "path"]   # Columns to show, in order — built-ins or custom headers (omit for the default set)[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# task-timeout-ms = 0   # Kill individual git commands after N ms; 0 disables[0m
@@ -204,8 +206,10 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# needs an LLM command (`[commit.generation]`), `url` needs a `[list] url`[0m
 [107m [0m [2m# template — since listing can't supply the data.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# The selection drives the table and the `wt switch` picker; `wt list --format[0m
-[107m [0m [2m# json` ignores it and emits every field.[0m
+[107m [0m [2m# The selection drives the table and the `wt switch` picker. `wt list --format[0m
+[107m [0m [2m# json` always emits every field, but a listed gated column (`ci`, `summary`)[0m
+[107m [0m [2m# still forces its data collection on, so the JSON carries the same data the[0m
+[107m [0m [2m# table shows.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# #### Custom columns [experimental][0m
 [107m [0m [2m#[0m

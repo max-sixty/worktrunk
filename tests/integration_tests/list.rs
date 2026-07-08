@@ -225,6 +225,93 @@ fn test_list_json_with_metadata(mut repo: TestRepo) {
     });
 }
 
+/// Schema 2 (`[list] json-schema = 2`): envelope with repo facts and
+/// per-item orthogonal facts. Pins the full shape, including the absence
+/// rule (locked reason present, integration null vs absent).
+#[rstest]
+fn test_list_json_schema_2_envelope(mut repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 2\n");
+
+    repo.add_worktree("feature-detached");
+    repo.add_worktree("locked-feature");
+    repo.lock_worktree("locked-feature", Some("Testing"));
+
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--format=json");
+        cmd
+    });
+}
+
+/// `[list] json-schema` selects the output schema: unset emits schema 1
+/// plus a one-time nag, an explicit value is silent, and anything except
+/// 1 or 2 is an error.
+#[rstest]
+fn test_list_json_schema_selection(repo: TestRepo) {
+    // Unset → schema 1 (bare array) + nag on stderr.
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(!json.is_empty(), "schema 1 root is a bare array");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("json-schema"),
+        "unset key should nag: {stderr}"
+    );
+
+    // Explicit 1 → schema 1, no nag.
+    repo.write_test_config("[list]\njson-schema = 1\n");
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(!json.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("json-schema"),
+        "explicit value should not nag: {stderr}"
+    );
+
+    // Explicit 2 → envelope, no nag.
+    repo.write_test_config("[list]\njson-schema = 2\n");
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["schema"], 2);
+    assert_eq!(json["repo"]["default_branch"], "main");
+    assert!(json["items"].as_array().is_some_and(|i| !i.is_empty()));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("json-schema"), "no nag with a value set");
+
+    // Invalid value → warn and degrade to schema 1, like a config type
+    // error (config problems never brick a command).
+    repo.write_test_config("[list]\njson-schema = 3\n");
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "invalid value must not fail");
+    let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(!json.is_empty(), "degrades to schema 1");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("expected 1 or 2"),
+        "invalid value should warn: {stderr}"
+    );
+}
+
 /// `repo_url` is derived locally from the primary remote, converting an SSH
 /// remote to its HTTPS web URL without shelling out to a forge.
 #[rstest]

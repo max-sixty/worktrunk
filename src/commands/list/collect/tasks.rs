@@ -869,6 +869,7 @@ impl Task for UpstreamTask {
             item_idx: ctx.item_idx,
             upstream: UpstreamStatus {
                 remote,
+                upstream_short: Some(upstream_branch),
                 ahead,
                 behind,
             },

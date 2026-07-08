@@ -64,7 +64,7 @@ use std::process::{Child, ExitStatus, Stdio};
 use anyhow::Context;
 
 use worktrunk::git::{Repository, WorktrunkError};
-use worktrunk::shell_exec::ShellConfig;
+use worktrunk::shell_exec::{ShellConfig, scrub_git_discovery_env_vars};
 use worktrunk::trace::CommandTrace;
 
 use super::command_executor::{expand_shell_template, wait_first_error};
@@ -166,14 +166,17 @@ fn spawn_shell_command(
     // `context_json` on stdin, so mark it stdin-reading — the same command
     // across worktrees isn't a duplicate (different per-worktree input).
     let mut trace = CommandTrace::new(None, expanded).reads_stdin(true);
-    let mut child = match shell
-        .command(expanded)
+    let mut command = shell.command(expanded);
+    command
         .current_dir(worktree_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::from(log_file))
-        .stderr(Stdio::from(log_err))
-        .spawn()
-    {
+        .stderr(Stdio::from(log_err));
+    // Background hooks, like foreground ones, discover their repo from the
+    // worktree cwd, not an inherited GIT_DIR/GIT_WORK_TREE (issue #3373). This
+    // runner only ever executes hook pipelines, so the scrub is unconditional.
+    scrub_git_discovery_env_vars(&mut command);
+    let mut child = match command.spawn() {
         Ok(child) => child,
         Err(e) => {
             trace.fail(&e);

@@ -3898,3 +3898,110 @@ lint = "cargo clippy"
         });
     });
 }
+
+// ============================================================================
+// Git-discovery env scrubbing (issue #3373)
+// ============================================================================
+//
+// wt forwards inherited `GIT_*` discovery vars (GIT_DIR, GIT_WORK_TREE, …)
+// into the commands it spawns. For wt's own internal git plumbing that is
+// intentional (#1914), but a *user hook* is meant to operate on the worktree
+// wt sets as its cwd — so a hook that shells out to `git` must discover the
+// repo from that cwd, not from a `GIT_DIR`/`GIT_WORK_TREE` wt happened to
+// inherit (e.g. wt run as a `!wt` git alias, or nested under another tool's
+// git hook). The concrete harm: with both `GIT_DIR` and `GIT_WORK_TREE`
+// present, a hook that runs `git init` (common in test-harness fixtures)
+// writes `core.worktree` into the inherited repo's config, silently
+// redirecting every later plain git command in that repo.
+//
+// These tests set a git-discovery context that is *consistent* with the repo
+// wt operates on (GIT_DIR = repo's gitdir, GIT_WORK_TREE = repo root), so wt
+// itself runs normally, then assert the spawned hook does not see the vars.
+// The hook records `$GIT_DIR`/`$GIT_WORK_TREE` — empty once scrubbed — as
+// `[<git_dir>][<work_tree>]`; a fully-scrubbed environment yields `[][]`.
+
+/// Hook body recording the `GIT_DIR`/`GIT_WORK_TREE` it sees to `marker`.
+/// Unset vars expand to empty, so a scrubbed environment writes `[][]`.
+fn record_git_env_cmd(marker: &str) -> String {
+    format!(r#"printf '[%s][%s]' \"$GIT_DIR\" \"$GIT_WORK_TREE\" > {marker}"#)
+}
+
+/// Assert a `record_git_env_cmd` marker shows both discovery vars scrubbed.
+fn assert_git_env_scrubbed(marker: &std::path::Path) {
+    let seen = fs::read_to_string(marker).unwrap();
+    assert_eq!(
+        seen, "[][]",
+        "hook inherited git-discovery vars ([GIT_DIR][GIT_WORK_TREE]): {seen}"
+    );
+}
+
+/// Run `wt hook <args>` with an inherited (but repo-consistent) git-discovery
+/// context, matching what a `!wt` git alias leaves in the environment.
+fn run_hook_with_inherited_git_env(repo: &TestRepo, args: &[&str]) -> std::process::Output {
+    repo.wt_command()
+        .args(args)
+        .env("GIT_DIR", repo.root_path().join(".git"))
+        .env("GIT_WORK_TREE", repo.root_path())
+        .output()
+        .unwrap()
+}
+
+#[rstest]
+fn test_foreground_hook_does_not_inherit_git_discovery_vars(repo: TestRepo) {
+    repo.write_test_config(&format!(
+        "[pre-merge]\nrecord = \"{}\"\n",
+        record_git_env_cmd("env_seen.txt")
+    ));
+
+    let output = run_hook_with_inherited_git_env(&repo, &["hook", "pre-merge", "--yes"]);
+    assert!(
+        output.status.success(),
+        "pre-merge hook run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let marker = repo.root_path().join("env_seen.txt");
+    assert!(marker.exists(), "foreground hook did not run");
+    assert_git_env_scrubbed(&marker);
+}
+
+#[rstest]
+fn test_background_hook_does_not_inherit_git_discovery_vars(repo: TestRepo) {
+    repo.write_test_config(&format!(
+        "[post-merge]\nrecord = \"{}\"\n",
+        record_git_env_cmd("env_seen.txt")
+    ));
+
+    let output = run_hook_with_inherited_git_env(&repo, &["hook", "post-merge", "--yes"]);
+    assert!(
+        output.status.success(),
+        "post-merge hook dispatch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // post-* hooks run detached; poll for the marker before reading it.
+    let marker = repo.root_path().join("env_seen.txt");
+    wait_for_file_content(&marker);
+    assert_git_env_scrubbed(&marker);
+}
+
+#[rstest]
+fn test_concurrent_hook_does_not_inherit_git_discovery_vars(repo: TestRepo) {
+    // A multi-command hook table runs as a concurrent group (foreground for a
+    // pre-* hook), exercising the separate concurrent spawn path.
+    repo.write_test_config(&format!(
+        "[pre-merge]\nrecord = \"{}\"\nnoop = \"true\"\n",
+        record_git_env_cmd("env_seen.txt")
+    ));
+
+    let output = run_hook_with_inherited_git_env(&repo, &["hook", "pre-merge", "--yes"]);
+    assert!(
+        output.status.success(),
+        "concurrent pre-merge hook run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let marker = repo.root_path().join("env_seen.txt");
+    assert!(marker.exists(), "concurrent hook did not run");
+    assert_git_env_scrubbed(&marker);
+}

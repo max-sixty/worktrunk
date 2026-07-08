@@ -1,13 +1,11 @@
 ---
-source: tests/integration_tests/config_show.rs
+source: tests/integration_tests/approvals.rs
 info:
   program: wt
   args:
     - config
-    - plugins
-    - codex
-    - install
-    - "--yes"
+    - approvals
+    - list
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
@@ -32,7 +30,7 @@ info:
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
-    WORKTRUNK_TEST_CODEX_INSTALLED: "1"
+    WORKTRUNK_TEST_CODEX_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_FISH_INSTALLED: "0"
@@ -48,9 +46,11 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+[36mAPPROVED[39m
+[2m○[22m pre-merge:
+[107m [0m [2m[0m[2m[34mcargo[0m[2m test[0m
+
+[36mUNAPPROVED[39m
+[2m↳[22m [2m(none)[22m
 
 ----- stderr -----
-[36m◎[39m [36mAdding Codex plugin marketplace...[39m
-[32m✓[39m [32mCodex marketplace configured[39m
-[2m↳[22m [2mNext, run /plugins in Codex and install Worktrunk from the marketplace[22m
-[2m↳[22m [2mActivity markers appear in [4mwt list[24m once a Codex session runs[22m

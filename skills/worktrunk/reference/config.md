@@ -185,6 +185,8 @@ full = false       # Show CI status and LLM summaries (--full)
 branches = false   # Include branches without worktrees (--branches)
 remotes = false    # Include remote-only branches (--remotes)
 
+json-schema = 1    # JSON output schema: 1 (current, bare array) or 2 (envelope); unset emits 1 with a warning
+
 columns = ["branch", "status", "ci", "path"]   # Columns to show, in order — built-ins or custom headers (omit for the default set)
 
 task-timeout-ms = 0   # Kill individual git commands after N ms; 0 disables
@@ -225,8 +227,10 @@ named one. A column whose data source is missing still stays hidden — `summary
 needs an LLM command (`[commit.generation]`), `url` needs a `[list] url`
 template — since listing can't supply the data.
 
-The selection drives the table and the `wt switch` picker; `wt list --format
-json` ignores it and emits every field.
+The selection drives the table and the `wt switch` picker. `wt list --format
+json` always emits every field, but a listed gated column (`ci`, `summary`)
+still forces its data collection on, so the JSON carries the same data the
+table shows.
 
 #### Custom columns [experimental]
 
@@ -759,6 +763,11 @@ Project hooks and project aliases prompt for approval on first run to prevent un
 
 ### Examples
 
+List commands and their approval status for current project:
+```bash
+$ wt config approvals list
+```
+
 Pre-approve all hook and alias commands for current project:
 ```bash
 $ wt config approvals add
@@ -767,6 +776,11 @@ $ wt config approvals add
 Clear approvals for current project:
 ```bash
 $ wt config approvals clear
+```
+
+Clear only approvals for commands no longer in the project config:
+```bash
+$ wt config approvals clear --stale
 ```
 
 Clear global approvals:
@@ -786,6 +800,7 @@ wt config approvals - Manage command approvals
 Usage: wt config approvals [OPTIONS] <COMMAND>
 
 Commands:
+  list   List project commands and their approval status
   add    Store approvals in approvals.toml
   clear  Clear approved commands from approvals.toml
 

@@ -6,6 +6,28 @@
 
 - **`-vv` diagnostics surface pager and terminal environment**: The diagnostic report (`.git/wt/logs/diagnostic.md`, written on every `-vv` run) gained an "Environment variables" section listing a curated, non-secret allowlist of the pager / terminal / locale knobs (`PAGER`, `GIT_PAGER`, `TERM`, `COLUMNS`, `NO_COLOR`, `LANG`, …) plus git's resolved `core.pager`. These are the inputs that most often explain a rendering bug — like a pager interaction suspending `wt config show` ([#3322](https://github.com/max-sixty/worktrunk/issues/3322)) — and they were previously invisible in the report. The list is a strict allowlist, never a blanket `env` dump, so no credential-bearing variable can leak into an uploaded report.
 
+## 0.66.0
+
+### Improved
+
+- **Opt-in JSON schema 2 for `wt list`**: `wt list --format=json` and `wt list statusline --format=json` can now emit a v2 schema, selected via the `[list] json-schema` config key. Schema 2 wraps the rows in an envelope (`schema`, `repo.default_branch`, `repo.forge`, `collected`) and separates "nothing to report" (field absent) from "requested but undetermined" (field `null` — a probe still pending, timed out, or failed). Schema 1 — the existing bare array — remains the default, byte-for-byte; with the key unset, a once-per-process stderr hint shows both values (`= 1` to pin, `= 2` to opt in; suppressed on the statusline surface). [Docs](https://worktrunk.dev/list/#json-output) ([#3357](https://github.com/max-sixty/worktrunk/pull/3357))
+
+- **`wt config approvals list` and `clear --stale`**: `list` shows every command the project config declares — hooks in lifecycle order, aliases, commit-message guidance — grouped into approved and unapproved, with approvals recorded for commands no longer in the config flagged as stale. `clear --stale` removes only those left-behind approvals, echoing each one; valid approvals survive, and a full wipe remains plain `clear`. [Docs](https://worktrunk.dev/config/#wt-config-approvals) ([#3380](https://github.com/max-sixty/worktrunk/pull/3380))
+
+- **Codex sessions show activity markers**: The Codex plugin now ships Codex-native activity hooks, so `wt list` shows 🤖 (working) / 💬 (waiting) for Codex sessions as it does for Claude Code, OpenCode, and Gemini — and Claude-branded events no longer surface inside Codex sessions. Codex has no session-exit event, so the marker rests at 💬 after a session ends until the next session or `wt config state marker clear`. ([#3364](https://github.com/max-sixty/worktrunk/pull/3364), closes [#3362](https://github.com/max-sixty/worktrunk/issues/3362), thanks @ofek for reporting)
+
+### Fixed
+
+- **User hooks no longer inherit `wt`'s `GIT_*` discovery vars**: A user hook that shells out to `git` now discovers its repository from the worktree `wt` sets as its cwd, rather than an inherited `GIT_DIR`/`GIT_WORK_TREE` (e.g. from `wt` run as a `!wt` git alias, or nested under another tool's git hook). `wt` now scrubs the `GIT_*` discovery vars at every hook spawn site — foreground, background, and concurrent. Previously the inherited context leaked into hooks: with both `GIT_DIR` and `GIT_WORK_TREE` present, a hook that ran `git init` would write `core.worktree` into the inherited repo's config, silently redirecting later plain git commands there. `wt`'s own internal git plumbing keeps the inherited context (the absolutize-and-forward behavior from [#1914](https://github.com/max-sixty/worktrunk/pull/1914)); aliases keep it too, since a top-level `wt <alias>` is the user's own command. ([#3374](https://github.com/max-sixty/worktrunk/pull/3374), closes [#3373](https://github.com/max-sixty/worktrunk/issues/3373), thanks @silvanshade for reporting)
+
+- **SCP-style SSH remotes with custom usernames**: Remote URLs like `org-12345678@github.com:owner/repo.git` (GitHub account/org aliases) now parse canonically, so `wt switch pr:<n>` matches the local remote instead of failing with `No remote found`. Malformed and local-path forms that merely resemble SCP syntax are still rejected. ([#3371](https://github.com/max-sixty/worktrunk/pull/3371), thanks @fcoury-oai)
+
+### Documentation
+
+- **Windows app-alias guidance matches current Settings**: The instructions for disabling Windows Terminal's `wt` app-execution alias now point at the current Settings path (Apps → Advanced app settings → App execution aliases). ([#3372](https://github.com/max-sixty/worktrunk/pull/3372), thanks @ofek)
+
+- **`/wt-switch-create` always creates a worktree**: The plugin skill's wording let a session judge that a research or read-only task didn't need isolation and skip the worktree; invoking the command now counts as the explicit request, so the worktree is created unconditionally. ([#3356](https://github.com/max-sixty/worktrunk/pull/3356))
+
 ## 0.65.0
 
 ### Improved
