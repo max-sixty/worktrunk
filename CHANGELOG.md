@@ -8,11 +8,17 @@
 
 - **`wt config approvals list` and `clear --stale`**: `list` shows every command the project config declares — hooks in lifecycle order, aliases, commit-message guidance — grouped into approved and unapproved, with approvals recorded for commands no longer in the config flagged as stale. `clear --stale` removes only those left-behind approvals, echoing each one; valid approvals survive, and a full wipe remains plain `clear`. [Docs](https://worktrunk.dev/config/#wt-config-approvals) ([#3380](https://github.com/max-sixty/worktrunk/pull/3380))
 
+- **Codex sessions show activity markers**: The Codex plugin now ships Codex-native activity hooks, so `wt list` shows 🤖 (working) / 💬 (waiting) for Codex sessions as it does for Claude Code, OpenCode, and Gemini — and Claude-branded events no longer surface inside Codex sessions. Codex has no session-exit event, so the marker rests at 💬 after a session ends until the next session or `wt config state marker clear`. ([#3364](https://github.com/max-sixty/worktrunk/pull/3364), closes [#3362](https://github.com/max-sixty/worktrunk/issues/3362), thanks @ofek for reporting)
+
 ### Fixed
 
 - **User hooks no longer inherit `wt`'s `GIT_*` discovery vars**: A user hook that shells out to `git` now discovers its repository from the worktree `wt` sets as its cwd, rather than an inherited `GIT_DIR`/`GIT_WORK_TREE` (e.g. from `wt` run as a `!wt` git alias, or nested under another tool's git hook). `wt` now scrubs the `GIT_*` discovery vars at every hook spawn site — foreground, background, and concurrent. Previously the inherited context leaked into hooks: with both `GIT_DIR` and `GIT_WORK_TREE` present, a hook that ran `git init` would write `core.worktree` into the inherited repo's config, silently redirecting later plain git commands there. `wt`'s own internal git plumbing keeps the inherited context (the absolutize-and-forward behavior from [#1914](https://github.com/max-sixty/worktrunk/pull/1914)); aliases keep it too, since a top-level `wt <alias>` is the user's own command. ([#3374](https://github.com/max-sixty/worktrunk/pull/3374), closes [#3373](https://github.com/max-sixty/worktrunk/issues/3373), thanks @silvanshade for reporting)
 
+- **SCP-style SSH remotes with custom usernames**: Remote URLs like `org-12345678@github.com:owner/repo.git` (GitHub account/org aliases) now parse canonically, so `wt switch pr:<n>` matches the local remote instead of failing with `No remote found`. Malformed and local-path forms that merely resemble SCP syntax are still rejected. ([#3371](https://github.com/max-sixty/worktrunk/pull/3371), thanks @fcoury-oai)
+
 ### Documentation
+
+- **Windows app-alias guidance matches current Settings**: The instructions for disabling Windows Terminal's `wt` app-execution alias now point at the current Settings path (Apps → Advanced app settings → App execution aliases). ([#3372](https://github.com/max-sixty/worktrunk/pull/3372), thanks @ofek)
 
 - **`/wt-switch-create` always creates a worktree**: The plugin skill's wording let a session judge that a research or read-only task didn't need isolation and skip the worktree; invoking the command now counts as the explicit request, so the worktree is created unconditionally. ([#3356](https://github.com/max-sixty/worktrunk/pull/3356))
 
