@@ -11,7 +11,7 @@ Criterion's CLI takes a positional `FILTER` (substring inclusion) and `--exact`.
 cargo bench --bench list skeleton/warm
 
 # Run specific group (all variants)
-cargo bench --bench list many_branches
+cargo bench --bench list full
 
 # GH #461 scenario (200 branches on rust-lang/rust)
 cargo bench --bench list real_repo_many_branches
@@ -34,17 +34,20 @@ Real repo benchmarks clone rust-lang/rust on first run (~2-5 minutes). The clone
 
 ## Faster Iteration
 
-Criterion has no exclusion flag — narrow the run by picking a substring that matches only the variants you want. Benchmark IDs look like `<group>/<label>/<param>`, e.g. `skeleton/cold/4`, `worktree_scaling/warm/8`, `real_repo_many_branches/warm`.
+Criterion has no exclusion flag — narrow the run by picking a substring that matches only the variants you want. Benchmark IDs look like `<group>/<label>/<param>`, e.g. `skeleton/cold/4`, `worktree_scaling/warm/8`, `full/cold`, `real_repo_many_branches/warm`.
 
 **Pattern matching (positional `FILTER`):**
 ```bash
 cargo bench --bench list scaling             # All worktree_scaling/* variants
 cargo bench --bench list warm                # Every benchmark whose ID contains "warm"
 cargo bench --bench list skeleton/warm       # Just skeleton's warm variants
-cargo bench --bench list -- --exact full/cold/4   # One exact ID
+cargo bench --bench list full                # Both cache states of the combined fixture
+cargo bench --bench list -- --exact full/cold   # One exact ID
 ```
 
-To skip the slow real-repo and divergent groups, target the synthetic groups directly: `cargo bench --bench list skeleton`, `cargo bench --bench list full`, or `cargo bench --bench list worktree_scaling`. Run them sequentially if you want more than one.
+To skip the slow real-repo and divergent groups, target the synthetic groups directly: `cargo bench --bench list skeleton`, `cargo bench --bench list worktree_scaling`, or `cargo bench --bench list full`. Run them sequentially if you want more than one.
+
+The `full` group is the place to start when `wt list` regresses on a real mix of worktrees and branches: the cold/warm split says whether the cost is the persistent-cache fill (cold) or the per-process re-fork (warm). A `full` wall time can't be split by side (the git subprocesses overlap on the rayon pool), so to localize a regression, trace one invocation and bucket subprocess time per worktree (query #3 below); `worktree_scaling` and `divergent_branches` track the worktree side and branch side respectively at criterion cadence.
 
 ## WORKTRUNK_FIRST_OUTPUT
 
@@ -110,6 +113,20 @@ User state — `worktrunk.history`, `worktrunk.hints.*`, `worktrunk.state.<branc
 read-path performance and benches may depend on it (e.g., branch markers set during
 setup).
 
+**Deleting a worktree's index isn't a cold cache.** Git treats a missing index
+as empty, so `git status` reports every tracked file as a staged deletion — a
+*different repo state*, which flips any clean-worktree gate a benchmarked
+command exercises (e.g. `wt step prune`'s removability check would silently
+drop every worktree candidate). A benchmark exercising such a gate must pair
+`invalidate_caches_auto` with `wt_perf::restore_worktree_indexes`, which
+`git reset -q`s every worktree back to a clean `git status` while leaving the
+integration probes cold. It's a separate call, not folded into
+`invalidate_caches_auto`, because `git reset --mixed` discards
+staged-but-uncommitted index state that some fixtures plant on purpose (and
+that a real repo targeted by `wt-perf invalidate` / `timeline --cold` may hold
+as genuine work in progress) — pair it only with fixtures whose dirt is
+untracked files.
+
 **Which commands populate `.git/wt/cache/`:**
 
 | Command | Populates? | Notes |
@@ -164,6 +181,7 @@ cargo run -p wt-perf -- setup typical-8 --persist
 #   branches-N      - N branches, 1 commit each
 #   branches-N-M    - N branches, M commits each
 #   divergent       - 200 branches × 20 commits (GH #461 scenario)
+#   mixed-W-B       - W worktrees + B branches in varied states (the `full` fixture)
 #   picker-test     - Config for wt switch interactive picker testing
 
 # Invalidate caches for cold run

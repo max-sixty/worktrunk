@@ -185,6 +185,8 @@ full = false       # Show CI status and LLM summaries (--full)
 branches = false   # Include branches without worktrees (--branches)
 remotes = false    # Include remote-only branches (--remotes)
 
+json-schema = 1    # JSON output schema: 1 (current, bare array) or 2 (envelope); unset emits 1 with a warning
+
 columns = ["branch", "status", "ci", "path"]   # Columns to show, in order — built-ins or custom headers (omit for the default set)
 
 task-timeout-ms = 0   # Kill individual git commands after N ms; 0 disables
@@ -225,8 +227,10 @@ named one. A column whose data source is missing still stays hidden — `summary
 needs an LLM command (`[commit.generation]`), `url` needs a `[list] url`
 template — since listing can't supply the data.
 
-The selection drives the table and the `wt switch` picker; `wt list --format
-json` ignores it and emits every field.
+The selection drives the table and the `wt switch` picker. `wt list --format
+json` always emits every field, but a listed gated column (`ci`, `summary`)
+still forces its data collection on, so the JSON carries the same data the
+table shows.
 
 #### Custom columns [experimental]
 
@@ -243,20 +247,30 @@ priority = 9                     # Optional drop order when the terminal narrows
 ```
 
 Templates may reference `{{ branch }}`, `{{ worktree_path }}`,
-`{{ worktree_name }}` (empty for branch-only rows), and `{{ vars.* }}` —
-per-branch values stored with
-[`wt config state vars set`](https://worktrunk.dev/config/#wt-config-state-vars).
+`{{ worktree_name }}` (empty for branch-only rows), and two per-branch
+namespaces:
+
+- `{{ vars.* }}` — values stored with
+  [`wt config state vars set`](https://worktrunk.dev/config/#wt-config-state-vars).
+- `{{ git.branch.* }}` — the branch's own git config under `branch.<name>.*`,
+  read straight from `git config` (e.g. `{{ git.branch.jira }}` for a key you
+  set yourself, or the git-native `description`). Git lowercases config variable
+  names, so `branch.<name>.nvciShelf` reads as `{{ git.branch.nvcishelf }}`.
+
 All standard filters work (`sanitize`, `hash_port`, `codename`, …). A row
-where the template renders empty (e.g. a branch without the vars key) shows an
+where the template renders empty (e.g. a branch without the key) shows an
 empty cell; a column that is empty for every row is dropped from the table.
 `wt list --format json` includes the rendered values under `columns`.
 
-A `Note` column showing free-form descriptions, set per branch with
-`wt config state vars set note "Bug fix for production fire"`:
+A `Jira` column reading a key kept in git config, and a `Summary` column
+showing just the first line of the git-native branch description:
 
 ```toml
-[list.custom-columns.Note]
-template = "{{ vars.note }}"
+[list.custom-columns.Jira]
+template = "{{ git.branch.jira }}"
+
+[list.custom-columns.Summary]
+template = "{{ git.branch.description | lines | first }}"
 ```
 
 ### Commit
@@ -749,6 +763,11 @@ Project hooks and project aliases prompt for approval on first run to prevent un
 
 ### Examples
 
+List commands and their approval status for current project:
+```bash
+$ wt config approvals list
+```
+
 Pre-approve all hook and alias commands for current project:
 ```bash
 $ wt config approvals add
@@ -757,6 +776,11 @@ $ wt config approvals add
 Clear approvals for current project:
 ```bash
 $ wt config approvals clear
+```
+
+Clear only approvals for commands no longer in the project config:
+```bash
+$ wt config approvals clear --stale
 ```
 
 Clear global approvals:
@@ -776,6 +800,7 @@ wt config approvals - Manage command approvals
 Usage: wt config approvals [OPTIONS] <COMMAND>
 
 Commands:
+  list   List project commands and their approval status
   add    Store approvals in approvals.toml
   clear  Clear approved commands from approvals.toml
 
@@ -1133,7 +1158,7 @@ All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the
 | `subprocess.log` | Running with `-vv` |
 | `diagnostic.md` | Running with `-vv` |
 
-`trace.log` is the human-readable trace at `-vv` — each command's start (`$ …`) and completion (`✓`/`✗ … 12.3ms`), in-process spans, milestones, and bounded subprocess previews. `trace.jsonl` is the same event stream as one JSON object per line, for machines (`jq`, chrome://tracing); `wt config state logs profile` reads it to summarize a performance report (where time went, parallelism, redundant commands). `subprocess.log` holds the raw uncapped subprocess stdout/stderr bodies. `diagnostic.md` is a markdown bug-report bundle that inlines `trace.log` and a rendered performance profile; `wt` prints a `gh gist create` command pointing at it. All four are overwritten on each `-vv` run.
+`trace.log` is the human-readable trace at `-vv` — each command's start (`$ …`) and completion (`✓`/`✗ … 12.3ms`), in-process spans, milestones, and bounded subprocess previews. `trace.jsonl` is the same event stream as one JSON object per line, for machines (`jq`, chrome://tracing); `wt config state logs profile` reads it to summarize a performance report (where time went, parallelism, redundant commands). `subprocess.log` holds the raw uncapped subprocess stdout/stderr bodies. `diagnostic.md` is a markdown bug-report bundle that leads with that same performance profile and inlines `trace.log`; `wt` prints a `gh gist create` command pointing at it. All four are overwritten on each `-vv` run.
 
 ### Location
 

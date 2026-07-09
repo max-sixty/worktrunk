@@ -6,36 +6,46 @@
 //!
 //! # When Diagnostics Are Generated
 //!
-//! Diagnostic files are written on every `-vv` run (one file per command,
-//! overwritten each time). Without `-vv`, the hint simply tells users to
-//! rerun with `-vv`. This ensures the diagnostic file contains the trace
-//! the report inlines.
+//! A `diagnostic.md` bundle is written on every `-vv` run (one file per
+//! command, overwritten each time). Without `-vv`, the hint simply tells users
+//! to rerun with `-vv`. This ensures the diagnostic file contains the trace the
+//! report inlines.
 //!
 //! # Report Format
 //!
 //! The report is a markdown file designed for easy pasting into GitHub issues:
 //!
 //! 1. **Header** — Timestamp, command that was run, and result
-//! 2. **Environment** — wt version, OS, git version, shell integration
-//! 3. **Worktrees** — Raw `git worktree list --porcelain` output
-//! 4. **Config** — User and project config contents
-//! 5. **Performance profile** — Rendered view of `trace.jsonl`: where time went,
-//!    parallelism, and same-context cache misses (omitted if no records)
-//! 6. **Verbose log** — Debug log output, truncated to ~50KB if large
+//! 2. **Performance profile** — Rendered view of `trace.jsonl`: where time went,
+//!    parallelism, and same-context cache misses (omitted if no records). Shown
+//!    first as the at-a-glance summary, expanded by default; the raw dumps
+//!    below stay collapsed.
+//! 3. **Environment** — wt version, OS, git version, shell integration
+//! 4. **Environment variables** — a curated, non-secret allowlist of the
+//!    pager / terminal / locale knobs (`PAGER`, `GIT_PAGER`, `TERM`, …) plus
+//!    git's resolved `core.pager`, since these most often explain a rendering
+//!    bug (issue #3322: `wt config show` suspending on a pager write)
+//! 5. **Worktrees** — Raw `git worktree list --porcelain` output
+//! 6. **Config** — User and project config contents
+//! 7. **Verbose log** — Debug log output, truncated to ~50KB if large
 //!
 //! # Privacy
 //!
 //! The report explicitly documents what IS and ISN'T included:
 //!
 //! **Included:** worktree paths, branch names, worktree status (prunable, locked),
-//! config files, trace/output logs, commit messages (in trace logs)
+//! config files, trace/output logs, commit messages (in trace logs), and a
+//! fixed allowlist of pager / terminal / locale environment variables
 //!
-//! **Not included:** file contents, credentials
+//! **Not included:** file contents, credentials, any environment variable
+//! outside the curated allowlist (the report never does a blanket `env` dump,
+//! so a credential-bearing variable can't leak in)
 //!
 //! # File Location
 //!
 //! Reports are written to `<git-common-dir>/wt/logs/diagnostic.md` (typically
-//! `.git/wt/logs/diagnostic.md`). Companion log files (`trace.log`, `trace.jsonl`, `subprocess.log`) live in the same directory.
+//! `.git/wt/logs/diagnostic.md`). Companion log files (`trace.log`,
+//! `trace.jsonl`, `subprocess.log`) live in the same directory.
 //!
 //! # Usage
 //!
@@ -55,7 +65,9 @@ use minijinja::{Environment, context};
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::Cmd;
-use worktrunk::styling::{eprintln, hint_message, success_message, warning_message};
+use worktrunk::styling::{
+    eprintln, format_with_gutter, hint_message, info_message, warning_message,
+};
 
 use crate::cli::version_str;
 use crate::output;
@@ -69,6 +81,16 @@ const REPORT_TEMPLATE: &str = r#"## Diagnostic Report
 **Generated:** {{ timestamp }}
 **Command:** `{{ command }}`
 **Result:** {{ context }}
+{%- if performance_profile %}
+
+<details open>
+<summary>Performance profile</summary>
+
+```
+{{ performance_profile }}
+```
+</details>
+{%- endif %}
 
 <details>
 <summary>Environment</summary>
@@ -77,6 +99,14 @@ const REPORT_TEMPLATE: &str = r#"## Diagnostic Report
 wt {{ version }} ({{ os }} {{ arch }})
 git {{ git_version }}
 Shell integration: {{ shell_integration }}
+```
+</details>
+
+<details>
+<summary>Environment variables</summary>
+
+```
+{{ env_vars }}
 ```
 </details>
 
@@ -94,16 +124,6 @@ Shell integration: {{ shell_integration }}
 
 ```
 {{ config_show }}
-```
-</details>
-{%- endif %}
-{%- if performance_profile %}
-
-<details>
-<summary>Performance profile</summary>
-
-```
-{{ performance_profile }}
 ```
 </details>
 {%- endif %}
@@ -127,6 +147,40 @@ Full captured stdout/stderr is in `{{ subprocess_log_path }}`.
 {%- endif %}
 "#;
 
+/// The curated, non-secret environment variables surfaced in the diagnostic
+/// report, in display order. This is a strict allowlist — the report never does
+/// a blanket `env` dump — so a credential-bearing variable (a token, a password)
+/// can never reach the uploaded report. Every entry is a knob that shapes
+/// rendering, output, or worktrunk's own behaviour, which is the class of bug a
+/// diagnostic most often needs (issue #3322: a pager interaction suspending
+/// `wt config show`). To surface a new variable, add its name here.
+const DIAGNOSTIC_ENV_VARS: &[&str] = &[
+    // Pager selection — the class behind issue #3322. `core.pager` (git config)
+    // is appended separately by `environment_vars`.
+    "PAGER",
+    "GIT_PAGER",
+    "LESS",
+    // Terminal & colour capability — drives width detection and ANSI output.
+    "TERM",
+    "COLORTERM",
+    "COLUMNS",
+    "LINES",
+    "NO_COLOR",
+    "CLICOLOR",
+    "CLICOLOR_FORCE",
+    // Shell & locale — affect interactive probes, escaping, and date rendering.
+    "SHELL",
+    "LANG",
+    "LC_ALL",
+    "LC_TIME",
+    // Worktrunk's own runtime knobs and logging.
+    "RUST_LOG",
+    "WORKTRUNK_VERBOSE",
+    "WORKTRUNK_SHELL",
+    "WORKTRUNK_FOREGROUND",
+    "WORKTRUNK_MAX_CONCURRENT_COMMANDS",
+];
+
 /// Collected diagnostic information for issue reporting.
 pub(crate) struct DiagnosticReport {
     /// Formatted markdown content
@@ -141,12 +195,24 @@ impl DiagnosticReport {
     /// * `command` - The command that was run (e.g., "wt list -vv")
     /// * `context` - Context describing the result (error message or success)
     pub fn collect(repo: &Repository, command: &str, context: String) -> Self {
-        let content = Self::format_report(repo, command, &context);
+        // Render the profile once from `trace.jsonl`; the markdown bundle
+        // inlines it as its lead section.
+        let profile = crate::log_files::TRACE_JSONL
+            .path()
+            .and_then(|path| std::fs::read_to_string(&path).ok())
+            .as_deref()
+            .and_then(render_trace_profile);
+        let content = Self::format_report(repo, command, &context, profile.as_deref());
         Self { content }
     }
 
     /// Format the complete diagnostic report as markdown using minijinja template.
-    fn format_report(repo: &Repository, command: &str, context: &str) -> String {
+    fn format_report(
+        repo: &Repository,
+        command: &str,
+        context: &str,
+        performance_profile: Option<&str>,
+    ) -> String {
         // Strip ANSI codes from context - the diagnostic is a markdown file for GitHub
         let context = context.ansi_strip();
 
@@ -166,6 +232,10 @@ impl DiagnosticReport {
             .map(|s| s.trim_end().to_string())
             .unwrap_or_else(|_| "(failed to get worktree list)".to_string());
 
+        // Curated, non-secret env vars (pager / terminal / locale knobs) plus
+        // git's resolved `core.pager` — the inputs a rendering bug report needs.
+        let env_vars = environment_vars(repo);
+
         // Get config show output (if available)
         let config_show = config_show_output(repo);
 
@@ -181,13 +251,6 @@ impl DiagnosticReport {
             .as_deref()
             .map(|content| truncate_log(content.trim()))
             .filter(|s| !s.is_empty());
-        // The profile is derived from the machine `trace.jsonl` (the human
-        // `trace.log` inlined above is no longer parseable).
-        let performance_profile = crate::log_files::TRACE_JSONL
-            .path()
-            .and_then(|path| std::fs::read_to_string(&path).ok())
-            .as_deref()
-            .and_then(render_trace_profile);
         // Forward slashes on both platforms so the rendered markdown reads the
         // same in bug reports regardless of where it was produced.
         let subprocess_log_path = crate::log_files::SUBPROCESS
@@ -207,6 +270,7 @@ impl DiagnosticReport {
                 arch,
                 git_version,
                 shell_integration,
+                env_vars,
                 worktree_list,
                 config_show,
                 performance_profile,
@@ -284,15 +348,37 @@ pub(crate) fn write_if_verbose(verbose: u8, command_line: &str, error_msg: Optio
         None => "Command completed successfully".to_string(),
     };
 
-    // Collect and write diagnostic
+    // Collect and write the diagnostic bundle. It leads with the performance
+    // profile and inlines a (truncated) `trace.log`, so `diagnostic.md` is the
+    // human-facing doc — the headline names what it captured. The raw
+    // companions it doesn't carry in full (`trace.jsonl` machine source,
+    // `subprocess.log` uncapped bodies) are listed beneath it.
     let report = DiagnosticReport::collect(&repo, command_line, context);
+
     match report.write_diagnostic_file(&repo) {
         Some(path) => {
             let path_display = format_path_for_display(&path);
             eprintln!(
                 "{}",
-                success_message(format!("Diagnostic saved @ {path_display}"))
+                info_message(format!(
+                    "Logs, performance profile, and diagnostics saved @ {path_display}"
+                ))
             );
+
+            // The raw companions diagnostic.md doesn't carry in full, when their
+            // sinks opened; `trace.log` and the profile are omitted because the
+            // bundle already inlines them.
+            let companions: Vec<String> = [
+                crate::log_files::TRACE_JSONL.path(),
+                crate::log_files::SUBPROCESS.path(),
+            ]
+            .into_iter()
+            .flatten()
+            .map(|p| format_path_for_display(&p))
+            .collect();
+            if !companions.is_empty() {
+                eprintln!("{}", format_with_gutter(&companions.join("\n"), None));
+            }
 
             // Only show gh command if gh is installed
             if is_gh_installed() {
@@ -369,6 +455,37 @@ fn git_version() -> anyhow::Result<String> {
         .to_string();
 
     Ok(version)
+}
+
+/// Render the curated environment variables ([`DIAGNOSTIC_ENV_VARS`]) plus git's
+/// resolved `core.pager` as `KEY=value` lines for the diagnostic report.
+///
+/// Every name comes from the explicit allowlist — never a blanket `env` dump —
+/// so no credential-bearing variable can reach the report. An unset variable is
+/// rendered as `(unset)` so an absent `PAGER` is as visible as a set one, which
+/// is exactly the distinction a pager-suspension report (issue #3322) turns on.
+fn environment_vars(repo: &Repository) -> String {
+    let mut lines: Vec<String> = DIAGNOSTIC_ENV_VARS
+        .iter()
+        .map(|name| {
+            let value = std::env::var(name).unwrap_or_else(|_| "(unset)".to_string());
+            format!("{name}={value}")
+        })
+        .collect();
+
+    // git's `core.pager` is the pager source `PAGER`/`GIT_PAGER` don't capture.
+    // Read the raw config value (not `pager::git_config_pager`, which folds an
+    // explicit `cat`/empty into "unset") so the report shows what git actually
+    // sees.
+    let core_pager = repo
+        .config_value("core.pager")
+        .ok()
+        .flatten()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| "(unset)".to_string());
+    lines.push(format!("core.pager={core_pager}"));
+
+    lines.join("\n")
 }
 
 /// Get config show output for diagnostic.

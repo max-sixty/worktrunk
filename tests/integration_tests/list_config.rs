@@ -828,6 +828,51 @@ template = "{{ vars.ticket }}"
 }
 
 #[rstest]
+fn test_list_custom_column_git_branch(repo: TestRepo) {
+    // A git.branch column reads the branch's own git config under
+    // branch.<name>.*, with no `wt config state vars set` round-trip. The
+    // git-native multi-line description is reduced to its first line.
+    fs::write(
+        repo.test_config_path(),
+        r#"[list.custom-columns.Jira]
+template = "{{ git.branch.jira }}"
+
+[list.custom-columns.Summary]
+template = "{{ git.branch.description | lines | first }}"
+"#,
+    )
+    .unwrap();
+    repo.run_git(&["config", "branch.feature-a.jira", "HWINFCI-2810"]);
+    repo.run_git(&[
+        "config",
+        "branch.feature-a.description",
+        "Add telemetry\n\n# Description\nlong body",
+    ]);
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["list", "--format=json"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let items = json.as_array().unwrap();
+    let by_branch = |branch: &str| {
+        items
+            .iter()
+            .find(|item| item["branch"] == branch)
+            .unwrap_or_else(|| panic!("no item for branch {branch}"))
+    };
+
+    let cols = &by_branch("feature-a")["columns"];
+    assert_eq!(cols["Jira"], "HWINFCI-2810");
+    assert_eq!(cols["Summary"], "Add telemetry");
+    // A branch without any branch.<name>.* keys renders no custom cells.
+    assert!(by_branch("feature-b")["columns"].is_null());
+}
+
+#[rstest]
 fn test_list_custom_column_invalid_template(repo: TestRepo) {
     // An unknown top-level variable aborts wt list with the available set
     fs::write(

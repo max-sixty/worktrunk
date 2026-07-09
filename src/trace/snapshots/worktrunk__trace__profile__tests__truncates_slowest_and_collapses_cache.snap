@@ -3,28 +3,45 @@ source: src/trace/profile.rs
 expression: "plain(profile.render_text(\"trace.log\"))"
 ---
 PERFORMANCE PROFILE @ trace.log
-  10 subprocesses · 46.50ms subprocess time · parallelism n/a · peak n/a
+  52 subprocesses · 1851.90ms subprocess time · parallelism n/a · peak n/a
 
 BY COMMAND TYPE
-  command  count    total     max     avg
-  git aaa      2  17.00ms  9.00ms  8.50ms
-  git bbb      2  13.00ms  7.00ms  6.50ms
-  git ccc      2   9.00ms  5.00ms  4.50ms
-  git ddd      4   7.50ms  3.00ms  1.88ms
+  command   count      total      max      avg
+  git          48  1845.60ms  50.00ms  38.45ms
+  git xctx      4     6.30ms   2.00ms   1.57ms
 
 SLOWEST CALLS
-  9.00ms  git aaa [w1]
-  8.00ms  git aaa [w1]
-  7.00ms  git bbb [w1]
-  6.00ms  git bbb [w1]
-  5.00ms  git ccc [w1]
-  4.00ms  git ccc [w1]
-  3.00ms  git ddd [w1]
-  2.00ms  git ddd [w1]
+  50.00ms  git cmd00 [w1]
+  49.90ms  git cmd00 [w1]
+  49.00ms  git cmd01 [w1]
+  48.90ms  git cmd01 [w1]
+  48.00ms  git cmd02 [w1]
+  47.90ms  git cmd02 [w1]
+  47.00ms  git cmd03 [w1]
+  46.90ms  git cmd03 [w1]
+  46.00ms  git cmd04 [w1]
+  45.90ms  git cmd04 [w1]
+  45.00ms  git cmd05 [w1]
+  44.90ms  git cmd05 [w1]
+  44.00ms  git cmd06 [w1]
+  43.90ms  git cmd06 [w1]
+  43.00ms  git cmd07 [w1]
+  42.90ms  git cmd07 [w1]
+  42.00ms  git cmd08 [w1]
+  41.90ms  git cmd08 [w1]
+  41.00ms  git cmd09 [w1]
+  40.90ms  git cmd09 [w1]
 
 CACHE
-  5 duplicate calls wasting ~21.00ms (same context, slowest run kept)
-  8.00ms  git aaa (×2)
-  6.00ms  git bbb (×2)
-  4.00ms  git ccc (×2)
-  … and 1 more command
+  26 duplicate calls wasting ~924.40ms (same context, slowest run kept)
+  49.90ms  git cmd00 (×2)
+  48.90ms  git cmd01 (×2)
+  47.90ms  git cmd02 (×2)
+  46.90ms  git cmd03 (×2)
+  45.90ms  git cmd04 (×2)
+  44.90ms  git cmd05 (×2)
+  43.90ms  git cmd06 (×2)
+  42.90ms  git cmd07 (×2)
+  41.90ms  git cmd08 (×2)
+  40.90ms  git cmd09 (×2)
+  … and 15 more commands

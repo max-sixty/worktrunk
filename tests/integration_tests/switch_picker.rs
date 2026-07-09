@@ -1525,7 +1525,7 @@ fn test_switch_picker_prs_github_list(mut repo: TestRepo) {
     );
     // The header's loading marker is gone once the rows have streamed in.
     assert!(
-        !screen.contains("loading open PRs"),
+        !screen.contains("Loading open PRs"),
         "loading marker cleared once rows arrived:\n{screen}"
     );
 }
@@ -1653,6 +1653,59 @@ fn test_switch_picker_prs_rows_survive_alt_x_removal(mut repo: TestRepo) {
     );
 }
 
+/// alt-x on a row that can't be removed flashes the reason in the header at
+/// alt-x time, not only when the stash drains on exit. The current worktree is
+/// the picker's pinned top row, so launching from the main worktree and pressing
+/// alt-x (no cursor move) targets it — and the main worktree can't be removed, so
+/// the header swaps the column labels for `✗ The main worktree cannot be removed`
+/// for a beat. The flash *clearing* after the beat is covered by the `HeaderFlash`
+/// unit tests; this asserts it paints. A presence-wait catches it before the beat
+/// elapses (`HEADER_FLASH_DURATION`), so the test never depends on the timer.
+#[rstest]
+fn test_switch_picker_alt_x_flashes_unremovable_reason(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+    // A second worktree so the skeleton paints a distinctive row to gate on; the
+    // cursor still starts on the pinned current (main) worktree above it.
+    repo.add_worktree("wt-extra");
+
+    let env_vars = repo.test_env_vars();
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+    );
+
+    // The worktree rows have painted (one skeleton batch); the cursor is on the
+    // pinned current worktree — the main worktree, which can't be removed.
+    wait_for_stable_with_content(&rx, &mut parser, Some("wt-extra"));
+
+    // alt-x is declined, and the reason flashes in the header. The presence-wait
+    // returns as soon as the flash paints — before it self-clears.
+    send_input_awaiting_content(
+        &writer,
+        &rx,
+        &mut parser,
+        "\x1bx",
+        Some("main worktree cannot be removed"),
+    );
+
+    let screen = parser.screen().contents();
+    let exit_code = abort_and_exit_code(child, writer, rx);
+    assert_valid_abort_exit_code(exit_code);
+    assert!(
+        screen.contains("main worktree cannot be removed"),
+        "the unremovable reason flashes in the header at alt-x time:\n{screen}"
+    );
+}
+
 /// A preview pane fills in on its own once its background compute lands — no
 /// keystroke needed. The deterministic vehicle is a `--prs` row's `comments`
 /// tab: the comment fetch (`gh pr view <n> --json comments`) is mocked behind a
@@ -1731,7 +1784,7 @@ fn test_switch_picker_preview_auto_refreshes_when_compute_lands(mut repo: TestRe
     );
 }
 
-/// `wt switch --prs` shows a dim "loading open PRs…" marker on the header row
+/// `wt switch --prs` shows a dim "↳ Loading open PRs…" marker on the header row
 /// while the forge call is in flight. A delayed mock holds the PR list long
 /// enough to observe the marker on the real screen before the rows land. The
 /// picker captures and aborts at stabilize time — well before the delay
@@ -1760,13 +1813,13 @@ fn test_switch_picker_prs_shows_loading_marker(mut repo: TestRepo) {
         &env_vars,
         // The loading line paints at skeleton, before the (slow) forge call
         // returns its rows.
-        &[("", Some("loading open PRs"))],
+        &[("", Some("Loading open PRs"))],
     );
 
     assert_valid_abort_exit_code(result.exit_code);
     let (list, _preview) = result.panels();
     assert!(
-        list.contains("loading open PRs"),
+        list.contains("Loading open PRs"),
         "loading line on the header while --prs fetches:\n{list}"
     );
     // The PR row hasn't streamed in yet — still inside the delayed forge call.
@@ -2991,31 +3044,40 @@ fn test_switch_picker_alt_x_keeps_unmerged_branch_row(mut repo: TestRepo) {
     repo.run_git(&["checkout", &default_branch]);
 
     let env_vars = repo.test_env_vars();
-    let result = exec_in_pty_capture_before_abort(
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(
         wt_bin().to_str().unwrap(),
         &["switch", "--branches"],
         repo.root_path(),
         &env_vars,
-        &[
-            ("unmerged-orphan", Some("unmerged-orphan")), // filter to the branch
-            ("\x1bx", Some("unmerged-orphan")),           // alt-x keeps it: still visible
-        ],
     );
 
-    assert_valid_abort_exit_code(result.exit_code);
-    let (list, _preview) = result.panels();
-    // `list` (cols 0..LIST_WIDTH of every row) includes skim's query-echo prompt
-    // line `> unmerged-orphan`, which holds the branch name whether or not the row
-    // survives. So `contains` alone is tautological — assert the name appears at
-    // least twice (the prompt echo PLUS the data row). A regression that dropped
-    // the row optimistically would empty the filtered list, leaving only the
-    // prompt's single occurrence, and fail here.
-    let occurrences = list.matches("unmerged-orphan").count();
-    assert!(
-        occurrences >= 2,
-        "the unmerged branch-only row survives alt-x — expected the branch name in \
-         both the prompt echo and a data row, got {occurrences} occurrence(s).\nList:\n{list}"
-    );
+    // Filter to the branch-only row, then wait for the cursor (`>`) to land on it.
+    // A local branch with no worktree carries the `/` gutter, so `/ unmerged-orphan`
+    // names the data row specifically — skim's query-echo prompt line is
+    // `> unmerged-orphan` (no gutter), which this gate ignores. Keying off the
+    // gutter rather than the bare name is what makes the wait robust: under Windows
+    // CI load the prompt echo trails its keystrokes (the final character can still
+    // be unrendered once the row is already on screen), and an assertion that
+    // counted the name across both the prompt and the row flaked when the prompt
+    // came up a character short.
+    send_input_awaiting_content(&writer, &rx, &mut parser, "unmerged-orphan", None);
+    wait_for_cursor_on_row(&rx, &mut parser, "/ unmerged-orphan");
+
+    // alt-x: `SafeDelete` refuses to drop an unmerged branch, so the row stays and
+    // the cursor holds on `/ unmerged-orphan`. A regression that dropped the row
+    // would empty the filtered list, the `/` data row would never reappear, and
+    // this wait would time out with a screen dump.
+    send_input_awaiting_content(&writer, &rx, &mut parser, "\x1bx", None);
+    wait_for_cursor_on_row(&rx, &mut parser, "/ unmerged-orphan");
+
+    let exit_code = abort_and_exit_code(child, writer, rx);
+    assert_valid_abort_exit_code(exit_code);
 }
 
 /// alt-x on a *worktree* row whose branch is unmerged morphs the row to

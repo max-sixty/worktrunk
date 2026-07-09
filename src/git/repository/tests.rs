@@ -721,6 +721,77 @@ fn commit_details_many_empty_input_is_noop() {
 }
 
 #[test]
+fn commit_details_many_primes_commit_tree_cache() {
+    use crate::testing::TestRepo;
+
+    // The batch reads `%T` so the `wt list` per-row tree lookups
+    // (CommittedTreesMatch / WouldMergeAdd) hit memory instead of forking
+    // `git rev-parse <sha>^{tree}` each.
+    let test = TestRepo::new();
+    test.commit_with_message("first");
+    let sha = test.repo.run_command(&["rev-parse", "HEAD"]).unwrap();
+    let sha = sha.trim().to_string();
+    let tree = test.git_output(&["rev-parse", "HEAD^{tree}"]);
+
+    // Cold before the batch.
+    assert!(!test.repo.cache.commit_tree.contains_key(&sha));
+
+    test.repo.commit_details_many(&[sha.as_str()]).unwrap();
+
+    let cached = test
+        .repo
+        .cache
+        .commit_tree
+        .get(&sha)
+        .map(|e| e.value().clone());
+    assert_eq!(cached, Some(tree));
+}
+
+#[test]
+fn prime_worktree_path_caches_matches_subprocess() {
+    use crate::git::Repository;
+    use crate::testing::TestRepo;
+    use dunce::canonicalize;
+
+    let test = TestRepo::with_initial_commit();
+    // A linked worktree as a sibling of the main worktree.
+    let linked = test.root_path().parent().unwrap().join("linked-feature");
+    test.run_git(&["worktree", "add", "-b", "feature", linked.to_str().unwrap()]);
+
+    let repo = Repository::at(test.root_path()).unwrap();
+    let worktrees: Vec<_> = repo.list_worktrees().unwrap().to_vec();
+    assert!(worktrees.len() >= 2, "main + linked worktree");
+
+    repo.prime_worktree_path_caches(&worktrees);
+
+    for wt in &worktrees {
+        let key = canonicalize(&wt.path).unwrap();
+        // Priming actually populated both maps (no silent skip).
+        let primed_root = super::WORKTREE_ROOTS
+            .get(&key)
+            .map(|e| e.value().clone())
+            .expect("root primed");
+        let primed_git_dir = super::GIT_DIRS
+            .get(&key)
+            .map(|e| e.value().clone())
+            .expect("git_dir primed");
+
+        // Oracle: drop the primed entries, then let the production `root()` /
+        // `git_dir()` recompute via `git rev-parse`. The primed values must
+        // match what the subprocess path produces.
+        super::WORKTREE_ROOTS.remove(&key);
+        super::GIT_DIRS.remove(&key);
+        let wtree = repo.worktree_at(&wt.path);
+        assert_eq!(primed_root, wtree.root().unwrap(), "root for {key:?}");
+        assert_eq!(
+            primed_git_dir,
+            wtree.git_dir().unwrap(),
+            "git_dir for {key:?}"
+        );
+    }
+}
+
+#[test]
 fn commit_details_many_fails_loudly_on_unknown_sha() {
     // `git log --no-walk` refuses the whole batch on a single bad ref. The
     // error surfaces as an `Err`, which `collect()` turns into a user-facing
@@ -741,7 +812,7 @@ fn commit_details_many_fails_loudly_on_unknown_sha() {
 #[test]
 fn commit_details_many_preserves_multibyte_utf8_subject() {
     // Pin that multibyte UTF-8 round-trips through the NUL-delimited parser —
-    // `splitn(3, '\0')` works on byte positions, so char boundaries inside the
+    // `splitn(5, '\0')` works on byte positions, so char boundaries inside the
     // subject must be preserved intact.
     use crate::testing::TestRepo;
 

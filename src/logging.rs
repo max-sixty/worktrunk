@@ -47,7 +47,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
 use worktrunk::shell_exec::{SUBPROCESS_BOUNDED_TARGET, SUBPROCESS_FULL_TARGET};
-use worktrunk::styling::{eprintln, format_with_gutter, info_message};
+use worktrunk::styling::{eprintln, info_message};
 use worktrunk::trace::{WT_TRACE_TARGET, now_us, thread_id};
 use worktrunk::utils::escape_controls;
 
@@ -698,53 +698,31 @@ where
     Some(layer)
 }
 
-/// Print a stderr pointer at `-vv` so users know where the noisy log
-/// pipeline output went — an info header over a gutter that lists each
-/// file's full path on its own line, so any one can be copied without
-/// joining a shared root to a filename. Silent if `trace.log` couldn't be
-/// opened (outside a git repo, permission error) — there's nothing
+/// Print a one-line stderr pointer at `-vv` to the log directory, so users
+/// know where the noisy log pipeline output went. Silent if `trace.log`
+/// couldn't be opened (outside a git repo, permission error) — there's nothing
 /// meaningful to point at.
+///
+/// Only the directory is named here, not the individual files: at init the
+/// streamed sinks (`trace.log`, `trace.jsonl`, `subprocess.log`) exist but the
+/// derived reports don't (`diagnostic.md` is written at exit), so the directory
+/// is the one stable anchor. The end-of-run announcement (`write_if_verbose`)
+/// owns the per-file story — it points at `diagnostic.md`, the single
+/// human-facing doc.
 fn announce_trace_destination() {
-    // TRACE and SUBPROCESS open independently — `LogSink::init` succeeds per
-    // file. The (Some, None) case (trace.log open, subprocess.log failed) is
-    // rare but real (path-type mismatch, fs quota); the reverse is possible
-    // too, but the pointer is anchored on trace.log's path (we derive the logs
-    // dir from it below) and subprocess.log's uncapped raw bodies aren't worth
-    // surfacing on their own, so we stay silent there. `diagnostic.md` is named
-    // even though it's written
-    // at exit (not init) — by the time the user reads the pointer and looks
-    // for files, all three will be there.
     let Some(trace_path) = log_files::TRACE.path() else {
         return;
     };
     // trace.log is always at `<git>/wt/logs/trace.log` (see `log_files::try_create`),
     // so the parent is structurally guaranteed.
     let dir = trace_path.parent().expect("trace.log path has a parent");
-
-    // subprocess.log opening or not decides two things at once: whether it
-    // joins the gutter list, and whether the header flags it as unavailable.
-    // Keeping the "unavailable" note in the header leaves the gutter a clean
-    // list of live, copy-pasteable paths.
-    let mut paths = vec![dir.join("trace.log")];
-    if log_files::TRACE_JSONL.path().is_some() {
-        paths.push(dir.join("trace.jsonl"));
-    }
-    let header = match log_files::SUBPROCESS.path() {
-        Some(_) => {
-            paths.push(dir.join("subprocess.log"));
-            "Writing to:"
-        }
-        None => "Writing to (subprocess.log unavailable):",
-    };
-    paths.push(dir.join("diagnostic.md"));
-
-    let gutter = paths
-        .iter()
-        .map(|p| worktrunk::path::format_path_for_display(p))
-        .collect::<Vec<_>>()
-        .join("\n");
-    eprintln!("{}", info_message(header));
-    eprintln!("{}", format_with_gutter(&gutter, None));
+    // `format_path_for_display` emits forward slashes on every platform; the
+    // trailing slash marks the path as a directory.
+    let dir_display = worktrunk::path::format_path_for_display(dir);
+    eprintln!(
+        "{}",
+        info_message(format!("Verbose logging to {dir_display}/"))
+    );
 }
 
 #[cfg(test)]

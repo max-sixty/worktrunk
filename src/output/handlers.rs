@@ -1606,10 +1606,20 @@ fn refresh_removal_safety_after_pre_remove(
 
 fn prepare_remove_directory_change(
     main_path: &Path,
+    worktree_path: &Path,
     changed_directory: bool,
 ) -> anyhow::Result<()> {
     if changed_directory {
-        super::change_directory(main_path)?;
+        // Preserve the user's subdirectory position, mirroring `wt switch`
+        // (#3343). The removal hasn't run yet, so the current directory still
+        // exists inside the worktree being removed — if the user is in
+        // `worktree/apps/gateway/` and `main/apps/gateway/` exists, cd there
+        // instead of the main worktree root. Falls back to the root when the
+        // subdir is absent in the destination or the cwd can't be read.
+        let cd_target = std::env::current_dir()
+            .map(|cwd| resolve_subdir_in_target(main_path, Some(worktree_path), &cwd))
+            .unwrap_or_else(|_| main_path.to_path_buf());
+        super::change_directory(&cd_target)?;
         stderr().flush()?; // Force flush to ensure shell processes the cd
         // Mark that the CWD worktree is being removed, so the error handler
         // can show a hint if a subsequent command (e.g., post-merge hook) fails.
@@ -1831,7 +1841,7 @@ fn handle_removed_worktree_output(
         return remove_removed_worktree_silently(&repo, &ctx, &safety, announcer);
     }
 
-    prepare_remove_directory_change(ctx.main_path, ctx.changed_directory)?;
+    prepare_remove_directory_change(ctx.main_path, ctx.worktree_path, ctx.changed_directory)?;
 
     // Handle detached HEAD case (no branch known)
     let Some(branch_name) = ctx.branch_name else {
@@ -1928,6 +1938,16 @@ fn remove_removed_worktree_silently(
 /// maintain a single rendering state machine — if stdout writes color codes
 /// but stderr's output arrives next, the terminal applies stdout's color
 /// state to stderr's text. The reset to stderr prevents this.
+///
+/// ## Git discovery
+///
+/// `scrub_git_discovery` removes inherited `GIT_DIR`/`GIT_WORK_TREE` (and the
+/// rest of [`INHERITED_GIT_PATH_VARS`]) from the child so its `git` commands
+/// discover the repo from `working_dir`. Hooks pass `true` (they operate on the
+/// worktree wt targets); aliases pass `false` (they keep wt's inherited context,
+/// like a top-level command the user typed). See issue #3373.
+///
+/// [`INHERITED_GIT_PATH_VARS`]: worktrunk::shell_exec::INHERITED_GIT_PATH_VARS
 pub fn execute_shell_command(
     working_dir: &std::path::Path,
     command: &str,
@@ -1935,6 +1955,7 @@ pub fn execute_shell_command(
     command_log_label: Option<&str>,
     directives: DirectivePassthrough,
     redirect_stdout_to_stderr: bool,
+    scrub_git_discovery: bool,
 ) -> anyhow::Result<()> {
     // Flush stdout before executing command to ensure all our messages appear
     // before the child process output
@@ -1949,6 +1970,12 @@ pub fn execute_shell_command(
     let mut cmd = Cmd::shell(command)
         .current_dir(working_dir)
         .forward_signals();
+
+    // User hooks discover their repo from the cwd wt sets, not an inherited
+    // GIT_DIR/GIT_WORK_TREE (issue #3373). Aliases keep the inherited context.
+    if scrub_git_discovery {
+        cmd = cmd.scrub_git_discovery_env();
+    }
 
     if redirect_stdout_to_stderr {
         cmd = cmd.stdout(Stdio::from(std::io::stderr()));

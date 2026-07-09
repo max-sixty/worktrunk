@@ -25,8 +25,8 @@ use color_print::cformat;
 use worktrunk::config::{Approvals, require_approvals_path};
 use worktrunk::git::{GitError, HookType};
 use worktrunk::styling::{
-    INFO_SYMBOL, WARNING_SYMBOL, eprint, eprintln, format_bash_with_gutter, format_with_gutter,
-    hint_message, prompt_message, stderr, warning_message,
+    INFO_SYMBOL, WARNING_SYMBOL, eprint, eprintln, hint_message, prompt_message, stderr,
+    warning_message,
 };
 
 use super::hook_filter::{HookSource, ParsedFilter};
@@ -115,22 +115,9 @@ fn prompt_for_batch_approval(
     );
 
     for cmd in commands {
-        // Format as: {phase} {bold}{name}{bold:#}:
         // Uses INFO_SYMBOL (○) since this is a preview, not active execution
-        let phase = cmd.phase.to_string();
-        let label = match &cmd.command.name {
-            Some(name) => cformat!("{INFO_SYMBOL} {phase} <bold>{name}</>:"),
-            None => format!("{INFO_SYMBOL} {phase}:"),
-        };
-        eprintln!("{}", label);
-        // Shell commands get bash syntax highlighting; the commit template
-        // fragment is plain text (markdown-ish) and shouldn't be tokenized as
-        // bash.
-        let body = match cmd.phase {
-            Phase::CommitTemplateAppend => format_with_gutter(&cmd.command.template, None),
-            _ => format_bash_with_gutter(&cmd.command.template),
-        };
-        eprintln!("{}", body);
+        eprintln!("{} {}", INFO_SYMBOL, cmd.label());
+        eprintln!("{}", cmd.format_template());
     }
 
     // Check if stdin is a TTY before attempting to prompt

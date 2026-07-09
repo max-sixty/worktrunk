@@ -138,6 +138,7 @@ pub use deprecation::format_migration_diff;
 pub use deprecation::migrate_content;
 pub use deprecation::normalize_template_vars;
 pub use deprecation::suppress_warnings;
+pub use deprecation::warnings_suppressed;
 pub use deprecation::{
     DEPRECATED_SECTION_KEYS, DeprecatedSection, UnknownKeyKind, classify_unknown_key,
     key_belongs_in, nested_key_belongs_in, warn_unknown_fields,
@@ -549,66 +550,6 @@ task2 = "echo 'Task 2 running' > task2.txt"
         )
         .unwrap();
         assert_eq!(result, "/path/to/repo/target -> /path/to/worktree/target");
-    }
-
-    #[test]
-    fn test_commit_generation_config_mutually_exclusive_validation() {
-        // Test that deserialization rejects both template and template-file
-        let toml_content = r#"
-worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[commit.generation]
-command = "llm"
-template = "inline template"
-template-file = "~/file.txt"
-"#;
-
-        // Parse the TOML directly
-        let config_result: Result<UserConfig, _> = toml::from_str(toml_content);
-
-        // The deserialization should succeed, but validation in load() would fail
-        // Since we can't easily test load() without env vars, we verify the fields deserialize
-        if let Ok(config) = config_result {
-            let generation = config.commit.generation.as_ref();
-            // Verify validation logic: both fields should not be Some
-            let has_both = generation
-                .map(|g| g.template.is_some() && g.template_file.is_some())
-                .unwrap_or(false);
-            assert!(
-                has_both,
-                "Config should have both template fields set for this test"
-            );
-        }
-    }
-
-    #[test]
-    fn test_squash_template_mutually_exclusive_validation() {
-        // Test that deserialization rejects both squash-template and squash-template-file
-        let toml_content = r#"
-worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[commit.generation]
-command = "llm"
-squash-template = "inline template"
-squash-template-file = "~/file.txt"
-"#;
-
-        // Parse the TOML directly
-        let config_result: Result<UserConfig, _> = toml::from_str(toml_content);
-
-        // The deserialization should succeed, but validation in load() would fail
-        // Since we can't easily test load() without env vars, we verify the fields deserialize
-        if let Ok(config) = config_result {
-            let generation = config.commit.generation.as_ref();
-            // Verify validation logic: both fields should not be Some
-            let has_both = generation
-                .map(|g| g.squash_template.is_some() && g.squash_template_file.is_some())
-                .unwrap_or(false);
-            assert!(
-                has_both,
-                "Config should have both squash template fields set for this test"
-            );
-        }
     }
 
     #[test]

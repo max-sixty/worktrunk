@@ -164,7 +164,8 @@ All hooks share the same perspective — `{{ branch | hash_port }}` produces the
 `cwd` is the worktree root where the hook command runs. It equals `worktree_path` except in three cases:
 
 - `pre-switch`: hook runs in the source worktree; `worktree_path` is the destination
-- `post-remove` and `post-merge` with removal: the active worktree is gone, so the hook runs in primary or target, respectively
+- `post-remove`: the active worktree is gone, so the hook runs in the primary worktree
+- `post-merge` with removal: the active worktree is gone, so the hook runs in the target worktree
 
 Undefined variables error — use conditionals or defaults for optional behavior:
 

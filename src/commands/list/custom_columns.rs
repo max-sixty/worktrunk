@@ -2,15 +2,16 @@
 //!
 //! Resolved once per invocation, then expanded eagerly for every row before
 //! the table skeleton renders: the template inputs (branch, worktree
-//! identity, per-branch vars from the bulk config snapshot) are all in memory
-//! by then, so cells paint with the skeleton, widths are measured from
-//! content like Branch/Path, and a column that renders empty for every row is
-//! dropped by the regular empty-column penalty. Layout participation lives in
-//! `columns.rs` / `layout.rs` via `ColumnKind::Custom`.
+//! identity, per-branch `vars` and `git.branch` config from the bulk config
+//! snapshot) are all in memory by then, so cells paint with the skeleton,
+//! widths are measured from content like Branch/Path, and a column that
+//! renders empty for every row is dropped by the regular empty-column penalty.
+//! Layout participation lives in `columns.rs` / `layout.rs` via
+//! `ColumnKind::Custom`.
 //!
 //! Expansion stays off the skeleton's critical costs: one minijinja
-//! environment and one parse per column per invocation, one vars conversion
-//! per branch, zero subprocesses per cell.
+//! environment and one parse per column per invocation, one value conversion
+//! per branch per namespace, zero subprocesses per cell.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -88,15 +89,18 @@ pub fn resolve_custom_columns(
 /// Expand every custom column for every item, populating
 /// `ListItem::custom_values`.
 ///
-/// `all_vars` is the pre-fetched vars map for all branches (one snapshot
-/// read covers the whole table — no subprocess per cell). Render errors
-/// produce an empty cell, logged at `-vv`: a vars key absent on this branch
-/// is the expected sparse-column shape, and config-level typos were already
-/// rejected at resolution.
+/// `all_vars` and `all_branch_config` are the pre-fetched per-branch maps for
+/// the whole table (one snapshot read each — no subprocess per cell); the
+/// former backs `{{ vars.* }}` (worktrunk's `wt config state vars`), the
+/// latter `{{ git.branch.* }}` (the branch's own `branch.<name>.*` git
+/// config). Render errors produce an empty cell, logged at `-vv`: a key absent
+/// on this branch is the expected sparse-column shape, and config-level typos
+/// were already rejected at resolution.
 pub fn expand_custom_columns(
     columns: &[ResolvedCustomColumn],
     items: &mut [ListItem],
     all_vars: &HashMap<String, BTreeMap<String, String>>,
+    all_branch_config: &HashMap<String, BTreeMap<String, String>>,
     repo: &Repository,
 ) {
     let env = template_environment(repo);
@@ -120,12 +124,17 @@ pub fn expand_custom_columns(
         )
         .collect();
 
-    // Convert each branch's vars to a template value once, not per cell
+    // Convert each branch's vars / branch_config to a template value once, not
+    // per cell. Both namespaces share the same empty value for unknown branches.
     let branch_values: HashMap<&str, Value> = all_vars
         .iter()
         .map(|(branch, entries)| (branch.as_str(), vars_map_to_value(entries)))
         .collect();
-    let empty_vars = vars_map_to_value(&BTreeMap::new());
+    let branch_config_values: HashMap<&str, Value> = all_branch_config
+        .iter()
+        .map(|(branch, entries)| (branch.as_str(), vars_map_to_value(entries)))
+        .collect();
+    let empty = vars_map_to_value(&BTreeMap::new());
 
     // Worktree identity is only computed when a template references it:
     // `to_posix_path` shells out to cygpath per call on Windows (Git Bash),
@@ -158,10 +167,15 @@ pub fn expand_custom_columns(
         context.insert("branch".to_string(), Value::from(branch));
         context.insert("worktree_path".to_string(), Value::from(worktree_path));
         context.insert("worktree_name".to_string(), Value::from(worktree_name));
-        // Always inject vars (empty for unknown branches) so
-        // `{{ vars.key | default(...) }}` works in SemiStrict mode
-        let vars = branch_values.get(branch).unwrap_or(&empty_vars).clone();
+        // Always inject vars / git.branch (empty for unknown branches) so
+        // `{{ vars.key | default(...) }}` works in SemiStrict mode. The branch's
+        // git config nests under `git` so the namespace can grow (git.remote,
+        // git.upstream, …) without claiming a new top-level name per field.
+        let vars = branch_values.get(branch).unwrap_or(&empty).clone();
         context.insert("vars".to_string(), vars);
+        let branch_config = branch_config_values.get(branch).unwrap_or(&empty).clone();
+        let git = Value::from_object(HashMap::from([("branch".to_string(), branch_config)]));
+        context.insert("git".to_string(), git);
         let context = Value::from_object(context);
 
         item.custom_values = templates
@@ -322,7 +336,7 @@ mod tests {
             ListItem::new_branch("abc12345".to_string(), "feature".to_string()),
             ListItem::new_branch("abc12345".to_string(), "other".to_string()),
         ];
-        expand_custom_columns(&columns, &mut items, &all_vars, &test.repo);
+        expand_custom_columns(&columns, &mut items, &all_vars, &HashMap::new(), &test.repo);
 
         // Vars-backed cells are sanitized to one line; nested JSON access
         // works; identity vars expand
@@ -332,5 +346,55 @@ mod tests {
         );
         // A branch without the vars keys renders empty cells, not errors
         assert_eq!(items[1].custom_values, ["", "", "other!"]);
+    }
+
+    #[test]
+    fn test_expand_custom_columns_git_branch() {
+        let test = TestRepo::new();
+        let columns = vec![
+            ResolvedCustomColumn {
+                name: "Ticket".to_string(),
+                template: "{{ git.branch.jira }}".to_string(),
+                max_width: 40,
+                priority: 9,
+            },
+            // The git-native description is multi-line; `lines | first` keeps
+            // just the summary line the use case wants.
+            ResolvedCustomColumn {
+                name: "Summary".to_string(),
+                template: "{{ git.branch.description | lines | first }}".to_string(),
+                max_width: 40,
+                priority: 9,
+            },
+        ];
+        let mut all_branch_config = HashMap::new();
+        all_branch_config.insert(
+            "feature".to_string(),
+            BTreeMap::from([
+                ("jira".to_string(), "PROJ-1".to_string()),
+                (
+                    "description".to_string(),
+                    "Add telemetry\n\n# Details\nlong body".to_string(),
+                ),
+            ]),
+        );
+
+        let mut items = vec![
+            ListItem::new_branch("abc12345".to_string(), "feature".to_string()),
+            ListItem::new_branch("abc12345".to_string(), "other".to_string()),
+        ];
+        expand_custom_columns(
+            &columns,
+            &mut items,
+            &HashMap::new(),
+            &all_branch_config,
+            &test.repo,
+        );
+
+        // The branch's own git config surfaces; the multi-line description is
+        // reduced to its first line.
+        assert_eq!(items[0].custom_values, ["PROJ-1", "Add telemetry"]);
+        // A branch without the keys renders empty cells, not errors.
+        assert_eq!(items[1].custom_values, ["", ""]);
     }
 }

@@ -865,7 +865,7 @@ Reuses the [`commit.generation`](@/config.md#commit) command — the same LLM th
 
 ### Custom columns [experimental]
 
-Each `[list.custom-columns]` entry in user config adds a column: the key is the header, the template renders each row's cell. Templates can reference per-branch `{{ vars.* }}` stored with [`wt config state vars set`](@/config.md#wt-config-state-vars) — useful for tracking what each of many (often agent-driven) branches is for:
+Each `[list.custom-columns]` entry in user config adds a column: the key is the header, the template renders each row's cell. Templates read two per-branch namespaces — `{{ vars.* }}`, stored with [`wt config state vars set`](@/config.md#wt-config-state-vars), and `{{ git.branch.* }}`, the branch's own git config under `branch.<name>.*` (a `jira` key you set yourself, or the git-native `description`) — useful for tracking what each of many (often agent-driven) branches is for:
 
 ```toml
 [list.custom-columns.Ticket]
@@ -945,7 +945,96 @@ These appear across all columns while the table is loading:
 
 ## JSON output
 
-Query structured data with `--format=json`:
+`--format=json` emits structured data in one of two schemas while the format
+migrates: `[list] json-schema = 2` selects the envelope format below, `= 1`
+the original bare-array format. Unset emits schema 1 with a warning; a future
+release flips the default to schema 2 and later removes schema 1.
+
+### Schema 2
+
+One envelope object. Items carry independent facts; rendered strings
+(including the collapsed Status value) live under `display`:
+
+```json
+{
+  "schema": 2,
+  "repo": {
+    "default_branch": "main",
+    "forge": {"url": "https://github.com/org/repo", "provider": "github",
+              "host": "github.com", "owner": "org", "name": "repo", "remote": "origin"}
+  },
+  "collected": {"ci": false, "summary": false},
+  "items": [
+    {
+      "branch": "feature",
+      "head": {"sha": "05a4a45d…", "short_sha": "05a4a45", "subject": "Add login page",
+               "committed_at": "2025-01-01T08:00:00Z"},
+      "worktree": {"path": "/home/user/repo.feature", "main": false, "current": true,
+                   "previous": false, "detached": false, "branch_mismatch": false,
+                   "changes": {"staged": false, "modified": true, "untracked": false,
+                               "renamed": false, "deleted": false, "conflicted": false,
+                               "diff": {"added": 10, "deleted": 2}}},
+      "default_branch": {"ahead": 3, "behind": 1, "diff": {"added": 50, "deleted": 20},
+                         "orphan": false, "integration": null, "merge_conflicts": false},
+      "upstream": {"remote": "origin", "branch": "feature", "ahead": 0, "behind": 2},
+      "display": {"state": "diverged", "symbols": "!↕", "statusline": "feature …"}
+    }
+  ]
+}
+```
+
+How "no value" reads:
+
+- **Absent** — nothing to report: not applicable (`worktree` on a branch-only
+  row), not requested this run (the envelope's `collected` records what was),
+  or determined-empty (no PR, no lock, not integrated).
+- **`null`** — requested but not determined: a task timed out, the branch was
+  too stale for the expensive checks, or a forge fetch failed. This is the
+  JSON form of the table's `·` placeholder.
+
+jq treats absent and `null` identically in path expressions, so filters need
+no null checks; `has()` distinguishes the two when it matters.
+
+Item fields:
+
+| Field | Description |
+|-------|-------------|
+| `branch` | Branch name; null for a detached-HEAD worktree. Remote rows carry the bare name with the remote in `remote` |
+| `remote` | Remote name, present only on remote-only branch rows |
+| `head` | `{sha, short_sha, subject, committed_at}`; null for unborn branches. `committed_at` is RFC 3339 UTC |
+| `worktree` | `{path, main, current, previous, detached, locked, prunable, branch_mismatch, operation, changes}`; absent on branch-only rows. `locked`/`prunable` are `{reason}` objects and can co-occur; `operation` is `"rebase"` or `"merge"`; `changes` holds the five working-tree flags plus `conflicted` and `diff {added, deleted}` |
+| `default_branch` | Relation to the default branch: `{ahead, behind, diff, orphan, integration, merge_conflicts}`; absent on the default branch itself. `integration.reason` is one of `same_commit`, `ancestor`, `no_added_changes`, `trees_match`, `merge_adds_nothing`, `patch_id_match`; a dirty tree skips the checks, leaving `integration` null |
+| `upstream` | Tracking branch: `{remote, branch, ahead, behind}`; absent when none is configured |
+| `pr` | Open PR/MR: `{number, url, review, mergeable, repo}`; collected with `--full` or a listed `ci` column. `review` uses the schema 1 `ci.review_state` vocabulary; `mergeable` is false when the forge reports conflicts, null otherwise |
+| `checks` | CI pipeline: `{status, source, stale}`; `status` is `passed`, `running`, or `failed` — null when a conflicts report masks it |
+| `dev_server` | `{url, listening}` from the project's `list.url` template |
+| `summary` | LLM branch summary (requires `[list] summary = true`) |
+| `vars` | Per-branch variables from [`wt config state vars`](@/config.md#wt-config-state-vars) |
+| `display` | Rendered strings: `state` (schema 1's `main_state` vocabulary), `symbols`, `statusline` (with ANSI colors), `columns` (custom-column cells keyed by header) |
+
+Schema 1 names map directly: `commit` → `head`, `working_tree` →
+`worktree.changes`, `main` + `main_state` → `default_branch` +
+`display.state`, `remote` → `upstream`, `ci` → `pr` + `checks`, `url` +
+`url_active` → `dev_server`, `statusline`/`symbols`/`columns` → `display.*`,
+and the per-item `repo` moves to the envelope's `repo.forge`.
+
+```console
+# Current worktree path (for scripts)
+$ wt list --format=json | jq -r '.items[] | select(.worktree.current) | .worktree.path'
+
+# Branches with uncommitted changes
+$ wt list --format=json | jq '.items[] | select(.worktree.changes.modified)'
+
+# Integrated branches (safe to remove)
+$ wt list --format=json | jq '.items[] | select(.display.state == "integrated" or .display.state == "empty") | .branch'
+
+# Worktrees ahead of upstream (needs pushing)
+$ wt list --format=json | jq '.items[] | select(.upstream.ahead > 0) | .branch'
+```
+
+### Schema 1
+
+The original bare-array format, and the default while unset:
 
 ```console
 # Current worktree path (for scripts)
@@ -1535,7 +1624,8 @@ All hooks share the same perspective — `{{ branch | hash_port }}` produces the
 `cwd` is the worktree root where the hook command runs. It equals `worktree_path` except in three cases:
 
 - `pre-switch`: hook runs in the source worktree; `worktree_path` is the destination
-- `post-remove` and `post-merge` with removal: the active worktree is gone, so the hook runs in primary or target, respectively
+- `post-remove`: the active worktree is gone, so the hook runs in the primary worktree
+- `post-merge` with removal: the active worktree is gone, so the hook runs in the target worktree
 
 Undefined variables error — use conditionals or defaults for optional behavior:
 
@@ -1912,6 +2002,8 @@ full = false       # Show CI status and LLM summaries (--full)
 branches = false   # Include branches without worktrees (--branches)
 remotes = false    # Include remote-only branches (--remotes)
 
+json-schema = 1    # JSON output schema: 1 (current, bare array) or 2 (envelope); unset emits 1 with a warning
+
 columns = ["branch", "status", "ci", "path"]   # Columns to show, in order — built-ins or custom headers (omit for the default set)
 
 task-timeout-ms = 0   # Kill individual git commands after N ms; 0 disables
@@ -1952,8 +2044,10 @@ named one. A column whose data source is missing still stays hidden — `summary
 needs an LLM command (`[commit.generation]`), `url` needs a `[list] url`
 template — since listing can't supply the data.
 
-The selection drives the table and the `wt switch` picker; `wt list --format
-json` ignores it and emits every field.
+The selection drives the table and the `wt switch` picker. `wt list --format
+json` always emits every field, but a listed gated column (`ci`, `summary`)
+still forces its data collection on, so the JSON carries the same data the
+table shows.
 
 #### Custom columns [experimental]
 
@@ -1970,20 +2064,30 @@ priority = 9                     # Optional drop order when the terminal narrows
 ```
 
 Templates may reference `{{ branch }}`, `{{ worktree_path }}`,
-`{{ worktree_name }}` (empty for branch-only rows), and `{{ vars.* }}` —
-per-branch values stored with
-[`wt config state vars set`](@/config.md#wt-config-state-vars).
+`{{ worktree_name }}` (empty for branch-only rows), and two per-branch
+namespaces:
+
+- `{{ vars.* }}` — values stored with
+  [`wt config state vars set`](@/config.md#wt-config-state-vars).
+- `{{ git.branch.* }}` — the branch's own git config under `branch.<name>.*`,
+  read straight from `git config` (e.g. `{{ git.branch.jira }}` for a key you
+  set yourself, or the git-native `description`). Git lowercases config variable
+  names, so `branch.<name>.nvciShelf` reads as `{{ git.branch.nvcishelf }}`.
+
 All standard filters work (`sanitize`, `hash_port`, `codename`, …). A row
-where the template renders empty (e.g. a branch without the vars key) shows an
+where the template renders empty (e.g. a branch without the key) shows an
 empty cell; a column that is empty for every row is dropped from the table.
 `wt list --format json` includes the rendered values under `columns`.
 
-A `Note` column showing free-form descriptions, set per branch with
-`wt config state vars set note "Bug fix for production fire"`:
+A `Jira` column reading a key kept in git config, and a `Summary` column
+showing just the first line of the git-native branch description:
 
 ```toml
-[list.custom-columns.Note]
-template = "{{ vars.note }}"
+[list.custom-columns.Jira]
+template = "{{ git.branch.jira }}"
+
+[list.custom-columns.Summary]
+template = "{{ git.branch.description | lines | first }}"
 ```
 
 ### Commit

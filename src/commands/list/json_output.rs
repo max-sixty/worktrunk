@@ -388,22 +388,13 @@ impl JsonItem {
         let symbols = Some(format_raw_symbols(&item.status_symbols)).filter(|s| !s.is_empty());
 
         // Per-branch vars data (pre-fetched, moved out to avoid cloning)
-        let vars = item
-            .branch
-            .as_deref()
-            .and_then(|b| all_vars.remove(b))
-            .unwrap_or_default();
+        let vars = super::json_v2::take_vars(item.branch.as_deref(), all_vars);
 
         // Summary: flatten Option<Option<String>> → Option<String>
         let summary = item.summary.as_ref().and_then(|s| s.clone());
 
         // Rendered custom column values, keyed by header; empty cells omitted
-        let columns = custom_columns
-            .iter()
-            .zip(&item.custom_values)
-            .filter(|(_, value)| !value.is_empty())
-            .map(|(column, value)| (column.name.clone(), value.clone()))
-            .collect();
+        let columns = super::json_v2::columns_map(custom_columns, &item.custom_values);
 
         JsonItem {
             branch: item.branch.clone(),
@@ -488,9 +479,7 @@ impl JsonCi {
     /// a self-hosted instance whose host can't be auto-detected still report the
     /// right provider.
     pub(crate) fn from_pr_status(pr: &PrStatus, provider_override: Option<&str>) -> Self {
-        let repo = pr.url.as_deref().and_then(|url| {
-            worktrunk::git::remote_ref::repo_info_from_ref_url_with_provider(url, provider_override)
-        });
+        let repo = super::json_v2::pr_target_repo(pr.url.as_deref(), provider_override);
         Self {
             status: pr.ci_status.into(),
             source: pr.source,
@@ -516,7 +505,9 @@ impl JsonCi {
 /// simply absent from the output string, not replaced by a placeholder.
 /// This matches the per-symbol atomic model: machine consumers see only the
 /// symbols that have been computed so far.
-fn format_raw_symbols(symbols: &super::model::StatusSymbols) -> String {
+///
+/// Shared with `json_v2` (the `display.symbols` field).
+pub(crate) fn format_raw_symbols(symbols: &super::model::StatusSymbols) -> String {
     let mut result = String::new();
 
     // Working tree symbols (gate 1)
@@ -774,6 +765,7 @@ mod tests {
             remote: Some("origin".to_string()),
             ahead: 3,
             behind: 2,
+            ..Default::default()
         };
         let branch = Some("feature".to_string());
         let json = upstream_to_json(&upstream, &branch);
@@ -791,6 +783,7 @@ mod tests {
             remote: None,
             ahead: 0,
             behind: 0,
+            ..Default::default()
         };
         let branch = Some("feature".to_string());
         let json = upstream_to_json(&upstream, &branch);
@@ -803,6 +796,7 @@ mod tests {
             remote: Some("origin".to_string()),
             ahead: 1,
             behind: 0,
+            ..Default::default()
         };
         let branch = None;
         let json = upstream_to_json(&upstream, &branch);
