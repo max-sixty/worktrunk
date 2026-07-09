@@ -191,7 +191,7 @@ fn reap_worktree_processes(worktree_path: &Path, label: &str) {
     }
 
     let count = procs.len();
-    let noun = if count == 1 { "process" } else { "processes" };
+    let noun = reap::process_noun(count);
     eprintln!(
         "{}",
         progress_message(cformat!(
@@ -207,16 +207,9 @@ fn reap_worktree_processes(worktree_path: &Path, label: &str) {
 
     let pids: Vec<u32> = procs.iter().map(|p| p.pid).collect();
     let gone = reap::reap_pids(&pids);
-    if gone == count {
-        eprintln!("{}", success_message(format!("Reaped {count} {noun}")));
-    } else {
-        let survived = count - gone;
-        eprintln!(
-            "{}",
-            warning_message(format!(
-                "Reaped {gone} of {count} {noun}; {survived} ignored SIGTERM & SIGKILL"
-            ))
-        );
+    match reap::reap_summary(count, gone) {
+        Ok(msg) => eprintln!("{}", success_message(msg)),
+        Err(msg) => eprintln!("{}", warning_message(msg)),
     }
 }
 

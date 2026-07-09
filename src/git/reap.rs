@@ -216,6 +216,26 @@ pub fn reap_pids(pids: &[u32]) -> usize {
     escalate_terminate(&NixSignaller, pids, REAP_KILL_DEADLINE)
 }
 
+/// Pluralized noun for a process count (`"process"` / `"processes"`).
+pub fn process_noun(count: usize) -> &'static str {
+    if count == 1 { "process" } else { "processes" }
+}
+
+/// Human summary of a reap outcome. `Ok` when every process was terminated (the
+/// caller renders it as success); `Err` when some survived both `SIGTERM` and
+/// `SIGKILL` (rendered as a warning).
+pub fn reap_summary(count: usize, gone: usize) -> Result<String, String> {
+    let noun = process_noun(count);
+    if gone >= count {
+        Ok(format!("Reaped {count} {noun}"))
+    } else {
+        let survived = count - gone;
+        Err(format!(
+            "Reaped {gone} of {count} {noun}; {survived} ignored SIGTERM & SIGKILL"
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -252,10 +272,12 @@ n/home/user/repo.feature/node_modules/.bin
 
     #[test]
     fn parse_lsof_cwd_skips_process_without_cwd_line() {
-        // A process whose cwd lsof could not read (no `n` line) is dropped.
+        // A process whose cwd lsof could not read (no `n` line) is dropped; a
+        // blank line and unknown field tags (`f`) are ignored.
         let stdout = "\
 p101
 cbash
+
 p202
 czsh
 fcwd
@@ -292,12 +314,40 @@ n/home/user/repo.feature
 
     #[test]
     fn parse_ps_tty_ignores_unparsable_lines() {
+        // A pid-only line (no tty column) defaults to "no terminal".
         let stdout = "\
 header junk
   101 ?
+  707
 not-a-pid tty
 ";
-        assert_eq!(parse_ps_tty(stdout), vec![(101, false)]);
+        assert_eq!(parse_ps_tty(stdout), vec![(101, false), (707, false)]);
+    }
+
+    #[test]
+    fn without_controlling_terminal_empty_input_is_empty() {
+        assert!(without_controlling_terminal(&[]).is_empty());
+    }
+
+    #[test]
+    fn discovery_on_nonexistent_path_is_empty() {
+        // A path that can't be canonicalized falls back to itself; no live
+        // process has a cwd under it, so both discovery layers return empty.
+        let missing = Path::new("/nonexistent/worktrunk-reap-xyz");
+        assert!(processes_under(missing).is_empty());
+        assert!(collect_reapable(missing).is_empty());
+    }
+
+    #[test]
+    fn reap_summary_reports_success_and_survivors() {
+        assert_eq!(process_noun(1), "process");
+        assert_eq!(process_noun(2), "processes");
+        assert_eq!(reap_summary(1, 1), Ok("Reaped 1 process".into()));
+        assert_eq!(reap_summary(3, 3), Ok("Reaped 3 processes".into()));
+        assert_eq!(
+            reap_summary(3, 1),
+            Err("Reaped 1 of 3 processes; 2 ignored SIGTERM & SIGKILL".into())
+        );
     }
 
     /// Read one PID's controlling-terminal state through the same `ps` probe
