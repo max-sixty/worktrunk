@@ -268,6 +268,32 @@ mod tests {
         assert_eq!(result.path(), &path);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn remove_result_branch_name_reads_both_variants() {
+        let removed = RemoveResult::RemovedWorktree {
+            main_path: PathBuf::from("/main"),
+            worktree_path: PathBuf::from("/wt"),
+            changed_directory: false,
+            branch_name: Some("feature".to_string()),
+            deletion_mode: BranchDeletionMode::default(),
+            target_branch: None,
+            force_worktree: false,
+            expected_path: None,
+            removed_commit: None,
+        };
+        assert_eq!(removed.branch_name(), Some("feature"));
+
+        let branch_only = RemoveResult::BranchOnly {
+            branch_name: "solo".to_string(),
+            deletion_mode: BranchDeletionMode::default(),
+            pruned: false,
+            target_branch: None,
+            integration_reason: None,
+        };
+        assert_eq!(branch_only.branch_name(), Some("solo"));
+    }
+
     #[test]
     fn test_switch_result_path_existing() {
         let path = PathBuf::from("/test/existing");

@@ -134,10 +134,11 @@ pub fn parse_ps_tty(stdout: &str) -> Vec<(u32, bool)> {
 /// Return the subset of `pids` that hold **no** controlling terminal.
 ///
 /// Runs `ps -o pid=,tty=` over the candidate PIDs and keeps those whose
-/// terminal is a "none" marker — the detached processes safe to reap. Any PID
-/// `ps` does not report (it exited between discovery and this probe) is
-/// dropped. A `ps` spawn or non-zero exit yields an empty set: without a
-/// trustworthy terminal reading, nothing is reaped (fail-safe).
+/// terminal is a "none" marker — the detached processes safe to reap. A PID
+/// `ps` does not report (it exited between discovery and this probe, or `ps`
+/// exited non-zero because every requested PID was gone) simply doesn't appear
+/// in the output, so it's dropped. A `ps` spawn failure yields an empty set:
+/// without a terminal reading, nothing is reaped (fail-safe).
 fn without_controlling_terminal(pids: &[u32]) -> HashSet<u32> {
     if pids.is_empty() {
         return HashSet::new();
@@ -147,6 +148,9 @@ fn without_controlling_terminal(pids: &[u32]) -> HashSet<u32> {
         .map(u32::to_string)
         .collect::<Vec<_>>()
         .join(",");
+    // Parse whatever `ps` printed regardless of exit status: it exits non-zero
+    // when some requested PIDs are gone but still lists the live ones (the same
+    // partial-output shape `lsof` has in `processes_under`).
     let Ok(output) = Cmd::new("ps")
         .args(["-o", "pid=,tty=", "-p", &pid_list])
         .timeout(PROBE_TIMEOUT)
@@ -154,9 +158,6 @@ fn without_controlling_terminal(pids: &[u32]) -> HashSet<u32> {
     else {
         return HashSet::new();
     };
-    if !output.status.success() {
-        return HashSet::new();
-    }
     parse_ps_tty(&String::from_utf8_lossy(&output.stdout))
         .into_iter()
         .filter_map(|(pid, has_tty)| (!has_tty).then_some(pid))
@@ -358,57 +359,17 @@ not-a-pid tty
         );
     }
 
-    /// Read one PID's controlling-terminal state through the same `ps` probe
-    /// the module uses, so the e2e assertion tracks the process's real TTY
-    /// rather than assuming the test host has (or lacks) one.
-    fn probe_has_tty(pid: u32) -> bool {
-        !without_controlling_terminal(&[pid]).contains(&pid)
-    }
-
-    /// End-to-end against the real `lsof`/`ps`: a child whose cwd is under the
-    /// path is discovered by [`processes_under`], correctly kept-or-dropped by
-    /// the controlling-terminal guard in [`collect_reapable`], and terminated
-    /// by [`reap_pids`].
-    ///
-    /// The child inherits whatever terminal the test process has, which varies
-    /// (a TTY locally, none in CI). Rather than assume either, the guard's
-    /// verdict is checked against the child's *actual* TTY state — so the test
-    /// exercises both branches without becoming host-dependent.
+    /// `reap_pids` against a real process: `SIGTERM` terminates it and the
+    /// count comes back confirmed. Discovery and the controlling-terminal
+    /// guard are covered in-process by the `test_remove_reap_kills_process`
+    /// integration test (which calls `processes_under` / `collect_reapable`
+    /// directly), so this focuses on the signalling half.
     #[test]
-    fn discovers_filters_and_kills_a_worktree_process() {
+    fn reap_pids_terminates_a_process() {
         use std::process::Command;
-        use std::time::{Duration, Instant};
 
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = dunce::canonicalize(tmp.path()).unwrap();
-
-        let mut child = Command::new("sleep")
-            .arg("30")
-            .current_dir(&dir)
-            .spawn()
-            .unwrap();
+        let mut child = Command::new("sleep").arg("30").spawn().unwrap();
         let pid = child.id();
-
-        // lsof sees the cwd once the child is running; poll briefly.
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            let under = processes_under(&dir);
-            if under.iter().any(|p| p.pid == pid) {
-                // Only our child lives under this fresh tempdir.
-                assert_eq!(under.iter().filter(|p| p.pid == pid).count(), 1);
-                break;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "child {pid} never discovered under {}",
-                dir.display()
-            );
-            std::thread::sleep(Duration::from_millis(50));
-        }
-
-        // The controlling-terminal guard keeps the child iff it has no TTY.
-        let kept = collect_reapable(&dir).iter().any(|p| p.pid == pid);
-        assert_eq!(kept, !probe_has_tty(pid));
 
         // Reap the zombie concurrently: `sleep` is a direct child here, so
         // after SIGTERM it lingers as a zombie (still "alive" to `kill(pid,0)`)
