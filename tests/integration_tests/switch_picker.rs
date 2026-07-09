@@ -2523,6 +2523,58 @@ fn test_switch_picker_no_cd_switches_without_cd_directive(mut repo: TestRepo) {
     );
 }
 
+/// `wt switch -x <cmd>` with no branch argument opens the picker and runs the
+/// command against the selected worktree — the composition requested in #3370.
+/// Before the fix, `--execute`'s `requires = "branch"` rejected this at parse
+/// time. The EXEC directive file is the observable proof: `--execute` writes
+/// the expanded command there for the shell wrapper to source, so its presence
+/// confirms the picker threaded `execute` into the shared `SwitchPipeline`.
+#[rstest]
+fn test_switch_picker_runs_execute_command(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.add_worktree("target-branch");
+
+    let (cd_path, exec_path, _guard) = directive_files_for_pty();
+
+    let mut env_vars = repo.test_env_vars();
+    env_vars.push((
+        "WORKTRUNK_DIRECTIVE_CD_FILE".to_string(),
+        cd_path.display().to_string(),
+    ));
+    env_vars.push((
+        "WORKTRUNK_DIRECTIVE_EXEC_FILE".to_string(),
+        exec_path.display().to_string(),
+    ));
+
+    // No branch argument — `-x` alone opens the picker. Select target-branch and
+    // press Enter; the switch pipeline then writes the execute command to the
+    // EXEC file instead of a cd directive.
+    let result = exec_in_pty_with_input_expectations(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--execute", "echo picker-exec-ran"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            // Preview-pane gate: see test_switch_picker_emits_cd_directive_by_default.
+            ("target", Some("target-branch has no uncommitted changes")),
+            ("\r", None), // Enter to switch
+        ],
+    );
+
+    assert_eq!(
+        result.exit_code, 0,
+        "Expected exit code 0 for picker switch with --execute"
+    );
+
+    let exec_contents = std::fs::read_to_string(&exec_path).unwrap_or_default();
+    assert!(
+        exec_contents.contains("picker-exec-ran"),
+        "EXEC file should contain the --execute command after a picker switch, got: {}",
+        exec_contents
+    );
+}
+
 /// A project `pre-switch` hook must pass through the approval gate when the
 /// picker switches — the picker has no `--yes`, so an unapproved project
 /// command is shown for approval, never auto-run.

@@ -1593,6 +1593,8 @@ pub fn handle_picker(
     cli_prs: bool,
     change_dir_flag: Option<bool>,
     format: SwitchFormat,
+    execute: Option<&str>,
+    execute_args: &[String],
 ) -> anyhow::Result<()> {
     // Interactive picker requires a terminal for the TUI. The dry-run and
     // preview-bench paths bypass skim entirely, so no TTY is required —
@@ -2162,10 +2164,12 @@ summary = true
 
         // Run the switch — the same `SwitchPipeline` as `wt switch <branch>`,
         // so hooks, approval, and output cannot drift from the argument path.
-        // The picker has no `--execute`, offers no shell integration, and does
-        // not capture pre-switch source identity (`capture_source: false` — an
-        // existing switch's `{{ base }}` / `{{ base_worktree_path }}` stay
-        // unset; result-derived `base` for creates and `target` still flow).
+        // The picker offers no shell integration and does not capture
+        // pre-switch source identity (`capture_source: false` — an existing
+        // switch's `{{ base }}` / `{{ base_worktree_path }}` stay unset;
+        // result-derived `base` for creates and `target` still flow). An
+        // `--execute` command (`wt switch -x <cmd>`) runs against the picked
+        // worktree, just as it would on the argument path.
         SwitchPipeline {
             repo: &repo,
             config: &mut config,
@@ -2180,8 +2184,8 @@ summary = true
             is_recovered,
             suggestion_ctx: None,
             capture_source: false,
-            execute: None,
-            execute_args: &[],
+            execute,
+            execute_args,
             shell_integration_binary: None,
         }
         .run()?;

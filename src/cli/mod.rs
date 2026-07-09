@@ -350,15 +350,15 @@ pub(crate) struct SwitchArgs {
     pub(crate) branch: Option<String>,
 
     /// Include branches without worktrees
-    #[arg(long, help_heading = "Picker Options", conflicts_with_all = ["create", "base", "execute", "execute_args", "clobber"])]
+    #[arg(long, help_heading = "Picker Options", conflicts_with_all = ["create", "base", "clobber"])]
     pub(crate) branches: bool,
 
     /// Include remote branches
-    #[arg(long, help_heading = "Picker Options", conflicts_with_all = ["create", "base", "execute", "execute_args", "clobber"])]
+    #[arg(long, help_heading = "Picker Options", conflicts_with_all = ["create", "base", "clobber"])]
     pub(crate) remotes: bool,
 
     /// Include open PRs/MRs
-    #[arg(long, help_heading = "Picker Options", conflicts_with_all = ["create", "base", "execute", "execute_args", "clobber"])]
+    #[arg(long, help_heading = "Picker Options", conflicts_with_all = ["create", "base", "clobber"])]
     pub(crate) prs: bool,
 
     /// Create a new branch
@@ -377,6 +377,10 @@ pub(crate) struct SwitchArgs {
     /// Replaces the wt process with the command after switching, giving
     /// it full terminal control. Useful for launching editors, AI agents,
     /// or other interactive tools.
+    ///
+    /// Without a branch argument, the interactive picker opens and the
+    /// command runs against the selected worktree — so `wt switch -x claude`
+    /// picks a worktree, then launches Claude Code there.
     ///
     /// Supports [hook template variables](@/hook.md#template-variables)
     /// (`{{ branch }}`, `{{ worktree_path }}`, etc.) and filters.
@@ -397,7 +401,7 @@ pub(crate) struct SwitchArgs {
     /// Template example: `-x code -- '{{ worktree_path }}'` opens VS Code
     /// at the worktree, `-x tmux -- new -s '{{ branch | sanitize }}'` starts
     /// a tmux session named after the branch.
-    #[arg(short = 'x', long, requires = "branch")]
+    #[arg(short = 'x', long)]
     pub(crate) execute: Option<String>,
 
     /// Additional arguments for --execute command (after --)
