@@ -1099,49 +1099,40 @@ fn normalize_report(content: &str) -> String {
     // LANG, PAGER, …) are inherited from the host and differ per machine, so
     // exact comparison is non-deterministic. We assert specific lines appear in
     // a dedicated test instead.
-    if let Some(start) = result.find("<summary>Environment variables</summary>")
-        && let Some(end_offset) = result[start..].find("</details>")
-    {
-        let end = start + end_offset + "</details>".len();
-        let before = &result[..start];
-        let after = &result[end..];
-        result = format!(
-            "{}<summary>Environment variables</summary>\n\n[ENV_VARS_CONTENT]\n</details>{}",
-            before, after
-        );
-    }
+    truncate_details_section(&mut result, "Environment variables", "[ENV_VARS_CONTENT]");
 
     // Truncate performance profile section - its durations and by-type/slowest
     // ordering depend on the run's real timing, so exact comparison is flaky.
     // We verify the section exists separately in the test.
-    if let Some(start) = result.find("<summary>Performance profile</summary>") {
-        // Find the closing </details> after this point
-        if let Some(end_offset) = result[start..].find("</details>") {
-            let end = start + end_offset + "</details>".len();
-            let before = &result[..start];
-            let after = &result[end..];
-            result = format!(
-                "{}<summary>Performance profile</summary>\n\n[PERFORMANCE_PROFILE_CONTENT]\n</details>{}",
-                before, after
-            );
-        }
-    }
+    truncate_details_section(
+        &mut result,
+        "Performance profile",
+        "[PERFORMANCE_PROFILE_CONTENT]",
+    );
 
     // Truncate trace log section - it has parallel git commands that interleave
     // in different orders, making exact snapshot comparison flaky.
     // We verify the section exists separately in the test.
-    if let Some(start) = result.find("<summary>Trace log</summary>") {
-        // Find the closing </details> after this point
-        if let Some(end_offset) = result[start..].find("</details>") {
-            let end = start + end_offset + "</details>".len();
-            let before = &result[..start];
-            let after = &result[end..];
-            result = format!(
-                "{}<summary>Trace log</summary>\n\n[TRACE_LOG_CONTENT]\n</details>{}",
-                before, after
-            );
-        }
-    }
+    truncate_details_section(&mut result, "Trace log", "[TRACE_LOG_CONTENT]");
 
     result
+}
+
+/// Replace a `<details>` section's body with a fixed placeholder so
+/// host-specific or run-specific content (env values, timings, interleaved
+/// trace output) doesn't make the snapshot non-deterministic. The section is
+/// located by its `<summary>{title}</summary>` line and truncated up to the
+/// next `</details>`. A no-op when the section isn't present.
+fn truncate_details_section(result: &mut String, title: &str, placeholder: &str) {
+    let summary = format!("<summary>{title}</summary>");
+    if let Some(start) = result.find(&summary)
+        && let Some(end_offset) = result[start..].find("</details>")
+    {
+        let end = start + end_offset + "</details>".len();
+        *result = format!(
+            "{}{summary}\n\n{placeholder}\n</details>{}",
+            &result[..start],
+            &result[end..],
+        );
+    }
 }
