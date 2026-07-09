@@ -1525,10 +1525,13 @@ fn capture_switch_source(repo: &Repository, is_recovered: bool) -> (String, Stri
 /// its own copy of that call.
 ///
 /// The picker-vs-argument differences are field values, not separate code: the
-/// picker passes `verify: true`, `yes: false`, `capture_source: false`,
-/// `suggestion_ctx: None`, and `shell_integration_binary: None`. It threads
-/// `execute` / `execute_args` through from `wt switch -x <cmd>` (no branch), so
-/// a picked worktree runs the command just as the argument path does.
+/// picker passes `verify: true`, `yes: false`, `suggestion_ctx: None`, and
+/// `shell_integration_binary: None`. It threads `execute` / `execute_args`
+/// through from `wt switch -x <cmd>` (no branch), and — like the argument path
+/// — captures the pre-switch source worktree, so a picked worktree runs the
+/// command and resolves its `{{ base }}` exactly as the argument path does.
+/// Source capture is no longer a divergence axis: both entry points always
+/// capture, with `is_recovered` the only thing that suppresses it.
 pub(crate) struct SwitchPipeline<'a> {
     pub repo: &'a Repository,
     /// Mutable because the bare-repo path-fix offer
@@ -1549,17 +1552,13 @@ pub(crate) struct SwitchPipeline<'a> {
     pub format: SwitchFormat,
     /// True when `current_or_recover` recovered from a deleted CWD. Suppresses
     /// pre-switch hooks (no source worktree to run them against) and source
-    /// capture.
+    /// capture (`{{ base }}` / `{{ base_worktree_path }}` stay unset — there is
+    /// no live source worktree to read).
     pub is_recovered: bool,
     /// Error-enrichment context for a failed `plan_switch`, so the hint
-    /// suggests the full `wt switch … --execute=… -- …`. `None` for the
-    /// picker, whose selection can't fail `plan_switch` that way.
+    /// suggests the full `wt switch … --execute=… -- …`. `None` for the picker,
+    /// which has no branch argument to embed in that suggested command.
     pub suggestion_ctx: Option<SwitchSuggestionCtx>,
-    /// Whether to capture the source worktree's branch/root before the switch,
-    /// for post-switch `{{ base }}` / `{{ base_worktree_path }}`. The argument
-    /// path captures; the picker does not — it does not track where the user
-    /// came from, so an existing switch's base vars stay unset.
-    pub capture_source: bool,
     /// `--execute` command and its trailing args. Flows from `wt switch -x
     /// <cmd>` on both the argument path and the picker (no branch given).
     pub execute: Option<&'a str>,
@@ -1586,7 +1585,6 @@ impl SwitchPipeline<'_> {
             format,
             is_recovered,
             suggestion_ctx,
-            capture_source,
             execute,
             execute_args,
             shell_integration_binary,
@@ -1607,14 +1605,10 @@ impl SwitchPipeline<'_> {
 
         // Capture source (base) worktree identity BEFORE the switch, for
         // post-switch {{ base }} / {{ base_worktree_path }}. Done here — after
-        // pre-switch hooks, before plan / approve / validate, none of which
-        // move the current worktree. The picker passes `capture_source: false`;
-        // it does not track where the user came from.
-        let (source_branch, source_path) = if capture_source {
-            capture_switch_source(repo, is_recovered)
-        } else {
-            (String::new(), String::new())
-        };
+        // pre-switch hooks, before plan / approve / validate, none of which move
+        // the current worktree. Both entry points capture; `capture_switch_source`
+        // returns empty on the recovered path (no live source worktree).
+        let (source_branch, source_path) = capture_switch_source(repo, is_recovered);
 
         // Validate and resolve the target branch.
         let plan = plan_switch(repo, identifier, create, base, clobber, config).map_err(|err| {
@@ -1841,7 +1835,6 @@ fn run_switch(
         format,
         is_recovered,
         suggestion_ctx,
-        capture_source: true,
         execute,
         execute_args,
         shell_integration_binary: Some(binary_name),

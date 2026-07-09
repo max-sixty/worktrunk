@@ -2164,12 +2164,12 @@ summary = true
 
         // Run the switch — the same `SwitchPipeline` as `wt switch <branch>`,
         // so hooks, approval, and output cannot drift from the argument path.
-        // The picker offers no shell integration and does not capture
-        // pre-switch source identity (`capture_source: false` — an existing
-        // switch's `{{ base }}` / `{{ base_worktree_path }}` stay unset;
-        // result-derived `base` for creates and `target` still flow). An
-        // `--execute` command (`wt switch -x <cmd>`) runs against the picked
-        // worktree, just as it would on the argument path.
+        // The picker offers no shell integration, but (like the argument path)
+        // the pipeline captures the pre-switch source worktree, so an existing
+        // switch's `{{ base }}` / `{{ base_worktree_path }}` resolve to the
+        // worktree the user came from. An `--execute` command (`wt switch -x
+        // <cmd>`) runs against the picked worktree, and its `{{ base }}` matches
+        // what `wt switch <branch> -x <cmd>` would produce.
         SwitchPipeline {
             repo: &repo,
             config: &mut config,
@@ -2183,7 +2183,6 @@ summary = true
             format,
             is_recovered,
             suggestion_ctx: None,
-            capture_source: false,
             execute,
             execute_args,
             shell_integration_binary: None,

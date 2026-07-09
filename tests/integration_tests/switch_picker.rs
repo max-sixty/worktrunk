@@ -2575,6 +2575,57 @@ fn test_switch_picker_runs_execute_command(mut repo: TestRepo) {
     );
 }
 
+/// `{{ base }}` in a picker `--execute` resolves to the source worktree, just
+/// as it does on the argument path (`wt switch <branch> -x …`). The picker now
+/// captures pre-switch source identity, so the two paths no longer diverge:
+/// before, the picker left `base` unset while pre-flight validation still
+/// accepted the template, so `-x 'echo {{ base }}'` passed validation and then
+/// errored on the undefined value *after* the switch had already landed.
+/// Selecting from the `main` worktree, `{{ base }}` expands to `main`.
+#[rstest]
+fn test_switch_picker_execute_base_resolves_to_source(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.add_worktree("target-branch");
+
+    let (cd_path, exec_path, _guard) = directive_files_for_pty();
+
+    let mut env_vars = repo.test_env_vars();
+    env_vars.push((
+        "WORKTRUNK_DIRECTIVE_CD_FILE".to_string(),
+        cd_path.display().to_string(),
+    ));
+    env_vars.push((
+        "WORKTRUNK_DIRECTIVE_EXEC_FILE".to_string(),
+        exec_path.display().to_string(),
+    ));
+
+    // Run from the `main` worktree so the captured source branch is `main`.
+    let result = exec_in_pty_with_input_expectations(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--execute", "echo {{ base }}"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            ("target", Some("target-branch has no uncommitted changes")),
+            ("\r", None), // Enter to switch
+        ],
+    );
+
+    assert_eq!(
+        result.exit_code, 0,
+        "picker `-x '{{{{ base }}}}'` should succeed, not error on an undefined \
+         value after the switch"
+    );
+
+    let exec_contents = std::fs::read_to_string(&exec_path).unwrap_or_default();
+    assert!(
+        exec_contents.contains("echo main"),
+        "EXEC file should contain the expanded `{{{{ base }}}}` (the source \
+         branch `main`), got: {exec_contents}"
+    );
+}
+
 /// A project `pre-switch` hook must pass through the approval gate when the
 /// picker switches — the picker has no `--yes`, so an unapproved project
 /// command is shown for approval, never auto-run.
