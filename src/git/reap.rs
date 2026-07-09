@@ -114,7 +114,7 @@ pub fn parse_lsof_cwd(stdout: &str) -> Vec<CwdProcess> {
 ///
 /// This feeds a data-safety gate (a process *with* a terminal is spared), so
 /// the unreadable case fails safe: a line missing the tty column is reported as
-/// **having** a terminal, so an unparseable reading never turns into a reap.
+/// **having** a terminal, so an unparsable reading never turns into a reap.
 /// Real `ps -o tty=` always fills the column, so this only guards the anomaly.
 pub fn parse_ps_tty(stdout: &str) -> Vec<(u32, bool)> {
     stdout
