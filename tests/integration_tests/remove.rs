@@ -36,6 +36,25 @@ fn test_remove_from_worktree(mut repo: TestRepo) {
     ));
 }
 
+// `--reap` (experimental) with no processes running under the worktree: the
+// reap phase reports it found nothing, then removal proceeds normally. A fresh
+// worktree has no processes with a cwd under it, so this is deterministic
+// (and identical whether or not `lsof` is installed on the runner).
+#[cfg(unix)]
+#[rstest]
+fn test_remove_reap_no_processes(mut repo: TestRepo) {
+    repo.add_worktree("feature-reap");
+
+    // Remove by name from the primary worktree so the reap scans the removed
+    // worktree's path, not the current one.
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["--reap", "feature-reap"],
+        None
+    ));
+}
+
 #[rstest]
 fn test_remove_internal_mode(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature-internal");

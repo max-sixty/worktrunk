@@ -52,6 +52,11 @@ Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[BRANCHES]...[0m
       [1m[36m--foreground[0m
           Run removal in foreground (block until complete)
 
+      [1m[36m--reap[0m
+          Kill processes started in the worktree [experimental][0m
+          
+          Before removal, terminate processes whose working directory is under the worktree — dev servers, watchers, language servers. Processes holding a controlling terminal (interactive shells, terminal editors) are left alone. Unix only.[0m
+
   [1m[36m-f[0m, [1m[36m--force[0m
           Force worktree removal[0m
           
@@ -151,6 +156,24 @@ Use [2m--no-delete-branch[0m to keep the branch regardless of merge status.
 Removal runs in the background by default — the command returns immediately. The worktree is renamed into [2m.git/wt/trash/[0m (instant same-filesystem rename), git metadata is pruned, the branch is deleted, and a detached [2mrm -rf[0m finishes cleanup. Cross-filesystem worktrees fall back to [2mgit worktree remove[0m. Logs: [2m.git/wt/logs/{branch}/internal/remove.log[0m. Use [2m--foreground[0m to run in the foreground.
 
 After each [2mwt remove[0m, entries in [2m.git/wt/trash/[0m older than 24 hours are swept by a detached [2mrm -rf[0m — eventual cleanup for directories orphaned when a previous background removal was interrupted (SIGKILL, reboot, disk full).
+
+[1m[32mReaping processes [experimental][0m
+
+[2m--reap[0m terminates processes left running in the worktree before it is removed — a [2mpost-start[0m dev server, a file watcher, a language server — freeing the ports and file handles they hold. Processes are discovered by working directory: any process whose current directory is at or under the worktree path ([2mSIGTERM[0m, then [2mSIGKILL[0m for survivors).
+
+[107m [0m [2m[0m[2m[34mwt[0m[2m remove [0m[2m[36m--reap[0m[2m feature[0m
+[107m [0m [2m[0m[2m[34m◎[0m[2m Reaping 2 processes under feature worktree[0m
+[107m [0m [2m   [0m[2m[34m┃[0m[2m 51234 node[0m
+[107m [0m [2m   [0m[2m[34m┃[0m[2m 51240 esbuild[0m
+[107m [0m [2m[0m[2m[34m✓[0m[2m Reaped 2 processes[0m
+[107m [0m [2m[0m[2m[34m◎[0m[2m Removing feature worktree & [0m[2m[34mbranch[0m[2m in background ([0m[2m[34msame[0m[2m commit as main, _)[0m
+
+To avoid killing work the user did not mean to kill, two guards keep [2m--reap[0m conservative:
+
+- [1mInteractive processes are spared.[0m A process holding a controlling terminal — an interactive shell, or a terminal editor such as [2mvim[0m with unsaved buffers — is never reaped. Only detached processes remain candidates.
+- [1mDiscovery is by working directory only.[0m A process that started in the worktree and later changed directory, or a daemon that reparented to [2minit[0m, no longer reports a directory under the worktree and is not found. To reliably reap those, launch them with [2mwt step tether[0m, which kills the whole process group when the worktree is removed.
+
+Reaping runs before the worktree directory is touched, so it is independent of foreground/background removal and the [2m--force[0m flag. Unix only; on Windows [2m--reap[0m is rejected.
 
 [1m[32mHooks[0m
 

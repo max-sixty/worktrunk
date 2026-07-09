@@ -204,6 +204,15 @@ impl RemoveResult {
         }
     }
 
+    /// Branch name of the removed worktree, if known. `None` for detached-HEAD
+    /// worktrees and (structurally) for branch-only deletions.
+    pub fn branch_name(&self) -> Option<&str> {
+        match self {
+            RemoveResult::RemovedWorktree { branch_name, .. } => branch_name.as_deref(),
+            RemoveResult::BranchOnly { branch_name, .. } => Some(branch_name),
+        }
+    }
+
     /// Post-removal working directory — where the user lands, and the worktree
     /// whose `.config/wt.toml` `post-switch` reads. `None` for branch-only
     /// deletions (no worktree was removed, so nothing was switched away from).
