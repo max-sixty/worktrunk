@@ -493,7 +493,7 @@ pub(crate) struct RemoveArgs {
     #[arg(long)]
     pub(crate) foreground: bool,
 
-    /// Kill processes started in the worktree [experimental]
+    /// Kill processes started in the worktree \[experimental\]
     ///
     /// Before removal, terminate processes whose working directory is under
     /// the worktree — dev servers, watchers, language servers. Processes
