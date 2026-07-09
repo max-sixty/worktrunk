@@ -206,6 +206,10 @@ impl RemoveResult {
 
     /// Branch name of the removed worktree, if known. `None` for detached-HEAD
     /// worktrees and (structurally) for branch-only deletions.
+    ///
+    /// Only the `--reap` label needs this, which is Unix-only; gated to avoid a
+    /// dead-code warning on Windows where nothing consumes it.
+    #[cfg(unix)]
     pub fn branch_name(&self) -> Option<&str> {
         match self {
             RemoveResult::RemovedWorktree { branch_name, .. } => branch_name.as_deref(),

@@ -183,7 +183,9 @@ fn reap_worktree_processes(worktree_path: &Path, label: &str) {
     if procs.is_empty() {
         eprintln!(
             "{}",
-            info_message(cformat!("No processes to reap under <bold>{label}</> worktree"))
+            info_message(cformat!(
+                "No processes to reap under <bold>{label}</> worktree"
+            ))
         );
         return;
     }
@@ -192,7 +194,9 @@ fn reap_worktree_processes(worktree_path: &Path, label: &str) {
     let noun = if count == 1 { "process" } else { "processes" };
     eprintln!(
         "{}",
-        progress_message(cformat!("Reaping {count} {noun} under <bold>{label}</> worktree"))
+        progress_message(cformat!(
+            "Reaping {count} {noun} under <bold>{label}</> worktree"
+        ))
     );
     let listing = procs
         .iter()

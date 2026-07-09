@@ -27,7 +27,7 @@
 //! - **Controlling-terminal exclusion.** A process holding a controlling
 //!   terminal is an interactive shell (including the one `wt remove` was run
 //!   from) or a terminal editor (`vim`, `nvim`, `emacs -nw`). These are the
-//!   "keep-me" set; [`without_controlling_terminal`] drops them via `ps -o
+//!   "keep-me" set; `without_controlling_terminal` drops them via `ps -o
 //!   tty=`, so only detached processes (dev servers, watchers, daemons) remain
 //!   candidates.
 //! - **Self-exclusion.** The current `wt` process is never a candidate.
@@ -209,8 +209,8 @@ pub fn collect_reapable(worktree_path: &Path) -> Vec<CwdProcess> {
 
 /// `SIGTERM`→wait→`SIGKILL` each PID, returning the count confirmed gone.
 ///
-/// Thin wrapper over [`escalate_terminate`] with the production
-/// [`NixSignaller`] and the shared [`REAP_KILL_DEADLINE`], so `--reap` uses the
+/// Thin wrapper over `escalate_terminate` with the production
+/// `NixSignaller` and the shared `REAP_KILL_DEADLINE`, so `--reap` uses the
 /// same bounded escalation as the fsmonitor sweep.
 pub fn reap_pids(pids: &[u32]) -> usize {
     escalate_terminate(&NixSignaller, pids, REAP_KILL_DEADLINE)
@@ -364,6 +364,9 @@ not-a-pid tty
 
         assert_eq!(gone, 1, "child {pid} was not confirmed terminated");
         use std::os::unix::process::ExitStatusExt;
-        assert_eq!(status.signal(), Some(nix::sys::signal::Signal::SIGTERM as i32));
+        assert_eq!(
+            status.signal(),
+            Some(nix::sys::signal::Signal::SIGTERM as i32)
+        );
     }
 }
