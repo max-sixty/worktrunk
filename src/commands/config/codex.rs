@@ -44,11 +44,17 @@ pub fn handle_codex_install(yes: bool) -> Result<()> {
         "{}",
         hint_message("Next, run /plugins in Codex and install Worktrunk from the marketplace")
     );
-    // The Codex plugin deliberately ships no activity-marker hooks: Codex's
-    // HookEventNameWire vocabulary (codex-cli 0.130.0) has no `Stop`/turn-end
-    // event, so a 🤖 set on UserPromptSubmit could never return to 💬 within a
-    // session. Re-add the hooks (and restore the marker hints + docs) once
-    // Codex exposes a turn-end hook event. See CLAUDE.md → "Plugin Layout".
+    // The Codex plugin ships activity-marker hooks inline in its manifest
+    // (`hooks` key in .codex-plugin/plugin.json), using Codex's native `Stop`
+    // turn-end event to return 🤖 → 💬. Codex has no session-exit event, so the
+    // marker persists after a session ends (documented tradeoff). See CLAUDE.md
+    // → "Plugin Layout".
+    eprintln!(
+        "{}",
+        hint_message(cformat!(
+            "Activity markers appear in <underline>wt list</> once a Codex session runs"
+        ))
+    );
 
     Ok(())
 }

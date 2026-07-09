@@ -36,6 +36,105 @@ fn test_remove_from_worktree(mut repo: TestRepo) {
     ));
 }
 
+// `--reap` (experimental) with no processes running under the worktree: the
+// reap phase reports it found nothing, then removal proceeds normally. A fresh
+// worktree has no processes with a cwd under it, so this is deterministic
+// (and identical whether or not `lsof` is installed on the runner).
+#[cfg(unix)]
+#[rstest]
+fn test_remove_reap_no_processes(mut repo: TestRepo) {
+    repo.add_worktree("feature-reap");
+
+    // Remove by name from the primary worktree so the reap scans the removed
+    // worktree's path, not the current one.
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["--reap", "feature-reap"],
+        None
+    ));
+}
+
+// `--reap` (experimental) with a real process running under the worktree: the
+// detached child is discovered and terminated before removal. Whether the
+// controlling-terminal guard reaps it depends on the test's own terminal
+// (none in CI → reaped; a TTY on a dev box → spared), so the assertion is
+// driven off the guard's verdict rather than assuming either — keeping the
+// found-processes path exercised in CI without becoming host-dependent.
+#[cfg(unix)]
+#[rstest]
+fn test_remove_reap_kills_process(mut repo: TestRepo) {
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+    use worktrunk::git::reap;
+
+    let worktree_path = repo.add_worktree("feature-reapkill");
+    let canonical = std::fs::canonicalize(&worktree_path).unwrap();
+
+    // A detached child whose cwd is the worktree — the shape `--reap` targets.
+    let mut child = Command::new("sleep")
+        .arg("60")
+        .current_dir(&canonical)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+
+    // Wait until lsof reports the child's cwd (fast, but not instant).
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !reap::processes_under(&canonical)
+        .iter()
+        .any(|p| p.pid == pid)
+    {
+        assert!(Instant::now() < deadline, "child {pid} never discovered");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    // The guard reaps the child iff it holds no controlling terminal.
+    let will_reap = reap::collect_reapable(&canonical)
+        .iter()
+        .any(|p| p.pid == pid);
+
+    let run_remove = |repo: &TestRepo| {
+        let output = repo
+            .wt_command()
+            .args(["remove", "--reap", "feature-reapkill"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&output.stderr).into_owned()
+    };
+
+    if will_reap {
+        // `sleep` is a child of *this* test process, so once `wt` signals it,
+        // its parent (us) must `wait()` to reap the zombie — otherwise it
+        // lingers and `wt`'s liveness check (`kill(pid, 0)`) still sees it.
+        // Real reap targets aren't `wt`'s children, so they simply vanish. A
+        // thread already blocked in `wait()` reaps it the instant it exits.
+        let reaper = std::thread::spawn(move || child.wait().unwrap());
+        let stderr = run_remove(&repo);
+        let status = reaper.join().unwrap();
+
+        assert!(
+            stderr.contains("Reaping 1 process under") && stderr.contains("Reaped 1 process"),
+            "expected reap output, got:\n{stderr}"
+        );
+        // Terminated by a signal (SIGTERM, or SIGKILL if it ignored SIGTERM).
+        assert!(!status.success());
+    } else {
+        let stderr = run_remove(&repo);
+        assert!(
+            stderr.contains("No processes to reap"),
+            "expected no-reap output, got:\n{stderr}"
+        );
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
 #[rstest]
 fn test_remove_internal_mode(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature-internal");

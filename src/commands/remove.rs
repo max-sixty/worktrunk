@@ -163,6 +163,74 @@ fn validate_remove_targets(
     plans
 }
 
+/// Terminate processes whose working directory is under a worktree, for
+/// `--reap` (experimental). Discovery, the controlling-terminal / self
+/// exclusions, and the `SIGTERM`→`SIGKILL` escalation live in
+/// [`worktrunk::git::reap`]; this wrapper renders the user-facing progress.
+///
+/// Called before the worktree directory is staged/renamed — cwd matching
+/// requires the directory at its original path. Best-effort: no candidate,
+/// or a survivor that ignored both signals, never blocks the removal.
+#[cfg(unix)]
+fn reap_worktree_processes(worktree_path: &Path, label: &str) {
+    use color_print::cformat;
+    use worktrunk::git::reap;
+    use worktrunk::styling::{
+        format_with_gutter, progress_message, success_message, warning_message,
+    };
+
+    let procs = reap::collect_reapable(worktree_path);
+    if procs.is_empty() {
+        eprintln!(
+            "{}",
+            info_message(cformat!(
+                "No processes to reap under <bold>{label}</> worktree"
+            ))
+        );
+        return;
+    }
+
+    let count = procs.len();
+    let noun = reap::process_noun(count);
+    eprintln!(
+        "{}",
+        progress_message(cformat!(
+            "Reaping {count} {noun} under <bold>{label}</> worktree"
+        ))
+    );
+    let listing = procs
+        .iter()
+        .map(|p| format!("{} {}", p.pid, p.command))
+        .collect::<Vec<_>>()
+        .join("\n");
+    eprintln!("{}", format_with_gutter(&listing, None));
+
+    let pids: Vec<u32> = procs.iter().map(|p| p.pid).collect();
+    let gone = reap::reap_pids(&pids);
+    match reap::reap_summary(count, gone) {
+        Ok(msg) => eprintln!("{}", success_message(msg)),
+        Err(msg) => eprintln!("{}", warning_message(msg)),
+    }
+}
+
+/// Reap the removed worktree's processes when `--reap` is set and the result
+/// removed a worktree (branch-only deletions have no directory to scope by).
+/// The display label prefers the branch name, falling back to the worktree
+/// directory name. No-op on non-Unix, where `--reap` is rejected up front.
+fn maybe_reap_result(result: &RemoveResult, reap_enabled: bool) {
+    #[cfg(unix)]
+    if reap_enabled && let Some(path) = result.removed_worktree_path() {
+        let label = result
+            .branch_name()
+            .map(str::to_string)
+            .or_else(|| path.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_else(|| "worktree".to_string());
+        reap_worktree_processes(path, &label);
+    }
+    #[cfg(not(unix))]
+    let _ = (result, reap_enabled);
+}
+
 /// Entry point for the `wt remove` command.
 ///
 /// # Command flow
@@ -207,6 +275,14 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                     message: "Cannot use --force-delete with delete-branch=false (set via --no-delete-branch or [remove] delete-branch = false)".into(),
                 }
                 .into());
+            }
+
+            // `--reap` relies on per-process cwd discovery (`lsof`/`ps`), which
+            // has no cheap Windows equivalent — reject it there rather than
+            // silently no-op.
+            #[cfg(not(unix))]
+            if args.reap {
+                anyhow::bail!("--reap is not supported on Windows");
             }
 
             // Helper: build and approve, once, the frozen hook plan the
@@ -281,6 +357,8 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                     yes,
                 )?;
 
+                maybe_reap_result(&result, args.reap);
+
                 let mut announcer = HookAnnouncer::new(&repo, false);
                 handle_remove_output(
                     &result,
@@ -344,6 +422,7 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                 let show_branch =
                     plans.others.len() + plans.branch_only.len() + plans.current.iter().len() > 1;
                 let run = |result: &RemoveResult| -> anyhow::Result<()> {
+                    maybe_reap_result(result, args.reap);
                     let mut announcer = HookAnnouncer::new(&repo, show_branch);
                     handle_remove_output(
                         result,

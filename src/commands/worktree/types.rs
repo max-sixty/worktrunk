@@ -204,6 +204,19 @@ impl RemoveResult {
         }
     }
 
+    /// Branch name of the removed worktree, if known. `None` for detached-HEAD
+    /// worktrees and (structurally) for branch-only deletions.
+    ///
+    /// Only the `--reap` label needs this, which is Unix-only; gated to avoid a
+    /// dead-code warning on Windows where nothing consumes it.
+    #[cfg(unix)]
+    pub fn branch_name(&self) -> Option<&str> {
+        match self {
+            RemoveResult::RemovedWorktree { branch_name, .. } => branch_name.as_deref(),
+            RemoveResult::BranchOnly { branch_name, .. } => Some(branch_name),
+        }
+    }
+
     /// Post-removal working directory — where the user lands, and the worktree
     /// whose `.config/wt.toml` `post-switch` reads. `None` for branch-only
     /// deletions (no worktree was removed, so nothing was switched away from).
@@ -253,6 +266,32 @@ mod tests {
         let path = PathBuf::from("/test/path");
         let result = SwitchResult::AlreadyAt(path.clone());
         assert_eq!(result.path(), &path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remove_result_branch_name_reads_both_variants() {
+        let removed = RemoveResult::RemovedWorktree {
+            main_path: PathBuf::from("/main"),
+            worktree_path: PathBuf::from("/wt"),
+            changed_directory: false,
+            branch_name: Some("feature".to_string()),
+            deletion_mode: BranchDeletionMode::default(),
+            target_branch: None,
+            force_worktree: false,
+            expected_path: None,
+            removed_commit: None,
+        };
+        assert_eq!(removed.branch_name(), Some("feature"));
+
+        let branch_only = RemoveResult::BranchOnly {
+            branch_name: "solo".to_string(),
+            deletion_mode: BranchDeletionMode::default(),
+            pruned: false,
+            target_branch: None,
+            integration_reason: None,
+        };
+        assert_eq!(branch_only.branch_name(), Some("solo"));
     }
 
     #[test]

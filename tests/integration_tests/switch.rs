@@ -2841,9 +2841,9 @@ fn test_switch_pr_create_conflict(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
-/// Test same-repo PR checkout (base.repo == head.repo)
+/// Test same-repo PR checkout with a custom SCP-style SSH user.
 #[rstest]
-fn test_switch_pr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
+fn test_switch_pr_same_repo_custom_ssh_user(#[from(repo_with_remote)] mut repo: TestRepo) {
     // Create a feature branch and push it to the remote
     repo.add_worktree("feature-auth");
     repo.run_git(&["push", "origin", "feature-auth"]);
@@ -2860,23 +2860,15 @@ fn test_switch_pr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
     .trim()
     .to_string();
 
-    // Set origin URL to GitHub-style so find_remote_for_repo() can match owner/test-repo
-    repo.run_git(&[
-        "remote",
-        "set-url",
-        "origin",
-        "https://github.com/owner/test-repo.git",
-    ]);
+    // GitHub requires this URL form when an organization enforces SSH certificates.
+    let github_url = "org-14957082@github.com:owner/test-repo.git";
+    repo.run_git(&["remote", "set-url", "origin", github_url]);
 
     // Configure git to redirect github.com URLs to the local bare remote.
     // This is necessary because:
     // 1. origin must have a GitHub URL for find_remote_for_repo() to match owner/repo
     // 2. But we need git fetch to actually succeed using the local bare remote
-    repo.run_git(&[
-        "config",
-        &format!("url.{}.insteadOf", bare_url),
-        "https://github.com/owner/test-repo.git",
-    ]);
+    repo.run_git(&["config", &format!("url.{}.insteadOf", bare_url), github_url]);
 
     // gh api repos/{owner}/{repo}/pulls/{number} format
     let gh_response = r#"{

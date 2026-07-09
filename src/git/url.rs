@@ -1,7 +1,7 @@
 //! Git remote URL parsing.
 //!
 //! Parses git remote URLs into structured components (host, owner, repo).
-//! Supports HTTPS, SSH, and git@ URL formats.
+//! Supports HTTPS, SSH, and SCP-style SSH URL formats.
 
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -93,7 +93,7 @@ impl From<CiPlatform> for GitRepoProvider {
 /// - `https://<host>/<namespace>/<repo>.git`
 /// - `http://<host>/<namespace>/<repo>.git`
 /// - `git://<host>/<namespace>/<repo>.git`
-/// - `git@<host>:<namespace>/<repo>.git`
+/// - `<user>@<host>:<namespace>/<repo>.git`
 /// - `ssh://git@<host>/<namespace>/<repo>.git`
 /// - `ssh://git@<host>:<port>/<namespace>/<repo>.git`
 /// - `ssh://<host>/<namespace>/<repo>.git`
@@ -190,10 +190,15 @@ impl GitRemoteUrl {
             let host = host_with_port.split(':').next().unwrap_or(host_with_port);
             let (namespace, repo) = split_namespace_repo(path)?;
             (host, namespace, repo)
-        } else if let Some(rest) = url.strip_prefix("git@") {
-            // git@github.com:owner/repo.git
-            // git@gitlab.com:group/subgroup/repo.git
-            let (host, path) = rest.split_once(':')?;
+        } else if let Some((authority, path)) = url.split_once(':')
+            && !authority.contains('/')
+        {
+            // SCP-style SSH: user@github.com:owner/repo.git
+            // Split the authority before looking for `@` so `@` remains valid in the path.
+            let (user, host) = authority.rsplit_once('@')?;
+            if user.is_empty() || host.is_empty() {
+                return None;
+            }
             let (namespace, repo) = split_namespace_repo(path)?;
             (host, namespace, repo)
         } else {
@@ -481,7 +486,7 @@ mod tests {
     }
 
     #[test]
-    fn test_git_at_urls() {
+    fn test_scp_style_ssh_urls() {
         let url = GitRemoteUrl::parse("git@github.com:owner/repo.git").unwrap();
         assert_eq!(url.project_identifier(), "github.com/owner/repo");
 
@@ -496,6 +501,31 @@ mod tests {
         // Bitbucket
         let url = GitRemoteUrl::parse("git@bitbucket.org:owner/repo.git").unwrap();
         assert!(url.project_identifier().starts_with("bitbucket.org/"));
+
+        // GitHub organization-scoped SSH certificate user
+        let url = GitRemoteUrl::parse("org-14957082@github.com:openai/codex.git").unwrap();
+        assert_eq!(
+            url,
+            GitRemoteUrl {
+                host: "github.com".to_string(),
+                owner: "openai".to_string(),
+                repo: "codex".to_string(),
+            }
+        );
+        assert_eq!(url.project_identifier(), "github.com/openai/codex");
+        assert_eq!(
+            url,
+            GitRemoteUrl::parse("https://github.com/openai/codex.git").unwrap()
+        );
+
+        // The final `@` separates the SSH user from the host.
+        let url = GitRemoteUrl::parse("alice@alias@github.com:owner/repo.git").unwrap();
+        assert_eq!(url.host(), "github.com");
+
+        // `@` in the repository path must not be treated as the user delimiter.
+        let url = GitRemoteUrl::parse("deploy@github.com:org@company/repo.git").unwrap();
+        assert_eq!(url.host(), "github.com");
+        assert_eq!(url.owner(), "org@company");
     }
 
     #[test]
@@ -563,6 +593,10 @@ mod tests {
         assert!(GitRemoteUrl::parse("https://github.com/owner/").is_none());
         assert!(GitRemoteUrl::parse("git@github.com:").is_none());
         assert!(GitRemoteUrl::parse("git@github.com:owner/").is_none());
+        assert!(GitRemoteUrl::parse("@github.com:owner/repo.git").is_none());
+        assert!(GitRemoteUrl::parse("user@:owner/repo.git").is_none());
+        assert!(GitRemoteUrl::parse("github.com:owner/repo.git").is_none());
+        assert!(GitRemoteUrl::parse("path/to/user@host:owner/repo.git").is_none());
         assert!(GitRemoteUrl::parse("ftp://github.com/owner/repo.git").is_none());
     }
 
@@ -930,6 +964,7 @@ mod tests {
             "https://gitlab.com/group/subgroup/repo.git",
             "https://gitlab.com/group/subgroup/repo",
             "git@gitlab.com:group/subgroup/repo.git",
+            "deploy@gitlab.com:group/subgroup/repo.git",
             "git@gitlab.com:group/subgroup/repo",
             "ssh://git@gitlab.com/group/subgroup/repo.git",
             "ssh://gitlab.com/group/subgroup/repo.git",

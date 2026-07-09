@@ -479,9 +479,12 @@ impl JsonItemV2 {
 
         // The default branch itself gets no relation object. Matching on the
         // worktree's main flag alone would miss a branch-only row for the
-        // default branch, so compare names too.
+        // default branch, so compare names too. Use the remote-stripped
+        // `branch` (not `item.branch`) so a remote-only row of the default
+        // branch (`origin/main`) also matches — otherwise it fails the name
+        // check and gets a spurious self-referential relation.
         let is_default_branch_row = worktree_data.is_some_and(|d| d.is_main)
-            || (item.branch.is_some() && item.branch.as_deref() == default_branch);
+            || (branch.is_some() && branch.as_deref() == default_branch);
         let default_branch = if is_default_branch_row {
             Tri::Absent
         } else {
@@ -947,6 +950,19 @@ mod tests {
     fn test_default_branch_row_has_no_relation() {
         let item = item_with("main");
         let json = to_value(&convert(&item, Collected::default()));
+        assert!(json.get("default_branch").is_none());
+    }
+
+    #[test]
+    fn test_remote_default_branch_row_has_no_relation() {
+        // A remote-only row of the default branch ("origin/main") is still the
+        // default branch — the name check must compare the remote-stripped
+        // "main", not the raw "origin/main", so it gets no self-referential
+        // relation object.
+        let mut item = item_with("origin/main");
+        item.kind = ItemKind::Branch(BranchScope::Remote);
+        let json = to_value(&convert(&item, Collected::default()));
+        assert_eq!(json["branch"], "main");
         assert!(json.get("default_branch").is_none());
     }
 

@@ -24,6 +24,13 @@ exclude = [
     # Zola internal links use @/ syntax (validated by `zola check`, not lychee)
     "/@/",
 
+    # Self-referential `.md` links in docs/static/llms.txt. These are generated
+    # (and their existence guaranteed) by `test_docs_are_in_sync`, and they
+    # point at the live site — so a newly added page's link always 404s until
+    # the site is deployed. Prose/template links use the trailing-slash form
+    # (worktrunk.dev/faq/), so this only excludes the llms.txt index entries.
+    "worktrunk\\.dev/[a-z0-9-]+\\.md",
+
     # Private or authenticated GitHub resources
     "github\\.com/anthropics/claude-code/issues",
 

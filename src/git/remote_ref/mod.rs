@@ -71,17 +71,17 @@ use crate::shell_exec::Cmd;
 
 /// Provider trait for platform-specific PR/MR operations.
 ///
-/// Each platform (GitHub, GitLab, Azure DevOps) implements this trait to
+/// Each platform (GitHub, Gitea, GitLab, Azure DevOps) implements this trait to
 /// provide unified access to PR/MR metadata and ref paths.
 pub trait RemoteRefProvider {
     /// The reference type this provider handles.
     fn ref_type(&self) -> RefType;
 
-    /// Short, stable identifier for the platform — `"github"`, `"gitlab"`, or
-    /// `"azure-devops"`. Useful for diagnostic logging and for tests that need
-    /// to verify which provider was selected (the other trait methods don't
-    /// distinguish GitHub from Azure DevOps — both use `RefType::Pr` and
-    /// `pull/{N}/head`).
+    /// Short, stable identifier for the platform — `"github"`, `"gitea"`,
+    /// `"gitlab"`, or `"azure-devops"`. Useful for diagnostic logging and for
+    /// tests that need to verify which provider was selected (the other trait
+    /// methods don't distinguish GitHub, Gitea, and Azure DevOps — all three
+    /// use `RefType::Pr` and `pull/{N}/head`).
     fn platform_label(&self) -> &'static str;
 
     /// Fetch ref information from the platform API.

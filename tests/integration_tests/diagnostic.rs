@@ -201,6 +201,49 @@ fn test_diagnostic_contains_required_sections(mut repo: TestRepo) {
     );
 }
 
+/// The diagnostic surfaces the curated pager/terminal env vars and git's
+/// resolved `core.pager`, so a rendering bug like #3322 (a pager interaction
+/// suspending `wt config show`) can be diagnosed from the report alone. A set
+/// `PAGER` is echoed verbatim; an unset allowlisted var shows `(unset)`.
+#[rstest]
+fn test_diagnostic_includes_environment_variables(mut repo: TestRepo) {
+    repo.add_worktree("feature");
+    // Configure git's core.pager so its resolved value appears in the report.
+    repo.run_git(&["config", "core.pager", "my-test-pager --opt"]);
+
+    repo.wt_command()
+        .args(["list", "-vv"])
+        .env("PAGER", "my-test-pager")
+        .env_remove("GIT_PAGER")
+        .output()
+        .unwrap();
+
+    let content = fs::read_to_string(
+        repo.root_path()
+            .join(".git")
+            .join("wt/logs")
+            .join("diagnostic.md"),
+    )
+    .unwrap();
+
+    assert!(
+        content.contains("<summary>Environment variables</summary>"),
+        "Should have an environment-variables section. content: {content}"
+    );
+    assert!(
+        content.contains("PAGER=my-test-pager"),
+        "A set PAGER should be echoed verbatim. content: {content}"
+    );
+    assert!(
+        content.contains("GIT_PAGER=(unset)"),
+        "An unset allowlisted var should read (unset). content: {content}"
+    );
+    assert!(
+        content.contains("core.pager=my-test-pager --opt"),
+        "git's resolved core.pager should be surfaced. content: {content}"
+    );
+}
+
 /// The context field should have ANSI codes stripped for clean GitHub display.
 #[rstest]
 fn test_diagnostic_context_has_no_ansi_codes(mut repo: TestRepo) {
@@ -1052,37 +1095,44 @@ fn normalize_report(content: &str) -> String {
         .replace_all(&result, "$1 $2")
         .to_string();
 
+    // Truncate the environment-variables section - its values (TERM, SHELL,
+    // LANG, PAGER, …) are inherited from the host and differ per machine, so
+    // exact comparison is non-deterministic. We assert specific lines appear in
+    // a dedicated test instead.
+    truncate_details_section(&mut result, "Environment variables", "[ENV_VARS_CONTENT]");
+
     // Truncate performance profile section - its durations and by-type/slowest
     // ordering depend on the run's real timing, so exact comparison is flaky.
     // We verify the section exists separately in the test.
-    if let Some(start) = result.find("<summary>Performance profile</summary>") {
-        // Find the closing </details> after this point
-        if let Some(end_offset) = result[start..].find("</details>") {
-            let end = start + end_offset + "</details>".len();
-            let before = &result[..start];
-            let after = &result[end..];
-            result = format!(
-                "{}<summary>Performance profile</summary>\n\n[PERFORMANCE_PROFILE_CONTENT]\n</details>{}",
-                before, after
-            );
-        }
-    }
+    truncate_details_section(
+        &mut result,
+        "Performance profile",
+        "[PERFORMANCE_PROFILE_CONTENT]",
+    );
 
     // Truncate trace log section - it has parallel git commands that interleave
     // in different orders, making exact snapshot comparison flaky.
     // We verify the section exists separately in the test.
-    if let Some(start) = result.find("<summary>Trace log</summary>") {
-        // Find the closing </details> after this point
-        if let Some(end_offset) = result[start..].find("</details>") {
-            let end = start + end_offset + "</details>".len();
-            let before = &result[..start];
-            let after = &result[end..];
-            result = format!(
-                "{}<summary>Trace log</summary>\n\n[TRACE_LOG_CONTENT]\n</details>{}",
-                before, after
-            );
-        }
-    }
+    truncate_details_section(&mut result, "Trace log", "[TRACE_LOG_CONTENT]");
 
     result
+}
+
+/// Replace a `<details>` section's body with a fixed placeholder so
+/// host-specific or run-specific content (env values, timings, interleaved
+/// trace output) doesn't make the snapshot non-deterministic. The section is
+/// located by its `<summary>{title}</summary>` line and truncated up to the
+/// next `</details>`. A no-op when the section isn't present.
+fn truncate_details_section(result: &mut String, title: &str, placeholder: &str) {
+    let summary = format!("<summary>{title}</summary>");
+    if let Some(start) = result.find(&summary)
+        && let Some(end_offset) = result[start..].find("</details>")
+    {
+        let end = start + end_offset + "</details>".len();
+        *result = format!(
+            "{}{summary}\n\n{placeholder}\n</details>{}",
+            &result[..start],
+            &result[end..],
+        );
+    }
 }
