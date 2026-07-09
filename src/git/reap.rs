@@ -291,7 +291,7 @@ n/home/user/repo.feature
     }
 
     #[test]
-    fn parse_ps_tty_ignores_unparseable_lines() {
+    fn parse_ps_tty_ignores_unparsable_lines() {
         let stdout = "\
 header junk
   101 ?
