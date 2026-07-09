@@ -111,14 +111,21 @@ pub fn parse_lsof_cwd(stdout: &str) -> Vec<CwdProcess> {
 /// `ps` prints one line per PID: the PID, then the controlling terminal or a
 /// "none" marker (`?` / `??` on Linux/macOS, `-` on some platforms). A terminal
 /// name that starts with `?` or equals `-` means no controlling terminal.
+///
+/// This feeds a data-safety gate (a process *with* a terminal is spared), so
+/// the unreadable case fails safe: a line missing the tty column is reported as
+/// **having** a terminal, so an unparseable reading never turns into a reap.
+/// Real `ps -o tty=` always fills the column, so this only guards the anomaly.
 pub fn parse_ps_tty(stdout: &str) -> Vec<(u32, bool)> {
     stdout
         .lines()
         .filter_map(|line| {
             let mut fields = line.split_whitespace();
             let pid = fields.next()?.parse::<u32>().ok()?;
-            let tty = fields.next().unwrap_or("?");
-            let has_tty = !(tty.starts_with('?') || tty == "-");
+            let has_tty = match fields.next() {
+                Some(tty) => !(tty.starts_with('?') || tty == "-"),
+                None => true,
+            };
             Some((pid, has_tty))
         })
         .collect()
@@ -314,14 +321,15 @@ n/home/user/repo.feature
 
     #[test]
     fn parse_ps_tty_ignores_unparsable_lines() {
-        // A pid-only line (no tty column) defaults to "no terminal".
+        // A pid-only line (no tty column) fails safe as "has terminal" so an
+        // unreadable reading never becomes a reap candidate.
         let stdout = "\
 header junk
   101 ?
   707
 not-a-pid tty
 ";
-        assert_eq!(parse_ps_tty(stdout), vec![(101, false), (707, false)]);
+        assert_eq!(parse_ps_tty(stdout), vec![(101, false), (707, true)]);
     }
 
     #[test]
