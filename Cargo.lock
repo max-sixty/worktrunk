@@ -4537,6 +4537,7 @@ dependencies = [
  "indexmap",
  "insta",
  "insta-cmd",
+ "libc",
  "log",
  "minijinja",
  "nix 0.31.3",

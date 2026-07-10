@@ -19,6 +19,41 @@ use std::path::Path;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
+/// Read a PTY master to end-of-stream, returning its output lossily as UTF-8.
+///
+/// On Linux a `read` on the master returns `EIO` once the child has exited and
+/// closed the slave side, instead of the clean 0-byte EOF macOS returns. Both
+/// mean "the child is gone, nothing more to read", so `EIO` is treated as
+/// end-of-stream here. `read_to_string().unwrap()` instead panicked
+/// intermittently depending on whether the read raced ahead of or behind the
+/// child's exit — #3144 was the same fragile read timing out on macOS, this is
+/// its Linux face. Lossy UTF-8 (like the Windows branch of `read_pty_output`)
+/// so a multibyte sequence truncated at `EIO` doesn't panic the test.
+#[cfg(unix)]
+pub fn read_pty_master_to_string<R: Read + ?Sized>(reader: &mut R) -> String {
+    let mut bytes = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        match reader.read(&mut chunk) {
+            Ok(0) => break, // clean EOF (the macOS behavior)
+            Ok(n) => bytes.extend_from_slice(&chunk[..n]),
+            Err(e) if e.raw_os_error() == Some(libc::EIO) => break,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => panic!("PTY master read failed: {e}"),
+        }
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// Read a PTY master to end-of-stream on Windows (ConPTY), where a blocking
+/// `read_to_string` reaches EOF cleanly.
+#[cfg(not(unix))]
+pub fn read_pty_master_to_string<R: Read + ?Sized>(reader: &mut R) -> String {
+    let mut buf = String::new();
+    reader.read_to_string(&mut buf).unwrap();
+    buf
+}
+
 /// Read output from PTY and wait for child exit.
 ///
 /// On Unix, this simply reads to EOF then waits for child.
@@ -40,8 +75,7 @@ pub fn read_pty_output(
         // Drop writer to signal EOF to child's stdin (important for Unix PTYs)
         drop(writer);
         let mut reader = reader;
-        let mut buf = String::new();
-        reader.read_to_string(&mut buf).unwrap();
+        let buf = read_pty_master_to_string(&mut reader);
         let exit_status = child.wait().unwrap();
         (buf, exit_status.exit_code() as i32)
     }
