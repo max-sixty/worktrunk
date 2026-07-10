@@ -3103,29 +3103,23 @@ pub mod tests {
         branch: &str,
         expect_present: bool,
     ) {
-        // Resolved once, outside the loop, so both arms are exercised across the
-        // callers (retained vs deleted) rather than only on the never-taken
-        // deadline-panic path.
-        let expectation = if expect_present {
-            "retained"
-        } else {
-            "deleted"
-        };
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            // A transient prune race surfaces as `Err`, not a successful empty
-            // read, so only a successful query is authoritative.
-            if let Ok(list) = repo.run_command(&["branch", "--list", branch])
-                && list.is_empty() != expect_present
-            {
-                return;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "branch `{branch}` was not {expectation} within the deadline"
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        worktrunk::testing::wait_for(
+            &format!(
+                "branch `{branch}` to become {}",
+                if expect_present {
+                    "retained"
+                } else {
+                    "deleted"
+                }
+            ),
+            || {
+                // A transient prune race surfaces as `Err`, not a successful
+                // empty read, so only a successful query is authoritative.
+                repo.run_command(&["branch", "--list", branch])
+                    .map(|list| list.is_empty() != expect_present)
+                    .unwrap_or(false)
+            },
+        );
     }
 
     /// Two detached worktrees both render the branch label `(detached)`, but
