@@ -96,8 +96,8 @@ fn test_list_progressive_api(mut repo: TestRepo) {
 #[rstest]
 fn test_list_progressive_overflow(mut repo: TestRepo) {
     // Create enough worktrees to overflow a 10-row terminal.
-    // With height=10: visible_rows = 10 - 4 (header + spacer + footer + cursor) = 6
-    // 10 worktrees + main = 11 rows, well above the 6-row limit.
+    // With height=10: visible_rows = 10 - 4 (header + spacer + footer + cursor)
+    // - 2 (prompt reserve) = 4. 10 worktrees + main = 11 rows, well above that.
     for i in 1..=10 {
         repo.add_worktree(&format!("overflow-{:02}", i));
     }
@@ -132,6 +132,17 @@ fn test_list_progressive_overflow(mut repo: TestRepo) {
         !final_text.contains('·'),
         "No placeholder dots should remain after finalize.\nFinal output:\n{final_text}"
     );
+
+    // The prompt reserve leaves the cursor two rows above the bottom of the
+    // scrolled screen, with the footer directly above it — the shell prompt
+    // printed after exit renders into the reserved rows instead of scrolling
+    // the settled table.
+    assert_eq!(
+        output.final_cursor,
+        (7, 0),
+        "Cursor should rest 2 reserved rows above the bottom of the 10-row \
+         terminal.\nFinal output:\n{final_text}"
+    );
 }
 
 /// Tests progressive rendering with no worktrees (fast path).
@@ -155,5 +166,16 @@ fn test_list_progressive_fast_command(repo: TestRepo) {
     assert!(
         output.final_output().contains("Branch"),
         "Should have table header"
+    );
+
+    // The prompt-reserve rows are emitted below the footer with the cursor
+    // moved back over them: it rests directly under the last content row, so
+    // a reserve/MoveUp mismatch would show up as a displaced cursor.
+    let content_rows = output.final_output().trim_end().lines().count() as u16;
+    assert_eq!(
+        output.final_cursor,
+        (content_rows, 0),
+        "Cursor should rest directly under the footer.\nFinal output:\n{}",
+        output.final_output()
     );
 }
