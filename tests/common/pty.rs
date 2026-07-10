@@ -31,13 +31,16 @@ use std::sync::{Arc, Mutex};
 /// so a multibyte sequence truncated at `EIO` doesn't panic the test.
 #[cfg(unix)]
 pub fn read_pty_master_to_string<R: Read + ?Sized>(reader: &mut R) -> String {
+    // POSIX `EIO` is 5 on every platform these tests run on (Linux, macOS);
+    // avoids a `libc` dev-dependency just for the constant.
+    const EIO: i32 = 5;
     let mut bytes = Vec::new();
     let mut chunk = [0u8; 4096];
     loop {
         match reader.read(&mut chunk) {
             Ok(0) => break, // clean EOF (the macOS behavior)
             Ok(n) => bytes.extend_from_slice(&chunk[..n]),
-            Err(e) if e.raw_os_error() == Some(libc::EIO) => break,
+            Err(e) if e.raw_os_error() == Some(EIO) => break,
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(e) => panic!("PTY master read failed: {e}"),
         }
