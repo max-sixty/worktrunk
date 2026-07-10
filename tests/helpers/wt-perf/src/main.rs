@@ -8,7 +8,10 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
-use wt_perf::{canonicalize, invalidate_caches_auto, parse_config};
+use wt_perf::{
+    PRUNE_REAL_MERGED, PRUNE_REAL_UNMERGED, canonicalize, ensure_prune_real_repo,
+    invalidate_caches_auto, parse_config, parse_pair,
+};
 
 #[derive(Parser)]
 #[command(name = "wt-perf")]
@@ -22,7 +25,7 @@ struct Cli {
 enum Commands {
     /// Set up a benchmark repository
     Setup {
-        /// Config name: typical-N, branches-N, branches-N-M, divergent, mixed-W-B, picker-test
+        /// Config name: typical-N, branches-N, branches-N-M, divergent, mixed-W-B, prune-M-U, prune-real[-M-U], picker-test
         config: String,
 
         /// Directory to create repo in (default: temp directory)
@@ -110,6 +113,45 @@ fn main() {
             path,
             persist,
         } => {
+            // `prune-real[-M-U]`: cache-managed rust-scale fixture (built once
+            // under target/bench-repos/, repaired after a live prune consumes
+            // its candidates) — takes no --path and never offers cleanup.
+            // Tested before parse_config so its `prune-` arm never sees it.
+            let prune_real = if config == "prune-real" {
+                Some((PRUNE_REAL_MERGED, PRUNE_REAL_UNMERGED))
+            } else {
+                parse_pair(&config, "prune-real-")
+            };
+            if let Some((merged, unmerged)) = prune_real {
+                if path.is_some() {
+                    eprintln!(
+                        "prune-real fixtures are cache-managed under target/bench-repos/; --path is not supported"
+                    );
+                    std::process::exit(1);
+                }
+                let repo = ensure_prune_real_repo(merged, unmerged);
+                eprintln!(
+                    "Ready: main @ {}, {} worktrees, {} branches",
+                    repo.display(),
+                    merged + unmerged + 1,
+                    merged + unmerged
+                );
+                eprintln!();
+                eprintln!(
+                    "  wt-perf timeline -- -C {} step prune --dry-run --min-age 0s",
+                    repo.display()
+                );
+                eprintln!(
+                    "  wt-perf timeline -- -C {} step prune --min-age 0s   # live; next setup/bench run re-creates the candidates",
+                    repo.display()
+                );
+                // No `wt-perf invalidate` hint: deleting this fixture's
+                // worktree indexes flips prune's clean-worktree gate and
+                // degrades every later run (ensure_prune_real_repo heals it,
+                // but only on the next setup/bench call).
+                return;
+            }
+
             let spec = parse_config(&config).unwrap_or_else(|| {
                 eprintln!("Unknown config: {}", config);
                 eprintln!();
@@ -121,6 +163,12 @@ fn main() {
                 eprintln!("  branches-N-M    - N branches with M commits each");
                 eprintln!("  divergent       - 200 branches × 20 commits (GH #461 scenario)");
                 eprintln!("  mixed-W-B       - W worktrees + B branches in varied states");
+                eprintln!(
+                    "  prune-M-U       - M squash-merged candidates + U unmerged worktrees/branches (wt step prune workload)"
+                );
+                eprintln!(
+                    "  prune-real[-M-U] - rust-lang/rust clone + M squash-merged candidates + U unmerged worktrees/branches, cached in target/bench-repos (default {PRUNE_REAL_MERGED}-{PRUNE_REAL_UNMERGED}; first run clones from network)"
+                );
                 eprintln!("  picker-test     - Config for wt switch interactive picker testing");
                 std::process::exit(1);
             });
@@ -149,13 +197,20 @@ fn main() {
             }
             eprintln!("Created: {}", parts.join(", "));
             eprintln!();
+            let example_args = if matches!(spec, wt_perf::SetupConfig::Prune { .. }) {
+                "step prune --dry-run --min-age 0s"
+            } else {
+                "list --progressive"
+            };
             eprintln!(
-                "  wt-perf timeline -- -C {} list --progressive",
-                base_path.display()
+                "  wt-perf timeline -- -C {} {}",
+                base_path.display(),
+                example_args
             );
             eprintln!(
-                "  wt-perf timeline --chrome -- -C {} list --progressive > trace.json",
-                base_path.display()
+                "  wt-perf timeline --chrome -- -C {} {} > trace.json",
+                base_path.display(),
+                example_args
             );
             eprintln!("  wt-perf invalidate {}", base_path.display());
 

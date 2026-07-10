@@ -184,7 +184,5 @@ fn require_claude_cli() -> anyhow::Result<()> {
     if is_claude_available() {
         return Ok(());
     }
-    bail!(
-        "claude CLI not found. Install Claude Code first: https://docs.anthropic.com/en/docs/claude-code/overview"
-    );
+    bail!("claude CLI not found. Install Claude Code first: https://code.claude.com/docs/en/setup");
 }

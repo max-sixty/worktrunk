@@ -104,6 +104,12 @@ syntax-highlighting = ["dep:tree-sitter", "dep:tree-sitter-bash", "dep:tree-sitt
 # When enabled, run with NEXTEST_NO_INPUT_HANDLER=1 to avoid suspension.
 # See CLAUDE.md "Nextest Terminal Suspension" section for details.
 shell-integration-tests = []
+# Enable benchmarks whose fixture is too large for hosted CI: the rust-scale
+# prune fixture (~15 GiB of rust-lang/rust worktrees, cached in
+# target/bench-repos/). The daily benchmarks workflow runs plain `cargo bench`
+# and must never build it; opt in locally with
+# `cargo bench --bench prune --features real-repo-benches`.
+real-repo-benches = []
 # Install git-wt binary so `git wt` works as a git subcommand
 git-wt = []
 
@@ -337,6 +343,10 @@ harness = false
 
 [[bench]]
 name = "remove"
+harness = false
+
+[[bench]]
+name = "prune"
 harness = false
 
 [[bench]]

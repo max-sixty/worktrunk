@@ -19,6 +19,7 @@ use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, println, success_message,
 };
+use worktrunk::trace::Span;
 
 use super::super::hook_plan::{ApprovedHookPlan, HookPlan, HookPlanBuilder};
 use super::super::hooks::HookAnnouncer;
@@ -189,6 +190,7 @@ struct RemovalContext<'a> {
 /// Try to remove a candidate immediately. Returns Ok(true) if removed,
 /// Ok(false) if skipped (preparation error), Err on execution error.
 fn try_remove(candidate: &Candidate, ctx: &RemovalContext<'_>) -> anyhow::Result<bool> {
+    let _span = Span::new(format!("prune-remove:{}", candidate.label));
     // The guard protects `()` — there is no shared state to corrupt, so a
     // poisoned lock is meaningless here. Recover the guard rather than
     // `.expect()`-ing: a panic elsewhere should surface as itself, not as a
@@ -278,6 +280,7 @@ fn check_one(
     min_age_duration: Duration,
     now_secs: u64,
 ) -> anyhow::Result<CheckOutcome> {
+    let _span = Span::new(format!("prune-check:{}", item.integration_ref));
     let (effective_target, reason) =
         repo.integration_reason(snapshot, &item.integration_ref, integration_target)?;
     if reason.is_none() {
@@ -702,7 +705,10 @@ pub fn step_prune(
     // Broad set of things that might be prunable. The parallel pass below
     // narrows this down via integration + removability + age, leaving the
     // exact worktrees prune will attempt to remove for the hook approval gate.
-    let check_items = gather_check_items(&repo, worktrees, default_branch.as_deref())?;
+    let check_items = {
+        let _span = Span::new("prune-gather");
+        gather_check_items(&repo, worktrees, default_branch.as_deref())?
+    };
 
     let mut skipped_young: Vec<String> = Vec::new();
 
@@ -710,6 +716,7 @@ pub fn step_prune(
     // sorted for deterministic output. No removals, no approval — just print.
     if dry_run {
         let check_lock = RwLock::new(());
+        let scan_span = Span::new("prune-scan");
         let mut dry_run_info: Vec<(Candidate, DryRunInfo)> = std::thread::scope(|s| {
             let (tx, rx) = chan::unbounded::<(usize, anyhow::Result<CheckOutcome>)>();
             // Pre-shadow with references so `move` on s.spawn moves only `tx`
@@ -779,6 +786,7 @@ pub fn step_prune(
             }
             anyhow::Ok(info)
         })?;
+        drop(scan_span);
         dry_run_info.sort_by_key(|(c, _)| c.check_idx);
         return render_dry_run(dry_run_info, skipped_young, min_age, format);
     }
@@ -879,6 +887,7 @@ pub fn step_prune(
     // each result as it arrives — print "Skipped (younger than X)" or call
     // `try_remove` immediately for positives. The current worktree is the one
     // exception: its removal cd's to the primary, so defer it until last.
+    let scan_span = Span::new("prune-scan");
     let (removed, deferred_current) =
         std::thread::scope(|s| -> anyhow::Result<(Vec<Candidate>, Option<Candidate>)> {
             let (tx, rx) = chan::unbounded::<(usize, anyhow::Result<CheckOutcome>)>();
@@ -981,6 +990,7 @@ pub fn step_prune(
             }
             Ok((removed, deferred_current))
         })?;
+    drop(scan_span);
 
     let mut removed = removed;
     // Remove deferred current worktree last (cd-to-primary happens here)
