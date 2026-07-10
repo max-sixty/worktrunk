@@ -161,9 +161,9 @@ When the report is about a slow `wt` command, read its **Performance profile**
 section first. It renders the same breakdown as `wt config state logs profile`
 (subprocess time by command type, slowest calls, repeated `(command, context)`
 pairs) directly from the bundled `trace.log`, so you can spot redundant git
-calls and slow commands without parsing the raw trace by hand. The deeper
-per-render cache analysis is a separate tool — see **Weekly Maintenance:
-Statusline Cache-Check**.
+calls and slow commands without parsing the raw trace by hand. The same
+report run against a statusline capture is the weekly per-render cache
+check — see **Weekly Maintenance: Statusline Cache-Check**.
 
 Reach for narrower asks only when the diagnostic is overkill:
 
