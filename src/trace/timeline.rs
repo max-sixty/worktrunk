@@ -169,14 +169,28 @@ mod tests {
         }
     }
 
+    fn instant(name: &str, ts_us: u64) -> TraceEntry {
+        TraceEntry {
+            context: None,
+            kind: TraceEntryKind::Instant {
+                name: name.to_string(),
+            },
+            start_time_us: Some(ts_us),
+            thread_id: Some(1),
+        }
+    }
+
     #[test]
     fn renders_sorted_timeline_with_summary() {
         // Emit order swaps span and child cmd (parent finishes after child),
-        // so this exercises the sort-by-start-time guarantee.
+        // so this exercises the sort-by-start-time guarantee. The instant
+        // event renders as an `event` row with an empty duration cell, stays
+        // out of the subprocess summary, and doesn't extend the traced span.
         let entries = vec![
             cmd("git rev-parse HEAD", Some("repo"), 50, 4_000, 1, true),
             span("prewarm", 30, 4_100, 1),
             span("init_logging", 0, 8, 1),
+            instant("Skeleton rendered", 3_000),
             span("user_config_load", 4_200, 280, 38),
         ];
         // Wall = 6ms; traced = 4.48ms (4.2ms start → 4.48ms end);
@@ -184,11 +198,12 @@ mod tests {
         insta::assert_snapshot!(
             render_timeline(&entries, Duration::from_micros(6_000)),
             @"
-          ts(ms)     dur  tid  kind  name
-           0.000  0.01ms    1  span  init_logging
-           0.030  4.10ms    1  span  prewarm
-           0.050  4.00ms    1  cmd   git rev-parse HEAD [repo]
-           4.200  0.28ms   38  span  user_config_load
+          ts(ms)     dur  tid  kind   name
+           0.000  0.01ms    1  span   init_logging
+           0.030  4.10ms    1  span   prewarm
+           0.050  4.00ms    1  cmd    git rev-parse HEAD [repo]
+           3.000            1  event  Skeleton rendered
+           4.200  0.28ms   38  span   user_config_load
 
         1 subprocess totaling 4.00ms (slowest: 4.00ms git rev-parse HEAD [repo])
         traced: 4.48ms (first → last record)

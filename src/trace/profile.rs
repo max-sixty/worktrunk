@@ -198,27 +198,15 @@ pub struct Phase {
 /// Redundant-command analysis: the same `(command, context)` run more than once
 /// in a single invocation is a cache that should have hit but didn't.
 ///
-/// The duplicate fields (`unique_commands`, `duplicated_commands`,
-/// `extra_calls`, `same_context_*`) only consider commands whose work is fully
-/// determined by `(command, context)`. A command that reads stdin
-/// (`stdin=true`: a `claude -p` prompt, a diff piped to `git patch-id`) carries
-/// input the command string doesn't capture, so two runs with identical
-/// `(command, context)` may be entirely different work — it's counted in
-/// `total_commands`/`total_time`/`contexts` but never reported as a duplicate.
+/// Only commands whose work is fully determined by `(command, context)` are
+/// considered. A command that reads stdin (`stdin=true`: a `claude -p` prompt,
+/// a diff piped to `git patch-id`) carries input the command string doesn't
+/// capture, so two runs with identical `(command, context)` may be entirely
+/// different work — it never forms or joins a duplicate bucket. Cross-context
+/// repeats aren't reported either: N worktrees each running `git status` is
+/// expected fan-out, not a cache miss.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CacheReport {
-    /// Every command record, including stdin-reading ones.
-    pub total_commands: usize,
-    /// Distinct dedupable command strings (stdin-reading commands excluded).
-    pub unique_commands: usize,
-    pub contexts: usize,
-    /// Σ of every command duration, including stdin-reading ones.
-    #[serde(rename = "total_time_us", serialize_with = "ser_dur_us")]
-    pub total_time: Duration,
-    /// Distinct commands run more than once (in any context).
-    pub duplicated_commands: usize,
-    /// Extra runs beyond the first, regardless of context.
-    pub extra_calls: usize,
     /// Commands re-run within the same context, worst waste first.
     pub same_context_duplicates: Vec<DuplicateCommand>,
     /// Extra same-context runs beyond the first.
@@ -685,10 +673,6 @@ impl Profile {
 impl CacheReport {
     /// Build a redundant-command report from parsed trace entries.
     pub fn from_entries(entries: &[TraceEntry]) -> Self {
-        let mut total_commands = 0;
-        let mut total_time_us = 0u64;
-        let mut cmd_counts: HashMap<&str, usize> = HashMap::new();
-        let mut contexts: HashSet<&str> = HashSet::new();
         // (command, context) → durations of every run, in microseconds.
         let mut pair_durations: HashMap<(&str, &str), Vec<u64>> = HashMap::new();
 
@@ -700,26 +684,20 @@ impl CacheReport {
                 ..
             } = &entry.kind
             {
-                let ctx = entry.context.as_deref().unwrap_or("(none)");
-                let dur_us = duration.as_micros() as u64;
-                total_commands += 1;
-                total_time_us += dur_us;
-                contexts.insert(ctx);
                 // Duplicate analysis assumes (command, context) fully determines
                 // a command's work. A command that reads stdin carries input the
                 // command string doesn't capture, so two runs with identical
                 // (command, context) may be entirely different work (a different
                 // prompt piped to `claude -p`, a different diff to `git
-                // patch-id`). Count it in the totals above, but never let it
-                // form — or join — a duplicate bucket.
+                // patch-id`) — never let it form, or join, a duplicate bucket.
                 if *reads_stdin {
                     continue;
                 }
-                *cmd_counts.entry(command.as_str()).or_default() += 1;
+                let ctx = entry.context.as_deref().unwrap_or("(none)");
                 pair_durations
                     .entry((command.as_str(), ctx))
                     .or_default()
-                    .push(dur_us);
+                    .push(duration.as_micros() as u64);
             }
         }
 
@@ -777,16 +755,7 @@ impl CacheReport {
                 .then_with(|| a.command.cmp(&b.command))
         });
 
-        let duplicated_commands = cmd_counts.values().filter(|c| **c > 1).count();
-        let extra_calls = cmd_counts.values().filter(|c| **c > 1).map(|c| c - 1).sum();
-
         CacheReport {
-            total_commands,
-            unique_commands: cmd_counts.len(),
-            contexts: contexts.len(),
-            total_time: Duration::from_micros(total_time_us),
-            duplicated_commands,
-            extra_calls,
             same_context_duplicates,
             same_context_extra_calls,
             same_context_extra: Duration::from_micros(same_context_extra_us),
@@ -833,19 +802,21 @@ pub(super) enum Align {
 
 /// Pad rows into aligned columns, two spaces between columns, two-space indent.
 ///
-/// Widths use `char` count — trace command shapes and durations are ASCII;
-/// only a `[context]` (a branch name) can carry wide characters, and it sits in
-/// the final left-aligned column. Trailing whitespace is trimmed per line.
+/// Widths use display width (`unicode_width`), so a context cell carrying wide
+/// characters (a CJK/emoji worktree name) aligns in any column. Trailing
+/// whitespace is trimmed per line.
 ///
 /// Durations all render in one unit ([`fmt_dur`]) with two decimals, so
 /// right-aligning a duration column lines up both the decimal points and the
 /// `ms` suffix — no decimal-specific alignment is needed.
 pub(super) fn render_table(rows: &[Vec<String>], aligns: &[Align]) -> String {
+    use unicode_width::UnicodeWidthStr;
+
     let cols = aligns.len();
     let mut widths = vec![0usize; cols];
     for row in rows {
         for (i, cell) in row.iter().enumerate() {
-            widths[i] = widths[i].max(cell.chars().count());
+            widths[i] = widths[i].max(cell.as_str().width());
         }
     }
 
@@ -854,7 +825,7 @@ pub(super) fn render_table(rows: &[Vec<String>], aligns: &[Align]) -> String {
         let mut line = String::from("  ");
         for (i, cell) in row.iter().enumerate() {
             let last = i + 1 == row.len();
-            let pad = widths[i].saturating_sub(cell.chars().count());
+            let pad = widths[i].saturating_sub(cell.as_str().width());
             match aligns[i] {
                 Align::Left => {
                     line.push_str(cell);
@@ -986,6 +957,22 @@ mod tests {
         assert_eq!(command_type(""), "");
     }
 
+    /// A wide-character context (CJK worktree name) in a non-final column must
+    /// not shift the columns after it — widths are display width, not chars.
+    #[test]
+    fn render_table_pads_by_display_width() {
+        let rows = vec![
+            vec!["context".into(), "count".into()],
+            vec!["日本語".into(), "3".into()],
+            vec!["main".into(), "12".into()],
+        ];
+        insta::assert_snapshot!(render_table(&rows, &[Align::Left, Align::Right]), @r"
+        context  count
+        日本語       3
+        main        12
+        ");
+    }
+
     #[test]
     fn fmt_dur_is_milliseconds() {
         // One unit everywhere, two decimals — sub-millisecond and multi-second alike.
@@ -1063,20 +1050,12 @@ mod tests {
         ];
         let cache = CacheReport::from_entries(&entries);
 
-        // The stdin-reading commands are not duplicates …
+        // The stdin-reading commands are not duplicates; only the repeated
+        // `git status` is.
         assert_eq!(cache.same_context_duplicates.len(), 1);
         assert_eq!(cache.same_context_duplicates[0].command, "git status");
         assert_eq!(cache.same_context_extra_calls, 1);
         assert_eq!(cache.same_context_extra, Duration::from_millis(1));
-        // … nor counted in the cross-context duplicate tallies.
-        assert_eq!(cache.duplicated_commands, 1);
-        assert_eq!(cache.extra_calls, 1);
-        assert_eq!(cache.unique_commands, 1); // only `git status` is dedupable
-
-        // … but they still count toward the totals (real commands, real time).
-        assert_eq!(cache.total_commands, 5);
-        assert_eq!(cache.total_time, Duration::from_millis(15));
-        assert_eq!(cache.contexts, 1);
     }
 
     #[test]
@@ -1172,12 +1151,6 @@ mod tests {
             }
           ],
           "cache": {
-            "total_commands": 2,
-            "unique_commands": 1,
-            "contexts": 1,
-            "total_time_us": 9000,
-            "duplicated_commands": 1,
-            "extra_calls": 1,
             "same_context_duplicates": [
               {
                 "command": "git status",
