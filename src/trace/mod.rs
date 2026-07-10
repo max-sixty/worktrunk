@@ -41,9 +41,11 @@ pub mod chrome;
 pub mod emit;
 pub mod parse;
 pub mod profile;
+pub mod timeline;
 
 // Re-export main types for convenience
 pub use chrome::to_chrome_trace;
 pub use emit::{CommandTrace, Span, WT_TRACE_TARGET, instant, now_us, thread_id};
 pub use parse::{TraceEntry, TraceEntryKind, TraceResult, parse_lines};
 pub use profile::{CacheReport, Profile};
+pub use timeline::render_timeline;

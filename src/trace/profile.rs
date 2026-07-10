@@ -7,7 +7,9 @@
 //!
 //! - **Where does time go?** — [`Profile::by_type`] groups subprocesses by command
 //!   shape (`git status`, `git rev-list`, `gh pr list`) with count/total/max/avg,
-//!   and [`Profile::slowest`] lists the most expensive individual jobs.
+//!   [`Profile::by_context`] groups them by context (typically worktree name) to
+//!   localize which worktree the parallel phase spends its time on, and
+//!   [`Profile::slowest`] lists the most expensive individual jobs.
 //! - **How parallel are we?** — [`Profile::parallelism`] is Σ(subprocess time) ÷
 //!   their wall span; [`Profile::peak_concurrency`] is the most subprocesses in
 //!   flight at once.
@@ -18,10 +20,10 @@
 //!
 //! The analysis ([`Profile::from_entries`], [`CacheReport::from_entries`]) is pure
 //! data over `&[TraceEntry]` and carries no styling, so it compiles without the
-//! `cli` feature and is shared by both `wt config state logs profile` (which
-//! renders via [`Profile::render_text`] or serializes the struct for `--format=json`)
-//! and the `wt-perf` helper (which reuses [`CacheReport`] for its `cache-check`
-//! output). The struct's `Serialize` impl is the single canonical JSON source.
+//! `cli` feature and is shared by `wt config state logs profile` (which renders
+//! via [`Profile::render_text`] or serializes the struct for `--format=json`) and
+//! `wt diagnose` (which embeds the rendered text). The struct's `Serialize` impl
+//! is the single canonical JSON source.
 //!
 //! [`benches/CLAUDE.md`]: ../../../benches/CLAUDE.md
 
@@ -100,6 +102,9 @@ pub struct Profile {
     pub key_intervals: KeyIntervals,
     /// Subprocess time grouped by command shape, busiest first.
     pub by_type: Vec<TypeStat>,
+    /// Subprocess time grouped by context (typically worktree name), busiest
+    /// first. Commands with no context land in a `(none)` bucket.
+    pub by_context: Vec<ContextStat>,
     /// The most expensive individual jobs (commands and spans), slowest first.
     pub slowest: Vec<Slow>,
     /// Redundant same-context commands.
@@ -158,6 +163,15 @@ pub struct TypeStat {
     pub max: Duration,
     #[serde(rename = "avg_us", serialize_with = "ser_dur_us")]
     pub avg: Duration,
+}
+
+/// Aggregated subprocess timing for one context (typically a worktree name).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ContextStat {
+    pub context: String,
+    pub count: usize,
+    #[serde(rename = "total_us", serialize_with = "ser_dur_us")]
+    pub total: Duration,
 }
 
 /// One expensive job in [`Profile::slowest`].
@@ -285,8 +299,9 @@ fn command_type(command: &str) -> String {
     parts.join(" ")
 }
 
-/// Display label for one slowest-list command.
-fn command_label(command: &str, context: Option<&str>, result: &TraceResult) -> String {
+/// Display label for a command: `cmd [context]` plus a failure marker. Shared
+/// with the timeline renderer so the two views can't drift.
+pub(super) fn command_label(command: &str, context: Option<&str>, result: &TraceResult) -> String {
     let mut label = match context {
         Some(c) => format!("{command} [{c}]"),
         None => command.to_string(),
@@ -326,6 +341,7 @@ impl Profile {
         let mut command_total_us = 0u64;
         let mut span_total_us = 0u64;
         let mut by_type_map: BTreeMap<String, (usize, u64, u64)> = BTreeMap::new();
+        let mut by_context_map: BTreeMap<&str, (usize, u64)> = BTreeMap::new();
         let mut threads: HashSet<u64> = HashSet::new();
         // (start, end) for timed subprocesses — drives parallelism & peak concurrency.
         let mut intervals: Vec<(u64, u64)> = Vec::new();
@@ -346,6 +362,11 @@ impl Profile {
                     stat.0 += 1;
                     stat.1 += dur_us;
                     stat.2 = stat.2.max(dur_us);
+                    let ctx_stat = by_context_map
+                        .entry(entry.context.as_deref().unwrap_or("(none)"))
+                        .or_default();
+                    ctx_stat.0 += 1;
+                    ctx_stat.1 += dur_us;
                     if let Some(tid) = entry.thread_id {
                         threads.insert(tid);
                     }
@@ -379,6 +400,20 @@ impl Profile {
             })
             .collect();
         by_type.sort_by(|a, b| b.total.cmp(&a.total).then_with(|| a.key.cmp(&b.key)));
+
+        let mut by_context: Vec<ContextStat> = by_context_map
+            .into_iter()
+            .map(|(context, (count, total))| ContextStat {
+                context: context.to_string(),
+                count,
+                total: Duration::from_micros(total),
+            })
+            .collect();
+        by_context.sort_by(|a, b| {
+            b.total
+                .cmp(&a.total)
+                .then_with(|| a.context.cmp(&b.context))
+        });
 
         slowest.sort_by_key(|s| std::cmp::Reverse(s.duration));
         slowest.truncate(SLOWEST_LIMIT);
@@ -435,6 +470,7 @@ impl Profile {
             thread_count: threads.len(),
             key_intervals,
             by_type,
+            by_context,
             slowest,
             cache: CacheReport::from_entries(entries),
             phases,
@@ -522,6 +558,30 @@ impl Profile {
                     Align::Right,
                     Align::Right,
                 ],
+            ));
+        }
+
+        // A single bucket would restate the summary line's totals, so the
+        // per-context attribution table only renders when it can attribute.
+        if self.by_context.len() > 1 {
+            out.push('\n');
+            out.push_str(&format_heading("BY CONTEXT", None));
+            out.push('\n');
+            let mut rows = vec![vec![
+                "context".to_string(),
+                "count".to_string(),
+                "total".to_string(),
+            ]];
+            for stat in &self.by_context {
+                rows.push(vec![
+                    stat.context.clone(),
+                    stat.count.to_string(),
+                    fmt_dur(stat.total),
+                ]);
+            }
+            out.push_str(&render_table(
+                &rows,
+                &[Align::Left, Align::Right, Align::Right],
             ));
         }
 
@@ -766,7 +826,7 @@ fn concurrency(intervals: &[(u64, u64)]) -> (Option<f64>, Option<usize>) {
 }
 
 #[derive(Clone, Copy)]
-enum Align {
+pub(super) enum Align {
     Left,
     Right,
 }
@@ -780,7 +840,7 @@ enum Align {
 /// Durations all render in one unit ([`fmt_dur`]) with two decimals, so
 /// right-aligning a duration column lines up both the decimal points and the
 /// `ms` suffix — no decimal-specific alignment is needed.
-fn render_table(rows: &[Vec<String>], aligns: &[Align]) -> String {
+pub(super) fn render_table(rows: &[Vec<String>], aligns: &[Align]) -> String {
     let cols = aligns.len();
     let mut widths = vec![0usize; cols];
     for row in rows {
@@ -820,7 +880,7 @@ fn render_table(rows: &[Vec<String>], aligns: &[Align]) -> String {
 /// Format a duration in milliseconds with two decimals — one unit everywhere so
 /// every duration column aligns (decimals and the `ms` suffix line up under
 /// right-alignment) regardless of magnitude.
-fn fmt_dur(d: Duration) -> String {
+pub(super) fn fmt_dur(d: Duration) -> String {
     format!("{:.2}ms", d.as_micros() as f64 / 1_000.0)
 }
 
@@ -1092,6 +1152,13 @@ mod tests {
               "total_us": 9000,
               "max_us": 5000,
               "avg_us": 4500
+            }
+          ],
+          "by_context": [
+            {
+              "context": "main",
+              "count": 2,
+              "total_us": 9000
             }
           ],
           "slowest": [

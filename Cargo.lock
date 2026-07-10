@@ -3326,15 +3326,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tabwriter"
-version = "1.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fce91f2f0ec87dff7e6bcbbeb267439aa1188703003c6055193c821487400432"
-dependencies = [
- "unicode-width 0.2.2",
-]
-
-[[package]]
 name = "tempfile"
 version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4608,10 +4599,9 @@ name = "wt-perf"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "criterion",
  "dunce",
- "insta",
  "serde_json",
- "tabwriter",
  "tempfile",
  "worktrunk",
 ]

@@ -1333,9 +1333,7 @@ $ wt config state logs --format=json | jq '.hook_output[] | select(.branch | sta
     #[command(
         after_long_help = r#"Summarize where a single `wt` invocation spent its time, reading the records captured to `trace.jsonl` by a `-vv` run.
 
-Reads `.git/wt/logs/trace.jsonl` by default, or a trace given as an argument (e.g. a CI artifact, or `-` for stdin). The report answers three questions: where time goes (subprocess time by command type, plus the slowest individual jobs), how parallel the run was (concurrency factor and peak concurrency), and where work was wasted (commands re-run with the same context). For a `wt list` capture it also shows derived latencies (time to skeleton, time to first result) and a timeline of collect milestones; the skeleton/first-result markers need a terminal (TTY) capture. `--format=json` emits the same data for scripting.
-
-For an interactive timeline or a Perfetto trace, use the `wt-perf` helper (`cargo run -p wt-perf -- timeline`); both read the same `trace.jsonl`.
+Reads `.git/wt/logs/trace.jsonl` by default, or a trace given as an argument (e.g. a CI artifact, or `-` for stdin). The report answers three questions: where time goes (subprocess time by command type and by worktree, plus the slowest individual jobs), how parallel the run was (concurrency factor and peak concurrency), and where work was wasted (commands re-run with the same context). For a `wt list` capture it also shows derived latencies (time to skeleton, time to first result) and a timeline of collect milestones; the skeleton/first-result markers need a terminal (TTY) capture. `--format=json` emits the same data for scripting.
 
 ## Examples
 

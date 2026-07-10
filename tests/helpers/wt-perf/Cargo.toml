@@ -1,7 +1,8 @@
 # HOW THE BINARY GETS BUILT:
-# Has a dummy integration test (tests/builds.rs) that triggers binary compilation
-# when running `cargo test`. Combined with `workspace.default-members` including
-# this package, `cargo test` automatically builds the binary.
+# The CLI integration tests in tests/cli.rs are in-package, so cargo builds
+# the wt-perf binary to run them (and sets CARGO_BIN_EXE_wt-perf). Combined
+# with `workspace.default-members` including this package, a workspace
+# `cargo test` builds and tests the binary automatically.
 [package]
 name = "wt-perf"
 version = "0.1.0"
@@ -18,11 +19,8 @@ dunce = "1"
 # For CLI
 clap = { version = "4.6", features = ["derive"] }
 
-# For JSON output
-serde_json = "1.0.145"
-
-# For column-aligned timeline tables (elastic tabstops)
-tabwriter = "1"
+# For the shared warm/cold bench runner (bench_wt)
+criterion = "0.8"
 
 # For trace parsing (reuse worktrunk's trace module).
 # `default-features = false` avoids leaking the `cli` feature into the
@@ -32,7 +30,7 @@ tabwriter = "1"
 worktrunk = { path = "../../..", default-features = false }
 
 [dev-dependencies]
-insta = "1.47.2"
+serde_json = "1.0.145"
 
 [lib]
 name = "wt_perf"

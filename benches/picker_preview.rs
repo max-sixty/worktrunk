@@ -51,7 +51,7 @@ use std::process::Command;
 #[cfg(unix)]
 use worktrunk::testing::isolate_subprocess_env;
 #[cfg(unix)]
-use wt_perf::{RepoConfig, create_repo, invalidate_caches_auto, setup_fake_remote};
+use wt_perf::{RepoConfig, bench_wt, create_repo, setup_fake_remote};
 
 #[cfg(unix)]
 fn bench_picker_preview(c: &mut Criterion) {
@@ -88,45 +88,11 @@ fn bench_picker_preview(c: &mut Criterion) {
                         cmd
                     };
 
-                    if *cold {
-                        // The picker writes to `.git/wt/cache/picker-preview/`
-                        // (Log / BranchDiff / UpstreamDiff entries). Without
-                        // invalidation, iter 1 measures real cost and iter 2+
-                        // measure cache hits.
-                        //
-                        // `BatchSize::PerIteration` (not `SmallInput`):
-                        // under `SmallInput`, criterion calls `setup` for an
-                        // entire batch up front and then runs the timed
-                        // routines back-to-back — so the first `wt switch`
-                        // in a batch is cold but the rest hit a freshly
-                        // populated `.git/wt/cache/`, biasing the "cold"
-                        // measurement warm. `PerIteration` invalidates
-                        // immediately before every measured iteration; the
-                        // setup itself is far cheaper than a `wt switch`
-                        // invocation, so per-iteration `Instant::now`
-                        // overhead doesn't dominate.
-                        b.iter_batched(
-                            || invalidate_caches_auto(&repo_path),
-                            |_| {
-                                let output = make_cmd().output().unwrap();
-                                assert!(
-                                    output.status.success(),
-                                    "Benchmark command failed:\nstderr: {}",
-                                    String::from_utf8_lossy(&output.stderr)
-                                );
-                            },
-                            criterion::BatchSize::PerIteration,
-                        );
-                    } else {
-                        b.iter(|| {
-                            let output = make_cmd().output().unwrap();
-                            assert!(
-                                output.status.success(),
-                                "Benchmark command failed:\nstderr: {}",
-                                String::from_utf8_lossy(&output.stderr)
-                            );
-                        });
-                    }
+                    // Cold matters here: the picker writes to
+                    // `.git/wt/cache/picker-preview/` (Log / BranchDiff /
+                    // UpstreamDiff entries), so without invalidation iter 1
+                    // measures real cost and iter 2+ measure cache hits.
+                    bench_wt(b, &repo_path, *cold, make_cmd);
                 },
             );
         }

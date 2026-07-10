@@ -417,6 +417,18 @@ fn test_logs_profile_json(repo: TestRepo) {
           "avg_us": 5000
         }
       ],
+      "by_context": [
+        {
+          "context": "main",
+          "count": 4,
+          "total_us": 24000
+        },
+        {
+          "context": "feature",
+          "count": 1,
+          "total_us": 8000
+        }
+      ],
       "slowest": [
         {
           "dur_us": 12000,

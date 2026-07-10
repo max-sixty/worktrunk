@@ -10,6 +10,11 @@ BY COMMAND TYPE
   git          48  1845.60ms  50.00ms  38.45ms
   git xctx      4     6.30ms   2.00ms   1.57ms
 
+BY CONTEXT
+  context  count      total
+  w1          50  1849.40ms
+  w2           2     2.50ms
+
 SLOWEST CALLS
   50.00ms  git cmd00 [w1]
   49.90ms  git cmd00 [w1]

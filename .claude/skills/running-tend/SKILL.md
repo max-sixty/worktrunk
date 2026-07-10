@@ -287,9 +287,9 @@ Discovery shortcut: a recent green CI run on `main` flags cargo-install drift di
 ## Weekly Maintenance: Statusline Cache-Check
 
 Detect new in-process cache-miss duplicates introduced by recent changes by
-running `wt-perf cache-check` against a real `wt list statusline --claude-code`
-trace. The render runs on every Claude Code prompt redraw, so duplicate git
-subprocesses there compound into measurable fseventsd / IPC load.
+profiling a real `wt list statusline --claude-code` trace. The render runs on
+every Claude Code prompt redraw, so duplicate git subprocesses there compound
+into measurable fseventsd / IPC load.
 
 ```bash
 # Run from any worktree of this repo
@@ -299,12 +299,12 @@ cat > /tmp/statusline-input.json <<'EOF'
 EOF
 sed -i '' "s|REPLACE_WITH_CWD|$PWD|" /tmp/statusline-input.json
 
-RUST_LOG=debug cargo run --release -- list statusline --claude-code \
-  < /tmp/statusline-input.json 2>&1 \
-  | cargo run -p wt-perf -- cache-check
+cargo run --release -- -vv list statusline --claude-code \
+  < /tmp/statusline-input.json > /dev/null
+cargo run --release -- config state logs profile --format=json | jq .cache
 ```
 
-The report flags commands invoked more than once with the same context.
+The `.cache` report flags commands invoked more than once with the same context.
 Triage each duplicate:
 
 - **Legitimate** (different cwd, different ref form that can't be normalized,
