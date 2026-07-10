@@ -12,8 +12,8 @@ name: nightly
 #   - link-check: lychee over tracked .md/.txt files (external-link volatility)
 #
 # Runs daily on cron, on demand via workflow_dispatch, on pushes to main that
-# touch dependency or toolchain files, and on PRs that either (a) touch the
-# same dependency/toolchain files or (b) carry the `nightly` label. The
+# touch dependency, toolchain, or nix packaging files, and on PRs that either
+# (a) touch the same files or (b) carry the `nightly` label. The
 # label is the iteration knob for fixes targeting nightly-only failures
 # (e.g. nix-flake's sandbox suite); without it, contributors had to wait for
 # the cron run or `gh workflow run` manually. The cron still catches drift
@@ -33,6 +33,9 @@ on:
       - '**/Cargo.toml'
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
       - '.github/workflows/nightly.yaml'
   pull_request:
     branches: [main]
@@ -56,8 +59,8 @@ jobs:
     # Decides whether to run on PR events. Non-PR events (cron,
     # workflow_dispatch, push) pass through unconditionally. PR events
     # run when either the `nightly` label is attached OR the diff touches
-    # one of the dependency/toolchain files. The decision is exposed via
-    # `outputs.run`; downstream jobs gate on it.
+    # one of the dependency/toolchain/nix files. The decision is exposed
+    # via `outputs.run`; downstream jobs gate on it.
     #
     # `dorny/paths-filter` works against the GitHub API for PR events, so
     # no checkout step is needed.
@@ -76,6 +79,9 @@ jobs:
               - '**/Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
+              - 'flake.nix'
+              - 'flake.lock'
+              - 'nix/**'
               - '.github/workflows/nightly.yaml'
       - id: decide
         run: |
