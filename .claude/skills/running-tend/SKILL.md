@@ -213,6 +213,31 @@ across every repo. It's the project's preferred extension point.
 5. Link to the [aliases docs](https://worktrunk.dev/extending/#aliases) and
    [tips & patterns](https://worktrunk.dev/tips-patterns/).
 
+### Weigh the root-cause fix before shipping a config/docs workaround
+
+When a mismatch or false-positive report has an obvious configurable
+workaround (a template change, a config value, an alias), don't stop at
+documenting it. First check whether the workaround is **lossy or
+foot-gunny**, and weigh a proportionate **root-cause code fix** before
+opening a docs-only PR. A "docs-only, no risk" framing is not the same as
+good guidance — a zero-code-risk change can still steer users toward a
+collision-prone or lossy config. If you do recommend a config change,
+surface its downsides in the PR body up front, not only when challenged.
+
+Example (PR #3390 / issue #3389, maintainer-flagged bad case): triage of the
+`⚑` `branch_worktree_mismatch` flag — which fires when an external agent CLI
+checks branch `claude/frosty-kilby-92c7d3` into a directory named
+`frosty-kilby-92c7d3` — shipped a docs PR recommending
+`worktree-path = "{{ branch | basename }}"`. But `basename` is lossy:
+`alice/foo` and `bob/foo` both collapse to `foo` and collide on one
+directory, whereas the default `{{ branch | sanitize }}`
+(`sanitize_branch_name` in `src/config/expansion.rs`, swaps `/`→`-`) keeps
+them distinct (`alice-foo` / `bob-foo`). The proportionate fix was a code change
+teaching the path-match check to tolerate a dropped namespace prefix — not
+asking every affected user to adopt a lossy template. The PR presented
+`basename` as *the* fix and surfaced the collision downside only after the
+maintainer pushed back.
+
 ### Don't fix tests by adding skip guards
 
 When a test fails because production code or test setup can't handle some
