@@ -207,6 +207,16 @@ pub(crate) fn print_json<T: serde::Serialize>(value: &T) -> anyhow::Result<()> {
 /// would corrupt the consumer's prompt, and the same user sees the nag on
 /// their next interactive run. The nag names both settings so the fix is
 /// copyable from the warning itself.
+///
+/// The unset nag deliberately bypasses the config deprecation system
+/// (`DEPRECATION_RULES` / `wt config update`): nothing in the file is
+/// deprecated — unset is a pending choice between two valid schemas — so the
+/// warning belongs on the surfaces that emit JSON rather than on every config
+/// load, and `wt config update` has no behavior-preserving rewrite to offer:
+/// inserting `= 1` would pin users to the schema the migration is moving away
+/// from. The machinery joins at the default flip, when `= 1` becomes a
+/// standard `DEPRECATION_RULES` row that `wt config update` strips (migration
+/// plan in design/list-json-v2.md, reviewed in #3357).
 pub(crate) fn resolve_json_schema(repo: &Repository) -> u8 {
     use std::sync::Once;
 
