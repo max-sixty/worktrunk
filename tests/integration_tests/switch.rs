@@ -578,6 +578,49 @@ fn test_switch_internal_with_execute(repo: TestRepo) {
     );
 }
 
+/// The `--execute` no-integration fallback relocates the payload into the
+/// switch target, so inherited git-discovery vars (`GIT_DIR`/`GIT_WORK_TREE`)
+/// must be scrubbed there like at the hook and for-each spawn sites — git
+/// resolves them before the cwd, so a forwarded value would misdirect the
+/// payload's `git` calls to the inherited repo while the "Executing @ …"
+/// header names the target (issue #3373; classification in
+/// `scrub_git_discovery_env_vars`).
+///
+/// `repo.wt_command()` configures no directive files, so wt executes the
+/// payload itself (unix: exec, non-unix: spawn — each platform's CI drives
+/// its own variant). The relative marker path resolves in the payload's cwd,
+/// pinning the relocation at the same time.
+#[rstest]
+fn test_switch_execute_fallback_does_not_inherit_git_discovery_vars(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "feature",
+            "--execute",
+            r#"printf '[%s][%s]' "$GIT_DIR" "$GIT_WORK_TREE" > git_env_seen.txt"#,
+        ])
+        .env("GIT_DIR", repo.root_path().join(".git"))
+        .env("GIT_WORK_TREE", repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "switch --execute failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let seen = fs::read_to_string(feature_path.join("git_env_seen.txt"))
+        .expect("payload should have run in the target worktree");
+    assert_eq!(
+        seen, "[][]",
+        "--execute payload inherited git-discovery vars ([GIT_DIR][GIT_WORK_TREE]): {seen}"
+    );
+}
+
 /// `--execute` with trailing `-- args` containing shell metacharacters: the
 /// constructed command appended to the exec directive file must POSIX-escape
 /// each trailing arg so the user's shell wrapper (`sh -c`, `bash -c`, …)

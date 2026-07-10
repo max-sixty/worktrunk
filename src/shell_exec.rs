@@ -365,18 +365,45 @@ pub fn scrub_directive_env_vars(cmd: &mut std::process::Command) {
 /// `Command`, so the spawned process discovers its repository from its working
 /// directory rather than a `GIT_DIR`/`GIT_WORK_TREE` that `wt` inherited.
 ///
-/// Applied when spawning **user hooks**: `wt` sets a hook's working directory to
-/// the worktree it is operating on, so the hook's own `git` commands must
-/// resolve against that worktree — not a git-discovery context `wt` happened to
-/// inherit (e.g. `wt` run as a `!wt` git alias, or nested under another tool's
-/// git hook). Forwarding the inherited context into a hook is a footgun: with
-/// both `GIT_DIR` and `GIT_WORK_TREE` present, a hook that runs `git init`
-/// writes `core.worktree` into the *inherited* repo's config, silently
-/// redirecting every later plain git command there. See issue #3373.
+/// Git resolves these vars **before** walking up from the cwd, so an inherited
+/// value silently overrides whatever working directory the child was given.
+/// Whether a child keeps them is decided by who chose its cwd:
 ///
-/// `wt`'s *own* internal git plumbing ([`Cmd`] via `Repository::run_command`)
-/// keeps the inherited context on purpose (relative values absolutized, see
-/// issue #1914), so this scrub is applied only at the hook spawn sites.
+/// - **`wt` relocated a user command into a worktree it selected** — hooks
+///   (run in the operation's worktree), `wt step for-each` (run in each
+///   worktree in turn), and the `--execute` no-integration fallback (run in
+///   the switch target when `wt` itself executes the payload) — the cwd
+///   carries `wt`'s intent, so the inherited context is scrubbed and the
+///   command's `git` calls discover the worktree from the cwd. The inherited
+///   context is common, not exotic: `git` exports an absolute `GIT_DIR`
+///   pinned to the invoking worktree's private gitdir when `wt` runs as a
+///   `!wt` alias from a **linked worktree**, and git itself exports discovery
+///   vars (e.g. `GIT_INDEX_FILE`) to the hooks it spawns. Forwarding those
+///   into a relocated command misdirects every `git` call in it; with both
+///   `GIT_DIR` and `GIT_WORK_TREE` present, a `git init` even writes
+///   `core.worktree` into the *inherited* repo's config, silently redirecting
+///   every later plain git command there. See issue #3373.
+///
+/// - **The child runs where the user already was** — aliases (the user's own
+///   top-level command, run from the invoking worktree) and `commit.generation`
+///   commands (spawned with no `current_dir`) — the inherited context *is* the
+///   user's context, so it is forwarded untouched. Under shell integration the
+///   `--execute` payload also lands here: the wrapper shell evaluates it, so
+///   it sees that shell's own environment (which never contains the vars a
+///   `!wt` git alias exports — git's exports die with `wt`'s process tree).
+///   Scrubbing the fallback therefore *converges* the two `--execute` paths
+///   for the alias case; only a `GIT_DIR` the user globally exported in their
+///   interactive shell still differs, and such an env misdirects every plain
+///   `git` command they run anyway.
+///
+/// - **`wt`'s own git plumbing** ([`Cmd`] via `Repository::run_command`) keeps
+///   the inherited context on purpose (relative values absolutized, see issue
+///   #1914): `wt` honoring the context it was handed is the point of running
+///   `wt` under `git`.
+///
+/// Any new spawn site that relocates a user command into a `wt`-chosen
+/// worktree must apply this scrub, via this helper or
+/// [`Cmd::scrub_git_discovery_env`].
 pub fn scrub_git_discovery_env_vars(cmd: &mut std::process::Command) {
     for var in INHERITED_GIT_PATH_VARS {
         cmd.env_remove(var);
@@ -1104,10 +1131,11 @@ impl Cmd {
     }
 
     /// Scrub inherited git-discovery vars ([`INHERITED_GIT_PATH_VARS`]) from the
-    /// child environment. Applied by user-hook spawn sites so a hook's `git`
-    /// commands discover the repository from the working directory `wt` sets,
+    /// child environment. Applied by spawn sites that relocate a user command
+    /// into a `wt`-chosen worktree (hooks, `wt step for-each`) so the command's
+    /// `git` calls discover the repository from the working directory `wt` sets,
     /// not a `GIT_DIR`/`GIT_WORK_TREE` `wt` inherited. See
-    /// [`scrub_git_discovery_env_vars`] for the rationale (issue #3373).
+    /// [`scrub_git_discovery_env_vars`] for the site classification (issue #3373).
     ///
     /// Applied after the inherited-`GIT_*` absolutization in
     /// `apply_common_settings` (env-removes run last), so it also overrides the

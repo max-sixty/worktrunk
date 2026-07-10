@@ -90,7 +90,10 @@ fn test_remove_reap_kills_process(mut repo: TestRepo) {
         .iter()
         .any(|p| p.pid == pid)
     {
-        assert!(Instant::now() < deadline, "child {pid} never discovered");
+        assert!(
+            Instant::now() < deadline,
+            "child {pid} never discovered — is lsof installed and able to read process cwds?"
+        );
         std::thread::sleep(Duration::from_millis(50));
     }
 

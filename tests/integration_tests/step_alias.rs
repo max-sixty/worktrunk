@@ -2526,3 +2526,43 @@ greet = "echo hello {{ args }}"
         assert_cmd_snapshot!("alias_verbose_args_shell_escaped", cmd);
     });
 }
+
+/// Aliases keep `wt`'s inherited git-discovery context: `wt <alias>` is the
+/// user's own top-level command, run where they invoked it, so the inherited
+/// `GIT_DIR`/`GIT_WORK_TREE` pass through — unlike hooks and `wt step
+/// for-each`, which `wt` relocates into worktrees it selects and therefore
+/// scrubs (the keep side of the classification in
+/// `scrub_git_discovery_env_vars`; issue #3373).
+#[rstest]
+#[cfg(unix)]
+fn test_alias_keeps_inherited_git_discovery_vars(repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+record-git-env = "printf '[%s][%s]' \"$GIT_DIR\" \"$GIT_WORK_TREE\" > env_seen.txt"
+"#,
+    );
+    repo.commit("Add alias config");
+
+    let git_dir = repo.root_path().join(".git");
+    let output = repo
+        .wt_command()
+        .args(["-y", "record-git-env"])
+        .env("GIT_DIR", &git_dir)
+        .env("GIT_WORK_TREE", repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "alias failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let seen = std::fs::read_to_string(repo.root_path().join("env_seen.txt")).unwrap();
+    let expected = format!("[{}][{}]", git_dir.display(), repo.root_path().display());
+    assert_eq!(
+        seen, expected,
+        "alias should see wt's inherited git-discovery vars unchanged"
+    );
+}
