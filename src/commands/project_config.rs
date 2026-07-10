@@ -48,11 +48,7 @@ impl ApprovableCommand {
     /// `phase name:` label shown before the command body, in the approval
     /// prompt and the approvals listing.
     pub fn label(&self) -> String {
-        let phase = &self.phase;
-        match &self.command.name {
-            Some(name) => cformat!("{phase} <bold>{name}</>:"),
-            None => format!("{phase}:"),
-        }
+        command_label(&self.phase, self.command.name.as_deref())
     }
 
     /// Gutter-formatted template. Shell commands get bash syntax
@@ -63,6 +59,16 @@ impl ApprovableCommand {
             Phase::CommitTemplateAppend => format_with_gutter(&self.command.template, None),
             _ => format_bash_with_gutter(&self.command.template),
         }
+    }
+}
+
+/// `phase name:` label shown before a command body. Free-standing rather
+/// than a method on [`ApprovableCommand`] so `wt hook show` can label user
+/// hooks, which are never approvable.
+pub fn command_label(phase: impl fmt::Display, name: Option<&str>) -> String {
+    match name {
+        Some(name) => cformat!("{phase} <bold>{name}</>:"),
+        None => format!("{phase}:"),
     }
 }
 

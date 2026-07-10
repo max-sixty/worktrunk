@@ -18,7 +18,6 @@ pub fn shell_binary(shell: &str) -> &str {
 /// Works on both Unix (bash/zsh/fish) and Windows (PowerShell, Git Bash).
 pub fn execute_shell_script(repo: &TestRepo, shell: &str, script: &str) -> String {
     use portable_pty::CommandBuilder;
-    use std::io::Read;
 
     let pair = super::open_pty();
 
@@ -102,10 +101,11 @@ pub fn execute_shell_script(repo: &TestRepo, shell: &str, script: &str) -> Strin
     let mut child = pair.slave.spawn_command(cmd).unwrap();
     drop(pair.slave); // Close slave in parent
 
-    // Read everything the "terminal" would display
+    // Read everything the "terminal" would display. Blocks until child exits &
+    // PTY closes; treats Linux's EIO-on-slave-close as a clean EOF (see
+    // read_pty_master_to_string).
     let mut reader = pair.master.try_clone_reader().unwrap();
-    let mut buf = String::new();
-    reader.read_to_string(&mut buf).unwrap(); // Blocks until child exits & PTY closes
+    let buf = super::pty::read_pty_master_to_string(&mut reader);
 
     let status = child.wait().unwrap();
 
