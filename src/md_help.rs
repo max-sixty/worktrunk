@@ -885,6 +885,17 @@ mod tests {
         ];
         let result = render_table(&lines, Some(20));
         let plain = ansi_str::AnsiStr::ansi_strip(&result);
+        // Assert on something only the fallback produces, so the test keeps
+        // covering `catch_unwind` even if a future termimad release stops
+        // panicking on this input. The fallback returns the preprocessed lines
+        // verbatim, keeping the literal `|` delimiters; a successful termimad
+        // render replaces them with box-drawing borders (`│`) and contains no
+        // literal `|`. Cell-text presence alone can't tell the two apart.
+        assert!(
+            plain.contains('|'),
+            "expected the plain-text fallback (literal `|` delimiters), \
+             not a termimad render: {plain}"
+        );
         assert!(
             plain.contains("alpha") && plain.contains("zeta"),
             "fallback should still surface the table's cell text: {plain}"
