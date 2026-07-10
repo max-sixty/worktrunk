@@ -7,6 +7,8 @@
 //! - Uses our own escape-aware width calculations (StyledLine, truncate_visible)
 //! - Supports OSC-8 hyperlinks correctly
 //! - Has predictable cursor behavior based on our rendering logic
+//! - Reserves blank rows below the table ([`PROMPT_RESERVE_LINES`]) so the
+//!   shell prompt printed after exit doesn't scroll the settled table
 
 use crossterm::{
     ExecutableCommand,
@@ -17,6 +19,32 @@ use std::io::{IsTerminal, Write, stdout};
 
 use crate::display::truncate_visible;
 
+/// Blank rows kept below the table so the shell prompt printed after exit
+/// renders into pre-scrolled rows instead of scrolling the settled table.
+///
+/// The table sits on screen for the whole progressive phase, so a scroll at
+/// exit — the terminal making room for the shell's multi-line prompt — reads
+/// as a jarring jump at an unpredictable moment. Emitting the blank rows with
+/// the skeleton moves that scroll to command start, where output is expected
+/// to scroll. The prompt's height is unknowable, but the failure modes are
+/// asymmetric: extra reserved rows are consumed invisibly by whatever prints
+/// next, while a prompt taller than `PROMPT_RESERVE_LINES + 1` rows scrolls
+/// by just the difference. Two rows absorb prompts up to three rows tall
+/// (fish default 1, starship default 2, tide/powerlevel10k typically 3).
+const PROMPT_RESERVE_LINES: u16 = 2;
+
+/// Emit the prompt-reserve rows and move the cursor back up over them,
+/// returning it to the resting position (the line after the last content
+/// line). Callers emit this after the last content write, so the reserve
+/// always sits between the table and the shell prompt.
+fn write_prompt_reserve(stdout: &mut std::io::Stdout) -> std::io::Result<()> {
+    for _ in 0..PROMPT_RESERVE_LINES {
+        writeln!(stdout)?;
+    }
+    stdout.execute(MoveUp(PROMPT_RESERVE_LINES))?;
+    Ok(())
+}
+
 /// Progressive table that updates rows in-place using crossterm cursor control.
 ///
 /// The table structure is:
@@ -24,6 +52,11 @@ use crate::display::truncate_visible;
 /// - N data rows (one per worktree/branch)
 /// - Spacer (blank line)
 /// - Footer (loading status / summary)
+///
+/// Below the footer sit [`PROMPT_RESERVE_LINES`] pre-scrolled blank rows.
+/// The cursor rests on the line after the footer (the first reserved row)
+/// between flushes, so all redraw math is relative to that fixed resting
+/// position and the reserve stays invisible to it.
 ///
 /// Data mutation (`update_row`, `update_footer`) is separate from rendering (`flush`).
 /// Call `flush()` after updates to write changes to the terminal.
@@ -79,11 +112,11 @@ impl ProgressiveTable {
     ) -> Self {
         let total_row_count = skeletons.len();
 
-        // Limit visible rows to fit in terminal: header + rows + spacer + footer = rows + 3
-        // Reserve one extra line for the cursor position after printing.
+        // Limit visible rows to fit in terminal: header + rows + spacer + footer
+        // = rows + 3, plus the prompt-reserve rows and one line for the cursor.
         // Only limit when we have height info — None means non-TTY or unknown.
         let visible_row_count = terminal_height
-            .map(|h| total_row_count.min(h.saturating_sub(4)))
+            .map(|h| total_row_count.min(h.saturating_sub(4 + PROMPT_RESERVE_LINES as usize)))
             .unwrap_or(total_row_count);
 
         // Build initial lines: header + visible rows + spacer + footer
@@ -121,12 +154,13 @@ impl ProgressiveTable {
         Ok(())
     }
 
-    /// Print all lines to stdout.
+    /// Print all lines to stdout, followed by the prompt-reserve rows.
     fn print_all(&self) -> std::io::Result<()> {
         let mut stdout = stdout();
         for line in &self.lines {
             writeln!(stdout, "{}", line)?;
         }
+        write_prompt_reserve(&mut stdout)?;
         stdout.flush()
     }
 
@@ -272,6 +306,7 @@ impl ProgressiveTable {
                 "{}",
                 truncate_visible(&final_footer, self.max_width)
             )?;
+            write_prompt_reserve(&mut stdout)?;
             stdout.flush()
         } else {
             // Normal: update rows in-place + footer
@@ -454,14 +489,14 @@ mod tests {
 
     #[test]
     fn overflow_limits_visible_rows() {
-        // 10 rows, terminal height 8 → visible = 8 - 4 = 4
+        // 10 rows, terminal height 10 → visible = 10 - 4 - PROMPT_RESERVE_LINES = 4
         let skeletons: Vec<String> = (0..10).map(|i| format!("row{i}")).collect();
         let table = ProgressiveTable::new_with_height(
             "header".into(),
             skeletons,
             "loading".into(),
             80,
-            Some(8),
+            Some(10),
         );
 
         assert_eq!(table.row_count, 4);
@@ -495,14 +530,14 @@ mod tests {
 
     #[test]
     fn overflow_boundary_exact_fit() {
-        // 5 rows need height 5+4=9, terminal height 9 → fits exactly, no overflow
+        // 5 rows need height 5+4+PROMPT_RESERVE_LINES=11 → fits exactly, no overflow
         let skeletons: Vec<String> = (0..5).map(|i| format!("row{i}")).collect();
         let table = ProgressiveTable::new_with_height(
             "header".into(),
             skeletons,
             "loading".into(),
             80,
-            Some(9),
+            Some(11),
         );
 
         assert_eq!(table.row_count, 5);
@@ -511,14 +546,14 @@ mod tests {
 
     #[test]
     fn overflow_boundary_one_short() {
-        // 5 rows need height 5+4=9, terminal height 8 → overflow, visible = 4
+        // 5 rows need height 5+4+PROMPT_RESERVE_LINES=11, height 10 → overflow, visible = 4
         let skeletons: Vec<String> = (0..5).map(|i| format!("row{i}")).collect();
         let table = ProgressiveTable::new_with_height(
             "header".into(),
             skeletons,
             "loading".into(),
             80,
-            Some(8),
+            Some(10),
         );
 
         assert_eq!(table.row_count, 4);
@@ -534,7 +569,7 @@ mod tests {
             skeletons,
             "loading".into(),
             80,
-            Some(8),
+            Some(10),
         );
 
         // Can update visible rows (0..4)
