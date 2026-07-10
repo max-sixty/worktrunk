@@ -31,6 +31,7 @@ use std::sync::{Arc, Mutex};
 /// so a multibyte sequence truncated at `EIO` doesn't panic the test.
 #[cfg(unix)]
 pub fn read_pty_master_to_string<R: Read + ?Sized>(reader: &mut R) -> String {
+    use std::io::ErrorKind;
     // POSIX `EIO` is 5 on every platform these tests run on (Linux, macOS);
     // avoids a `libc` dev-dependency just for the constant.
     const EIO: i32 = 5;
@@ -41,7 +42,17 @@ pub fn read_pty_master_to_string<R: Read + ?Sized>(reader: &mut R) -> String {
             Ok(0) => break, // clean EOF (the macOS behavior)
             Ok(n) => bytes.extend_from_slice(&chunk[..n]),
             Err(e) if e.raw_os_error() == Some(EIO) => break,
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            // A transient `WouldBlock` (EAGAIN) means "no data yet", not EOF —
+            // retry after a short pause, mirroring the Windows branch of
+            // `read_pty_output`. The child will eventually produce data, close
+            // (EOF), or exit (EIO), so this can't spin forever. `read_to_string`
+            // didn't retry EAGAIN either, so it panicked here just the same;
+            // this is the more robust replacement.
+            Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                continue;
+            }
+            Err(e) if e.kind() == ErrorKind::Interrupted => continue,
             Err(e) => panic!("PTY master read failed: {e}"),
         }
     }
