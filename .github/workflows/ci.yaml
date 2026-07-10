@@ -23,8 +23,6 @@ env:
   # with no benefit. Especially impactful on Windows where I/O is the bottleneck.
   CARGO_INCREMENTAL: 0
   RUSTFLAGS: -C debuginfo=0
-  # Authenticate lychee requests to GitHub to avoid rate limiting
-  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
   lint:
@@ -40,12 +38,6 @@ jobs:
         # supply), gated to main so PRs restore but never write.
         cache-bin: "false"
         save-if: ${{ github.ref == 'refs/heads/main' }}
-
-    - name: Install lychee
-      uses: baptiste0928/cargo-install@v3
-      with:
-        crate: lychee
-        version: "=0.24.2"
 
     - name: 🔍 Pre-commit hooks
       uses: pre-commit/action@v3.0.1

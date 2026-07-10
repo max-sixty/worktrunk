@@ -9,6 +9,7 @@ name: nightly
 #   - minimal-versions: cargo check against minimum-version dep resolution
 #   - nix-flake: nix flake check (packaging-environment bugs, motivated by #2624)
 #   - crate-build: build the crates.io archive with no `.git` (faithful #3123 repro)
+#   - link-check: lychee over tracked .md/.txt files (external-link volatility)
 #
 # Runs daily on cron, on demand via workflow_dispatch, on pushes to main that
 # touch dependency or toolchain files, and on PRs that either (a) touch the
@@ -352,6 +353,35 @@ jobs:
     - name: 🧪 Build crates.io archive without .git
       run: cargo test --test integration crate_io_archive_builds_and_versions_without_git -- --ignored
 
+  link-check:
+    # The pre-commit `lychee-system` hook (manual stage) over every tracked
+    # .md/.txt file. It lives here, not in PR CI: link health depends on the
+    # outside world (429s, bot-blocking, transient outages), so it was the
+    # flakiest PR check — and link rot isn't PR-correlated anyway; links
+    # break when external sites change, not when code does. A failure opens
+    # the nightly-failure issue instead of reddening an unrelated PR.
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    env:
+      # Authenticate lychee requests to GitHub to avoid rate limiting
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v7
+
+    - name: Install lychee
+      uses: baptiste0928/cargo-install@v3
+      with:
+        crate: lychee
+        version: "=0.24.2"
+
+    - name: 🔗 Check links
+      # Through pre-commit so file selection (the `files` regex, symlink
+      # exclusion) has one definition; the manual stage keeps it out of the
+      # PR `lint` job and local `pre-commit run --all-files`.
+      run: pipx run pre-commit run lychee-system --all-files --hook-stage manual
+
   nix-flake:
     # Build and test under the nix sandbox so packaging-environment bugs
     # surface before a release / nixpkgs maintainer hits them. See #2624 for
@@ -390,6 +420,7 @@ jobs:
       - minimal-versions
       - nix-flake
       - crate-build
+      - link-check
     if: always() && contains(needs.*.result, 'failure') && github.repository_owner == 'max-sixty' && github.event_name == 'schedule'
     runs-on: ubuntu-24.04
     permissions:
