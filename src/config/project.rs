@@ -290,7 +290,7 @@ impl ProjectConfig {
             super::deprecation::warn_unknown_fields::<ProjectConfig>(
                 &contents,
                 &config_path,
-                "Project config",
+                super::ConfigFileKind::Project,
             );
         }
 

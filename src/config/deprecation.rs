@@ -660,31 +660,57 @@ const DEPRECATION_RULES: &[DeprecationRule] = &[
 ///
 /// A `list` slot occupied by a non-table is left alone (serde's type error is
 /// the messaging); a present key of any value is the user's explicit choice,
-/// including out-of-range values, which already warn at resolve time.
+/// including out-of-range values, which already warn at resolve time. When
+/// the system config layer defines the key, resolution is already explicit
+/// and a user-file pin would *override* the system value rather than
+/// preserve behavior, so the rule stays inert — the one rule that reads a
+/// second file (detection stays write-free; the common no-system-config case
+/// costs one stat).
 fn pin_json_schema_doc(doc: &mut toml_edit::DocumentMut) -> Deprecations {
-    match doc.get("list") {
-        None => {}
-        Some(toml_edit::Item::Table(t)) if !t.contains_key("json-schema") => {}
-        Some(toml_edit::Item::Value(toml_edit::Value::InlineTable(t)))
-            if !t.contains_key("json-schema") => {}
-        // A non-table occupant (serde's type error is the messaging) or a
-        // present key of any value — the user's explicit choice, including
-        // out-of-range values, which already warn at resolve time.
-        _ => return Vec::new(),
+    if system_config_defines_json_schema() {
+        return Vec::new();
     }
+    // `or_insert` only fills a vacant slot, so a bail through the fallthrough
+    // arm (scalar occupant, key already present) leaves the document
+    // unmodified; an absent `list` becomes the empty table the first arm
+    // then fills.
     match doc
         .entry("list")
         .or_insert(toml_edit::Item::Table(toml_edit::Table::new()))
     {
-        toml_edit::Item::Table(t) => {
+        toml_edit::Item::Table(t) if !t.contains_key("json-schema") => {
             t.insert("json-schema", toml_edit::value(1));
         }
-        toml_edit::Item::Value(toml_edit::Value::InlineTable(t)) => {
+        toml_edit::Item::Value(toml_edit::Value::InlineTable(t))
+            if !t.contains_key("json-schema") =>
+        {
             t.insert("json-schema", 1.into());
         }
-        _ => unreachable!("the match above verified the slot is absent or a table"),
+        _ => return Vec::new(),
     }
     vec![DeprecationKind::JsonSchemaUnset]
+}
+
+/// Whether the system config layer sets `[list] json-schema` (any value, any
+/// table shape). Unreadable or unparsable system config counts as not
+/// defining it.
+fn system_config_defines_json_schema() -> bool {
+    let Some(path) = crate::config::system_config_path() else {
+        return false;
+    };
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
+        return false;
+    };
+    match doc.get("list") {
+        Some(toml_edit::Item::Table(t)) => t.contains_key("json-schema"),
+        Some(toml_edit::Item::Value(toml_edit::Value::InlineTable(t))) => {
+            t.contains_key("json-schema")
+        }
+        _ => false,
+    }
 }
 
 /// Detect deprecations in config content. Pure function, no I/O.
@@ -1435,6 +1461,18 @@ pub fn check_and_migrate(
         });
     }
 
+    // Pending-default kinds warn at their own usage surface instead of at
+    // load, so an info carrying only pins (most user configs until the
+    // json-schema default flips) skips the dedup registry and emission
+    // entirely — no canonicalize + lock on every load for a config with
+    // nothing to say here.
+    if !info.has_deprecated_patterns() {
+        return Ok(CheckAndMigrateResult {
+            info: Some(info),
+            migrated_content,
+        });
+    }
+
     // Deduplicate warnings per path per process
     let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     {
@@ -1452,27 +1490,23 @@ pub fn check_and_migrate(
 
     // For non-config-show commands, emit per-kind warnings but skip the diff.
     // The diff is reserved for `wt config show`, where the user has opted into
-    // details. Pending-default kinds warn at their own usage surface instead
-    // of at load, so they are filtered out here, and the hint is gated on the
-    // remaining text being non-empty so a config with nothing to say at load
-    // produces no stray "run wt config show" line with nothing above it.
+    // details. Pending-default kinds still ride along in a mixed info, so
+    // they are filtered out of the emitted lines here.
     if emit_inline_warnings && !warnings_suppressed() {
         let warnings = format_warning_lines(
             info.deprecations.iter().filter(|k| !k.is_pending_default()),
             info.label(),
         );
-        if !warnings.is_empty() {
-            eprint!("{warnings}");
-            if DEPRECATION_HINT_EMITTED.set(()).is_ok() {
-                eprintln!(
-                    "{}",
-                    hint_message(cformat!(
-                        "To see details, run <underline>wt config show</>; to apply updates, run <underline>wt config update</>"
-                    ))
-                );
-            }
-            std::io::stderr().flush().ok();
+        eprint!("{warnings}");
+        if DEPRECATION_HINT_EMITTED.set(()).is_ok() {
+            eprintln!(
+                "{}",
+                hint_message(cformat!(
+                    "To see details, run <underline>wt config show</>; to apply updates, run <underline>wt config update</>"
+                ))
+            );
         }
+        std::io::stderr().flush().ok();
     }
 
     Ok(CheckAndMigrateResult {
@@ -1792,9 +1826,13 @@ pub fn classify_unknown_key<C: WorktrunkConfig>(key: &str) -> UnknownKeyKind {
 /// with `config show` via [`collect_unknown_warnings`](crate::config::collect_unknown_warnings);
 /// this wrapper adds per-path deduplication and stderr emission.
 ///
-/// The `label` is used in the warning message (e.g., "User config" or
-/// "Project config").
-pub fn warn_unknown_fields<C: WorktrunkConfig>(raw_contents: &str, path: &Path, label: &str) {
+/// `kind` derives the label shown in the warning message.
+pub fn warn_unknown_fields<C: WorktrunkConfig>(
+    raw_contents: &str,
+    path: &Path,
+    kind: ConfigFileKind,
+) {
+    let label = kind.label();
     if warnings_suppressed() {
         return;
     }
@@ -3256,6 +3294,39 @@ json-schema = 1
         let migrated =
             compute_migrated_content("list = { columns = [\"ci\"] }\n", ConfigFileKind::User);
         insta::assert_snapshot!(migrated, @r#"list = { columns = ["ci"] , json-schema = 1 }"#);
+
+        // A `list` that exists only implicitly (via a subtable) hosts the pin
+        // too; toml_edit renders the now-explicit [list] header ahead of the
+        // subtable.
+        let migrated = compute_migrated_content(
+            "[list.custom-columns]\nflag = \"echo hi\"\n",
+            ConfigFileKind::User,
+        );
+        insta::assert_snapshot!(migrated, @r#"
+        [list]
+        json-schema = 1
+        [list.custom-columns]
+        flag = "echo hi"
+        "#);
+    }
+
+    /// Every `PendingDefault` row's kinds must return true from
+    /// `is_pending_default` — that flag is what keeps their warning off the
+    /// load surface and out of `has_deprecated_patterns`. A row emitting a
+    /// non-pending kind would leak a load warning and suppress the
+    /// `wt config show` dump.
+    #[test]
+    fn test_pending_default_rules_emit_pending_kinds() {
+        for rule in DEPRECATION_RULES {
+            if let DeprecationRule::PendingDefault { migrate, .. } = rule {
+                let mut doc = toml_edit::DocumentMut::new();
+                let kinds = migrate(&mut doc);
+                assert!(!kinds.is_empty(), "pending rule inert on an empty doc");
+                for kind in kinds {
+                    assert!(kind.is_pending_default(), "{kind:?}");
+                }
+            }
+        }
     }
 
     /// The pin is scoped to user config — project config doesn't own the key,
@@ -4413,7 +4484,7 @@ ff = true
         warn_unknown_fields::<ProjectConfig>(
             "[commit-generation]\ncommand = \"llm\"\n",
             &path,
-            "Project config",
+            ConfigFileKind::Project,
         );
     }
 

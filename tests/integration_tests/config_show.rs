@@ -3382,6 +3382,32 @@ fn test_config_update_pins_json_schema(repo: TestRepo) {
     );
 }
 
+/// A system config that sets `[list] json-schema` makes the resolved value
+/// explicit, so `wt config update` must not pin the user file — a user-file
+/// pin would override the system value and flip JSON output.
+#[rstest]
+fn test_config_update_json_schema_pin_defers_to_system_config(repo: TestRepo) {
+    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_path = system_config_dir.path().join("config.toml");
+    fs::write(&system_config_path, "[list]\njson-schema = 2\n").unwrap();
+
+    // A user config with an unrelated deprecation: update applies that
+    // rewrite but must not insert the pin alongside it.
+    fs::write(repo.test_config_path(), "[merge]\nno-ff = true\n").unwrap();
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["config", "update", "--yes"]);
+    cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+
+    assert_eq!(
+        fs::read_to_string(repo.test_config_path()).unwrap(),
+        "[merge]\nff = false\n",
+        "the no-ff rewrite applies; the json-schema pin must not"
+    );
+}
+
 /// `wt config update --yes` applies template variable migration
 #[rstest]
 fn test_config_update_applies_template_var_migration(repo: TestRepo) {
