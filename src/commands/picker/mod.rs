@@ -3087,6 +3087,47 @@ pub mod tests {
         }
     }
 
+    /// Poll `git branch --list <branch>` until it succeeds and the branch
+    /// reaches the expected presence, tolerating the transient `exit 128` a
+    /// concurrent background removal can trigger.
+    ///
+    /// `apply` renames the worktree into the trash (so its path vanishes) and
+    /// then runs `git worktree prune`, which deletes the `.git/worktrees/<id>`
+    /// admin dir — all on a background thread. `git branch --list` enumerates
+    /// worktrees to mark checked-out branches, so a query that races the
+    /// in-flight prune can read a half-deleted admin dir and fail with
+    /// `exit 128`. A test that `.unwrap()`s such a query flakes; retry until the
+    /// prune settles and the branch has reached its steady state.
+    fn await_branch_presence(
+        repo: &worktrunk::git::Repository,
+        branch: &str,
+        expect_present: bool,
+    ) {
+        // Resolved once, outside the loop, so both arms are exercised across the
+        // callers (retained vs deleted) rather than only on the never-taken
+        // deadline-panic path.
+        let expectation = if expect_present {
+            "retained"
+        } else {
+            "deleted"
+        };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            // A transient prune race surfaces as `Err`, not a successful empty
+            // read, so only a successful query is authoritative.
+            if let Ok(list) = repo.run_command(&["branch", "--list", branch])
+                && list.is_empty() != expect_present
+            {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "branch `{branch}` was not {expectation} within the deadline"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
     /// Two detached worktrees both render the branch label `(detached)`, but
     /// each row's `output()` token carries its unique path. alt-x on the
     /// second row must remove exactly that worktree — not the first detached
@@ -3757,11 +3798,8 @@ pub mod tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         assert!(!reported_path.exists(), "the worktree is removed");
-        let branch_list = repo.run_command(&["branch", "--list", "feature"]).unwrap();
-        assert!(
-            !branch_list.is_empty(),
-            "the unmerged branch is retained after its worktree is removed"
-        );
+        // The unmerged branch is retained after its worktree is removed.
+        await_branch_presence(&repo, "feature", true);
         // The removal succeeded, so the morph stands (no revert).
         assert!(
             morphed.load(Ordering::Relaxed),
@@ -3831,13 +3869,8 @@ pub mod tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         assert!(!reported_path.exists(), "the worktree is removed");
-        assert!(
-            !repo
-                .run_command(&["branch", "--list", "feature"])
-                .unwrap()
-                .is_empty(),
-            "the unmerged branch is retained"
-        );
+        // The unmerged branch is retained.
+        await_branch_presence(&repo, "feature", true);
     }
 
     /// The negative of the above, end-to-end through `apply`: alt-x on a worktree
@@ -3884,23 +3917,10 @@ pub mod tests {
             "the integrated worktree row drops instead of morphing"
         );
 
-        // The background removal deletes both the worktree and the branch.
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !repo
-            .run_command(&["branch", "--list", "feature"])
-            .unwrap()
-            .is_empty()
-            && Instant::now() < deadline
-        {
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        // The background removal deletes both the worktree and the branch
+        // (nothing to keep).
+        await_branch_presence(&repo, "feature", false);
         assert!(!reported_path.exists(), "the worktree is removed");
-        assert!(
-            repo.run_command(&["branch", "--list", "feature"])
-                .unwrap()
-                .is_empty(),
-            "the integrated branch is deleted (nothing to keep)"
-        );
     }
 
     /// `worktree_removal_keeps_branch` predicts the morph: a `RemovedWorktree`
