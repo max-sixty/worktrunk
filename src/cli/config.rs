@@ -513,11 +513,12 @@ This tests:
     /// Update deprecated config settings
     #[command(
         after_long_help = r#"Updates deprecated settings in user and project config files
-to their current equivalents. Shows a diff and asks for confirmation.
+to their current equivalents, and pins defaults that a future release
+switches — currently `[list] json-schema = 1` — so upgrading doesn't change
+behavior. Shows a diff and asks for confirmation.
 
-Migrations are computed in memory on demand — worktrunk no longer writes
-`.new` files as a side effect of loading config. Use `--print` to see the
-migrated TOML without touching any file.
+Migrations are computed in memory on demand; nothing is written outside this
+command. Use `--print` to see the migrated TOML without touching any file.
 
 ## Examples
 

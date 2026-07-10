@@ -3265,6 +3265,9 @@ fn test_config_update_print_on_clean_config_is_silent(repo: TestRepo) {
     fs::write(
         repo.test_config_path(),
         r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[list]
+json-schema = 1
 "#,
     )
     .unwrap();
@@ -3325,10 +3328,13 @@ fn test_config_update_print_emits_migrated_without_writing(repo: TestRepo) {
 /// `wt config update` with no deprecated settings reports nothing to do
 #[rstest]
 fn test_config_update_no_deprecations(repo: TestRepo) {
-    // Write a clean config with no deprecated patterns
+    // Clean config: no deprecated patterns, json-schema explicitly pinned
     fs::write(
         repo.test_config_path(),
         r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[list]
+json-schema = 1
 "#,
     )
     .unwrap();
@@ -3340,6 +3346,40 @@ fn test_config_update_no_deprecations(repo: TestRepo) {
 
         assert_cmd_snapshot!(cmd);
     });
+}
+
+/// `wt config update` pins `[list] json-schema = 1` when the key is unset,
+/// and a second run has nothing left to do — the pending-default loop closes.
+#[rstest]
+fn test_config_update_pins_json_schema(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        "worktree-path = \"../{{ repo }}.{{ branch }}\"\n",
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "update", "--yes"]);
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    assert_eq!(
+        fs::read_to_string(repo.test_config_path()).unwrap(),
+        "worktree-path = \"../{{ repo }}.{{ branch }}\"\n\n[list]\njson-schema = 1\n"
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["config", "update", "--yes"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("No deprecated settings found"),
+        "second run should have nothing to update"
+    );
 }
 
 /// `wt config update --yes` applies template variable migration

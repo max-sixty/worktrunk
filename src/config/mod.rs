@@ -127,6 +127,7 @@ pub(crate) fn schema_top_level_keys<T: schemars::JsonSchema>() -> Vec<String> {
 pub use approvals::{Approvals, approvals_path, require_approvals_path};
 pub use commands::{Command, CommandConfig, HookStep, append_aliases};
 pub use deprecation::CheckAndMigrateResult;
+pub use deprecation::ConfigFileKind;
 pub use deprecation::DeprecationInfo;
 pub use deprecation::check_and_migrate;
 pub use deprecation::compute_migrated_content;

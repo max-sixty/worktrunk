@@ -8,6 +8,7 @@ info:
     - "--yes"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
+    CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
@@ -48,12 +49,13 @@ exit_code: 0
 
 ----- stderr -----
 [33m▲[39m [33mUser config: [1m[commit-generation][22m is deprecated in favor of [1m[commit.generation][22m[39m
+[33m▲[39m [33mUser config: [1m[list] json-schema[22m is unset; a future release switches the JSON default to schema 2[39m
 [2m○[22m Proposed diff:
 [107m [0m [1mdiff --git a/test-config.toml/current b/test-config.toml/migrated[m
-[107m [0m [1mindex 40d0385..bc7273c 100644[m
+[107m [0m [1mindex 40d0385..7f2d33c 100644[m
 [107m [0m [1m--- a/test-config.toml/current[m
 [107m [0m [1m+++ b/test-config.toml/migrated[m
-[107m [0m [36m@@ -1,5 +1,4 @@[m
+[107m [0m [36m@@ -1,5 +1,7 @@[m
 [107m [0m  worktree-path = "../{{ repo }}.{{ branch }}"[m
 [107m [0m  [m
 [107m [0m [31m-[commit-generation][m
@@ -61,4 +63,7 @@ exit_code: 0
 [107m [0m [31m-args = ["-m", "haiku"][m
 [107m [0m [32m+[m[32m[commit.generation][m
 [107m [0m [32m+[m[32mcommand = "llm -m haiku"[m
+[107m [0m [32m+[m
+[107m [0m [32m+[m[32m[list][m
+[107m [0m [32m+[m[32mjson-schema = 1[m
 [32m✓[39m [32mUpdated user config[39m

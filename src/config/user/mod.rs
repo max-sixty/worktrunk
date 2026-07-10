@@ -450,7 +450,7 @@ impl UserConfig {
                 &system_path,
                 &content,
                 true,
-                "System config",
+                super::ConfigFileKind::System,
                 None,
                 true,
             ) {
@@ -483,7 +483,7 @@ impl UserConfig {
                     config_path,
                     &content,
                     true,
-                    "User config",
+                    super::ConfigFileKind::User,
                     None,
                     true,
                 ) {

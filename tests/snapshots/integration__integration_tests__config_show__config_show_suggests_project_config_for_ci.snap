@@ -7,6 +7,7 @@ info:
     - show
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
+    CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
@@ -46,13 +47,14 @@ exit_code: 0
 ----- stdout -----
 [36mUSER CONFIG[39m @ ~/.config/worktrunk/config.toml
 [33m▲[39m [33mUser config: [1m[ci][22m is deprecated in favor of [1m[forge][22m[39m
+[33m▲[39m [33mUser config: [1m[list] json-schema[22m is unset; a future release switches the JSON default to schema 2[39m
 [2m↳[22m [2mTo apply: [4mwt config update[24m[22m
 [2m○[22m Proposed diff:
 [107m [0m [1mdiff --git a/config.toml/current b/config.toml/migrated[m
-[107m [0m [1mindex 2e0e0bb..9d78d51 100644[m
+[107m [0m [1mindex 2e0e0bb..9dc4e69 100644[m
 [107m [0m [1m--- a/config.toml/current[m
 [107m [0m [1m+++ b/config.toml/migrated[m
-[107m [0m [36m@@ -1,4 +1,4 @@[m
+[107m [0m [36m@@ -1,4 +1,7 @@[m
 [107m [0m  worktree-path = "../{{ repo }}.{{ branch }}"[m
 [107m [0m  [m
 [107m [0m [31m-[ci][m
@@ -60,6 +62,9 @@ exit_code: 0
 [107m [0m \ No newline at end of file[m
 [107m [0m [32m+[m[32m[forge][m
 [107m [0m [32m+[m[32mplatform = "github"[m
+[107m [0m [32m+[m
+[107m [0m [32m+[m[32m[list][m
+[107m [0m [32m+[m[32mjson-schema = 1[m
 [33m▲[39m [33mKey [1mci[22m belongs in project config as [forge][39m
 [2m↳[22m [2mOptional system config not found @ [2m/etc/xdg/worktrunk/config.toml[22m[22m
 

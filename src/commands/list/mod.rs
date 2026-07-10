@@ -205,17 +205,16 @@ pub(crate) fn print_json<T: serde::Serialize>(value: &T) -> anyhow::Result<()> {
 /// type error in the same key (warn and degrade, never brick a command).
 /// Both messages honor warning suppression — on the statusline, stderr
 /// would corrupt the consumer's prompt, and the same user sees the nag on
-/// their next interactive run. The nag names both settings so the fix is
-/// copyable from the warning itself.
+/// their next interactive run.
 ///
-/// The unset nag deliberately bypasses the config deprecation system
-/// (`DEPRECATION_RULES` / `wt config update`): nothing in the file is
-/// deprecated — unset is a pending choice between two valid schemas — so the
-/// warning belongs on the surfaces that emit JSON rather than on every config
-/// load, and `wt config update` has no behavior-preserving rewrite to offer:
-/// inserting `= 1` would pin users to the schema the migration is moving away
-/// from. The machinery joins at the default flip, when `= 1` becomes a
-/// standard `DEPRECATION_RULES` row that `wt config update` strips (migration
+/// The unset state is the `PendingDefault` row in `DEPRECATION_RULES`, but
+/// its warning fires here rather than at config load: the setting only
+/// matters to JSON consumers, so a load-time warning would nag every command
+/// for every user without the key. `wt config update` pins the current
+/// `json-schema = 1` (the behavior-preserving choice; adopting schema 2 is a
+/// deliberate manual edit), so the nag's hint offers that command when a user
+/// config file exists to update — with no user config there is nothing for
+/// update to rewrite, and the hint names both settings instead (migration
 /// plan in design/list-json-v2.md, reviewed in #3357).
 pub(crate) fn resolve_json_schema(repo: &Repository) -> u8 {
     use std::sync::Once;
@@ -251,12 +250,18 @@ pub(crate) fn resolve_json_schema(repo: &Repository) -> u8 {
                         "JSON output is schema 1; a future release switches the default to schema 2"
                     )
                 );
-                eprintln!(
-                    "{}",
-                    hint_message(cformat!(
-                        "To keep this format set <underline>[list] json-schema = 1</>; to adopt the new one, <underline>json-schema = 2</>"
-                    ))
-                );
+                let has_user_config =
+                    worktrunk::config::config_path().is_some_and(|p| p.exists());
+                let hint = if has_user_config {
+                    cformat!(
+                        "To adopt the new schema set <underline>[list] json-schema = 2</>; to keep this format, run <underline>wt config update</>"
+                    )
+                } else {
+                    cformat!(
+                        "To adopt the new schema set <underline>[list] json-schema = 2</>; to keep this format, <underline>json-schema = 1</>"
+                    )
+                };
+                eprintln!("{}", hint_message(hint));
             });
             1
         }
