@@ -1,6 +1,8 @@
 [workspace]
 members = ["tests/helpers/wt-perf", "tests/helpers/mock-stub"]
-# Include mock-stub and wt-perf so `cargo test` builds their binaries
+# Include the helper packages so a workspace `cargo test` builds their
+# binaries: mock-stub via its dummy tests/builds.rs, wt-perf via its real
+# in-package CLI tests.
 default-members = [".", "tests/helpers/mock-stub", "tests/helpers/wt-perf"]
 
 # cargo-affected input→test rules. cargo-affected selects tests by Rust-line
@@ -333,10 +335,6 @@ harness = false
 
 [[bench]]
 name = "list"
-harness = false
-
-[[bench]]
-name = "cow_copy"
 harness = false
 
 [[bench]]

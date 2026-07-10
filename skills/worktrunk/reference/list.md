@@ -204,8 +204,9 @@ These appear across all columns while the table is loading:
 
 `--format=json` emits structured data in one of two schemas while the format
 migrates: `[list] json-schema = 2` selects the envelope format below, `= 1`
-the original bare-array format. Unset emits schema 1 with a warning; a future
-release flips the default to schema 2 and later removes schema 1.
+the original bare-array format. Unset emits schema 1 with a warning
+(`wt config update` pins `= 1`); a future release flips the default to
+schema 2 and later removes schema 1.
 
 ### Schema 2
 

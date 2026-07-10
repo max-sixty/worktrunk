@@ -450,7 +450,7 @@ impl UserConfig {
                 &system_path,
                 &content,
                 true,
-                "System config",
+                super::ConfigFileKind::System,
                 None,
                 true,
             ) {
@@ -458,7 +458,7 @@ impl UserConfig {
                     super::deprecation::warn_unknown_fields::<UserConfig>(
                         &content,
                         &system_path,
-                        "System config",
+                        super::ConfigFileKind::System,
                     );
 
                     match load_config_file(&system_path, &result.migrated_content, "System config")
@@ -483,7 +483,7 @@ impl UserConfig {
                     config_path,
                     &content,
                     true,
-                    "User config",
+                    super::ConfigFileKind::User,
                     None,
                     true,
                 ) {
@@ -491,7 +491,7 @@ impl UserConfig {
                         super::deprecation::warn_unknown_fields::<UserConfig>(
                             &content,
                             config_path,
-                            "User config",
+                            super::ConfigFileKind::User,
                         );
 
                         match load_config_file(config_path, &result.migrated_content, "User config")

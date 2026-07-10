@@ -60,11 +60,11 @@ pub fn wt_bin() -> PathBuf {
     )
 }
 
-/// Path to a workspace member binary (e.g., `wt-perf`, `mock-stub`).
+/// Path to a workspace member binary (`mock-stub`).
 ///
-/// These are binaries from other workspace packages (not the main `wt` crate),
-/// so `CARGO_BIN_EXE_<name>` isn't available. Derives the path from the test
-/// executable's location in `target/debug/deps/`.
+/// Binaries from other workspace packages (not the main `wt` crate) have no
+/// `CARGO_BIN_EXE_<name>` in the main crate's tests. Derives the path from
+/// the test executable's location in `target/debug/deps/`.
 pub fn workspace_bin(name: &str) -> PathBuf {
     let mut path = std::env::current_exe().expect("failed to get test executable path");
     path.pop(); // Remove test binary name

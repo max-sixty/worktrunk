@@ -273,8 +273,9 @@ These appear across all columns while the table is loading:
 
 [2m--format=json[0m emits structured data in one of two schemas while the format
 migrates: [2m[list] json-schema = 2[0m selects the envelope format below, [2m= 1[0m
-the original bare-array format. Unset emits schema 1 with a warning; a future
-release flips the default to schema 2 and later removes schema 1.
+the original bare-array format. Unset emits schema 1 with a warning
+([2mwt config update[0m pins [2m= 1[0m); a future release flips the default to
+schema 2 and later removes schema 1.
 
 [32mSchema 2[0m
 

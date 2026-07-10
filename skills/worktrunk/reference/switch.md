@@ -172,6 +172,10 @@ Options:
           Replaces the wt process with the command after switching, giving it full terminal control.
           Useful for launching editors, AI agents, or other interactive tools.
 
+          Without a branch argument, the interactive picker opens and the command runs against the
+          selected worktree — so wt switch -x claude picks a worktree, then launches Claude Code
+          there.
+
           Supports hook template variables ({{ branch }}, {{ worktree_path }}, etc.) and filters. {{
           base }} and {{ base_worktree_path }} require --create.
 

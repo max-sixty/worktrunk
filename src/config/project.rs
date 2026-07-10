@@ -276,7 +276,7 @@ impl ProjectConfig {
             &config_path,
             &contents,
             is_main_worktree,
-            "Project config",
+            super::ConfigFileKind::Project,
             repo_for_hints,
             true, // emit_inline_warnings
         )
@@ -290,7 +290,7 @@ impl ProjectConfig {
             super::deprecation::warn_unknown_fields::<ProjectConfig>(
                 &contents,
                 &config_path,
-                "Project config",
+                super::ConfigFileKind::Project,
             );
         }
 

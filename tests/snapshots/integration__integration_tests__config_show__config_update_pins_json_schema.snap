@@ -4,7 +4,8 @@ info:
   program: wt
   args:
     - config
-    - show
+    - update
+    - "--yes"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
@@ -45,35 +46,17 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-[36mUSER CONFIG[39m @ ~/.config/worktrunk/config.toml
+
+----- stderr -----
 [33m▲[39m [33mUser config: [1m[list] json-schema[22m is unset; a future release switches the JSON default to schema 2[39m
-[2m↳[22m [2mTo apply: [4mwt config update[24m[22m
 [2m○[22m Proposed diff:
-[107m [0m [1mdiff --git a/config.toml/current b/config.toml/migrated[m
+[107m [0m [1mdiff --git a/test-config.toml/current b/test-config.toml/migrated[m
 [107m [0m [1mindex a30ca31..cea088e 100644[m
-[107m [0m [1m--- a/config.toml/current[m
-[107m [0m [1m+++ b/config.toml/migrated[m
+[107m [0m [1m--- a/test-config.toml/current[m
+[107m [0m [1m+++ b/test-config.toml/migrated[m
 [107m [0m [36m@@ -1 +1,4 @@[m
 [107m [0m  worktree-path = "../{{ repo }}.{{ branch }}"[m
 [107m [0m [32m+[m
 [107m [0m [32m+[m[32m[list][m
 [107m [0m [32m+[m[32mjson-schema = 1[m
-
-[107m [0m [2mworktree-path = [0m[2m[32m"../{{ repo }}.{{ branch }}"[0m
-[2m↳[22m [2mOptional system config not found @ [2m/etc/xdg/worktrunk/config.toml[22m[22m
-
-[36mPROJECT CONFIG[39m @ _REPO_/.config/wt.toml
-[2m○[22m Identifier: [1m../origin[22m
-[2m↳[22m [2mNot found[22m
-
-[36mSHELL INTEGRATION[39m
-[33m▲[39m [33mShell integration not configured[39m
-[2m↳[22m [2mTo configure, run [4mwt config shell install[24m[22m
-[107m [0m Invoked as: [1m[PROJECT_ROOT]/target/[BUILD_MODE]/wt[22m
-
-[36mOTHER[39m
-[2m○[22m wt: [1m[VERSION][22m
-[2m○[22m git: [1m[VERSION][22m
-[2m○[22m Hyperlinks: [1minactive[22m
-
------ stderr -----
+[32m✓[39m [32mUpdated user config[39m

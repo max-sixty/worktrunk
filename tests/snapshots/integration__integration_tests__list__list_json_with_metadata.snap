@@ -284,4 +284,4 @@ exit_code: 0
 
 ----- stderr -----
 [33m▲[39m [33mJSON output is schema 1; a future release switches the default to schema 2[39m
-[2m↳[22m [2mTo keep this format set [4m[list] json-schema = 1[24m; to adopt the new one, [4mjson-schema = 2[24m[22m
+[2m↳[22m [2mTo adopt the new schema set [4m[list] json-schema = 2[24m; to keep this format, [4mjson-schema = 1[24m[22m

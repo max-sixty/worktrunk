@@ -1593,6 +1593,8 @@ pub fn handle_picker(
     cli_prs: bool,
     change_dir_flag: Option<bool>,
     format: SwitchFormat,
+    execute: Option<&str>,
+    execute_args: &[String],
 ) -> anyhow::Result<()> {
     // Interactive picker requires a terminal for the TUI. The dry-run and
     // preview-bench paths bypass skim entirely, so no TTY is required —
@@ -2162,10 +2164,12 @@ summary = true
 
         // Run the switch — the same `SwitchPipeline` as `wt switch <branch>`,
         // so hooks, approval, and output cannot drift from the argument path.
-        // The picker has no `--execute`, offers no shell integration, and does
-        // not capture pre-switch source identity (`capture_source: false` — an
-        // existing switch's `{{ base }}` / `{{ base_worktree_path }}` stay
-        // unset; result-derived `base` for creates and `target` still flow).
+        // The picker offers no shell integration, but (like the argument path)
+        // the pipeline captures the pre-switch source worktree, so an existing
+        // switch's `{{ base }}` / `{{ base_worktree_path }}` resolve to the
+        // worktree the user came from. An `--execute` command (`wt switch -x
+        // <cmd>`) runs against the picked worktree, and its `{{ base }}` matches
+        // what `wt switch <branch> -x <cmd>` would produce.
         SwitchPipeline {
             repo: &repo,
             config: &mut config,
@@ -2179,9 +2183,8 @@ summary = true
             format,
             is_recovered,
             suggestion_ctx: None,
-            capture_source: false,
-            execute: None,
-            execute_args: &[],
+            execute,
+            execute_args,
             shell_integration_binary: None,
         }
         .run()?;
@@ -3087,6 +3090,41 @@ pub mod tests {
         }
     }
 
+    /// Poll `git branch --list <branch>` until it succeeds and the branch
+    /// reaches the expected presence, tolerating the transient `exit 128` a
+    /// concurrent background removal can trigger.
+    ///
+    /// `apply` renames the worktree into the trash (so its path vanishes) and
+    /// then runs `git worktree prune`, which deletes the `.git/worktrees/<id>`
+    /// admin dir — all on a background thread. `git branch --list` enumerates
+    /// worktrees to mark checked-out branches, so a query that races the
+    /// in-flight prune can read a half-deleted admin dir and fail with
+    /// `exit 128`. A test that `.unwrap()`s such a query flakes; retry until the
+    /// prune settles and the branch has reached its steady state.
+    fn await_branch_presence(
+        repo: &worktrunk::git::Repository,
+        branch: &str,
+        expect_present: bool,
+    ) {
+        worktrunk::testing::wait_for(
+            &format!(
+                "branch `{branch}` to become {}",
+                if expect_present {
+                    "retained"
+                } else {
+                    "deleted"
+                }
+            ),
+            || {
+                // A transient prune race surfaces as `Err`, not a successful
+                // empty read, so only a successful query is authoritative.
+                repo.run_command(&["branch", "--list", branch])
+                    .map(|list| list.is_empty() != expect_present)
+                    .unwrap_or(false)
+            },
+        );
+    }
+
     /// Two detached worktrees both render the branch label `(detached)`, but
     /// each row's `output()` token carries its unique path. alt-x on the
     /// second row must remove exactly that worktree — not the first detached
@@ -3757,11 +3795,8 @@ pub mod tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         assert!(!reported_path.exists(), "the worktree is removed");
-        let branch_list = repo.run_command(&["branch", "--list", "feature"]).unwrap();
-        assert!(
-            !branch_list.is_empty(),
-            "the unmerged branch is retained after its worktree is removed"
-        );
+        // The unmerged branch is retained after its worktree is removed.
+        await_branch_presence(&repo, "feature", true);
         // The removal succeeded, so the morph stands (no revert).
         assert!(
             morphed.load(Ordering::Relaxed),
@@ -3831,13 +3866,8 @@ pub mod tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         assert!(!reported_path.exists(), "the worktree is removed");
-        assert!(
-            !repo
-                .run_command(&["branch", "--list", "feature"])
-                .unwrap()
-                .is_empty(),
-            "the unmerged branch is retained"
-        );
+        // The unmerged branch is retained.
+        await_branch_presence(&repo, "feature", true);
     }
 
     /// The negative of the above, end-to-end through `apply`: alt-x on a worktree
@@ -3884,23 +3914,10 @@ pub mod tests {
             "the integrated worktree row drops instead of morphing"
         );
 
-        // The background removal deletes both the worktree and the branch.
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !repo
-            .run_command(&["branch", "--list", "feature"])
-            .unwrap()
-            .is_empty()
-            && Instant::now() < deadline
-        {
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        // The background removal deletes both the worktree and the branch
+        // (nothing to keep).
+        await_branch_presence(&repo, "feature", false);
         assert!(!reported_path.exists(), "the worktree is removed");
-        assert!(
-            repo.run_command(&["branch", "--list", "feature"])
-                .unwrap()
-                .is_empty(),
-            "the integrated branch is deleted (nothing to keep)"
-        );
     }
 
     /// `worktree_removal_keeps_branch` predicts the morph: a `RemovedWorktree`

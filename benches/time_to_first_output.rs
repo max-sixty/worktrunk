@@ -17,7 +17,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use std::path::Path;
 use std::process::Command;
 use worktrunk::testing::isolate_subprocess_env;
-use wt_perf::{RepoConfig, create_repo, invalidate_caches_auto, setup_fake_remote};
+use wt_perf::{RepoConfig, bench_wt, create_repo, setup_fake_remote};
 
 fn bench_first_output(c: &mut Criterion) {
     let mut group = c.benchmark_group("first_output");
@@ -38,45 +38,21 @@ fn bench_first_output(c: &mut Criterion) {
 
     // remove: exits after validation, before approval/output.
     //
-    // `prepare_worktree_removal` calls `compute_integration_lazy`, which
-    // populates `.git/wt/cache/{is-ancestor,has-added-changes,merge-add-probe}`
-    // on the first invocation. Without invalidation between iterations, iter 1
-    // is cold and iter 2+ read from cache — the reported timing would be warm
-    // cache, which doesn't reflect the first-invocation TTFO a user sees.
-    // Invalidate via `iter_batched` so every iteration starts cold; use
-    // `BatchSize::PerIteration` (not `SmallInput`) so setup runs immediately
-    // before every measured iter — under `SmallInput`, criterion would run
-    // setup once per batch and time the routines back-to-back, leaving only
-    // iter 1 actually cold per batch.
+    // Cold matters here: `prepare_worktree_removal` calls
+    // `compute_integration_lazy`, which populates
+    // `.git/wt/cache/{is-ancestor,has-added-changes,merge-add-probe}` on the
+    // first invocation. Without per-iteration invalidation the reported
+    // timing would be warm cache, not the first-invocation TTFO a user sees.
     group.bench_function("remove", |b| {
-        b.iter_batched(
-            || invalidate_caches_auto(&repo_path),
-            |_| {
-                let output =
-                    make_cmd(&["remove", "--yes", "--no-hooks", "--force", "feature-wt-1"])
-                        .output()
-                        .unwrap();
-                assert!(
-                    output.status.success(),
-                    "Benchmark command failed:\nstderr: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            },
-            criterion::BatchSize::PerIteration,
-        );
+        bench_wt(b, &repo_path, true, || {
+            make_cmd(&["remove", "--yes", "--no-hooks", "--force", "feature-wt-1"])
+        });
     });
 
     // switch: exits after execute_switch, before mismatch computation and output
     group.bench_function("switch", |b| {
-        b.iter(|| {
-            let output = make_cmd(&["switch", "--yes", "--no-hooks", "feature-wt-1"])
-                .output()
-                .unwrap();
-            assert!(
-                output.status.success(),
-                "Benchmark command failed:\nstderr: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
+        bench_wt(b, &repo_path, false, || {
+            make_cmd(&["switch", "--yes", "--no-hooks", "feature-wt-1"])
         });
     });
 

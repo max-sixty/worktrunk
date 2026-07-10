@@ -108,6 +108,50 @@ impl RepoConfig {
     }
 }
 
+/// A parsed `wt-perf setup` config string.
+///
+/// Most configs map onto the flat [`RepoConfig`] (every worktree/branch
+/// identical); the composite fixtures build varied states instead:
+/// `mixed-W-B` via [`create_mixed_repo_at`], `prune-M-U` via
+/// [`create_prune_repo_at`]. (`prune-real[-M-U]` is not a `SetupConfig`:
+/// it is cache-managed under `target/bench-repos/` and takes no path — see
+/// [`ensure_prune_real_repo`].)
+pub enum SetupConfig {
+    Flat(RepoConfig),
+    Mixed { worktrees: usize, branches: usize },
+    Prune { merged: usize, unmerged: usize },
+}
+
+impl SetupConfig {
+    /// Create the repo at `base_path`; returns `(worktrees, branches)`.
+    pub fn create_at(&self, base_path: &Path) -> (usize, usize) {
+        match self {
+            SetupConfig::Flat(cfg) => {
+                create_repo_at(cfg, base_path);
+                (cfg.worktrees, cfg.branches)
+            }
+            SetupConfig::Mixed {
+                worktrees,
+                branches,
+            } => {
+                create_mixed_repo_at(*worktrees, *branches, base_path);
+                (*worktrees, *branches)
+            }
+            SetupConfig::Prune { merged, unmerged } => {
+                create_prune_repo_at(*merged, *unmerged, base_path);
+                (merged + unmerged + 1, merged + unmerged)
+            }
+        }
+    }
+}
+
+/// Parse a `<prefix>A-B` config string (e.g. `mixed-4-8`) into its two counts.
+pub fn parse_pair(config: &str, prefix: &str) -> Option<(usize, usize)> {
+    let rest = config.strip_prefix(prefix)?;
+    let (a, b) = rest.split_once('-')?;
+    Some((a.parse().ok()?, b.parse().ok()?))
+}
+
 /// Build a `git` command isolated from host context, with config
 /// redirected to `NULL_DEVICE`. Thin call-site wrapper around
 /// [`configure_git_cmd`] — every git invocation in this crate goes
@@ -117,6 +161,53 @@ fn git_command() -> Command {
     let mut cmd = Command::new("git");
     configure_git_cmd(&mut cmd, Path::new(NULL_DEVICE));
     cmd
+}
+
+/// Run a `wt` benchmark iteration function under criterion, warm or cold.
+///
+/// The one place the warm/cold iteration strategy lives: warm uses plain
+/// `Bencher::iter` (persistent caches stay hot across iterations); cold
+/// invalidates the repo's caches immediately before every measured iteration.
+///
+/// Cold uses `iter_batched` with `BatchSize::PerIteration`, not `SmallInput`:
+/// under `SmallInput`, criterion calls the setup once for an entire batch up
+/// front and then times the routines back-to-back, so only the first run per
+/// batch is actually cold — the rest hit a `.git/wt/cache/` the previous run
+/// just repopulated, biasing the "cold" median warm. `PerIteration` runs
+/// setup → time(routine) per iteration, so every measured run is genuinely
+/// cold; the invalidation is far cheaper than a `wt` subprocess, so the
+/// per-iteration `Instant::now` overhead doesn't dominate. When this fix
+/// landed, cold variance tightened (e.g. `first_output/remove` spread
+/// 2.4ms → 0.65ms) and medians rose to their true cold cost.
+///
+/// `make_cmd` builds a fresh command per iteration; the child's exit status is
+/// asserted so a benchmark can't silently time a failing command.
+pub fn bench_wt(
+    b: &mut criterion::Bencher,
+    repo_path: &Path,
+    cold: bool,
+    mut make_cmd: impl FnMut() -> Command,
+) {
+    let mut run = move || run_and_check(&mut make_cmd());
+    if cold {
+        b.iter_batched(
+            || invalidate_caches_auto(repo_path),
+            |_| run(),
+            criterion::BatchSize::PerIteration,
+        );
+    } else {
+        b.iter(run);
+    }
+}
+
+/// Spawn the command, wait, and panic with its stderr if it failed.
+pub fn run_and_check(cmd: &mut Command) {
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "benchmark command failed:\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 /// Run a git command in the given directory. Panics on failure.
@@ -161,6 +252,28 @@ pub fn run_git_ok(path: &Path, args: &[&str]) -> bool {
         .is_ok_and(|o| o.status.success())
 }
 
+/// `git init` a fixture repo at `repo_path` (creating the directory) with the
+/// benchmark identity and all background auto-maintenance disabled.
+///
+/// Auto-maintenance must be off: rapid commits in a fixture build loop
+/// trigger detached `git gc` / `git maintenance` runs whose pack-and-prune
+/// steps race the foreground `git add` / `git commit`, producing intermittent
+/// "invalid object ..." / "unable to create temporary file" / "failed to
+/// insert into database" failures partway through a 500-commit fixture.
+/// Modern git enables both `gc.auto` (loose-object threshold) and
+/// `maintenance.auto` (the post-command hook scheduler) by default, so both
+/// are silenced. Fixture builders run an explicit `git gc` once at the end
+/// instead, for a mature-repo shape.
+fn init_bench_repo(repo_path: &Path) {
+    std::fs::create_dir_all(repo_path).unwrap();
+    run_git(repo_path, &["init", "-b", "main"]);
+    run_git(repo_path, &["config", "user.name", "Benchmark"]);
+    run_git(repo_path, &["config", "user.email", "bench@test.com"]);
+    run_git(repo_path, &["config", "gc.auto", "0"]);
+    run_git(repo_path, &["config", "gc.autoPackLimit", "0"]);
+    run_git(repo_path, &["config", "maintenance.auto", "false"]);
+}
+
 /// Run a git plumbing command against a scratch `GIT_INDEX_FILE`, panicking on
 /// failure and returning trimmed stdout. Used to build commits without
 /// touching the repo's working tree or real index (see
@@ -192,23 +305,7 @@ pub fn create_repo(config: &RepoConfig) -> TempDir {
 /// - Feature worktrees: `base_path.feature-wt-N` (siblings in parent directory)
 pub fn create_repo_at(config: &RepoConfig, base_path: &Path) {
     let repo_path = base_path.to_path_buf();
-    std::fs::create_dir_all(&repo_path).unwrap();
-
-    run_git(&repo_path, &["init", "-b", "main"]);
-    run_git(&repo_path, &["config", "user.name", "Benchmark"]);
-    run_git(&repo_path, &["config", "user.email", "bench@test.com"]);
-    // Disable all background auto-maintenance: rapid commits in the
-    // build loop trigger detached `git gc` / `git maintenance` runs
-    // whose pack-and-prune steps race the foreground `git add` /
-    // `git commit`, producing intermittent "invalid object ..." /
-    // "unable to create temporary file" / "failed to insert into
-    // database" failures partway through a 500-commit fixture. Modern
-    // git enables both `gc.auto` (loose-object threshold) and
-    // `maintenance.auto` (the post-command hook scheduler) by default,
-    // so we have to silence both.
-    run_git(&repo_path, &["config", "gc.auto", "0"]);
-    run_git(&repo_path, &["config", "gc.autoPackLimit", "0"]);
-    run_git(&repo_path, &["config", "maintenance.auto", "false"]);
+    init_bench_repo(&repo_path);
 
     // Create initial file structure
     let num_files = config.files.max(1);
@@ -785,15 +882,7 @@ pub fn create_mixed_repo_at(worktrees: usize, branches: usize, repo: &Path) {
     const CHECKPOINT_EVERY: usize = 5;
 
     let repo = repo.to_path_buf();
-    std::fs::create_dir_all(&repo).unwrap();
-
-    run_git(&repo, &["init", "-b", "main"]);
-    run_git(&repo, &["config", "user.name", "Benchmark"]);
-    run_git(&repo, &["config", "user.email", "bench@test.com"]);
-    // Disable background auto-maintenance (see create_repo_at for why).
-    run_git(&repo, &["config", "gc.auto", "0"]);
-    run_git(&repo, &["config", "gc.autoPackLimit", "0"]);
-    run_git(&repo, &["config", "maintenance.auto", "false"]);
+    init_bench_repo(&repo);
 
     for i in 0..FILES {
         let p = repo.join(format!("src/file_{i}.rs"));
@@ -1213,39 +1302,45 @@ pub fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
     dunce::canonicalize(path)
 }
 
-/// Parse a config string into a RepoConfig.
+/// Parse a `wt-perf setup` config string.
 ///
 /// Supported formats:
 /// - `typical-N` - typical repo with N worktrees
 /// - `branches-N` - N branches with 1 commit each
 /// - `branches-N-M` - N branches with M commits each
 /// - `divergent` - many divergent branches (GH #461)
+/// - `mixed-W-B` - W worktrees + B branches in varied states
+/// - `prune-M-U` - M squash-merged candidates + U unmerged (prune workload)
 /// - `picker-test` - config for wt switch interactive picker testing
-pub fn parse_config(s: &str) -> Option<RepoConfig> {
+pub fn parse_config(s: &str) -> Option<SetupConfig> {
     if let Some(n) = s.strip_prefix("typical-") {
         let worktrees: usize = n.parse().ok()?;
-        return Some(RepoConfig::typical(worktrees));
+        return Some(SetupConfig::Flat(RepoConfig::typical(worktrees)));
     }
 
     if let Some(rest) = s.strip_prefix("branches-") {
-        let parts: Vec<&str> = rest.split('-').collect();
-        match parts.as_slice() {
-            [count] => {
-                let count: usize = count.parse().ok()?;
-                return Some(RepoConfig::branches(count, 1));
-            }
-            [count, commits] => {
-                let count: usize = count.parse().ok()?;
-                let commits: usize = commits.parse().ok()?;
-                return Some(RepoConfig::branches(count, commits));
-            }
+        let config = match rest.split('-').collect::<Vec<_>>().as_slice() {
+            [count] => RepoConfig::branches(count.parse().ok()?, 1),
+            [count, commits] => RepoConfig::branches(count.parse().ok()?, commits.parse().ok()?),
             _ => return None,
-        }
+        };
+        return Some(SetupConfig::Flat(config));
+    }
+
+    if let Some((worktrees, branches)) = parse_pair(s, "mixed-") {
+        return Some(SetupConfig::Mixed {
+            worktrees,
+            branches,
+        });
+    }
+
+    if let Some((merged, unmerged)) = parse_pair(s, "prune-") {
+        return Some(SetupConfig::Prune { merged, unmerged });
     }
 
     match s {
-        "divergent" => Some(RepoConfig::many_divergent_branches()),
-        "picker-test" => Some(RepoConfig::picker_test()),
+        "divergent" => Some(SetupConfig::Flat(RepoConfig::many_divergent_branches())),
+        "picker-test" => Some(SetupConfig::Flat(RepoConfig::picker_test())),
         _ => None,
     }
 }

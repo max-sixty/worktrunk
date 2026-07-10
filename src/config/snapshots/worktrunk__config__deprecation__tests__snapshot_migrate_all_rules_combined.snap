@@ -18,6 +18,9 @@ expression: "migration_diff(content, &migrated)"
  platform = "github"
  
 -[select]
++[list]
++json-schema = 1
++
 +[switch.picker]
  pager = "delta"
 -timeout-ms = 500

@@ -176,6 +176,10 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           Replaces the wt process with the command after switching, giving it full terminal control.
           Useful for launching editors, AI agents, or other interactive tools.
 
+          Without a branch argument, the interactive picker opens and the command runs against the
+          selected worktree — so <b>wt switch -x claude</b> picks a worktree, then launches Claude Code
+          there.
+
           Supports <u>hook template variables</u> (<b>{{ branch }}</b>, <b>{{ worktree_path }}</b>, etc.) and filters. <b>{{</b>
 <b>          base }}</b> and <b>{{ base_worktree_path }}</b> require <b>--create</b>.
 

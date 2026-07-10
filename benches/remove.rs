@@ -1,12 +1,12 @@
 // Benchmarks for `wt remove` end-to-end performance
 //
-// Measures the full remove command including output rendering and hook spawning,
-// to complement `time_to_first_output` which exits before output.
+// Measures the full remove command including output rendering and hook
+// spawning, to complement `first_output/remove` in `time_to_first_output`,
+// which exits before output.
 //
 // Benchmark variants:
 //   - remove_e2e/no_hooks       — remove with --no-hooks (no hook loading)
 //   - remove_e2e/with_hooks     — remove with hooks configured (user + project)
-//   - remove_e2e/first_output   — baseline: exits before output (same as time_to_first_output)
 //
 // Run examples:
 //   cargo bench --bench remove              # All variants
@@ -16,7 +16,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use worktrunk::testing::isolate_subprocess_env;
-use wt_perf::{RepoConfig, invalidate_caches_auto, run_git, run_git_ok, setup_fake_remote};
+use wt_perf::{RepoConfig, run_git, run_git_ok, setup_fake_remote};
 
 /// Create a benchmark repo at a specific path with optional hooks.
 fn create_bench_repo(base_path: &Path, with_hooks: bool) -> PathBuf {
@@ -108,35 +108,6 @@ fn bench_remove_e2e(c: &mut Criterion) {
             repo.file_name().unwrap().to_str().unwrap()
         ))
     };
-
-    // Baseline: first_output (exits before output rendering).
-    //
-    // Invalidates caches per iteration so the timing reflects first-invocation
-    // TTFO — `prepare_worktree_removal` writes to `.git/wt/cache/` via
-    // `compute_integration_lazy`, and reusing it across iterations would
-    // measure warm-cache cost instead. `BatchSize::PerIteration` (not
-    // `SmallInput`) so the setup actually runs before every measured iter —
-    // under `SmallInput`, criterion calls `setup` once per batch and runs
-    // the timed routines back-to-back, leaving only iter 1 cold per batch.
-    group.bench_function("first_output", |b| {
-        b.iter_batched(
-            || invalidate_caches_auto(&repo_no_hooks),
-            |_| {
-                let mut cmd = Command::new(binary);
-                cmd.args(["remove", "--yes", "--no-hooks", "--force", "feature-wt-1"]);
-                cmd.current_dir(&repo_no_hooks);
-                isolate_subprocess_env(&mut cmd, Some(&user_config_no_hooks));
-                cmd.env("WORKTRUNK_FIRST_OUTPUT", "1");
-                let output = cmd.output().unwrap();
-                assert!(
-                    output.status.success(),
-                    "first_output failed: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            },
-            criterion::BatchSize::PerIteration,
-        );
-    });
 
     // No hooks: --no-hooks (skip hook loading), run from feature worktree
     group.bench_function("no_hooks", |b| {

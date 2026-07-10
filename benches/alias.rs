@@ -33,7 +33,7 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::path::Path;
 use std::process::Command;
 use worktrunk::testing::isolate_subprocess_env;
-use wt_perf::{RepoConfig, create_repo, invalidate_caches_auto};
+use wt_perf::{RepoConfig, bench_wt, create_repo, run_and_check};
 
 /// Alias body is a shell builtin so the wall-clock is dominated by the
 /// parent's dispatch — not by running a real subcommand.
@@ -73,16 +73,6 @@ fn wt_cmd(binary: &Path, repo: &Path, user_config: &Path, args: &[&str]) -> Comm
     cmd
 }
 
-/// Run a benchmark command and assert success, surfacing stderr on failure.
-fn run_and_check(mut cmd: Command, label: &str) {
-    let output = cmd.output().unwrap();
-    assert!(
-        output.status.success(),
-        "{label} failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
 fn bench_dispatch(c: &mut Criterion) {
     let mut group = c.benchmark_group("dispatch");
     let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
@@ -95,7 +85,7 @@ fn bench_dispatch(c: &mut Criterion) {
             let mut cmd = Command::new(binary);
             cmd.arg("--version");
             isolate_subprocess_env(&mut cmd, None);
-            run_and_check(cmd, "wt_version");
+            run_and_check(&mut cmd);
         });
     });
 
@@ -122,27 +112,12 @@ fn bench_dispatch(c: &mut Criterion) {
                 };
 
                 group.bench_with_input(BenchmarkId::new(id, worktrees), &worktrees, |b, _| {
-                    let run = || {
-                        run_and_check(
-                            wt_cmd(binary, &repo_path, user_config, &[alias_name]),
-                            "dispatch",
-                        );
-                    };
-                    if cold {
-                        // `PerIteration` so every measured run is actually
-                        // cold — `build_hook_context` resolves the default
-                        // branch, which writes `worktrunk.default-branch`
-                        // and would be a cache hit on iters 2-N under
-                        // `SmallInput`. See `benches/CLAUDE.md` →
-                        // "Cache Handling" for the full rationale.
-                        b.iter_batched(
-                            || invalidate_caches_auto(&repo_path),
-                            |_| run(),
-                            criterion::BatchSize::PerIteration,
-                        );
-                    } else {
-                        b.iter(run);
-                    }
+                    // Cold matters here: `build_hook_context` resolves the
+                    // default branch, which writes `worktrunk.default-branch`
+                    // and would otherwise be a cache hit on iters 2-N.
+                    bench_wt(b, &repo_path, cold, || {
+                        wt_cmd(binary, &repo_path, user_config, &[alias_name])
+                    });
                 });
             }
         }

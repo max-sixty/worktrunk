@@ -417,6 +417,18 @@ fn test_logs_profile_json(repo: TestRepo) {
           "avg_us": 5000
         }
       ],
+      "by_context": [
+        {
+          "context": "main",
+          "count": 4,
+          "total_us": 24000
+        },
+        {
+          "context": "feature",
+          "count": 1,
+          "total_us": 8000
+        }
+      ],
       "slowest": [
         {
           "dur_us": 12000,
@@ -444,12 +456,6 @@ fn test_logs_profile_json(repo: TestRepo) {
         }
       ],
       "cache": {
-        "total_commands": 5,
-        "unique_commands": 3,
-        "contexts": 2,
-        "total_time_us": 32000,
-        "duplicated_commands": 2,
-        "extra_calls": 2,
         "same_context_duplicates": [
           {
             "command": "git config --list",

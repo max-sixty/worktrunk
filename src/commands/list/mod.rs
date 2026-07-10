@@ -205,8 +205,18 @@ pub(crate) fn print_json<T: serde::Serialize>(value: &T) -> anyhow::Result<()> {
 /// type error in the same key (warn and degrade, never brick a command).
 /// Both messages honor warning suppression — on the statusline, stderr
 /// would corrupt the consumer's prompt, and the same user sees the nag on
-/// their next interactive run. The nag names both settings so the fix is
-/// copyable from the warning itself.
+/// their next interactive run.
+///
+/// The unset state is the `PendingDefault` row in `DEPRECATION_RULES`, but
+/// its warning fires here rather than at config load: the setting only
+/// matters to JSON consumers, so a load-time warning would nag every command
+/// for every user without the key. `wt config update` pins the current
+/// `json-schema = 1` (the behavior-preserving choice; adopting schema 2 is a
+/// deliberate manual edit), so the nag's hint offers that command exactly
+/// when running it would write the pin — decided by the same detection
+/// update runs, so a missing, unreadable, or malformed user config falls
+/// back to naming the manual setting instead (migration plan in
+/// design/list-json-v2.md, reviewed in #3357).
 pub(crate) fn resolve_json_schema(repo: &Repository) -> u8 {
     use std::sync::Once;
 
@@ -241,10 +251,25 @@ pub(crate) fn resolve_json_schema(repo: &Repository) -> u8 {
                         "JSON output is schema 1; a future release switches the default to schema 2"
                     )
                 );
+                let update_would_pin = worktrunk::config::config_path()
+                    .and_then(|p| std::fs::read_to_string(p).ok())
+                    .is_some_and(|content| {
+                        worktrunk::config::detect_deprecations(
+                            &content,
+                            worktrunk::config::ConfigFileKind::User,
+                        )
+                        .iter()
+                        .any(|k| matches!(k, worktrunk::config::DeprecationKind::JsonSchemaUnset))
+                    });
+                let keep = if update_would_pin {
+                    cformat!("run <underline>wt config update</>")
+                } else {
+                    cformat!("<underline>json-schema = 1</>")
+                };
                 eprintln!(
                     "{}",
                     hint_message(cformat!(
-                        "To keep this format set <underline>[list] json-schema = 1</>; to adopt the new one, <underline>json-schema = 2</>"
+                        "To adopt the new schema set <underline>[list] json-schema = 2</>; to keep this format, {keep}"
                     ))
                 );
             });

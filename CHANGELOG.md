@@ -6,7 +6,13 @@
 
 - **Experimental `--reap` flag for `wt remove`**: `wt remove --reap` terminates processes still running in the worktree (a `post-start` dev server, a file watcher, a language server) before removing it, freeing the ports and file handles they hold. Processes are discovered by working directory and terminated with `SIGTERM`, then `SIGKILL` for survivors; the list prints before any signal is sent. A process holding a controlling terminal (an interactive shell, a terminal editor with unsaved buffers) is never touched. Unix only. [Docs](https://worktrunk.dev/remove/#reaping-processes) ([#3396](https://github.com/max-sixty/worktrunk/pull/3396))
 
+- **`wt switch -x` without a branch opens the picker**: `--execute` no longer requires a branch argument — `wt switch -x claude` opens the interactive picker and runs the command against the selected worktree. It composes with every picker mode (`--branches`, `--remotes`, `--prs`), and the picker path shares the same pipeline as the argument path, so hooks, approval, and template expansion behave identically. ([#3394](https://github.com/max-sixty/worktrunk/pull/3394), closes [#3370](https://github.com/max-sixty/worktrunk/issues/3370), thanks @gbcreation for the request)
+
+- **`wt config state logs profile` groups subprocess time by worktree**: The report gained a BY CONTEXT table (and a `by_context` array in `--format=json`) — subprocess time per context, typically the worktree name — so a slow parallel phase can be attributed to the worktree causing it without exporting the trace to an external tool. ([#3403](https://github.com/max-sixty/worktrunk/pull/3403))
+
 - **`-vv` diagnostics surface pager and terminal environment**: The diagnostic report (`.git/wt/logs/diagnostic.md`, written on every `-vv` run) gained an "Environment variables" section listing a curated, non-secret allowlist of the pager / terminal / locale knobs (`PAGER`, `GIT_PAGER`, `TERM`, `COLUMNS`, `NO_COLOR`, `LANG`, …) plus git's resolved `core.pager`. These are the inputs that most often explain a rendering bug — like a pager interaction suspending `wt config show` ([#3322](https://github.com/max-sixty/worktrunk/issues/3322)) — and they were previously invisible in the report. The list is a strict allowlist, never a blanket `env` dump, so no credential-bearing variable can leak into an uploaded report.
+
+- **`wt config update` pins `[list] json-schema` while unset**: The schema hint from 0.66.0 now comes with the standard one-command fix — `wt config update` pins `json-schema = 1` (the behavior-preserving choice) when the key is unset, and the hint offers the command only when running it would actually write the pin. ([#3411](https://github.com/max-sixty/worktrunk/pull/3411))
 
 ### Fixed
 

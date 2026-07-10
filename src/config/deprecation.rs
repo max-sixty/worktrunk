@@ -14,6 +14,13 @@
 //! one predicate and cannot drift. The table order is both the
 //! warning-emission order and the migration order.
 //!
+//! The table also carries pending default changes
+//! ([`DeprecationRule::PendingDefault`]): defaults a future release switches,
+//! which `wt config update` pins to their current value. These share the
+//! detection-equals-migration predicate but warn at the surface that reads
+//! the setting (the `wt list` JSON nag) instead of at config load, and apply
+//! only to the config kind that owns the key.
+//!
 //! Detection is purely in-memory — nothing writes to the filesystem from a
 //! config load path. `check_and_migrate` returns the structurally migrated
 //! content (for serde) and a `DeprecationInfo` describing what needs fixing.
@@ -41,6 +48,33 @@ use crate::styling::{
     eprintln, format_with_gutter, hint_message, info_message, suggest_command_in_dir,
     warning_message,
 };
+
+/// Which config file a deprecation pass is examining.
+///
+/// Replaces the string labels that used to travel with each check: the kind
+/// derives the display label, and kind-scoped rules
+/// (`DeprecationRule::PendingDefault`) use it to apply only to the config
+/// file that owns their key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigFileKind {
+    /// `~/.config/worktrunk/config.toml` — the file `wt config update` rewrites.
+    User,
+    /// The system-wide config layer (same schema as user config; never
+    /// rewritten by `wt config update`).
+    System,
+    /// The repo's `.config/wt.toml`.
+    Project,
+}
+
+impl ConfigFileKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::User => "User config",
+            Self::System => "System config",
+            Self::Project => "Project config",
+        }
+    }
+}
 
 /// Tracks which config paths have already shown deprecation warnings this process.
 /// Prevents repeated warnings when config is loaded multiple times.
@@ -450,6 +484,23 @@ pub enum DeprecationKind {
     NoCd,
     /// `timeout-ms` under `[switch.picker]` (removed — picker renders progressively).
     SwitchPickerTimeout,
+    /// `[list] json-schema` unset while the default is scheduled to switch to
+    /// schema 2 — `wt config update` pins the current `json-schema = 1`.
+    /// Warns at the JSON-emitting surface (`resolve_json_schema`), not at
+    /// config load.
+    JsonSchemaUnset,
+}
+
+impl DeprecationKind {
+    /// Whether this kind pins a pending default change rather than rewriting
+    /// a deprecated pattern. Pending defaults warn at the surface that reads
+    /// the setting (the `wt list` JSON nag) instead of at config load — the
+    /// setting only matters to consumers of that surface — and still render
+    /// on the pull surfaces (`wt config show`, the `wt config update`
+    /// preview), where the user asked for details.
+    fn is_pending_default(&self) -> bool {
+        matches!(self, Self::JsonSchemaUnset)
+    }
 }
 
 /// All deprecation patterns detected in a config file, in the order their
@@ -488,6 +539,30 @@ enum DeprecationRule {
     /// Silently-migrated rename: rewritten on every load like `Structural`,
     /// but with no warning by construction.
     Silent(SilentMigrateFn),
+    /// Pending default change: a default that a future release switches, which
+    /// `wt config update` pins to its current value. Applies only on the
+    /// update pass and only to the config kind that owns the key — the load
+    /// path must leave the document alone (an in-memory pin would read as an
+    /// explicit setting and silence the usage-site nag). Its
+    /// [`DeprecationKind`] returns true from `is_pending_default`, so the warning
+    /// fires where the setting is consumed rather than on every config load.
+    PendingDefault {
+        kind: ConfigFileKind,
+        migrate: MigrateFn,
+    },
+}
+
+/// Which pass rules run under.
+///
+/// `Load` is the structural rewrite before serde parses — `Structural` and
+/// `Silent` rows only. `Update` is what `wt config update` materializes —
+/// every row, with kind-scoped rows applying only to their config kind.
+/// Detection always runs the `Update` pass against a scratch copy, so a
+/// rule's detection and migration share one predicate and cannot drift.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RulePass {
+    Load,
+    Update(ConfigFileKind),
 }
 
 /// Every deprecation, one row each. The table order is the contract:
@@ -522,7 +597,9 @@ enum DeprecationRule {
 /// [`DeprecationKind`] variant with its `format_deprecation_warnings` arm,
 /// and a row here (plus a [`DeprecatedSection`] entry for a removed top-level
 /// section). A silently-migrated rename is just a [`DeprecationRule::Silent`]
-/// row.
+/// row. A pending default change is a [`DeprecationRule::PendingDefault`] row
+/// whose kind returns true from `is_pending_default` — the surface that reads the
+/// setting owns the warning.
 const DEPRECATION_RULES: &[DeprecationRule] = &[
     // Template variables: {{ repo_root }} → {{ repo_path }} etc., inside any
     // string value.
@@ -569,17 +646,82 @@ const DEPRECATION_RULES: &[DeprecationRule] = &[
             Vec::new()
         }
     }),
+    // [list] json-schema unset → pin json-schema = 1 ahead of the default
+    // switching to schema 2. User config only: the key isn't valid in project
+    // config, and the top-level pin covers every repo (per-project overrides
+    // in user config remain the user's own choice).
+    DeprecationRule::PendingDefault {
+        kind: ConfigFileKind::User,
+        migrate: pin_json_schema_doc,
+    },
 ];
+
+/// Pin `[list] json-schema = 1` at the top level when the key is absent.
+///
+/// A `list` slot occupied by a non-table is left alone (serde's type error is
+/// the messaging); a present key of any value is the user's explicit choice,
+/// including out-of-range values, which already warn at resolve time. When
+/// the system config layer defines the key, resolution is already explicit
+/// and a user-file pin would *override* the system value rather than
+/// preserve behavior, so the rule stays inert — the one rule that reads a
+/// second file (detection stays write-free; the common no-system-config case
+/// costs one stat).
+fn pin_json_schema_doc(doc: &mut toml_edit::DocumentMut) -> Deprecations {
+    if system_config_defines_json_schema() {
+        return Vec::new();
+    }
+    // `or_insert` only fills a vacant slot, so a bail through the fallthrough
+    // arm (scalar occupant, key already present) leaves the document
+    // unmodified; an absent `list` becomes the empty table the first arm
+    // then fills.
+    match doc
+        .entry("list")
+        .or_insert(toml_edit::Item::Table(toml_edit::Table::new()))
+    {
+        toml_edit::Item::Table(t) if !t.contains_key("json-schema") => {
+            t.insert("json-schema", toml_edit::value(1));
+        }
+        toml_edit::Item::Value(toml_edit::Value::InlineTable(t))
+            if !t.contains_key("json-schema") =>
+        {
+            t.insert("json-schema", 1.into());
+        }
+        _ => return Vec::new(),
+    }
+    vec![DeprecationKind::JsonSchemaUnset]
+}
+
+/// Whether the system config layer sets `[list] json-schema` (any value, any
+/// table shape). Unreadable or unparsable system config counts as not
+/// defining it.
+fn system_config_defines_json_schema() -> bool {
+    let Some(path) = crate::config::system_config_path() else {
+        return false;
+    };
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
+        return false;
+    };
+    match doc.get("list") {
+        Some(toml_edit::Item::Table(t)) => t.contains_key("json-schema"),
+        Some(toml_edit::Item::Value(toml_edit::Value::InlineTable(t))) => {
+            t.contains_key("json-schema")
+        }
+        _ => false,
+    }
+}
 
 /// Detect deprecations in config content. Pure function, no I/O.
 ///
 /// Returns the detected deprecation patterns. This is the recommended entry
 /// point for deprecation detection.
-pub fn detect_deprecations(content: &str) -> Deprecations {
+pub fn detect_deprecations(content: &str, kind: ConfigFileKind) -> Deprecations {
     let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
         return Vec::new();
     };
-    detect_deprecations_from_doc(&doc)
+    detect_deprecations_from_doc(&doc, kind)
 }
 
 /// Detect deprecations from an already-parsed document.
@@ -588,24 +730,25 @@ pub fn detect_deprecations(content: &str) -> Deprecations {
 /// a warning fires exactly when `wt config update` would change the file.
 /// Pushes kinds in [`DEPRECATION_RULES`] order — the warning-emission order —
 /// so iterating the returned `Vec` reproduces the warning text byte-for-byte.
-fn detect_deprecations_from_doc(doc: &toml_edit::DocumentMut) -> Deprecations {
+fn detect_deprecations_from_doc(
+    doc: &toml_edit::DocumentMut,
+    kind: ConfigFileKind,
+) -> Deprecations {
     let mut scratch = doc.clone();
     let mut kinds = Vec::new();
-    apply_rules(&mut scratch, true, &mut kinds);
+    apply_rules(&mut scratch, RulePass::Update(kind), &mut kinds);
     kinds
 }
 
 /// Run every rule in table order against `doc`, appending each rule's warning
 /// kinds to `kinds` and returning whether the document changed.
 ///
-/// `include_update_only` is false on the load path: [`DeprecationRule::UpdateOnly`]
-/// rewrites are cosmetic or still-valid serde fields, so serde doesn't need
-/// them applied. Detection and [`compute_migrated_content`] pass true.
-fn apply_rules(
-    doc: &mut toml_edit::DocumentMut,
-    include_update_only: bool,
-    kinds: &mut Deprecations,
-) -> bool {
+/// The load pass excludes [`DeprecationRule::UpdateOnly`] rewrites (cosmetic
+/// or still-valid serde fields, so serde doesn't need them applied) and
+/// [`DeprecationRule::PendingDefault`] pins (an in-memory pin would silence
+/// the usage-site nag). Detection and [`compute_migrated_content`] run the
+/// update pass.
+fn apply_rules(doc: &mut toml_edit::DocumentMut, pass: RulePass, kinds: &mut Deprecations) -> bool {
     let mut modified = false;
     for rule in DEPRECATION_RULES {
         match rule {
@@ -615,13 +758,20 @@ fn apply_rules(
                 kinds.extend(new_kinds);
             }
             DeprecationRule::UpdateOnly(migrate) => {
-                if include_update_only {
+                if matches!(pass, RulePass::Update(_)) {
                     let new_kinds = migrate(doc);
                     modified |= !new_kinds.is_empty();
                     kinds.extend(new_kinds);
                 }
             }
             DeprecationRule::Silent(migrate) => modified |= migrate(doc),
+            DeprecationRule::PendingDefault { kind, migrate } => {
+                if pass == RulePass::Update(*kind) {
+                    let new_kinds = migrate(doc);
+                    modified |= !new_kinds.is_empty();
+                    kinds.extend(new_kinds);
+                }
+            }
         }
     }
     modified
@@ -990,7 +1140,7 @@ fn migrate_negated_bool_doc(
 /// renaming is cosmetic (would break `--var` overrides), and approved-commands
 /// is still a valid serde field. They apply in [`compute_migrated_content`].
 fn migrate_content_doc(doc: &mut toml_edit::DocumentMut) -> bool {
-    apply_rules(doc, false, &mut Vec::new())
+    apply_rules(doc, RulePass::Load, &mut Vec::new())
 }
 
 /// Rename `old_key` to `new_key` at the top level and under each `[projects."..."]`.
@@ -1195,8 +1345,9 @@ pub struct DeprecationInfo {
     pub config_path: PathBuf,
     /// All detected deprecations
     pub deprecations: Deprecations,
-    /// Label for this config (e.g., "User config", "Project config")
-    pub label: String,
+    /// Which config file this is; derives the display label and scopes
+    /// [`compute_migrated_content`] to the rules that apply to it.
+    pub kind: ConfigFileKind,
     /// Main worktree path when viewing from a linked worktree (for `-C` in hints)
     pub main_worktree_path: Option<PathBuf>,
 }
@@ -1205,6 +1356,19 @@ impl DeprecationInfo {
     /// Returns true if any deprecations were found
     pub fn has_deprecations(&self) -> bool {
         !self.deprecations.is_empty()
+    }
+
+    /// Display label for this config file (e.g., "User config").
+    pub fn label(&self) -> &'static str {
+        self.kind.label()
+    }
+
+    /// True when the file contains deprecated patterns, as opposed to only
+    /// pending-default pins, which deprecate nothing in the file. `wt config
+    /// show` dumps the config only when this is false: a deprecation diff
+    /// supersedes the dump, while a pending pin is additive.
+    pub fn has_deprecated_patterns(&self) -> bool {
+        self.deprecations.iter().any(|k| !k.is_pending_default())
     }
 }
 
@@ -1235,7 +1399,8 @@ pub struct CheckAndMigrateResult {
 /// the warning is only actionable from the main worktree where the user would
 /// run `wt config update`.
 ///
-/// The `label` is used in the warning message (e.g., "User config" or "Project config").
+/// `kind` names the config file being checked; it derives the warning label
+/// and scopes kind-specific rules (`DeprecationRule::PendingDefault`).
 ///
 /// `repo` is used to resolve the primary worktree path for the "run this from
 /// the main worktree" hint when viewing project config from a linked worktree.
@@ -1252,7 +1417,7 @@ pub fn check_and_migrate(
     path: &Path,
     content: &str,
     warn_and_migrate: bool,
-    label: &str,
+    kind: ConfigFileKind,
     repo: Option<&crate::git::Repository>,
     emit_inline_warnings: bool,
 ) -> anyhow::Result<CheckAndMigrateResult> {
@@ -1262,7 +1427,7 @@ pub fn check_and_migrate(
     // `info` is `Some`) can assume the content parses.
     let (deprecations, migrated_content) = match content.parse::<toml_edit::DocumentMut>() {
         Ok(doc) => {
-            let deprecations = detect_deprecations_from_doc(&doc);
+            let deprecations = detect_deprecations_from_doc(&doc, kind);
             let migrated_content = migrate_content_from_doc(content, doc);
             (deprecations, migrated_content)
         }
@@ -1279,7 +1444,7 @@ pub fn check_and_migrate(
     let info = DeprecationInfo {
         config_path: path.to_path_buf(),
         deprecations,
-        label: label.to_string(),
+        kind,
         main_worktree_path: if !warn_and_migrate {
             repo.and_then(|r| r.repo_path().ok())
                 .map(|p| p.to_path_buf())
@@ -1290,6 +1455,18 @@ pub fn check_and_migrate(
 
     // Skip warning entirely if not in main worktree (for project config)
     if !warn_and_migrate {
+        return Ok(CheckAndMigrateResult {
+            info: Some(info),
+            migrated_content,
+        });
+    }
+
+    // Pending-default kinds warn at their own usage surface instead of at
+    // load, so an info carrying only pins (most user configs until the
+    // json-schema default flips) skips the dedup registry and emission
+    // entirely — no canonicalize + lock on every load for a config with
+    // nothing to say here.
+    if !info.has_deprecated_patterns() {
         return Ok(CheckAndMigrateResult {
             info: Some(info),
             migrated_content,
@@ -1312,26 +1489,24 @@ pub fn check_and_migrate(
     }
 
     // For non-config-show commands, emit per-kind warnings but skip the diff.
-    // The diff is reserved for `wt config show`, where the user has opted into details.
-    //
-    // Some deprecations migrate silently (e.g. the `-create` → `-start` hook
-    // rename): `format_deprecation_warnings` emits nothing for them. The hint is
-    // gated on the warning text being non-empty so a silently-migrated config
-    // produces no stray "run wt config show" line with nothing above it.
+    // The diff is reserved for `wt config show`, where the user has opted into
+    // details. Pending-default kinds still ride along in a mixed info, so
+    // they are filtered out of the emitted lines here.
     if emit_inline_warnings && !warnings_suppressed() {
-        let warnings = format_deprecation_warnings(&info);
-        if !warnings.is_empty() {
-            eprint!("{warnings}");
-            if DEPRECATION_HINT_EMITTED.set(()).is_ok() {
-                eprintln!(
-                    "{}",
-                    hint_message(cformat!(
-                        "To see details, run <underline>wt config show</>; to apply updates, run <underline>wt config update</>"
-                    ))
-                );
-            }
-            std::io::stderr().flush().ok();
+        let warnings = format_warning_lines(
+            info.deprecations.iter().filter(|k| !k.is_pending_default()),
+            info.label(),
+        );
+        eprint!("{warnings}");
+        if DEPRECATION_HINT_EMITTED.set(()).is_ok() {
+            eprintln!(
+                "{}",
+                hint_message(cformat!(
+                    "To see details, run <underline>wt config show</>; to apply updates, run <underline>wt config update</>"
+                ))
+            );
         }
+        std::io::stderr().flush().ok();
     }
 
     Ok(CheckAndMigrateResult {
@@ -1350,14 +1525,14 @@ pub fn check_and_migrate(
 /// Pure function — no filesystem access. Idempotent: feeding its own output
 /// back in is a no-op. Callers materialize the result via `wt config update`
 /// or display it via `wt config show`.
-pub fn compute_migrated_content(content: &str) -> String {
+pub fn compute_migrated_content(content: &str, kind: ConfigFileKind) -> String {
     // Callers (`wt config show`, `wt config update`, `format_deprecation_details`)
     // all run content through `check_and_migrate` first, so it is known to parse.
     let mut doc = content
         .parse::<toml_edit::DocumentMut>()
         .expect("compute_migrated_content called with content that failed TOML parse; callers must funnel through check_and_migrate first");
 
-    if apply_rules(&mut doc, true, &mut Vec::new()) {
+    if apply_rules(&mut doc, RulePass::Update(kind), &mut Vec::new()) {
         doc.to_string()
     } else {
         content.to_string()
@@ -1402,15 +1577,20 @@ pub fn format_migration_diff(original: &str, migrated: &str, label: &str) -> Opt
 /// approved-commands. Used by both `format_deprecation_details` (which adds the
 /// `wt config update` hint and diff) and `wt config update` (which applies directly).
 pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
+    format_warning_lines(&info.deprecations, info.label())
+}
+
+/// Render one `warning_message` line per kind (the commit-generation kind can
+/// emit several). The kinds arrive in emission order, so a single pass
+/// reproduces the original output verbatim.
+fn format_warning_lines<'a>(
+    kinds: impl IntoIterator<Item = &'a DeprecationKind>,
+    label: &str,
+) -> String {
     use std::fmt::Write;
-    let label = &info.label;
     let mut out = String::new();
 
-    // One `warning_message` line per emitted message. The kinds are stored in
-    // emission order, so a single pass reproduces the original output verbatim.
-    // Each arm pushes its own newline so a multi-line kind (commit-generation)
-    // can emit several lines.
-    for kind in &info.deprecations {
+    for kind in kinds {
         match kind {
             DeprecationKind::TemplateVar { old, new } => {
                 let _ = writeln!(
@@ -1495,6 +1675,15 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
                     ))
                 );
             }
+            DeprecationKind::JsonSchemaUnset => {
+                let _ = writeln!(
+                    out,
+                    "{}",
+                    warning_message(cformat!(
+                        "{label}: <bold>[list] json-schema</> is unset; a future release switches the JSON default to schema 2"
+                    ))
+                );
+            }
         }
     }
 
@@ -1532,7 +1721,7 @@ pub fn format_deprecation_details(info: &DeprecationInfo, original_content: &str
         hint_message(cformat!("To apply: <underline>wt config update</>"))
     );
 
-    let migrated = compute_migrated_content(original_content);
+    let migrated = compute_migrated_content(original_content, info.kind);
     let label = info
         .config_path
         .file_name()
@@ -1637,9 +1826,13 @@ pub fn classify_unknown_key<C: WorktrunkConfig>(key: &str) -> UnknownKeyKind {
 /// with `config show` via [`collect_unknown_warnings`](crate::config::collect_unknown_warnings);
 /// this wrapper adds per-path deduplication and stderr emission.
 ///
-/// The `label` is used in the warning message (e.g., "User config" or
-/// "Project config").
-pub fn warn_unknown_fields<C: WorktrunkConfig>(raw_contents: &str, path: &Path, label: &str) {
+/// `kind` derives the label shown in the warning message.
+pub fn warn_unknown_fields<C: WorktrunkConfig>(
+    raw_contents: &str,
+    path: &Path,
+    kind: ConfigFileKind,
+) {
+    let label = kind.label();
     if warnings_suppressed() {
         return;
     }
@@ -1757,7 +1950,7 @@ mod tests {
     }
 
     fn find_deprecated_vars(content: &str) -> Vec<(&'static str, &'static str)> {
-        detect_deprecations(content)
+        detect_deprecations(content, ConfigFileKind::User)
             .into_iter()
             .filter_map(|k| match k {
                 DeprecationKind::TemplateVar { old, new } => Some((old, new)),
@@ -1774,7 +1967,7 @@ mod tests {
     }
 
     fn find_commit_generation_deprecations(content: &str) -> CommitGenerationDeprecations {
-        detect_deprecations(content)
+        detect_deprecations(content, ConfigFileKind::User)
             .into_iter()
             .find_map(|k| match k {
                 DeprecationKind::CommitGeneration(found) => Some(found),
@@ -1784,13 +1977,13 @@ mod tests {
     }
 
     fn find_approved_commands_deprecation(content: &str) -> bool {
-        has_kind(&detect_deprecations(content), |k| {
+        has_kind(&detect_deprecations(content, ConfigFileKind::User), |k| {
             matches!(k, DeprecationKind::ApprovedCommands)
         })
     }
 
     fn find_select_deprecation(content: &str) -> bool {
-        has_kind(&detect_deprecations(content), |k| {
+        has_kind(&detect_deprecations(content, ConfigFileKind::User), |k| {
             matches!(k, DeprecationKind::Select)
         })
     }
@@ -1936,7 +2129,7 @@ post-start = "cd {{ worktree_path }} && npm install"
     #[test]
     fn test_compute_migrated_content_escaped_quotes() {
         let content = "pre-start = \"echo \\\"{{ repo_root }}\\\"\"\n";
-        let migrated = compute_migrated_content(content);
+        let migrated = compute_migrated_content(content, ConfigFileKind::User);
         assert!(
             !migrated.contains("repo_root"),
             "compute_migrated_content must migrate vars inside escaped strings; got: {migrated}"
@@ -2033,20 +2226,25 @@ timeout = 30
 
     /// Canonical config with no deprecations must round-trip through
     /// `compute_migrated_content` byte-for-byte (the unmodified branch).
+    /// Canonical includes an explicit json-schema value — without one the
+    /// pending-default row pins it.
     #[test]
     fn test_compute_migrated_content_noop_returns_input_unchanged() {
-        let content = "pre-start = \"echo {{ repo_path }}\"\n";
-        assert_eq!(compute_migrated_content(content), content);
+        let content = "pre-start = \"echo {{ repo_path }}\"\n\n[list]\njson-schema = 1\n";
+        assert_eq!(
+            compute_migrated_content(content, ConfigFileKind::User),
+            content
+        );
     }
 
     #[test]
     fn test_compute_migrated_content_does_not_rewrite_literal_text_when_other_template_uses_deprecated_var()
      {
-        let content = "pre-merge = \"echo repo_root\"\npost-merge = \"echo {{ repo_root }}\"\n";
-        let migrated = compute_migrated_content(content);
+        let content = "pre-merge = \"echo repo_root\"\npost-merge = \"echo {{ repo_root }}\"\nlist = { json-schema = 1 }\n";
+        let migrated = compute_migrated_content(content, ConfigFileKind::User);
         assert_eq!(
             migrated,
-            "pre-merge = \"echo repo_root\"\npost-merge = \"echo {{ repo_path }}\"\n"
+            "pre-merge = \"echo repo_root\"\npost-merge = \"echo {{ repo_path }}\"\nlist = { json-schema = 1 }\n"
         );
     }
 
@@ -2277,8 +2475,14 @@ approved-commands = [
         let non_existent_path = std::path::Path::new("/nonexistent/dir/config.toml");
 
         // Should return Ok(Some(_)) even if write fails - the function logs error but doesn't fail
-        let result =
-            check_and_migrate(non_existent_path, content, true, "Test config", None, false);
+        let result = check_and_migrate(
+            non_existent_path,
+            content,
+            true,
+            ConfigFileKind::User,
+            None,
+            false,
+        );
         assert!(result.is_ok());
         assert!(result.unwrap().info.is_some());
     }
@@ -2291,12 +2495,26 @@ approved-commands = [
         let unique_path = std::path::Path::new("/nonexistent/dedup_test_12345/config.toml");
 
         // First call should process normally
-        let result1 = check_and_migrate(unique_path, content, true, "Test config", None, false);
+        let result1 = check_and_migrate(
+            unique_path,
+            content,
+            true,
+            ConfigFileKind::User,
+            None,
+            false,
+        );
         assert!(result1.is_ok());
         assert!(result1.unwrap().info.is_some());
 
         // Second call with same path should early-return (hits the deduplication branch)
-        let result2 = check_and_migrate(unique_path, content, true, "Test config", None, false);
+        let result2 = check_and_migrate(
+            unique_path,
+            content,
+            true,
+            ConfigFileKind::User,
+            None,
+            false,
+        );
         assert!(result2.is_ok());
         assert!(result2.unwrap().info.is_some());
     }
@@ -2312,7 +2530,7 @@ pager = "delta"
             std::path::Path::new("/tmp/config.toml"),
             content,
             true,
-            "Test config",
+            ConfigFileKind::User,
             None,
             false,
         )
@@ -2938,16 +3156,22 @@ ff = false
 
 [ci]
 platform = "github"
+
+[list]
+json-schema = 1
 "#;
         assert_eq!(migrate_content(content), content);
-        assert!(detect_deprecations(content).is_empty());
+        assert!(detect_deprecations(content, ConfigFileKind::User).is_empty());
     }
 
     /// The framework invariant: a warning fires exactly when `wt config
     /// update` would change the file. Degenerate configs that can't be safely
     /// rewritten produce no warning and no rewrite; deprecated configs
     /// produce both. (Silent renames change the file without warning by
-    /// design and aren't part of this battery.)
+    /// design and aren't part of this battery. Every case gets an explicit
+    /// json-schema pin appended so only the rule under test drives the diff;
+    /// the pending-default row satisfies the same invariant with its warning
+    /// at the JSON-emitting surface — see `test_json_schema_pin_iff`.)
     #[test]
     fn test_warning_fires_iff_update_changes() {
         let untouched = [
@@ -2973,12 +3197,13 @@ platform = "github"
             "[projects.\"github.com/u/r\"]\napproved-commands = []\n",
         ];
         for content in untouched {
+            let content = &format!("{content}\n[list]\njson-schema = 1\n");
             assert!(
-                detect_deprecations(content).is_empty(),
+                detect_deprecations(content, ConfigFileKind::User).is_empty(),
                 "no warning expected for:\n{content}"
             );
             assert_eq!(
-                compute_migrated_content(content),
+                &compute_migrated_content(content, ConfigFileKind::User),
                 content,
                 "no rewrite expected for:\n{content}"
             );
@@ -2998,19 +3223,123 @@ platform = "github"
             "[projects.\"github.com/u/r\"]\napproved-commands = [\"npm test\"]\n",
         ];
         for content in rewritten {
+            let content = &format!("{content}\n[list]\njson-schema = 1\n");
             assert!(
-                !detect_deprecations(content).is_empty(),
+                !detect_deprecations(content, ConfigFileKind::User).is_empty(),
                 "warning expected for:\n{content}"
             );
-            let migrated = compute_migrated_content(content);
-            assert_ne!(migrated, content, "rewrite expected for:\n{content}");
+            let migrated = compute_migrated_content(content, ConfigFileKind::User);
+            assert_ne!(&migrated, content, "rewrite expected for:\n{content}");
             // The user-visible loop closes: applying the update silences the
             // warning.
             assert!(
-                detect_deprecations(&migrated).is_empty(),
+                detect_deprecations(&migrated, ConfigFileKind::User).is_empty(),
                 "no warning expected after update for:\n{migrated}"
             );
         }
+    }
+
+    /// The pending-default row's own iff: the unset nag (fired by
+    /// `resolve_json_schema`, not at config load) corresponds exactly to
+    /// `wt config update` pinning the key.
+    #[test]
+    fn test_json_schema_pin_iff() {
+        // Unset → detected and pinned, and applying the update closes the loop.
+        let migrated = compute_migrated_content("", ConfigFileKind::User);
+        insta::assert_snapshot!(migrated, @r#"
+        [list]
+        json-schema = 1
+        "#);
+        assert!(matches!(
+            detect_deprecations("", ConfigFileKind::User).as_slice(),
+            [DeprecationKind::JsonSchemaUnset]
+        ));
+        assert!(detect_deprecations(&migrated, ConfigFileKind::User).is_empty());
+
+        // Any present value is the user's explicit choice — including
+        // out-of-range ones, which warn at resolve time instead.
+        let untouched = [
+            "[list]\njson-schema = 1\n",
+            "[list]\njson-schema = 2\n",
+            "[list]\njson-schema = 42\n",
+            "list = { json-schema = 2 }\n",
+            // a non-table `list` is left for serde's type error
+            "list = 5\n",
+        ];
+        for content in untouched {
+            assert!(
+                detect_deprecations(content, ConfigFileKind::User).is_empty(),
+                "no detection expected for:\n{content}"
+            );
+            assert_eq!(
+                compute_migrated_content(content, ConfigFileKind::User),
+                content,
+                "no rewrite expected for:\n{content}"
+            );
+        }
+    }
+
+    /// The pin lands inside an existing `[list]` section (either shape)
+    /// rather than duplicating it.
+    #[test]
+    fn test_json_schema_pin_joins_existing_list_section() {
+        let migrated =
+            compute_migrated_content("[list]\ncolumns = [\"ci\"]\n", ConfigFileKind::User);
+        insta::assert_snapshot!(migrated, @r#"
+        [list]
+        columns = ["ci"]
+        json-schema = 1
+        "#);
+
+        let migrated =
+            compute_migrated_content("list = { columns = [\"ci\"] }\n", ConfigFileKind::User);
+        insta::assert_snapshot!(migrated, @r#"list = { columns = ["ci"] , json-schema = 1 }"#);
+
+        // A `list` that exists only implicitly (via a subtable) hosts the pin
+        // too; toml_edit renders the now-explicit [list] header ahead of the
+        // subtable.
+        let migrated = compute_migrated_content(
+            "[list.custom-columns]\nflag = \"echo hi\"\n",
+            ConfigFileKind::User,
+        );
+        insta::assert_snapshot!(migrated, @r#"
+        [list]
+        json-schema = 1
+        [list.custom-columns]
+        flag = "echo hi"
+        "#);
+    }
+
+    /// Every `PendingDefault` row's kinds must return true from
+    /// `is_pending_default` — that flag is what keeps their warning off the
+    /// load surface and out of `has_deprecated_patterns`. A row emitting a
+    /// non-pending kind would leak a load warning and suppress the
+    /// `wt config show` dump.
+    #[test]
+    fn test_pending_default_rules_emit_pending_kinds() {
+        for rule in DEPRECATION_RULES {
+            if let DeprecationRule::PendingDefault { migrate, .. } = rule {
+                let mut doc = toml_edit::DocumentMut::new();
+                let kinds = migrate(&mut doc);
+                assert!(!kinds.is_empty(), "pending rule inert on an empty doc");
+                for kind in kinds {
+                    assert!(kind.is_pending_default(), "{kind:?}");
+                }
+            }
+        }
+    }
+
+    /// The pin is scoped to user config — project config doesn't own the key,
+    /// and the system layer isn't rewritten by `wt config update` — and to
+    /// the update pass: an in-memory pin at load would read as an explicit
+    /// setting and silence the usage-site nag.
+    #[test]
+    fn test_json_schema_pin_scope() {
+        for kind in [ConfigFileKind::System, ConfigFileKind::Project] {
+            assert!(detect_deprecations("", kind).is_empty());
+            assert_eq!(compute_migrated_content("", kind), "");
+        }
+        assert_eq!(migrate_content(""), "");
     }
 
     /// A `timeout-ms` written under `[select]` is reported by the timeout
@@ -3018,7 +3347,10 @@ platform = "github"
     /// (Previously it was dropped on load with only the `[select]` warning.)
     #[test]
     fn test_select_timeout_ms_warns_both_kinds() {
-        let deprecations = detect_deprecations("[select]\npager = \"delta\"\ntimeout-ms = 500\n");
+        let deprecations = detect_deprecations(
+            "[select]\npager = \"delta\"\ntimeout-ms = 500\n",
+            ConfigFileKind::User,
+        );
         assert!(has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::Select
@@ -3265,7 +3597,7 @@ approved-commands = ["npm install"]
 [projects."github.com/user/repo"]
 approved-commands = ["npm install"]
 "#;
-        let deprecations = detect_deprecations(content);
+        let deprecations = detect_deprecations(content, ConfigFileKind::User);
         assert!(has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::ApprovedCommands
@@ -3289,7 +3621,7 @@ approved-commands = ["npm install"]
         let info = DeprecationInfo {
             config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
             deprecations: vec![DeprecationKind::ApprovedCommands],
-            label: "User config".to_string(),
+            kind: ConfigFileKind::User,
             main_worktree_path: None,
         };
         let output = format_deprecation_details(&info, content);
@@ -3312,7 +3644,7 @@ approved-commands = ["npm install"]
 [projects."github.com/user/repo"]
 approved-commands = ["npm install"]
 "#;
-        let migrated = compute_migrated_content(content);
+        let migrated = compute_migrated_content(content, ConfigFileKind::User);
         assert!(!migrated.contains("approved-commands"));
     }
 
@@ -3652,7 +3984,7 @@ full = true
 [select]
 pager = "delta"
 "#;
-        let deprecations = detect_deprecations(content);
+        let deprecations = detect_deprecations(content, ConfigFileKind::User);
         assert!(has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::Select
@@ -3682,7 +4014,7 @@ pager = "delta --paging=never"
         let info = DeprecationInfo {
             config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
             deprecations: vec![DeprecationKind::Select],
-            label: "User config".to_string(),
+            kind: ConfigFileKind::User,
             main_worktree_path: None,
         };
         let output = format_deprecation_details(&info, content);
@@ -3703,7 +4035,7 @@ pager = "delta --paging=never"
 [select]
 pager = "delta --paging=never"
 "#;
-        let migrated = compute_migrated_content(content);
+        let migrated = compute_migrated_content(content, ConfigFileKind::User);
         assert!(
             migrated.contains("[switch.picker]"),
             "Migrated content should have [switch.picker]: {migrated}"
@@ -3784,8 +4116,11 @@ post-start = "new"
 
 [post-create]
 server = "npm run dev"
+
+[list]
+json-schema = 1
 "#;
-        let migrated = compute_migrated_content(content);
+        let migrated = compute_migrated_content(content, ConfigFileKind::User);
         insta::assert_snapshot!(migration_diff(content, &migrated));
     }
 
@@ -3796,7 +4131,7 @@ server = "npm run dev"
 pager = "delta"
 timeout-ms = 500
 "#;
-        let deprecations = detect_deprecations(content);
+        let deprecations = detect_deprecations(content, ConfigFileKind::User);
         assert!(has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::SwitchPickerTimeout
@@ -3810,7 +4145,7 @@ timeout-ms = 500
 [projects."github.com/user/repo".switch.picker]
 timeout-ms = 300
 "#;
-        let deprecations = detect_deprecations(content);
+        let deprecations = detect_deprecations(content, ConfigFileKind::User);
         assert!(has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::SwitchPickerTimeout
@@ -3823,7 +4158,7 @@ timeout-ms = 300
 [switch]
 picker = { pager = "delta", timeout-ms = 500 }
 "#;
-        let deprecations = detect_deprecations(content);
+        let deprecations = detect_deprecations(content, ConfigFileKind::User);
         assert!(has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::SwitchPickerTimeout
@@ -3847,7 +4182,7 @@ picker = { pager = "delta", timeout-ms = 500 }
 [switch.picker]
 pager = "delta"
 "#;
-        let deprecations = detect_deprecations(content);
+        let deprecations = detect_deprecations(content, ConfigFileKind::User);
         assert!(!has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::SwitchPickerTimeout
@@ -3906,7 +4241,7 @@ pager = "delta"
         let info = DeprecationInfo {
             config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
             deprecations: vec![DeprecationKind::SwitchPickerTimeout],
-            label: "User config".to_string(),
+            kind: ConfigFileKind::User,
             main_worktree_path: None,
         };
         let output = format_deprecation_warnings(&info);
@@ -3927,7 +4262,7 @@ pager = "delta"
         let info = DeprecationInfo {
             config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
             deprecations: vec![DeprecationKind::NoFf, DeprecationKind::NoCd],
-            label: "User config".to_string(),
+            kind: ConfigFileKind::User,
             main_worktree_path: None,
         };
         let output = format_deprecation_warnings(&info);
@@ -3937,7 +4272,7 @@ pager = "delta"
 
     #[test]
     fn test_detect_no_ff_deprecation() {
-        let deprecations = detect_deprecations("[merge]\nno-ff = true\n");
+        let deprecations = detect_deprecations("[merge]\nno-ff = true\n", ConfigFileKind::User);
         assert!(has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::NoFf
@@ -3951,7 +4286,7 @@ pager = "delta"
     #[test]
     fn test_no_ff_warned_and_removed_when_ff_exists() {
         let content = "[merge]\nff = true\nno-ff = true\n";
-        let deprecations = detect_deprecations(content);
+        let deprecations = detect_deprecations(content, ConfigFileKind::User);
         assert!(has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::NoFf
@@ -3964,7 +4299,7 @@ pager = "delta"
 
     #[test]
     fn test_detect_no_cd_deprecation() {
-        let deprecations = detect_deprecations("[switch]\nno-cd = true\n");
+        let deprecations = detect_deprecations("[switch]\nno-cd = true\n", ConfigFileKind::User);
         assert!(has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::NoCd
@@ -3977,7 +4312,7 @@ pager = "delta"
 [projects."github.com/user/repo".merge]
 no-ff = true
 "#;
-        let deprecations = detect_deprecations(content);
+        let deprecations = detect_deprecations(content, ConfigFileKind::User);
         assert!(has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::NoFf
@@ -4049,7 +4384,7 @@ no-ff = true
 [projects."github.com/user/repo".select]
 pager = "bat"
 "#;
-        let deprecations = detect_deprecations(content);
+        let deprecations = detect_deprecations(content, ConfigFileKind::User);
         assert!(has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::Select
@@ -4149,7 +4484,7 @@ ff = true
         warn_unknown_fields::<ProjectConfig>(
             "[commit-generation]\ncommand = \"llm\"\n",
             &path,
-            "Project config",
+            ConfigFileKind::Project,
         );
     }
 
@@ -4187,16 +4522,16 @@ server = "npm run dev"
 [projects."github.com/user/repo"]
 approved-commands = ["npm test"]
 "#;
-        let migrated = compute_migrated_content(content);
+        let migrated = compute_migrated_content(content, ConfigFileKind::User);
         assert_eq!(
-            compute_migrated_content(&migrated),
+            compute_migrated_content(&migrated, ConfigFileKind::User),
             migrated,
             "migration must be idempotent"
         );
         assert!(
-            detect_deprecations(&migrated).is_empty(),
+            detect_deprecations(&migrated, ConfigFileKind::User).is_empty(),
             "applying the update must silence every warning; got {:?}",
-            detect_deprecations(&migrated)
+            detect_deprecations(&migrated, ConfigFileKind::User)
         );
         insta::assert_snapshot!(migration_diff(content, &migrated));
     }
