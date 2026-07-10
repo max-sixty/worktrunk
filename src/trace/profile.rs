@@ -22,7 +22,7 @@
 //! data over `&[TraceEntry]` and carries no styling, so it compiles without the
 //! `cli` feature and is shared by `wt config state logs profile` (which renders
 //! via [`Profile::render_text`] or serializes the struct for `--format=json`) and
-//! `wt diagnose` (which embeds the rendered text). The struct's `Serialize` impl
+//! the `-vv` diagnostic report (`diagnostic.md`, which embeds the rendered text). The struct's `Serialize` impl
 //! is the single canonical JSON source.
 //!
 //! [`benches/CLAUDE.md`]: ../../../benches/CLAUDE.md

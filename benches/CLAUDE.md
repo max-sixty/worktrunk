@@ -184,7 +184,7 @@ because its ~15 GiB fixture must never build on a hosted CI runner):
 | `prune_e2e/dry_run_warm` | ~90 ms | steady-state re-scan, probes hit sha_cache |
 | `prune_e2e/live` | ~620 ms | cold scan + serial removal of the 8 candidates (~60 ms each, under the scan write lock) |
 | `prune_real_repo/dry_run_warm` | ~0.3–0.8 s | steady-state scan of 72 items (36 worktrees + 36 branches) at 331k-commit scale |
-| `remove_e2e/first_output` | ~86 ms | single-target validation up to first output |
+| `first_output/remove` | ~86 ms | single-target validation up to first output (`benches/time_to_first_output.rs`) |
 
 Cold and live at rust scale are **one-shot timelines, not criterion groups**
 (a cold criterion iteration costs ~1 min in re-hashing statuses alone; a live
