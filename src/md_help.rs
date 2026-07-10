@@ -302,7 +302,19 @@ fn render_table_with_termimad(lines: &[&str], indent: &str, max_width: Option<us
         .unwrap_or(DEFAULT_HELP_WIDTH);
 
     let skin = help_table_skin();
-    let rendered = skin.text(&markdown, Some(width)).to_string();
+    // termimad 0.34.1 panics with an out-of-bounds index on a *ragged* table —
+    // a row with more cells than the header — when it's rendered at a width too
+    // narrow to fit the widest row. Its column fitter (`Table::fix_columns`,
+    // termimad's src/tbl.rs) takes an error path that skips padding the short
+    // rows, then indexes past them. PR-comment markdown is untrusted and can
+    // contain such a table (issue #3407), and the picker renders comment bodies
+    // through here on a rayon worker — an escaped panic aborts the whole
+    // process. Contain it and fall back to the plain preprocessed lines so the
+    // pane still shows the table's text rather than crashing `wt switch`.
+    let rendered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        skin.text(&markdown, Some(width)).to_string()
+    }))
+    .unwrap_or_else(|_| processed.join("\n"));
 
     // Add indent to each line
     if indent.is_empty() {
@@ -854,6 +866,29 @@ mod tests {
         A   B  
         1   2
         ");
+    }
+
+    #[test]
+    fn test_render_table_ragged_narrow_does_not_panic() {
+        // Regression for #3407. termimad 0.34.1 panics with an out-of-bounds
+        // index when a *ragged* table — a row with more cells than the header —
+        // is rendered at a narrow width: its column fitter (`Table::fix_columns`
+        // in termimad's src/tbl.rs) takes an error path that skips cell padding,
+        // then indexes past the shorter row. PR-comment markdown is untrusted and
+        // can contain such a table, and the picker renders comment bodies through
+        // here, so this used to abort `wt switch`. The render must degrade to
+        // plain text instead of crashing.
+        let lines = vec![
+            "| Key | Value |",
+            "| --- | --- |",
+            "| alpha | beta | gamma | delta | epsilon | zeta |",
+        ];
+        let result = render_table(&lines, Some(20));
+        let plain = ansi_str::AnsiStr::ansi_strip(&result);
+        assert!(
+            plain.contains("alpha") && plain.contains("zeta"),
+            "fallback should still surface the table's cell text: {plain}"
+        );
     }
 
     #[test]
