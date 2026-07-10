@@ -1893,10 +1893,10 @@ fn remove_removed_worktree_silently(
 
 /// Run a shell command with streaming output, signal forwarding, and ANSI reset.
 ///
-/// Unified entry point for all foreground command execution — hooks, aliases,
-/// and `for-each` all call this. The background pipeline runner
-/// (`run_pipeline.rs`) has its own spawning logic since it redirects to log
-/// files and runs detached.
+/// Entry point for foreground hook and alias execution. `wt step for-each`
+/// (`for_each.rs`, direct argv exec with no shell) and the background
+/// pipeline runner (`run_pipeline.rs`, redirects to log files and runs
+/// detached) have their own spawning logic.
 ///
 /// Capabilities: optional stdout→stderr redirect for deterministic ordering,
 /// SIGINT/SIGTERM forwarding to child process group, ANSI reset before child

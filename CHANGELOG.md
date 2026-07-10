@@ -6,6 +6,10 @@
 
 - **`-vv` diagnostics surface pager and terminal environment**: The diagnostic report (`.git/wt/logs/diagnostic.md`, written on every `-vv` run) gained an "Environment variables" section listing a curated, non-secret allowlist of the pager / terminal / locale knobs (`PAGER`, `GIT_PAGER`, `TERM`, `COLUMNS`, `NO_COLOR`, `LANG`, …) plus git's resolved `core.pager`. These are the inputs that most often explain a rendering bug — like a pager interaction suspending `wt config show` ([#3322](https://github.com/max-sixty/worktrunk/issues/3322)) — and they were previously invisible in the report. The list is a strict allowlist, never a blanket `env` dump, so no credential-bearing variable can leak into an uploaded report.
 
+### Fixed
+
+- **`wt step for-each` and the `--execute` fallback no longer inherit `wt`'s `GIT_*` discovery vars**: The command that for-each runs in each worktree — and the `--execute` payload, when `wt` executes it directly because shell integration isn't active — now discovers its repository from the worktree `wt` placed it in, rather than an inherited `GIT_DIR`/`GIT_WORK_TREE`. Previously such a command's `git` calls resolved against the one inherited repo (e.g. the invoking worktree, when `wt` runs as a `!wt` git alias from a linked worktree) while the per-worktree headers claimed otherwise. This extends the hook-spawn scrub from [#3374](https://github.com/max-sixty/worktrunk/pull/3374) to the remaining spawn sites that relocate a user command into a `wt`-chosen worktree; aliases and `commit.generation` commands run in the user's own context and keep the inherited environment. ([#3373](https://github.com/max-sixty/worktrunk/issues/3373))
+
 ## 0.66.0
 
 ### Improved
