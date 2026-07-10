@@ -3151,6 +3151,63 @@ fn test_remove_sweeps_stale_trash_entries(mut repo: TestRepo) {
     );
 }
 
+/// `wt remove -vv` traces the end-of-command fsmonitor sweep: the
+/// `enumerate-fsmonitor-daemons` span appears and the machine-wide daemon
+/// count is surfaced, so a slow sweep (per-PID `lsof` resolution) is
+/// explainable from the trace. `pgrep` is mocked to report one bogus PID —
+/// CI runners have no real fsmonitor daemons, so the count line is otherwise
+/// unreachable — and `lsof` is mocked to fail its per-PID resolution, which
+/// the best-effort sweep treats as "no daemons".
+#[rstest]
+#[cfg(unix)]
+fn test_remove_vv_traces_fsmonitor_sweep(mut repo: TestRepo) {
+    use crate::common::mock_commands::{MockConfig, MockResponse};
+
+    let bin_dir = repo.root_path().join(".bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    MockConfig::new("pgrep")
+        .command("_default", MockResponse::output("999999999\n"))
+        .write(&bin_dir);
+    MockConfig::new("lsof")
+        .command("_default", MockResponse::exit(1))
+        .write(&bin_dir);
+
+    let mut paths: Vec<std::path::PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default();
+    paths.insert(0, bin_dir.clone());
+    let new_path = std::env::join_paths(&paths).unwrap();
+
+    repo.add_worktree("feature-fsmon");
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature-fsmon", "-vv"])
+        .env("PATH", &new_path)
+        .env("MOCK_CONFIG_DIR", &bin_dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt remove should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // -vv streams primary output to stderr but writes trace records to the
+    // log files; the sweep runs in the foreground process, so its records are
+    // complete once the command exits.
+    let trace_log =
+        crate::common::resolve_git_common_dir(repo.root_path()).join("wt/logs/trace.log");
+    let trace = std::fs::read_to_string(&trace_log).unwrap();
+    assert!(
+        trace.contains("◷ enumerate-fsmonitor-daemons"),
+        "sweep span should appear in the -vv trace. trace.log: {trace}"
+    );
+    assert!(
+        trace.contains("resolving sockets for 1 daemon(s) via lsof"),
+        "sweep should surface the daemon count. trace.log: {trace}"
+    );
+}
+
 /// Tests that foreground removal shows remaining directory entries when
 /// `git worktree remove` fails because a directory can't be deleted.
 ///
