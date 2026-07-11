@@ -1,6 +1,5 @@
 ---
 source: tests/integration_tests/help.rs
-assertion_line: 53
 info:
   program: wt
   args:
