@@ -16,6 +16,8 @@
 
 ### Fixed
 
+- **Claude plugin hooks load again**: The Claude activity (🤖/💬) and `WorktreeCreate`/`WorktreeRemove` hooks stopped loading after the hooks file was renamed to `claude-hooks.json` in [#3382](https://github.com/max-sixty/worktrunk/pull/3382). Claude Code discovers plugin hooks by convention at `hooks/hooks.json` and does not honor `plugin.json`'s string-path `hooks` override for plugin loads, so the renamed file was never read — `/hooks` showed no worktrunk handlers and the markers silently stopped updating. The file is restored to the conventional `hooks/hooks.json`; the #3362 Codex collision the rename guarded against stays closed because the Codex manifest defines its hooks inline, which overrides Codex's convention discovery independently of the filename. ([#3417](https://github.com/max-sixty/worktrunk/issues/3417), thanks @avdi for reporting)
+
 - **`wt switch` no longer crashes on ragged tables in PR comments**: A PR/MR comment table with more cells in a data row than in its header could panic termimad's column fitter at narrow widths, and because the comments preview renders on a background worker, the panic aborted the whole picker. The table render is now contained; the preview falls back to the table's plain text. ([#3408](https://github.com/max-sixty/worktrunk/pull/3408), closes [#3407](https://github.com/max-sixty/worktrunk/issues/3407), thanks @ortonomy for reporting)
 
 - **`wt config show` no longer suspends on the zsh completion probe**: The interactive zsh probe that detects a missing `compinit` claims the terminal foreground when job control is on; a slow or prompting zsh startup could hit the probe's kill-on-timeout before the foreground was restored, leaving `wt` in a background process group and its pager suspended with `suspended (tty output)`. Both interactive probes now run with job control disabled (`zsh +m`), so a timed-out probe can't strand the terminal. ([#3327](https://github.com/max-sixty/worktrunk/pull/3327), closes [#3322](https://github.com/max-sixty/worktrunk/issues/3322), thanks @karmeleon for reporting)
@@ -31,8 +33,6 @@
 - **Code Signing Policy page**: A new page documents Worktrunk's code-signing policy for the Windows binaries under the [SignPath Foundation](https://signpath.org/) open-source program: certificate provenance, the signing pipeline, and per-release approval. Signing addresses Microsoft Defender's false positives on unsigned native binaries. [Docs](https://worktrunk.dev/code-signing/) ([#3366](https://github.com/max-sixty/worktrunk/pull/3366), thanks @bemnlam for reporting [#3355](https://github.com/max-sixty/worktrunk/issues/3355))
 
 ### Internal
-
-- **Claude plugin hooks are Claude-scoped**: The plugin's hooks file is renamed `hooks.json` → `claude-hooks.json` so Codex's convention discovery can't pick up Claude's hooks, hardening the Codex scoping shipped in 0.66.0. ([#3382](https://github.com/max-sixty/worktrunk/pull/3382), thanks @ofek for the suggestion)
 
 - **skim 5.0**: The picker's fuzzy-finder library moves from 4.10 to 5.0, dropping roughly 1,000 lines of transitive dependencies from the lockfile. ([#3378](https://github.com/max-sixty/worktrunk/pull/3378))
 

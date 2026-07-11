@@ -19,9 +19,11 @@ worktrunk/                          ← repo root = marketplace root
     ├── plugin.json                 ← Claude manifest (NO .claude-plugin/ wrapper —
     │                                  the wrapper is marketplace-root-only)
     ├── .codex-plugin/plugin.json   ← Codex manifest (Codex's required wrapper)
-    ├── hooks/claude-hooks.json     ← Claude activity + WorktreeCreate/Remove hooks
-    │                                  (Claude-scoped name — a plain hooks/hooks.json
-    │                                  would be auto-discovered by Codex, see #3362)
+    ├── hooks/hooks.json            ← Claude activity + WorktreeCreate/Remove hooks
+    │                                  (the conventional path Claude Code's loader
+    │                                  discovers — a Claude-scoped filename is NOT
+    │                                  honored by the string-path override, see #3417;
+    │                                  Codex is kept off it by its inline manifest, #3362)
     ├── hooks/wt.sh                 ← canonical hook shim; Claude reaches it via
     │                                  $CLAUDE_PLUGIN_ROOT, Codex via $PLUGIN_ROOT,
     │                                  Gemini via
@@ -37,9 +39,13 @@ Path resolution differs by tool, all verified end-to-end against the real CLIs:
 
 - **Claude**: `.claude-plugin/marketplace.json` `source: "./plugins/worktrunk"`.
   Claude reads `plugins/worktrunk/plugin.json` (at the plugin root, *not* a
-  `.claude-plugin/` subdir). `hooks` and `skills` paths in `plugin.json` resolve
-  from the plugin root, so `./skills/worktrunk` follows the `skills` symlink to
-  the repo-root `skills/worktrunk`. `$CLAUDE_PLUGIN_ROOT` is the plugin root.
+  `.claude-plugin/` subdir). `skills` paths in `plugin.json` resolve from the
+  plugin root, so `./skills/worktrunk` follows the `skills` symlink to the
+  repo-root `skills/worktrunk`. Hooks are different: Claude's loader discovers
+  them by **convention** at `hooks/hooks.json` and does not honor the
+  string-path `hooks` override for plugin loads, so the file must sit at that
+  conventional path (#3417) even though `plugin.json` still names it.
+  `$CLAUDE_PLUGIN_ROOT` is the plugin root.
 - **Codex**: `.agents/plugins/marketplace.json` `source` object
   `{ "source": "local", "path": "./plugins/worktrunk" }`. Codex reads
   `plugins/worktrunk/.codex-plugin/plugin.json`. `skills: "./skills/"` resolves
@@ -71,9 +77,10 @@ The 💬 transitions overlap deliberately: `Notification` covers the documented 
 
 ### Codex activity hooks (marker persists after session end)
 
-The Claude manifest carries `hooks: "./hooks/claude-hooks.json"` (a path); the Codex manifest carries `hooks` as an **inline object**, `{ "hooks": { … } }`, embedding a Codex-tailored hooks file directly. The distinction is deliberate:
+The Claude manifest carries `hooks: "./hooks/hooks.json"` (a path); the Codex manifest carries `hooks` as an **inline object**, `{ "hooks": { … } }`, embedding a Codex-tailored hooks file directly. The distinction is deliberate:
 
-- **Why inline, not a path or an absent key.** Claude and Codex share one payload dir, and Codex auto-discovers a `hooks/hooks.json` at the plugin root by convention (`DEFAULT_HOOKS_CONFIG_FILE`, the `None` branch of `load_plugin_hooks`). Historically the Claude hooks lived at exactly that path, so a Codex session surfaced Worktrunk's *Claude* events ([#3362](https://github.com/max-sixty/worktrunk/issues/3362)). Two independent things now keep a Codex session clean: (1) the Claude file is **Claude-scoped** — `hooks/claude-hooks.json`, not the conventional `hooks/hooks.json` — so Codex's discovery lookup finds nothing at the plugin root; and (2) the Codex manifest carries its own hooks **inline**, taking Codex's `Some(Inline)` branch (`resolve_manifest_hooks` in `codex-rs/core-plugins/src/manifest.rs`). The inline object is the functional definition of the Codex-native events *and* overrides discovery, so even if a `hooks/hooks.json` ever reappeared at the plugin root it would not be loaded. The Claude-scoped filename makes the #3362 collision structurally impossible; the inline manifest is what actually drives Codex's markers.
+- **Why the Claude file sits at the conventional `hooks/hooks.json`.** Claude Code's loader discovers plugin hooks by convention at `hooks/hooks.json`; it does **not** honor the string-path `hooks` override in `plugin.json` for plugin loads. A Claude-scoped filename (`hooks/claude-hooks.json`) therefore loads *nothing* — `/hooks` shows no worktrunk handlers and the 🤖/💬 markers stop updating, silently ([#3417](https://github.com/max-sixty/worktrunk/issues/3417)). So the file must live at the conventional path.
+- **Why inline for Codex, not a path or an absent key.** Claude and Codex share one payload dir, and Codex *also* auto-discovers `hooks/hooks.json` at the plugin root by convention (`DEFAULT_HOOKS_CONFIG_FILE`, the `None` branch of `load_plugin_hooks`) — which once surfaced Worktrunk's *Claude* events in a Codex session ([#3362](https://github.com/max-sixty/worktrunk/issues/3362)). The Codex manifest carries its own hooks **inline**, taking Codex's `Some(Inline)` branch (`resolve_manifest_hooks` in `codex-rs/core-plugins/src/manifest.rs`), which **overrides** convention discovery. The inline object is both the functional definition of the Codex-native events and the thing that keeps Codex off the shared `hooks/hooks.json`, so the two toolchains coexist on one file: Claude discovers it, Codex ignores it. (An earlier revision Claude-scoped the filename as belt-and-suspenders against #3362, but that broke Claude's discovery — #3417 — and the inline override already made it redundant.)
 - **Why `$PLUGIN_ROOT`, not `$CLAUDE_PLUGIN_ROOT`.** Codex exports both to hook commands (`PLUGIN_ROOT` native, `CLAUDE_PLUGIN_ROOT` as an OOTB-compat alias — `codex-rs/hooks/src/engine/discovery.rs`). The Codex file uses the native `$PLUGIN_ROOT` so nothing Claude-branded appears in a Codex session.
 
 The events (Codex's `HookEventsToml` vocabulary, verified against `codex-rs/config/src/hook_config.rs`):
