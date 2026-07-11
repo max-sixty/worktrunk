@@ -576,6 +576,13 @@ The swap uses `rename()` for each entry — fast regardless of entry size, since
         /// Defaults to current branch, or default branch from main worktree.
         #[arg(add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
+
+        /// Output format
+        ///
+        /// JSON prints structured result to stdout after the promote completes.
+        /// The mismatch warning still appears on stderr in JSON mode (safety signal).
+        #[arg(long, default_value = "text", help_heading = "Automation")]
+        format: crate::cli::SwitchFormat,
     },
 
     /// \[experimental\] Remove worktrees merged into the default branch

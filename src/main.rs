@@ -378,18 +378,38 @@ fn handle_step_command(
         ),
         StepCommand::Eval { template, format } => step_eval(&template, format),
         StepCommand::ForEach { format, args } => step_for_each(args, format),
-        StepCommand::Promote { branch } => {
-            handle_promote(branch.as_deref()).map(|result| match result {
-                commands::PromoteResult::Promoted => (),
-                commands::PromoteResult::AlreadyInMain(branch) => {
-                    eprintln!(
-                        "{}",
-                        info_message(cformat!(
-                            "Branch <bold>{branch}</> is already in main worktree"
-                        ))
-                    );
-                }
-            })
+        StepCommand::Promote { branch, format } => {
+            let json_mode = format == SwitchFormat::Json;
+            let result = handle_promote(branch.as_deref(), json_mode)?;
+            if format == SwitchFormat::Json {
+                let output = match &result {
+                    commands::PromoteResult::Promoted {
+                        target,
+                        main_branch,
+                        swapped,
+                        mismatch,
+                    } => serde_json::json!({
+                        "outcome": "promoted",
+                        "target": target,
+                        "main_branch": main_branch,
+                        "swapped": swapped,
+                        "mismatch": mismatch,
+                    }),
+                    commands::PromoteResult::AlreadyInMain(branch) => serde_json::json!({
+                        "outcome": "already_in_main",
+                        "branch": branch,
+                    }),
+                };
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else if let commands::PromoteResult::AlreadyInMain(branch) = &result {
+                eprintln!(
+                    "{}",
+                    info_message(cformat!(
+                        "Branch <bold>{branch}</> is already in main worktree"
+                    ))
+                );
+            }
+            Ok(())
         }
         StepCommand::Prune {
             dry_run,
