@@ -877,7 +877,10 @@ mod tests {
         // columns to fit width 20, so we don't assert on specific cell text —
         // reaching this line at all is the proof the panic is gone.
         let result = render_table(&lines, Some(20));
-        assert!(!result.is_empty(), "render should complete and produce output");
+        assert!(
+            !result.is_empty(),
+            "render should complete and produce output"
+        );
     }
 
     #[test]
