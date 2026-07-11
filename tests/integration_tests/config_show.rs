@@ -4027,7 +4027,9 @@ fn test_plugin_layout_is_consolidated() {
     // discoverable path. Structural scoping via the filename is what broke
     // Claude; the inline Codex manifest is what actually keeps Codex clean.
     assert!(
-        !root.join("plugins/worktrunk/hooks/claude-hooks.json").exists(),
+        !root
+            .join("plugins/worktrunk/hooks/claude-hooks.json")
+            .exists(),
         "the Claude hooks file must sit at the conventional hooks/hooks.json that Claude \
          Code's loader discovers, not a Claude-scoped name the string-path override can't rescue (#3417)"
     );
