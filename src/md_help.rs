@@ -498,9 +498,10 @@ fn colorize_status_symbols(text: &str) -> String {
     result = replace_dim(result, "⤵", warning);
     result = replace_dim(result, "✗", warning);
 
-    // Worktree state: Prunable/Locked (yellow); BranchWorktreeMismatch stays dim
+    // Worktree state: Prunable/Locked (yellow), BranchWorktreeMismatch (dim yellow)
     result = replace_dim(result, "⊟", warning);
     result = replace_dim(result, "⊞", warning);
+    result = replace_dim(result, "⚑", warning.dimmed());
 
     // CI legend samples: replace dimmed `#` followed by a color name
     let dimmed_hash = format!("{dim}#{dim:#}");

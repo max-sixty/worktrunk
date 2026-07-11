@@ -49,6 +49,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m Branch-worktree mismatch: [1mfeature[22m @ [1m_PARENT_/wrong-path[22m, expected @ [1m_REPO_.feature[22m [2m⚑[22m
+[2m○[22m Branch-worktree mismatch: [1mfeature[22m @ [1m_PARENT_/wrong-path[22m, expected @ [1m_REPO_.feature[22m [33m[2m⚑[39m[22m
 [2m○[22m Switched to worktree for [1mfeature[22m @ [1m_PARENT_/wrong-path[22m
 [0m

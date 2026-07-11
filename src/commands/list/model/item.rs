@@ -18,7 +18,7 @@ use crate::commands::list::columns::ColumnKind;
 /// Used by `refresh_status_symbols` to resolve the worktree-state position
 /// (Gate 2) from metadata alone. The decision priority is:
 /// `prunable` > `locked` > `branch_worktree_mismatch` > `None` — the yellow
-/// actionable states outrank the informational (dim) mismatch flag.
+/// actionable states outrank the informational (dim yellow) mismatch flag.
 fn metadata_worktree_state(data: &WorktreeData) -> WorktreeState {
     if data.is_prunable() {
         WorktreeState::Prunable
@@ -847,8 +847,8 @@ impl ListItem {
 mod tests {
     use super::*;
 
-    /// The yellow actionable states outrank the informational (dim) mismatch
-    /// flag, so a demoted `⚑` can never mask `⊟` or `⊞`.
+    /// The yellow actionable states outrank the informational (dim yellow)
+    /// mismatch flag, so a demoted `⚑` can never mask `⊟` or `⊞`.
     #[test]
     fn test_metadata_worktree_state_priority() {
         let mismatched = WorktreeData {

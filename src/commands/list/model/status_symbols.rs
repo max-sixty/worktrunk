@@ -22,7 +22,7 @@
 //! | 0 | `STAGED`            | `+`                  | Are there staged changes?             |
 //! | 1 | `MODIFIED`          | `!`                  | Are there unstaged modifications?     |
 //! | 2 | `UNTRACKED`         | `?`                  | Are there untracked files?            |
-//! | 3 | `WORKTREE_STATE`    | `✘ ⤴ ⤵ ⚑ ⊟ ⊞ /`      | Operation / worktree attribute        |
+//! | 3 | `WORKTREE_STATE`    | `✘ ⤴ ⤵ ⊟ ⊞ ⚑ /`      | Operation / worktree attribute        |
 //! | 4 | `MAIN_STATE`        | `^ _ ⊂ ✗ – ↕ ↑ ↓`    | Relationship to the default branch    |
 //! | 5 | `UPSTREAM_DIVERGENCE` | \| ⇅ ⇡ ⇣           | Relationship to the tracked remote    |
 //! | 6 | `USER_MARKER`       | emoji / text         | User-defined annotation               |
@@ -365,7 +365,7 @@ impl WorkingTreeStatus {
 /// - ⤵: Merge in progress
 /// - ⊟: Prunable (directory missing)
 /// - ⊞: Locked worktree
-/// - ⚑: Branch-worktree mismatch (informational, dim)
+/// - ⚑: Branch-worktree mismatch (informational, dim yellow)
 /// - /: Branch without worktree
 ///
 /// **Main state (single position with priority):**
@@ -564,7 +564,7 @@ impl StatusSymbols {
                     SlotState::Visible(cformat!("<dim>{}</>", WorktreeState::Branch))
                 }
                 Some(WorktreeState::BranchWorktreeMismatch) => SlotState::Visible(cformat!(
-                    "<dim>{}</>",
+                    "<dim,yellow>{}</>",
                     WorktreeState::BranchWorktreeMismatch
                 )),
                 Some(other) => SlotState::Visible(cformat!("<yellow>{}</>", other)),

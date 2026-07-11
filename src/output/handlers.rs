@@ -470,7 +470,7 @@ fn format_path_mismatch_notice(
     let actual_display = format_path_for_display(actual_path);
     let expected_display = format_path_for_display(expected_path);
     info_message(cformat!(
-        "Branch-worktree mismatch: <bold>{branch}</> @ <bold>{actual_display}</>, expected @ <bold>{expected_display}</> <dim>⚑</>"
+        "Branch-worktree mismatch: <bold>{branch}</> @ <bold>{actual_display}</>, expected @ <bold>{expected_display}</> <dim,yellow>⚑</>"
     ))
 }
 
