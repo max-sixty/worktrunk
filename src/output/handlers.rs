@@ -457,19 +457,20 @@ fn format_switch_message(
     }
 }
 
-/// Format a branch-worktree mismatch warning message.
+/// Format a branch-worktree mismatch notice.
 ///
 /// Shows when a worktree is at a path that doesn't match the config template.
-/// Displays both the actual location and the expected location.
-fn format_path_mismatch_warning(
+/// Displays both the actual location and the expected location. Informational,
+/// not a warning: other tools legitimately place worktrees off-template.
+fn format_path_mismatch_notice(
     branch: &str,
     actual_path: &Path,
     expected_path: &Path,
 ) -> FormattedMessage {
     let actual_display = format_path_for_display(actual_path);
     let expected_display = format_path_for_display(expected_path);
-    warning_message(cformat!(
-        "Branch-worktree mismatch: <bold>{branch}</> @ <bold>{actual_display}</>, expected @ <bold>{expected_display}</> <red>⚑</>"
+    info_message(cformat!(
+        "Branch-worktree mismatch: <bold>{branch}</> @ <bold>{actual_display}</>, expected @ <bold>{expected_display}</> <dim>⚑</>"
     ))
 }
 
@@ -479,7 +480,7 @@ struct SwitchOutputContext {
     branch: String,
     shell_warning_reason: Option<String>,
     user_wont_be_in_worktree: bool,
-    branch_worktree_mismatch_warning: Option<FormattedMessage>,
+    branch_worktree_mismatch_notice: Option<FormattedMessage>,
     is_git_subcommand: bool,
 }
 
@@ -505,10 +506,10 @@ fn build_switch_output_context(
         Some(compute_shell_warning_reason())
     };
     let user_wont_be_in_worktree = !change_dir || shell_warning_reason.is_some();
-    let branch_worktree_mismatch_warning = branch_info
+    let branch_worktree_mismatch_notice = branch_info
         .expected_path
         .as_ref()
-        .map(|expected| format_path_mismatch_warning(&branch, &path, expected));
+        .map(|expected| format_path_mismatch_notice(&branch, &path, expected));
 
     SwitchOutputContext {
         path,
@@ -516,14 +517,14 @@ fn build_switch_output_context(
         branch,
         shell_warning_reason,
         user_wont_be_in_worktree,
-        branch_worktree_mismatch_warning,
+        branch_worktree_mismatch_notice,
         is_git_subcommand,
     }
 }
 
-fn print_switch_path_mismatch_warning(ctx: &SwitchOutputContext) {
-    if let Some(warning) = &ctx.branch_worktree_mismatch_warning {
-        eprintln!("{}", warning);
+fn print_switch_path_mismatch_notice(ctx: &SwitchOutputContext) {
+    if let Some(notice) = &ctx.branch_worktree_mismatch_notice {
+        eprintln!("{}", notice);
     }
 }
 
@@ -536,7 +537,7 @@ fn print_switch_directory_hint(branch: &str, is_git_subcommand: bool) {
 }
 
 fn handle_switch_already_at_output(ctx: &SwitchOutputContext) -> Option<PathBuf> {
-    print_switch_path_mismatch_warning(ctx);
+    print_switch_path_mismatch_notice(ctx);
     eprintln!(
         "{}",
         info_message(cformat!(
@@ -549,7 +550,7 @@ fn handle_switch_already_at_output(ctx: &SwitchOutputContext) -> Option<PathBuf>
 }
 
 fn handle_switch_existing_output(ctx: &SwitchOutputContext) -> Option<PathBuf> {
-    print_switch_path_mismatch_warning(ctx);
+    print_switch_path_mismatch_notice(ctx);
 
     if let Some(reason) = &ctx.shell_warning_reason {
         eprintln!(
@@ -1715,17 +1716,17 @@ fn handle_named_removed_worktree_foreground(
     branch_name: &str,
     announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
+    if let Some(expected) = ctx.expected_path {
+        eprintln!(
+            "{}",
+            format_path_mismatch_notice(branch_name, ctx.worktree_path, expected)
+        );
+    }
+
     eprintln!(
         "{}",
         progress_message(cformat!("Removing <bold>{branch_name}</> worktree..."))
     );
-
-    if let Some(expected) = ctx.expected_path {
-        eprintln!(
-            "{}",
-            format_path_mismatch_warning(branch_name, ctx.worktree_path, expected)
-        );
-    }
 
     let snapshot = repo.capture_refs()?;
     let output = remove_worktree_with_cleanup(
@@ -1778,7 +1779,7 @@ fn handle_named_removed_worktree_background(
     if let Some(expected) = ctx.expected_path {
         eprintln!(
             "{}",
-            format_path_mismatch_warning(branch_name, ctx.worktree_path, expected)
+            format_path_mismatch_notice(branch_name, ctx.worktree_path, expected)
         );
     }
 

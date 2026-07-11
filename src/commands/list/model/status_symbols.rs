@@ -55,9 +55,9 @@
 //!
 //! # Gate 2: Worktree state (position 3)
 //!
-//! **Renders:** at most one of `✘ ⤴ ⤵ ⚑ ⊟ ⊞ /`, priority
-//! `✘ > ⤴ > ⤵ > ⚑ > ⊟ > ⊞ > /`. The operation family (`✘⤴⤵`) comes from live
-//! task data; the attribute family (`⚑⊟⊞/`) is metadata, always known.
+//! **Renders:** at most one of `✘ ⤴ ⤵ ⊟ ⊞ ⚑ /`, priority
+//! `✘ > ⤴ > ⤵ > ⊟ > ⊞ > ⚑ > /`. The operation family (`✘⤴⤵`) comes from live
+//! task data; the attribute family (`⊟⊞⚑/`) is metadata, always known.
 //!
 //! **Inputs:** `data.has_conflicts`, `data.git_operation`, plus metadata
 //! (`locked`, `prunable`, `branch_worktree_mismatch`, `ItemKind::Branch`).
@@ -71,8 +71,8 @@
 //! 2. `has_conflicts == Some(false)` and `git_operation == Some(Rebase)` → `⤴`.
 //! 3. `has_conflicts == Some(false)` and `git_operation == Some(Merge)` → `⤵`.
 //! 4. `has_conflicts == Some(false)` and `git_operation == Some(None)` and
-//!    metadata says mismatched → `⚑`.
-//! 5. …continuing down through `⊟`, `⊞`, `/`, nothing.
+//!    metadata says prunable → `⊟`.
+//! 5. …continuing down through `⊞`, `⚑`, `/`, nothing.
 //!
 //! Until both `has_conflicts` and `git_operation` are known, we cannot rule
 //! out `✘/⤴/⤵`, so the position renders `·` even if metadata would otherwise
@@ -359,13 +359,13 @@ impl WorkingTreeStatus {
 /// ## Mutual Exclusivity
 ///
 /// **Worktree state (operations take priority over location):**
-/// Priority: ✘ > ⤴ > ⤵ > ⚑ > ⊟ > ⊞ > /
+/// Priority: ✘ > ⤴ > ⤵ > ⊟ > ⊞ > ⚑ > /
 /// - ✘: Actual conflicts (must resolve)
 /// - ⤴: Rebase in progress
 /// - ⤵: Merge in progress
-/// - ⚑: Branch-worktree mismatch
 /// - ⊟: Prunable (directory missing)
 /// - ⊞: Locked worktree
+/// - ⚑: Branch-worktree mismatch (informational, dim)
 /// - /: Branch without worktree
 ///
 /// **Main state (single position with priority):**
@@ -564,7 +564,7 @@ impl StatusSymbols {
                     SlotState::Visible(cformat!("<dim>{}</>", WorktreeState::Branch))
                 }
                 Some(WorktreeState::BranchWorktreeMismatch) => SlotState::Visible(cformat!(
-                    "<red>{}</>",
+                    "<dim>{}</>",
                     WorktreeState::BranchWorktreeMismatch
                 )),
                 Some(other) => SlotState::Visible(cformat!("<yellow>{}</>", other)),
