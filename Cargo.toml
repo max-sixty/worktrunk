@@ -220,7 +220,7 @@ which = "8.0.2"
 # Cross-platform path canonicalization that avoids Windows verbatim paths (\\?\)
 # which external tools like git cannot handle. On Unix, it's a no-op wrapper.
 dunce = "1.0"
-termimad = { version = "0.34.1", optional = true }
+termimad = { version = "0.35.1", optional = true }
 urlencoding = "2.1"
 regex = "1.12.3"
 ignore = "0.4"

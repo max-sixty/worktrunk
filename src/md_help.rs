@@ -302,19 +302,7 @@ fn render_table_with_termimad(lines: &[&str], indent: &str, max_width: Option<us
         .unwrap_or(DEFAULT_HELP_WIDTH);
 
     let skin = help_table_skin();
-    // termimad 0.34.1 panics with an out-of-bounds index on a *ragged* table —
-    // a row with more cells than the header — when it's rendered at a width too
-    // narrow to fit the widest row. Its column fitter (`Table::fix_columns`,
-    // termimad's src/tbl.rs) takes an error path that skips padding the short
-    // rows, then indexes past them. PR-comment markdown is untrusted and can
-    // contain such a table (issue #3407), and the picker renders comment bodies
-    // through here on a rayon worker — an escaped panic aborts the whole
-    // process. Contain it and fall back to the plain preprocessed lines so the
-    // pane still shows the table's text rather than crashing `wt switch`.
-    let rendered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        skin.text(&markdown, Some(width)).to_string()
-    }))
-    .unwrap_or_else(|_| processed.join("\n"));
+    let rendered = skin.text(&markdown, Some(width)).to_string();
 
     // Add indent to each line
     if indent.is_empty() {
@@ -739,7 +727,7 @@ mod tests {
 
     #[test]
     fn test_render_markdown_in_help_table() {
-        let result = render_markdown_in_help("| A | B |\n| - | - |\n| 1 | 2 |");
+        let result = render_markdown_in_help("| A | B |\n| --- | --- |\n| 1 | 2 |");
         assert_snapshot!(result, @"
          A   B  
         ─── ─── 
@@ -870,36 +858,26 @@ mod tests {
 
     #[test]
     fn test_render_table_ragged_narrow_does_not_panic() {
-        // Regression for #3407. termimad 0.34.1 panics with an out-of-bounds
+        // Regression for #3407. termimad <= 0.34.1 panicked with an out-of-bounds
         // index when a *ragged* table — a row with more cells than the header —
-        // is rendered at a narrow width: its column fitter (`Table::fix_columns`
-        // in termimad's src/tbl.rs) takes an error path that skips cell padding,
-        // then indexes past the shorter row. PR-comment markdown is untrusted and
+        // was rendered at a narrow width: its column fitter (`Table::fix_columns`
+        // in termimad's src/tbl.rs) took an error path that skipped cell padding,
+        // then indexed past the shorter row. PR-comment markdown is untrusted and
         // can contain such a table, and the picker renders comment bodies through
-        // here, so this used to abort `wt switch`. The render must degrade to
-        // plain text instead of crashing.
+        // here, so this used to abort `wt switch`. Fixed upstream in termimad
+        // 0.35.1 (Canop/termimad#77); this guards against a regression or an
+        // accidental downgrade — the render must complete rather than panicking.
         let lines = vec![
             "| Key | Value |",
             "| --- | --- |",
             "| alpha | beta | gamma | delta | epsilon | zeta |",
         ];
+        // The bug manifested as an out-of-bounds panic *during* rendering in the
+        // narrow-width band (16/20/24). termimad wraps cells hard and drops
+        // columns to fit width 20, so we don't assert on specific cell text —
+        // reaching this line at all is the proof the panic is gone.
         let result = render_table(&lines, Some(20));
-        let plain = ansi_str::AnsiStr::ansi_strip(&result);
-        // Assert on something only the fallback produces, so the test keeps
-        // covering `catch_unwind` even if a future termimad release stops
-        // panicking on this input. The fallback returns the preprocessed lines
-        // verbatim, keeping the literal `|` delimiters; a successful termimad
-        // render replaces them with box-drawing borders (`│`) and contains no
-        // literal `|`. Cell-text presence alone can't tell the two apart.
-        assert!(
-            plain.contains('|'),
-            "expected the plain-text fallback (literal `|` delimiters), \
-             not a termimad render: {plain}"
-        );
-        assert!(
-            plain.contains("alpha") && plain.contains("zeta"),
-            "fallback should still surface the table's cell text: {plain}"
-        );
+        assert!(!result.is_empty(), "render should complete and produce output");
     }
 
     #[test]
