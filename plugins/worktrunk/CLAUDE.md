@@ -42,8 +42,11 @@ Path resolution differs by tool, all verified end-to-end against the real CLIs:
   `plugins/worktrunk/.claude-plugin/plugin.json` — the same wrapper convention
   as the marketplace root, and the only manifest location `claude plugin
   validate` accepts (a bare `plugin.json` at the plugin root loads through an
-  undocumented fallback but fails validation). Components load by
-  **convention**, and the manifest must not name them:
+  undocumented fallback but fails validation). The manifest deliberately
+  carries no `version` field: installs pin the marketplace git SHA, so a
+  semver here would be a second version to maintain with nothing consuming
+  it — `claude plugin validate`'s missing-`version` warning is accepted.
+  Components load by **convention**, and the manifest must not name them:
   - Hooks are discovered at `hooks/hooks.json`. The loader does not honor the
     string-path `hooks` manifest override for plugin loads, so a renamed file
     silently loads nothing (#3417) and a `hooks` key pointing at the
