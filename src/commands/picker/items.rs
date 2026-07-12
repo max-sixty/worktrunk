@@ -594,12 +594,16 @@ impl SkimItem for PickerRow {
         // A miss on a local-git tab means the placeholder below would sit
         // until background precompute reaches this (row, mode) — in a large
         // repo, seconds. Ask the demand worker to compute it now; the fill
-        // then repaints via the awaited key recorded above.
+        // then repaints via the awaited key recorded above. A morphed row is
+        // excluded like in `output()`: its frozen item still points at the
+        // worktree the alt-x removal is deleting, and a compute from it
+        // would cache an actively wrong pane under the kept branch.
         if let Some(local) = &self.local
             && mode.is_local_git()
+            && !local.morphed.load(Ordering::Relaxed)
             && !self
                 .preview_cache
-                .contains_key(&(self.branch_name.clone(), mode))
+                .contains_key(&(self.preview_key().to_string(), mode))
         {
             local.demand.request(
                 Arc::clone(&local.item),
@@ -1817,16 +1821,16 @@ mod tests {
     }
 
     /// A minimal `LocalCheckout` for row construction in tests: a branch-only
-    /// snapshot item, a detached demand channel (requests recorded, never
-    /// served), and defaulted local signals (no upstream, no summaries,
-    /// unknown diff content).
+    /// snapshot item, a demand channel with no worker behind it (requests
+    /// recorded, never served), and defaulted local signals (no upstream, no
+    /// summaries, unknown diff content).
     fn test_local_checkout(branch: &str) -> LocalCheckout {
         LocalCheckout {
             item: Arc::new(ListItem::new_branch(
                 "0000000".to_string(),
                 branch.to_string(),
             )),
-            demand: PreviewDemand::detached(),
+            demand: PreviewDemand::new(),
             has_upstream: false,
             summaries_enabled: false,
             local_content: Arc::new(Mutex::new(LocalContent::default())),

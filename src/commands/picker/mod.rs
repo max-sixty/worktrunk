@@ -1460,6 +1460,10 @@ impl PipelineFactory {
             // picked up and a narrow stale-fill race remains — see the
             // `preview_orchestrator` module spec ("Refresh") for both.
             self.preview_cache.clear();
+            // A parked demand request came from a pre-refresh row; serving
+            // it after the clear would re-seed the cache from the
+            // superseded item. Drop it with the cache.
+            self.orchestrator.demand().clear_pending();
             Repository::at(self.repo.discovery_path())?
         } else {
             self.repo.clone()
@@ -2927,7 +2931,7 @@ pub mod tests {
             notifier: super::preview_notify::PreviewNotifier::detached(),
             local: Some(LocalCheckout {
                 item,
-                demand: super::preview_orchestrator::PreviewDemand::detached(),
+                demand: super::preview_orchestrator::PreviewDemand::new(),
                 has_upstream: false,
                 summaries_enabled: false,
                 local_content: Arc::new(Mutex::new(LocalContent::default())),
@@ -3002,7 +3006,7 @@ pub mod tests {
             notifier: super::preview_notify::PreviewNotifier::detached(),
             local: Some(LocalCheckout {
                 item: Arc::clone(&item_arc),
-                demand: super::preview_orchestrator::PreviewDemand::detached(),
+                demand: super::preview_orchestrator::PreviewDemand::new(),
                 has_upstream: false,
                 summaries_enabled: false,
                 local_content: Arc::clone(&local_content),

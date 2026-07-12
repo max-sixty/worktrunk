@@ -74,9 +74,10 @@
 //!   fires while a prior spawn's precompute is still draining (large repo / slow
 //!   summaries) and the row's content moved in that window — the common "I edited
 //!   the branch I'm viewing" case doesn't hit it, since that branch's precompute
-//!   finished when the picker opened. (A demand compute taken just before the
-//!   clear shares the same window: it computes from the pre-refresh row's item
-//!   and fills after the clear.) The structural fix for both is to give the
+//!   finished when the picker opened. (The refresh also drops any parked
+//!   demand request — `PreviewDemand::clear_pending`, called at the same
+//!   clear site — so only a demand compute already *in flight* at the clear
+//!   shares this window.) The structural fix for both is to give the
 //!   orchestrator the current spawn's repo plus a spawn generation (mirroring
 //!   `prs_epoch`) so a superseded fill drops.
 //!
@@ -130,7 +131,7 @@ use tokio::sync::mpsc::Sender;
 use worktrunk::git::Repository;
 
 use super::items::{PickerRow, PreviewCache, PreviewCacheKey};
-use super::preview::PreviewMode;
+use super::preview::{LOCAL_GIT_MODES, PreviewMode};
 use super::preview_notify::PreviewNotifier;
 use super::summary;
 use crate::commands::list::collect::COLLECT_POOL;
@@ -139,18 +140,11 @@ use crate::commands::list::model::ListItem;
 /// The picker's initial preview tab — `WorkingTree`, shown when the
 /// picker opens. Pre-computed for every row at skeleton time so j/k
 /// navigation lands on warm content without paying the 4-mode bulk cost
-/// per row during the row-fill window.
+/// per row during the row-fill window. The remaining [`LOCAL_GIT_MODES`]
+/// for items 1..N are deferred until `spawn_deferred_precompute` fires
+/// (after row drain); for the landing row they fire at skeleton time so
+/// tab-cycling is responsive immediately.
 const INITIAL_MODE: PreviewMode = PreviewMode::WorkingTree;
-
-/// Modes other than [`INITIAL_MODE`]. For the user's landing row (item 0)
-/// these pre-compute at skeleton time alongside `INITIAL_MODE` so
-/// tab-cycling is responsive immediately. For items 1..N they're
-/// deferred until `spawn_deferred_precompute` fires (after row drain).
-const SECONDARY_MODES: [PreviewMode; 3] = [
-    PreviewMode::Log,
-    PreviewMode::BranchDiff,
-    PreviewMode::UpstreamDiff,
-];
 
 struct PendingGuard(Arc<AtomicUsize>);
 
@@ -180,12 +174,23 @@ impl Drop for PendingGuard {
 /// One slot is the point: `preview()` only ever misses on the *selected*
 /// row's current tab, so the newest request supersedes any unserved one and
 /// rows skimmed past are never computed. A request whose key a racing pool
-/// task already filled is dropped on the worker's `contains_key` check; the
-/// rare simultaneous double-compute is harmless (both route through `fill`
-/// with identical content).
+/// task already filled is dropped on the worker's `contains_key` check. A
+/// simultaneous double-compute — the pool task for the same key mid-flight
+/// when the demand is taken — is accepted rather than tracked: it's common
+/// exactly once per spawn (the landing row's default tab at first paint,
+/// before its skeleton-time precompute lands) and harmless (both producers
+/// route through `fill` with identical content); an in-flight key set shared
+/// across producers isn't worth that one duplicate `git diff`.
 pub(super) struct PreviewDemand {
-    slot: Mutex<Option<DemandRequest>>,
+    state: Mutex<DemandState>,
     cond: Condvar,
+}
+
+/// The slot plus the close flag, under the one mutex the condvar guards.
+#[derive(Default)]
+struct DemandState {
+    request: Option<DemandRequest>,
+    closed: bool,
 }
 
 /// One demand: compute `mode` for `item` at the preview pane's `dims`.
@@ -198,37 +203,58 @@ struct DemandRequest {
 }
 
 impl PreviewDemand {
-    fn new() -> Arc<Self> {
+    /// The channel only — the orchestrator spawns the worker that drains it.
+    /// Tests building skim rows without an orchestrator use this directly:
+    /// requests are recorded and never served.
+    pub(super) fn new() -> Arc<Self> {
         Arc::new(Self {
-            slot: Mutex::new(None),
+            state: Mutex::new(DemandState::default()),
             cond: Condvar::new(),
         })
-    }
-
-    /// A demand channel with no worker behind it — used by tests that build
-    /// skim items without an orchestrator. Requests are recorded, never
-    /// served (mirrors [`PreviewNotifier::detached`]).
-    #[cfg(test)]
-    pub(super) fn detached() -> Arc<Self> {
-        Self::new()
     }
 
     /// Publish the selected row's awaited preview, replacing any unserved
     /// request. Called from skim's UI thread on every `preview()` cache miss,
     /// so it must stay non-blocking (a brief uncontended lock).
     pub(super) fn request(&self, item: Arc<ListItem>, mode: PreviewMode, dims: (usize, usize)) {
-        *self.slot.lock().unwrap() = Some(DemandRequest { item, mode, dims });
+        let mut state = self.state.lock().unwrap();
+        if state.closed {
+            return;
+        }
+        state.request = Some(DemandRequest { item, mode, dims });
         self.cond.notify_one();
     }
 
-    /// Worker side: block until a request is available and take it.
-    fn take_blocking(&self) -> DemandRequest {
-        let mut slot = self.slot.lock().unwrap();
+    /// Drop any parked request. Called alongside the `alt-r` preview-cache
+    /// clear: a request posted by a pre-refresh row is superseded by the
+    /// rebuild, and serving it after the clear would re-seed the cache with
+    /// content computed from the stale item (which the new spawn's precompute
+    /// would then short-circuit on).
+    pub(super) fn clear_pending(&self) {
+        self.state.lock().unwrap().request = None;
+    }
+
+    /// Close the channel: the worker drains out and releases its captures.
+    /// Called when the orchestrator drops (the picker is done), so the parked
+    /// thread doesn't pin the preview cache and repo until process exit.
+    fn close(&self) {
+        self.state.lock().unwrap().closed = true;
+        self.cond.notify_one();
+    }
+
+    /// Worker side: block until a request is available and take it, or
+    /// return `None` once the channel is closed (a parked request is
+    /// dropped — the picker is gone, nothing would read the fill).
+    fn take_blocking(&self) -> Option<DemandRequest> {
+        let mut state = self.state.lock().unwrap();
         loop {
-            if let Some(req) = slot.take() {
-                return req;
+            if state.closed {
+                return None;
             }
-            slot = self.cond.wait(slot).unwrap();
+            if let Some(req) = state.request.take() {
+                return Some(req);
+            }
+            state = self.cond.wait(state).unwrap();
         }
     }
 }
@@ -270,22 +296,39 @@ impl PreviewOrchestrator {
             let notifier = Arc::clone(&notifier);
             let pending = Arc::clone(&pending);
             let repo = repo.clone();
-            // Detached daemon thread: it parks on the condvar between
-            // requests and dies with the process (the picker's pool tasks
-            // are equally fire-and-forget). Spawn failure degrades to the
-            // pre-demand behavior — the tab fills when precompute reaches it.
+            // Detached worker thread: it parks on the condvar between
+            // requests and exits when the orchestrator's `Drop` closes the
+            // channel. Spawn failure degrades to the pre-demand behavior —
+            // the tab fills when precompute reaches it.
             let _ = std::thread::Builder::new()
                 .name("wt-preview-demand".into())
                 .spawn(move || {
-                    loop {
-                        let req = demand.take_blocking();
+                    while let Some(req) = demand.take_blocking() {
                         let key = (req.item.branch_name().to_string(), req.mode);
                         if cache.contains_key(&key) {
                             continue;
                         }
                         let (w, h) = req.dims;
-                        let (value, log_disk_hit) =
-                            PickerRow::compute_and_page_preview(&repo, &req.item, req.mode, w, h);
+                        // A panicking compute on a rayon worker aborts the
+                        // process; here it would only unwind this thread —
+                        // and a dead worker silently regresses every later
+                        // navigation to queue-wait latency for the rest of
+                        // the session. Contain it to the one poisoned key
+                        // and keep serving.
+                        let computed =
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                PickerRow::compute_and_page_preview(
+                                    &repo, &req.item, req.mode, w, h,
+                                )
+                            }));
+                        let Ok((value, log_disk_hit)) = computed else {
+                            tracing::debug!(
+                                branch = key.0,
+                                mode = ?key.1,
+                                "preview demand compute panicked; leaving the tab to precompute"
+                            );
+                            continue;
+                        };
                         Self::fill(&cache, &notifier, key, value);
                         if log_disk_hit {
                             Self::spawn_log_refresh(
@@ -476,7 +519,7 @@ impl PreviewOrchestrator {
     ///   for every row so quick j/k navigation hits cached content,
     ///   bounded contention with the row pipeline (~N tasks).
     ///
-    /// The remaining [`SECONDARY_MODES`] for items 1..N and their summaries
+    /// The remaining [`LOCAL_GIT_MODES`] for items 1..N and their summaries
     /// are deferred to [`Self::spawn_deferred_precompute`], which fires
     /// after the row pipeline tears down.
     pub(super) fn spawn_initial_precompute(
@@ -488,8 +531,7 @@ impl PreviewOrchestrator {
         let Some(first) = items.first() else { return };
 
         // First item: all modes + summary.
-        self.spawn_preview(Arc::clone(first), INITIAL_MODE, preview_dims);
-        for mode in SECONDARY_MODES {
+        for mode in LOCAL_GIT_MODES {
             self.spawn_preview(Arc::clone(first), mode, preview_dims);
         }
         if let Some(llm) = llm_command {
@@ -510,8 +552,8 @@ impl PreviewOrchestrator {
     /// tier keeps these submissions out of that pool's injector while
     /// row tasks are still landing on workers' local deques. The
     /// default tab for these rows already fired at skeleton time via
-    /// [`Self::spawn_initial_precompute`]; what's left is
-    /// [`SECONDARY_MODES`] plus summaries.
+    /// [`Self::spawn_initial_precompute`]; what's left is the rest of
+    /// [`LOCAL_GIT_MODES`] plus summaries.
     ///
     /// Spawn order: mode-major across previews, then summaries last —
     /// each LLM call can take seconds. Called from outside any rayon
@@ -523,7 +565,7 @@ impl PreviewOrchestrator {
         preview_dims: (usize, usize),
         llm_command: Option<&str>,
     ) {
-        for mode in SECONDARY_MODES {
+        for mode in LOCAL_GIT_MODES.into_iter().filter(|m| *m != INITIAL_MODE) {
             for item in rest {
                 self.spawn_preview(Arc::clone(item), mode, preview_dims);
             }
@@ -568,12 +610,19 @@ impl PreviewOrchestrator {
         COLLECT_POOL.spawn(wrapped);
     }
 
-    /// Block until all spawned tasks complete.
+    /// Block until all pool-spawned tasks complete.
     ///
     /// Used by the dry-run path and tests; production never waits — tasks
     /// are fire-and-forget while skim runs. Polls at 10ms resolution; tasks
     /// typically take tens to hundreds of ms, so a condvar isn't worth the
     /// complexity.
+    ///
+    /// Scope: the `pending` counter covers everything spawned through
+    /// [`Self::spawn_task`] and [`Self::spawn_log_refresh`]. The demand
+    /// worker's own computes are outside it — they're keystroke-driven, and
+    /// neither the dry-run path nor `wait_for_idle` callers drive
+    /// `preview()`; a test exercising the demand path polls the cache
+    /// instead (see `preview_miss_is_served_by_demand_worker`).
     pub(super) fn wait_for_idle(&self) {
         while self.pending.load(Ordering::SeqCst) > 0 {
             std::thread::sleep(Duration::from_millis(10));
@@ -600,6 +649,16 @@ impl PreviewOrchestrator {
                 serde_json::json!({ "branch": branch, "mode": mode, "bytes": bytes })
             })
             .collect()
+    }
+}
+
+impl Drop for PreviewOrchestrator {
+    /// Close the demand channel so the worker exits and drops its captures
+    /// (preview cache, repo) when the picker ends — `wt switch` keeps
+    /// running (hooks, the switch itself) after the picker returns, and a
+    /// parked thread would otherwise pin them until process exit.
+    fn drop(&mut self) {
+        self.demand.close();
     }
 }
 
@@ -874,7 +933,10 @@ mod tests {
 
         // The picker opens on WorkingTree — the process-global default tab,
         // which this test deliberately leaves untouched (other tests read
-        // it). The first render misses and posts the demand.
+        // it). This render misses and posts the demand. No assertion on the
+        // returned placeholder: the worker races the render's own cache read
+        // by design, so on a stalled thread the first render could already
+        // carry the diff.
         let ctx = PreviewContext {
             query: "",
             cmd_query: "",
@@ -885,13 +947,9 @@ mod tests {
             selected_indices: &[],
             selections: &[],
         };
-        let ItemPreview::AnsiText(first) = row.preview(ctx) else {
+        let ItemPreview::AnsiText(_) = row.preview(ctx) else {
             panic!("expected AnsiText preview");
         };
-        assert!(
-            first.contains("Loading"),
-            "first render is the placeholder: {first:?}"
-        );
 
         // The demand worker fills the key with the real diff. Bounded poll so
         // a dead worker fails instead of hanging the suite.
