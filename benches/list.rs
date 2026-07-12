@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use worktrunk::testing::isolate_subprocess_env;
 use wt_perf::{
-    RepoConfig, add_history_spread_branches, add_worktrees, bench_wt, clone_rust_repo,
+    CacheState, RepoConfig, add_history_spread_branches, add_worktrees, bench_wt, clone_rust_repo,
     create_mixed_repo, create_repo, run_git, setup_fake_remote,
 };
 
@@ -75,7 +75,12 @@ fn run_benchmark(
     args: &[&str],
     env: Option<(&str, &str)>,
 ) {
-    bench_wt(b, repo_path, cold_cache, || {
+    let cache = if cold_cache {
+        CacheState::Cold
+    } else {
+        CacheState::Warm
+    };
+    bench_wt(b, repo_path, cache, || {
         let mut cmd = Command::new(binary);
         cmd.args(args).current_dir(repo_path);
         isolate_subprocess_env(&mut cmd, None);
@@ -173,7 +178,12 @@ fn bench_real_repo(c: &mut Criterion) {
             add_worktrees(&config, &workspace_main);
             run_git(&workspace_main, &["status"]);
 
-            bench_wt(b, &workspace_main, cold, || {
+            let cache = if cold {
+                CacheState::Cold
+            } else {
+                CacheState::Warm
+            };
+            bench_wt(b, &workspace_main, cache, || {
                 let mut cmd = Command::new(binary);
                 cmd.arg("list").current_dir(&workspace_main);
                 isolate_subprocess_env(&mut cmd, None);
@@ -274,7 +284,7 @@ fn bench_real_repo_many_branches(c: &mut Criterion) {
     // Baseline: all branches
     group.bench_function("warm", |b| {
         let (_temp, workspace_main) = setup_workspace();
-        bench_wt(b, &workspace_main, false, || {
+        bench_wt(b, &workspace_main, CacheState::Warm, || {
             let mut cmd = Command::new(binary);
             cmd.args(["list", "--branches"])
                 .current_dir(&workspace_main);
@@ -286,7 +296,7 @@ fn bench_real_repo_many_branches(c: &mut Criterion) {
     // Worktrees only: no branch enumeration, skips expensive %(ahead-behind) batch
     group.bench_function("warm_worktrees_only", |b| {
         let (_temp, workspace_main) = setup_workspace();
-        bench_wt(b, &workspace_main, false, || {
+        bench_wt(b, &workspace_main, CacheState::Warm, || {
             let mut cmd = Command::new(binary);
             cmd.arg("list").current_dir(&workspace_main); // no --branches
             isolate_subprocess_env(&mut cmd, None);

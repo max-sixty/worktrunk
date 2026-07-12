@@ -163,11 +163,25 @@ fn git_command() -> Command {
     cmd
 }
 
+/// Cache state a [`bench_wt`] iteration starts from.
+#[derive(Clone, Copy)]
+pub enum CacheState {
+    /// Persistent caches stay hot across iterations (steady-state re-run).
+    Warm,
+    /// [`invalidate_caches_auto`] per iteration: git's own caches (indexes,
+    /// commit graph) plus worktrunk's — a first run against fresh state.
+    Cold,
+    /// [`invalidate_probe_caches`] per iteration: only `.git/wt/cache/` —
+    /// the first scan after new commits land, git's state staying warm.
+    ProbeCold,
+}
+
 /// Run a `wt` benchmark iteration function under criterion, warm or cold.
 ///
 /// The one place the warm/cold iteration strategy lives: warm uses plain
-/// `Bencher::iter` (persistent caches stay hot across iterations); cold
-/// invalidates the repo's caches immediately before every measured iteration.
+/// `Bencher::iter` (persistent caches stay hot across iterations); the cold
+/// states invalidate the repo's caches immediately before every measured
+/// iteration — see [`CacheState`] for what each clears.
 ///
 /// Cold uses `iter_batched` with `BatchSize::PerIteration`, not `SmallInput`:
 /// under `SmallInput`, criterion calls the setup once for an entire batch up
@@ -181,23 +195,30 @@ fn git_command() -> Command {
 /// 2.4ms → 0.65ms) and medians rose to their true cold cost.
 ///
 /// `make_cmd` builds a fresh command per iteration; the child's exit status is
-/// asserted so a benchmark can't silently time a failing command.
+/// asserted so a benchmark can't silently time a failing command. That status
+/// check is the only per-iteration validation — anything stronger (fixture
+/// shape, candidate counts) belongs in a one-time check outside the timed
+/// loop, not on the measured path.
 pub fn bench_wt(
     b: &mut criterion::Bencher,
     repo_path: &Path,
-    cold: bool,
+    cache: CacheState,
     mut make_cmd: impl FnMut() -> Command,
 ) {
     let mut run = move || run_and_check(&mut make_cmd());
-    if cold {
-        b.iter_batched(
-            || invalidate_caches_auto(repo_path),
-            |_| run(),
-            criterion::BatchSize::PerIteration,
-        );
-    } else {
-        b.iter(run);
-    }
+    let invalidate: fn(&Path) = match cache {
+        CacheState::Warm => {
+            b.iter(run);
+            return;
+        }
+        CacheState::Cold => invalidate_caches_auto,
+        CacheState::ProbeCold => invalidate_probe_caches,
+    };
+    b.iter_batched(
+        || invalidate(repo_path),
+        |_| run(),
+        criterion::BatchSize::PerIteration,
+    );
 }
 
 /// Spawn the command, wait, and panic with its stderr if it failed.
@@ -496,7 +517,7 @@ pub fn invalidate_caches_auto(repo_path: &Path) {
     // simulate by deleting it.
 
     // All worktrunk persistent caches: every kind dir under wt/cache/.
-    let _ = std::fs::remove_dir_all(git_dir.join("wt/cache"));
+    invalidate_probe_caches(repo_path);
 
     // Worktrunk's default-branch cache lives in git config; we have no
     // safe way to edit that file ourselves (escaping rules), so shell
@@ -519,22 +540,34 @@ pub fn invalidate_caches_auto(repo_path: &Path) {
     }
 }
 
-/// Rebuild every worktree's index after [`invalidate_caches_auto`].
+/// Invalidate only worktrunk's persistent probe caches (`.git/wt/cache/`).
 ///
-/// Deleting an index doesn't model a cold cache — git treats a missing index
-/// as empty, so `git status` reports every tracked file as a staged deletion.
-/// That is a *different repo state*, and it flips any clean-worktree gate:
-/// `wt step prune`'s removability check drops all worktree candidates against
-/// such a worktree. Benches that exercise those gates call this after
-/// invalidation; `git reset -q` rewrites the index from HEAD, leaving the
-/// integration probes cold but the working trees reading clean again.
+/// Models the recurring cold scan: after new commits land on the default
+/// branch, every sha_cache entry keyed on the old tips misses, while git's
+/// own state stays warm — indexes keep their stat data, and the commit graph
+/// and `worktrunk.default-branch` config entry survive a fetch. This is the
+/// "first `wt step prune` after fetching main" shape, and it is safe against
+/// clean-worktree gates: deleting an *index* (as [`invalidate_caches_auto`]
+/// does) doesn't model a cold cache — git treats a missing index as empty, so
+/// `git status` reports every tracked file as a staged deletion, a different
+/// repo state that flips removability checks and silently drops worktree
+/// candidates from a prune scan.
+pub fn invalidate_probe_caches(repo_path: &Path) {
+    let Some(git_dir) = resolve_git_common_dir(repo_path) else {
+        return;
+    };
+    let _ = std::fs::remove_dir_all(git_dir.join("wt/cache"));
+}
+
+/// Rebuild every worktree's index via `git reset -q`.
 ///
-/// This is deliberately NOT folded into `invalidate_caches_auto`: `git reset
-/// --mixed` discards staged-but-uncommitted index state, which the mixed
-/// fixture plants on purpose (worktree state 2) and which a real repo — the
-/// `wt-perf invalidate` / `timeline --cold` targets — may hold as the user's
-/// work in progress. Only pair it with fixtures whose dirt is untracked files.
-pub fn restore_worktree_indexes(repo_path: &Path) {
+/// Used by [`ensure_prune_real_repo`] to heal a fixture whose indexes were
+/// deleted by a stray `wt-perf invalidate` / `timeline --cold` (a missing
+/// index reads as all-tracked-files-deleted and flips prune's clean-worktree
+/// gate — see [`invalidate_probe_caches`]). `git reset --mixed` discards
+/// staged-but-uncommitted index state, so this is safe only on fixtures
+/// whose dirt is untracked files.
+fn restore_worktree_indexes(repo_path: &Path) {
     let output = git_command()
         .args(["worktree", "list", "--porcelain"])
         .current_dir(repo_path)
@@ -544,8 +577,7 @@ pub fn restore_worktree_indexes(repo_path: &Path) {
     let stdout = String::from_utf8_lossy(&output.stdout);
     // Parallel: each reset rebuilds one worktree's index from its own HEAD,
     // fully independent of the others. On the rust-scale fixture a rebuild
-    // is ~2.5 s per worktree — serially that would dominate every cold-bench
-    // iteration's setup.
+    // is ~2.5 s per worktree — serially that would dominate the repair.
     std::thread::scope(|s| {
         for line in stdout.lines() {
             if let Some(path) = line.strip_prefix("worktree ") {
@@ -1238,7 +1270,7 @@ fn next_squash_round(repo: &Path) -> usize {
 /// - `Broken` (interrupted prune or build, corruption) → wiped and rebuilt.
 ///
 /// Deleted worktree indexes (a stray `wt-perf invalidate` / `timeline --cold`
-/// against the fixture) are healed first with [`restore_worktree_indexes`] —
+/// against the fixture) are healed first with `restore_worktree_indexes` —
 /// without an index, `git status` reports every tracked file as a staged
 /// deletion and prune's clean-worktree gate silently drops the worktree
 /// candidates. Safe here because the fixture's only dirt is untracked files.

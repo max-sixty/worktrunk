@@ -51,7 +51,7 @@ use std::process::Command;
 #[cfg(unix)]
 use worktrunk::testing::isolate_subprocess_env;
 #[cfg(unix)]
-use wt_perf::{RepoConfig, bench_wt, create_repo, setup_fake_remote};
+use wt_perf::{CacheState, RepoConfig, bench_wt, create_repo, setup_fake_remote};
 
 #[cfg(unix)]
 fn bench_picker_preview(c: &mut Criterion) {
@@ -92,7 +92,12 @@ fn bench_picker_preview(c: &mut Criterion) {
                     // `.git/wt/cache/picker-preview/` (Log / BranchDiff /
                     // UpstreamDiff entries), so without invalidation iter 1
                     // measures real cost and iter 2+ measure cache hits.
-                    bench_wt(b, &repo_path, *cold, make_cmd);
+                    let cache = if *cold {
+                        CacheState::Cold
+                    } else {
+                        CacheState::Warm
+                    };
+                    bench_wt(b, &repo_path, cache, make_cmd);
                 },
             );
         }
