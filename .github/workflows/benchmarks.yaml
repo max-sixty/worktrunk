@@ -54,7 +54,7 @@ jobs:
     - name: Install nushell
       uses: hustcer/setup-nu@v3
       with:
-        version: '0.114.0'
+        version: '0.114.1'
 
     - name: 💰 Rust repo cache
       uses: actions/cache@v6

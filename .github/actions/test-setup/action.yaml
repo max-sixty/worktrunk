@@ -28,7 +28,7 @@ runs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-nextest
-        version: "=0.9.138"
+        version: "=0.9.140"
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
@@ -69,4 +69,4 @@ runs:
       if: runner.os != 'Windows'
       uses: hustcer/setup-nu@v3
       with:
-        version: '0.114.0'
+        version: '0.114.1'
