@@ -210,12 +210,12 @@ pub(crate) fn print_json<T: serde::Serialize>(value: &T) -> anyhow::Result<()> {
 /// The unset state is the `PendingDefault` row in `DEPRECATION_RULES`, but
 /// its warning fires here rather than at config load: the setting only
 /// matters to JSON consumers, so a load-time warning would nag every command
-/// for every user without the key. `wt config update` pins the current
-/// `json-schema = 1` (the behavior-preserving choice; adopting schema 2 is a
-/// deliberate manual edit), so the nag's hint offers that command exactly
-/// when running it would write the pin — decided by the same detection
-/// update runs, so a missing, unreadable, or malformed user config falls
-/// back to naming the manual setting instead (migration plan in
+/// for every user without the key. `wt config update` writes the upcoming
+/// `json-schema = 2` (adopting the new schema is the migration; staying on
+/// schema 1 is the deliberate manual edit), so the nag's hint offers that
+/// command exactly when running it would write the key — decided by the same
+/// detection update runs, so a missing, unreadable, or malformed user config
+/// falls back to naming the manual setting instead (migration plan in
 /// design/list-json-v2.md, reviewed in #3357).
 pub(crate) fn resolve_json_schema(repo: &Repository) -> u8 {
     use std::sync::Once;
@@ -251,7 +251,7 @@ pub(crate) fn resolve_json_schema(repo: &Repository) -> u8 {
                         "JSON output is schema 1; a future release switches the default to schema 2"
                     )
                 );
-                let update_would_pin = worktrunk::config::config_path()
+                let update_would_adopt = worktrunk::config::config_path()
                     .and_then(|p| std::fs::read_to_string(p).ok())
                     .is_some_and(|content| {
                         worktrunk::config::detect_deprecations(
@@ -261,15 +261,15 @@ pub(crate) fn resolve_json_schema(repo: &Repository) -> u8 {
                         .iter()
                         .any(|k| matches!(k, worktrunk::config::DeprecationKind::JsonSchemaUnset))
                     });
-                let keep = if update_would_pin {
+                let adopt = if update_would_adopt {
                     cformat!("run <underline>wt config update</>")
                 } else {
-                    cformat!("<underline>json-schema = 1</>")
+                    cformat!("set <underline>json-schema = 2</>")
                 };
                 eprintln!(
                     "{}",
                     hint_message(cformat!(
-                        "To adopt the new schema set <underline>[list] json-schema = 2</>; to keep this format, {keep}"
+                        "To keep this format set <underline>[list] json-schema = 1</>; to adopt the new schema, {adopt}"
                     ))
                 );
             });

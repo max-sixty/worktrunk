@@ -51,7 +51,7 @@ exit_code: 0
 [2m↳[22m [2mTo apply: [4mwt config update[24m[22m
 [2m○[22m Proposed diff:
 [107m [0m [1mdiff --git a/config.toml/current b/config.toml/migrated[m
-[107m [0m [1mindex de80729..c3295a3 100644[m
+[107m [0m [1mindex de80729..6a26487 100644[m
 [107m [0m [1m--- a/config.toml/current[m
 [107m [0m [1m+++ b/config.toml/migrated[m
 [107m [0m [36m@@ -1,4 +1,7 @@[m
@@ -62,7 +62,7 @@ exit_code: 0
 [107m [0m  command = "llm -m gpt-4"[m
 [107m [0m [32m+[m
 [107m [0m [32m+[m[32m[list][m
-[107m [0m [32m+[m[32mjson-schema = 1[m
+[107m [0m [32m+[m[32mjson-schema = 2[m
 [2m↳[22m [2mOptional system config not found @ [2m/etc/xdg/worktrunk/config.toml[22m[22m
 
 [36mPROJECT CONFIG[39m @ _REPO_/.config/wt.toml

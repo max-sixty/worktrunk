@@ -213,7 +213,7 @@ Persistent flag values for [2mwt list[0m. Override on command line as needed.
 [107m [0m [2mbranches = [0m[2m[33mfalse[0m[2m   [0m[2m# Include branches without worktrees (--branches)[0m
 [107m [0m [2mremotes = [0m[2m[33mfalse[0m[2m    [0m[2m# Include remote-only branches (--remotes)[0m
 [107m [0m 
-[107m [0m [2mjson-schema = [0m[2m[33m1[0m[2m    [0m[2m# JSON output schema: 1 (current, bare array) or 2 (envelope); unset emits 1 with a warning[0m
+[107m [0m [2mjson-schema = [0m[2m[33m2[0m[2m    [0m[2m# JSON output schema: 2 (envelope) or 1 (bare array, the current default); unset emits 1 with a warning[0m
 [107m [0m 
 [107m [0m [2mcolumns = [[0m[2m[32m"branch"[0m[2m, [0m[2m[32m"status"[0m[2m, [0m[2m[32m"ci"[0m[2m, [0m[2m[32m"path"[0m[2m]   [0m[2m# Columns to show, in order — built-ins or custom headers (omit for the default set)[0m
 [107m [0m 

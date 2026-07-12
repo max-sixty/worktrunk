@@ -16,10 +16,10 @@
 //!
 //! The table also carries pending default changes
 //! ([`DeprecationRule::PendingDefault`]): defaults a future release switches,
-//! which `wt config update` pins to their current value. These share the
-//! detection-equals-migration predicate but warn at the surface that reads
-//! the setting (the `wt list` JSON nag) instead of at config load, and apply
-//! only to the config kind that owns the key.
+//! which `wt config update` adopts early by writing the upcoming value. These
+//! share the detection-equals-migration predicate but warn at the surface
+//! that reads the setting (the `wt list` JSON nag) instead of at config load,
+//! and apply only to the config kind that owns the key.
 //!
 //! Detection is purely in-memory — nothing writes to the filesystem from a
 //! config load path. `check_and_migrate` returns the structurally migrated
@@ -485,15 +485,15 @@ pub enum DeprecationKind {
     /// `timeout-ms` under `[switch.picker]` (removed — picker renders progressively).
     SwitchPickerTimeout,
     /// `[list] json-schema` unset while the default is scheduled to switch to
-    /// schema 2 — `wt config update` pins the current `json-schema = 1`.
+    /// schema 2 — `wt config update` writes the upcoming `json-schema = 2`.
     /// Warns at the JSON-emitting surface (`resolve_json_schema`), not at
     /// config load.
     JsonSchemaUnset,
 }
 
 impl DeprecationKind {
-    /// Whether this kind pins a pending default change rather than rewriting
-    /// a deprecated pattern. Pending defaults warn at the surface that reads
+    /// Whether this kind tracks a pending default change rather than a
+    /// deprecated-pattern rewrite. Pending defaults warn at the surface that reads
     /// the setting (the `wt list` JSON nag) instead of at config load — the
     /// setting only matters to consumers of that surface — and still render
     /// on the pull surfaces (`wt config show`, the `wt config update`
@@ -540,10 +540,11 @@ enum DeprecationRule {
     /// but with no warning by construction.
     Silent(SilentMigrateFn),
     /// Pending default change: a default that a future release switches, which
-    /// `wt config update` pins to its current value. Applies only on the
-    /// update pass and only to the config kind that owns the key — the load
-    /// path must leave the document alone (an in-memory pin would read as an
-    /// explicit setting and silence the usage-site nag). Its
+    /// `wt config update` adopts early by writing the upcoming value. Applies
+    /// only on the update pass and only to the config kind that owns the key —
+    /// the load path must leave the document alone (an in-memory value would
+    /// read as an explicit setting, switching behavior without a config edit
+    /// and silencing the usage-site nag). Its
     /// [`DeprecationKind`] returns true from `is_pending_default`, so the warning
     /// fires where the setting is consumed rather than on every config load.
     PendingDefault {
@@ -646,27 +647,28 @@ const DEPRECATION_RULES: &[DeprecationRule] = &[
             Vec::new()
         }
     }),
-    // [list] json-schema unset → pin json-schema = 1 ahead of the default
-    // switching to schema 2. User config only: the key isn't valid in project
-    // config, and the top-level pin covers every repo (per-project overrides
-    // in user config remain the user's own choice).
+    // [list] json-schema unset → write json-schema = 2, adopting the default
+    // ahead of the release that switches it. User config only: the key isn't
+    // valid in project config, and the top-level write covers every repo
+    // (per-project overrides in user config remain the user's own choice).
     DeprecationRule::PendingDefault {
         kind: ConfigFileKind::User,
-        migrate: pin_json_schema_doc,
+        migrate: adopt_json_schema_doc,
     },
 ];
 
-/// Pin `[list] json-schema = 1` at the top level when the key is absent.
+/// Write `[list] json-schema = 2` at the top level when the key is absent —
+/// adopting the upcoming default ahead of the release that switches it.
 ///
 /// A `list` slot occupied by a non-table is left alone (serde's type error is
 /// the messaging); a present key of any value is the user's explicit choice,
 /// including out-of-range values, which already warn at resolve time. When
-/// the system config layer defines the key, resolution is already explicit
-/// and a user-file pin would *override* the system value rather than
-/// preserve behavior, so the rule stays inert — the one rule that reads a
+/// the system config layer defines the key, resolution is already explicit —
+/// no nag fires — and a user-file write would *override* that deliberate
+/// system-level choice, so the rule stays inert — the one rule that reads a
 /// second file (detection stays write-free; the common no-system-config case
 /// costs one stat).
-fn pin_json_schema_doc(doc: &mut toml_edit::DocumentMut) -> Deprecations {
+fn adopt_json_schema_doc(doc: &mut toml_edit::DocumentMut) -> Deprecations {
     if system_config_defines_json_schema() {
         return Vec::new();
     }
@@ -679,12 +681,12 @@ fn pin_json_schema_doc(doc: &mut toml_edit::DocumentMut) -> Deprecations {
         .or_insert(toml_edit::Item::Table(toml_edit::Table::new()))
     {
         toml_edit::Item::Table(t) if !t.contains_key("json-schema") => {
-            t.insert("json-schema", toml_edit::value(1));
+            t.insert("json-schema", toml_edit::value(2));
         }
         toml_edit::Item::Value(toml_edit::Value::InlineTable(t))
             if !t.contains_key("json-schema") =>
         {
-            t.insert("json-schema", 1.into());
+            t.insert("json-schema", 2.into());
         }
         _ => return Vec::new(),
     }
@@ -745,9 +747,9 @@ fn detect_deprecations_from_doc(
 ///
 /// The load pass excludes [`DeprecationRule::UpdateOnly`] rewrites (cosmetic
 /// or still-valid serde fields, so serde doesn't need them applied) and
-/// [`DeprecationRule::PendingDefault`] pins (an in-memory pin would silence
-/// the usage-site nag). Detection and [`compute_migrated_content`] run the
-/// update pass.
+/// [`DeprecationRule::PendingDefault`] writes (an in-memory value would
+/// switch behavior without a config edit and silence the usage-site nag).
+/// Detection and [`compute_migrated_content`] run the update pass.
 fn apply_rules(doc: &mut toml_edit::DocumentMut, pass: RulePass, kinds: &mut Deprecations) -> bool {
     let mut modified = false;
     for rule in DEPRECATION_RULES {
@@ -1364,9 +1366,9 @@ impl DeprecationInfo {
     }
 
     /// True when the file contains deprecated patterns, as opposed to only
-    /// pending-default pins, which deprecate nothing in the file. `wt config
+    /// pending-default writes, which deprecate nothing in the file. `wt config
     /// show` dumps the config only when this is false: a deprecation diff
-    /// supersedes the dump, while a pending pin is additive.
+    /// supersedes the dump, while a pending-default write is additive.
     pub fn has_deprecated_patterns(&self) -> bool {
         self.deprecations.iter().any(|k| !k.is_pending_default())
     }
@@ -1462,7 +1464,7 @@ pub fn check_and_migrate(
     }
 
     // Pending-default kinds warn at their own usage surface instead of at
-    // load, so an info carrying only pins (most user configs until the
+    // load, so an info carrying only those (most user configs until the
     // json-schema default flips) skips the dedup registry and emission
     // entirely — no canonicalize + lock on every load for a config with
     // nothing to say here.
@@ -2227,7 +2229,7 @@ timeout = 30
     /// Canonical config with no deprecations must round-trip through
     /// `compute_migrated_content` byte-for-byte (the unmodified branch).
     /// Canonical includes an explicit json-schema value — without one the
-    /// pending-default row pins it.
+    /// pending-default row writes it.
     #[test]
     fn test_compute_migrated_content_noop_returns_input_unchanged() {
         let content = "pre-start = \"echo {{ repo_path }}\"\n\n[list]\njson-schema = 1\n";
@@ -3169,9 +3171,9 @@ json-schema = 1
     /// rewritten produce no warning and no rewrite; deprecated configs
     /// produce both. (Silent renames change the file without warning by
     /// design and aren't part of this battery. Every case gets an explicit
-    /// json-schema pin appended so only the rule under test drives the diff;
+    /// json-schema value appended so only the rule under test drives the diff;
     /// the pending-default row satisfies the same invariant with its warning
-    /// at the JSON-emitting surface — see `test_json_schema_pin_iff`.)
+    /// at the JSON-emitting surface — see `test_json_schema_adopt_iff`.)
     #[test]
     fn test_warning_fires_iff_update_changes() {
         let untouched = [
@@ -3241,14 +3243,14 @@ json-schema = 1
 
     /// The pending-default row's own iff: the unset nag (fired by
     /// `resolve_json_schema`, not at config load) corresponds exactly to
-    /// `wt config update` pinning the key.
+    /// `wt config update` writing the key.
     #[test]
-    fn test_json_schema_pin_iff() {
-        // Unset → detected and pinned, and applying the update closes the loop.
+    fn test_json_schema_adopt_iff() {
+        // Unset → detected and adopted, and applying the update closes the loop.
         let migrated = compute_migrated_content("", ConfigFileKind::User);
         insta::assert_snapshot!(migrated, @r#"
         [list]
-        json-schema = 1
+        json-schema = 2
         "#);
         assert!(matches!(
             detect_deprecations("", ConfigFileKind::User).as_slice(),
@@ -3279,23 +3281,23 @@ json-schema = 1
         }
     }
 
-    /// The pin lands inside an existing `[list]` section (either shape)
-    /// rather than duplicating it.
+    /// The adopted key lands inside an existing `[list]` section (either
+    /// shape) rather than duplicating it.
     #[test]
-    fn test_json_schema_pin_joins_existing_list_section() {
+    fn test_json_schema_adopt_joins_existing_list_section() {
         let migrated =
             compute_migrated_content("[list]\ncolumns = [\"ci\"]\n", ConfigFileKind::User);
         insta::assert_snapshot!(migrated, @r#"
         [list]
         columns = ["ci"]
-        json-schema = 1
+        json-schema = 2
         "#);
 
         let migrated =
             compute_migrated_content("list = { columns = [\"ci\"] }\n", ConfigFileKind::User);
-        insta::assert_snapshot!(migrated, @r#"list = { columns = ["ci"] , json-schema = 1 }"#);
+        insta::assert_snapshot!(migrated, @r#"list = { columns = ["ci"] , json-schema = 2 }"#);
 
-        // A `list` that exists only implicitly (via a subtable) hosts the pin
+        // A `list` that exists only implicitly (via a subtable) hosts the key
         // too; toml_edit renders the now-explicit [list] header ahead of the
         // subtable.
         let migrated = compute_migrated_content(
@@ -3304,7 +3306,7 @@ json-schema = 1
         );
         insta::assert_snapshot!(migrated, @r#"
         [list]
-        json-schema = 1
+        json-schema = 2
         [list.custom-columns]
         flag = "echo hi"
         "#);
@@ -3329,12 +3331,13 @@ json-schema = 1
         }
     }
 
-    /// The pin is scoped to user config — project config doesn't own the key,
-    /// and the system layer isn't rewritten by `wt config update` — and to
-    /// the update pass: an in-memory pin at load would read as an explicit
-    /// setting and silence the usage-site nag.
+    /// The write is scoped to user config — project config doesn't own the
+    /// key, and the system layer isn't rewritten by `wt config update` — and
+    /// to the update pass: an in-memory value at load would read as an
+    /// explicit setting, switching behavior without a config edit and
+    /// silencing the usage-site nag.
     #[test]
-    fn test_json_schema_pin_scope() {
+    fn test_json_schema_adopt_scope() {
         for kind in [ConfigFileKind::System, ConfigFileKind::Project] {
             assert!(detect_deprecations("", kind).is_empty());
             assert_eq!(compute_migrated_content("", kind), "");

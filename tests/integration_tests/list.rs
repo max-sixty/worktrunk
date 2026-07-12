@@ -248,7 +248,7 @@ fn test_list_json_schema_2_envelope(mut repo: TestRepo) {
 /// 1 or 2 is an error.
 #[rstest]
 fn test_list_json_schema_selection(repo: TestRepo) {
-    // Unset with no user config file → nag names the setting to write by
+    // Unset with no user config file → nag names both settings to write by
     // hand; there is no file for `wt config update` to rewrite.
     let output = repo
         .wt_command()
@@ -260,8 +260,8 @@ fn test_list_json_schema_selection(repo: TestRepo) {
     assert!(!json.is_empty(), "schema 1 root is a bare array");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("json-schema = 1"),
-        "unset key should nag with the manual setting: {stderr}"
+        stderr.contains("json-schema = 1") && stderr.contains("json-schema = 2"),
+        "unset key should nag with the manual settings: {stderr}"
     );
     assert!(
         !stderr.contains("config update"),
@@ -269,7 +269,7 @@ fn test_list_json_schema_selection(repo: TestRepo) {
     );
 
     // Unset with a user config file present → the hint offers wt config
-    // update, which pins json-schema = 1.
+    // update, which writes json-schema = 2.
     repo.write_test_config("");
     let output = repo
         .wt_command()
