@@ -128,7 +128,9 @@ wt remove -D test --force
 /// the real `wt` output the function appended a bare exit-code line (e.g. `0`).
 /// That corrupts any capture of a command's output, e.g. `$out = wt list
 /// --format json`. Exit-code propagation is handled by `$global:LASTEXITCODE`
-/// plus `Write-Error`, so the `return` was pure stdout pollution.
+/// (the `Write-Error` only surfaces a visible error record — it does not set
+/// the caller's `$?` from a simple function), so the `return` was pure stdout
+/// pollution.
 ///
 /// The mock must exit with a real code so `$LASTEXITCODE` is set — a `.ps1`
 /// that only calls `Write-Output` leaves `$LASTEXITCODE` unset, and the old
