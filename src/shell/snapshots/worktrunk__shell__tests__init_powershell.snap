@@ -77,13 +77,18 @@ if ((Get-Command wt -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN) {
             Remove-Item $execFile -ErrorAction SilentlyContinue
         }
 
-        # Propagate exit code so $? and $LASTEXITCODE are consistent for scripts/CI
+        # Propagate exit code so $? and $LASTEXITCODE are consistent for scripts/CI.
+        # Do NOT `return $exitCode`: in a PowerShell function `return <value>`
+        # writes the value to the output (success) stream, so it would append a
+        # stray exit-code line (e.g. `0`) after the real command output — that
+        # corrupts captures like `$out = wt list --format json`. Setting
+        # $global:LASTEXITCODE plus the Write-Error below already propagates both
+        # $LASTEXITCODE and $?.
         $global:LASTEXITCODE = $exitCode
         if ($exitCode -ne 0) {
             # Write error to set $? = $false without throwing
             Write-Error "wt exited with code $exitCode" -ErrorAction SilentlyContinue
         }
-        return $exitCode
     }
 
     # Tab completion - generate clap's completer script and eval it
