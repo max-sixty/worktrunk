@@ -288,7 +288,9 @@ impl PreviewOrchestrator {
                             PickerRow::compute_and_page_preview(&repo, &req.item, req.mode, w, h);
                         Self::fill(&cache, &notifier, key, value);
                         if log_disk_hit {
-                            Self::spawn_log_refresh(&cache, &notifier, &pending, req.item, &repo, w, h);
+                            Self::spawn_log_refresh(
+                                &cache, &notifier, &pending, req.item, &repo, w, h,
+                            );
                         }
                     }
                 });
