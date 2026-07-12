@@ -28,7 +28,7 @@ metadata:
      Launch a ci-reporter to monitor `$RUN` to completion (avoid `gh run watch` — it can hang). Fix any failure before continuing.
 3. **Check current version**: Read `version` in `Cargo.toml`
 4. **Review commits**: Check commits since last release to understand scope of changes. Audit the cumulative diff for the data-loss surface (see [Data-Loss Surface Review](#data-loss-surface-review)) before proceeding.
-5. **Check library API compatibility**: Run `cargo semver-checks check-release -p worktrunk` (install with `cargo install cargo-semver-checks --locked` if missing). If it reports breaking changes, the bump must be minor (pre-1.0) or major (post-1.0). See "Library API Compatibility" below.
+5. **Check library API compatibility (advisory)**: Run `cargo semver-checks check-release -p worktrunk` (install with `cargo install cargo-semver-checks --locked` if missing) as a bump-level input, not a compat gate — worktrunk ships breaking library changes freely. If it reports breaking changes, that's fine; under semver the bump must still be minor (pre-1.0) or major (post-1.0). See "Library API Compatibility" below.
 6. **Credit contributors**: Check for external PR authors and issue reporters (see "Credit External Contributors" and "Credit Issue Reporters" below)
 7. **Determine release type**: Pick the bump from the changes (including semver-checks result). Ask the user only if the choice is genuinely ambiguous (see below).
 8. **Bump version** (must run on a clean tree — before editing CHANGELOG):
@@ -289,11 +289,13 @@ Recommendation: Minor release (0.3.0) — new features, no breaking changes
 - **Second digit** (0.1.0 → 0.2.0): Backward incompatible changes
 - **Third digit** (0.1.0 → 0.1.1): Everything else
 
-Current project status: early release, breaking changes acceptable, optimize for best solution over compatibility.
+Current project status: maturing mode (see [CLAUDE.md › Project Status](../../../CLAUDE.md)). External interfaces — the config file format (`wt.toml`, user config) and CLI flags/arguments — carry compatibility weight, so breaks there need justification (a real improvement, not cleanup) and prefer deprecation warnings over silent breaks. Everything else, including the internal and library APIs, stays flexible: worktrunk ships breaking library changes freely and bumps the version each time, putting no weight on the existing internal APIs.
 
 ## Library API Compatibility
 
-Worktrunk is primarily a CLI, but it also publishes a library crate (`[lib]` in `Cargo.toml`) that downstream crates depend on. `cargo-semver-checks` compares the current public API against the last version published to crates.io and flags semver violations.
+Worktrunk is a CLI tool. The `[lib]` crate in `Cargo.toml` does expose a public API, but it is **not a compatibility surface** — per [CLAUDE.md › Project Status](../../../CLAUDE.md) there are no Rust library compatibility concerns, and the project ships breaking library changes freely, bumping the version each time (see the "Breaking library API" entries in `CHANGELOG.md`). Downstream crates are expected to pin.
+
+`cargo-semver-checks` is therefore an **advisory bump-level input**, not a gate that commits us to keeping the API stable for downstream crates. It compares the current public API against the last version published to crates.io and reports semver-relevant changes — a useful signal for choosing the bump:
 
 ```bash
 cargo semver-checks check-release -p worktrunk
@@ -301,8 +303,8 @@ cargo semver-checks check-release -p worktrunk
 
 Interpreting results:
 
-- **No issues reported**: any bump level is valid from the library's perspective. Choose based on CLI changes and new features.
-- **Breaking changes reported**: while pre-1.0, these require at minimum a minor bump (e.g., 0.37.0 → 0.38.0). A patch release is not allowed.
+- **No issues reported**: no library-level signal for the bump. Choose based on CLI changes and new features.
+- **Breaking changes reported**: expected and acceptable — breaking the library API is not something to avoid here. But under semver a breaking change still warrants at minimum a minor bump while pre-1.0 (e.g., 0.37.0 → 0.38.0) rather than a patch. Bump accordingly; this is version mechanics, not a signal to preserve the old API.
 - **Tool fails to run** (e.g., missing baseline): likely the crate hasn't been published yet or the registry cache is stale. Try `cargo semver-checks check-release -p worktrunk --baseline-version <last-published>`.
 
 This check validates the chosen bump — it doesn't distinguish patch vs. minor when no breakage exists. Continue using the commit review to decide between patch (fixes only) and minor (new features).
