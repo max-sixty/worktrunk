@@ -597,7 +597,9 @@ impl SkimItem for PickerRow {
         // then repaints via the awaited key recorded above. A morphed row is
         // excluded like in `output()`: its frozen item still points at the
         // worktree the alt-x removal is deleting, and a compute from it
-        // would cache an actively wrong pane under the kept branch.
+        // would cache an actively wrong pane under the kept branch. (Best
+        // effort, like the refresh-time `clear_pending`: a request parked in
+        // the instant before the morph is still served from the frozen item.)
         if let Some(local) = &self.local
             && mode.is_local_git()
             && !local.morphed.load(Ordering::Relaxed)

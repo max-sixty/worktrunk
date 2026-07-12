@@ -74,12 +74,15 @@
 //!   fires while a prior spawn's precompute is still draining (large repo / slow
 //!   summaries) and the row's content moved in that window — the common "I edited
 //!   the branch I'm viewing" case doesn't hit it, since that branch's precompute
-//!   finished when the picker opened. (The refresh also drops any parked
-//!   demand request — `PreviewDemand::clear_pending`, called at the same
-//!   clear site — so only a demand compute already *in flight* at the clear
-//!   shares this window.) The structural fix for both is to give the
-//!   orchestrator the current spawn's repo plus a spawn generation (mirroring
-//!   `prs_epoch`) so a superseded fill drops.
+//!   finished when the picker opened. The demand path shares this window on
+//!   the same terms: the clear site drops a parked request via
+//!   `PreviewDemand::clear_pending`, but until the rebuilt skeleton replaces
+//!   the rows, the old rows' `preview()` misses on the just-cleared cache
+//!   and posts fresh demands from their superseded items, re-seeding stale
+//!   entries the new spawn's precompute then short-circuits on. The
+//!   structural fix for all of it is to give the orchestrator the current
+//!   spawn's repo plus a spawn generation (mirroring `prs_epoch`) so a
+//!   superseded fill drops.
 //!
 //! # Filling and surfacing
 //!
