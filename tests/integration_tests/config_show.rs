@@ -3887,10 +3887,20 @@ fn test_codex_plugin_metadata_is_valid_json() {
     .unwrap();
 
     assert_eq!(plugin["name"], "worktrunk");
-    assert_eq!(plugin["skills"], "./skills/");
+    // No `skills` key: Codex scans <plugin-root>/skills/ by convention when
+    // the manifest omits it, and an explicit "./skills/" names the same
+    // directory (verified against codex-cli 0.144.1). Neither form ships
+    // skills today — `codex plugin add` copies the plugin into its cache
+    // with a copier that drops symlink entries, so the skills symlink never
+    // reaches the installed root. See CLAUDE.md → "Codex installs carry no
+    // skills".
+    assert!(
+        plugin.get("skills").is_none(),
+        "the Codex manifest must not carry a `skills` key — Codex scans skills/ by convention"
+    );
     // Metadata must not drift back toward the Claude plugin: the Codex plugin
-    // ships only the configuration skill, and its URLs are the canonical site
-    // (not the `/claude-code/` doc slug).
+    // is scoped to configuration guidance (no activity-tracking claims), and
+    // its URLs are the canonical site (not the `/claude-code/` doc slug).
     for key in ["description", "homepage"] {
         let val = plugin[key].as_str().unwrap();
         assert!(
@@ -3983,7 +3993,11 @@ fn test_codex_plugin_metadata_is_valid_json() {
 /// at `hooks/hooks.json`, skills by scanning `skills/*/SKILL.md` (the
 /// installer dereferences the `skills` symlink into a real directory in the
 /// install cache). A marketplace install of exactly this shape loads the
-/// skills and fires the hooks with no component keys in the manifest. Gemini
+/// skills and fires the hooks with no component keys in the manifest. Codex
+/// (codex-cli 0.144.1) also scans `skills/` by convention when the manifest
+/// omits the key, but its installer's cache copy drops symlink entries, so
+/// Codex installs carry no skills either way (see plugins/worktrunk/CLAUDE.md
+/// → "Codex installs carry no skills"). Gemini
 /// (gemini-cli 0.42) resolves the extension at the repo root, so
 /// `${extensionPath}/skills/` is the real single-sourced repo-root `skills/`
 /// and its hooks call the canonical
