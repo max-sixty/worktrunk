@@ -150,6 +150,13 @@ const MAX_LINE_LEN: usize = 500;
 /// truncated diff itself.
 const STAT_MAX_LINES: usize = 200;
 
+/// Maximum squashed commits rendered into a squash prompt; a synthetic
+/// "(N earlier commits omitted)" entry stands in for the older tail. This
+/// bounds the one prompt input the diff budget doesn't cover — subjects from
+/// a branch with thousands of commits would otherwise grow the prompt
+/// without limit.
+const MAX_SQUASH_COMMITS: usize = 200;
+
 /// Lock file patterns that are filtered out when diff is too large
 const LOCK_FILE_PATTERNS: &[&str] = &[".lock", "-lock.json", "-lock.yaml", ".lock.hcl"];
 
@@ -224,30 +231,27 @@ fn truncate_line(line: &str) -> Cow<'_, str> {
     Cow::Owned(format!("{}... (line truncated)", &line[..end]))
 }
 
-/// Truncate a diff section to max lines (keeping the header) and cap each
-/// surviving line at [`MAX_LINE_LEN`] bytes
+/// Truncate a diff section to max lines (keeping at least the header lines,
+/// through the first `@@` hunk marker) and cap each surviving line at
+/// [`MAX_LINE_LEN`] bytes. Output is LF-normalized.
 fn truncate_diff_section(section: &str, max_lines: usize) -> String {
-    let lines: Vec<&str> = section.lines().collect();
-    if lines.len() <= max_lines {
-        return lines
-            .iter()
-            .map(|l| format!("{}\n", truncate_line(l)))
-            .collect();
+    let line_count = section.lines().count();
+    let total_lines = if line_count <= max_lines {
+        line_count
+    } else {
+        let header_lines = section
+            .lines()
+            .position(|l| l.starts_with("@@"))
+            .map_or(1, |i| i + 1);
+        max_lines.max(header_lines)
+    };
+
+    let mut result = String::new();
+    for line in section.lines().take(total_lines) {
+        result.push_str(&truncate_line(line));
+        result.push('\n');
     }
-
-    // Find where the actual diff content starts (after the @@ line)
-    let header_end = lines.iter().position(|l| l.starts_with("@@")).unwrap_or(0);
-    let header_lines = header_end + 1; // Include the first @@ line
-
-    let content_lines = max_lines.saturating_sub(header_lines);
-    let total_lines = header_lines + content_lines;
-
-    let mut result: String = lines
-        .iter()
-        .take(total_lines)
-        .map(|l| format!("{}\n", truncate_line(l)))
-        .collect();
-    let omitted = lines.len() - total_lines;
+    let omitted = line_count - total_lines;
     if omitted > 0 {
         result.push_str(&format!("\n... ({} lines omitted)\n", omitted));
     }
@@ -255,23 +259,25 @@ fn truncate_diff_section(section: &str, max_lines: usize) -> String {
     result
 }
 
-/// Cap the diffstat at [`STAT_MAX_LINES`], keeping the head and the trailing
-/// `N files changed, ...` summary line with an omission marker between
+/// Cap the diffstat at [`STAT_MAX_LINES`] lines plus an omission marker. No
+/// line is special-cased: the summary path concatenates two `--stat` blocks
+/// (branch + working tree), so "the last line is the total" doesn't hold in
+/// general.
 fn truncate_stat(stat: String) -> String {
-    let lines: Vec<&str> = stat.lines().collect();
-    if lines.len() <= STAT_MAX_LINES {
+    let line_count = stat.lines().count();
+    if line_count <= STAT_MAX_LINES {
         return stat;
     }
 
-    let kept_head = STAT_MAX_LINES - 1;
-    let omitted = lines.len() - kept_head - 1;
-    let mut out: String = lines[..kept_head]
-        .iter()
-        .map(|l| format!("{}\n", l))
-        .collect();
-    out.push_str(&format!("... ({} more files)\n", omitted));
-    out.push_str(lines[lines.len() - 1]);
-    out.push('\n');
+    let mut out = String::new();
+    for line in stat.lines().take(STAT_MAX_LINES) {
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.push_str(&format!(
+        "... ({} more files)\n",
+        line_count - STAT_MAX_LINES
+    ));
     out
 }
 
@@ -588,6 +594,8 @@ fn load_template(
 /// Squash-specific variables (empty for regular commits):
 /// - `commit_details`: Commits being squashed. Each element renders as its
 ///   subject when printed bare and exposes `.subject` / `.body` properties.
+///   Capped at [`MAX_SQUASH_COMMITS`]; the older tail is represented by one
+///   synthetic "(N earlier commits omitted)" entry.
 /// - `commits`: Commit subjects being squashed (deprecated — see #2984;
 ///   `wt config update` rewrites it to `commit_details`)
 /// - `target_branch`: Target branch for merge
@@ -641,16 +649,30 @@ fn build_prompt(
     // element renders as its subject (see `CommitDetailValue`), so a migrated
     // `{% for c in commit_details %}{{ c }}` reads identically to the old
     // `{% for c in commits %}{{ c }}`.
-    let commits_chronological: Vec<&String> = context
+    //
+    // The list is capped at `MAX_SQUASH_COMMITS` — the one prompt input the
+    // diff budget doesn't bound. Details arrive newest-first, so the newest
+    // are kept and a synthetic entry stands in for the older tail; it renders
+    // first in the chronological order below.
+    let omitted_commits = context
         .commit_details
+        .len()
+        .saturating_sub(MAX_SQUASH_COMMITS);
+    let synthetic_tail = (omitted_commits > 0).then(|| CommitMessageDetail {
+        subject: format!("... ({} earlier commits omitted)", omitted_commits),
+        body: String::new(),
+    });
+    let kept_details = &context.commit_details[..context.commit_details.len() - omitted_commits];
+    let details_chronological: Vec<&CommitMessageDetail> = synthetic_tail
         .iter()
-        .rev()
+        .chain(kept_details.iter().rev())
+        .collect();
+    let commits_chronological: Vec<&String> = details_chronological
+        .iter()
         .map(|detail| &detail.subject)
         .collect();
-    let commit_details_chronological: Vec<Value> = context
-        .commit_details
+    let commit_details_chronological: Vec<Value> = details_chronological
         .iter()
-        .rev()
         .map(|detail| {
             Value::from_object(CommitDetailValue {
                 subject: detail.subject.clone(),
@@ -2214,12 +2236,12 @@ index abc..def 100644
     }
 
     #[test]
-    fn test_truncate_stat_keeps_head_and_summary() {
+    fn test_truncate_stat_caps_lines() {
         // Small stat passes through unchanged
         let small = " src/main.rs | 4 ++++\n 1 file changed, 4 insertions(+)\n".to_string();
         assert_eq!(truncate_stat(small.clone()), small);
 
-        // Oversized stat keeps the head, a marker, and the trailing summary
+        // Oversized stat keeps the head plus an omission marker
         let mut stat = String::new();
         for i in 0..500 {
             stat.push_str(&format!(" src/file{}.rs | 2 +-\n", i));
@@ -2230,11 +2252,38 @@ index abc..def 100644
         let lines: Vec<&str> = truncated.lines().collect();
         assert_eq!(lines.len(), STAT_MAX_LINES + 1);
         assert_eq!(lines[0], " src/file0.rs | 2 +-");
-        assert_eq!(lines[STAT_MAX_LINES - 1], "... (301 more files)");
-        assert_eq!(
-            lines[STAT_MAX_LINES],
-            " 500 files changed, 500 insertions(+), 500 deletions(-)"
-        );
+        assert_eq!(lines[STAT_MAX_LINES - 1], " src/file199.rs | 2 +-");
+        assert_eq!(lines[STAT_MAX_LINES], "... (301 more files)");
+    }
+
+    #[test]
+    fn test_build_squash_prompt_caps_commit_count() {
+        // Details arrive newest-first; over MAX_SQUASH_COMMITS the newest are
+        // kept and a synthetic entry for the older tail renders first in the
+        // chronological list.
+        let config = CommitGenerationConfig {
+            squash_template: Some(
+                "{% for c in commit_details %}- {{ c }}\n{% endfor %}".to_string(),
+            ),
+            ..Default::default()
+        };
+        let commit_details: Vec<CommitMessageDetail> = (0..MAX_SQUASH_COMMITS + 50)
+            .map(|i| CommitMessageDetail {
+                subject: format!("commit {}", i),
+                body: String::new(),
+            })
+            .collect();
+        let context = squash_context("diff", "feature", None, "repo", &commit_details, "main");
+
+        let prompt = build_prompt(&config, TemplateType::Squash, &context).unwrap();
+
+        assert!(prompt.starts_with("- ... (50 earlier commits omitted)\n"));
+        // Newest (index 0) renders last; the oldest kept (index 199) follows
+        // the marker; the 50 oldest are gone.
+        assert!(prompt.ends_with("- commit 0\n"));
+        assert!(prompt.contains("- commit 199\n"));
+        assert!(!prompt.contains("- commit 200\n"));
+        assert_eq!(prompt.lines().count(), MAX_SQUASH_COMMITS + 1);
     }
 
     #[test]

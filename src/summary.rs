@@ -240,8 +240,17 @@ pub(crate) fn compute_combined_diff(
     if !is_default_branch && let Some(spec) = repo.branch_diff_spec(head) {
         // `--end-of-options` guards a base name that could begin with `-`; the
         // stat and full-diff invocations differ only by the `--stat` flag.
+        // The `-c` flags force the `a/`/`b/` prefix format regardless of user
+        // git config — `prepare_diff` parses the diff into per-file sections
+        // by those prefixes (same guard as `build_commit_prompt`).
         let run_branch_diff = |opts: &[&str], out: &mut String| {
-            let mut args = vec!["diff"];
+            let mut args = vec![
+                "-c",
+                "diff.noprefix=false",
+                "-c",
+                "diff.mnemonicPrefix=false",
+                "diff",
+            ];
             args.extend_from_slice(opts);
             args.push("--end-of-options");
             args.extend(spec.revs.iter().map(String::as_str));
@@ -261,8 +270,16 @@ pub(crate) fn compute_combined_diff(
         {
             stat.push_str(&wt_stat);
         }
-        if let Ok(wt_diff) = repo.run_command(&["-C", &path, "diff", "HEAD"])
-            && !wt_diff.trim().is_empty()
+        if let Ok(wt_diff) = repo.run_command(&[
+            "-C",
+            &path,
+            "-c",
+            "diff.noprefix=false",
+            "-c",
+            "diff.mnemonicPrefix=false",
+            "diff",
+            "HEAD",
+        ]) && !wt_diff.trim().is_empty()
         {
             diff.push_str(&wt_diff);
         }
