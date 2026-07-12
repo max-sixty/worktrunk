@@ -92,7 +92,7 @@ mod types;
 pub use finish::{FinishAfterMergeArgs, finish_after_merge};
 pub use push::{PushKind, PushOutcome, PushResult, handle_no_ff_merge, handle_push};
 pub use resolve::{
-    compute_worktree_path, is_worktree_at_expected_path, path_mismatch, resolve_worktree_arg,
+    compute_worktree_path, is_worktree_at_expected_path, resolve_worktree_arg,
     worktree_display_name,
 };
 pub(crate) use switch::SwitchPipeline;

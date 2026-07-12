@@ -260,7 +260,6 @@ mod tests {
         };
         let info = SwitchBranchInfo {
             branch: Some("contributor/feature".to_string()),
-            expected_path: None,
         };
         let vars = TemplateVars::for_post_switch(&result, &info, "", "");
         let pairs = vars.as_extra_vars();
@@ -279,7 +278,6 @@ mod tests {
         };
         let info = SwitchBranchInfo {
             branch: Some("feature".to_string()),
-            expected_path: None,
         };
         let vars = TemplateVars::for_post_switch(&result, &info, "main", "/repo");
         let pairs = vars.as_extra_vars();
@@ -295,7 +293,6 @@ mod tests {
         let result = SwitchResult::AlreadyAt(PathBuf::from("/repo.feature"));
         let info = SwitchBranchInfo {
             branch: Some("feature".to_string()),
-            expected_path: None,
         };
         let vars = TemplateVars::for_post_switch(&result, &info, "", "");
         let pairs = vars.as_extra_vars();
@@ -309,10 +306,7 @@ mod tests {
         let result = SwitchResult::Existing {
             path: PathBuf::from("/repo.detached"),
         };
-        let info = SwitchBranchInfo {
-            branch: None,
-            expected_path: None,
-        };
+        let info = SwitchBranchInfo { branch: None };
         let vars = TemplateVars::for_post_switch(&result, &info, "", "");
         let pairs = vars.as_extra_vars();
         assert!(!pairs.iter().any(|(k, _)| *k == "target"));

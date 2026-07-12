@@ -357,15 +357,17 @@ When a command evaluates state, discovers something unexpected, and proceeds
 anyway, that message comes first:
 
 ```
-○ Branch-worktree mismatch: feature @ ~/workspace/project.alias, expected @ ~/workspace/project.feature ⚑
-◎ Removing feature worktree & branch in background (same commit as main, _)
+▲ Auto-staging 1 untracked path:
+   ┃ notes.md
+◎ Generating commit message...
 ```
 
 Not:
 
 ```
-◎ Removing feature worktree & branch in background (same commit as main, _)
-○ Branch-worktree mismatch: feature @ ~/workspace/project.alias, expected @ ~/workspace/project.feature ⚑
+◎ Generating commit message...
+▲ Auto-staging 1 untracked path:
+   ┃ notes.md
 ```
 
 Warnings that result from the action itself (something failed during execution)

@@ -56,8 +56,6 @@ impl SwitchResult {
 pub struct SwitchBranchInfo {
     /// The branch being switched to. `None` for detached HEAD worktrees.
     pub branch: Option<String>,
-    /// Expected path when there's a branch-worktree mismatch (None = path matches template)
-    pub expected_path: Option<PathBuf>,
 }
 
 /// How the worktree will be created.
@@ -163,9 +161,6 @@ pub enum RemoveResult {
         target_branch: Option<String>,
         /// Force git worktree removal even with untracked files.
         force_worktree: bool,
-        /// Expected path based on config template. `Some` when actual path differs
-        /// from expected (path mismatch), `None` when path matches template.
-        expected_path: Option<PathBuf>,
         /// Commit SHA of the removed worktree's HEAD, captured before removal.
         /// Used for post-remove hook template variables so they reference the
         /// removed worktree's state, not the execution context.
@@ -279,7 +274,6 @@ mod tests {
             deletion_mode: BranchDeletionMode::default(),
             target_branch: None,
             force_worktree: false,
-            expected_path: None,
             removed_commit: None,
         };
         assert_eq!(removed.branch_name(), Some("feature"));
@@ -341,7 +335,6 @@ mod tests {
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
             force_worktree: false,
-            expected_path: None,
             removed_commit: Some("abc1234567890".to_string()),
         };
         match result {
@@ -353,7 +346,6 @@ mod tests {
                 deletion_mode,
                 target_branch,
                 force_worktree,
-                expected_path,
                 removed_commit,
             } => {
                 assert_eq!(main_path.to_str().unwrap(), "/main");
@@ -364,7 +356,6 @@ mod tests {
                 assert!(!deletion_mode.is_force());
                 assert_eq!(target_branch.as_deref(), Some("main"));
                 assert!(!force_worktree);
-                assert!(expected_path.is_none());
                 assert_eq!(removed_commit.as_deref(), Some("abc1234567890"));
             }
             _ => panic!("Expected RemovedWorktree variant"),
@@ -436,7 +427,6 @@ mod tests {
             deletion_mode: BranchDeletionMode::ForceDelete,
             target_branch: None,
             force_worktree: true,
-            expected_path: None,
             removed_commit: None, // Detached HEAD may not have meaningful commit
         };
         match result {

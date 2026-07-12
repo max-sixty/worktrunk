@@ -27,7 +27,6 @@ use worktrunk::config::UserConfig;
 use worktrunk::git::{BranchDeletionMode, Repository};
 use worktrunk::styling::{eprintln, info_message};
 
-use super::resolve::path_mismatch;
 use super::types::RemoveResult;
 use crate::commands::command_executor::CommandContext;
 use crate::commands::context::CommandEnv;
@@ -129,7 +128,6 @@ pub fn finish_after_merge(
         current_wt.ensure_clean("remove worktree after merge", Some(current_branch), false)?;
 
         let worktree_root = current_wt.root()?;
-        let expected_path = path_mismatch(repo, current_branch, &worktree_root, config);
 
         // No config snapshot: `pre-remove` / `post-remove` were selected and
         // frozen into `plan` at the gate (anchored at `feature_path`), so the
@@ -142,7 +140,6 @@ pub fn finish_after_merge(
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some(target_branch.to_string()),
             force_worktree: false,
-            expected_path,
             removed_commit: feature_commit.clone(),
         };
         handle_remove_output(

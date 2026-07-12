@@ -1518,7 +1518,7 @@ fn test_switch_no_warning_when_branch_matches(mut repo: TestRepo) {
 }
 
 #[rstest]
-fn test_switch_branch_worktree_mismatch_shows_hint(repo: TestRepo) {
+fn test_switch_branch_worktree_mismatch(repo: TestRepo) {
     // Create a worktree at a non-standard path (sibling to repo, not following template)
     let wrong_path = repo.root_path().parent().unwrap().join("wrong-path");
     repo.run_git(&[
@@ -1529,17 +1529,13 @@ fn test_switch_branch_worktree_mismatch_shows_hint(repo: TestRepo) {
         "feature",
     ]);
 
-    // Switch to feature - should show hint about branch-worktree mismatch
-    snapshot_switch_with_directive_file(
-        "switch_branch_worktree_mismatch_shows_hint",
-        &repo,
-        &["feature"],
-    );
+    // Switch to feature - no mismatch notice; the state shows only in wt list
+    snapshot_switch_with_directive_file("switch_branch_worktree_mismatch", &repo, &["feature"]);
 }
 
 ///
-/// When shell integration is not active, the branch-worktree mismatch warning should appear
-/// alongside the "cannot change directory" warning.
+/// Without shell integration, switching to a mismatched worktree shows only
+/// the "cannot change directory" warning — no mismatch notice.
 #[rstest]
 fn test_switch_worktree_mismatch_no_shell_integration(repo: TestRepo) {
     // Create a worktree at a non-standard path
@@ -1556,7 +1552,7 @@ fn test_switch_worktree_mismatch_no_shell_integration(repo: TestRepo) {
         "feature-mismatch",
     ]);
 
-    // Switch without directive file (no shell integration) - should show both warnings
+    // Switch without directive file (no shell integration)
     snapshot_switch(
         "switch_branch_worktree_mismatch_no_shell",
         &repo,
@@ -1566,7 +1562,7 @@ fn test_switch_worktree_mismatch_no_shell_integration(repo: TestRepo) {
 
 ///
 /// When already in a worktree whose path doesn't match the branch name,
-/// switching to that branch should show the branch-worktree mismatch warning.
+/// switching to that branch acknowledges the location with no mismatch notice.
 #[rstest]
 fn test_switch_already_at_with_branch_worktree_mismatch(repo: TestRepo) {
     // Create a worktree at a non-standard path
@@ -1583,7 +1579,7 @@ fn test_switch_already_at_with_branch_worktree_mismatch(repo: TestRepo) {
         "feature-already",
     ]);
 
-    // Switch from within the worktree with branch-worktree mismatch (AlreadyAt case)
+    // Switch from within the mismatched worktree (AlreadyAt case)
     snapshot_switch_from_dir(
         "switch_already_at_branch_worktree_mismatch",
         &repo,

@@ -337,7 +337,6 @@ impl AltXRemover {
         let caller_path = repo.current_worktree().root().ok();
 
         let result = {
-            let config = repo.user_config();
             let remove_target = match target {
                 PickerRemovalTarget::WorktreePath(path) => RemoveTarget::Path(path),
                 PickerRemovalTarget::Branch(branch) => RemoveTarget::Branch(branch),
@@ -346,7 +345,6 @@ impl AltXRemover {
                 remove_target,
                 BranchDeletionMode::SafeDelete,
                 false,
-                config,
                 caller_path,
                 None,
                 None,
@@ -2713,7 +2711,6 @@ pub mod tests {
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
             force_worktree: false,
-            expected_path: None,
             removed_commit: None,
         };
 
@@ -2808,7 +2805,6 @@ pub mod tests {
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
             force_worktree: false,
-            expected_path: None,
             removed_commit: None,
         };
 
@@ -2899,7 +2895,6 @@ pub mod tests {
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
             force_worktree: false,
-            expected_path: None,
             removed_commit: None,
         };
 
@@ -3581,7 +3576,6 @@ pub mod tests {
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
             force_worktree: false,
-            expected_path: None,
             removed_commit: None,
         };
         assert_eq!(
@@ -3597,7 +3591,6 @@ pub mod tests {
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
             force_worktree: false,
-            expected_path: None,
             removed_commit: None,
         };
         assert_eq!(
@@ -3945,7 +3938,6 @@ pub mod tests {
             deletion_mode: mode,
             target_branch: Some("main".to_string()),
             force_worktree: false,
-            expected_path: None,
             removed_commit: None,
         };
 
@@ -4043,7 +4035,6 @@ pub mod tests {
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
             force_worktree: false,
-            expected_path: None,
             removed_commit: None,
         };
         assert!(super::removal_target_still_present(
@@ -4102,7 +4093,6 @@ pub mod tests {
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
             force_worktree: false,
-            expected_path: None,
             removed_commit: None,
         };
         assert!(
@@ -4148,7 +4138,6 @@ pub mod tests {
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
             force_worktree: false,
-            expected_path: None,
             removed_commit: None,
         };
         assert!(
