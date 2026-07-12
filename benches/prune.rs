@@ -35,7 +35,7 @@
 //   cargo bench --bench prune --features real-repo-benches prune_real_repo
 //
 // For phase attribution (scan vs per-candidate removal), trace one invocation
-// instead: `wt-perf setup prune-4-8 --path /tmp/prune-repo --persist`, then
+// instead: `wt-perf setup prune-4-8 --path /tmp/prune-repo`, then
 // `wt-perf timeline -- -C /tmp/prune-repo step prune --dry-run --min-age 0s`
 // and read the `prune-gather` / `prune-scan` / `prune-check:*` /
 // `prune-remove:*` spans.

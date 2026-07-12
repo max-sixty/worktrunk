@@ -226,7 +226,7 @@ drain *plus* the removal itself: read it as "how long this removal stalled the
 run", not as pure removal work.
 
 ```bash
-cargo run -p wt-perf -- setup prune-4-8 --path /tmp/prune-repo --persist
+cargo run -p wt-perf -- setup prune-4-8 --path /tmp/prune-repo
 # A freshly built fixture is already probe-cold (empty sha_cache); don't use
 # `timeline --cold` here — it deletes worktree indexes, which flips prune's
 # clean-worktree gate and drops the worktree candidates from the run.
@@ -280,8 +280,9 @@ Use `wt-perf` to set up benchmark repos and generate Chrome Trace Format for vis
 ### Setting up benchmark repos
 
 ```bash
-# Set up a repo with 8 worktrees (persists at /tmp/wt-perf-typical-8)
-cargo run -p wt-perf -- setup typical-8 --persist
+# Set up a repo with 8 worktrees (persists at /tmp/wt-perf-typical-8; the
+# next `setup typical-8` run wipes and rebuilds it)
+cargo run -p wt-perf -- setup typical-8
 
 # Available configs:
 #   typical-N       - 500 commits, 100 files, N worktrees
@@ -313,9 +314,8 @@ Perfetto/chrome://tracing. `--cold` invalidates caches first.
 # Text timeline of one wt invocation
 cargo run -p wt-perf -- timeline -- list --progressive
 
-# Cold-cache run
-cargo run -p wt-perf -- timeline --cold --repo /tmp/wt-perf-typical-8 -- \
-  -C /tmp/wt-perf-typical-8 list --progressive
+# Cold-cache run (invalidates the traced repo — the `-C` arg, else cwd)
+cargo run -p wt-perf -- timeline --cold -- -C /tmp/wt-perf-typical-8 list --progressive
 
 # Chrome Trace Format JSON for Perfetto
 cargo run -p wt-perf -- timeline --chrome -- list --progressive > trace.json

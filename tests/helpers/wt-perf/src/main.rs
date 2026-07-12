@@ -2,7 +2,7 @@
 //!
 //! Run `wt-perf --help` (and `wt-perf <subcommand> --help`) for usage.
 
-use std::io::{IsTerminal, Read, Write};
+use std::io::{IsTerminal, Read};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -31,10 +31,6 @@ enum Commands {
         /// Directory to create repo in (default: temp directory)
         #[arg(long)]
         path: Option<PathBuf>,
-
-        /// Keep the repo (don't wait for cleanup)
-        #[arg(long)]
-        persist: bool,
     },
 
     /// Invalidate git caches for cold benchmarks
@@ -76,23 +72,19 @@ enum Commands {
   # Text timeline of `wt list` in the current repo
   wt-perf timeline -- list
 
-  # Cold-cache run (invalidates ./ then runs)
+  # Cold-cache run (invalidates the traced repo, then runs)
   wt-perf timeline --cold -- list
 
   # Cold run against a specific repo
-  wt-perf timeline --cold --repo /tmp/wt-perf-typical-1 -- -C /tmp/wt-perf-typical-1 list
+  wt-perf timeline --cold -- -C /tmp/wt-perf-typical-1 list
 
   # Chrome Trace Format JSON for Perfetto
   wt-perf timeline --chrome -- list > trace.json
 "#)]
     Timeline {
-        /// Invalidate caches before running (cold measurement).
+        /// Invalidate the traced repo's caches before running (cold measurement).
         #[arg(long)]
         cold: bool,
-
-        /// Repo to invalidate (only used with --cold). Defaults to cwd.
-        #[arg(long, value_name = "PATH")]
-        repo: Option<PathBuf>,
 
         /// Output Chrome Trace Format JSON to stdout instead of a text timeline.
         #[arg(long)]
@@ -108,11 +100,7 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Setup {
-            config,
-            path,
-            persist,
-        } => {
+        Commands::Setup { config, path } => {
             // `prune-real[-M-U]`: cache-managed rust-scale fixture (built once
             // under target/bench-repos/, repaired after a live prune consumes
             // its candidates) — takes no --path and never offers cleanup.
@@ -213,20 +201,6 @@ fn main() {
                 example_args
             );
             eprintln!("  wt-perf invalidate {}", base_path.display());
-
-            if !persist {
-                eprintln!();
-                eprintln!("Press Enter to clean up (or Ctrl+C to keep)...");
-                std::io::stdout().flush().unwrap();
-                let mut input = String::new();
-                std::io::stdin().read_line(&mut input).unwrap();
-
-                eprintln!("Cleaning up...");
-                if let Err(e) = std::fs::remove_dir_all(&base_path) {
-                    eprintln!("Warning: Failed to clean up: {}", e);
-                    eprintln!("You may need to manually remove: {}", base_path.display());
-                }
-            }
         }
 
         Commands::Invalidate { repo } => {
@@ -251,10 +225,9 @@ fn main() {
 
         Commands::Timeline {
             cold,
-            repo,
             chrome,
             wt_args,
-        } => run_timeline(cold, repo, chrome, &wt_args),
+        } => run_timeline(cold, chrome, &wt_args),
     }
 }
 
@@ -285,15 +258,15 @@ fn resolve_wt_binary() -> PathBuf {
 /// the repo wt operated on (the humanized stderr/`trace.log` isn't parseable).
 /// We locate that repo the same way wt does — a `-C` in the args, else the
 /// cwd — and read the file back after the run.
-fn run_timeline(cold: bool, repo: Option<PathBuf>, chrome: bool, wt_args: &[String]) {
+fn run_timeline(cold: bool, chrome: bool, wt_args: &[String]) {
     let wt = resolve_wt_binary();
     // The trace lands in the repo wt operates on — resolved from `-C`/cwd the
     // same way wt resolves it, so we never read a different repo than wt wrote.
-    // `--repo` governs only `--cold` invalidation.
+    // `--cold` invalidates that same repo.
     let trace_dir = wt_target_dir(wt_args);
 
     if cold {
-        let path = canonicalize(repo.as_deref().unwrap_or(&trace_dir)).unwrap_or_else(|e| {
+        let path = canonicalize(&trace_dir).unwrap_or_else(|e| {
             eprintln!("Invalid --cold repo path: {e}");
             std::process::exit(1);
         });
