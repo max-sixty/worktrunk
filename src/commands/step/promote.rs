@@ -290,7 +290,7 @@ fn exchange_branches(
 /// A hard kill at any phase leaves files in staging, never deleted. The next run
 /// detects the leftover directory and bails with a recovery path. A kill during
 /// `git switch` may leave a worktree detached (fix: `git switch <branch>`).
-pub fn handle_promote(branch: Option<&str>, json_mode: bool) -> anyhow::Result<PromoteResult> {
+pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
     use worktrunk::git::GitError;
 
     let repo = Repository::current()?;
@@ -408,25 +408,22 @@ pub fn handle_promote(branch: Option<&str>, json_mode: bool) -> anyhow::Result<P
         0
     };
 
-    // Print success messages only after everything succeeded.
-    // In JSON mode the JSON envelope to stdout is the success signal;
-    // the mismatch warning (printed earlier via print_promote_announcement)
-    // still surfaces because it is a safety signal, not a status line.
-    if !json_mode {
+    // Print success messages only after everything succeeded. These go to
+    // stderr regardless of --format, matching `rebase`/`push`: the human
+    // status line is stderr, the JSON envelope on stdout is unaffected.
+    eprintln!(
+        "{}",
+        success_message(cformat!(
+            "Promoted: main worktree now has <bold>{target_branch}</>; {} now has <bold>{main_branch}</>",
+            worktrunk::path::format_path_for_display(target_path)
+        ))
+    );
+    if swapped > 0 {
+        let path_word = if swapped == 1 { "path" } else { "paths" };
         eprintln!(
             "{}",
-            success_message(cformat!(
-                "Promoted: main worktree now has <bold>{target_branch}</>; {} now has <bold>{main_branch}</>",
-                worktrunk::path::format_path_for_display(target_path)
-            ))
+            success_message(format!("Swapped {swapped} gitignored {path_word}"))
         );
-        if swapped > 0 {
-            let path_word = if swapped == 1 { "path" } else { "paths" };
-            eprintln!(
-                "{}",
-                success_message(format!("Swapped {swapped} gitignored {path_word}"))
-            );
-        }
     }
 
     Ok(PromoteResult::Promoted {

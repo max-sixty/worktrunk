@@ -379,8 +379,7 @@ fn handle_step_command(
         StepCommand::Eval { template, format } => step_eval(&template, format),
         StepCommand::ForEach { format, args } => step_for_each(args, format),
         StepCommand::Promote { branch, format } => {
-            let json_mode = format == SwitchFormat::Json;
-            let result = handle_promote(branch.as_deref(), json_mode)?;
+            let result = handle_promote(branch.as_deref())?;
             if format == SwitchFormat::Json {
                 let output = match &result {
                     commands::PromoteResult::Promoted {

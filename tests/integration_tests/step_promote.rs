@@ -1018,6 +1018,13 @@ fn test_promote_swap_json(mut repo: TestRepo) {
         stderr.contains("mismatched worktree state"),
         "expected mismatch warning on stderr, got: {stderr}"
     );
+    // The "Promoted:" success line also goes to stderr in JSON mode, matching
+    // `rebase`/`push`: the human status line is stderr, the JSON on stdout is
+    // the machine-readable signal.
+    assert!(
+        stderr.contains("Promoted:"),
+        "expected promote success line on stderr, got: {stderr}"
+    );
 }
 
 /// `step promote --format=json` reports `mismatch: false` when restoring the
