@@ -30,7 +30,7 @@
 
 ### Documentation
 
-- **Codex commit-generation model bumped to `gpt-5.6-luna`**: The recommended `[commit.generation]` command for Codex — shown by `wt config create` and in the LLM-commits docs — now uses `gpt-5.6-luna` (was `gpt-5.4-mini`). OpenAI's models page moved `gpt-5.4-mini` into the previous-generation "Other models" tier; `gpt-5.6-luna` is the fast/low-cost variant of the current recommended (5.6) family.
+- **Codex commit-generation model bumped to `gpt-5.6-luna`**: The recommended `[commit.generation]` command for Codex — shown by `wt config create` and in the LLM-commits docs — now uses `gpt-5.6-luna` (was `gpt-5.4-mini`). OpenAI's models page moved `gpt-5.4-mini` into the previous-generation "Other models" tier; `gpt-5.6-luna` is the fast/low-cost variant of the current recommended (5.6) family. ([#3430](https://github.com/max-sixty/worktrunk/pull/3430))
 
 - **Code Signing Policy page**: A new page documents Worktrunk's code-signing policy for the Windows binaries under the [SignPath Foundation](https://signpath.org/) open-source program: certificate provenance, the signing pipeline, and per-release approval. Signing addresses Microsoft Defender's false positives on unsigned native binaries. [Docs](https://worktrunk.dev/code-signing/) ([#3366](https://github.com/max-sixty/worktrunk/pull/3366), thanks @bemnlam for reporting [#3355](https://github.com/max-sixty/worktrunk/issues/3355))
 
