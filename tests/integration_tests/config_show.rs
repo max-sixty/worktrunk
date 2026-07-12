@@ -3977,21 +3977,24 @@ fn test_codex_plugin_metadata_is_valid_json() {
 /// third loader-mandated repo-root pointer (`gemini-extension.json` +
 /// `hooks/hooks.json` — Gemini hard-probes `${extensionPath}/{hooks,skills}/`
 /// at the extension root with no path indirection). Verified end-to-end
-/// against the real CLIs: Claude (claude-cli 2.1.x) wants its manifest at the
-/// plugin root with NO `.claude-plugin/` wrapper (`source:
-/// "./plugins/worktrunk"` + `<subdir>/.claude-plugin/` fails "Plugin not
-/// found"); Gemini (gemini-cli 0.42) resolves the extension at the repo root,
-/// so `${extensionPath}/skills/` is the real single-sourced repo-root
-/// `skills/` and its hooks call the canonical
+/// against the real CLIs: Claude (claude-cli 2.1.207) reads the manifest at
+/// `<plugin-root>/.claude-plugin/plugin.json` — the only location `claude
+/// plugin validate` accepts — and discovers components by convention: hooks
+/// at `hooks/hooks.json`, skills by scanning `skills/*/SKILL.md` (the
+/// installer dereferences the `skills` symlink into a real directory in the
+/// install cache). A marketplace install of exactly this shape loads the
+/// skills and fires the hooks with no component keys in the manifest. Gemini
+/// (gemini-cli 0.42) resolves the extension at the repo root, so
+/// `${extensionPath}/skills/` is the real single-sourced repo-root `skills/`
+/// and its hooks call the canonical
 /// `${extensionPath}/plugins/worktrunk/hooks/wt.sh` — no symlink, no bundled
 /// copy, and `gemini extensions install owner/repo` works natively.
 ///
 /// Duplicated strings can't be `include!`d into JSON, so this test is the
 /// drift guard: the Claude marketplace/manifest descriptions stay
 /// byte-identical, every product description shares the canonical opening
-/// sentence, and every repo-root skill is listed in the Claude manifest
-/// (Claude has no skill auto-discovery — an unlisted skill is silently
-/// dropped).
+/// sentence, and the Claude manifest carries no component-path keys
+/// (conventions are the single loading mechanism).
 #[test]
 fn test_plugin_layout_is_consolidated() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -4007,9 +4010,26 @@ fn test_plugin_layout_is_consolidated() {
     let claude_mkt = json(".claude-plugin/marketplace.json");
     assert_eq!(claude_mkt["plugins"][0]["source"], "./plugins/worktrunk");
 
-    // Claude manifest at the plugin root (no wrapper); hooks relative to it.
-    let claude = json("plugins/worktrunk/plugin.json");
-    assert_eq!(claude["hooks"], "./hooks/hooks.json");
+    // Claude manifest in the plugin's own `.claude-plugin/` wrapper — the
+    // only manifest location `claude plugin validate` accepts (a bare
+    // plugin.json at the plugin root loads through an undocumented runtime
+    // fallback but fails validation).
+    let claude = json("plugins/worktrunk/.claude-plugin/plugin.json");
+    assert!(
+        !root.join("plugins/worktrunk/plugin.json").exists(),
+        "the Claude manifest lives at .claude-plugin/plugin.json; a root-level \
+         plugin.json rides an undocumented fallback and fails `claude plugin validate`"
+    );
+    // The manifest carries metadata only; hooks and skills load by convention.
+    // The override keys are worse than redundant: the string-path `hooks`
+    // override is not honored for plugin loads (#3417), so a `hooks` key can
+    // only mask a mislocated file, and a `skills` array re-adds directories
+    // the default `skills/` scan already picks up.
+    assert!(
+        claude.get("hooks").is_none() && claude.get("skills").is_none(),
+        "the Claude manifest must not carry `hooks`/`skills` keys — components \
+         load by convention (hooks/hooks.json; skills/*/SKILL.md)"
+    );
     assert!(
         root.join("plugins/worktrunk/hooks/hooks.json").exists()
             && root.join("plugins/worktrunk/hooks/wt.sh").exists(),
@@ -4042,7 +4062,8 @@ fn test_plugin_layout_is_consolidated() {
     // the Claude manifest — they must stay byte-identical.
     assert_eq!(
         claude_mkt["plugins"][0]["description"], claude["description"],
-        ".claude-plugin/marketplace.json and plugins/worktrunk/plugin.json descriptions drifted"
+        ".claude-plugin/marketplace.json and plugins/worktrunk/.claude-plugin/plugin.json \
+         descriptions drifted"
     );
 
     // Gemini extension: manifest + hooks are loader-mandated repo-root
@@ -4084,23 +4105,29 @@ fn test_plugin_layout_is_consolidated() {
         "no bundled Gemini wt.sh — hooks reference the canonical worktrunk shim"
     );
 
-    // Claude has no skill auto-discovery, so every repo-root skill dir MUST be
-    // listed explicitly in plugin.json — otherwise a new skill is silently
-    // invisible to Claude while Codex/Gemini (whole-dir) pick it up.
-    let listed: std::collections::BTreeSet<&str> = claude["skills"]
-        .as_array()
-        .expect("plugin.json `skills` must be an array")
-        .iter()
-        .map(|v| v.as_str().unwrap())
-        .collect();
+    // Claude auto-discovers skills by scanning skills/ for <dir>/SKILL.md, so
+    // the invariants are structural: the plugin's skills/ is the symlink that
+    // single-sources the repo-root skills/ (checked on unix only — a Windows
+    // checkout without core.symlinks materializes it as a plain file), and
+    // every repo-root skill dir carries a SKILL.md, since the scan silently
+    // ignores a directory without one.
+    if cfg!(unix) {
+        let skills_link = root.join("plugins/worktrunk/skills");
+        assert!(
+            skills_link.is_symlink()
+                && dunce::canonicalize(&skills_link).unwrap()
+                    == dunce::canonicalize(root.join("skills")).unwrap(),
+            "plugins/worktrunk/skills must be the symlink single-sourcing the \
+             repo-root skills/"
+        );
+    }
     for entry in fs::read_dir(root.join("skills")).unwrap() {
         let entry = entry.unwrap();
         if entry.file_type().unwrap().is_dir() {
-            let listed_form = format!("./skills/{}", entry.file_name().to_string_lossy());
             assert!(
-                listed.contains(listed_form.as_str()),
-                "repo-root skill {listed_form} is not in plugins/worktrunk/plugin.json \
-                 `skills` (Claude has no auto-discovery — add it or it is silently dropped)"
+                entry.path().join("SKILL.md").exists(),
+                "skills/{} has no SKILL.md — Claude's convention scan silently ignores it",
+                entry.file_name().to_string_lossy()
             );
         }
     }
@@ -4159,7 +4186,10 @@ fn test_plugin_layout_is_consolidated() {
         "Worktrunk is a CLI for Git worktree management, designed for parallel AI agent workflows.";
     let codex = json("plugins/worktrunk/.codex-plugin/plugin.json");
     for (label, val) in [
-        ("plugins/worktrunk/plugin.json", &claude["description"]),
+        (
+            "plugins/worktrunk/.claude-plugin/plugin.json",
+            &claude["description"],
+        ),
         (
             ".claude-plugin/marketplace.json",
             &claude_mkt["plugins"][0]["description"],

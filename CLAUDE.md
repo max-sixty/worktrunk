@@ -49,7 +49,7 @@ Design proposals live in `design/` and are review-only: open a PR to discuss, th
 
 ## Plugin Layout
 
-Per-tool layout and path resolution (Claude/Codex/Gemini), the Codex no-hooks re-enablement conditions, the accepted `wt-switch-create` tradeoff, and `test_plugin_layout_is_consolidated`: `plugins/worktrunk/CLAUDE.md`.
+Per-tool layout and path resolution (Claude/Codex/Gemini), the convention-only Claude manifest, the Codex inline-hooks rationale, the accepted `wt-switch-create` tradeoff, and `test_plugin_layout_is_consolidated`: `plugins/worktrunk/CLAUDE.md`.
 
 ## Data Safety
 
