@@ -7,6 +7,7 @@ info:
     - "--full"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
+    CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
     CLICOLOR_FORCE: "1"
     COLUMNS: "134"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
@@ -50,6 +51,6 @@ exit_code: 0
 + fix-auth         [2m↕[22m[2m|[22m                [32m↑2[0m  [2m[31m↓1[0m   [32m+25[0m  [31m-11[0m  Harden auth with constant-time token validation           [2m|[0m     [32m#408[0m  [2mb772e68b[0m
 + [2mfix-typos[0m        [2m_[22m[2m|[22m                                                                                             [2m|[0m     [32m#410[0m  [2m41ee0834[0m
 
-[2m○[22m [2mShowing 4 worktrees, 1 with changes, 2 ahead, 3 columns hidden[0m
-
 ----- stderr -----
+
+[2m○[22m [2mShowing 4 worktrees, 1 with changes, 2 ahead, 3 columns hidden[0m

@@ -331,17 +331,18 @@ impl SummaryMetrics {
     ) -> Vec<String> {
         let mut parts = Vec::new();
 
+        let plural = if self.worktrees == 1 { "" } else { "s" };
+        parts.push(format!("{} worktree{}", self.worktrees, plural));
+
         if include_branches {
-            parts.push(format!("{} worktrees", self.worktrees));
             if self.local_branches > 0 {
-                parts.push(format!("{} branches", self.local_branches));
+                let plural = if self.local_branches == 1 { "" } else { "es" };
+                parts.push(format!("{} branch{}", self.local_branches, plural));
             }
             if self.remote_branches > 0 {
-                parts.push(format!("{} remote branches", self.remote_branches));
+                let plural = if self.remote_branches == 1 { "" } else { "es" };
+                parts.push(format!("{} remote branch{}", self.remote_branches, plural));
             }
-        } else {
-            let plural = if self.worktrees == 1 { "" } else { "s" };
-            parts.push(format!("{} worktree{}", self.worktrees, plural));
         }
 
         if self.dirty_worktrees > 0 {
@@ -380,20 +381,24 @@ pub(crate) fn format_summary_message(
         .join(", ");
 
     if error_count > 0 {
-        let failure_msg = if error_count == timed_out_count {
-            // All failures are timeouts
-            let plural = if timed_out_count == 1 { "" } else { "s" };
-            format!("{timed_out_count} task{plural} timed out")
-        } else if timed_out_count > 0 {
-            // Mix of timeouts and other errors
-            let plural = if error_count == 1 { "" } else { "s" };
-            format!("{error_count} task{plural} failed ({timed_out_count} timed out)")
-        } else {
-            // No timeouts, just other errors
-            let plural = if error_count == 1 { "" } else { "s" };
-            format!("{error_count} task{plural} failed")
+        // "failed" and "timed out" are disjoint here, matching the warning
+        // that details the non-timeout failures after the table.
+        let failed_count = error_count - timed_out_count;
+        let failure_msg = match (failed_count, timed_out_count) {
+            (0, t) => {
+                let plural = if t == 1 { "" } else { "s" };
+                format!("{t} task{plural} timed out")
+            }
+            (f, 0) => {
+                let plural = if f == 1 { "" } else { "s" };
+                format!("{f} task{plural} failed")
+            }
+            (f, t) => {
+                let plural = if f == 1 { "" } else { "s" };
+                format!("{f} task{plural} failed, {t} timed out")
+            }
         };
-        format!("{INFO_SYMBOL} {dim}Showing {summary}. {failure_msg}{dim:#}")
+        format!("{INFO_SYMBOL} {dim}Showing {summary}; {failure_msg}{dim:#}")
     } else {
         format!("{INFO_SYMBOL} {dim}Showing {summary}{dim:#}")
     }
@@ -540,14 +545,14 @@ mod tests {
         // No errors
         assert_snapshot!(format_summary_message(&[], false, 0, 0, 0), @"[2m○[22m [2mShowing 0 worktrees[0m");
         // All timeouts
-        assert_snapshot!(format_summary_message(&[], false, 0, 3, 3), @"[2m○[22m [2mShowing 0 worktrees. 3 tasks timed out[0m");
+        assert_snapshot!(format_summary_message(&[], false, 0, 3, 3), @"[2m○[22m [2mShowing 0 worktrees; 3 tasks timed out[0m");
         // Mixed errors and timeouts
-        assert_snapshot!(format_summary_message(&[], false, 0, 5, 3), @"[2m○[22m [2mShowing 0 worktrees. 5 tasks failed (3 timed out)[0m");
+        assert_snapshot!(format_summary_message(&[], false, 0, 5, 3), @"[2m○[22m [2mShowing 0 worktrees; 2 tasks failed, 3 timed out[0m");
         // Only failures, no timeouts
-        assert_snapshot!(format_summary_message(&[], false, 0, 2, 0), @"[2m○[22m [2mShowing 0 worktrees. 2 tasks failed[0m");
+        assert_snapshot!(format_summary_message(&[], false, 0, 2, 0), @"[2m○[22m [2mShowing 0 worktrees; 2 tasks failed[0m");
         // Single error
-        assert_snapshot!(format_summary_message(&[], false, 0, 1, 0), @"[2m○[22m [2mShowing 0 worktrees. 1 task failed[0m");
+        assert_snapshot!(format_summary_message(&[], false, 0, 1, 0), @"[2m○[22m [2mShowing 0 worktrees; 1 task failed[0m");
         // Single timeout
-        assert_snapshot!(format_summary_message(&[], false, 0, 1, 1), @"[2m○[22m [2mShowing 0 worktrees. 1 task timed out[0m");
+        assert_snapshot!(format_summary_message(&[], false, 0, 1, 1), @"[2m○[22m [2mShowing 0 worktrees; 1 task timed out[0m");
     }
 }

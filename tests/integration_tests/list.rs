@@ -3620,8 +3620,8 @@ fn test_list_unborn_worktree_no_task_failures(repo: TestRepo) {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !stderr.contains("working-tree-diff") && !stderr.contains("working-tree-conflicts"),
-        "wt list should not surface working-tree-* task failures for unborn worktrees, got stderr:\n{stderr}"
+        !stderr.contains("working-tree diff") && !stderr.contains("working-tree conflict check"),
+        "wt list should not surface working-tree task failures for unborn worktrees, got stderr:\n{stderr}"
     );
     assert!(
         !stderr.contains("ambiguous argument 'HEAD'")
@@ -3861,8 +3861,8 @@ fn test_list_tolerates_missing_index(mut repo: TestRepo) {
         "missing index must not surface as a copy error.\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert!(
-        !combined.contains("working-tree-conflicts ("),
-        "missing index must not produce a working-tree-conflicts task error.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        !combined.contains("working-tree conflict check ("),
+        "missing index must not produce a working-tree conflict task error.\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert!(
         !feature_index.exists(),

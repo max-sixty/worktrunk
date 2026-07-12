@@ -192,7 +192,7 @@ impl MarkerType {
 ///
 /// Handles:
 /// - YAML front matter removal
-/// - insta_cmd stdout/stderr section extraction (prefers stderr where user messages go)
+/// - insta_cmd stdout/stderr section extraction (both streams, in terminal order)
 /// - Malformed snapshots (returns raw content rather than erroring)
 fn parse_snapshot_raw(content: &str) -> String {
     // Remove YAML front matter
@@ -207,14 +207,18 @@ fn parse_snapshot_raw(content: &str) -> String {
         content.to_string()
     };
 
-    // Handle insta_cmd format with stdout/stderr sections
+    // Handle insta_cmd format with stdout/stderr sections. Show both streams
+    // in terminal order (stdout, then stderr) — a command like `wt list` puts
+    // the table on stdout and the summary/warnings on stderr, and the docs
+    // block should read like the terminal.
     if content.contains("----- stdout -----") {
-        let stderr = extract_section(&content, "----- stderr -----\n", "----- ");
-        if !stderr.is_empty() {
-            return stderr;
-        }
         let stdout = extract_section(&content, "----- stdout -----\n", "----- stderr -----");
-        return stdout; // May be empty if both sections are empty
+        let stderr = extract_section(&content, "----- stderr -----\n", "----- ");
+        return match (stdout.is_empty(), stderr.is_empty()) {
+            (false, false) => format!("{stdout}\n{stderr}"),
+            (true, _) => stderr, // both-empty also lands here, returning ""
+            (false, true) => stdout,
+        };
     }
 
     // Plain content (PTY-based tests without section markers)

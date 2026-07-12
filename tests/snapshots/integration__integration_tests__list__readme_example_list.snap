@@ -50,6 +50,6 @@ exit_code: 0
 + fix-auth         [2m↕[22m[2m|[22m                [32m↑2[0m  [2m[31m↓1[0m   [32m+25[0m  [31m-11[0m     [2m|[0m     [2mb772e68b[0m  [2m5h[0m    [2mAdd secure token…[0m
 + [2mfix-typos[0m        [2m_[22m[2m|[22m                                      [2m|[0m     [2m41ee0834[0m  [2m4d[0m    [2mMerge fix-auth:…[0m
 
-[2m○[22m [2mShowing 4 worktrees, 1 with changes, 2 ahead, 1 column hidden[0m
-
 ----- stderr -----
+
+[2m○[22m [2mShowing 4 worktrees, 1 with changes, 2 ahead, 1 column hidden[0m

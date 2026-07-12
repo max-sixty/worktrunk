@@ -153,6 +153,30 @@ impl TaskKind {
             TaskKind::CiStatus | TaskKind::UrlStatus | TaskKind::SummaryGenerate
         )
     }
+
+    /// Human-readable task name for user-facing messages (failure warnings,
+    /// stall footers, timeout diagnostics). The strum kebab-case form
+    /// (`IntoStaticStr`) is developer vocabulary for tracing and `-vv`
+    /// diagnostics; this form names what the task computes for the table.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            TaskKind::AheadBehind => "ahead/behind counts",
+            TaskKind::CommittedTreesMatch => "trees-match check",
+            TaskKind::HasFileChanges => "file-changes check",
+            TaskKind::WouldMergeAdd => "merge-simulation check",
+            TaskKind::IsAncestor => "ancestor check",
+            TaskKind::BranchDiff => "branch diff",
+            TaskKind::WorkingTreeDiff => "working-tree diff",
+            TaskKind::MergeTreeConflicts => "merge-conflict check",
+            TaskKind::WorkingTreeConflicts => "working-tree conflict check",
+            TaskKind::GitOperation => "operation-state check",
+            TaskKind::UserMarker => "user-marker lookup",
+            TaskKind::Upstream => "upstream status",
+            TaskKind::CiStatus => "CI status",
+            TaskKind::UrlStatus => "URL check",
+            TaskKind::SummaryGenerate => "summary generation",
+        }
+    }
 }
 
 /// Result of draining task results - indicates whether all results were received

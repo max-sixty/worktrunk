@@ -52,6 +52,6 @@ exit_code: 0
 + complex    [36m+[39m [36m?[39m [2m↑[22m       [32m+1[0m   [31m-1[0m   [32m↑1[0m        [32m+1[0m   [31m-1[0m           ../repo.complex    [2m0fdc439a[0m  [2m1d[0m    [2mComplex[0m
 + simple       [36m?[39m [2m↑[22m                 [32m↑1[0m        [32m+1[0m   [31m-1[0m           ../repo.simple     [2m42a9d012[0m  [2m1d[0m    [2mSimple[0m
 
-[2m○[22m [2mShowing 6 worktrees, 2 with changes, 5 ahead[0m
-
 ----- stderr -----
+
+[2m○[22m [2mShowing 6 worktrees, 2 with changes, 5 ahead[0m

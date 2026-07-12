@@ -53,6 +53,6 @@ exit_code: 0
 + diverged          [36m![39m  [2m↑[22m 💬   [32m+40[0m  [31m-60[0m   [32m↑1[0m       [32m+60[0m                ../repo.diverged         [2m96d1fd92[0m  [2m1d[0m    [2mDiverged commit[0m
 + feature-changes   [36m![39m[36m?[39m [2m↑[22m 🤖   [32m+50[0m [31m-100[0m   [32m↑1[0m      [32m+100[0m                ../repo.feature-changes  [2mf5306ded[0m  [2m1d[0m    [2mAdd 100 lines[0m
 
-[2m○[22m [2mShowing 7 worktrees, 3 with changes, 5 ahead[0m
-
 ----- stderr -----
+
+[2m○[22m [2mShowing 7 worktrees, 3 with changes, 5 ahead[0m

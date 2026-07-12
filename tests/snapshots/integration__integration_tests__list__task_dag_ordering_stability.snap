@@ -55,6 +55,6 @@ exit_code: 0
 + feature-middle       [2m↑[22m                 [32m↑1[0m        [32m+1[0m                ../repo.feature-middle   [2ma63f3739[0m  [2m22h[0m   [2mCommit at 02:00[0m
 + feature-oldest       [2m↑[22m                 [32m↑1[0m        [32m+1[0m                ../repo.feature-oldest   [2ma9b3e5b7[0m  [2m23h[0m   [2mCommit at 00:30[0m
 
-[2m○[22m [2mShowing 8 worktrees, 7 ahead[0m
-
 ----- stderr -----
+
+[2m○[22m [2mShowing 8 worktrees, 7 ahead[0m

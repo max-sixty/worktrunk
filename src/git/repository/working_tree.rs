@@ -937,7 +937,7 @@ mod tests {
         // A worktree whose `<gitdir>/index` file is absent must not error
         // when callers ask for a temp index — git itself treats a missing
         // index as empty, and the WorkingTreeConflictsTask used to surface
-        // this as a misleading `working-tree-conflicts (Failed to copy
+        // this as a misleading `working-tree conflict check (Failed to copy
         // index file)` footer.
         let test = TestRepo::with_initial_commit();
         std::fs::write(test.root_path().join("tracked.txt"), "hello\n").unwrap();

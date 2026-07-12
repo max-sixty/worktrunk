@@ -1414,8 +1414,8 @@ fn test_clone_bare_repo_list_no_status_errors() {
         "Should not get 'must be run in a work tree' error.\nstderr: {stderr}"
     );
     assert!(
-        !stderr.contains("git operations failed"),
-        "Should not have git operation failures.\nstderr: {stderr}"
+        !stderr.contains("task failed") && !stderr.contains("tasks failed"),
+        "Should not have task failures.\nstderr: {stderr}"
     );
 }
 
