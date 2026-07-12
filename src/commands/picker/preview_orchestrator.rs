@@ -304,37 +304,7 @@ impl PreviewOrchestrator {
                 .name("wt-preview-demand".into())
                 .spawn(move || {
                     while let Some(req) = demand.take_blocking() {
-                        let key = (req.item.branch_name().to_string(), req.mode);
-                        if cache.contains_key(&key) {
-                            continue;
-                        }
-                        let (w, h) = req.dims;
-                        // A panicking compute on a rayon worker aborts the
-                        // process; here it would only unwind this thread —
-                        // and a dead worker silently regresses every later
-                        // navigation to queue-wait latency for the rest of
-                        // the session. Contain it to the one poisoned key
-                        // and keep serving.
-                        let computed =
-                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                PickerRow::compute_and_page_preview(
-                                    &repo, &req.item, req.mode, w, h,
-                                )
-                            }));
-                        let Ok((value, log_disk_hit)) = computed else {
-                            tracing::debug!(
-                                branch = key.0,
-                                mode = ?key.1,
-                                "preview demand compute panicked; leaving the tab to precompute"
-                            );
-                            continue;
-                        };
-                        Self::fill(&cache, &notifier, key, value);
-                        if log_disk_hit {
-                            Self::spawn_log_refresh(
-                                &cache, &notifier, &pending, req.item, &repo, w, h,
-                            );
-                        }
+                        Self::serve_demand(&cache, &notifier, &pending, &repo, req);
                     }
                 });
         }
@@ -344,6 +314,44 @@ impl PreviewOrchestrator {
             notifier,
             repo,
             demand,
+        }
+    }
+
+    /// Serve one demand request: compute the awaited preview and fill the
+    /// cache. The demand worker's whole loop body, factored out so each arm
+    /// is unit-testable without racing the thread.
+    ///
+    /// Skips a key a racing pool task already filled. A panicking compute is
+    /// contained to its key: on a rayon worker it would abort the process,
+    /// but here it would only unwind the worker thread — and a dead worker
+    /// silently regresses every later navigation to queue-wait latency for
+    /// the rest of the session — so log and keep serving.
+    fn serve_demand(
+        cache: &PreviewCache,
+        notifier: &Arc<PreviewNotifier>,
+        pending: &Arc<AtomicUsize>,
+        repo: &Repository,
+        req: DemandRequest,
+    ) {
+        let key = (req.item.branch_name().to_string(), req.mode);
+        if cache.contains_key(&key) {
+            return;
+        }
+        let (w, h) = req.dims;
+        let computed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            PickerRow::compute_and_page_preview(repo, &req.item, req.mode, w, h)
+        }));
+        let Ok((value, log_disk_hit)) = computed else {
+            tracing::debug!(
+                branch = key.0,
+                mode = ?key.1,
+                "preview demand compute panicked; leaving the tab to precompute"
+            );
+            return;
+        };
+        Self::fill(cache, notifier, key, value);
+        if log_disk_hit {
+            Self::spawn_log_refresh(cache, notifier, pending, req.item, repo, w, h);
         }
     }
 
@@ -905,7 +913,7 @@ mod tests {
     #[test]
     fn preview_miss_is_served_by_demand_worker() {
         use super::super::items::{LocalCheckout, LocalContent, PickerRow};
-        use skim::prelude::{ItemPreview, PreviewContext, SkimItem};
+        use skim::prelude::{PreviewContext, SkimItem};
         use std::sync::Mutex;
         use std::sync::atomic::AtomicBool;
 
@@ -947,9 +955,7 @@ mod tests {
             selected_indices: &[],
             selections: &[],
         };
-        let ItemPreview::AnsiText(_) = row.preview(ctx) else {
-            panic!("expected AnsiText preview");
-        };
+        drop(row.preview(ctx));
 
         // The demand worker fills the key with the real diff. Bounded poll so
         // a dead worker fails instead of hanging the suite.
@@ -967,6 +973,124 @@ mod tests {
             served.contains("README"),
             "demand-computed working-tree diff served: {served:?}"
         );
+    }
+
+    /// A key a racing pool task already filled is not recomputed: serve_demand
+    /// (the worker's loop body, driven directly so nothing races) returns
+    /// before compute and the existing value survives.
+    #[test]
+    fn serve_demand_skips_already_filled_key() {
+        let (t, item) = dirty_worktree_item();
+        let orch = orch_for(&t);
+        let key = ("main".to_string(), PreviewMode::WorkingTree);
+        orch.fill_external(key.clone(), "already here".to_string());
+
+        PreviewOrchestrator::serve_demand(
+            &orch.cache,
+            orch.notifier(),
+            &orch.pending,
+            &orch.repo,
+            DemandRequest {
+                item,
+                mode: PreviewMode::WorkingTree,
+                dims: (80, 24),
+            },
+        );
+
+        assert_eq!(
+            orch.cache.get(&key).unwrap().clone(),
+            "already here",
+            "a filled key is skipped, not recomputed"
+        );
+    }
+
+    /// A panicking compute must not unwind out of serve_demand — on the real
+    /// worker thread that would silently kill demand serving for the rest of
+    /// the session. `Pr` mode's compute arm is `unreachable!`, a deterministic
+    /// panic source; the panic is contained and the key stays unfilled.
+    #[test]
+    fn serve_demand_contains_a_panicking_compute() {
+        let (t, item) = dirty_worktree_item();
+        let orch = orch_for(&t);
+
+        PreviewOrchestrator::serve_demand(
+            &orch.cache,
+            orch.notifier(),
+            &orch.pending,
+            &orch.repo,
+            DemandRequest {
+                item,
+                mode: PreviewMode::Pr,
+                dims: (80, 24),
+            },
+        );
+
+        assert!(
+            !orch
+                .cache
+                .contains_key(&("main".to_string(), PreviewMode::Pr)),
+            "a panicked compute fills nothing"
+        );
+    }
+
+    /// A Log disk hit served on demand enqueues the same decoration refresh
+    /// the pool path does (see `log_disk_hit_triggers_background_refresh`):
+    /// the stale seeded entry is overwritten once the pending-tracked refresh
+    /// drains.
+    #[test]
+    fn serve_demand_log_disk_hit_enqueues_refresh() {
+        let (t, item) = dirty_worktree_item();
+        let repo = Repository::at(t.path()).unwrap();
+
+        let stale = super::super::preview_cache::LogCacheEntry {
+            raw_log: "STALE_MARKER\n".to_string(),
+            stats: std::collections::HashMap::new(),
+        };
+        super::super::preview_cache::write_log(&repo, item.head(), 80, 24, &stale);
+
+        let orch = orch_for(&t);
+        PreviewOrchestrator::serve_demand(
+            &orch.cache,
+            orch.notifier(),
+            &orch.pending,
+            &orch.repo,
+            DemandRequest {
+                item,
+                mode: PreviewMode::Log,
+                dims: (80, 24),
+            },
+        );
+        orch.wait_for_idle();
+
+        let in_memory = orch
+            .cache
+            .get(&("main".to_string(), PreviewMode::Log))
+            .expect("in-memory entry present")
+            .clone();
+        assert!(
+            !in_memory.contains("STALE_MARKER"),
+            "the demand-served disk hit was refreshed: {in_memory:?}"
+        );
+    }
+
+    /// Rows hold the demand channel beyond the orchestrator's life (skim can
+    /// still call `preview()` while teardown races), so a request after
+    /// `Drop` closed the channel must be inert, not parked forever.
+    #[test]
+    fn request_after_orchestrator_drop_is_inert() {
+        let (t, item) = dirty_worktree_item();
+        let orch = orch_for(&t);
+        let demand = Arc::clone(orch.demand());
+        let cache = Arc::clone(&orch.cache);
+        drop(orch);
+
+        demand.request(item, PreviewMode::WorkingTree, (80, 24));
+
+        assert!(
+            demand.state.lock().unwrap().request.is_none(),
+            "a closed channel records nothing"
+        );
+        assert!(cache.is_empty(), "nothing fills after close");
     }
 
     /// A fill injects an `Event::RunPreview` exactly when the selected row is
