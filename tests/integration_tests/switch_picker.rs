@@ -163,6 +163,42 @@ fn assert_valid_abort_exit_code(exit_code: i32) {
     );
 }
 
+/// Assert the exit code of a *successful* picker-create (alt-c).
+///
+/// A create that succeeds exits 0 — `run_picker` returns `Ok(())` after the
+/// `SwitchPipeline` runs, and the "cannot cd — shell integration not installed"
+/// line is a warning, not an error. Callers still prove the create succeeded the
+/// deterministic way: the new branch and worktree exist in git afterward.
+///
+/// On Windows the picker process has been observed to *self-exit* with code 1
+/// after a fully-correct create under the advisory `affected tests (windows)`
+/// leg's load, while the required `test (windows)` leg passed 0 on the same SHA
+/// (PR #3424 CI: branch + worktree created, pre-start hook ran, only the exit
+/// code diverged; the test finished in ~5.6s, well under `CHILD_EXIT_TIMEOUT`,
+/// so it was a genuine self-exit and not a harness kill). This is the same
+/// "slow-but-successful exit reports 1 on Windows" class the abort helpers
+/// already tolerate via [`assert_valid_abort_exit_code`]. Tolerate it here so a
+/// correct create doesn't false-fail the advisory leg, while keeping the exit
+/// code strict everywhere it is reliable — a create that genuinely *fails*
+/// leaves no branch, so the git-state assertions remain the real guard.
+fn assert_valid_create_exit_code(exit_code: i32) {
+    let valid = if cfg!(windows) {
+        exit_code == 0 || exit_code == 1
+    } else {
+        exit_code == 0
+    };
+    assert!(
+        valid,
+        "Unexpected create exit code: {} (expected 0{})",
+        exit_code,
+        if cfg!(windows) {
+            ", or 1 for the Windows slow-exit quirk"
+        } else {
+            ""
+        }
+    );
+}
+
 /// Check if skim is ready (shows "> " prompt indicating it's accepting input)
 fn is_skim_ready(screen_content: &str) -> bool {
     // Skim shows "> " at the start of the prompt line when accepting input.
@@ -2239,11 +2275,10 @@ fn test_switch_picker_create_worktree_with_alt_c(mut repo: TestRepo) {
         ],
     );
 
-    // Alt-C triggers accept which should exit normally
-    assert_eq!(
-        result.exit_code, 0,
-        "Expected exit code 0 for successful create"
-    );
+    // Alt-C triggers accept which should exit normally. The create's success is
+    // proven deterministically by the branch existing below; the exit code
+    // tolerates the Windows self-exit-1 quirk (see assert_valid_create_exit_code).
+    assert_valid_create_exit_code(result.exit_code);
 
     let screen = result.screen();
 
@@ -2378,12 +2413,12 @@ fn test_switch_picker_create_validates_templates_before_worktree(mut repo: TestR
         &env_vars,
         &[("new-feature", None), ("\x1bc", None)],
     );
-    assert_eq!(
-        result.exit_code,
-        0,
-        "Re-running picker-create with fixed template should succeed.\nScreen:\n{}",
-        result.screen()
-    );
+    // Re-running with the fixed template should succeed. Success is proven by the
+    // branch existing below (no half-state was left behind); the exit code
+    // tolerates the Windows self-exit-1 quirk (see assert_valid_create_exit_code)
+    // — the flake this test hit on the advisory `affected tests (windows)` leg,
+    // where a fully-correct create self-exited 1 (PR #3424 CI).
+    assert_valid_create_exit_code(result.exit_code);
 
     let branch_output = repo
         .git_command()
@@ -2392,7 +2427,8 @@ fn test_switch_picker_create_validates_templates_before_worktree(mut repo: TestR
         .unwrap();
     assert!(
         String::from_utf8_lossy(&branch_output.stdout).contains("new-feature"),
-        "Branch `new-feature` should exist after fix"
+        "Branch `new-feature` should exist after fix.\nScreen:\n{}",
+        result.screen()
     );
 }
 
