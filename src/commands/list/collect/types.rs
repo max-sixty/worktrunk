@@ -262,4 +262,15 @@ mod tests {
         let error = TaskError::new(0, TaskKind::AheadBehind, "timed out", ErrorCause::Timeout);
         assert!(error.is_timeout());
     }
+
+    /// Duplicate display names would make two different task failures
+    /// indistinguishable in the `wt list` failure warning.
+    #[test]
+    fn test_task_kind_display_names_unique_and_nonempty() {
+        use strum::IntoEnumIterator;
+        let names: Vec<&str> = TaskKind::iter().map(TaskKind::display_name).collect();
+        assert!(names.iter().all(|name| !name.is_empty()));
+        let unique: std::collections::HashSet<_> = names.iter().collect();
+        assert_eq!(unique.len(), names.len(), "duplicate display names: {names:?}");
+    }
 }
