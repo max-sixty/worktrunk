@@ -160,6 +160,23 @@ const MAX_SQUASH_COMMITS: usize = 200;
 /// Lock file patterns that are filtered out when diff is too large
 const LOCK_FILE_PATTERNS: &[&str] = &[".lock", "-lock.json", "-lock.yaml", ".lock.hcl"];
 
+/// Git `-c` overrides forcing the `a/`/`b/` diff prefix format regardless of
+/// user config: `diff.noprefix`, `diff.mnemonicPrefix`, and (git >= 2.45)
+/// `diff.srcPrefix`/`diff.dstPrefix` can all change the header format that
+/// [`parse_diff_sections`] splits file sections on, so every full diff
+/// destined for [`prepare_diff`] must carry these flags. Unknown config keys
+/// are ignored by older git.
+pub(crate) const DIFF_PREFIX_OVERRIDES: [&str; 8] = [
+    "-c",
+    "diff.noprefix=false",
+    "-c",
+    "diff.mnemonicPrefix=false",
+    "-c",
+    "diff.srcPrefix=a/",
+    "-c",
+    "diff.dstPrefix=b/",
+];
+
 /// Prepared diff output with optional filtering applied
 pub(crate) struct PreparedDiff {
     /// The diff content (possibly filtered/truncated)
@@ -852,18 +869,9 @@ pub(crate) fn build_commit_prompt(
     let repo = Repository::current()?;
     let cwd = repo.discovery_path().to_path_buf();
 
-    // Use -c flags to ensure consistent format regardless of user's git config
-    // (diff.noprefix, diff.mnemonicPrefix, etc. could break our parsing)
     let mut diff_cmd = Cmd::new("git")
-        .args([
-            "-c",
-            "diff.noprefix=false",
-            "-c",
-            "diff.mnemonicPrefix=false",
-            "--no-pager",
-            "diff",
-            "--staged",
-        ])
+        .args(DIFF_PREFIX_OVERRIDES)
+        .args(["--no-pager", "diff", "--staged"])
         .current_dir(&cwd);
     let mut diff_stat_cmd = Cmd::new("git")
         .args(["--no-pager", "diff", "--staged", "--stat"])
@@ -967,17 +975,9 @@ pub(crate) fn build_squash_prompt(
     let repo = Repository::current()?;
 
     // Get the combined diff and diffstat for all commits being squashed
-    // Use -c flags to ensure consistent format regardless of user's git config
-    let diff_output = repo.run_command(&[
-        "-c",
-        "diff.noprefix=false",
-        "-c",
-        "diff.mnemonicPrefix=false",
-        "--no-pager",
-        "diff",
-        merge_base,
-        "HEAD",
-    ])?;
+    let mut diff_args: Vec<&str> = DIFF_PREFIX_OVERRIDES.to_vec();
+    diff_args.extend(["--no-pager", "diff", merge_base, "HEAD"]);
+    let diff_output = repo.run_command(&diff_args)?;
     let diff_stat = repo.run_command(&["--no-pager", "diff", merge_base, "HEAD", "--stat"])?;
 
     // Prepare diff (may filter if too large)
