@@ -74,7 +74,9 @@
 //!   fires while a prior spawn's precompute is still draining (large repo / slow
 //!   summaries) and the row's content moved in that window — the common "I edited
 //!   the branch I'm viewing" case doesn't hit it, since that branch's precompute
-//!   finished when the picker opened. The structural fix for both is to give the
+//!   finished when the picker opened. (A demand compute taken just before the
+//!   clear shares the same window: it computes from the pre-refresh row's item
+//!   and fills after the clear.) The structural fix for both is to give the
 //!   orchestrator the current spawn's repo plus a spawn generation (mirroring
 //!   `prs_epoch`) so a superseded fill drops.
 //!
@@ -92,6 +94,13 @@
 //! first or their recompute is a no-op; `spawn_summary` has no such guard and
 //! always recomputes — cheap, since `crate::summary` is gated by its own
 //! diff-hash disk cache.
+//!
+//! Precompute is best-effort background work; the tab the user is *looking
+//! at* is served by a third producer, the demand worker ([`PreviewDemand`]):
+//! a `preview()` cache miss on a local-git tab posts the row's item to a
+//! dedicated thread that computes just that key, off `COLLECT_POOL`, so the
+//! selected tab costs its own compute rather than a position in the
+//! precompute queue.
 //!
 //! # Orchestration
 //!
@@ -112,7 +121,7 @@
 //! entry point (`handle_picker`) uses this for its real spawns.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
 use dashmap::DashMap;
@@ -151,6 +160,79 @@ impl Drop for PendingGuard {
     }
 }
 
+/// On-demand compute channel for the preview the user is looking at *right
+/// now* — a one-slot, latest-wins handoff from skim's UI thread to a
+/// dedicated worker thread.
+///
+/// Precompute alone leaves a gap: `SkimItem::preview` never computes (it only
+/// reads the in-memory cache), so a tab whose precompute hasn't landed sits on
+/// its loading placeholder until the background queue reaches it — behind the
+/// row pipeline, its network tail (`COLLECT_POOL` workers park on blocking
+/// `gh` subprocesses, and rayon has no task priorities), and the mode-major
+/// deferred tier. In a large repo with many worktrees that's several seconds
+/// of queue for a tab the user is staring at. The demand worker closes the
+/// gap: `preview()` routes a cache miss on a local-git tab here
+/// ([`PreviewMode::is_local_git`]), and the worker computes exactly that key,
+/// off `COLLECT_POOL` entirely — so the looked-at tab costs one disk-cache
+/// read (~ms when previously computed) or one git command, not a queue
+/// position.
+///
+/// One slot is the point: `preview()` only ever misses on the *selected*
+/// row's current tab, so the newest request supersedes any unserved one and
+/// rows skimmed past are never computed. A request whose key a racing pool
+/// task already filled is dropped on the worker's `contains_key` check; the
+/// rare simultaneous double-compute is harmless (both route through `fill`
+/// with identical content).
+pub(super) struct PreviewDemand {
+    slot: Mutex<Option<DemandRequest>>,
+    cond: Condvar,
+}
+
+/// One demand: compute `mode` for `item` at the preview pane's `dims`.
+/// Self-contained (the row hands over its own `Arc<ListItem>`), so the worker
+/// needs no item registry that could drift from the rows skim holds.
+struct DemandRequest {
+    item: Arc<ListItem>,
+    mode: PreviewMode,
+    dims: (usize, usize),
+}
+
+impl PreviewDemand {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            slot: Mutex::new(None),
+            cond: Condvar::new(),
+        })
+    }
+
+    /// A demand channel with no worker behind it — used by tests that build
+    /// skim items without an orchestrator. Requests are recorded, never
+    /// served (mirrors [`PreviewNotifier::detached`]).
+    #[cfg(test)]
+    pub(super) fn detached() -> Arc<Self> {
+        Self::new()
+    }
+
+    /// Publish the selected row's awaited preview, replacing any unserved
+    /// request. Called from skim's UI thread on every `preview()` cache miss,
+    /// so it must stay non-blocking (a brief uncontended lock).
+    pub(super) fn request(&self, item: Arc<ListItem>, mode: PreviewMode, dims: (usize, usize)) {
+        *self.slot.lock().unwrap() = Some(DemandRequest { item, mode, dims });
+        self.cond.notify_one();
+    }
+
+    /// Worker side: block until a request is available and take it.
+    fn take_blocking(&self) -> DemandRequest {
+        let mut slot = self.slot.lock().unwrap();
+        loop {
+            if let Some(req) = slot.take() {
+                return req;
+            }
+            slot = self.cond.wait(slot).unwrap();
+        }
+    }
+}
+
 pub(super) struct PreviewOrchestrator {
     pub(super) cache: PreviewCache,
     pending: Arc<AtomicUsize>,
@@ -169,16 +251,61 @@ pub(super) struct PreviewOrchestrator {
     /// scan. That shared cache is how the BranchDiff preview avoids
     /// re-scanning refs per item.
     repo: Repository,
+    /// The on-demand channel serving the selected row's awaited tab (see
+    /// [`PreviewDemand`]). Handed to each worktree-backed row at
+    /// construction; its worker thread is spawned once here and shared
+    /// across `alt-r` spawns, like the cache.
+    demand: Arc<PreviewDemand>,
 }
 
 impl PreviewOrchestrator {
     pub(super) fn new(repo: Repository, render_tx: Arc<OnceLock<Sender<Event>>>) -> Self {
-        Self {
-            cache: Arc::new(DashMap::new()),
-            pending: Arc::new(AtomicUsize::new(0)),
-            notifier: Arc::new(PreviewNotifier::new(render_tx)),
-            repo,
+        let cache: PreviewCache = Arc::new(DashMap::new());
+        let pending = Arc::new(AtomicUsize::new(0));
+        let notifier = Arc::new(PreviewNotifier::new(render_tx));
+        let demand = PreviewDemand::new();
+        {
+            let demand = Arc::clone(&demand);
+            let cache = Arc::clone(&cache);
+            let notifier = Arc::clone(&notifier);
+            let pending = Arc::clone(&pending);
+            let repo = repo.clone();
+            // Detached daemon thread: it parks on the condvar between
+            // requests and dies with the process (the picker's pool tasks
+            // are equally fire-and-forget). Spawn failure degrades to the
+            // pre-demand behavior — the tab fills when precompute reaches it.
+            let _ = std::thread::Builder::new()
+                .name("wt-preview-demand".into())
+                .spawn(move || {
+                    loop {
+                        let req = demand.take_blocking();
+                        let key = (req.item.branch_name().to_string(), req.mode);
+                        if cache.contains_key(&key) {
+                            continue;
+                        }
+                        let (w, h) = req.dims;
+                        let (value, log_disk_hit) =
+                            PickerRow::compute_and_page_preview(&repo, &req.item, req.mode, w, h);
+                        Self::fill(&cache, &notifier, key, value);
+                        if log_disk_hit {
+                            Self::spawn_log_refresh(&cache, &notifier, &pending, req.item, &repo, w, h);
+                        }
+                    }
+                });
         }
+        Self {
+            cache,
+            pending,
+            notifier,
+            repo,
+            demand,
+        }
+    }
+
+    /// The shared demand channel, handed to each worktree-backed skim row so
+    /// its `preview()` can request the awaited tab on a cache miss.
+    pub(super) fn demand(&self) -> &Arc<PreviewDemand> {
+        &self.demand
     }
 
     /// The repository this orchestrator computes previews against. Exposed so
@@ -219,13 +346,9 @@ impl PreviewOrchestrator {
     /// `preview()` synchronously and reads via `DashMap::get`) is never
     /// blocked on a shard write held across git/pager subprocesses.
     ///
-    /// Log mode that hits the disk cache also enqueues a refresh task
-    /// (via `rayon::spawn_fifo`, so it lands behind in-flight foreground
-    /// precompute) to recompute the embedded ref decorations before the
-    /// next visit. The `spawn_fifo` runs from inside a `COLLECT_POOL`
-    /// worker, so it inherits that pool rather than the global one. See the
-    /// `LogCacheEntry` docstring for why the disk cache itself is
-    /// SHA-keyed but decoration text drifts.
+    /// Log mode that hits the disk cache also enqueues a refresh task to
+    /// recompute the embedded ref decorations before the next visit (see
+    /// [`Self::spawn_log_refresh`]).
     pub(super) fn spawn_preview(
         &self,
         item: Arc<ListItem>,
@@ -246,27 +369,44 @@ impl PreviewOrchestrator {
                 PickerRow::compute_and_page_preview(&repo, &item, mode, w, h);
             Self::fill(&cache, &notifier, cache_key, value);
             if log_disk_hit {
-                pending.fetch_add(1, Ordering::SeqCst);
-                let guard = PendingGuard(Arc::clone(&pending));
-                let item = Arc::clone(&item);
-                let cache = Arc::clone(&cache);
-                let notifier = Arc::clone(&notifier);
-                let repo = repo.clone();
-                rayon::spawn_fifo(move || {
-                    let _g = guard;
-                    let rendered = PickerRow::refresh_log_preview(&repo, &item, w, h);
-                    // Skip empty results so a transient `git log` failure
-                    // doesn't poison the in-memory cache with "" and wipe
-                    // out the value the producer just inserted.
-                    if !rendered.is_empty() {
-                        Self::fill(
-                            &cache,
-                            &notifier,
-                            (item.branch_name().to_string(), PreviewMode::Log),
-                            rendered,
-                        );
-                    }
-                });
+                Self::spawn_log_refresh(&cache, &notifier, &pending, item, &repo, w, h);
+            }
+        });
+    }
+
+    /// Enqueue the background re-render that follows a Log disk-cache hit
+    /// (recomputing the embedded ref decorations — see the `LogCacheEntry`
+    /// docstring for why the SHA-keyed cache drifts). Lands on
+    /// `COLLECT_POOL`'s FIFO injector, behind in-flight foreground
+    /// precompute. Shared by the pool producer (`spawn_preview`) and the
+    /// demand worker.
+    fn spawn_log_refresh(
+        cache: &PreviewCache,
+        notifier: &Arc<PreviewNotifier>,
+        pending: &Arc<AtomicUsize>,
+        item: Arc<ListItem>,
+        repo: &Repository,
+        w: usize,
+        h: usize,
+    ) {
+        pending.fetch_add(1, Ordering::SeqCst);
+        let guard = PendingGuard(Arc::clone(pending));
+        let cache = Arc::clone(cache);
+        let notifier = Arc::clone(notifier);
+        let repo = repo.clone();
+        COLLECT_POOL.spawn_fifo(move || {
+            let _g = guard;
+            let rendered = PickerRow::refresh_log_preview(&repo, &item, w, h);
+            // Skip empty results so a transient `git log` failure
+            // doesn't poison the in-memory cache with "" and wipe
+            // out the value the producer just inserted.
+            if !rendered.is_empty() {
+                Self::fill(
+                    &cache,
+                    &notifier,
+                    (item.branch_name().to_string(), PreviewMode::Log),
+                    rendered,
+                );
             }
         });
     }
@@ -693,6 +833,79 @@ mod tests {
                 .cache
                 .contains_key(&("pr:8".to_string(), PreviewMode::Log)),
             "empty string is not cached"
+        );
+    }
+
+    /// End-to-end demand path: a `preview()` cache miss on a local-git tab is
+    /// computed by the demand worker and served — without any precompute
+    /// spawn touching the pool. Pins the fix for the "navigated-to tab waits
+    /// behind the whole precompute queue" latency: the placeholder used to
+    /// sit until the deferred tier happened to reach the key.
+    #[test]
+    fn preview_miss_is_served_by_demand_worker() {
+        use super::super::items::{LocalCheckout, LocalContent, PickerRow};
+        use skim::prelude::{ItemPreview, PreviewContext, SkimItem};
+        use std::sync::Mutex;
+        use std::sync::atomic::AtomicBool;
+
+        let (t, item) = dirty_worktree_item();
+        let orch = orch_for(&t);
+
+        let row = PickerRow {
+            search_base: String::new(),
+            gutter: '@',
+            rendered: Arc::new(Mutex::new(String::new())),
+            branch_name: "main".to_string(),
+            output_token: "main".to_string(),
+            preview_cache: Arc::clone(&orch.cache),
+            pr_status: Arc::new(Mutex::new(None)),
+            notifier: Arc::clone(orch.notifier()),
+            local: Some(LocalCheckout {
+                item: Arc::clone(&item),
+                demand: Arc::clone(orch.demand()),
+                has_upstream: false,
+                summaries_enabled: false,
+                local_content: Arc::new(Mutex::new(LocalContent::default())),
+                morphed: Arc::new(AtomicBool::new(false)),
+            }),
+        };
+
+        // The picker opens on WorkingTree — the process-global default tab,
+        // which this test deliberately leaves untouched (other tests read
+        // it). The first render misses and posts the demand.
+        let ctx = PreviewContext {
+            query: "",
+            cmd_query: "",
+            width: 80,
+            height: 24,
+            current_index: 0,
+            current_selection: "",
+            selected_indices: &[],
+            selections: &[],
+        };
+        let ItemPreview::AnsiText(first) = row.preview(ctx) else {
+            panic!("expected AnsiText preview");
+        };
+        assert!(
+            first.contains("Loading"),
+            "first render is the placeholder: {first:?}"
+        );
+
+        // The demand worker fills the key with the real diff. Bounded poll so
+        // a dead worker fails instead of hanging the suite.
+        let key = ("main".to_string(), PreviewMode::WorkingTree);
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        while !orch.cache.contains_key(&key) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "demand worker never filled the awaited key"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let served = orch.cache.get(&key).unwrap().clone();
+        assert!(
+            served.contains("README"),
+            "demand-computed working-tree diff served: {served:?}"
         );
     }
 

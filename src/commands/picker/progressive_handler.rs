@@ -449,6 +449,8 @@ impl PickerProgressHandler for PickerHandler {
                 pr_status: pr_status_arc,
                 notifier: Arc::clone(self.orchestrator.notifier()),
                 local: Some(LocalCheckout {
+                    item: Arc::clone(&item_arc),
+                    demand: Arc::clone(self.orchestrator.demand()),
                     has_upstream,
                     summaries_enabled,
                     local_content: local_content_arc,

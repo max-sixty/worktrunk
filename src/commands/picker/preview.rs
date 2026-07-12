@@ -65,6 +65,17 @@ impl PreviewMode {
     pub(super) fn prev(self) -> Self {
         Self::from_u8(if self as u8 <= 1 { 7 } else { self as u8 - 1 })
     }
+
+    /// The four tabs computed from local git alone — the modes the demand
+    /// worker serves on a cache miss (see `PreviewDemand`). Summary is
+    /// excluded (an LLM call on tab navigation would be a surprise cost);
+    /// Pr and Comments render/fetch through their own paths.
+    pub(super) fn is_local_git(self) -> bool {
+        matches!(
+            self,
+            Self::WorkingTree | Self::Log | Self::BranchDiff | Self::UpstreamDiff
+        )
+    }
 }
 
 /// Typical terminal character aspect ratio (width/height).

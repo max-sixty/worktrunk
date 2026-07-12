@@ -2913,6 +2913,7 @@ pub mod tests {
 
     /// Build a `PickerRow` from a snapshot `ListItem`.
     fn picker_item(branch_name: &str, item: ListItem) -> Arc<dyn SkimItem> {
+        let item = Arc::new(item);
         let pr_status = Arc::new(Mutex::new(item.pr_status.clone()));
         let output_token = worktree_output_token(&item, branch_name);
         Arc::new(PickerRow {
@@ -2925,6 +2926,8 @@ pub mod tests {
             pr_status,
             notifier: super::preview_notify::PreviewNotifier::detached(),
             local: Some(LocalCheckout {
+                item,
+                demand: super::preview_orchestrator::PreviewDemand::detached(),
                 has_upstream: false,
                 summaries_enabled: false,
                 local_content: Arc::new(Mutex::new(LocalContent::default())),
@@ -2998,6 +3001,8 @@ pub mod tests {
             pr_status: Arc::new(Mutex::new(None)),
             notifier: super::preview_notify::PreviewNotifier::detached(),
             local: Some(LocalCheckout {
+                item: Arc::clone(&item_arc),
+                demand: super::preview_orchestrator::PreviewDemand::detached(),
                 has_upstream: false,
                 summaries_enabled: false,
                 local_content: Arc::clone(&local_content),

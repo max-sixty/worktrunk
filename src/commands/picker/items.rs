@@ -29,6 +29,7 @@ use super::pr_pane;
 use super::preview::{PreviewMode, PreviewStateData};
 use super::preview_cache;
 use super::preview_notify::PreviewNotifier;
+use super::preview_orchestrator::PreviewDemand;
 
 /// Parse a pre-rendered ANSI string into a single ratatui `Line` for skim's
 /// item list. skim's `DisplayContext::to_line` only applies match-highlight
@@ -485,6 +486,15 @@ pub(super) struct PickerRow {
 /// renders its local-checkout tabs (working-tree, branch-diff, upstream,
 /// summary) as placeholders.
 pub(super) struct LocalCheckout {
+    /// The row's snapshot `ListItem`, for the demand worker: a `preview()`
+    /// cache miss on a local-git tab sends this item to [`PreviewDemand`] so
+    /// the awaited tab is computed immediately instead of waiting for the
+    /// precompute queue. The same frozen skeleton-time snapshot the
+    /// orchestrator's precompute captures.
+    pub item: Arc<ListItem>,
+    /// The orchestrator's demand channel (see [`PreviewDemand`]), shared by
+    /// every local row like the notifier.
+    pub demand: Arc<PreviewDemand>,
     /// Whether this branch has an upstream tracking ref, for the tab-4
     /// (remote⇅) empty state. A SYNCHRONOUS skeleton-time fact read from
     /// `Repository::local_branches()` at construction — never from the async
@@ -581,6 +591,22 @@ impl SkimItem for PickerRow {
         // (branch for a worktree row, `pr:N` for a `--prs` row) so the awaited
         // key matches the one the background fill writes.
         self.notifier.note_awaiting(self.preview_key(), mode);
+        // A miss on a local-git tab means the placeholder below would sit
+        // until background precompute reaches this (row, mode) — in a large
+        // repo, seconds. Ask the demand worker to compute it now; the fill
+        // then repaints via the awaited key recorded above.
+        if let Some(local) = &self.local
+            && mode.is_local_git()
+            && !self
+                .preview_cache
+                .contains_key(&(self.branch_name.clone(), mode))
+        {
+            local.demand.request(
+                Arc::clone(&local.item),
+                mode,
+                (context.width, context.height),
+            );
+        }
         ItemPreview::AnsiText(self.render_preview(mode, context.width, context.height))
     }
 }
@@ -1790,6 +1816,24 @@ mod tests {
         assert_eq!(out.spans[3].style.fg, None);
     }
 
+    /// A minimal `LocalCheckout` for row construction in tests: a branch-only
+    /// snapshot item, a detached demand channel (requests recorded, never
+    /// served), and defaulted local signals (no upstream, no summaries,
+    /// unknown diff content).
+    fn test_local_checkout(branch: &str) -> LocalCheckout {
+        LocalCheckout {
+            item: Arc::new(ListItem::new_branch(
+                "0000000".to_string(),
+                branch.to_string(),
+            )),
+            demand: PreviewDemand::detached(),
+            has_upstream: false,
+            summaries_enabled: false,
+            local_content: Arc::new(Mutex::new(LocalContent::default())),
+            morphed: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
     /// Build a worktree-backed [`PickerRow`] (`local: Some`) for tests, with the
     /// given branch, preview cache, and live `pr_status` slot value; the local
     /// signals default (no upstream, no summaries, unknown diff content).
@@ -1807,12 +1851,7 @@ mod tests {
             preview_cache,
             pr_status: Arc::new(Mutex::new(pr_status)),
             notifier: PreviewNotifier::detached(),
-            local: Some(LocalCheckout {
-                has_upstream: false,
-                summaries_enabled: false,
-                local_content: Arc::new(Mutex::new(LocalContent::default())),
-                morphed: Arc::new(AtomicBool::new(false)),
-            }),
+            local: Some(test_local_checkout(branch)),
         }
     }
 
@@ -2669,12 +2708,7 @@ mod tests {
             preview_cache: Arc::clone(&cache),
             pr_status: Arc::clone(&slot),
             notifier: PreviewNotifier::detached(),
-            local: Some(LocalCheckout {
-                has_upstream: false,
-                summaries_enabled: false,
-                local_content: Arc::new(Mutex::new(LocalContent::default())),
-                morphed: Arc::new(AtomicBool::new(false)),
-            }),
+            local: Some(test_local_checkout("feature")),
         };
 
         // First render populates the shared cache.
