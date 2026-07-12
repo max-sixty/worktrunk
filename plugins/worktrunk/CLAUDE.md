@@ -28,10 +28,10 @@ worktrunk/                          ← repo root = marketplace root
     │                                  $CLAUDE_PLUGIN_ROOT, Codex via $PLUGIN_ROOT,
     │                                  Gemini via
     │                                  ${extensionPath}/plugins/worktrunk/hooks/wt.sh
-    ├── skills -> ../../skills       ← symlink; how Claude reaches the
-    │                                  single-sourced repo-root skills/ (Codex's
-    │                                  installer drops symlinks — see Known
-    │                                  Limitations)
+    ├── skills/                      ← generated real-file mirror of repo-root
+    │                                  skills/ (test_docs_are_in_sync; never
+    │                                  hand-edit) — real files because Codex's
+    │                                  installer drops symlinks, see below
     ├── CLAUDE.md / README.md
     └── (Codex activity hooks live *inline* in .codex-plugin/plugin.json's
         `hooks` key — see Known Limitations below)
@@ -52,8 +52,7 @@ Path resolution differs by tool, all verified end-to-end against the real CLIs:
     conventional path is dead config that can only mask a mislocated file.
   - Skills are auto-discovered by scanning `skills/` for `<dir>/SKILL.md`; a
     `skills` manifest array only *adds* directories to that scan, so listing
-    the defaults is redundant. The installer dereferences the `skills` symlink
-    into a real directory in the install cache.
+    the defaults is redundant.
 
   `$CLAUDE_PLUGIN_ROOT` is the plugin root.
 - **Codex** (codex-cli 0.144.1): `.agents/plugins/marketplace.json` `source`
@@ -61,20 +60,53 @@ Path resolution differs by tool, all verified end-to-end against the real CLIs:
   `plugins/worktrunk/.codex-plugin/plugin.json`. Skills load by convention —
   with no `skills` manifest key, Codex scans `<plugin-root>/skills/`; an
   explicit `"skills": "./skills/"` names the same directory, so the manifest
-  carries no `skills` key. No skills currently reach a Codex install either
-  way: the installer's cache copy drops the symlink (see Known Limitations).
+  carries no `skills` key. The scanned tree is the real-file mirror ("Plugin
+  skills are a generated mirror" below).
 - **Gemini**: `gemini-extension.json` at the repo root; `${extensionPath}` is
   the repo root, so `${extensionPath}/skills/` is the repo-root `skills/`
   directly and `hooks/hooks.json` (repo root) calls the canonical shim at
   `${extensionPath}/plugins/worktrunk/hooks/wt.sh`. No symlink or copy.
 
-Claude (through the symlink) and Gemini (directly) pick up the whole `skills/`
-directory, so a new repo-root skill ships to both with no manifest change —
-provided its directory contains a `SKILL.md`
-(`test_plugin_layout_is_consolidated` enforces that; a directory without one is
-silently ignored). Codex installs get no skills — the installer drops the
-symlink (see Known Limitations). Claude-only skills reach Gemini too (accepted
-tradeoff — see Known Limitations below).
+All three tools pick up the whole `skills/` set — Gemini reads the repo-root
+directory, Claude and Codex ship the plugin mirror — so a new repo-root skill
+ships everywhere once `test_docs_are_in_sync` regenerates the mirror, provided
+its directory contains a `SKILL.md` (`test_plugin_layout_is_consolidated`
+enforces that; a directory without one is silently ignored). Claude-only
+skills reach the other tools too (accepted tradeoff — see Known Limitations
+below).
+
+### Plugin skills are a generated mirror
+
+`plugins/worktrunk/skills/` is a real-file mirror of the authored repo-root
+`skills/`, regenerated — symlinks dereferenced, stale files deleted — by the
+`sync_plugin_skills_mirror` stage of `test_docs_are_in_sync`; never hand-edit
+it. Repo-root `skills/` stays the authored home: Gemini reads it directly and
+the docs sync writes into it.
+
+The mirror holds real files because of how the plugin ships, verified
+end-to-end against codex-cli 0.144.1 (scratch marketplaces through
+`codex plugin marketplace add` + `codex plugin add`, skill inventory read with
+`codex debug prompt-input`):
+
+- `codex plugin add` copies the plugin into
+  `$CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>` with a copier
+  that handles only regular files and directories, silently skipping symlink
+  entries (`copy_dir_recursive` in `codex-rs/core-plugins/src/store.rs`), and
+  sessions load from that cache copy. A symlink anywhere in the tree — a
+  top-level `skills` link or a nested one like `reference/README.md` — ships
+  no content. No manifest value can bridge it: manifest paths must stay within
+  the plugin root (`..` and absolute paths are rejected,
+  `resolve_manifest_path` in `codex-rs/core-plugins/src/manifest.rs`).
+- Codex's convention scan (`default_skill_roots`, the empty-`skills` branch of
+  `plugin_skill_roots` in `codex-rs/core-plugins/src/loader.rs`) reads the
+  mirror like any directory.
+- Claude's installer dereferences symlinks, so a symlinked `skills/` worked
+  for Claude; the mirror serves it identically. A symlink also materializes as
+  a plain text file on Windows checkouts, which shipped no skills from a
+  Windows clone to Claude or Codex.
+
+`test_plugin_layout_is_consolidated` pins the no-symlinks invariant;
+`test_docs_are_in_sync` pins content equality with repo-root `skills/`.
 
 ## Known Limitations
 
@@ -106,12 +138,6 @@ The events (Codex's `HookEventsToml` vocabulary, verified against `codex-rs/conf
 
 **Limitation — marker persists after the session ends.** Codex's `HookEventsToml` has **no `SessionEnd`/session-exit event**, so there is no hook to *clear* the marker when a Codex session exits. The resting state after a normal exit is 💬 (set by the last `Stop`), which reads as "waiting for input" and lingers until the next session or a manual `wt config state marker clear`. This is the same class of limitation already documented above for Claude ("Status persists after user interrupt") — an accepted tradeoff, not a regression. If Codex later adds a session-exit event, add a `marker clear` handler for it here.
 
-### Codex installs carry no skills
-
-Codex discovers plugin skills by convention: with no `skills` manifest key, it scans `<plugin-root>/skills/` for `<dir>/SKILL.md` (`default_skill_roots`, the empty-`skills` branch of `plugin_skill_roots` in `codex-rs/core-plugins/src/loader.rs`). An explicit `"skills": "./skills/"` key names the same directory through a pure string join with no existence check (`resolve_manifest_path` in `codex-rs/core-plugins/src/manifest.rs`), so the manifest carries no `skills` key.
-
-Neither form delivers skills to a Codex install, though. `codex plugin add` copies the plugin into `$CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>` with a copier that handles only regular files and directories, silently skipping symlink entries (`copy_dir_recursive` in `codex-rs/core-plugins/src/store.rs`), and sessions load from that cache copy — so the `skills` symlink never reaches the installed root, and the skill inventory is empty. Verified end-to-end against codex-cli 0.144.1 with scratch marketplaces (`codex plugin marketplace add` + `codex plugin add` + `codex debug prompt-input`): a real `skills/` directory loads identically with and without the key; the symlinked layout loads nothing either way. No manifest value can bridge it — manifest paths must stay within the plugin root (`..` and absolute paths are rejected). Shipping skills to Codex would require `plugins/worktrunk/skills/` to be a real directory (e.g. reversing the symlink direction), which needs Claude- and Gemini-side re-verification first.
-
 ### Accepted tradeoff: shared `skills/` exposes `wt-switch-create`
 
-Gemini's `${extensionPath}/skills/` resolves the entire repo-root `skills/`, including `wt-switch-create`, which depends on Claude session-cwd switching (`EnterWorktree`) that Gemini doesn't provide. Accepted: a tool loading a skill it can't act on is harmless, and a single repo-root `skills/` keeps the `worktrunk` skill single-source across the tools and the docs sync. Don't add per-tool skills subtrees to exclude it.
+Codex's mirrored `skills/` and Gemini's `${extensionPath}/skills/` both carry the entire skill set, including `wt-switch-create`, which depends on Claude session-cwd switching (`EnterWorktree`) that neither provides. Accepted: a tool loading a skill it can't act on is harmless, and a single authored `skills/` keeps the `worktrunk` skill single-source across all three tools and the docs sync. Don't add per-tool skills subtrees to exclude it.
