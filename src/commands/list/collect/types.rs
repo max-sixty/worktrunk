@@ -271,6 +271,10 @@ mod tests {
         let names: Vec<&str> = TaskKind::iter().map(TaskKind::display_name).collect();
         assert!(names.iter().all(|name| !name.is_empty()));
         let unique: std::collections::HashSet<_> = names.iter().collect();
-        assert_eq!(unique.len(), names.len(), "duplicate display names: {names:?}");
+        assert_eq!(
+            unique.len(),
+            names.len(),
+            "duplicate display names: {names:?}"
+        );
     }
 }
