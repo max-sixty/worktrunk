@@ -62,6 +62,7 @@ use ansi_str::AnsiStr;
 use anyhow::Context;
 use color_print::cformat;
 use minijinja::{Environment, context};
+use worktrunk::config::ConfigFileKind;
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::Cmd;
@@ -496,14 +497,17 @@ fn config_show_output(repo: &Repository) -> Option<String> {
 
     // User config
     if let Some(user_config_path) = worktrunk::config::config_path() {
-        output.push_str(&format_config_section(&user_config_path, "User config"));
+        output.push_str(&format_config_section(
+            &user_config_path,
+            ConfigFileKind::User,
+        ));
     }
 
     // Project config
     if let Ok(Some(project_config_path)) = repo.project_config_path() {
         output.push_str(&format!(
             "\n{}",
-            format_config_section(&project_config_path, "Project config")
+            format_config_section(&project_config_path, ConfigFileKind::Project)
         ));
     }
 
@@ -515,8 +519,8 @@ fn config_show_output(repo: &Repository) -> Option<String> {
 }
 
 /// Format a config file section for diagnostic output.
-fn format_config_section(path: &std::path::Path, label: &str) -> String {
-    let mut output = format!("{}: {}\n", label, path.display());
+fn format_config_section(path: &std::path::Path, kind: ConfigFileKind) -> String {
+    let mut output = format!("{}: {}\n", kind.label(), path.display());
     if path.exists() {
         match std::fs::read_to_string(path) {
             Ok(content) if content.trim().is_empty() => output.push_str("(empty file)\n"),
@@ -547,9 +551,12 @@ mod tests {
 
     #[test]
     fn test_format_config_section_file_not_found() {
-        let result = format_config_section(std::path::Path::new("/nonexistent/path.toml"), "Test");
+        let result = format_config_section(
+            std::path::Path::new("/nonexistent/path.toml"),
+            ConfigFileKind::User,
+        );
         insta::assert_snapshot!(result, @"
-        Test: /nonexistent/path.toml
+        User config: /nonexistent/path.toml
         (file not found)
         ");
     }
@@ -560,7 +567,7 @@ mod tests {
         let path = tmp.path().join("empty.toml");
         std::fs::write(&path, "").unwrap();
 
-        let result = format_config_section(&path, "Test");
+        let result = format_config_section(&path, ConfigFileKind::User);
         assert!(result.contains("(empty file)"));
     }
 
@@ -570,7 +577,7 @@ mod tests {
         let path = tmp.path().join("config.toml");
         std::fs::write(&path, "key = \"value\"\n").unwrap();
 
-        let result = format_config_section(&path, "Test");
+        let result = format_config_section(&path, ConfigFileKind::User);
         assert!(result.contains("key = \"value\""));
     }
 
@@ -580,7 +587,7 @@ mod tests {
         let path = tmp.path().join("config.toml");
         std::fs::write(&path, "no-newline").unwrap();
 
-        let result = format_config_section(&path, "Test");
+        let result = format_config_section(&path, ConfigFileKind::User);
         assert!(result.ends_with('\n'));
     }
 
@@ -591,7 +598,7 @@ mod tests {
         let content = "x".repeat(5000);
         std::fs::write(&path, &content).unwrap();
 
-        let result = format_config_section(&path, "Test");
+        let result = format_config_section(&path, ConfigFileKind::User);
         assert!(result.contains("(truncated)"));
         assert!(result.len() < 5000);
     }

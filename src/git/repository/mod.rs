@@ -1631,7 +1631,8 @@ fn parse_config_list_z(stdout: &[u8]) -> indexmap::IndexMap<String, Vec<String>>
 fn emit_user_config_warnings(warnings: &[LoadError]) {
     for warning in warnings {
         match warning {
-            LoadError::File { path, label, err } => {
+            LoadError::File { path, kind, err } => {
+                let label = kind.label();
                 let path_display = crate::path::format_path_for_display(path);
                 crate::styling::eprintln!(
                     "{}",
