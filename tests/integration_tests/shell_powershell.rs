@@ -167,7 +167,11 @@ wt list
 
     // The mock's line is the only thing that should reach stdout. Before the
     // fix, a stray `0` (the exit code) followed it.
-    let lines: Vec<&str> = stdout.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
+    let lines: Vec<&str> = stdout
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect();
     assert_eq!(
         lines,
         vec!["MOCK_OUTPUT_LINE"],
