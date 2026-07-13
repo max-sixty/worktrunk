@@ -507,29 +507,28 @@ fn multiline_error_formatting() {
 }
 
 /// Test that CRLF and CR line endings are normalized before formatting.
-/// main.rs normalizes: msg.replace("\r\n", "\n").replace('\r', "\n")
+/// Capture sites and main.rs's fallback path share
+/// `worktrunk::styling::normalize_carriage_returns`.
 #[test]
 fn multiline_error_crlf_normalization() {
-    use worktrunk::styling::format_with_gutter;
+    use worktrunk::styling::{format_with_gutter, normalize_carriage_returns};
 
-    // Test CRLF (Windows line endings)
-    let crlf_error = "line1\r\nline2\r\nline3";
-    let normalized = crlf_error.replace("\r\n", "\n").replace('\r', "\n");
+    // CRLF (Windows line endings) — each pair becomes a single newline
+    assert_eq!(
+        normalize_carriage_returns("line1\r\nline2\r\nline3"),
+        "line1\nline2\nline3"
+    );
+
+    // CR only (progress-meter rewrites) — bare `\r` becomes a newline
+    let normalized = normalize_carriage_returns("line1\rline2\rline3");
+    assert_eq!(normalized, "line1\nline2\nline3");
+
+    // The gutter renders each as its own line, none carrying a raw `\r`
     let gutter = format_with_gutter(&normalized, None);
-
-    // All three lines should appear
     assert!(gutter.contains("line1"), "Should contain line1");
     assert!(gutter.contains("line2"), "Should contain line2");
     assert!(gutter.contains("line3"), "Should contain line3");
-
-    // Test CR only (old Mac line endings)
-    let cr_error = "line1\rline2\rline3";
-    let normalized = cr_error.replace("\r\n", "\n").replace('\r', "\n");
-    let gutter = format_with_gutter(&normalized, None);
-
-    assert!(gutter.contains("line1"), "CR: Should contain line1");
-    assert!(gutter.contains("line2"), "CR: Should contain line2");
-    assert!(gutter.contains("line3"), "CR: Should contain line3");
+    assert!(!gutter.contains('\r'), "Gutter must not carry a raw CR");
 }
 
 // ============================================================================

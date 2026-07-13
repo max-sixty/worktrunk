@@ -33,7 +33,7 @@ pub use anstyle::Style as AnstyleStyle;
 pub use constants::*;
 pub use format::{
     GUTTER_OVERHEAD, format_bash_with_gutter, format_bash_with_gutter_chopped, format_with_gutter,
-    wrap_styled_text,
+    normalize_carriage_returns, wrap_styled_text,
 };
 pub use highlighting::format_toml;
 pub use hyperlink::{Stream, hyperlink_stdout, strip_osc8_hyperlinks, supports_hyperlinks};

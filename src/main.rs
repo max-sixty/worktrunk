@@ -7,7 +7,8 @@ use worktrunk::git::{
     ErrorExt, Repository, WorktrunkError, current_or_recover, cwd_removed_hint, set_base_path,
 };
 use worktrunk::styling::{
-    eprintln, error_message, format_with_gutter, hint_message, info_message, warning_message,
+    eprintln, error_message, format_with_gutter, hint_message, info_message,
+    normalize_carriage_returns, warning_message,
 };
 
 use commands::hooks::HookAnnouncer;
@@ -1014,7 +1015,7 @@ fn format_command_error(error: &anyhow::Error) -> String {
                         "Multiline error without CommandError or context: {msg}"
                     );
                     tracing::warn!("Multiline error without CommandError or context: {msg}");
-                    let normalized = msg.replace("\r\n", "\n").replace('\r', "\n");
+                    let normalized = normalize_carriage_returns(&msg);
                     let _ = writeln!(out, "{}", error_message("Command failed"));
                     let _ = writeln!(out, "{}", format_with_gutter(&normalized, None));
                 } else {

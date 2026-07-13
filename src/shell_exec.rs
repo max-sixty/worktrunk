@@ -882,7 +882,8 @@ fn record_captured(
 /// this to render git's failure to the user.
 #[derive(Debug)]
 pub struct StreamCommandError {
-    /// Lines of output from the command (may be empty).
+    /// Lines of output from the command (may be empty), CR-normalized —
+    /// see `stream_exit_result`.
     pub output: String,
     /// The command string, e.g., "git worktree add /path -b fix main".
     pub command: String,
@@ -916,8 +917,12 @@ fn stream_exit_result(
         .code()
         .map(|c| format!("exit code {c}"))
         .unwrap_or_else(|| "killed by signal".to_string());
+    // `BufReader::lines` strips `\r\n` but keeps bare progress-rewrite `\r`s
+    // mid-line; normalize at the error boundary (not in the reader) so live
+    // streaming stays byte-faithful while the payload can't overprint the
+    // gutter that quotes it.
     Err(StreamCommandError {
-        output: lines.join("\n"),
+        output: crate::styling::normalize_carriage_returns(&lines.join("\n")),
         command: cmd_str.to_string(),
         exit_info,
     }
@@ -2574,6 +2579,30 @@ mod tests {
             exit_info: "exit code 128".to_string(),
         };
         assert_eq!(err.to_string(), "fatal: ref exists");
+    }
+
+    #[test]
+    fn test_stream_exit_result_normalizes_carriage_returns() {
+        #[cfg(unix)]
+        use std::os::unix::process::ExitStatusExt;
+        #[cfg(windows)]
+        use std::os::windows::process::ExitStatusExt;
+
+        // A buffered line can carry bare progress-rewrite `\r`s
+        // (`BufReader::lines` only strips `\r\n`); the error payload must
+        // hold real newlines so no rendered line overprints its gutter.
+        let buffer = Arc::new(Mutex::new(vec![
+            "Receiving objects: 42%\rReceiving objects: 100%".to_string(),
+        ]));
+        let err = stream_exit_result(std::process::ExitStatus::from_raw(1), &buffer, "git fetch")
+            .unwrap_err();
+        let stream_err = err
+            .downcast_ref::<StreamCommandError>()
+            .expect("stream failure carries StreamCommandError");
+        assert_eq!(
+            stream_err.output,
+            "Receiving objects: 42%\nReceiving objects: 100%"
+        );
     }
 
     #[test]

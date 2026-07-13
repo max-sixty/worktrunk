@@ -31,7 +31,7 @@ use super::HookType;
 use crate::path::format_path_for_display;
 use crate::styling::{
     error_message, format_bash_with_gutter, format_with_gutter, hint_message, info_message,
-    suggest_command,
+    normalize_carriage_returns, suggest_command,
 };
 
 /// Platform-specific reference type (PR vs MR).
@@ -204,11 +204,11 @@ pub struct CommandError {
     pub program: String,
     /// Arguments, e.g., `["worktree", "list"]`.
     pub args: Vec<String>,
-    /// Captured stderr with `\r` normalized to `\n` (git emits `\r` for
-    /// progress; non-TTY contexts otherwise produce snapshot instability).
+    /// Captured stderr, CR-normalized (see [`Self::from_failed_output`]).
     pub stderr: String,
-    /// Captured stdout — kept separate because some git subcommands print
-    /// errors here (e.g., `commit` with nothing to commit).
+    /// Captured stdout, CR-normalized like `stderr` — kept separate because
+    /// some git subcommands print errors here (e.g., `commit` with nothing
+    /// to commit).
     pub stdout: String,
     /// Process exit code; `None` if the child was killed by a signal.
     pub exit_code: Option<i32>,
@@ -216,13 +216,21 @@ pub struct CommandError {
 
 impl CommandError {
     /// Build from the captured `Output` of a non-zero exit.
+    ///
+    /// Both streams are normalized via [`normalize_carriage_returns`] here,
+    /// at capture, rather than in renderers: git emits `\r` for progress
+    /// meters, and a raw `\r` reaching the terminal would overprint the
+    /// gutter or indent of the block quoting the output. Normalizing at the
+    /// source means every consumer — gutter rendering, the line counting and
+    /// truncation in `wt list`'s task-failure warnings, embedding in
+    /// higher-level `GitError` fields — sees honest line structure.
     pub fn from_failed_output(
         program: impl Into<String>,
         args: &[&str],
         output: &std::process::Output,
     ) -> Self {
-        let stderr = String::from_utf8_lossy(&output.stderr).replace('\r', "\n");
-        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let stderr = normalize_carriage_returns(&String::from_utf8_lossy(&output.stderr));
+        let stdout = normalize_carriage_returns(&String::from_utf8_lossy(&output.stdout));
         Self {
             program: program.into(),
             args: args.iter().map(|&s| s.to_string()).collect(),
@@ -2416,6 +2424,30 @@ mod tests {
             exit_code: Some(1),
         };
         assert_eq!(err.combined_output(), "actual error on stdout");
+    }
+
+    #[test]
+    fn command_error_from_failed_output_normalizes_carriage_returns() {
+        #[cfg(unix)]
+        use std::os::unix::process::ExitStatusExt;
+        #[cfg(windows)]
+        use std::os::windows::process::ExitStatusExt;
+
+        // Progress meters rewrite lines with bare `\r`; CRLF arrives from
+        // Windows tools. Both streams must reach renderers as real newlines —
+        // a raw `\r` in the rendered block would return the cursor to column
+        // 0 and overprint the gutter.
+        let output = std::process::Output {
+            status: std::process::ExitStatus::from_raw(1),
+            stdout: b"Receiving objects: 42%\rReceiving objects: 100%".to_vec(),
+            stderr: b"warning: one\r\nfatal: two".to_vec(),
+        };
+        let err = CommandError::from_failed_output("git", &["fetch"], &output);
+        assert_eq!(
+            err.combined_output(),
+            "warning: one\nfatal: two\nReceiving objects: 42%\nReceiving objects: 100%"
+        );
+        assert!(!err.render().contains('\r'));
     }
 
     #[test]
