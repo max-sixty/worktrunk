@@ -798,9 +798,9 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
             return Ok(());
         }
     };
-    let config_path = match repo.project_config_path() {
-        Ok(Some(path)) => path,
-        _ => {
+    let config_path = match repo.project_config_path()? {
+        Some(path) => path,
+        None => {
             writeln!(
                 out,
                 "{}",

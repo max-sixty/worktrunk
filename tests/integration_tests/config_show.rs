@@ -5022,6 +5022,30 @@ fn test_project_config_path_env_var_override(repo: TestRepo, temp_home: TempDir)
         "missing override path should resolve to no project config, got: {}",
         json["project"]["config"]
     );
+
+    // An empty override likewise means no project config — it must not fall
+    // back to the repo's own file or resolve to the worktree root directory.
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_xdg_config_path(&mut cmd, temp_home.path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_PROJECT_CONFIG_PATH", "");
+    cmd.args(["config", "show", "--format=json"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    assert!(
+        json["project"]["config"].is_null(),
+        "empty override should resolve to no project config, got: {}",
+        json["project"]["config"]
+    );
 }
 
 /// A relative `WORKTRUNK_PROJECT_CONFIG_PATH` resolves against the worktree
@@ -5039,8 +5063,7 @@ fn test_project_config_path_env_var_relative(repo: TestRepo, temp_home: TempDir)
     fs::create_dir_all(&subdir).unwrap();
 
     for cwd in [repo.root_path(), subdir.as_path()] {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
+        let mut cmd = repo.wt_command();
         set_xdg_config_path(&mut cmd, temp_home.path());
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("WORKTRUNK_PROJECT_CONFIG_PATH", "custom-wt.toml");
@@ -5075,8 +5098,7 @@ fn test_project_config_path_env_var_relative(repo: TestRepo, temp_home: TempDir)
 fn test_project_config_path_env_var_relative_no_worktree_errors() {
     let test = BareRepoTest::new();
 
-    let mut cmd = wt_command();
-    test.configure_wt_cmd(&mut cmd);
+    let mut cmd = test.wt_command();
     cmd.env("WORKTRUNK_PROJECT_CONFIG_PATH", "custom-wt.toml");
     cmd.args(["config", "show", "--format=json"])
         .current_dir(test.bare_repo_path());
@@ -5091,4 +5113,28 @@ fn test_project_config_path_env_var_relative_no_worktree_errors() {
         stderr.contains("WORKTRUNK_PROJECT_CONFIG_PATH is relative"),
         "error should name the env var and the problem; stderr:\n{stderr}"
     );
+}
+
+/// On Windows, an override that is neither fully absolute nor relative — a
+/// drive-relative (`C:cfg`) or rooted-but-driveless (`\cfg`) value — errors
+/// instead of silently resolving against the process drive or cwd.
+#[cfg(windows)]
+#[rstest]
+fn test_project_config_path_env_var_half_anchored_errors(repo: TestRepo) {
+    for value in [r"C:cfg\wt.toml", r"\cfg\wt.toml"] {
+        let mut cmd = repo.wt_command();
+        cmd.env("WORKTRUNK_PROJECT_CONFIG_PATH", value);
+        cmd.args(["config", "show", "--format=json"]);
+
+        let output = cmd.output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !output.status.success(),
+            "override {value} should be rejected; stderr:\n{stderr}"
+        );
+        assert!(
+            stderr.contains("neither fully absolute nor relative"),
+            "error should explain the rejected form for {value}; stderr:\n{stderr}"
+        );
+    }
 }

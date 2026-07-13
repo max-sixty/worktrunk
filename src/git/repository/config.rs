@@ -631,12 +631,13 @@ impl Repository {
     ///
     /// If `WORKTRUNK_PROJECT_CONFIG_PATH` is set, returns that path (used for
     /// test isolation so the spawned `wt` does not pick up this repo's
-    /// `.config/wt.toml`). A relative value resolves against the same worktree
-    /// root the default `.config/wt.toml` is anchored to — never the process
-    /// cwd, which would make the override silently depend on the invocation
-    /// directory — and errors when no worktree root exists to anchor it. A
-    /// missing file at the resulting path still resolves to `Ok(None)` via
-    /// `ProjectConfig::load`, matching the no-config case.
+    /// `.config/wt.toml`). An empty value means no project config. A relative
+    /// value resolves against the same worktree root the default
+    /// `.config/wt.toml` is anchored to — never the process cwd, which would
+    /// make the override silently depend on the invocation directory — and
+    /// errors when no worktree root exists to anchor it. A missing file at the
+    /// resulting path still resolves to `Ok(None)` via `ProjectConfig::load`,
+    /// matching the no-config case.
     ///
     /// Without the override: uses the current worktree when inside one (both
     /// normal and bare repos). For bare repos at the bare root (outside any
@@ -650,10 +651,33 @@ impl Repository {
     /// (`src/commands/hooks.rs`).
     pub fn project_config_path(&self) -> anyhow::Result<Option<PathBuf>> {
         let override_path = std::env::var_os("WORKTRUNK_PROJECT_CONFIG_PATH").map(PathBuf::from);
-        if let Some(path) = &override_path
-            && path.is_absolute()
-        {
-            return Ok(Some(path.clone()));
+        if let Some(path) = &override_path {
+            if path.as_os_str().is_empty() {
+                // An empty override means no project config, matching a
+                // missing file at the override path.
+                return Ok(None);
+            }
+            if path.is_absolute() {
+                return Ok(Some(path.clone()));
+            }
+            // Windows-only forms that are neither absolute nor purely
+            // relative — drive-relative (`C:cfg`) or rooted without a drive
+            // (`\cfg`, `/tmp/x`) — would resolve against the process drive or
+            // replace the anchor under `Path::join`; reject them rather than
+            // silently keep the cwd dependence this resolution exists to
+            // eliminate.
+            #[cfg(windows)]
+            if path.has_root()
+                || matches!(
+                    path.components().next(),
+                    Some(std::path::Component::Prefix(_))
+                )
+            {
+                anyhow::bail!(
+                    "WORKTRUNK_PROJECT_CONFIG_PATH ({}) is neither fully absolute nor relative; use an absolute path including the drive",
+                    path.display()
+                );
+            }
         }
 
         // Batched rev-parse: asks `--is-inside-work-tree` and also pre-warms
@@ -670,15 +694,16 @@ impl Repository {
             None => None,
         };
 
-        match (override_path, root) {
-            (Some(relative), Some(root)) => Ok(Some(root.join(relative))),
-            (Some(relative), None) => anyhow::bail!(
+        let Some(relative) = override_path else {
+            return Ok(root.map(|root| root.join(".config").join("wt.toml")));
+        };
+        let Some(root) = root else {
+            anyhow::bail!(
                 "WORKTRUNK_PROJECT_CONFIG_PATH is relative ({}) but there is no worktree root to resolve it against; use an absolute path",
                 relative.display()
-            ),
-            (None, Some(root)) => Ok(Some(root.join(".config").join("wt.toml"))),
-            (None, None) => Ok(None),
-        }
+            );
+        };
+        Ok(Some(root.join(relative)))
     }
 
     /// Load the project configuration (.config/wt.toml) if it exists.
