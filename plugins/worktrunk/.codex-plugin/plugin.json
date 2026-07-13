@@ -44,7 +44,6 @@
       ]
     }
   },
-  "skills": "./skills/",
   "interface": {
     "displayName": "Worktrunk",
     "shortDescription": "Git worktree workflows for parallel Codex sessions.",

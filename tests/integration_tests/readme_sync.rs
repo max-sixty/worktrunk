@@ -24,8 +24,9 @@ use crate::common::wt_command;
 use ansi_str::AnsiStr;
 use ansi_to_html::convert as ansi_to_html;
 use regex::Regex;
+use std::collections::BTreeMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 use worktrunk::docs::{MARKER_CLOSE, MARKER_OPEN_PREFIX};
@@ -2204,6 +2205,87 @@ fn finalize_skill_content(content: &str) -> String {
         .join("\n")
 }
 
+/// Mirror the repo-root `skills/` tree into `plugins/worktrunk/skills/` as
+/// regular files, dereferencing symlinks, and delete mirror files whose
+/// source is gone.
+///
+/// The mirror is what Claude and Codex installs ship. It must hold real files
+/// only: Codex's plugin installer copies the plugin root with a copier that
+/// silently skips symlink entries (`copy_dir_recursive` in codex-rs
+/// core-plugins), so a symlink anywhere in the tree — a `skills` link at the
+/// top or a nested one like `reference/README.md` — ships no content, and a
+/// symlink also materializes as a plain text file on Windows checkouts.
+/// Repo-root `skills/` stays the authored home: Gemini reads it directly, and
+/// the earlier sync stages write into it.
+fn sync_plugin_skills_mirror(project_root: &Path) -> (Vec<String>, Vec<String>) {
+    let mut errors = Vec::new();
+    let mut updated_files = Vec::new();
+
+    let source_root = project_root.join("skills");
+    let mirror_root = project_root.join("plugins/worktrunk/skills");
+
+    // `is_dir` and `read` follow symlinks, so linked source content lands in
+    // the collected map — and therefore in the mirror — as regular file bytes.
+    fn collect_files(
+        root: &Path,
+        dir: &Path,
+        files: &mut BTreeMap<PathBuf, Vec<u8>>,
+    ) -> std::io::Result<()> {
+        for entry in fs::read_dir(dir)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                collect_files(root, &path, files)?;
+            } else {
+                let rel = path.strip_prefix(root).unwrap().to_path_buf();
+                files.insert(rel, fs::read(&path)?);
+            }
+        }
+        Ok(())
+    }
+
+    let mut source_files = BTreeMap::new();
+    if let Err(e) = collect_files(&source_root, &source_root, &mut source_files) {
+        errors.push(format!("walk {}: {e}", source_root.display()));
+        return (errors, updated_files);
+    }
+    let mut mirror_files = BTreeMap::new();
+    if mirror_root.exists()
+        && let Err(e) = collect_files(&mirror_root, &mirror_root, &mut mirror_files)
+    {
+        errors.push(format!("walk {}: {e}", mirror_root.display()));
+        return (errors, updated_files);
+    }
+
+    for (rel, content) in &source_files {
+        if mirror_files
+            .get(rel)
+            .is_none_or(|mirrored| mirrored != content)
+        {
+            let dst = mirror_root.join(rel);
+            if let Some(parent) = dst.parent() {
+                fs::create_dir_all(parent)
+                    .unwrap_or_else(|e| panic!("Failed to create {}: {}", parent.display(), e));
+            }
+            fs::write(&dst, content)
+                .unwrap_or_else(|e| panic!("Failed to write {}: {}", dst.display(), e));
+            updated_files.push(format!("plugins/worktrunk/skills/{}", rel.display()));
+        }
+    }
+    for rel in mirror_files.keys() {
+        if !source_files.contains_key(rel) {
+            let stale = mirror_root.join(rel);
+            fs::remove_file(&stale)
+                .unwrap_or_else(|e| panic!("Failed to remove {}: {}", stale.display(), e));
+            updated_files.push(format!(
+                "plugins/worktrunk/skills/{} (removed)",
+                rel.display()
+            ));
+        }
+    }
+
+    (errors, updated_files)
+}
+
 /// Sync .well-known/agent-skills/ index.json and verify symlink.
 ///
 /// The skill files are served via a symlink:
@@ -2614,6 +2696,11 @@ fn test_docs_are_in_sync() {
     // Step 3: Sync skill files (docs/content/*.md → skills/*)
     let (skill_errors, skill_files) = sync_skill_files(project_root);
     tag("skill files", skill_errors, skill_files);
+
+    // Step 3b: Mirror the now-fresh skills/ into plugins/worktrunk/skills/
+    // (real files for the plugin payload — Codex's installer drops symlinks)
+    let (mirror_errors, mirror_files) = sync_plugin_skills_mirror(project_root);
+    tag("plugin skills mirror", mirror_errors, mirror_files);
 
     // Step 4: Sync .well-known/agent-skills/ (skills/ → docs/static/)
     let (well_known_errors, well_known_files) = sync_well_known_skills(project_root);

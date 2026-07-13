@@ -41,7 +41,7 @@ use worktrunk::styling::INFO_SYMBOL;
 use worktrunk::sync::Semaphore;
 use worktrunk::utils::epoch_now;
 
-use crate::llm::{execute_llm_command, prepare_diff};
+use crate::llm::{DIFF_PREFIX_OVERRIDES, execute_llm_command, prepare_diff};
 
 /// Limits concurrent LLM calls to avoid overwhelming the network / LLM
 /// provider. 8 permits balances parallelism with resource usage — LLM calls
@@ -240,8 +240,11 @@ pub(crate) fn compute_combined_diff(
     if !is_default_branch && let Some(spec) = repo.branch_diff_spec(head) {
         // `--end-of-options` guards a base name that could begin with `-`; the
         // stat and full-diff invocations differ only by the `--stat` flag.
+        // The prefix overrides keep the diff parseable into per-file sections
+        // by `prepare_diff` (same guard as `build_commit_prompt`).
         let run_branch_diff = |opts: &[&str], out: &mut String| {
-            let mut args = vec!["diff"];
+            let mut args = DIFF_PREFIX_OVERRIDES.to_vec();
+            args.push("diff");
             args.extend_from_slice(opts);
             args.push("--end-of-options");
             args.extend(spec.revs.iter().map(String::as_str));
@@ -261,7 +264,10 @@ pub(crate) fn compute_combined_diff(
         {
             stat.push_str(&wt_stat);
         }
-        if let Ok(wt_diff) = repo.run_command(&["-C", &path, "diff", "HEAD"])
+        let mut wt_diff_args = vec!["-C", &path];
+        wt_diff_args.extend(DIFF_PREFIX_OVERRIDES);
+        wt_diff_args.extend(["diff", "HEAD"]);
+        if let Ok(wt_diff) = repo.run_command(&wt_diff_args)
             && !wt_diff.trim().is_empty()
         {
             diff.push_str(&wt_diff);
