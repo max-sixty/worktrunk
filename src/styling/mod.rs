@@ -397,6 +397,19 @@ command = "npm install"
         ");
     }
 
+    /// An indented line that wraps keeps its indent on every continuation
+    /// line, so subordinate content (a task-failure message under its
+    /// label) stays visually subordinate instead of rendering flush-left.
+    #[test]
+    fn test_format_with_gutter_preserves_indent_on_wrap() {
+        let indented = "  fatal: Unable to create '/some/long/path/to/repository/.git/worktrees/name/index.lock': File exists.";
+        assert_snapshot!(format_with_gutter(indented, Some(50)), @"
+        [107m [0m   fatal: Unable to create
+        [107m [0m   '/some/long/path/to/repository/.git/worktrees/name/index.lock':
+        [107m [0m   File exists.
+        ");
+    }
+
     #[cfg(feature = "syntax-highlighting")]
     #[test]
     fn test_bash_gutter_formatting_ends_with_reset() {
