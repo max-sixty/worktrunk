@@ -701,11 +701,10 @@ fn format_task_failure(name: &str, kind: TaskKind, message: &str) -> String {
             }
         }
         if line_count > TASK_FAILURE_MESSAGE_MAX_LINES {
+            let extra = line_count - TASK_FAILURE_MESSAGE_MAX_LINES;
+            let plural = if extra == 1 { "" } else { "s" };
             rendered.push('\n');
-            rendered.push_str(&format!(
-                "  … ({} more lines)",
-                line_count - TASK_FAILURE_MESSAGE_MAX_LINES
-            ));
+            rendered.push_str(&format!("  … ({extra} more line{plural})"));
         }
     } else if !message.is_empty() {
         let message = truncate_visible(message, TASK_FAILURE_MESSAGE_MAX_COLS);
@@ -2474,6 +2473,14 @@ remove the file manually to continue.";
             padded.lines().all(|line| line == line.trim_end()),
             "{padded:?}"
         );
+        // Exactly one line over the cap pluralizes the elision marker.
+        let thirteen = (0..13)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let capped = format_task_failure("plugins", TaskKind::CiStatus, &thirteen);
+        let capped = capped.ansi_strip();
+        assert!(capped.ends_with("… (1 more line)"), "{capped:?}");
         // One enormous line with no newlines is bounded too — the inline
         // form truncates rather than word-wrapping across dozens of rows.
         let monster = format_task_failure("plugins", TaskKind::CiStatus, &"x".repeat(2_000));
