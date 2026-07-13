@@ -19,7 +19,7 @@ expression: "migration_diff(content, &migrated)"
  
 -[select]
 +[list]
-+json-schema = 1
++json-schema = 2
 +
 +[switch.picker]
  pager = "delta"

@@ -413,8 +413,12 @@ fn print_buffered_table(header: &str, rows: &[String], summary: &str) {
     for row in rows {
         println!("{row}");
     }
-    println!();
-    println!("{summary}");
+    // The summary narrates the table rather than being part of the answer
+    // (`--format=json` omits it), so it goes to stderr and piped stdout ends
+    // cleanly after the last row. The progressive path keeps it on stdout:
+    // there it's a repainted row of the table region.
+    eprintln!();
+    eprintln!("{summary}");
 }
 
 /// Options for controlling what data to collect.
@@ -656,12 +660,12 @@ fn format_stall_footer(
     first_name: &str,
 ) -> String {
     let dim = Style::new().dimmed();
-    let kind_str: &'static str = first_kind.into();
+    let kind_name = first_kind.display_name();
     let waiting_clause = if pending_count == 1 {
-        cformat!("waiting on <underline>{kind_str}</> for <underline>{first_name}</>")
+        cformat!("waiting on <underline>{kind_name}</> for <underline>{first_name}</>")
     } else {
         cformat!(
-            "waiting on {pending_count} tasks, including <underline>{kind_str}</> for <underline>{first_name}</>"
+            "waiting on {pending_count} tasks, including <underline>{kind_name}</> for <underline>{first_name}</>"
         )
     };
     cformat!(
@@ -718,8 +722,11 @@ fn format_drain_timeout_diag(
             .iter()
             .take(MAX_SHOWN)
             .map(|result| {
-                let missing_names: Vec<&str> =
-                    result.missing_kinds.iter().map(|k| k.into()).collect();
+                let missing_names: Vec<&str> = result
+                    .missing_kinds
+                    .iter()
+                    .map(|k| k.display_name())
+                    .collect();
                 cformat!("<bold>{}</>: {}", result.name, missing_names.join(", "))
             })
             .collect();
@@ -1983,14 +1990,15 @@ pub fn collect(
                 .iter()
                 .map(|error| {
                     let name = all_items[error.item_idx].branch_name();
-                    let kind_str: &'static str = error.kind.into();
                     // Take first line only - git errors can be multi-line with usage hints
                     let msg = error.message.lines().next().unwrap_or(&error.message);
-                    cformat!("<bold>{}</>: {} ({})", name, kind_str, msg)
+                    cformat!("<bold>{}</>: {} ({})", name, error.kind.display_name(), msg)
                 })
                 .collect();
+            let count = sorted_errors.len();
+            let plural = if count == 1 { "" } else { "s" };
             warning_parts.push(format!(
-                "Some git operations failed:\n{}",
+                "{count} task{plural} failed:\n{}",
                 format_with_gutter(&error_lines.join("\n"), None)
             ));
         }
@@ -2343,7 +2351,7 @@ mod tests {
             format_stall_footer("Showing 3 worktrees", 5, 12, 1, TaskKind::CiStatus, "feat");
         insta::assert_snapshot!(
             rendered.ansi_strip(),
-            @"○ Showing 3 worktrees (5/12 loaded, no recent progress; waiting on ci-status for feat)"
+            @"○ Showing 3 worktrees (5/12 loaded, no recent progress; waiting on CI status for feat)"
         );
     }
 
@@ -2353,7 +2361,7 @@ mod tests {
             format_stall_footer("Showing 3 worktrees", 5, 12, 3, TaskKind::CiStatus, "feat");
         insta::assert_snapshot!(
             rendered.ansi_strip(),
-            @"○ Showing 3 worktrees (5/12 loaded, no recent progress; waiting on 3 tasks, including ci-status for feat)"
+            @"○ Showing 3 worktrees (5/12 loaded, no recent progress; waiting on 3 tasks, including CI status for feat)"
         );
     }
 
@@ -2448,10 +2456,10 @@ mod tests {
         let rendered = format_drain_timeout_diag(3, &items);
         insta::assert_snapshot!(
             rendered.ansi_strip(),
-            @r"
+            @"
         Listing worktrees timed out after 120s (3 results received); blocked tasks:
-          feature-a: ci-status, branch-diff
-          feature-b: ahead-behind
+          feature-a: CI status, branch diff
+          feature-b: ahead/behind counts
         "
         );
     }
@@ -2470,13 +2478,13 @@ mod tests {
         let rendered = format_drain_timeout_diag(2, &items);
         insta::assert_snapshot!(
             rendered.ansi_strip(),
-            @r"
+            @"
         Listing worktrees timed out after 120s (2 results received); blocked tasks:
-          feature-0: ahead-behind
-          feature-1: ahead-behind
-          feature-2: ahead-behind
-          feature-3: ahead-behind
-          feature-4: ahead-behind
+          feature-0: ahead/behind counts
+          feature-1: ahead/behind counts
+          feature-2: ahead/behind counts
+          feature-3: ahead/behind counts
+          feature-4: ahead/behind counts
           … and 3 more
         "
         );

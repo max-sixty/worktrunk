@@ -173,7 +173,6 @@ fn prune_summary(candidates: &[Candidate]) -> String {
 /// and passed by reference.
 struct RemovalContext<'a> {
     repo: &'a Repository,
-    config: &'a UserConfig,
     foreground: bool,
     hook_plan: &'a ApprovedHookPlan,
     worktrees: &'a [WorktreeInfo],
@@ -207,7 +206,6 @@ fn try_remove(candidate: &Candidate, ctx: &RemovalContext<'_>) -> anyhow::Result
         target,
         BranchDeletionMode::SafeDelete,
         false,
-        ctx.config,
         None,
         Some(ctx.worktrees),
         Some(ctx.snapshot),
@@ -275,7 +273,6 @@ fn check_one(
     repo: &Repository,
     snapshot: &RefSnapshot,
     integration_target: &str,
-    config: &UserConfig,
     worktrees: &[WorktreeInfo],
     min_age_duration: Duration,
     now_secs: u64,
@@ -303,7 +300,6 @@ fn check_one(
                 target,
                 BranchDeletionMode::SafeDelete,
                 false,
-                config,
                 None,
                 Some(worktrees),
                 Some(snapshot),
@@ -725,7 +721,6 @@ pub fn step_prune(
             // main thread.
             let repo_ref = &repo;
             let snapshot_ref = &snapshot;
-            let config_ref = &config;
             let check_items_ref = &check_items;
             let integration_target_ref = integration_target.as_str();
             let check_lock_ref = &check_lock;
@@ -741,7 +736,6 @@ pub fn step_prune(
                                 repo_ref,
                                 snapshot_ref,
                                 integration_target_ref,
-                                config_ref,
                                 worktrees,
                                 min_age_duration,
                                 now_secs,
@@ -875,7 +869,6 @@ pub fn step_prune(
     let check_lock = RwLock::new(());
     let removal_ctx = RemovalContext {
         repo: &repo,
-        config: &config,
         foreground,
         hook_plan: &hook_plan,
         worktrees,
@@ -897,7 +890,6 @@ pub fn step_prune(
             // main thread's removal calls.
             let repo_ref = &repo;
             let snapshot_ref = &snapshot;
-            let config_ref = &config;
             let check_items_ref = &check_items;
             let integration_target_ref = integration_target.as_str();
             let check_lock_ref = &check_lock;
@@ -913,7 +905,6 @@ pub fn step_prune(
                                 repo_ref,
                                 snapshot_ref,
                                 integration_target_ref,
-                                config_ref,
                                 worktrees,
                                 min_age_duration,
                                 now_secs,

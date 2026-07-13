@@ -17,7 +17,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use std::path::Path;
 use std::process::Command;
 use worktrunk::testing::isolate_subprocess_env;
-use wt_perf::{RepoConfig, bench_wt, create_repo, setup_fake_remote};
+use wt_perf::{CacheState, RepoConfig, bench_wt, create_repo, setup_fake_remote};
 
 fn bench_first_output(c: &mut Criterion) {
     let mut group = c.benchmark_group("first_output");
@@ -44,14 +44,14 @@ fn bench_first_output(c: &mut Criterion) {
     // first invocation. Without per-iteration invalidation the reported
     // timing would be warm cache, not the first-invocation TTFO a user sees.
     group.bench_function("remove", |b| {
-        bench_wt(b, &repo_path, true, || {
+        bench_wt(b, &repo_path, CacheState::Cold, || {
             make_cmd(&["remove", "--yes", "--no-hooks", "--force", "feature-wt-1"])
         });
     });
 
     // switch: exits after execute_switch, before mismatch computation and output
     group.bench_function("switch", |b| {
-        bench_wt(b, &repo_path, false, || {
+        bench_wt(b, &repo_path, CacheState::Warm, || {
             make_cmd(&["switch", "--yes", "--no-hooks", "feature-wt-1"])
         });
     });

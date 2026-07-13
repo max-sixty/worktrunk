@@ -74,7 +74,7 @@ impl Divergence {
 /// - For worktrees: whether the path matches the template, or has issues
 /// - For branches (without worktree): shows / to distinguish from worktrees
 ///
-/// Priority order for worktrees: BranchWorktreeMismatch > Prunable > Locked
+/// Priority order for worktrees: Prunable > Locked > BranchWorktreeMismatch
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr)]
 pub enum WorktreeState {
     #[strum(serialize = "")]

@@ -53,6 +53,6 @@ exit_code: 0
 + pr-link           [2m↑[22m 🤖              [32m↑1[0m        [32m+1[0m                ../repo.pr-link       [2m152b5dea[0m  [2m1d[0m    [2mPR commit[0m
 + wli-sequence   [36m![39m[36m?[39m [2m↑[22m 🤖    [32m+1[0m [31m-112[0m   [32m↑1[0m      [32m+200[0m                ../repo.wli-sequence  [2m4353e28e[0m  [2m1d[0m    [2mInitial content[0m
 
-[2m○[22m [2mShowing 7 worktrees, 1 with changes, 6 ahead[0m
-
 ----- stderr -----
+
+[2m○[22m [2mShowing 7 worktrees, 1 with changes, 6 ahead[0m

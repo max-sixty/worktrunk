@@ -3328,7 +3328,7 @@ fn test_config_update_print_emits_migrated_without_writing(repo: TestRepo) {
 /// `wt config update` with no deprecated settings reports nothing to do
 #[rstest]
 fn test_config_update_no_deprecations(repo: TestRepo) {
-    // Clean config: no deprecated patterns, json-schema explicitly pinned
+    // Clean config: no deprecated patterns, json-schema explicitly set
     fs::write(
         repo.test_config_path(),
         r#"worktree-path = "../{{ repo }}.{{ branch }}"
@@ -3348,10 +3348,11 @@ json-schema = 1
     });
 }
 
-/// `wt config update` pins `[list] json-schema = 1` when the key is unset,
-/// and a second run has nothing left to do — the pending-default loop closes.
+/// `wt config update` writes `[list] json-schema = 2` when the key is unset,
+/// adopting the upcoming default, and a second run has nothing left to do —
+/// the pending-default loop closes.
 #[rstest]
-fn test_config_update_pins_json_schema(repo: TestRepo) {
+fn test_config_update_adopts_json_schema(repo: TestRepo) {
     fs::write(
         repo.test_config_path(),
         "worktree-path = \"../{{ repo }}.{{ branch }}\"\n",
@@ -3368,7 +3369,7 @@ fn test_config_update_pins_json_schema(repo: TestRepo) {
 
     assert_eq!(
         fs::read_to_string(repo.test_config_path()).unwrap(),
-        "worktree-path = \"../{{ repo }}.{{ branch }}\"\n\n[list]\njson-schema = 1\n"
+        "worktree-path = \"../{{ repo }}.{{ branch }}\"\n\n[list]\njson-schema = 2\n"
     );
 
     let output = repo
@@ -3383,16 +3384,16 @@ fn test_config_update_pins_json_schema(repo: TestRepo) {
 }
 
 /// A system config that sets `[list] json-schema` makes the resolved value
-/// explicit, so `wt config update` must not pin the user file — a user-file
-/// pin would override the system value and flip JSON output.
+/// explicit, so `wt config update` must not write the user file — a user-file
+/// value would override the deliberate system-level choice.
 #[rstest]
-fn test_config_update_json_schema_pin_defers_to_system_config(repo: TestRepo) {
+fn test_config_update_json_schema_adopt_defers_to_system_config(repo: TestRepo) {
     let system_config_dir = tempfile::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
-    fs::write(&system_config_path, "[list]\njson-schema = 2\n").unwrap();
+    fs::write(&system_config_path, "[list]\njson-schema = 1\n").unwrap();
 
     // A user config with an unrelated deprecation: update applies that
-    // rewrite but must not insert the pin alongside it.
+    // rewrite but must not insert json-schema alongside it.
     fs::write(repo.test_config_path(), "[merge]\nno-ff = true\n").unwrap();
 
     let mut cmd = repo.wt_command();
@@ -3404,7 +3405,7 @@ fn test_config_update_json_schema_pin_defers_to_system_config(repo: TestRepo) {
     assert_eq!(
         fs::read_to_string(repo.test_config_path()).unwrap(),
         "[merge]\nff = false\n",
-        "the no-ff rewrite applies; the json-schema pin must not"
+        "the no-ff rewrite applies; the json-schema write must not"
     );
 }
 

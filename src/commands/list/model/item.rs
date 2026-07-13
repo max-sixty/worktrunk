@@ -17,14 +17,15 @@ use crate::commands::list::columns::ColumnKind;
 ///
 /// Used by `refresh_status_symbols` to resolve the worktree-state position
 /// (Gate 2) from metadata alone. The decision priority is:
-/// `branch_worktree_mismatch` > `prunable` > `locked` > `None`.
+/// `prunable` > `locked` > `branch_worktree_mismatch` > `None` — the yellow
+/// actionable states outrank the informational (dim yellow) mismatch flag.
 fn metadata_worktree_state(data: &WorktreeData) -> WorktreeState {
-    if data.branch_worktree_mismatch {
-        WorktreeState::BranchWorktreeMismatch
-    } else if data.is_prunable() {
+    if data.is_prunable() {
         WorktreeState::Prunable
     } else if data.locked.is_some() {
         WorktreeState::Locked
+    } else if data.branch_worktree_mismatch {
+        WorktreeState::BranchWorktreeMismatch
     } else {
         WorktreeState::None
     }
@@ -845,6 +846,32 @@ impl ListItem {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The yellow actionable states outrank the informational (dim yellow)
+    /// mismatch flag, so a demoted `⚑` can never mask `⊟` or `⊞`.
+    #[test]
+    fn test_metadata_worktree_state_priority() {
+        let mismatched = WorktreeData {
+            branch_worktree_mismatch: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            metadata_worktree_state(&mismatched),
+            WorktreeState::BranchWorktreeMismatch
+        );
+
+        let prunable = WorktreeData {
+            prunable: Some("gone".to_string()),
+            ..mismatched.clone()
+        };
+        assert_eq!(metadata_worktree_state(&prunable), WorktreeState::Prunable);
+
+        let locked = WorktreeData {
+            locked: Some("pinned".to_string()),
+            ..mismatched.clone()
+        };
+        assert_eq!(metadata_worktree_state(&locked), WorktreeState::Locked);
+    }
 
     #[test]
     fn test_list_item_branch_name() {

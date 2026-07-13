@@ -2474,7 +2474,7 @@ fn test_load_error_display_file() {
     let toml_err = toml::from_str::<UserConfig>("[list]\nbranches = \"bad\"\n").unwrap_err();
     let err = LoadError::File {
         path: std::path::PathBuf::from("/tmp/config.toml"),
-        label: "User config",
+        kind: ConfigFileKind::User,
         err: Box::new(toml_err),
     };
     let msg = err.to_string();

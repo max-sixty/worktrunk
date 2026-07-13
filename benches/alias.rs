@@ -33,7 +33,7 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::path::Path;
 use std::process::Command;
 use worktrunk::testing::isolate_subprocess_env;
-use wt_perf::{RepoConfig, bench_wt, create_repo, run_and_check};
+use wt_perf::{CacheState, RepoConfig, bench_wt, create_repo, run_and_check};
 
 /// Alias body is a shell builtin so the wall-clock is dominated by the
 /// parent's dispatch — not by running a real subcommand.
@@ -115,7 +115,12 @@ fn bench_dispatch(c: &mut Criterion) {
                     // Cold matters here: `build_hook_context` resolves the
                     // default branch, which writes `worktrunk.default-branch`
                     // and would otherwise be a cache hit on iters 2-N.
-                    bench_wt(b, &repo_path, cold, || {
+                    let cache = if cold {
+                        CacheState::Cold
+                    } else {
+                        CacheState::Warm
+                    };
+                    bench_wt(b, &repo_path, cache, || {
                         wt_cmd(binary, &repo_path, user_config, &[alias_name])
                     });
                 });

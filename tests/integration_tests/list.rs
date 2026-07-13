@@ -248,7 +248,7 @@ fn test_list_json_schema_2_envelope(mut repo: TestRepo) {
 /// 1 or 2 is an error.
 #[rstest]
 fn test_list_json_schema_selection(repo: TestRepo) {
-    // Unset with no user config file → nag names the setting to write by
+    // Unset with no user config file → nag names both settings to write by
     // hand; there is no file for `wt config update` to rewrite.
     let output = repo
         .wt_command()
@@ -260,8 +260,8 @@ fn test_list_json_schema_selection(repo: TestRepo) {
     assert!(!json.is_empty(), "schema 1 root is a bare array");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("json-schema = 1"),
-        "unset key should nag with the manual setting: {stderr}"
+        stderr.contains("json-schema = 1") && stderr.contains("json-schema = 2"),
+        "unset key should nag with the manual settings: {stderr}"
     );
     assert!(
         !stderr.contains("config update"),
@@ -269,7 +269,7 @@ fn test_list_json_schema_selection(repo: TestRepo) {
     );
 
     // Unset with a user config file present → the hint offers wt config
-    // update, which pins json-schema = 1.
+    // update, which writes json-schema = 2.
     repo.write_test_config("");
     let output = repo
         .wt_command()
@@ -3620,8 +3620,8 @@ fn test_list_unborn_worktree_no_task_failures(repo: TestRepo) {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !stderr.contains("working-tree-diff") && !stderr.contains("working-tree-conflicts"),
-        "wt list should not surface working-tree-* task failures for unborn worktrees, got stderr:\n{stderr}"
+        !stderr.contains("working-tree diff") && !stderr.contains("working-tree conflict check"),
+        "wt list should not surface working-tree task failures for unborn worktrees, got stderr:\n{stderr}"
     );
     assert!(
         !stderr.contains("ambiguous argument 'HEAD'")
@@ -3861,8 +3861,8 @@ fn test_list_tolerates_missing_index(mut repo: TestRepo) {
         "missing index must not surface as a copy error.\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert!(
-        !combined.contains("working-tree-conflicts ("),
-        "missing index must not produce a working-tree-conflicts task error.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        !combined.contains("working-tree conflict check ("),
+        "missing index must not produce a working-tree conflict task error.\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert!(
         !feature_index.exists(),

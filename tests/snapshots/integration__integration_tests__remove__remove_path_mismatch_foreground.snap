@@ -1,12 +1,14 @@
 ---
-source: tests/integration_tests/switch.rs
+source: tests/integration_tests/remove.rs
 info:
   program: wt
   args:
-    - switch
-    - feature
+    - remove
+    - "--foreground"
+    - feature-fg
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
+    CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
@@ -25,8 +27,6 @@ info:
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
-    WORKTRUNK_DIRECTIVE_CD_FILE: "[DIRECTIVE_CD_FILE]"
-    WORKTRUNK_DIRECTIVE_EXEC_FILE: "[DIRECTIVE_EXEC_FILE]"
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
@@ -48,6 +48,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mBranch-worktree mismatch: [1mfeature[22m @ [1m_PARENT_/wrong-path[22m, expected @ [1m_REPO_.feature[22m [31m⚑[39m[39m
-[2m○[22m Switched to worktree for [1mfeature[22m @ [1m_PARENT_/wrong-path[22m
-[0m
+[36m◎[39m [36mRemoving [1mfeature-fg[22m worktree...[39m
+[32m✓[39m [32mRemoved [1mfeature-fg[22m worktree & branch (same commit as [1mmain[22m,[39m [2m_[22m[32m)[39m [90m(3 files · [BYTES] B[39m[90m)[39m

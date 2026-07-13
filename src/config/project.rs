@@ -298,7 +298,8 @@ impl ProjectConfig {
         // (e.g. `pre-start`/`post-start`) still load into their canonical fields.
         let config: ProjectConfig = toml::from_str(&migrated).map_err(|e| {
             ConfigError(format!(
-                "Project config at {} failed to parse:\n{e}",
+                "{} at {} failed to parse:\n{e}",
+                super::ConfigFileKind::Project.label(),
                 crate::path::format_path_for_display(&config_path),
             ))
         })?;

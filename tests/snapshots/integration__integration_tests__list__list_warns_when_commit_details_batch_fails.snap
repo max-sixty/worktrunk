@@ -51,15 +51,15 @@ exit_code: 0
 + feature-b      [2m↑[22m                 [32m↑1[0m        [32m+1[0m                ../repo.feature-b  [2mf62940fc[0m  [2m·[0m     [2m·[0m
 + feature-c      [2m↑[22m                 [32m↑1[0m        [32m+1[0m                ../repo.feature-c  [2m345c7c93[0m  [2m·[0m     [2m·[0m
 
-[2m○[22m [2mShowing 5 worktrees, 3 ahead. 6 tasks failed[0m
-
 ----- stderr -----
 [33m▲[39m [33mFailed to batch-fetch commit details: fatal: bad object 0000000000000000000000000000000000000001[39m
-[33m▲[39m [33mSome git operations failed:
-[107m [0m [1m(detached)[22m: ahead-behind (git merge-base failed for 05a4a45d0b981dad5c27db59dca482836d59f89e 0000000000000000000000000000000000000001: fatal: Not a valid commit name 0000000000000000000000000000000000000001)
-[107m [0m [1m(detached)[22m: committed-trees-match (fatal: Needed a single revision)
-[107m [0m [1m(detached)[22m: branch-diff (git merge-base failed for 05a4a45d0b981dad5c27db59dca482836d59f89e 0000000000000000000000000000000000000001: fatal: Not a valid commit name 0000000000000000000000000000000000000001)
-[107m [0m [1m(detached)[22m: working-tree-diff (fatal: bad object HEAD)
-[107m [0m [1m(detached)[22m: merge-tree-conflicts (fatal: bad object HEAD)
-[107m [0m [1m(detached)[22m: working-tree-conflicts (fatal: bad object HEAD)[39m
+
+[2m○[22m [2mShowing 5 worktrees, 3 ahead; 6 tasks failed[0m
+[33m▲[39m [33m6 tasks failed:
+[107m [0m [1m(detached)[22m: ahead/behind counts (git merge-base failed for 05a4a45d0b981dad5c27db59dca482836d59f89e 0000000000000000000000000000000000000001: fatal: Not a valid commit name 0000000000000000000000000000000000000001)
+[107m [0m [1m(detached)[22m: trees-match check (fatal: Needed a single revision)
+[107m [0m [1m(detached)[22m: branch diff (git merge-base failed for 05a4a45d0b981dad5c27db59dca482836d59f89e 0000000000000000000000000000000000000001: fatal: Not a valid commit name 0000000000000000000000000000000000000001)
+[107m [0m [1m(detached)[22m: working-tree diff (fatal: bad object HEAD)
+[107m [0m [1m(detached)[22m: merge-conflict check (fatal: bad object HEAD)
+[107m [0m [1m(detached)[22m: working-tree conflict check (fatal: bad object HEAD)[39m
 [2m↳[22m [2mTo create a diagnostic file, run with [4m-vv[24m[22m

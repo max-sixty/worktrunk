@@ -52,7 +52,7 @@ exit_code: 0
 [2m↳[22m [2mTo apply: [4mwt config update[24m[22m
 [2m○[22m Proposed diff:
 [107m [0m [1mdiff --git a/config.toml/current b/config.toml/migrated[m
-[107m [0m [1mindex 6114dbb..0167af2 100644[m
+[107m [0m [1mindex 6114dbb..c559278 100644[m
 [107m [0m [1m--- a/config.toml/current[m
 [107m [0m [1m+++ b/config.toml/migrated[m
 [107m [0m [36m@@ -2,3 +2,6 @@[m [mworktree-path = "../{{ repo }}.{{ branch }}"[m
@@ -61,7 +61,7 @@ exit_code: 0
 [107m [0m  command = "nonexistent-llm-command-12345 -m test-model"[m
 [107m [0m [32m+[m
 [107m [0m [32m+[m[32m[list][m
-[107m [0m [32m+[m[32mjson-schema = 1[m
+[107m [0m [32m+[m[32mjson-schema = 2[m
 
 [107m [0m [2mworktree-path = [0m[2m[32m"../{{ repo }}.{{ branch }}"[0m
 [107m [0m 

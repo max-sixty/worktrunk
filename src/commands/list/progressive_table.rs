@@ -281,6 +281,13 @@ impl ProgressiveTable {
     /// When overflowing (skeleton showed a subset of rows), erases the skeleton
     /// and prints the complete table — the output scrolls naturally, avoiding
     /// the `MoveUp`-into-scrollback problem.
+    ///
+    /// The footer (summary) is written to stdout here even though the buffered
+    /// path (`print_buffered_table`) narrates it on stderr: progressive mode
+    /// repaints the footer as a row of the table region, and only runs when
+    /// stdout is a TTY (`RenderTarget::detect`), so this stdout never feeds a
+    /// pipe. A future non-TTY progressive mode must move the summary to stderr
+    /// with the buffered path.
     pub fn finalize(
         &mut self,
         final_rows: Vec<String>,

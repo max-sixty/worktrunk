@@ -149,16 +149,16 @@ Independent flags from `git status`; several can show at once (e.g. `+!?`). Each
 
 ### Worktree
 
-An in-progress git operation, a worktree-location attribute, or a branch with no worktree. One symbol shows, highest priority first (`✘ > ⤴ > ⤵ > ⚑ > ⊟ > ⊞ > /`):
+An in-progress git operation, a worktree-location attribute, or a branch with no worktree. One symbol shows, highest priority first (`✘ > ⤴ > ⤵ > ⊟ > ⊞ > ⚑ > /`):
 
 | Symbol | JSON | Meaning |
 |--------|------|---------|
 | `✘` | `operation_state` `"conflicts"` | Merge conflicts |
 | `⤴` | `operation_state` `"rebase"` | Rebase in progress |
 | `⤵` | `operation_state` `"merge"` | Merge in progress |
-| `⚑` | `worktree.state` `"branch_worktree_mismatch"` | Branch name doesn't match the worktree path |
 | `⊟` | `worktree.state` `"prunable"` | Prunable (worktree directory missing) |
 | `⊞` | `worktree.state` `"locked"` | Locked worktree |
+| `⚑` | `worktree.state` `"branch_worktree_mismatch"` | Branch name doesn't match the worktree path |
 | `/` | `kind` `"branch"` | Branch without a worktree (no `worktree` object) |
 
 ### Default branch
@@ -205,7 +205,7 @@ These appear across all columns while the table is loading:
 `--format=json` emits structured data in one of two schemas while the format
 migrates: `[list] json-schema = 2` selects the envelope format below, `= 1`
 the original bare-array format. Unset emits schema 1 with a warning
-(`wt config update` pins `= 1`); a future release flips the default to
+(`wt config update` adopts `= 2`); a future release flips the default to
 schema 2 and later removes schema 1.
 
 ### Schema 2

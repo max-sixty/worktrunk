@@ -513,9 +513,10 @@ This tests:
     /// Update deprecated config settings
     #[command(
         after_long_help = r#"Updates deprecated settings in user and project config files
-to their current equivalents, and pins defaults that a future release
-switches — currently `[list] json-schema = 1` — so upgrading doesn't change
-behavior. Shows a diff and asks for confirmation.
+to their current equivalents, and adopts defaults that a future release
+switches — currently `[list] json-schema = 2` — so the switch happens as a
+reviewed config edit rather than at upgrade. Shows a diff and asks for
+confirmation.
 
 Migrations are computed in memory on demand; nothing is written outside this
 command. Use `--print` to see the migrated TOML without touching any file.

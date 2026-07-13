@@ -2,10 +2,9 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::worktree::{RemoveResult, path_mismatch};
+use super::worktree::RemoveResult;
 use anyhow::{Context, bail};
 use color_print::cformat;
-use worktrunk::config::UserConfig;
 use worktrunk::git::{
     BranchDeletionMode, GitError, IntegrationReason, RefSnapshot, Repository, WorktreeInfo,
     parse_porcelain_z, parse_untracked_files,
@@ -53,7 +52,6 @@ pub trait RepositoryCliExt {
         target: RemoveTarget,
         deletion_mode: BranchDeletionMode,
         force_worktree: bool,
-        config: &UserConfig,
         current_path: Option<PathBuf>,
         worktrees: Option<&[WorktreeInfo]>,
         snapshot: Option<&RefSnapshot>,
@@ -92,7 +90,6 @@ impl RepositoryCliExt for Repository {
         target: RemoveTarget,
         deletion_mode: BranchDeletionMode,
         force_worktree: bool,
-        config: &UserConfig,
         current_path: Option<PathBuf>,
         worktrees: Option<&[WorktreeInfo]>,
         snapshot: Option<&RefSnapshot>,
@@ -293,12 +290,6 @@ impl RepositoryCliExt for Repository {
             _ => default_branch,
         };
 
-        // Compute expected_path for path mismatch detection
-        // Only set if actual path differs from expected (path mismatch)
-        let expected_path = branch_name
-            .as_ref()
-            .and_then(|branch| path_mismatch(self, branch, &worktree_path, config));
-
         // Capture commit SHA before removal for post-remove hook template variables.
         // This ensures {{ commit }} references the removed worktree's state.
         let removed_commit = target_wt
@@ -318,7 +309,6 @@ impl RepositoryCliExt for Repository {
             deletion_mode,
             target_branch,
             force_worktree,
-            expected_path,
             removed_commit,
         })
     }

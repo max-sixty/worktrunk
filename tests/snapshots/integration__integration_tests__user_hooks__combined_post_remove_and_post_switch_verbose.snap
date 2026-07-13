@@ -9,6 +9,7 @@ info:
     - "--force-delete"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
+    CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
@@ -48,10 +49,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m [1mworktree-path[22m source
-[107m [0m [2m[0m[2m[32m{{[0m[2m[0m[2m repo_path [0m[2m[32m}}[0m[2m/../[0m[2m[32m{{[0m[2m repo [0m[2m[32m}}[0m[2m.[0m[2m[32m{{[0m[2m branch [0m[2m[36m|[0m[2m [0m[2m[34msanitize[0m[2m [0m[2m[32m}}[0m
-[2m○[22m [1mworktree-path[22m result
-[107m [0m [2m[0m[2m[34m_REPO_/../repo.feature[0m
 [36m◎[39m [36mRemoving [1mfeature[22m worktree & branch in background (--force-delete)[39m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m

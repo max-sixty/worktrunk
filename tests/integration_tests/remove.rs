@@ -2432,9 +2432,10 @@ approved-commands = ["echo 'branch={{{{ branch }}}}' > {branch_path}"]
 
 ///
 /// When a worktree is created at a path that doesn't match the config template,
-/// `wt remove` should show a warning about the path mismatch.
+/// `wt remove` proceeds with no mismatch notice (the state is informational,
+/// surfaced only by the `wt list` glyph).
 #[rstest]
-fn test_remove_path_mismatch_warning(repo: TestRepo) {
+fn test_remove_path_mismatch(repo: TestRepo) {
     // Create a worktree at a non-standard path using raw git
     // (wt switch --create would put it at the expected path)
     let unexpected_path = repo
@@ -2454,12 +2455,12 @@ fn test_remove_path_mismatch_warning(repo: TestRepo) {
         .run()
         .unwrap();
 
-    // Remove the worktree - should show path mismatch warning
+    // Remove the worktree - no mismatch notice
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &["feature"], None));
 }
 
 #[rstest]
-fn test_remove_path_mismatch_warning_foreground(repo: TestRepo) {
+fn test_remove_path_mismatch_foreground(repo: TestRepo) {
     // Create a worktree at a non-standard path using raw git
     let unexpected_path = repo
         .root_path()
@@ -2478,7 +2479,7 @@ fn test_remove_path_mismatch_warning_foreground(repo: TestRepo) {
         .run()
         .unwrap();
 
-    // Remove in foreground mode - should show path mismatch warning
+    // Remove in foreground mode - no mismatch notice
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "remove",

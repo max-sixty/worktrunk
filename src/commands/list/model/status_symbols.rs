@@ -22,7 +22,7 @@
 //! | 0 | `STAGED`            | `+`                  | Are there staged changes?             |
 //! | 1 | `MODIFIED`          | `!`                  | Are there unstaged modifications?     |
 //! | 2 | `UNTRACKED`         | `?`                  | Are there untracked files?            |
-//! | 3 | `WORKTREE_STATE`    | `✘ ⤴ ⤵ ⚑ ⊟ ⊞ /`      | Operation / worktree attribute        |
+//! | 3 | `WORKTREE_STATE`    | `✘ ⤴ ⤵ ⊟ ⊞ ⚑ /`      | Operation / worktree attribute        |
 //! | 4 | `MAIN_STATE`        | `^ _ ⊂ ✗ – ↕ ↑ ↓`    | Relationship to the default branch    |
 //! | 5 | `UPSTREAM_DIVERGENCE` | \| ⇅ ⇡ ⇣           | Relationship to the tracked remote    |
 //! | 6 | `USER_MARKER`       | emoji / text         | User-defined annotation               |
@@ -55,9 +55,9 @@
 //!
 //! # Gate 2: Worktree state (position 3)
 //!
-//! **Renders:** at most one of `✘ ⤴ ⤵ ⚑ ⊟ ⊞ /`, priority
-//! `✘ > ⤴ > ⤵ > ⚑ > ⊟ > ⊞ > /`. The operation family (`✘⤴⤵`) comes from live
-//! task data; the attribute family (`⚑⊟⊞/`) is metadata, always known.
+//! **Renders:** at most one of `✘ ⤴ ⤵ ⊟ ⊞ ⚑ /`, priority
+//! `✘ > ⤴ > ⤵ > ⊟ > ⊞ > ⚑ > /`. The operation family (`✘⤴⤵`) comes from live
+//! task data; the attribute family (`⊟⊞⚑/`) is metadata, always known.
 //!
 //! **Inputs:** `data.has_conflicts`, `data.git_operation`, plus metadata
 //! (`locked`, `prunable`, `branch_worktree_mismatch`, `ItemKind::Branch`).
@@ -71,8 +71,8 @@
 //! 2. `has_conflicts == Some(false)` and `git_operation == Some(Rebase)` → `⤴`.
 //! 3. `has_conflicts == Some(false)` and `git_operation == Some(Merge)` → `⤵`.
 //! 4. `has_conflicts == Some(false)` and `git_operation == Some(None)` and
-//!    metadata says mismatched → `⚑`.
-//! 5. …continuing down through `⊟`, `⊞`, `/`, nothing.
+//!    metadata says prunable → `⊟`.
+//! 5. …continuing down through `⊞`, `⚑`, `/`, nothing.
 //!
 //! Until both `has_conflicts` and `git_operation` are known, we cannot rule
 //! out `✘/⤴/⤵`, so the position renders `·` even if metadata would otherwise
@@ -274,7 +274,7 @@ impl PositionMask {
             1, // STAGED: + (1 char)
             1, // MODIFIED: ! (1 char)
             1, // UNTRACKED: ? (1 char)
-            1, // WORKTREE_STATE: ✘⤴⤵/⚑⊟⊞ (1 char, priority: conflicts > rebase > merge > branch_worktree_mismatch > prunable > locked > branch)
+            1, // WORKTREE_STATE: ✘⤴⤵/⊟⊞⚑ (1 char, priority: conflicts > rebase > merge > prunable > locked > branch_worktree_mismatch > branch)
             1, // MAIN_STATE: ^_⊂✗–↕↑↓ (1 char, priority: is_main > orphan > empty > integrated > would_conflict > same_commit > diverged > ahead > behind)
             1, // UPSTREAM_DIVERGENCE: |⇡⇣⇅ (1 char)
             2, // USER_MARKER: single emoji or two chars (allocate 2)
@@ -359,13 +359,13 @@ impl WorkingTreeStatus {
 /// ## Mutual Exclusivity
 ///
 /// **Worktree state (operations take priority over location):**
-/// Priority: ✘ > ⤴ > ⤵ > ⚑ > ⊟ > ⊞ > /
+/// Priority: ✘ > ⤴ > ⤵ > ⊟ > ⊞ > ⚑ > /
 /// - ✘: Actual conflicts (must resolve)
 /// - ⤴: Rebase in progress
 /// - ⤵: Merge in progress
-/// - ⚑: Branch-worktree mismatch
 /// - ⊟: Prunable (directory missing)
 /// - ⊞: Locked worktree
+/// - ⚑: Branch-worktree mismatch (informational, dim yellow)
 /// - /: Branch without worktree
 ///
 /// **Main state (single position with priority):**
@@ -564,7 +564,7 @@ impl StatusSymbols {
                     SlotState::Visible(cformat!("<dim>{}</>", WorktreeState::Branch))
                 }
                 Some(WorktreeState::BranchWorktreeMismatch) => SlotState::Visible(cformat!(
-                    "<red>{}</>",
+                    "<dim,yellow>{}</>",
                     WorktreeState::BranchWorktreeMismatch
                 )),
                 Some(other) => SlotState::Visible(cformat!("<yellow>{}</>", other)),

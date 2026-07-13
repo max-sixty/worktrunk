@@ -16,7 +16,7 @@ mod tests;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use super::ConfigError;
+use super::{ConfigError, ConfigFileKind};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -68,7 +68,7 @@ pub enum LoadError {
     /// line/column info and a source-snippet pointer.
     File {
         path: PathBuf,
-        label: &'static str,
+        kind: ConfigFileKind,
         err: Box<toml::de::Error>,
     },
     /// Config files parsed cleanly; applying env-var overrides failed.
@@ -89,10 +89,11 @@ pub enum LoadError {
 impl std::fmt::Display for LoadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LoadError::File { path, label, err } => {
+            LoadError::File { path, kind, err } => {
                 write!(
                     f,
-                    "{label} at {} failed to parse:\n{err}",
+                    "{} at {} failed to parse:\n{err}",
+                    kind.label(),
                     crate::path::format_path_for_display(path)
                 )
             }
@@ -285,13 +286,13 @@ fn deep_merge_table(base: &mut toml::Table, overlay: toml::Table) {
 fn load_config_file(
     path: &Path,
     migrated: &str,
-    label: &'static str,
+    kind: ConfigFileKind,
 ) -> Result<toml::Table, LoadError> {
     // Validate by deserializing — gives rich line/col errors.
     if let Err(err) = toml::from_str::<UserConfig>(migrated) {
         return Err(LoadError::File {
             path: path.to_path_buf(),
-            label,
+            kind,
             err: Box::new(err),
         });
     }
@@ -450,7 +451,7 @@ impl UserConfig {
                 &system_path,
                 &content,
                 true,
-                super::ConfigFileKind::System,
+                ConfigFileKind::System,
                 None,
                 true,
             ) {
@@ -458,11 +459,14 @@ impl UserConfig {
                     super::deprecation::warn_unknown_fields::<UserConfig>(
                         &content,
                         &system_path,
-                        super::ConfigFileKind::System,
+                        ConfigFileKind::System,
                     );
 
-                    match load_config_file(&system_path, &result.migrated_content, "System config")
-                    {
+                    match load_config_file(
+                        &system_path,
+                        &result.migrated_content,
+                        ConfigFileKind::System,
+                    ) {
                         Ok(table) => deep_merge_table(&mut merged_table, table),
                         Err(e) => warnings.push(e),
                     }
@@ -483,7 +487,7 @@ impl UserConfig {
                     config_path,
                     &content,
                     true,
-                    super::ConfigFileKind::User,
+                    ConfigFileKind::User,
                     None,
                     true,
                 ) {
@@ -491,11 +495,14 @@ impl UserConfig {
                         super::deprecation::warn_unknown_fields::<UserConfig>(
                             &content,
                             config_path,
-                            super::ConfigFileKind::User,
+                            ConfigFileKind::User,
                         );
 
-                        match load_config_file(config_path, &result.migrated_content, "User config")
-                        {
+                        match load_config_file(
+                            config_path,
+                            &result.migrated_content,
+                            ConfigFileKind::User,
+                        ) {
                             Ok(table) => deep_merge_table(&mut merged_table, table),
                             Err(e) => warnings.push(e),
                         }

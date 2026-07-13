@@ -30,7 +30,7 @@ use worktrunk::styling::{
     warning_message,
 };
 
-use super::resolve::{compute_worktree_path, offer_bare_repo_worktree_path_fix, path_mismatch};
+use super::resolve::{compute_worktree_path, offer_bare_repo_worktree_path_fix};
 use super::types::{CreationMethod, SwitchBranchInfo, SwitchPlan, SwitchResult};
 use crate::cli::{SwitchArgs, SwitchFormat};
 use crate::commands::backup::back_up_clobbered_path_now;
@@ -901,9 +901,7 @@ fn plan_switch(
 /// Execute a validated switch plan.
 ///
 /// Takes a `SwitchPlan` from `plan_switch()` and executes it.
-/// For `SwitchPlan::Existing`, just records history. The returned
-/// `SwitchBranchInfo` has `expected_path: None` — callers fill it in after
-/// first output to avoid computing path mismatch on the hot path.
+/// For `SwitchPlan::Existing`, just records history.
 /// For `SwitchPlan::Create`, creates the worktree and runs hooks.
 fn execute_switch(
     repo: &Repository,
@@ -942,13 +940,7 @@ fn execute_switch(
 
             // Path mismatch is computed lazily by callers after first output,
             // avoiding ~7 git commands on the hot path for existing switches.
-            Ok((
-                result,
-                SwitchBranchInfo {
-                    branch,
-                    expected_path: None,
-                },
-            ))
+            Ok((result, SwitchBranchInfo { branch }))
         }
 
         SwitchPlan::Create {
@@ -1213,7 +1205,6 @@ fn execute_switch(
                 },
                 SwitchBranchInfo {
                     branch: Some(branch),
-                    expected_path: None,
                 },
             ))
         }
@@ -1650,23 +1641,6 @@ impl SwitchPipeline<'_> {
         if std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some() {
             return Ok(());
         }
-
-        // Compute path mismatch lazily (deferred from plan_switch for existing
-        // worktrees). Skip detached HEAD worktrees (branch is None) — no branch
-        // to compute the expected path from.
-        let branch_info = match &result {
-            SwitchResult::Existing { path } | SwitchResult::AlreadyAt(path) => {
-                let expected_path = branch_info
-                    .branch
-                    .as_deref()
-                    .and_then(|b| path_mismatch(repo, b, path, config));
-                SwitchBranchInfo {
-                    expected_path,
-                    ..branch_info
-                }
-            }
-            _ => branch_info,
-        };
 
         // Show success message (temporal locality: immediately after the
         // worktree operation). Returns the path to display in hooks when the

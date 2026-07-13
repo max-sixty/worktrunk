@@ -349,22 +349,25 @@ spawn_background(build_command_that_checks_merge_again());  // Duplicate check!
 
 ## Warning Ordering
 
-**Core principle:** Warnings about state discovered during evaluation appear
-**before** the action message that follows from that evaluation.
+**Core principle:** Messages about state discovered during evaluation
+(warnings, info notices) appear **before** the action message that follows
+from that evaluation.
 
 When a command evaluates state, discovers something unexpected, and proceeds
-anyway, the warning should come first:
+anyway, that message comes first:
 
 ```
-▲ Branch-worktree mismatch: feature @ ~/workspace/project.alias, expected @ ~/workspace/project.feature ⚑
-◎ Removing feature worktree & branch in background (same commit as main, _)
+▲ Auto-staging 1 untracked path:
+   ┃ notes.md
+◎ Generating commit message...
 ```
 
 Not:
 
 ```
-◎ Removing feature worktree & branch in background (same commit as main, _)
-▲ Branch-worktree mismatch: feature @ ~/workspace/project.alias, expected @ ~/workspace/project.feature ⚑
+◎ Generating commit message...
+▲ Auto-staging 1 untracked path:
+   ┃ notes.md
 ```
 
 Warnings that result from the action itself (something failed during execution)
