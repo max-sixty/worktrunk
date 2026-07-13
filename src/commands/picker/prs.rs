@@ -61,7 +61,7 @@ use super::pr_pane;
 use super::preview::PreviewMode;
 use super::preview_cache::CommentEntry;
 use super::preview_notify::PreviewNotifier;
-use super::preview_orchestrator::PreviewOrchestrator;
+use super::preview_orchestrator::{PreviewOrchestrator, SpawnGeneration};
 
 /// One-shot handoff from the collect thread (which builds the skeleton) to the
 /// `--prs` thread: the picker's column geometry, so PR rows align to the
@@ -275,6 +275,11 @@ pub(super) struct PrsShared {
     /// stale forge call from a pre-refresh spawn (whose skim channel is already
     /// dropped) can't pollute the list a newer spawn rebuilt.
     pub current_epoch: usize,
+    /// This spawn's preview producer token — the cache-fill analog of
+    /// `current_epoch`. Carried by the per-row `log`/`comments` fetches, so a
+    /// stale spawn's forge results can't land in the preview cache a refresh
+    /// cleared (see [`SpawnGeneration`]).
+    pub preview_gen: SpawnGeneration,
 }
 
 /// Stream the open PRs/MRs into the picker, then clear the header's "loading…"
@@ -385,7 +390,12 @@ fn fetch_and_stream(
     let items: Vec<Arc<dyn SkimItem>> = entries
         .into_iter()
         .map(|entry| {
-            spawn_pr_previews(orchestrator, &entry, layout.preview_dims);
+            spawn_pr_previews(
+                orchestrator,
+                &shared.preview_gen,
+                &entry,
+                layout.preview_dims,
+            );
             // Shortcut lookup for this row: `alt-y` copies the PR/MR head
             // branch, `alt-o` opens its already-known web URL.
             shared.shortcut_table.lock().unwrap().insert(
@@ -495,6 +505,7 @@ fn listed_pr_row(
 /// (a worktree row renders its `log` tab from the local object store instead).
 fn spawn_pr_previews(
     orchestrator: &PreviewOrchestrator,
+    spawn_gen: &SpawnGeneration,
     entry: &PrEntry,
     preview_dims: (usize, usize),
 ) {
@@ -503,7 +514,7 @@ fn spawn_pr_previews(
     let (width, height) = preview_dims;
     let head_oid = entry.head_oid.clone();
     let head_branch = entry.head_branch.clone();
-    orchestrator.spawn_compute((token.clone(), PreviewMode::Log), move |repo| {
+    orchestrator.spawn_compute(spawn_gen, (token.clone(), PreviewMode::Log), move |repo| {
         Some(
             compute_pr_log(
                 repo,
@@ -519,6 +530,7 @@ fn spawn_pr_previews(
     });
     spawn_comments_fetch(
         orchestrator,
+        spawn_gen,
         token,
         entry.kind,
         entry.number,
@@ -546,13 +558,14 @@ fn spawn_pr_previews(
 /// runs and nothing is written to disk — see [`compute_pr_comments`].
 fn spawn_comments_fetch(
     orchestrator: &PreviewOrchestrator,
+    spawn_gen: &SpawnGeneration,
     key_token: String,
     kind: RefKind,
     number: u32,
     updated_at: Option<String>,
     width: usize,
 ) {
-    orchestrator.spawn_compute((key_token, PreviewMode::Comments), move |repo| {
+    orchestrator.spawn_compute(spawn_gen, (key_token, PreviewMode::Comments), move |repo| {
         Some(
             compute_pr_comments(repo, kind, number, updated_at.as_deref(), width)
                 .unwrap_or_else(|| pr_unavailable_pane("comments")),
@@ -572,6 +585,7 @@ fn spawn_comments_fetch(
 /// forever. `ci_platform` reads the cached remote URL — no network.
 pub(super) fn spawn_worktree_comments_fetch(
     orchestrator: &PreviewOrchestrator,
+    spawn_gen: &SpawnGeneration,
     branch: String,
     number: u32,
     updated_at: Option<String>,
@@ -582,13 +596,22 @@ pub(super) fn spawn_worktree_comments_fetch(
         Some(CiPlatform::GitLab) => RefKind::Mr,
         _ => {
             orchestrator.fill_external(
+                spawn_gen,
                 (branch, PreviewMode::Comments),
                 comments_unsupported_forge_pane(),
             );
             return;
         }
     };
-    spawn_comments_fetch(orchestrator, branch, kind, number, updated_at, width);
+    spawn_comments_fetch(
+        orchestrator,
+        spawn_gen,
+        branch,
+        kind,
+        number,
+        updated_at,
+        width,
+    );
 }
 
 /// The `comments` tab pane for a worktree row whose branch has a PR on a forge
@@ -1849,6 +1872,7 @@ mod tests {
             shared_items: Arc::new(Mutex::new(Vec::new())),
             epoch: Arc::new(AtomicUsize::new(1)),
             current_epoch: 1,
+            preview_gen: orchestrator.generation(),
         };
         let (rtx, mut rrx) = tokio::sync::mpsc::channel(8);
         let render_tx = OnceLock::new();

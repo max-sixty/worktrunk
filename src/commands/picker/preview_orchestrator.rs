@@ -53,36 +53,42 @@
 //! - **WorkingTree / Log / BranchDiff / UpstreamDiff / Summary** have *no*
 //!   per-event in-memory invalidation. Within a session they are reconciled with
 //!   moved content only by a refresh.
-//! - **Refresh (`alt-r`)** clears the entire in-memory cache (in
-//!   `PipelineFactory::spawn`, gated on `rebuild_repo`). What then refreshes is
-//!   bounded by what the recompute sees: the rebuilt inventory gives each row a
-//!   current `item.head()`, so the live working-tree diff, the log, and a branch
-//!   whose own commits moved all recompute correctly. But precompute runs against
-//!   the orchestrator's *startup* repo — it's built once and shared (`Arc`),
-//!   never rebuilt — so values read from its `RepoCache`, notably the
-//!   default-branch base SHA for BranchDiff, stay at session start; a default
-//!   branch that moved externally isn't picked up until the picker reopens. The
-//!   disk tiers keep an unchanged branch cheap; only genuinely changed content
-//!   pays.
+//! - **Refresh (`alt-r`)** calls [`PreviewOrchestrator::refresh`] (from
+//!   `PipelineFactory::spawn`, gated on `rebuild_repo`), which supersedes the
+//!   prior spawn's producers, rebinds the compute repo to the rebuilt spawn's,
+//!   and clears the entire in-memory cache — see *Spawn generations* below.
+//!   The rebuilt inventory gives each row a current `item.head()` and the
+//!   rebound repo a fresh `RepoCache` (notably the default-branch base SHA for
+//!   BranchDiff), so recompute sees current state, not session-start state.
+//!   The disk tiers keep an unchanged branch cheap; only genuinely changed
+//!   content pays.
 //!
-//!   Two known limitations follow from that once-built orchestrator: (1) the
-//!   stale base SHA above; (2) a narrow race — a prior spawn's still-draining
-//!   precompute task computes against its captured (now stale) `item.head()` and,
-//!   because the clear emptied the cache, *fills* it instead of short-circuiting,
-//!   after which the new spawn's task short-circuits on that stale entry, which
-//!   then persists until the next refresh. The window opens only when a refresh
-//!   fires while a prior spawn's precompute is still draining (large repo / slow
-//!   summaries) and the row's content moved in that window — the common "I edited
-//!   the branch I'm viewing" case doesn't hit it, since that branch's precompute
-//!   finished when the picker opened. The demand path shares this window on
-//!   the same terms: the clear site drops a parked request via
-//!   `PreviewDemand::clear_pending`, but until the rebuilt skeleton replaces
-//!   the rows, the old rows' `preview()` misses on the just-cleared cache
-//!   and posts fresh demands from their superseded items, re-seeding stale
-//!   entries the new spawn's precompute then short-circuits on. The
-//!   structural fix for all of it is to give the orchestrator the current
-//!   spawn's repo plus a spawn generation (mirroring `prs_epoch`) so a
-//!   superseded fill drops.
+//!   What's left unrefreshed is only the in-between: content that moves
+//!   mid-session without an `alt-r` waits for the next refresh (or reopen) by
+//!   design — the refresh *is* the reconciliation point.
+//!
+//! # Spawn generations
+//!
+//! A refresh doesn't wait for the previous spawn's producers — precompute
+//! tasks still draining `COLLECT_POOL`, a `--prs` forge call in flight, a
+//! demand request parked or mid-compute — and each of those holds a frozen
+//! `Arc<ListItem>` whose `head()` the refresh may have made stale. Left
+//! alone, such a producer would land its stale content in the just-cleared
+//! cache, and the new spawn's own producer would then short-circuit on the
+//! entry instead of recomputing. [`SpawnGeneration`] closes this: each
+//! pipeline spawn mints a token (`PipelineFactory::spawn`, mirroring the
+//! `prs_epoch` gate on `--prs` row appends), every producer that spawn
+//! starts carries it, and [`PreviewOrchestrator::fill`] — the one insert
+//! path — drops a write whose token a later [`PreviewOrchestrator::refresh`]
+//! superseded. `refresh` bumps the generation *first*, then rebinds the
+//! compute repo to the new spawn's (so recompute resolves bases from a fresh
+//! `RepoCache`, not session-start state), then clears the cache — bump-first
+//! means a stale fill racing the refresh either lands before the clear (and
+//! is wiped by it) or after (and is dropped by the check). Skim rows carry
+//! their spawn's token too, so a pre-refresh row still rendering during the
+//! reload window is refused at the demand channel
+//! ([`PreviewDemand::request`]) instead of re-seeding the cache from its
+//! superseded item.
 //!
 //! # Filling and surfacing
 //!
@@ -157,6 +163,43 @@ impl Drop for PendingGuard {
     }
 }
 
+/// Identity of one pipeline spawn, held by every preview producer that spawn
+/// starts — precompute tasks, `--prs` fetches, demand requests, and the skim
+/// rows themselves. [`PreviewOrchestrator::refresh`] supersedes all
+/// outstanding tokens by bumping the shared counter; a producer whose token
+/// is no longer current has its cache write dropped at
+/// [`PreviewOrchestrator::fill`] and its demand refused at
+/// [`PreviewDemand::request`], so a refresh can never be undone by a stale
+/// straggler. Minted per spawn in `PipelineFactory::spawn` (see the *Spawn
+/// generations* section of the module docs); the counter is the preview
+/// analog of the factory's `prs_epoch`, which gates `--prs` row appends the
+/// same way.
+#[derive(Clone)]
+pub(super) struct SpawnGeneration {
+    current: Arc<AtomicUsize>,
+    value: usize,
+}
+
+impl SpawnGeneration {
+    /// Whether the spawn this token identifies is still the live one.
+    fn is_current(&self) -> bool {
+        self.current.load(Ordering::SeqCst) == self.value
+    }
+}
+
+/// A generation with no refresh lifecycle behind it — nothing ever
+/// supersedes it, so it is always current. For rows built outside a picker
+/// session; tests building skim rows directly use this the way they use
+/// [`PreviewDemand::new`].
+impl Default for SpawnGeneration {
+    fn default() -> Self {
+        Self {
+            current: Arc::new(AtomicUsize::new(0)),
+            value: 0,
+        }
+    }
+}
+
 /// On-demand compute channel for the preview the user is looking at *right
 /// now* — a one-slot, latest-wins handoff from skim's UI thread to a
 /// dedicated worker thread.
@@ -196,13 +239,15 @@ struct DemandState {
     closed: bool,
 }
 
-/// One demand: compute `mode` for `item` at the preview pane's `dims`.
-/// Self-contained (the row hands over its own `Arc<ListItem>`), so the worker
-/// needs no item registry that could drift from the rows skim holds.
+/// One demand: compute `mode` for `item` at the preview pane's `dims`, on
+/// behalf of the spawn identified by `spawn_gen`. Self-contained (the row hands
+/// over its own `Arc<ListItem>` and spawn token), so the worker needs no item
+/// registry that could drift from the rows skim holds.
 struct DemandRequest {
     item: Arc<ListItem>,
     mode: PreviewMode,
     dims: (usize, usize),
+    spawn_gen: SpawnGeneration,
 }
 
 impl PreviewDemand {
@@ -219,22 +264,30 @@ impl PreviewDemand {
     /// Publish the selected row's awaited preview, replacing any unserved
     /// request. Called from skim's UI thread on every `preview()` cache miss,
     /// so it must stay non-blocking (a brief uncontended lock).
-    pub(super) fn request(&self, item: Arc<ListItem>, mode: PreviewMode, dims: (usize, usize)) {
+    ///
+    /// A request whose spawn a refresh superseded is refused: after `alt-r`
+    /// clears the cache, the pre-refresh rows keep missing (and posting) on
+    /// every repaint until the rebuilt skeleton replaces them, and each of
+    /// those computes would be dropped at `fill` anyway — refusing at the
+    /// channel keeps the worker free for the live spawn's first demand.
+    pub(super) fn request(
+        &self,
+        item: Arc<ListItem>,
+        mode: PreviewMode,
+        dims: (usize, usize),
+        spawn_gen: SpawnGeneration,
+    ) {
         let mut state = self.state.lock().unwrap();
-        if state.closed {
+        if state.closed || !spawn_gen.is_current() {
             return;
         }
-        state.request = Some(DemandRequest { item, mode, dims });
+        state.request = Some(DemandRequest {
+            item,
+            mode,
+            dims,
+            spawn_gen,
+        });
         self.cond.notify_one();
-    }
-
-    /// Drop any parked request. Called alongside the `alt-r` preview-cache
-    /// clear: a request posted by a pre-refresh row is superseded by the
-    /// rebuild, and serving it after the clear would re-seed the cache with
-    /// content computed from the stale item (which the new spawn's precompute
-    /// would then short-circuit on).
-    pub(super) fn clear_pending(&self) {
-        self.state.lock().unwrap().request = None;
     }
 
     /// Close the channel: the worker drains out and releases its captures.
@@ -269,17 +322,22 @@ pub(super) struct PreviewOrchestrator {
     /// without a keystroke (see [`PreviewNotifier`]). Shared with the skim
     /// items, which record their awaited preview; every fill site here notifies.
     notifier: Arc<PreviewNotifier>,
-    /// Repository used by preview compute. Captured once at construction
-    /// so background tasks see a stable repo binding, and so unit tests
-    /// can inject a `TestRepo`-rooted `Repository` instead of relying on
-    /// process CWD.
+    /// Repository used by preview compute. Bound at construction (unit tests
+    /// inject a `TestRepo`-rooted `Repository` instead of relying on process
+    /// CWD) and rebound by [`Self::refresh`] to each rebuilt spawn's repo, so
+    /// recompute reads a current `RepoCache` rather than session-start state.
     ///
-    /// Cloned into each spawned task so they share the underlying
-    /// `Arc<RepoCache>` — including the memoized comparison base that
-    /// [`Repository::branch_diff_spec`] resolves from a single `for-each-ref`
-    /// scan. That shared cache is how the BranchDiff preview avoids
-    /// re-scanning refs per item.
-    repo: Repository,
+    /// Cloned out of the cell into each spawned task, so one spawn's tasks
+    /// share the underlying `Arc<RepoCache>` — including the memoized
+    /// comparison base that [`Repository::branch_diff_spec`] resolves from a
+    /// single `for-each-ref` scan. That shared cache is how the BranchDiff
+    /// preview avoids re-scanning refs per item. The lock is held only for
+    /// the clone, never across a compute.
+    repo: Arc<Mutex<Repository>>,
+    /// The live spawn's generation; [`Self::generation`] mints tokens at this
+    /// value and [`Self::refresh`] bumps it to supersede them. See
+    /// [`SpawnGeneration`].
+    generation: Arc<AtomicUsize>,
     /// The on-demand channel serving the selected row's awaited tab (see
     /// [`PreviewDemand`]). Handed to each worktree-backed row at
     /// construction; its worker thread is spawned once here and shared
@@ -293,12 +351,13 @@ impl PreviewOrchestrator {
         let pending = Arc::new(AtomicUsize::new(0));
         let notifier = Arc::new(PreviewNotifier::new(render_tx));
         let demand = PreviewDemand::new();
+        let repo = Arc::new(Mutex::new(repo));
         {
             let demand = Arc::clone(&demand);
             let cache = Arc::clone(&cache);
             let notifier = Arc::clone(&notifier);
             let pending = Arc::clone(&pending);
-            let repo = repo.clone();
+            let repo = Arc::clone(&repo);
             // Detached worker thread: it parks on the condvar between
             // requests and exits when the orchestrator's `Drop` closes the
             // channel. Spawn failure degrades to the pre-demand behavior —
@@ -307,6 +366,10 @@ impl PreviewOrchestrator {
                 .name("wt-preview-demand".into())
                 .spawn(move || {
                     while let Some(req) = demand.take_blocking() {
+                        // Read the repo cell per request, not once at spawn:
+                        // a refresh rebinds it, and a demand from the rebuilt
+                        // spawn must compute against the rebuilt repo.
+                        let repo = repo.lock().unwrap().clone();
                         Self::serve_demand(&cache, &notifier, &pending, &repo, req);
                     }
                 });
@@ -316,7 +379,32 @@ impl PreviewOrchestrator {
             pending,
             notifier,
             repo,
+            generation: Arc::new(AtomicUsize::new(0)),
             demand,
+        }
+    }
+
+    /// Supersede the previous spawn's producers and rebind compute state to a
+    /// rebuilt spawn's `repo`. Called from `PipelineFactory::spawn` on every
+    /// `alt-r` rebuild, before the new spawn starts any producer.
+    ///
+    /// Order matters: the generation bump comes first, so a stale in-flight
+    /// fill racing this call either lands before the clear (wiped by it) or
+    /// after (dropped by [`Self::fill`]'s check) — clear-then-bump would
+    /// leave a window where a stale fill lands post-clear and survives until
+    /// the next refresh.
+    pub(super) fn refresh(&self, repo: Repository) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        *self.repo.lock().unwrap() = repo;
+        self.cache.clear();
+    }
+
+    /// Mint a token for the live spawn. Everything the spawn starts carries a
+    /// clone; a later [`Self::refresh`] invalidates them all at once.
+    pub(super) fn generation(&self) -> SpawnGeneration {
+        SpawnGeneration {
+            current: Arc::clone(&self.generation),
+            value: self.generation.load(Ordering::SeqCst),
         }
     }
 
@@ -328,7 +416,10 @@ impl PreviewOrchestrator {
     /// contained to its key: on a rayon worker it would abort the process,
     /// but here it would only unwind the worker thread — and a dead worker
     /// silently regresses every later navigation to queue-wait latency for
-    /// the rest of the session — so log and keep serving.
+    /// the rest of the session — so log and keep serving. A request parked
+    /// across a refresh (posted while its spawn was still current) computes
+    /// once and drops at `fill`'s generation check — at most one wasted git
+    /// call per refresh, not worth a third check site.
     fn serve_demand(
         cache: &PreviewCache,
         notifier: &Arc<PreviewNotifier>,
@@ -352,9 +443,17 @@ impl PreviewOrchestrator {
             );
             return;
         };
-        Self::fill(cache, notifier, key, value);
+        Self::fill(cache, notifier, &req.spawn_gen, key, value);
         if log_disk_hit {
-            Self::spawn_log_refresh(cache, notifier, pending, req.item, repo, w, h);
+            Self::spawn_log_refresh(
+                cache,
+                notifier,
+                pending,
+                &req.spawn_gen,
+                req.item,
+                repo,
+                (w, h),
+            );
         }
     }
 
@@ -364,11 +463,10 @@ impl PreviewOrchestrator {
         &self.demand
     }
 
-    /// The repository this orchestrator computes previews against. Exposed so
-    /// `on_skeleton` can read the cached local-branch inventory
-    /// (`local_branches()`) for synchronous tab-availability facts.
-    pub(super) fn repo(&self) -> &Repository {
-        &self.repo
+    /// The repository the live spawn computes previews against (a clone out
+    /// of the rebindable cell — see the `repo` field).
+    pub(super) fn repo(&self) -> Repository {
+        self.repo.lock().unwrap().clone()
     }
 
     /// The shared preview notifier, handed to each skim item so its `preview()`
@@ -381,8 +479,19 @@ impl PreviewOrchestrator {
     /// row is awaiting exactly this key. The single fill path: every background
     /// producer routes through this (or the `&self` [`Self::fill_external`]) so a
     /// finished compute can never reach the cache without giving skim the chance
-    /// to repaint it.
-    fn fill(cache: &PreviewCache, notifier: &PreviewNotifier, key: PreviewCacheKey, value: String) {
+    /// to repaint it — and, symmetrically, so a producer whose spawn a refresh
+    /// superseded can never re-seed the just-cleared cache with stale content
+    /// (the write is dropped, and nothing notifies).
+    fn fill(
+        cache: &PreviewCache,
+        notifier: &PreviewNotifier,
+        spawn_gen: &SpawnGeneration,
+        key: PreviewCacheKey,
+        value: String,
+    ) {
+        if !spawn_gen.is_current() {
+            return;
+        }
         cache.insert(key.clone(), value);
         notifier.notify_filled(&key);
     }
@@ -390,8 +499,13 @@ impl PreviewOrchestrator {
     /// [`Self::fill`] for callers that hold the orchestrator rather than the
     /// captured `cache` / `notifier` clones — the `--prs` comments path's
     /// synchronous "unsupported forge" pane.
-    pub(super) fn fill_external(&self, key: PreviewCacheKey, value: String) {
-        Self::fill(&self.cache, &self.notifier, key, value);
+    pub(super) fn fill_external(
+        &self,
+        spawn_gen: &SpawnGeneration,
+        key: PreviewCacheKey,
+        value: String,
+    ) {
+        Self::fill(&self.cache, &self.notifier, spawn_gen, key, value);
     }
 
     /// Spawn a preview compute task. Returns immediately.
@@ -407,6 +521,7 @@ impl PreviewOrchestrator {
     /// [`Self::spawn_log_refresh`]).
     pub(super) fn spawn_preview(
         &self,
+        spawn_gen: &SpawnGeneration,
         item: Arc<ListItem>,
         mode: PreviewMode,
         dims: (usize, usize),
@@ -414,8 +529,9 @@ impl PreviewOrchestrator {
         let cache = Arc::clone(&self.cache);
         let notifier = Arc::clone(&self.notifier);
         let (w, h) = dims;
-        let repo = self.repo.clone();
+        let repo = self.repo();
         let pending = Arc::clone(&self.pending);
+        let spawn_gen = spawn_gen.clone();
         self.spawn_task(move || {
             let cache_key = (item.branch_name().to_string(), mode);
             if cache.contains_key(&cache_key) {
@@ -423,9 +539,17 @@ impl PreviewOrchestrator {
             }
             let (value, log_disk_hit) =
                 PickerRow::compute_and_page_preview(&repo, &item, mode, w, h);
-            Self::fill(&cache, &notifier, cache_key, value);
+            Self::fill(&cache, &notifier, &spawn_gen, cache_key, value);
             if log_disk_hit {
-                Self::spawn_log_refresh(&cache, &notifier, &pending, item, &repo, w, h);
+                Self::spawn_log_refresh(
+                    &cache,
+                    &notifier,
+                    &pending,
+                    &spawn_gen,
+                    item,
+                    &repo,
+                    (w, h),
+                );
             }
         });
     }
@@ -440,18 +564,20 @@ impl PreviewOrchestrator {
         cache: &PreviewCache,
         notifier: &Arc<PreviewNotifier>,
         pending: &Arc<AtomicUsize>,
+        spawn_gen: &SpawnGeneration,
         item: Arc<ListItem>,
         repo: &Repository,
-        w: usize,
-        h: usize,
+        dims: (usize, usize),
     ) {
         pending.fetch_add(1, Ordering::SeqCst);
         let guard = PendingGuard(Arc::clone(pending));
         let cache = Arc::clone(cache);
         let notifier = Arc::clone(notifier);
         let repo = repo.clone();
+        let spawn_gen = spawn_gen.clone();
         COLLECT_POOL.spawn_fifo(move || {
             let _g = guard;
+            let (w, h) = dims;
             let rendered = PickerRow::refresh_log_preview(&repo, &item, w, h);
             // Skip empty results so a transient `git log` failure
             // doesn't poison the in-memory cache with "" and wipe
@@ -460,6 +586,7 @@ impl PreviewOrchestrator {
                 Self::fill(
                     &cache,
                     &notifier,
+                    &spawn_gen,
                     (item.branch_name().to_string(), PreviewMode::Log),
                     rendered,
                 );
@@ -468,14 +595,22 @@ impl PreviewOrchestrator {
     }
 
     /// Spawn an LLM summary task. Returns immediately.
-    pub(super) fn spawn_summary(&self, item: Arc<ListItem>, llm_command: String, repo: Repository) {
+    pub(super) fn spawn_summary(
+        &self,
+        spawn_gen: &SpawnGeneration,
+        item: Arc<ListItem>,
+        llm_command: String,
+    ) {
         let cache = Arc::clone(&self.cache);
         let notifier = Arc::clone(&self.notifier);
+        let repo = self.repo();
+        let spawn_gen = spawn_gen.clone();
         self.spawn_task(move || {
             let summary = summary::generate_summary_for_item(&item, &llm_command, &repo);
             Self::fill(
                 &cache,
                 &notifier,
+                &spawn_gen,
                 (item.branch_name().to_string(), PreviewMode::Summary),
                 summary,
             );
@@ -502,13 +637,18 @@ impl PreviewOrchestrator {
     /// failed fetch into a terminal "couldn't load" pane and hand that back as
     /// `Some(..)` rather than `None` — an uncached `None` would strand the tab on
     /// its loading placeholder until the picker reopens.
-    pub(super) fn spawn_compute<F>(&self, key: PreviewCacheKey, compute: F)
-    where
+    pub(super) fn spawn_compute<F>(
+        &self,
+        spawn_gen: &SpawnGeneration,
+        key: PreviewCacheKey,
+        compute: F,
+    ) where
         F: FnOnce(&Repository) -> Option<String> + Send + 'static,
     {
         let cache = Arc::clone(&self.cache);
         let notifier = Arc::clone(&self.notifier);
-        let repo = self.repo.clone();
+        let repo = self.repo();
+        let spawn_gen = spawn_gen.clone();
         self.spawn_task(move || {
             if cache.contains_key(&key) {
                 return;
@@ -516,7 +656,7 @@ impl PreviewOrchestrator {
             if let Some(value) = compute(&repo)
                 && !value.is_empty()
             {
-                Self::fill(&cache, &notifier, key, value);
+                Self::fill(&cache, &notifier, &spawn_gen, key, value);
             }
         });
     }
@@ -535,6 +675,7 @@ impl PreviewOrchestrator {
     /// after the row pipeline tears down.
     pub(super) fn spawn_initial_precompute(
         &self,
+        spawn_gen: &SpawnGeneration,
         items: &[Arc<ListItem>],
         preview_dims: (usize, usize),
         llm_command: Option<&str>,
@@ -543,15 +684,15 @@ impl PreviewOrchestrator {
 
         // First item: all modes + summary.
         for mode in LOCAL_GIT_MODES {
-            self.spawn_preview(Arc::clone(first), mode, preview_dims);
+            self.spawn_preview(spawn_gen, Arc::clone(first), mode, preview_dims);
         }
         if let Some(llm) = llm_command {
-            self.spawn_summary(Arc::clone(first), llm.to_string(), self.repo.clone());
+            self.spawn_summary(spawn_gen, Arc::clone(first), llm.to_string());
         }
 
         // Items 1..N: default tab only. Other modes wait for drain.
         for item in items.iter().skip(1) {
-            self.spawn_preview(Arc::clone(item), INITIAL_MODE, preview_dims);
+            self.spawn_preview(spawn_gen, Arc::clone(item), INITIAL_MODE, preview_dims);
         }
     }
 
@@ -572,18 +713,19 @@ impl PreviewOrchestrator {
     /// rayon's FIFO injector and workers pick previews before summaries.
     pub(super) fn spawn_deferred_precompute(
         &self,
+        spawn_gen: &SpawnGeneration,
         rest: &[Arc<ListItem>],
         preview_dims: (usize, usize),
         llm_command: Option<&str>,
     ) {
         for mode in LOCAL_GIT_MODES.into_iter().filter(|m| *m != INITIAL_MODE) {
             for item in rest {
-                self.spawn_preview(Arc::clone(item), mode, preview_dims);
+                self.spawn_preview(spawn_gen, Arc::clone(item), mode, preview_dims);
             }
         }
         if let Some(llm) = llm_command {
             for item in rest {
-                self.spawn_summary(Arc::clone(item), llm.to_string(), self.repo.clone());
+                self.spawn_summary(spawn_gen, Arc::clone(item), llm.to_string());
             }
         }
     }
@@ -716,8 +858,18 @@ mod tests {
         let (t, item) = dirty_worktree_item();
 
         let orch = orch_for(&t);
-        orch.spawn_preview(Arc::clone(&item), PreviewMode::WorkingTree, (80, 24));
-        orch.spawn_preview(Arc::clone(&item), PreviewMode::Log, (80, 24));
+        orch.spawn_preview(
+            &orch.generation(),
+            Arc::clone(&item),
+            PreviewMode::WorkingTree,
+            (80, 24),
+        );
+        orch.spawn_preview(
+            &orch.generation(),
+            Arc::clone(&item),
+            PreviewMode::Log,
+            (80, 24),
+        );
         orch.wait_for_idle();
 
         let wt_key = ("main".to_string(), PreviewMode::WorkingTree);
@@ -738,7 +890,12 @@ mod tests {
         let (t, item) = dirty_worktree_item();
 
         let orch = orch_for(&t);
-        orch.spawn_preview(Arc::clone(&item), PreviewMode::WorkingTree, (80, 24));
+        orch.spawn_preview(
+            &orch.generation(),
+            Arc::clone(&item),
+            PreviewMode::WorkingTree,
+            (80, 24),
+        );
         orch.wait_for_idle();
         let first = orch
             .cache
@@ -748,7 +905,12 @@ mod tests {
             .clone();
 
         // Second spawn should hit `contains_key` and skip.
-        orch.spawn_preview(Arc::clone(&item), PreviewMode::WorkingTree, (80, 24));
+        orch.spawn_preview(
+            &orch.generation(),
+            Arc::clone(&item),
+            PreviewMode::WorkingTree,
+            (80, 24),
+        );
         orch.wait_for_idle();
         let second = orch
             .cache
@@ -767,10 +929,13 @@ mod tests {
     #[test]
     fn spawn_summary_populates_cache() {
         let (t, item) = dirty_worktree_item();
-        let repo = Repository::at(t.path()).unwrap();
 
         let orch = orch_for(&t);
-        orch.spawn_summary(Arc::clone(&item), "/bin/cat".to_string(), repo);
+        orch.spawn_summary(
+            &orch.generation(),
+            Arc::clone(&item),
+            "/bin/cat".to_string(),
+        );
         orch.wait_for_idle();
 
         assert!(
@@ -802,7 +967,12 @@ mod tests {
         super::super::preview_cache::write_log(&repo, item.head(), 80, 24, &stale);
 
         let orch = orch_for(&t);
-        orch.spawn_preview(Arc::clone(&item), PreviewMode::Log, (80, 24));
+        orch.spawn_preview(
+            &orch.generation(),
+            Arc::clone(&item),
+            PreviewMode::Log,
+            (80, 24),
+        );
         orch.wait_for_idle();
 
         let disk = super::super::preview_cache::read_log(&repo, item.head(), 80, 24)
@@ -842,7 +1012,12 @@ mod tests {
         super::super::preview_cache::write_log(&repo, item.head(), 80, 24, &stale);
 
         let orch = orch_for(&t);
-        orch.spawn_preview(Arc::clone(&item), PreviewMode::BranchDiff, (80, 24));
+        orch.spawn_preview(
+            &orch.generation(),
+            Arc::clone(&item),
+            PreviewMode::BranchDiff,
+            (80, 24),
+        );
         orch.wait_for_idle();
 
         let disk = super::super::preview_cache::read_log(&repo, item.head(), 80, 24)
@@ -863,9 +1038,11 @@ mod tests {
         let orch = orch_for(&t);
 
         // A populated value lands in the cache under its key.
-        orch.spawn_compute(("pr:7".to_string(), PreviewMode::Log), |_| {
-            Some("commit list".to_string())
-        });
+        orch.spawn_compute(
+            &orch.generation(),
+            ("pr:7".to_string(), PreviewMode::Log),
+            |_| Some("commit list".to_string()),
+        );
         orch.wait_for_idle();
         assert_eq!(
             orch.cache
@@ -876,9 +1053,11 @@ mod tests {
 
         // A second spawn for the same key short-circuits on `contains_key`, so
         // the original value survives even though this closure would overwrite.
-        orch.spawn_compute(("pr:7".to_string(), PreviewMode::Log), |_| {
-            Some("REPLACED".to_string())
-        });
+        orch.spawn_compute(
+            &orch.generation(),
+            ("pr:7".to_string(), PreviewMode::Log),
+            |_| Some("REPLACED".to_string()),
+        );
         orch.wait_for_idle();
         assert_eq!(
             orch.cache
@@ -889,10 +1068,16 @@ mod tests {
         );
 
         // `None` (forge failure) and `Some("")` both leave the slot empty.
-        orch.spawn_compute(("pr:9".to_string(), PreviewMode::Log), |_| None);
-        orch.spawn_compute(("pr:8".to_string(), PreviewMode::Log), |_| {
-            Some(String::new())
-        });
+        orch.spawn_compute(
+            &orch.generation(),
+            ("pr:9".to_string(), PreviewMode::Log),
+            |_| None,
+        );
+        orch.spawn_compute(
+            &orch.generation(),
+            ("pr:8".to_string(), PreviewMode::Log),
+            |_| Some(String::new()),
+        );
         orch.wait_for_idle();
         assert!(
             !orch
@@ -935,6 +1120,7 @@ mod tests {
             local: Some(LocalCheckout {
                 item: Arc::clone(&item),
                 demand: Arc::clone(orch.demand()),
+                spawn_gen: orch.generation(),
                 has_upstream: false,
                 summaries_enabled: false,
                 local_content: Arc::new(Mutex::new(LocalContent::default())),
@@ -986,17 +1172,18 @@ mod tests {
         let (t, item) = dirty_worktree_item();
         let orch = orch_for(&t);
         let key = ("main".to_string(), PreviewMode::WorkingTree);
-        orch.fill_external(key.clone(), "already here".to_string());
+        orch.fill_external(&orch.generation(), key.clone(), "already here".to_string());
 
         PreviewOrchestrator::serve_demand(
             &orch.cache,
             orch.notifier(),
             &orch.pending,
-            &orch.repo,
+            &orch.repo(),
             DemandRequest {
                 item,
                 mode: PreviewMode::WorkingTree,
                 dims: (80, 24),
+                spawn_gen: orch.generation(),
             },
         );
 
@@ -1020,11 +1207,12 @@ mod tests {
             &orch.cache,
             orch.notifier(),
             &orch.pending,
-            &orch.repo,
+            &orch.repo(),
             DemandRequest {
                 item,
                 mode: PreviewMode::Pr,
                 dims: (80, 24),
+                spawn_gen: orch.generation(),
             },
         );
 
@@ -1056,11 +1244,12 @@ mod tests {
             &orch.cache,
             orch.notifier(),
             &orch.pending,
-            &orch.repo,
+            &orch.repo(),
             DemandRequest {
                 item,
                 mode: PreviewMode::Log,
                 dims: (80, 24),
+                spawn_gen: orch.generation(),
             },
         );
         orch.wait_for_idle();
@@ -1076,6 +1265,119 @@ mod tests {
         );
     }
 
+    /// A refresh supersedes the prior spawn's producers: a task carrying the
+    /// pre-refresh token computes but its fill drops, so it can't re-seed the
+    /// cleared cache with content from a stale item — while the rebuilt
+    /// spawn's token fills normally. Pins the fix for the stale-drain race
+    /// the module docs' *Spawn generations* section describes.
+    #[test]
+    fn refresh_supersedes_stale_spawn_fills() {
+        let (t, item) = dirty_worktree_item();
+        let orch = orch_for(&t);
+        let stale = orch.generation();
+
+        orch.refresh(Repository::at(t.path()).unwrap());
+        orch.spawn_preview(
+            &stale,
+            Arc::clone(&item),
+            PreviewMode::WorkingTree,
+            (80, 24),
+        );
+        orch.wait_for_idle();
+        assert!(
+            orch.cache.is_empty(),
+            "a superseded spawn's fill must drop, not re-seed the cleared cache"
+        );
+
+        orch.spawn_preview(
+            &orch.generation(),
+            Arc::clone(&item),
+            PreviewMode::WorkingTree,
+            (80, 24),
+        );
+        orch.wait_for_idle();
+        assert!(
+            orch.cache
+                .contains_key(&("main".to_string(), PreviewMode::WorkingTree)),
+            "the live spawn's fill lands"
+        );
+    }
+
+    /// `refresh` rebinds the compute repo, so post-refresh producers (and the
+    /// demand worker's per-request read) resolve `RepoCache` values — notably
+    /// the BranchDiff comparison base — from the rebuilt spawn's repo, not
+    /// session-start state.
+    #[test]
+    fn refresh_rebinds_compute_repo() {
+        let t = TestRepo::new();
+        let orch = orch_for(&t);
+        let t2 = TestRepo::new();
+        let repo2 = Repository::at(t2.path()).unwrap();
+
+        orch.refresh(repo2.clone());
+
+        assert_eq!(
+            orch.repo().discovery_path(),
+            repo2.discovery_path(),
+            "repo cell rebound to the rebuilt spawn's repo"
+        );
+    }
+
+    /// A request from a row a refresh superseded is refused at the channel
+    /// (its compute would drop at `fill` anyway); the live spawn's request
+    /// parks. Driven on a worker-less channel so the parked/empty slot can be
+    /// asserted without racing a serve.
+    #[test]
+    fn stale_generation_request_is_refused() {
+        let (t, item) = dirty_worktree_item();
+        let orch = orch_for(&t);
+        let demand = PreviewDemand::new();
+        let stale = orch.generation();
+
+        orch.refresh(Repository::at(t.path()).unwrap());
+
+        demand.request(Arc::clone(&item), PreviewMode::WorkingTree, (80, 24), stale);
+        assert!(
+            demand.state.lock().unwrap().request.is_none(),
+            "a superseded row's request is refused"
+        );
+
+        demand.request(item, PreviewMode::WorkingTree, (80, 24), orch.generation());
+        assert!(
+            demand.state.lock().unwrap().request.is_some(),
+            "the live spawn's request parks"
+        );
+    }
+
+    /// The one stale demand that can outlive `request`'s check — parked while
+    /// its spawn was current, taken after a refresh — computes once and drops
+    /// at `fill`, leaving the cleared cache untouched.
+    #[test]
+    fn parked_request_across_refresh_drops_at_fill() {
+        let (t, item) = dirty_worktree_item();
+        let orch = orch_for(&t);
+        let stale = orch.generation();
+
+        orch.refresh(Repository::at(t.path()).unwrap());
+        PreviewOrchestrator::serve_demand(
+            &orch.cache,
+            orch.notifier(),
+            &orch.pending,
+            &orch.repo(),
+            DemandRequest {
+                item,
+                mode: PreviewMode::WorkingTree,
+                dims: (80, 24),
+                spawn_gen: stale,
+            },
+        );
+
+        assert!(
+            orch.cache.is_empty(),
+            "a request parked across a refresh computes but its fill drops"
+        );
+    }
+
     /// Rows hold the demand channel beyond the orchestrator's life (skim can
     /// still call `preview()` while teardown races), so a request after
     /// `Drop` closed the channel must be inert, not parked forever.
@@ -1085,9 +1387,10 @@ mod tests {
         let orch = orch_for(&t);
         let demand = Arc::clone(orch.demand());
         let cache = Arc::clone(&orch.cache);
+        let spawn_gen = orch.generation();
         drop(orch);
 
-        demand.request(item, PreviewMode::WorkingTree, (80, 24));
+        demand.request(item, PreviewMode::WorkingTree, (80, 24), spawn_gen);
 
         assert!(
             demand.state.lock().unwrap().request.is_none(),
@@ -1116,6 +1419,7 @@ mod tests {
 
         // The awaited compute lands → skim is poked to repaint.
         orch.fill_external(
+            &orch.generation(),
             ("main".to_string(), PreviewMode::WorkingTree),
             "diff".to_string(),
         );
@@ -1126,10 +1430,15 @@ mod tests {
 
         // Fills for other rows / other tabs must not poke — no preview thrash.
         orch.fill_external(
+            &orch.generation(),
             ("feature".to_string(), PreviewMode::WorkingTree),
             "x".to_string(),
         );
-        orch.fill_external(("main".to_string(), PreviewMode::Log), "y".to_string());
+        orch.fill_external(
+            &orch.generation(),
+            ("main".to_string(), PreviewMode::Log),
+            "y".to_string(),
+        );
         assert!(
             rx.try_recv().is_err(),
             "an off-screen / other-tab fill injects nothing"

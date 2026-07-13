@@ -58,7 +58,7 @@ use super::items::{
 };
 use super::preview::PreviewMode;
 use super::preview_notify::PrStatusDelta;
-use super::preview_orchestrator::PreviewOrchestrator;
+use super::preview_orchestrator::{PreviewOrchestrator, SpawnGeneration};
 use crate::commands::list::collect::PickerProgressHandler;
 use crate::commands::list::model::{BranchScope, ItemKind, ListItem};
 
@@ -112,16 +112,21 @@ pub(super) struct PickerHandler {
     pub(super) local_content_slots: OnceLock<Box<[LocalContentSlot]>>,
     pub(super) preview_cache: PreviewCache,
     /// Fresh `Repository` for this spawn, used for the mutation-sensitive
-    /// `on_skeleton` reads (`list_worktrees`, `local_branches`). The
-    /// `orchestrator` carries its own startup-cloned repo shared across every
-    /// spawn — reading worktrees/branches through that re-probes a
-    /// `RepoCache.worktrees`/`local_branches` `OnceCell` primed at startup and
-    /// never invalidated, so after an in-picker removal it would yield the stale
-    /// pre-removal set. `spawn` rebuilds this repo per pass (same `spawn_repo`
-    /// the collect/prs threads use); read inventories through it, not through
-    /// `orchestrator.repo()`.
+    /// `on_skeleton` reads (`list_worktrees`, `local_branches`) — a
+    /// `RepoCache` is a set of `OnceCell`s that are never invalidated, so
+    /// these reads must go through a repo rebuilt after any in-picker
+    /// removal, or they'd yield the stale pre-removal inventory. `spawn`
+    /// rebuilds this repo per pass: the same `spawn_repo` the collect/prs
+    /// threads use and `PreviewOrchestrator::refresh` rebinds for preview
+    /// compute; this field is the handler's direct handle to it.
     pub(super) repo: Repository,
     pub(super) orchestrator: Arc<PreviewOrchestrator>,
+    /// This spawn's producer token (see [`SpawnGeneration`]): every
+    /// precompute spawn, comments fetch, and skim row this handler starts
+    /// carries it, so a refresh that supersedes this spawn also supersedes
+    /// everything it still has in flight — including this handler's own
+    /// `on_collect_complete` firing after the refresh.
+    pub(super) spawn_gen: SpawnGeneration,
     pub(super) preview_dims: (usize, usize),
     pub(super) llm_command: Option<String>,
     /// Filled into the Summary preview cache for every item when summaries
@@ -227,6 +232,7 @@ impl PickerHandler {
         }
         super::prs::spawn_worktree_comments_fetch(
             &self.orchestrator,
+            &self.spawn_gen,
             branch_name.to_string(),
             number as u32,
             status.updated_at.clone(),
@@ -331,7 +337,7 @@ impl PickerProgressHandler for PickerHandler {
         // the empty-list "No open PRs found", styled as a hint (the dim `↳` sits
         // in the pointer gutter, the text aligned with the row content at col 2).
         let loading = self.prs_loading.as_ref().map(|pending| {
-            let noun = super::prs::forge_noun(self.orchestrator.repo());
+            let noun = super::prs::forge_noun(&self.repo);
             HeaderLoading {
                 pending: Arc::clone(pending),
                 marker_ansi: cformat!("{HINT_SYMBOL} <dim>Loading open {noun}…</>"),
@@ -451,6 +457,7 @@ impl PickerProgressHandler for PickerHandler {
                 local: Some(LocalCheckout {
                     item: Arc::clone(&item_arc),
                     demand: Arc::clone(self.orchestrator.demand()),
+                    spawn_gen: self.spawn_gen.clone(),
                     has_upstream,
                     summaries_enabled,
                     local_content: local_content_arc,
@@ -494,6 +501,7 @@ impl PickerProgressHandler for PickerHandler {
         // of row tasks in `COLLECT_POOL`'s injector while workers are still
         // grinding through the row work.
         self.orchestrator.spawn_initial_precompute(
+            &self.spawn_gen,
             &list_items,
             self.preview_dims,
             self.llm_command.as_deref(),
@@ -614,6 +622,7 @@ impl PickerProgressHandler for PickerHandler {
             return;
         }
         self.orchestrator.spawn_deferred_precompute(
+            &self.spawn_gen,
             &items[1..],
             self.preview_dims,
             self.llm_command.as_deref(),
@@ -641,6 +650,7 @@ mod tests {
         render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
     ) -> PickerHandler {
         let preview_cache: PreviewCache = Arc::clone(&orchestrator.cache);
+        let spawn_gen = orchestrator.generation();
         PickerHandler {
             tx,
             render_tx,
@@ -654,6 +664,7 @@ mod tests {
             preview_cache,
             repo,
             orchestrator,
+            spawn_gen,
             preview_dims: (80, 24),
             llm_command: None,
             summary_hint: Some("disabled".to_string()),

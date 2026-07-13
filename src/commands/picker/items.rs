@@ -29,7 +29,7 @@ use super::pr_pane;
 use super::preview::{PreviewMode, PreviewStateData};
 use super::preview_cache;
 use super::preview_notify::PreviewNotifier;
-use super::preview_orchestrator::PreviewDemand;
+use super::preview_orchestrator::{PreviewDemand, SpawnGeneration};
 
 /// Parse a pre-rendered ANSI string into a single ratatui `Line` for skim's
 /// item list. skim's `DisplayContext::to_line` only applies match-highlight
@@ -495,6 +495,12 @@ pub(super) struct LocalCheckout {
     /// The orchestrator's demand channel (see [`PreviewDemand`]), shared by
     /// every local row like the notifier.
     pub demand: Arc<PreviewDemand>,
+    /// The spawn this row belongs to. Carried into every demand request so
+    /// the channel can refuse a row an `alt-r` rebuild superseded — a
+    /// pre-refresh row repainting during the reload window would otherwise
+    /// re-seed the just-cleared cache from its frozen `item` (see the
+    /// orchestrator's *Spawn generations* docs).
+    pub spawn_gen: SpawnGeneration,
     /// Whether this branch has an upstream tracking ref, for the tab-4
     /// (remote⇅) empty state. A SYNCHRONOUS skeleton-time fact read from
     /// `Repository::local_branches()` at construction — never from the async
@@ -598,8 +604,9 @@ impl SkimItem for PickerRow {
         // excluded like in `output()`: its frozen item still points at the
         // worktree the alt-x removal is deleting, and a compute from it
         // would cache an actively wrong pane under the kept branch. (Best
-        // effort, like the refresh-time `clear_pending`: a request parked in
-        // the instant before the morph is still served from the frozen item.)
+        // effort: a request parked in the instant before the morph is still
+        // served from the frozen item.) A row an `alt-r` rebuild superseded
+        // is refused at the channel via the spawn token it posts.
         if let Some(local) = &self.local
             && mode.is_local_git()
             && !local.morphed.load(Ordering::Relaxed)
@@ -611,6 +618,7 @@ impl SkimItem for PickerRow {
                 Arc::clone(&local.item),
                 mode,
                 (context.width, context.height),
+                local.spawn_gen.clone(),
             );
         }
         ItemPreview::AnsiText(self.render_preview(mode, context.width, context.height))
@@ -1833,6 +1841,7 @@ mod tests {
                 branch.to_string(),
             )),
             demand: PreviewDemand::new(),
+            spawn_gen: SpawnGeneration::default(),
             has_upstream: false,
             summaries_enabled: false,
             local_content: Arc::new(Mutex::new(LocalContent::default())),
