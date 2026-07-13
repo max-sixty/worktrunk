@@ -1200,11 +1200,22 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
             }
         }
 
+        // Show the shell actually running wt — the process tree names the
+        // interactive shell even when $SHELL points at a different login shell
+        let ancestor = worktrunk::shell::ancestor_shell();
+        if let Some(ancestor) = ancestor {
+            debug_lines.push(cformat!(
+                "Detected shell: <bold>{}</> (process tree)",
+                ancestor.name
+            ));
+        }
         // Show $SHELL to help diagnose rc file sourcing issues
         let shell_env = std::env::var("SHELL").ok().filter(|s| !s.is_empty());
         if let Some(shell_env) = &shell_env {
             debug_lines.push(cformat!("$SHELL: <bold>{shell_env}</>"));
-        } else if let Some(detected) = worktrunk::shell::current_shell() {
+        } else if ancestor.is_none()
+            && let Some(detected) = worktrunk::shell::current_shell()
+        {
             debug_lines.push(cformat!(
                 "Detected shell: <bold>{detected}</> (via PSModulePath)"
             ));

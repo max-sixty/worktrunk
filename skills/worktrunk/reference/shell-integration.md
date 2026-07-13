@@ -60,16 +60,22 @@ When shell integration isn't working, `wt switch` shows warnings explaining why.
 
 ### "shell integration not installed"
 
-**Meaning**: The shell config file doesn't have the `eval "$(wt config shell init ...)"` line.
+**Meaning**: The current shell's config file doesn't have the
+`eval "$(wt config shell init ...)"` line. The current shell is detected from
+the process tree (falling back to `$SHELL`), so this refers to the shell wt
+was actually invoked from, not necessarily the login shell.
 
 **Fix**: Run `wt config shell install` or add the line manually.
 
-### "shell requires restart"
+### "shell integration installed but not active"
 
-**Meaning**: Shell integration is configured, but the current shell session was
-started before installation. The shell function isn't loaded yet.
+**Meaning**: Shell integration is configured for the current shell, but the
+shell function isn't loaded in this session — usually because the session was
+started before installation.
 
-**Fix**: Start a new terminal or run `source ~/.bashrc` (or equivalent).
+**Fix**: Start a new terminal or run `source ~/.bashrc` (or equivalent). If
+the message persists after a restart, `wt config show` reports the detected
+shell, `$SHELL`, and per-shell integration status.
 
 ### "ran ./path/to/wt; shell integration wraps wt"
 
