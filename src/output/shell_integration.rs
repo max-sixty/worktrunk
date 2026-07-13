@@ -9,7 +9,7 @@
 //! | Condition | Warning | Hint |
 //! |-----------|---------|------|
 //! | Not installed | `Worktree for X @ path, but cannot change directory — shell integration not installed` | `To enable automatic cd, run wt config shell install` |
-//! | Installed, not active | `Worktree for X @ path, but cannot change directory — shell integration installed but not active` | `A shell restart usually activates shell integration; if it doesn't, ask an agent to debug with wt config show` |
+//! | Installed, not active | `Worktree for X @ path, but cannot change directory — shell integration installed but not active` | `A shell restart usually activates shell integration; if it doesn't, ask an agent to debug with the docs @ https://worktrunk.dev/llms.txt` |
 //! | Explicit path | `Worktree for X @ path, but cannot change directory — ran ./wt; shell integration wraps wt` | `To change directory, run wt switch X` |
 //! | Git subcommand | `Worktree for X @ path, but cannot change directory — ran git wt; running through git prevents cd` | `For automatic cd, invoke directly (with the -): git-wt` |
 //!
@@ -118,10 +118,12 @@ pub(crate) fn shell_restart_hint() -> &'static str {
 /// Hint when integration is installed for the current shell but the wrapper
 /// didn't intercept this invocation. Hedged: shell detection can still be
 /// wrong (non-interactive contexts, exotic nesting), so restart is presented
-/// as the likely fix with a diagnostic escape hatch, not a certainty.
+/// as the likely fix with an escape hatch, not a certainty. The escape hatch
+/// points at the LLM docs index, which any agent can fetch — unlike the
+/// `/worktrunk` skill, which only plugin users have.
 pub(crate) fn shell_inactive_hint() -> String {
     cformat!(
-        "A shell restart usually activates shell integration; if it doesn't, ask an agent to debug with <underline>wt config show</>"
+        "A shell restart usually activates shell integration; if it doesn't, ask an agent to debug with the docs @ <underline>https://worktrunk.dev/llms.txt</>"
     )
 }
 
