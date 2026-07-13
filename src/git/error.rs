@@ -217,13 +217,11 @@ pub struct CommandError {
 impl CommandError {
     /// Build from the captured `Output` of a non-zero exit.
     ///
-    /// Both streams are normalized via [`normalize_carriage_returns`] here,
-    /// at capture, rather than in renderers: git emits `\r` for progress
-    /// meters, and a raw `\r` reaching the terminal would overprint the
-    /// gutter or indent of the block quoting the output. Normalizing at the
-    /// source means every consumer — gutter rendering, the line counting and
-    /// truncation in `wt list`'s task-failure warnings, embedding in
-    /// higher-level `GitError` fields — sees honest line structure.
+    /// Both streams are normalized via [`normalize_carriage_returns`] at
+    /// capture rather than in renderers, so every consumer — gutter
+    /// rendering, the line counting and truncation in `wt list`'s
+    /// task-failure warnings, embedding in higher-level `GitError` fields —
+    /// sees honest line structure.
     pub fn from_failed_output(
         program: impl Into<String>,
         args: &[&str],
@@ -259,9 +257,9 @@ impl CommandError {
     }
 
     /// stderr + stdout, trimmed and joined by `\n`, with empty pieces
-    /// dropped. Mirrors the legacy `bail!("{}", error_msg)` payload so
+    /// dropped. Mirrors the legacy `bail!("{}", error_msg)` payload shape so
     /// callers that previously parsed `e.to_string()` (notably
-    /// `GitError::RebaseConflict`) get the same bytes when they downcast.
+    /// `GitError::RebaseConflict`) get the same join when they downcast.
     pub fn combined_output(&self) -> String {
         [self.stderr.trim(), self.stdout.trim()]
             .into_iter()
@@ -2437,8 +2435,14 @@ mod tests {
         // Windows tools. Both streams must reach renderers as real newlines —
         // a raw `\r` in the rendered block would return the cursor to column
         // 0 and overprint the gutter.
+        // Raw wait status 256 encodes "exited with code 1" on unix; on
+        // Windows the raw value is the exit code itself.
+        #[cfg(unix)]
+        let status = std::process::ExitStatus::from_raw(256);
+        #[cfg(windows)]
+        let status = std::process::ExitStatus::from_raw(1);
         let output = std::process::Output {
-            status: std::process::ExitStatus::from_raw(1),
+            status,
             stdout: b"Receiving objects: 42%\rReceiving objects: 100%".to_vec(),
             stderr: b"warning: one\r\nfatal: two".to_vec(),
         };

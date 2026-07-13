@@ -128,9 +128,10 @@ pub(super) fn wrap_text_at_width(text: &str, max_width: usize) -> Vec<String> {
 /// consumers honest line structure: line counting, per-line truncation, and
 /// indenting all see the lines `\r` hid inside one.
 ///
-/// This is the single normalization mechanism: call it where subprocess
+/// One mechanism, applied at every capture edge: call it wherever subprocess
 /// output is captured into an error payload (`CommandError::from_failed_output`,
-/// `stream_exit_result`) — renderers assume their input is already normalized.
+/// `stream_exit_result`, the gh/glab and LLM-command failure captures) —
+/// renderers assume their input is already normalized.
 pub fn normalize_carriage_returns(s: &str) -> String {
     s.replace("\r\n", "\n").replace('\r', "\n")
 }

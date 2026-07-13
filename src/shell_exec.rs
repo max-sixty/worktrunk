@@ -2594,8 +2594,13 @@ mod tests {
         let buffer = Arc::new(Mutex::new(vec![
             "Receiving objects: 42%\rReceiving objects: 100%".to_string(),
         ]));
-        let err = stream_exit_result(std::process::ExitStatus::from_raw(1), &buffer, "git fetch")
-            .unwrap_err();
+        // Raw wait status 256 encodes "exited with code 1" on unix; on
+        // Windows the raw value is the exit code itself.
+        #[cfg(unix)]
+        let status = std::process::ExitStatus::from_raw(256);
+        #[cfg(windows)]
+        let status = std::process::ExitStatus::from_raw(1);
+        let err = stream_exit_result(status, &buffer, "git fetch").unwrap_err();
         let stream_err = err
             .downcast_ref::<StreamCommandError>()
             .expect("stream failure carries StreamCommandError");

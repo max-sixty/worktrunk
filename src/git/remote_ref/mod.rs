@@ -68,6 +68,7 @@ use anyhow::{Context, bail};
 use crate::git::error::GitError;
 use crate::git::{GitRepoInfo, GitRepoProvider, RefType, Repository};
 use crate::shell_exec::Cmd;
+use crate::styling::normalize_carriage_returns;
 
 /// Provider trait for platform-specific PR/MR operations.
 ///
@@ -131,11 +132,12 @@ pub(super) fn run_cli_api(request: CliApiRequest<'_>) -> anyhow::Result<Output> 
 
 pub(super) fn cli_api_error_details(output: &Output) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr);
-    if stderr.trim().is_empty() {
+    let details = if stderr.trim().is_empty() {
         String::from_utf8_lossy(&output.stdout).trim().to_string()
     } else {
         stderr.trim().to_string()
-    }
+    };
+    normalize_carriage_returns(&details)
 }
 
 pub(super) fn cli_api_error(ref_type: RefType, message: String, output: &Output) -> anyhow::Error {
