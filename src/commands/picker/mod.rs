@@ -1280,6 +1280,13 @@ impl CommandCollector for PickerCollector {
         // drop and skim's reload sees EOF. The returned handler and join handles
         // are kept alive by those threads, so let them drop here. On a spawn
         // failure we fall through and re-stream the current items unchanged.
+        // If the failure hit after `PreviewOrchestrator::refresh` ran (a
+        // thread-spawn error — resource-exhaustion territory), those rows'
+        // tokens are already superseded against a cleared cache, so their
+        // previews sit on placeholders until the next successful refresh.
+        // Accepted: un-bumping the generation would instead break a
+        // partially-started spawn's live producers (the collect thread can
+        // already be running when the `--prs` thread spawn is what failed).
         //
         // `alt-x` removal does NOT route here — it runs synchronously through
         // [`AltXRemover`] / [`resync_pool`] instead of a `reload`, so `refresh` is
@@ -1361,12 +1368,6 @@ struct PipelineFactory {
     repo: Repository,
     render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
     shared_items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>>,
-    /// Monotonic spawn counter. Each [`spawn`](Self::spawn) bumps it and hands
-    /// the value to that spawn's `--prs` thread, which appends its PR/MR rows to
-    /// `shared_items` only while the counter still matches — so a stale forge call
-    /// from a pre-refresh spawn can't pollute the list a later spawn rebuilt. See
-    /// [`prs::PrsShared`].
-    prs_epoch: Arc<AtomicUsize>,
     shortcut_table: ShortcutTable,
     preview_cache: PreviewCache,
     orchestrator: Arc<PreviewOrchestrator>,
@@ -1467,8 +1468,8 @@ impl PipelineFactory {
         } else {
             self.repo.clone()
         };
-        // This spawn's preview producer token: superseded by the next
-        // refresh, like `prs_epoch` supersedes the `--prs` row append.
+        // This spawn's identity token, carried by everything the spawn
+        // starts and superseded by the next refresh (see `SpawnGeneration`).
         let spawn_gen = self.orchestrator.generation();
 
         // The skeleton→`--prs` handoff (column geometry + the branches already
@@ -1541,19 +1542,15 @@ impl PipelineFactory {
             let prs_warnings = Arc::clone(&self.stashed_warnings);
             let prs_orchestrator = Arc::clone(&self.orchestrator);
             let prs_render_tx = Arc::clone(&self.render_tx);
-            // Bump the spawn counter and capture this spawn's value: the `--prs`
-            // thread appends its rows to `shared_items` only while the counter
-            // still matches, so an earlier spawn's still-in-flight forge call
-            // can't add rows to this (or a later) spawn's list. See
-            // `PipelineFactory::prs_epoch` and `prs::PrsShared`.
-            let current_epoch = self.prs_epoch.fetch_add(1, Ordering::SeqCst) + 1;
             let prs_shared = prs::PrsShared {
                 grid_slot: Arc::clone(&grid_slot),
                 shortcut_table: Arc::clone(&self.shortcut_table),
                 shared_items: Arc::clone(&self.shared_items),
-                epoch: Arc::clone(&self.prs_epoch),
-                current_epoch,
-                preview_gen: spawn_gen.clone(),
+                // This spawn's token: the thread appends its rows (and fans
+                // out per-row fetches) only while it is still current, so an
+                // earlier spawn's still-in-flight forge call can't add rows
+                // to this (or a later) spawn's list. See `prs::PrsShared`.
+                spawn_gen: spawn_gen.clone(),
             };
             let prs_layout = prs::PrsLayout {
                 list_width: self.skim_list_width,
@@ -1868,7 +1865,6 @@ summary = true
         repo: repo.clone(),
         render_tx: Arc::clone(&render_tx),
         shared_items: Arc::clone(&shared_items),
-        prs_epoch: Arc::new(AtomicUsize::new(0)),
         shortcut_table: Arc::clone(&shortcut_table),
         preview_cache: Arc::clone(&preview_cache),
         orchestrator: Arc::clone(&orchestrator),
@@ -3070,7 +3066,6 @@ pub mod tests {
             repo,
             render_tx,
             shared_items: Arc::new(Mutex::new(Vec::new())),
-            prs_epoch: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             shortcut_table: Arc::new(Mutex::new(std::collections::HashMap::new())),
             preview_cache,
             orchestrator,

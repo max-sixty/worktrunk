@@ -76,19 +76,30 @@
 //! alone, such a producer would land its stale content in the just-cleared
 //! cache, and the new spawn's own producer would then short-circuit on the
 //! entry instead of recomputing. [`SpawnGeneration`] closes this: each
-//! pipeline spawn mints a token (`PipelineFactory::spawn`, mirroring the
-//! `prs_epoch` gate on `--prs` row appends), every producer that spawn
-//! starts carries it, and [`PreviewOrchestrator::fill`] — the one insert
-//! path — drops a write whose token a later [`PreviewOrchestrator::refresh`]
-//! superseded. `refresh` bumps the generation *first*, then rebinds the
-//! compute repo to the new spawn's (so recompute resolves bases from a fresh
-//! `RepoCache`, not session-start state), then clears the cache — bump-first
-//! means a stale fill racing the refresh either lands before the clear (and
-//! is wiped by it) or after (and is dropped by the check). Skim rows carry
-//! their spawn's token too, so a pre-refresh row still rendering during the
-//! reload window is refused at the demand channel
-//! ([`PreviewDemand::request`]) instead of re-seeding the cache from its
-//! superseded item.
+//! pipeline spawn mints a token (`PipelineFactory::spawn`), everything that
+//! spawn starts carries it, and [`PreviewOrchestrator::fill`] — the one
+//! insert path — drops a write whose token a later
+//! [`PreviewOrchestrator::refresh`] superseded. `refresh` bumps the
+//! generation *first*, then rebinds the compute repo to the new spawn's (so
+//! recompute resolves bases from a fresh `RepoCache`, not session-start
+//! state), then clears the cache. `fill` checks the token while holding the
+//! key's shard write lock, which makes its check-and-insert atomic against
+//! the bump-then-clear: a check that passes happened before the bump, so
+//! the clear always lands after (and wipes) that insert, and a check after
+//! the bump refuses the write — a stale fill cannot straddle the refresh.
+//!
+//! The same token gates every other cross-spawn effect, all enforcement
+//! secondary to `fill`'s: a superseded row's demand is refused at the
+//! channel ([`PreviewDemand::request`]) instead of re-seeding the cache
+//! from its frozen item on every repaint; superseded queued tasks skip
+//! their git/LLM compute rather than paying for doomed work; a superseded
+//! `--prs` batch is dropped whole (row appends re-check inside the
+//! `shared_items` lock — see `prs::PrsShared`); and a superseded skeleton
+//! neither overwrites the session-shared row list / shortcut table nor
+//! seeds summary hints (the one documented `fill` bypass). A superseded
+//! handler's `maybe_spawn_comments` is inert for the same reason its fill
+//! would drop: its *eviction* of the shared Comments entry would otherwise
+//! delete the live spawn's fetch with no producer left to refill it.
 //!
 //! # Filling and surfacing
 //!
@@ -163,17 +174,17 @@ impl Drop for PendingGuard {
     }
 }
 
-/// Identity of one pipeline spawn, held by every preview producer that spawn
-/// starts — precompute tasks, `--prs` fetches, demand requests, and the skim
-/// rows themselves. [`PreviewOrchestrator::refresh`] supersedes all
+/// Identity of one pipeline spawn, held by everything that spawn starts —
+/// precompute tasks, `--prs` fetches, demand requests, the handler, and the
+/// skim rows themselves. [`PreviewOrchestrator::refresh`] supersedes all
 /// outstanding tokens by bumping the shared counter; a producer whose token
 /// is no longer current has its cache write dropped at
-/// [`PreviewOrchestrator::fill`] and its demand refused at
-/// [`PreviewDemand::request`], so a refresh can never be undone by a stale
-/// straggler. Minted per spawn in `PipelineFactory::spawn` (see the *Spawn
-/// generations* section of the module docs); the counter is the preview
-/// analog of the factory's `prs_epoch`, which gates `--prs` row appends the
-/// same way.
+/// [`PreviewOrchestrator::fill`], its demand refused at
+/// [`PreviewDemand::request`], its queued work skipped before compute, and
+/// its writes to the session-shared row list / shortcut table declined — so
+/// a refresh can never be undone by a stale straggler. Minted per spawn in
+/// `PipelineFactory::spawn` (see the *Spawn generations* section of the
+/// module docs).
 #[derive(Clone)]
 pub(super) struct SpawnGeneration {
     current: Arc<AtomicUsize>,
@@ -182,7 +193,7 @@ pub(super) struct SpawnGeneration {
 
 impl SpawnGeneration {
     /// Whether the spawn this token identifies is still the live one.
-    fn is_current(&self) -> bool {
+    pub(super) fn is_current(&self) -> bool {
         self.current.load(Ordering::SeqCst) == self.value
     }
 }
@@ -412,14 +423,15 @@ impl PreviewOrchestrator {
     /// cache. The demand worker's whole loop body, factored out so each arm
     /// is unit-testable without racing the thread.
     ///
-    /// Skips a key a racing pool task already filled. A panicking compute is
-    /// contained to its key: on a rayon worker it would abort the process,
-    /// but here it would only unwind the worker thread — and a dead worker
-    /// silently regresses every later navigation to queue-wait latency for
-    /// the rest of the session — so log and keep serving. A request parked
-    /// across a refresh (posted while its spawn was still current) computes
-    /// once and drops at `fill`'s generation check — at most one wasted git
-    /// call per refresh, not worth a third check site.
+    /// Skips a key a racing pool task already filled, and a request parked
+    /// across a refresh (posted while its spawn was still current, taken
+    /// after it was superseded) — computing the latter would make the live
+    /// spawn's first demand queue behind a git call whose fill is doomed to
+    /// drop. A panicking compute is contained to its key: on a rayon worker
+    /// it would abort the process, but here it would only unwind the worker
+    /// thread — and a dead worker silently regresses every later navigation
+    /// to queue-wait latency for the rest of the session — so log and keep
+    /// serving.
     fn serve_demand(
         cache: &PreviewCache,
         notifier: &Arc<PreviewNotifier>,
@@ -427,6 +439,9 @@ impl PreviewOrchestrator {
         repo: &Repository,
         req: DemandRequest,
     ) {
+        if !req.spawn_gen.is_current() {
+            return;
+        }
         let key = (req.item.branch_name().to_string(), req.mode);
         if cache.contains_key(&key) {
             return;
@@ -489,10 +504,23 @@ impl PreviewOrchestrator {
         key: PreviewCacheKey,
         value: String,
     ) {
-        if !spawn_gen.is_current() {
-            return;
+        {
+            // The generation check and the insert hold the key's shard write
+            // lock together (`entry` acquires it), making them atomic against
+            // `refresh`'s bump-then-clear: a check that passes here happened
+            // before the bump, so the clear — which starts after the bump and
+            // must wait for this shard lock — always runs after the insert
+            // and wipes it. A plain check-then-insert would leave a third
+            // interleaving (check passes pre-bump, insert lands post-clear)
+            // where the stale entry survives. Compute has already finished by
+            // now, so the lock spans only the check and the insert — never a
+            // subprocess — keeping skim's UI-thread reads unblocked.
+            let entry = cache.entry(key.clone());
+            if !spawn_gen.is_current() {
+                return;
+            }
+            entry.insert(value);
         }
-        cache.insert(key.clone(), value);
         notifier.notify_filled(&key);
     }
 
@@ -533,6 +561,14 @@ impl PreviewOrchestrator {
         let pending = Arc::clone(&self.pending);
         let spawn_gen = spawn_gen.clone();
         self.spawn_task(move || {
+            // A superseded spawn's queued task is doomed — its fill would
+            // drop — so skip the compute, not just the write. `fill` remains
+            // the correctness gate; this (and the same check in the other
+            // task bodies) only stops a refresh from paying for the prior
+            // spawn's still-queued git/LLM work.
+            if !spawn_gen.is_current() {
+                return;
+            }
             let cache_key = (item.branch_name().to_string(), mode);
             if cache.contains_key(&cache_key) {
                 return;
@@ -577,6 +613,9 @@ impl PreviewOrchestrator {
         let spawn_gen = spawn_gen.clone();
         COLLECT_POOL.spawn_fifo(move || {
             let _g = guard;
+            if !spawn_gen.is_current() {
+                return;
+            }
             let (w, h) = dims;
             let rendered = PickerRow::refresh_log_preview(&repo, &item, w, h);
             // Skip empty results so a transient `git log` failure
@@ -606,6 +645,9 @@ impl PreviewOrchestrator {
         let repo = self.repo();
         let spawn_gen = spawn_gen.clone();
         self.spawn_task(move || {
+            if !spawn_gen.is_current() {
+                return;
+            }
             let summary = summary::generate_summary_for_item(&item, &llm_command, &repo);
             Self::fill(
                 &cache,
@@ -650,7 +692,7 @@ impl PreviewOrchestrator {
         let repo = self.repo();
         let spawn_gen = spawn_gen.clone();
         self.spawn_task(move || {
-            if cache.contains_key(&key) {
+            if !spawn_gen.is_current() || cache.contains_key(&key) {
                 return;
             }
             if let Some(value) = compute(&repo)
@@ -1265,11 +1307,12 @@ mod tests {
         );
     }
 
-    /// A refresh supersedes the prior spawn's producers: a task carrying the
-    /// pre-refresh token computes but its fill drops, so it can't re-seed the
-    /// cleared cache with content from a stale item — while the rebuilt
-    /// spawn's token fills normally. Pins the fix for the stale-drain race
-    /// the module docs' *Spawn generations* section describes.
+    /// A refresh supersedes the prior spawn's producers: every producer path
+    /// carrying the pre-refresh token — pool preview/summary/compute tasks,
+    /// the log-refresh follow-up, and the `fill` choke point itself — leaves
+    /// the cleared cache untouched, while the rebuilt spawn's token fills
+    /// normally. Pins the fix for the stale-drain race the module docs'
+    /// *Spawn generations* section describes.
     #[test]
     fn refresh_supersedes_stale_spawn_fills() {
         let (t, item) = dirty_worktree_item();
@@ -1277,16 +1320,40 @@ mod tests {
         let stale = orch.generation();
 
         orch.refresh(Repository::at(t.path()).unwrap());
+
+        // Queued task bodies drop the doomed work before computing.
         orch.spawn_preview(
             &stale,
             Arc::clone(&item),
             PreviewMode::WorkingTree,
             (80, 24),
         );
+        orch.spawn_summary(&stale, Arc::clone(&item), "/bin/cat".to_string());
+        orch.spawn_compute(&stale, ("pr:1".to_string(), PreviewMode::Log), |_| {
+            Some("stale".to_string())
+        });
+        PreviewOrchestrator::spawn_log_refresh(
+            &orch.cache,
+            orch.notifier(),
+            &orch.pending,
+            &stale,
+            Arc::clone(&item),
+            &orch.repo(),
+            (80, 24),
+        );
         orch.wait_for_idle();
+        // The choke point drops a stale write even when a task slipped past
+        // the early checks (queued while current, filling after the bump).
+        PreviewOrchestrator::fill(
+            &orch.cache,
+            orch.notifier(),
+            &stale,
+            ("main".to_string(), PreviewMode::WorkingTree),
+            "stale".to_string(),
+        );
         assert!(
             orch.cache.is_empty(),
-            "a superseded spawn's fill must drop, not re-seed the cleared cache"
+            "a superseded spawn must not re-seed the cleared cache"
         );
 
         orch.spawn_preview(
@@ -1350,10 +1417,11 @@ mod tests {
     }
 
     /// The one stale demand that can outlive `request`'s check — parked while
-    /// its spawn was current, taken after a refresh — computes once and drops
-    /// at `fill`, leaving the cleared cache untouched.
+    /// its spawn was current, taken after a refresh — is dropped before its
+    /// compute, so the live spawn's first demand never queues behind it and
+    /// the cleared cache stays untouched.
     #[test]
-    fn parked_request_across_refresh_drops_at_fill() {
+    fn parked_request_across_refresh_is_dropped() {
         let (t, item) = dirty_worktree_item();
         let orch = orch_for(&t);
         let stale = orch.generation();

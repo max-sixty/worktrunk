@@ -37,7 +37,7 @@
 
 use std::collections::HashSet;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -266,20 +266,15 @@ pub(super) struct PrsShared {
     /// that — so PR rows always land after the worktree rows, never in the
     /// reserved header slot.
     pub shared_items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>>,
-    /// Session-shared spawn counter (`PipelineFactory::prs_epoch`); each spawn
-    /// bumps it. Read together with `current_epoch` to decide whether this
-    /// thread's append is still wanted — see the append in [`fetch_and_stream`].
-    pub epoch: Arc<AtomicUsize>,
-    /// This spawn's `epoch` value, captured when the thread was spawned. The
-    /// append into `shared_items` runs only while `epoch` still equals it, so a
-    /// stale forge call from a pre-refresh spawn (whose skim channel is already
-    /// dropped) can't pollute the list a newer spawn rebuilt.
-    pub current_epoch: usize,
-    /// This spawn's preview producer token — the cache-fill analog of
-    /// `current_epoch`. Carried by the per-row `log`/`comments` fetches, so a
-    /// stale spawn's forge results can't land in the preview cache a refresh
-    /// cleared (see [`SpawnGeneration`]).
-    pub preview_gen: SpawnGeneration,
+    /// This spawn's identity token (see [`SpawnGeneration`]), gating every
+    /// cross-spawn effect this thread has: the whole row batch is dropped
+    /// once superseded (see the bail in [`fetch_and_stream`]), the append
+    /// into `shared_items` re-checks inside the lock so a stale forge call
+    /// from a pre-refresh spawn (whose skim channel is already dropped)
+    /// can't pollute the list a newer spawn rebuilt, and the per-row
+    /// `log`/`comments` fetches carry it so their fills can't land in the
+    /// preview cache a refresh cleared.
+    pub spawn_gen: SpawnGeneration,
 }
 
 /// Stream the open PRs/MRs into the picker, then clear the header's "loading…"
@@ -361,6 +356,16 @@ fn fetch_and_stream(
         return;
     }
 
+    // An `alt-r` during the forge call supersedes this spawn: the rebuilt
+    // spawn's own `--prs` thread refetches everything, so building rows here
+    // would only fan out per-row fetches (up to 2×`MAX_PRS` forge
+    // subprocesses) whose fills all drop at the generation check, plus a
+    // doomed append below. Drop the whole batch instead. The check inside
+    // the `shared_items` lock below stays authoritative for the append.
+    if !shared.spawn_gen.is_current() {
+        return;
+    }
+
     // The forge call above (~1s) almost always outlasts the skeleton
     // (~50ms), so this returns immediately; the wait covers a mocked forge
     // CLI winning the race. A `None` (collect errored / zero rows) leaves both
@@ -390,12 +395,7 @@ fn fetch_and_stream(
     let items: Vec<Arc<dyn SkimItem>> = entries
         .into_iter()
         .map(|entry| {
-            spawn_pr_previews(
-                orchestrator,
-                &shared.preview_gen,
-                &entry,
-                layout.preview_dims,
-            );
+            spawn_pr_previews(orchestrator, &shared.spawn_gen, &entry, layout.preview_dims);
             // Shortcut lookup for this row: `alt-y` copies the PR/MR head
             // branch, `alt-o` opens its already-known web URL.
             shared.shortcut_table.lock().unwrap().insert(
@@ -422,15 +422,16 @@ fn fetch_and_stream(
     // pool rebuild (`resync_pool`) keeps them — they reach skim through its own
     // channel below, which the rebuild never reads. The skeleton has already
     // populated `shared_items` (the `grid_slot.wait` above gates on it), so this
-    // appends after the worktree rows. Done under the lock and gated on the spawn
-    // epoch: a stale forge call from a pre-refresh spawn (its skim channel already
-    // dropped) must not add rows to the list a newer spawn rebuilt — reading the
-    // epoch inside the lock pairs the check with the next spawn's `on_skeleton`
-    // overwrite, which holds the same lock. Ordered before `tx.send` so the rows
-    // reach `shared_items` no later than they reach skim's pool.
+    // appends after the worktree rows. Done under the lock and gated on the
+    // spawn generation: a stale forge call from a pre-refresh spawn (its skim
+    // channel already dropped) must not add rows to the list a newer spawn
+    // rebuilt — re-checking inside the lock pairs the check with the next
+    // spawn's `on_skeleton` overwrite, which holds the same lock (its
+    // generation bump precedes its overwrite). Ordered before `tx.send` so the
+    // rows reach `shared_items` no later than they reach skim's pool.
     {
         let mut list = shared.shared_items.lock().unwrap();
-        if shared.epoch.load(Ordering::SeqCst) == shared.current_epoch {
+        if shared.spawn_gen.is_current() {
             list.extend(items.iter().map(Arc::clone));
         }
     }
@@ -1870,9 +1871,7 @@ mod tests {
             grid_slot: Arc::new(GridSlot::new()),
             shortcut_table: Arc::new(Mutex::new(std::collections::HashMap::new())),
             shared_items: Arc::new(Mutex::new(Vec::new())),
-            epoch: Arc::new(AtomicUsize::new(1)),
-            current_epoch: 1,
-            preview_gen: orchestrator.generation(),
+            spawn_gen: orchestrator.generation(),
         };
         let (rtx, mut rrx) = tokio::sync::mpsc::channel(8);
         let render_tx = OnceLock::new();
