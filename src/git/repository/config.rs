@@ -631,13 +631,17 @@ impl Repository {
     ///
     /// If `WORKTRUNK_PROJECT_CONFIG_PATH` is set, returns that path (used for
     /// test isolation so the spawned `wt` does not pick up this repo's
-    /// `.config/wt.toml`). A missing file at that path still resolves to
-    /// `Ok(None)` via `ProjectConfig::load`, matching the no-config case.
+    /// `.config/wt.toml`). A relative value resolves against the same worktree
+    /// root the default `.config/wt.toml` is anchored to — never the process
+    /// cwd, which would make the override silently depend on the invocation
+    /// directory — and errors when no worktree root exists to anchor it. A
+    /// missing file at the resulting path still resolves to `Ok(None)` via
+    /// `ProjectConfig::load`, matching the no-config case.
     ///
-    /// Otherwise: uses the current worktree when inside one (both normal and
-    /// bare repos). For bare repos at the bare root (outside any worktree),
-    /// falls back to the primary worktree. Returns `None` when no worktree can
-    /// be determined (bare repo with no linked worktrees).
+    /// Without the override: uses the current worktree when inside one (both
+    /// normal and bare repos). For bare repos at the bare root (outside any
+    /// worktree), falls back to the primary worktree. Returns `None` when no
+    /// worktree can be determined (bare repo with no linked worktrees).
     ///
     /// "The current worktree" is whatever this `Repository` was rooted at, so
     /// the answer to "which `.config/wt.toml` does a hook read" is decided by
@@ -645,8 +649,11 @@ impl Repository {
     /// is resolved against — is the spec in the `commands::hooks` module docs
     /// (`src/commands/hooks.rs`).
     pub fn project_config_path(&self) -> anyhow::Result<Option<PathBuf>> {
-        if let Ok(path) = std::env::var("WORKTRUNK_PROJECT_CONFIG_PATH") {
-            return Ok(Some(PathBuf::from(path)));
+        let override_path = std::env::var_os("WORKTRUNK_PROJECT_CONFIG_PATH").map(PathBuf::from);
+        if let Some(path) = &override_path
+            && path.is_absolute()
+        {
+            return Ok(Some(path.clone()));
         }
 
         // Batched rev-parse: asks `--is-inside-work-tree` and also pre-warms
@@ -654,21 +661,24 @@ impl Repository {
         // forks on the typical alias path.
         let info = self.current_worktree().prewarm_info().unwrap_or_default();
 
-        if let Some(root) = info.root {
-            // Inside a worktree — use it (normal repo or linked worktree in
-            // bare repo). `root` is `Some` iff the batch saw us inside a work
-            // tree, so no separate `is_inside` check.
-            return Ok(Some(root.join(".config").join("wt.toml")));
-        }
+        // Inside a worktree — use it (normal repo or linked worktree in bare
+        // repo; `root` is `Some` iff the batch saw us inside a work tree). At
+        // the bare root, fall back to the primary worktree.
+        let root = match info.root {
+            Some(root) => Some(root),
+            None if self.is_bare().unwrap_or(false) => self.primary_worktree()?,
+            None => None,
+        };
 
-        if self.is_bare().unwrap_or(false) {
-            // At bare repo root — use primary worktree
-            return Ok(self
-                .primary_worktree()?
-                .map(|p| p.join(".config").join("wt.toml")));
+        match (override_path, root) {
+            (Some(relative), Some(root)) => Ok(Some(root.join(relative))),
+            (Some(relative), None) => anyhow::bail!(
+                "WORKTRUNK_PROJECT_CONFIG_PATH is relative ({}) but there is no worktree root to resolve it against; use an absolute path",
+                relative.display()
+            ),
+            (None, Some(root)) => Ok(Some(root.join(".config").join("wt.toml"))),
+            (None, None) => Ok(None),
         }
-
-        Ok(None)
     }
 
     /// Load the project configuration (.config/wt.toml) if it exists.
