@@ -397,17 +397,25 @@ fn fetch_and_stream(
         .map(|entry| {
             spawn_pr_previews(orchestrator, &shared.spawn_gen, &entry, layout.preview_dims);
             // Shortcut lookup for this row: `alt-y` copies the PR/MR head
-            // branch, `alt-o` opens its already-known web URL.
-            shared.shortcut_table.lock().unwrap().insert(
-                entry.output_token(),
-                RowShortcutData {
-                    branch: Some(entry.head_branch.clone()),
-                    url: RowUrl::Static(entry.url.clone()),
-                    // A `--prs` row has no local worktree to remove, so `alt-x`
-                    // can't morph it.
-                    morph: None,
-                },
-            );
+            // branch, `alt-o` opens its already-known web URL. Re-checked
+            // inside the lock like the `shared_items` append below — an
+            // `alt-r` landing mid-build must not write this spawn's entries
+            // into the table the new spawn rebuilt.
+            {
+                let mut table = shared.shortcut_table.lock().unwrap();
+                if shared.spawn_gen.is_current() {
+                    table.insert(
+                        entry.output_token(),
+                        RowShortcutData {
+                            branch: Some(entry.head_branch.clone()),
+                            url: RowUrl::Static(entry.url.clone()),
+                            // A `--prs` row has no local worktree to remove,
+                            // so `alt-x` can't morph it.
+                            morph: None,
+                        },
+                    );
+                }
+            }
             Arc::new(listed_pr_row(
                 &entry,
                 grid.as_ref(),
