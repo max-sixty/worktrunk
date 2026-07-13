@@ -314,7 +314,7 @@ use once_cell::sync::OnceCell;
 use rayon::prelude::*;
 use worktrunk::git::{ErrorExt, LocalBranch, Repository, WorktreeInfo};
 use worktrunk::styling::{
-    INFO_SYMBOL, eprintln, format_with_gutter, hint_message, warning_message,
+    INFO_SYMBOL, eprintln, format_with_gutter, hint_message, truncate_visible, warning_message,
 };
 
 use crate::commands::is_worktree_at_expected_path;
@@ -673,12 +673,14 @@ fn format_stall_footer(
     )
 }
 
-/// Cap on message lines shown per failed task. Real git errors fit well
-/// under this (the index.lock guidance is ~7 lines); the cap exists so a
-/// crashing task command (e.g. an LLM summary tool dumping a stack trace)
-/// can't flood the warning block. The `-vv` diagnostic hint that follows
-/// the warning is the route to full output.
+/// Caps on the message shown per failed task: at most `MAX_LINES` lines,
+/// each at most `MAX_COLS` columns. Real git errors fit well under both
+/// (the index.lock guidance is ~7 short lines); the caps exist so a
+/// crashing task command (an LLM summary tool dumping a stack trace, or
+/// one enormous line of output) can't flood the warning block. The `-vv`
+/// diagnostic hint that follows the warning is the route to full output.
 const TASK_FAILURE_MESSAGE_MAX_LINES: usize = 12;
+const TASK_FAILURE_MESSAGE_MAX_COLS: usize = 500;
 
 /// Render one entry of the task-failure warning: `branch: task-name`,
 /// with a single-line message inline in parens and a multi-line message
@@ -691,11 +693,11 @@ fn format_task_failure(name: &str, kind: TaskKind, message: &str) -> String {
     let line_count = message.lines().count();
     if line_count > 1 {
         for line in message.lines().take(TASK_FAILURE_MESSAGE_MAX_LINES) {
-            let line = line.trim_end();
+            let line = truncate_visible(line.trim_end(), TASK_FAILURE_MESSAGE_MAX_COLS);
             rendered.push('\n');
             if !line.is_empty() {
                 rendered.push_str("  ");
-                rendered.push_str(line);
+                rendered.push_str(&line);
             }
         }
         if line_count > TASK_FAILURE_MESSAGE_MAX_LINES {
@@ -706,6 +708,7 @@ fn format_task_failure(name: &str, kind: TaskKind, message: &str) -> String {
             ));
         }
     } else if !message.is_empty() {
+        let message = truncate_visible(message, TASK_FAILURE_MESSAGE_MAX_COLS);
         rendered.push_str(&format!(" ({message})"));
     }
     rendered
@@ -2470,6 +2473,16 @@ remove the file manually to continue.";
         assert!(
             padded.lines().all(|line| line == line.trim_end()),
             "{padded:?}"
+        );
+        // One enormous line with no newlines is bounded too — the inline
+        // form truncates rather than word-wrapping across dozens of rows.
+        let monster = format_task_failure("plugins", TaskKind::CiStatus, &"x".repeat(2_000));
+        let monster = monster.ansi_strip();
+        assert!(monster.ends_with("…)"), "{monster:?}");
+        assert!(
+            monster.len() <= TASK_FAILURE_MESSAGE_MAX_COLS + "plugins: CI status ()…".len(),
+            "len={}",
+            monster.len()
         );
     }
 
