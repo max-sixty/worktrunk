@@ -1515,7 +1515,7 @@ fn fetch_latest_version() -> anyhow::Result<String> {
     // --connect-timeout fails fast when offline, and a generous --max-time bounds a
     // connected-but-stalled host without cutting off a slow-but-progressing fetch.
     let output = {
-        let _watchdog = worktrunk::progress::Watchdog::start("the latest version", None);
+        let _watchdog = worktrunk::progress::Watchdog::start("the version check", None);
         Cmd::new("curl")
             .args([
                 "--silent",

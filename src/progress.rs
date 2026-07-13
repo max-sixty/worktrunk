@@ -292,12 +292,13 @@ mod imp {
     ///
     /// Unlike [`Progress`] (which counts work units), `Watchdog` just tracks
     /// elapsed time. After a startup delay it renders a dim one-line status —
-    /// `↳ Waiting for the commit message (4s)` — redrawn in place each second;
-    /// the ticking counter is the "still alive" signal. After a longer delay it
-    /// escalates, revealing the exact command in a gutter beneath the status:
+    /// `↳ Waiting for the commit generation command (4s)` — redrawn in place
+    /// each second; the ticking counter is the "still alive" signal. After a
+    /// longer delay it escalates, revealing the exact command in a gutter
+    /// beneath the status:
     ///
     /// ```text
-    /// ↳ Waiting for the commit message (12s)
+    /// ↳ Waiting for the commit generation command (12s)
     ///    sh -c 'claude -p --model=haiku'
     /// ```
     ///
@@ -319,10 +320,11 @@ mod imp {
     impl Watchdog {
         /// Start a watchdog for a slow subprocess.
         ///
-        /// `waiting_for` names what is being awaited (e.g. `"the commit
-        /// message"`). `command`, if given, is the exact invocation — revealed
-        /// in a gutter beneath the status line once the command runs past the
-        /// escalation delay, so a slow or stuck command is debuggable.
+        /// `waiting_for` names the running operation (e.g. `"the commit
+        /// generation command"`). `command`, if given, is the exact
+        /// invocation — revealed in a gutter beneath the status line once the
+        /// command runs past the escalation delay, so a slow or stuck command
+        /// is debuggable.
         ///
         /// Enabled only when stderr is a TTY and verbosity is 0 — under
         /// `-v`/`-vv` the structured diagnostics take over, and a non-TTY (piped)
@@ -630,9 +632,9 @@ mod imp {
         fn test_watchdog_block_status_only() {
             // Before escalation (no command) the block is a single dim status
             // row. A wide width leaves the status untruncated.
-            let block = watchdog_block("the commit message", 4, None, Some(200));
+            let block = watchdog_block("the commit generation command", 4, None, Some(200));
             assert_eq!(block.len(), 1);
-            assert!(block[0].contains("Waiting for the commit message"));
+            assert!(block[0].contains("Waiting for the commit generation command"));
             assert!(block[0].contains("(4s)"));
             assert!(block[0].contains('↳'));
             assert!(!block[0].contains('…'));
@@ -645,13 +647,13 @@ mod imp {
             // command, since bash highlighting interleaves ANSI codes between
             // tokens (a word itself is never split mid-token).
             let block = watchdog_block(
-                "the commit message",
+                "the commit generation command",
                 12,
                 Some("claude --model=haiku"),
                 Some(200),
             );
             assert!(block.len() >= 2);
-            assert!(block[0].contains("Waiting for the commit message"));
+            assert!(block[0].contains("Waiting for the commit generation command"));
             assert!(block.join("\n").contains("claude"));
         }
 
@@ -662,7 +664,7 @@ mod imp {
             // soft-wrapped second row desyncs the in-place cursor math.
             use ansi_str::AnsiStr;
             use unicode_width::UnicodeWidthStr;
-            let block = watchdog_block("the squash commit message", 1234, None, Some(20));
+            let block = watchdog_block("the commit generation command", 1234, None, Some(20));
             assert_eq!(block.len(), 1);
             let visible = block[0].ansi_strip();
             assert!(UnicodeWidthStr::width(visible.as_ref()) <= 20);
@@ -672,7 +674,7 @@ mod imp {
         #[test]
         fn test_watchdog_start_with_non_tty_is_disabled() {
             assert!(
-                Watchdog::start_with("the commit message", None, false)
+                Watchdog::start_with("the commit generation command", None, false)
                     .ticker
                     .is_none()
             );
@@ -680,7 +682,7 @@ mod imp {
 
         #[test]
         fn test_watchdog_start_with_tty_is_enabled() {
-            let w = Watchdog::start_with("the commit message", None, true);
+            let w = Watchdog::start_with("the commit generation command", None, true);
             assert!(w.ticker.is_some());
             w.finish();
         }
@@ -694,7 +696,7 @@ mod imp {
             // far-off escalation delay keeps the gutter absent for the whole
             // poll, so the `!escalated` assertion holds regardless of timing.
             let w = Watchdog::enabled_with_delays(
-                "the commit message",
+                "the commit generation command",
                 Some("sh -c 'claude -p'"),
                 Duration::from_millis(10),
                 Duration::from_secs(3600),
@@ -720,7 +722,7 @@ mod imp {
             // can't race the ticker into rendering under load; finish() wakes the
             // parked thread immediately regardless.
             let w = Watchdog::enabled_with_delays(
-                "the commit message",
+                "the commit generation command",
                 None,
                 Duration::from_secs(3600),
                 WATCHDOG_ESCALATE_DELAY,
@@ -739,7 +741,7 @@ mod imp {
             // is what we're verifying. Generous timeout, fast poll — fast when
             // healthy, reliable under load.
             let w = Watchdog::enabled_with_delays(
-                "the commit message",
+                "the commit generation command",
                 Some("sh -c 'claude -p'"),
                 Duration::from_millis(10),
                 Duration::from_millis(30),
@@ -767,7 +769,7 @@ mod imp {
             // load; escalation is gated on `command.is_some()`, so `!escalated`
             // holds at any instant no matter how long the loop runs.
             let w = Watchdog::enabled_with_delays(
-                "the commit message",
+                "the commit generation command",
                 None,
                 Duration::from_millis(10),
                 Duration::from_millis(30),

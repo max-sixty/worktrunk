@@ -100,9 +100,9 @@ pub(crate) fn render_llm_invocation(command: &str) -> anyhow::Result<String> {
 /// ([`generate_summary_core`](crate::summary::generate_summary_core), up to 8
 /// under a semaphore), where
 /// per-call spinners would interleave.
-fn watch_llm_command(command: &str, waiting_for: &str) -> worktrunk::progress::Watchdog {
+fn watch_llm_command(command: &str) -> worktrunk::progress::Watchdog {
     let invocation = render_llm_invocation(command).ok();
-    worktrunk::progress::Watchdog::start(waiting_for, invocation.as_deref())
+    worktrunk::progress::Watchdog::start("the commit generation command", invocation.as_deref())
 }
 
 /// Format a reproduction command, only wrapping with `sh -c` if needed.
@@ -667,7 +667,7 @@ pub(crate) fn generate_commit_message(
         // A slow or hung command is otherwise silent (stdout is captured); the
         // watchdog surfaces a "still waiting" status. Held until this function
         // returns, clearing the block before the caller prints the message.
-        let _watchdog = watch_llm_command(command, "the commit message");
+        let _watchdog = watch_llm_command(command);
         // Commit generation is explicitly configured - fail if it doesn't work
         return try_generate_commit_message(
             command,
@@ -841,7 +841,7 @@ pub(crate) fn generate_squash_message(
 
         // See `generate_commit_message` — keep a slow squash-message generation
         // from being silent.
-        let _watchdog = watch_llm_command(command, "the squash commit message");
+        let _watchdog = watch_llm_command(command);
         return execute_llm_command(command, &prompt).map_err(|e| {
             worktrunk::git::GitError::LlmCommandFailed {
                 command: command.clone(),
@@ -967,7 +967,7 @@ pub(crate) fn test_commit_generation(
 
     // The connectivity test shells out the same way real generation does, so a
     // slow command would be just as silent — surface the same waiting status.
-    let _watchdog = watch_llm_command(command, "the test commit message");
+    let _watchdog = watch_llm_command(command);
     execute_llm_command(command, &prompt).map_err(|e| {
         worktrunk::git::GitError::LlmCommandFailed {
             command: command.clone(),

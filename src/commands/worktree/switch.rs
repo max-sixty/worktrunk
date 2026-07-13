@@ -210,7 +210,7 @@ fn fetch_ref_info(
     repo: &Repository,
 ) -> anyhow::Result<RemoteRefInfo> {
     let _watchdog = worktrunk::progress::Watchdog::start(
-        &format!("the {} info", provider.ref_type().name()),
+        &format!("the {} lookup", provider.ref_type().name()),
         None,
     );
     provider.fetch_info(number, repo)
