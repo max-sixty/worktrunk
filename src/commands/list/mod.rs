@@ -215,8 +215,7 @@ pub(crate) fn print_json<T: serde::Serialize>(value: &T) -> anyhow::Result<()> {
 /// schema 1 is the deliberate manual edit), so the nag's hint offers that
 /// command exactly when running it would write the key — decided by the same
 /// detection update runs, so a missing, unreadable, or malformed user config
-/// falls back to naming the manual setting instead (migration plan in
-/// design/list-json-v2.md, reviewed in #3357).
+/// falls back to naming the manual setting instead.
 pub(crate) fn resolve_json_schema(repo: &Repository) -> u8 {
     use std::sync::Once;
 
