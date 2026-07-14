@@ -272,12 +272,7 @@ impl ProjectConfig {
             // copy from the object store rather than silently dropping project
             // config and every project hook (#3461). `config_path` is then a
             // display-only revision spec, used only for diagnostics.
-            _ => match repo.default_branch_project_config_content().map_err(|e| {
-                ConfigError(format!(
-                    "Failed to read project config from default branch: {}",
-                    e
-                ))
-            })? {
+            _ => match repo.default_branch_project_config_content() {
                 Some((contents, display_path)) => (contents, display_path),
                 None => return Ok(None),
             },

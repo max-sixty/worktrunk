@@ -705,35 +705,43 @@ impl Repository {
     /// config (`git show` exits non-zero for a path absent from the tree),
     /// matching the no-config case.
     ///
-    /// The returned `PathBuf` is a display-only label of the form
-    /// `<default-branch>:.config/wt.toml` — a git revision spec, not a
-    /// filesystem path. Nothing is read from or written to it; it only
-    /// annotates diagnostics (e.g. a parse error) with the object-store source.
-    pub fn default_branch_project_config_content(
-        &self,
-    ) -> anyhow::Result<Option<(String, PathBuf)>> {
-        if !self.is_bare()? {
-            return Ok(None);
+    /// This is a best-effort resolver: the `is_bare` / `primary_worktree`
+    /// checks re-run calls that `project_config_path` already made
+    /// successfully on this path, and a `git show` failure degrades to "no
+    /// project config" (no hooks) rather than surfacing — the same
+    /// error-swallowing shape `alias.rs` uses for config resolution, and safe
+    /// because the fallback only ever adds hooks, never risks data.
+    ///
+    /// The read uses `HEAD` rather than a resolved branch name: at the bare
+    /// root the repo's own `HEAD` is a symbolic ref to the default branch (it
+    /// is what local default-branch inference reads), so `HEAD:.config/wt.toml`
+    /// reads the default branch's committed config, always resolves in a bare
+    /// repo, and needs no separate branch lookup. The returned `PathBuf` is a
+    /// display-only label of the form `HEAD:.config/wt.toml` — a git revision
+    /// spec, not a filesystem path. Nothing is read from or written to it; it
+    /// only annotates diagnostics (e.g. a parse error) with the source.
+    pub fn default_branch_project_config_content(&self) -> Option<(String, PathBuf)> {
+        if !self.is_bare().unwrap_or(false) {
+            return None;
         }
         // Only the "default branch checked out nowhere" state needs this; when
-        // the primary worktree exists, its on-disk path already resolved.
-        if self.primary_worktree()?.is_some() {
-            return Ok(None);
+        // the default branch is checked out somewhere, its on-disk path already
+        // resolved (and stays authoritative — e.g. a deletion there wins).
+        if self.primary_worktree().ok().flatten().is_some() {
+            return None;
         }
-        let Some(branch) = self.default_branch() else {
-            return Ok(None);
-        };
 
-        let spec = format!("{branch}:.config/wt.toml");
-        let output = self.run_command_output(&["show", &spec])?;
-        if !output.status.success() {
-            // Non-zero (typically 128) means the default branch's tree has no
-            // `.config/wt.toml`. Treat as "no project config", not an error —
-            // same result as an absent file on disk.
-            return Ok(None);
+        let spec = "HEAD:.config/wt.toml";
+        match self.run_command_output(&["show", spec]) {
+            Ok(output) if output.status.success() => Some((
+                String::from_utf8_lossy(&output.stdout).into_owned(),
+                PathBuf::from(spec),
+            )),
+            // A non-zero exit (typically 128, path absent from the tree) or a
+            // rare spawn failure: treat as "no project config", the same result
+            // as an absent file on disk.
+            _ => None,
         }
-        let contents = String::from_utf8_lossy(&output.stdout).into_owned();
-        Ok(Some((contents, PathBuf::from(spec))))
     }
 
     /// Load the project configuration (.config/wt.toml) if it exists.
