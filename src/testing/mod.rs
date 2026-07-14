@@ -235,7 +235,7 @@ pub const HOUR: i64 = 60 * MINUTE;
 pub const DAY: i64 = 24 * HOUR;
 pub const WEEK: i64 = 7 * DAY;
 
-/// The epoch used for deterministic timestamps in tests (2025-01-01T00:00:00Z).
+/// The epoch used for deterministic timestamps in tests (2025-01-02T00:00:00Z).
 /// Use this when creating test data with timestamps (cache entries, etc.).
 pub const TEST_EPOCH: u64 = 1735776000;
 
