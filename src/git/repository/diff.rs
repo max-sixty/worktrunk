@@ -270,15 +270,18 @@ impl Repository {
                 }
 
                 // Exit codes: 0 = found, 1 = no common ancestor, 128+ = invalid ref
-                let output = self.run_command_output(&["merge-base", sha1, sha2])?;
+                let args = ["merge-base", sha1, sha2];
+                let output = self.run_command_output(&args)?;
 
                 let result = if output.status.success() {
                     Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
                 } else if output.status.code() == Some(1) {
                     None
                 } else {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    bail!("git merge-base failed for {sha1} {sha2}: {}", stderr.trim());
+                    return Err(crate::git::CommandError::from_failed_output(
+                        "git", &args, &output,
+                    )
+                    .into());
                 };
 
                 super::sha_cache::put_merge_base(self, sha1, sha2, &result);

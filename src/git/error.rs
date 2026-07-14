@@ -219,14 +219,14 @@ impl CommandError {
     /// Build from the captured `Output` of a non-zero exit.
     pub fn from_failed_output(
         program: impl Into<String>,
-        args: &[&str],
+        args: &[impl AsRef<str>],
         output: &std::process::Output,
     ) -> Self {
         let stderr = String::from_utf8_lossy(&output.stderr).replace('\r', "\n");
         let stdout = String::from_utf8_lossy(&output.stdout).replace('\r', "\n");
         Self {
             program: program.into(),
-            args: args.iter().map(|&s| s.to_string()).collect(),
+            args: args.iter().map(|s| s.as_ref().to_string()).collect(),
             stderr,
             stdout,
             exit_code: output.status.code(),

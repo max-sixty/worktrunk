@@ -7,6 +7,8 @@ use color_print::cformat;
 
 use crate::config::ProjectConfig;
 
+use crate::git::CommandError;
+
 use super::{DefaultBranchName, GitError, Repository};
 
 impl Repository {
@@ -67,15 +69,15 @@ impl Repository {
     /// Removes the canonical form (matching what git emits) to stay in
     /// sync with `set_config_value` and `config_last`.
     pub(super) fn unset_config_value(&self, key: &str) -> anyhow::Result<bool> {
-        let output = self.run_command_output(&["config", "--unset", key])?;
+        let args = ["config", "--unset", key];
+        let output = self.run_command_output(&args)?;
         let existed = if output.status.success() {
             true
         } else if output.status.code() == Some(5) {
             // --unset exit code 5 = key didn't exist
             false
         } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("git config --unset {}: {}", key, stderr.trim());
+            return Err(CommandError::from_failed_output("git", &args, &output).into());
         };
         if let Some(lock) = self.cache.all_config.get() {
             // `shift_remove` preserves remaining order (swap_remove would
@@ -94,15 +96,15 @@ impl Repository {
     /// surfaced as `Err`). Use this instead of `run_command` + `.unwrap_or_default()`,
     /// which conflates the two.
     pub fn get_config_regexp(&self, pattern: &str) -> anyhow::Result<String> {
-        let output = self.run_command_output(&["config", "--get-regexp", pattern])?;
+        let args = ["config", "--get-regexp", pattern];
+        let output = self.run_command_output(&args)?;
         if output.status.success() {
             Ok(String::from_utf8_lossy(&output.stdout).into_owned())
         } else if output.status.code() == Some(1) {
             // Exit 1 = no keys matched the pattern
             Ok(String::new())
         } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("git config --get-regexp {}: {}", pattern, stderr.trim());
+            Err(CommandError::from_failed_output("git", &args, &output).into())
         }
     }
 
@@ -822,6 +824,44 @@ mod tests {
             .get_config_regexp(r"^worktrunk\.state\..+\.marker$")
             .unwrap();
         assert_eq!(output, "");
+    }
+
+    #[test]
+    fn test_get_config_regexp_failure_is_command_error() {
+        // A real failure (invalid pattern, exit 6) must surface as a typed
+        // `CommandError` — unlike exit 1, which means "no keys matched".
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let err = repo.get_config_regexp("(").unwrap_err();
+        let cmd_err = CommandError::find_in(&err).expect("error should carry a CommandError");
+        assert_eq!(cmd_err.command_string(), "git config --get-regexp (");
+    }
+
+    #[test]
+    fn test_unset_config_failure_is_command_error() {
+        // A real failure (invalid key, exit 1) must surface as a typed
+        // `CommandError` — unlike exit 5, which means "key didn't exist".
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let err = repo.unset_config("inva lid.key").unwrap_err();
+        let cmd_err = CommandError::find_in(&err).expect("error should carry a CommandError");
+        assert_eq!(cmd_err.command_string(), "git config --unset inva lid.key");
+    }
+
+    #[test]
+    fn test_config_read_failure_is_command_error() {
+        // Corrupting the config after the repository is open (the bulk map
+        // populates lazily) makes `git config --list -z` fail — the failure
+        // must surface as a typed `CommandError`.
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        std::fs::write(test.root_path().join(".git/config"), "[bad\n").unwrap();
+
+        let err = repo.config_value("user.name").unwrap_err();
+        let cmd_err = CommandError::find_in(&err).expect("error should carry a CommandError");
+        assert_eq!(cmd_err.command_string(), "git config --list -z");
     }
 
     #[test]
