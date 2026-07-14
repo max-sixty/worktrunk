@@ -52,7 +52,7 @@ Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET][0m
           Skip commit and squash
 
       [1m[36m--no-rebase[0m
-          Skip rebase (fail if not already rebased)
+          Skip rebase; require the target to fast-forward to the resulting tip
 
       [1m[36m--no-remove[0m
           Keep worktree after merge
@@ -130,7 +130,7 @@ Preserve commit history (no squash):
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m merge [0m[2m[36m--no-squash[0m
 
-Create a merge commit — semi-linear history:
+Create a merge commit — rebased semi-linear history by default:
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m merge [0m[2m[36m--no-ff[0m
 
@@ -138,20 +138,24 @@ Skip committing/squashing (rebase still runs unless --no-rebase):
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m merge [0m[2m[36m--no-commit[0m
 
+Preserve the exact clean commit graph and tip:
+
+[107m [0m [2m[0m[2m[34mwt[0m[2m merge [0m[2m[36m--no-commit[0m[2m [0m[2m[36m--no-rebase[0m
+
 [1m[32mPipeline[0m
 
 [2mwt merge[0m runs these steps:
 
 1. [1mCommit[0m — Pre-commit hooks run, then uncommitted changes are committed. Post-commit hooks run in background. Skipped when squashing (the default) — changes are staged during the squash step instead. With [2m--no-squash[0m, this is the only commit step.
 2. [1mSquash[0m — Combines all commits since target into one (like GitHub's "Squash and merge"). Use [2m--stage[0m to control what gets staged: [2mall[0m (default), [2mtracked[0m, or [2mnone[0m. A backup ref is saved to [2mrefs/wt-backup/<branch>[0m. With [2m--no-squash[0m, individual commits are preserved.
-3. [1mRebase[0m — Rebases onto target if behind. Skipped if already up-to-date. Conflicts abort immediately.
+3. [1mRebase[0m — Rebases onto target if behind. Skipped if already up-to-date. Conflicts abort immediately. With [2m--no-rebase[0m, the graph produced by earlier commit/squash steps is preserved and the target must be able to fast-forward to its tip.
 4. [1mPre-merge hooks[0m — Hooks run after rebase, before merge. Failures abort. See [2mwt hook[0m.
-5. [1mMerge[0m — Fast-forward merge to the target branch. With [2m--no-ff[0m, a merge commit is created instead — semi-linear history with rebased commits plus a merge commit. Non-fast-forward merges are rejected.
+5. [1mMerge[0m — Fast-forward merge to the target branch. With [2m--no-ff[0m, a merge commit is created instead — semi-linear history after the default rebase, while explicit [2m--no-rebase[0m preserves the graph produced by earlier steps before adding the merge commit. Non-fast-forward merges are rejected.
 6. [1mPre-remove hooks[0m — Hooks run before removing worktree. Failures abort.
 7. [1mCleanup[0m — Removes the worktree and branch. Use [2m--no-remove[0m to keep the worktree. When already on the target branch or in the primary worktree, the worktree is preserved.
 8. [1mPost-remove + post-merge hooks[0m — Run in background after cleanup.
 
-Use [2m--no-commit[0m to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless [2m--no-rebase[0m is passed. Useful after preparing commits manually with [2mwt step commit[0m. Requires a clean working tree.
+Use [2m--no-commit[0m to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless [2m--no-rebase[0m is passed. Combining both flags preserves the exact source graph and requires the target to be its ancestor. Useful after preparing commits manually with [2mwt step commit[0m. Requires a clean working tree.
 
 [1m[32mLocal CI[0m
 
