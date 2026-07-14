@@ -54,7 +54,7 @@ exit_code: 0
 ----- stderr -----
 [33m▲[39m [33mFailed to batch-fetch commit details: fatal: bad object 0000000000000000000000000000000000000001[39m
 
-[2m○[22m [2mShowing 5 worktrees, 3 ahead; 10 tasks failed[0m
+[2m○[22m [2mShowing 5 worktrees, 3 ahead[0m
 [33m▲[39m [33m10 tasks failed:
 [107m [0m [1mmain[22m: upstream status (fatal: missing object 0000000000000000000000000000000000000001 for refs/heads/feature)
 [107m [0m [1mfeature[22m: ahead/behind counts (git merge-base failed for 05a4a45d0b981dad5c27db59dca482836d59f89e 0000000000000000000000000000000000000001: fatal: Not a valid commit name 0000000000000000000000000000000000000001)
