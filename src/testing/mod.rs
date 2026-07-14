@@ -235,7 +235,7 @@ pub const HOUR: i64 = 60 * MINUTE;
 pub const DAY: i64 = 24 * HOUR;
 pub const WEEK: i64 = 7 * DAY;
 
-/// The epoch used for deterministic timestamps in tests (2025-01-01T00:00:00Z).
+/// The epoch used for deterministic timestamps in tests (2025-01-02T00:00:00Z).
 /// Use this when creating test data with timestamps (cache entries, etc.).
 pub const TEST_EPOCH: u64 = 1735776000;
 
@@ -272,6 +272,13 @@ pub const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
     ("WORKTRUNK_TEST_FISH_INSTALLED", "0"),
     ("WORKTRUNK_TEST_NUSHELL_ENV", "0"),
     ("WORKTRUNK_TEST_POWERSHELL_INSTALLED", "0"),
+    // Disable the process-tree shell walk (see `shell::ancestor_shell`): the
+    // real ancestry of a spawned test wt is the test harness → nextest →
+    // cargo → the developer's or CI runner's shell, which would leak into
+    // shell-detection results nondeterministically. Empty = "no shell
+    // ancestor found", so tests drive detection via SHELL. Tests exercising
+    // the walk set a shell name instead.
+    ("WORKTRUNK_TEST_PARENT_SHELL", ""),
     // Disable PowerShell auto-detection (PSModulePath / SHELL signal).
     // Iteration is unconditional (matches the other shells); this var only
     // controls `allow_create` via `should_auto_configure_powershell()` so we

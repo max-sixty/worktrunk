@@ -84,3 +84,17 @@ exclude = [
     "127\\.0\\.0\\.1",
     "localhost",
 ]
+
+# Paths excluded from checking entirely (regex, matched against the file path).
+exclude_path = [
+    # Generated plugin-skills mirror: a byte-identical copy of `skills/`, synced
+    # by `test_docs_are_in_sync`. Every file here is already link-checked at its
+    # authored `skills/` source, where `reference/README.md` is a symlink to the
+    # repo-root README and its relative `docs/static/logo.png` resolves. The sync
+    # dereferences that symlink into a real file, so under the mirror the
+    # repo-root-relative image path resolves to a nonexistent
+    # `plugins/worktrunk/skills/worktrunk/reference/docs/static/logo.png`.
+    # Excluding the redundant copy avoids that false positive without losing
+    # coverage (the authored source is still checked).
+    "plugins/worktrunk/skills/",
+]

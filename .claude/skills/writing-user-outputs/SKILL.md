@@ -313,7 +313,7 @@ the message color before the symbol so it renders in its native styling. This
 requires breaking out of the message color and reopening it after the symbol.
 See `FlagNote` in `src/output/handlers.rs` for an example — it handles flag
 acknowledgment notes (like integration reasons) with proper color transitions
-via `after_cyan()` and `after_green()` methods.
+via its `after(color)` method, which reopens the message color after the symbol.
 
 **Comma + "but" + em-dash for limitations:** When stating an outcome with a
 limitation and its reason:

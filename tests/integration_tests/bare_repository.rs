@@ -803,6 +803,232 @@ fn test_bare_repo_project_config_found_from_bare_root() {
 }
 
 #[test]
+fn test_bare_repo_project_config_found_when_primary_on_non_default_branch() {
+    // Regression test for #3461: the project config must still be found from the
+    // bare root when the primary worktree is temporarily checked out to a
+    // *non-default* branch. This is the gap left by #1691's fix —
+    // `project_config_path()` locates the primary worktree via
+    // `primary_worktree()`, which looks it up by "which worktree holds the
+    // default branch". When an agent-driven workflow briefly checks out a PR
+    // branch in the primary worktree, no worktree holds the default branch, so
+    // the project source was dropped silently and NO project hooks fired.
+    //
+    // The fix reads the committed default-branch config from the object store
+    // (`git show <default>:.config/wt.toml`), so this test also pins that it
+    // reads the *default branch's* config, not whatever the parked worktree
+    // happens to have on disk: after parking the primary off-branch, the
+    // working-tree config is overwritten with a divergent hook that must NOT
+    // run.
+    let test = BareRepoTest::new();
+
+    // Create main worktree (the primary worktree for bare repos)
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit");
+
+    // Place project config in the primary worktree's .config/wt.toml
+    let config_dir = main_worktree.join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+
+    // Marker written by the default branch's committed hook (the one that
+    // must run), plus a marker for a divergent on-disk hook that must not.
+    let marker_path = test.bare_repo_path().join("hook-ran-off-branch.marker");
+    let marker_str = marker_path.to_str().unwrap().replace('\\', "/");
+    let stale_marker_path = test.bare_repo_path().join("hook-ran-stale.marker");
+    let stale_marker_str = stale_marker_path.to_str().unwrap().replace('\\', "/");
+    fs::write(
+        config_dir.join("wt.toml"),
+        format!("post-start = \"echo hook-executed > '{}'\"\n", marker_str),
+    )
+    .unwrap();
+
+    // Commit the config so it's part of the worktree
+    let output = test
+        .git_command(&main_worktree)
+        .args(["add", ".config/wt.toml"])
+        .run()
+        .unwrap();
+    assert!(output.status.success());
+    test.commit_in(&main_worktree, "Add project config");
+
+    // Move the primary worktree off the default branch, so no worktree holds
+    // `main`. This is the exact state that triggers the regression.
+    let output = test
+        .git_command(&main_worktree)
+        .args(["checkout", "-b", "feature-x"])
+        .run()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "checkout -b feature-x failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Overwrite the parked worktree's on-disk config with a divergent hook,
+    // uncommitted. If resolution read the parked worktree's files instead of
+    // the default branch's committed tree, this stale hook would run.
+    fs::write(
+        config_dir.join("wt.toml"),
+        format!("post-start = \"echo stale > '{}'\"\n", stale_marker_str),
+    )
+    .unwrap();
+
+    // Now run `wt switch --create test-repro` from the bare repo root.
+    let (cd_path, exec_path, _guard) = directive_files();
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    cmd.args(["switch", "--create", "test-repro", "--yes"])
+        .current_dir(test.bare_repo_path());
+
+    let output = cmd.output().unwrap();
+
+    if !output.status.success() {
+        panic!(
+            "wt switch failed:\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // The default branch's committed hook must run even though the primary
+    // worktree is parked on a non-default branch.
+    wait_for_file_content(&marker_path);
+    let content = fs::read_to_string(&marker_path).unwrap();
+    assert!(
+        content.contains("hook-executed"),
+        "Project hook must run from the bare root even when the primary worktree \
+         is on a non-default branch (#3461). Marker file content: {:?}",
+        content
+    );
+
+    // The parked worktree's divergent on-disk hook must NOT run — resolution
+    // reads the default branch's committed config, not the checked-out files.
+    assert!(
+        !stale_marker_path.exists(),
+        "Resolution must read the default branch's committed config via `git \
+         show`, not the parked worktree's on-disk file"
+    );
+}
+
+#[test]
+fn test_bare_repo_no_project_config_when_primary_off_branch_and_none_present() {
+    // Companion to the #3461 fix: the object-store fallback that reads
+    // `git show <default>:.config/wt.toml` when the default branch is checked
+    // out nowhere must not conjure a config that doesn't exist. With the primary
+    // off the default branch and no config committed on the default branch,
+    // `git show` exits non-zero and resolution stays `None` — the command
+    // succeeds and no project hook runs.
+    let test = BareRepoTest::new();
+
+    // Create main worktree (the primary worktree for bare repos) — no config
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit");
+
+    // Move the primary worktree off the default branch.
+    let output = test
+        .git_command(&main_worktree)
+        .args(["checkout", "-b", "feature-x"])
+        .run()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "checkout -b feature-x failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Run `wt switch --create foo` from the bare repo root. With no project
+    // config anywhere, it should still succeed.
+    let (cd_path, exec_path, _guard) = directive_files();
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    cmd.args(["switch", "--create", "foo", "--yes"])
+        .current_dir(test.bare_repo_path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt switch should succeed with no project config:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // No config exists, so no worktree should be reported as carrying one and
+    // no project hook can run. `wt config show` from the bare root confirms the
+    // fallback found nothing rather than resolving a phantom config.
+    let mut show = wt_command();
+    test.configure_wt_cmd(&mut show);
+    show.args(["config", "show"])
+        .current_dir(test.bare_repo_path());
+    let show_out = show.output().unwrap();
+    let stdout = String::from_utf8_lossy(&show_out.stdout);
+    assert!(
+        !stdout.contains("[pre-start]") && !stdout.contains("[post-start]"),
+        "no project hooks should be resolved when no config exists:\n{stdout}"
+    );
+}
+
+#[test]
+fn test_bare_repo_committed_config_does_not_supersede_override() {
+    // Companion to the #3461 fix: the object-store fallback must never
+    // supersede an explicit `WORKTRUNK_PROJECT_CONFIG_PATH`. The override
+    // names the config source outright — a missing file there means no
+    // project config — and it exists for test isolation, where reading the
+    // repo's own committed config is exactly the leak being prevented.
+    let test = BareRepoTest::new();
+
+    // Commit a project config on the default branch, then park the primary
+    // worktree off it — the state where the committed fallback applies.
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit");
+    let config_dir = main_worktree.join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("wt.toml"),
+        "pre-start = \"echo committed\"\n",
+    )
+    .unwrap();
+    let output = test
+        .git_command(&main_worktree)
+        .args(["add", ".config/wt.toml"])
+        .run()
+        .unwrap();
+    assert!(output.status.success());
+    test.commit_in(&main_worktree, "Add project config");
+    let output = test
+        .git_command(&main_worktree)
+        .args(["checkout", "-b", "feature-x"])
+        .run()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "checkout -b feature-x failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let mut cmd = test.wt_command();
+    cmd.env(
+        "WORKTRUNK_PROJECT_CONFIG_PATH",
+        test.temp_path().join("nonexistent.toml"),
+    );
+    cmd.args(["config", "show", "--format=json"])
+        .current_dir(test.bare_repo_path());
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    assert!(
+        json["project"]["config"].is_null(),
+        "an override pointing at a missing file must not fall back to the committed config, got: {}",
+        json["project"]["config"]
+    );
+}
+
+#[test]
 fn test_bare_repo_project_config_found_with_dash_c_flag() {
     // Regression test for #1691 (comment): project config in the primary worktree
     // should be found when using `-C <repo>` from an unrelated directory.

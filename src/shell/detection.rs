@@ -77,7 +77,7 @@ use super::paths::{home_dir_required, powershell_profile_paths};
 /// detection is needed.
 ///
 /// **When binary is run directly (wrapper not active):**
-/// - If detection finds integration → "restart the shell to activate"
+/// - If detection finds integration → "installed but not active" (restart hint)
 /// - If detection misses (false negative) → "shell integration not installed"
 ///
 /// **When wrapper is active:** No warnings shown regardless of detection.

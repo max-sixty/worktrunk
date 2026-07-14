@@ -207,8 +207,9 @@ pub struct CommandError {
     /// Captured stderr with `\r` normalized to `\n` (git emits `\r` for
     /// progress; non-TTY contexts otherwise produce snapshot instability).
     pub stderr: String,
-    /// Captured stdout — kept separate because some git subcommands print
-    /// errors here (e.g., `commit` with nothing to commit).
+    /// Captured stdout, `\r`-normalized like `stderr` (a raw `\r` would
+    /// overprint the gutter when rendered) — kept separate because some git
+    /// subcommands print errors here (e.g., `commit` with nothing to commit).
     pub stdout: String,
     /// Process exit code; `None` if the child was killed by a signal.
     pub exit_code: Option<i32>,
@@ -222,7 +223,7 @@ impl CommandError {
         output: &std::process::Output,
     ) -> Self {
         let stderr = String::from_utf8_lossy(&output.stderr).replace('\r', "\n");
-        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let stdout = String::from_utf8_lossy(&output.stdout).replace('\r', "\n");
         Self {
             program: program.into(),
             args: args.iter().map(|&s| s.to_string()).collect(),
@@ -2416,6 +2417,35 @@ mod tests {
             exit_code: Some(1),
         };
         assert_eq!(err.combined_output(), "actual error on stdout");
+    }
+
+    #[test]
+    fn command_error_from_failed_output_normalizes_carriage_returns() {
+        #[cfg(unix)]
+        use std::os::unix::process::ExitStatusExt;
+        #[cfg(windows)]
+        use std::os::windows::process::ExitStatusExt;
+
+        // Progress meters rewrite lines with bare `\r`; a raw `\r` in the
+        // rendered block would return the cursor to column 0 and overprint
+        // the gutter, so both streams must reach renderers as real newlines.
+        // Raw wait status 256 encodes "exited with code 1" on unix; on
+        // Windows the raw value is the exit code itself.
+        #[cfg(unix)]
+        let status = std::process::ExitStatus::from_raw(256);
+        #[cfg(windows)]
+        let status = std::process::ExitStatus::from_raw(1);
+        let output = std::process::Output {
+            status,
+            stdout: b"Receiving objects: 42%\rReceiving objects: 100%".to_vec(),
+            stderr: b"error: fetch interrupted".to_vec(),
+        };
+        let err = CommandError::from_failed_output("git", &["fetch"], &output);
+        assert_eq!(
+            err.combined_output(),
+            "error: fetch interrupted\nReceiving objects: 42%\nReceiving objects: 100%"
+        );
+        assert!(!err.render().contains('\r'));
     }
 
     #[test]

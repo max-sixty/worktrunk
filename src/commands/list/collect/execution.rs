@@ -432,8 +432,10 @@ pub fn work_items_for_worktree(
     }
 
     // URL status health check task (if we have a URL). Only this single
-    // work item is queued per item — `item.url` was set directly above, so
-    // no placeholder send is needed.
+    // work item is queued per item — the immediate `UrlStatus` placeholder
+    // was already sent through the drain channel above (never written to
+    // `item.url` directly; see the module docstring), so this task needs no
+    // additional placeholder send.
     if include_url && ctx.item_url.is_some() {
         expected_results.expect(item_idx, TaskKind::UrlStatus);
         items.push(WorkItem {

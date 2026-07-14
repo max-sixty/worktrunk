@@ -3,7 +3,7 @@
 ## Quick Start
 
 ```bash
-cargo run -- hook pre-merge --yes   # all tests + lints; run before committing
+cargo run -- hook pre-merge --yes   # all tests + lints (runs automatically in wt merge)
 ```
 
 Claude Code web: run `task setup-web` first. Test commands, isolation, and coverage investigation: `tests/CLAUDE.md`.
@@ -43,9 +43,7 @@ Load relevant skills before starting; reload when scope changes mid-session. Pro
 
 ## Documentation
 
-Behavior changes require doc updates. `src/cli/mod.rs` (`after_long_help` plus clap attributes) is the PRIMARY SOURCE for command pages; never hand-edit the generated mirrors under `docs/content/`, `skills/worktrunk/reference/`, or `plugins/worktrunk/skills/`. Ask: "does `--help` still describe what the code does?" After any doc change run `cargo test --test integration test_docs_are_in_sync`; editing help text (`after_long_help`, `about`, arg docs) also changes the rendered `--help` snapshots, which that test leaves untouched — regenerate them with `cargo insta test --accept -- --test integration "test_help"` (the pre-merge hook runs both). Sync taxonomy, help-text authoring (three render contexts, link text, config-TOML blocks): `docs/CLAUDE.md`.
-
-Design proposals live in `design/` and are review-only: open a PR to discuss, then close it without merging. They guide implementation PRs but don't land on `main`.
+Behavior changes require doc updates. `src/cli/mod.rs` (`after_long_help` plus clap attributes) is the PRIMARY SOURCE for command pages; never hand-edit the generated mirrors under `docs/content/`, `skills/worktrunk/reference/`, or `plugins/worktrunk/skills/`. Ask: "does `--help` still describe what the code does?" `cargo test --test integration test_docs_are_in_sync` checks doc sync; editing help text (`after_long_help`, `about`, arg docs) also changes the rendered `--help` snapshots, which that test leaves untouched — `cargo insta test --accept -- --test integration "test_help"` regenerates them (the pre-merge hook runs both). Sync taxonomy, help-text authoring (three render contexts, link text, config-TOML blocks): `docs/CLAUDE.md`.
 
 ## Plugin Layout
 

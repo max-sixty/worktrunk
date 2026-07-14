@@ -641,8 +641,15 @@ impl Repository {
     ///
     /// Without the override: uses the current worktree when inside one (both
     /// normal and bare repos). For bare repos at the bare root (outside any
-    /// worktree), falls back to the primary worktree. Returns `None` when no
-    /// worktree can be determined (bare repo with no linked worktrees).
+    /// worktree), falls back to the primary worktree. When the default branch
+    /// is checked out in no worktree (so `primary_worktree()` is `None`),
+    /// there is no on-disk path to return here — `ProjectConfig::load` reads
+    /// the committed default-branch config from the object store via
+    /// [`default_branch_project_config_content`](Self::default_branch_project_config_content)
+    /// so project config (and every project hook) isn't silently dropped while
+    /// the primary is parked on another branch (#3461). That fallback is for
+    /// the no-override case only: an override always names the config source
+    /// outright.
     ///
     /// "The current worktree" is whatever this `Repository` was rooted at, so
     /// the answer to "which `.config/wt.toml` does a hook read" is decided by
@@ -687,7 +694,11 @@ impl Repository {
 
         // Inside a worktree — use it (normal repo or linked worktree in bare
         // repo; `root` is `Some` iff the batch saw us inside a work tree). At
-        // the bare root, fall back to the primary worktree.
+        // the bare root, fall back to the primary worktree (the one holding
+        // the default branch); when the default branch is checked out in no
+        // worktree, there is no root and no on-disk path — `ProjectConfig::load`
+        // then reads the committed default-branch config from the object store
+        // via `default_branch_project_config_content` (#3461).
         let root = match info.root {
             Some(root) => Some(root),
             None if self.is_bare().unwrap_or(false) => self.primary_worktree()?,
@@ -704,6 +715,77 @@ impl Repository {
             );
         };
         Ok(Some(root.join(relative)))
+    }
+
+    /// Content of the default branch's committed `.config/wt.toml`, read from
+    /// the object store via `git show`, for the one state where the on-disk
+    /// path can't supply it: a bare repo whose default branch is checked out in
+    /// no worktree.
+    ///
+    /// In a bare layout the primary worktree normally holds the default branch,
+    /// so its on-disk `.config/wt.toml` *is* the default branch's project
+    /// config and [`project_config_path`](Self::project_config_path) resolves
+    /// it directly. When the primary worktree is transiently parked on another
+    /// branch (a common agent-driven workflow), no worktree exposes the default
+    /// branch's config on disk; returning nothing there would silently drop the
+    /// entire project config and every project hook (#3461). Reading the
+    /// committed copy from the object store restores it without depending on
+    /// which branch is checked out where — and, unlike scanning worktrees for
+    /// any `.config/wt.toml`, always reads the *default branch's* config rather
+    /// than whatever branch a worktree happens to be parked on.
+    ///
+    /// Returns `None` cheaply — before touching the object store — for every
+    /// other repo shape (non-bare repos, and bare repos whose default branch is
+    /// checked out somewhere), so the common load path never pays for the extra
+    /// `git show`. Also returns `None` when the default branch ships no project
+    /// config (`git show` exits non-zero for a path absent from the tree),
+    /// matching the no-config case.
+    ///
+    /// This is a best-effort resolver: the `is_bare` / `primary_worktree`
+    /// checks re-run calls that `project_config_path` already made
+    /// successfully on this path, and a `git show` failure degrades to "no
+    /// project config" (no hooks) rather than surfacing — the same
+    /// error-swallowing shape `alias.rs` uses for config resolution, and safe
+    /// because the fallback only ever adds hooks, never risks data.
+    ///
+    /// The read uses `HEAD` rather than a resolved branch name: at the bare
+    /// root the repo's own `HEAD` is a symbolic ref to the default branch (it
+    /// is what local default-branch inference reads), so `HEAD:.config/wt.toml`
+    /// reads the default branch's committed config, always resolves in a bare
+    /// repo, and needs no separate branch lookup. The returned `PathBuf` is a
+    /// display-only label of the form `HEAD:.config/wt.toml` — a git revision
+    /// spec, not a filesystem path. Nothing is read from or written to it; it
+    /// only annotates diagnostics (e.g. a parse error) with the source.
+    pub fn default_branch_project_config_content(&self) -> Option<(String, PathBuf)> {
+        // An explicit WORKTRUNK_PROJECT_CONFIG_PATH override names the config
+        // source outright — an empty value or a missing file at the override
+        // path means no project config — so the committed fallback must not
+        // supersede it (the override exists for test isolation, where reading
+        // the repo's own committed config is exactly the leak being prevented).
+        if std::env::var_os("WORKTRUNK_PROJECT_CONFIG_PATH").is_some() {
+            return None;
+        }
+        if !self.is_bare().unwrap_or(false) {
+            return None;
+        }
+        // Only the "default branch checked out nowhere" state needs this; when
+        // the default branch is checked out somewhere, its on-disk path already
+        // resolved (and stays authoritative — e.g. a deletion there wins).
+        if self.primary_worktree().ok().flatten().is_some() {
+            return None;
+        }
+
+        let spec = "HEAD:.config/wt.toml";
+        match self.run_command_output(&["show", spec]) {
+            Ok(output) if output.status.success() => Some((
+                String::from_utf8_lossy(&output.stdout).into_owned(),
+                PathBuf::from(spec),
+            )),
+            // A non-zero exit (typically 128, path absent from the tree) or a
+            // rare spawn failure: treat as "no project config", the same result
+            // as an absent file on disk.
+            _ => None,
+        }
     }
 
     /// Load the project configuration (.config/wt.toml) if it exists.
