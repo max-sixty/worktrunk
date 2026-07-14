@@ -6,6 +6,7 @@ use crate::common::{
 };
 use ansi_str::AnsiStr;
 use insta_cmd::assert_cmd_snapshot;
+use path_slash::PathExt;
 use rstest::rstest;
 use std::fs;
 use std::path::Path;
@@ -7032,6 +7033,283 @@ fn test_switch_format_json_create(repo: TestRepo) {
     assert_eq!(json["branch"], "json-test");
     assert!(json["path"].as_str().unwrap().contains("json-test"));
     assert_eq!(json["created_branch"], true);
+}
+
+#[rstest]
+fn test_switch_worktree_path_override_template_beats_config_layers(repo: TestRepo) {
+    let destinations = TempDir::new().unwrap();
+    let root = destinations.path().to_slash_lossy();
+    let repo_name = repo.root_path().file_name().unwrap().to_str().unwrap();
+    let file_template = format!("{root}/file-{{{{ branch | sanitize }}}}");
+    let env_template = format!("{root}/env-{{{{ branch | sanitize }}}}");
+    let config_set_template = format!("{root}/config-set-{{{{ branch | sanitize }}}}");
+    let override_template = format!("{root}/explicit-{{{{ repo }}}}.{{{{ branch | sanitize }}}}");
+    repo.write_test_config(&format!("worktree-path = \"{file_template}\"\n"));
+
+    let output = repo
+        .wt_command()
+        .env("WORKTRUNK_WORKTREE_PATH", &env_template)
+        .arg("--config-set")
+        .arg(format!("worktree-path = \"{config_set_template}\""))
+        .args(["switch", "--create", "feature/override"])
+        .arg("--worktree-path")
+        .arg(&override_template)
+        .args(["--no-cd", "--no-hooks", "--yes", "--format=json"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let expected = destinations
+        .path()
+        .join(format!("explicit-{repo_name}.feature-override"));
+    assert_eq!(Path::new(json["path"].as_str().unwrap()), expected);
+    assert!(expected.exists(), "explicit worktree path should exist");
+    assert!(!destinations.path().join("file-feature-override").exists());
+    assert!(!destinations.path().join("env-feature-override").exists());
+    assert!(
+        !destinations
+            .path()
+            .join("config-set-feature-override")
+            .exists()
+    );
+}
+
+#[rstest]
+fn test_switch_worktree_path_override_is_not_persisted(repo: TestRepo) {
+    let destinations = TempDir::new().unwrap();
+    let root = destinations.path().to_slash_lossy();
+    let config_contents =
+        format!("worktree-path = \"{root}/configured-{{{{ branch | sanitize }}}}\"\n");
+    repo.write_test_config(&config_contents);
+    let config_before = fs::read_to_string(repo.test_config_path()).unwrap();
+    let explicit_path = destinations.path().join("explicit-literal");
+
+    let first = repo
+        .wt_command()
+        .args(["switch", "--create", "override-once"])
+        .arg("--worktree-path")
+        .arg(&explicit_path)
+        .args(["--no-cd", "--no-hooks", "--yes", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(
+        first.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let first_json: serde_json::Value = serde_json::from_slice(&first.stdout).unwrap();
+    assert_eq!(
+        Path::new(first_json["path"].as_str().unwrap()),
+        explicit_path
+    );
+
+    let second = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "configured-next",
+            "--no-cd",
+            "--no-hooks",
+            "--yes",
+            "--format=json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        second.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    let second_json: serde_json::Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert_eq!(
+        Path::new(second_json["path"].as_str().unwrap()),
+        destinations.path().join("configured-configured-next")
+    );
+    assert_eq!(
+        fs::read_to_string(repo.test_config_path()).unwrap(),
+        config_before
+    );
+}
+
+#[rstest]
+fn test_switch_worktree_path_override_existing_local_branch(repo: TestRepo) {
+    let destinations = TempDir::new().unwrap();
+    let destination = destinations.path().join("existing-local");
+    repo.run_git(&["branch", "existing-local"]);
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "existing-local"])
+        .arg("--worktree-path")
+        .arg(&destination)
+        .args(["--no-cd", "--no-hooks", "--yes", "--format=json"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(Path::new(json["path"].as_str().unwrap()), destination);
+    assert!(destination.exists(), "explicit worktree path should exist");
+}
+
+#[rstest]
+fn test_switch_worktree_path_override_default_branch_when_main_worktree_is_parked(repo: TestRepo) {
+    let destinations = TempDir::new().unwrap();
+    let destination = destinations.path().join("main");
+    repo.run_git(&["switch", "-c", "parking"]);
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "main"])
+        .arg("--worktree-path")
+        .arg(&destination)
+        .args(["--no-cd", "--no-hooks", "--yes", "--format=json"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(Path::new(json["path"].as_str().unwrap()), destination);
+    assert_eq!(
+        repo.git_output(&[
+            "-C",
+            destination.to_str().unwrap(),
+            "branch",
+            "--show-current"
+        ]),
+        "main"
+    );
+}
+
+#[rstest]
+fn test_switch_worktree_path_override_remote_branch(#[from(repo_with_remote)] repo: TestRepo) {
+    let destinations = TempDir::new().unwrap();
+    let destination = destinations.path().join("remote-feature");
+    repo.run_git(&["branch", "remote-feature"]);
+    repo.run_git(&["push", "origin", "remote-feature"]);
+    repo.run_git(&["branch", "-D", "remote-feature"]);
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "remote-feature"])
+        .arg("--worktree-path")
+        .arg(&destination)
+        .args(["--no-cd", "--no-hooks", "--yes", "--format=json"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(Path::new(json["path"].as_str().unwrap()), destination);
+    assert!(destination.exists(), "explicit worktree path should exist");
+    assert_eq!(
+        repo.git_output(&["rev-parse", "--abbrev-ref", "remote-feature@{upstream}"]),
+        "origin/remote-feature"
+    );
+}
+
+#[rstest]
+fn test_switch_worktree_path_override_rejects_existing_worktree(mut repo: TestRepo) {
+    repo.add_worktree("existing-worktree");
+    let destinations = TempDir::new().unwrap();
+    let override_path = destinations.path().join("must-not-be-created");
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "existing-worktree"])
+        .arg("--worktree-path")
+        .arg(&override_path)
+        .args(["--no-cd", "--no-hooks", "--yes"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("already has a worktree"),
+        "stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("existing-worktree") && stderr.contains(" @ "),
+        "stderr should identify the existing worktree: {stderr}"
+    );
+    assert!(
+        !override_path.exists(),
+        "override path must remain untouched"
+    );
+}
+
+#[rstest]
+fn test_switch_worktree_path_override_requires_explicit_target(repo: TestRepo) {
+    let destination = TempDir::new().unwrap().path().join("unused");
+    let output = repo
+        .wt_command()
+        .arg("switch")
+        .arg("--worktree-path")
+        .arg(destination)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("<BRANCH>"), "stderr: {stderr}");
+}
+
+#[cfg(unix)]
+#[rstest]
+fn test_switch_worktree_path_override_rejects_dangling_symlink(repo: TestRepo) {
+    use std::os::unix::fs::symlink;
+
+    let destinations = TempDir::new().unwrap();
+    let destination = destinations.path().join("dangling-worktree");
+    let missing_target = destinations.path().join("missing-target");
+    symlink(&missing_target, &destination).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "dangling-override"])
+        .arg("--worktree-path")
+        .arg(&destination)
+        .args(["--no-cd", "--no-hooks", "--yes"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("already exists"), "stderr: {stderr}");
+    assert_eq!(fs::read_link(&destination).unwrap(), missing_target);
+    let branch = repo
+        .git_command()
+        .args([
+            "show-ref",
+            "--verify",
+            "--quiet",
+            "refs/heads/dangling-override",
+        ])
+        .run()
+        .unwrap();
+    assert!(
+        !branch.status.success(),
+        "branch must not be created when the destination is occupied"
+    );
 }
 
 #[rstest]

@@ -81,13 +81,24 @@ pub fn compute_worktree_path(
     branch: &str,
     config: &UserConfig,
 ) -> anyhow::Result<PathBuf> {
+    compute_worktree_path_with_override(repo, branch, config, None)
+}
+
+/// Compute a worktree path, preferring a one-shot template over configuration.
+pub(super) fn compute_worktree_path_with_override(
+    repo: &Repository,
+    branch: &str,
+    config: &UserConfig,
+    worktree_path_override: Option<&str>,
+) -> anyhow::Result<PathBuf> {
     let repo_root = repo.repo_path()?;
     let default_branch = repo.default_branch().unwrap_or_default();
     let is_bare = repo.is_bare()?;
 
-    // Default branch lives at repo root (main worktree), not a templated path.
-    // Exception: bare repos have no main worktree, so all branches use templated paths.
-    if !is_bare && branch == default_branch {
+    // The explicit override always wins. Without one, the default branch lives
+    // at the repo root; bare repos have no main worktree, so all branches use
+    // templated paths.
+    if worktree_path_override.is_none() && !is_bare && branch == default_branch {
         return Ok(repo_root.to_path_buf());
     }
 
@@ -107,8 +118,13 @@ pub fn compute_worktree_path(
             )
         })?;
 
-    let project = repo.project_identifier().ok();
-    let expanded_path = config.format_path(repo_name, branch, repo, project.as_deref())?;
+    let expanded_path = match worktree_path_override {
+        Some(template) => config.format_path_with_template(template, repo_name, branch, repo)?,
+        None => {
+            let project = repo.project_identifier().ok();
+            config.format_path(repo_name, branch, repo, project.as_deref())?
+        }
+    };
 
     Ok(repo_root.join(expanded_path).normalize())
 }

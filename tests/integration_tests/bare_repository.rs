@@ -1977,6 +1977,45 @@ fn test_bare_repo_worktree_path_prompt_non_interactive_warning() {
     });
 }
 
+/// An explicit one-shot path makes the configured-path repair irrelevant.
+/// It must not warn, prompt, or persist a project-level replacement before
+/// creating the worktree at the requested destination.
+#[test]
+fn test_bare_repo_worktree_path_prompt_skipped_for_explicit_override() {
+    let test = setup_unconfigured_nested_bare_repo();
+    let main_worktree = test.project_path().join("main");
+    let override_path = test.project_path().join("feature-override");
+    let config_before = fs::read_to_string(test.config_path()).unwrap();
+
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    cmd.args([
+        "switch",
+        "--create",
+        "feature",
+        "--worktree-path",
+        override_path.to_str().unwrap(),
+    ])
+    .current_dir(&main_worktree);
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "switch failed:\n{stderr}");
+    assert!(
+        !stderr.contains("Bare repo at") && !stderr.contains("Configure worktree-path"),
+        "Explicit override should skip the configured-path repair.\nstderr: {stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(test.config_path()).unwrap(),
+        config_before,
+        "Explicit override must not persist path configuration"
+    );
+    assert!(
+        override_path.exists(),
+        "Worktree should be created at the explicit override"
+    );
+}
+
 /// Symbolic identifiers (-, @, pr:N) are passed before branch resolution, so
 /// the example paths in the prompt would show the raw symbol. The function
 /// must return early without prompting.

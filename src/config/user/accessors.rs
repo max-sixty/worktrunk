@@ -211,6 +211,17 @@ impl UserConfig {
             Some(p) => self.worktree_path_for_project(p),
             None => self.worktree_path(),
         };
+        self.format_path_with_template(&template, main_worktree, branch, repo)
+    }
+
+    /// Format a worktree path using an explicit template.
+    pub fn format_path_with_template(
+        &self,
+        template: &str,
+        main_worktree: &str,
+        branch: &str,
+        repo: &crate::git::Repository,
+    ) -> anyhow::Result<String> {
         // Use native path format (not POSIX) since this is used for filesystem operations
         let repo_path = repo.repo_path()?.to_string_lossy().to_string();
         let mut vars = HashMap::new();
@@ -225,7 +236,7 @@ impl UserConfig {
             vars.insert("owner", owner.as_str());
         }
         Ok(expand_template(
-            &template,
+            template,
             &vars,
             ShellEscapeMode::Literal,
             repo,

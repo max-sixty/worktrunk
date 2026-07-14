@@ -372,6 +372,10 @@ pub(crate) struct SwitchArgs {
     #[arg(short = 'b', long, requires = "branch", add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
     pub(crate) base: Option<String>,
 
+    /// Worktree path template when creating a worktree
+    #[arg(long, value_name = "template", requires = "branch")]
+    pub(crate) worktree_path: Option<String>,
+
     /// Command to run after switch
     ///
     /// Replaces the wt process with the command after switching, giving
@@ -630,7 +634,7 @@ The `--create` flag creates a new branch from `--base` — the default branch un
 If the branch already has a worktree, `wt switch` changes directories to it. Otherwise, it creates one:
 
 1. Runs [pre-switch hooks](@/hook.md#hook-types), blocking until complete
-2. Creates worktree at configured path
+2. Creates worktree at the effective path
 3. Switches to new directory
 4. Runs [pre-start hooks](@/hook.md#hook-types), blocking until complete
 5. Spawns [post-start](@/hook.md#hook-types) and [post-switch hooks](@/hook.md#hook-types) in the background
@@ -639,8 +643,11 @@ If the branch already has a worktree, `wt switch` changes directories to it. Oth
 $ wt switch feature                        # Existing branch → creates worktree
 $ wt switch --create feature               # New branch and worktree
 $ wt switch --create fix --base release    # New branch from release
+$ wt switch feature/auth --worktree-path '/private/tmp/{{ repo }}.{{ branch | sanitize }}'
 $ wt switch --create temp --no-hooks       # Skip hooks
 ```
+
+`--worktree-path <template>` overrides the configured path for this invocation whenever switching creates a worktree: for a new `--create` branch, an existing local or remote branch without a worktree, or a resolved PR/MR branch. If the target already has a worktree, the command fails instead of ignoring the override.
 
 ## Shortcuts
 

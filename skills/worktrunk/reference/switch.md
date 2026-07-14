@@ -24,7 +24,7 @@ The `--create` flag creates a new branch from `--base` — the default branch un
 If the branch already has a worktree, `wt switch` changes directories to it. Otherwise, it creates one:
 
 1. Runs [pre-switch hooks](https://worktrunk.dev/hook/#hook-types), blocking until complete
-2. Creates worktree at configured path
+2. Creates worktree at the effective path
 3. Switches to new directory
 4. Runs [pre-start hooks](https://worktrunk.dev/hook/#hook-types), blocking until complete
 5. Spawns [post-start](https://worktrunk.dev/hook/#hook-types) and [post-switch hooks](https://worktrunk.dev/hook/#hook-types) in the background
@@ -33,8 +33,11 @@ If the branch already has a worktree, `wt switch` changes directories to it. Oth
 $ wt switch feature                        # Existing branch → creates worktree
 $ wt switch --create feature               # New branch and worktree
 $ wt switch --create fix --base release    # New branch from release
+$ wt switch feature/auth --worktree-path '/private/tmp/{{ repo }}.{{ branch | sanitize }}'
 $ wt switch --create temp --no-hooks       # Skip hooks
 ```
+
+`--worktree-path <template>` overrides the configured path for this invocation whenever switching creates a worktree: for a new `--create` branch, an existing local or remote branch without a worktree, or a resolved PR/MR branch. If the target already has a worktree, the command fails instead of ignoring the override.
 
 ## Shortcuts
 
@@ -165,6 +168,9 @@ Options:
 
           Defaults to default branch. Supports the same shortcuts as the branch argument: ^, @, -,
           pr:{N}, mr:{N}.
+
+      --worktree-path <template>
+          Worktree path template when creating a worktree
 
   -x, --execute <EXECUTE>
           Command to run after switch
