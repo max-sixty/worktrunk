@@ -5051,9 +5051,9 @@ fn test_project_config_path_env_var_override(repo: TestRepo, temp_home: TempDir)
 /// A relative `WORKTRUNK_PROJECT_CONFIG_PATH` resolves against the worktree
 /// root — the same anchor as the default `.config/wt.toml` — so the override
 /// behaves identically from any subdirectory instead of silently depending on
-/// the process cwd.
+/// the process cwd, and each worktree anchors to its own root.
 #[rstest]
-fn test_project_config_path_env_var_relative(repo: TestRepo, temp_home: TempDir) {
+fn test_project_config_path_env_var_relative(mut repo: TestRepo, temp_home: TempDir) {
     fs::write(
         repo.root_path().join("custom-wt.toml"),
         "pre-start = \"custom-hook\"\n",
@@ -5062,7 +5062,25 @@ fn test_project_config_path_env_var_relative(repo: TestRepo, temp_home: TempDir)
     let subdir = repo.root_path().join("sub");
     fs::create_dir_all(&subdir).unwrap();
 
-    for cwd in [repo.root_path(), subdir.as_path()] {
+    // A linked worktree carries its own config file at the same relative
+    // location; running there must load that file, not the main worktree's.
+    let linked = repo.add_worktree("linked-anchor");
+    fs::write(
+        linked.join("custom-wt.toml"),
+        "pre-start = \"linked-hook\"\n",
+    )
+    .unwrap();
+
+    let cases = [
+        (
+            repo.root_path().to_path_buf(),
+            repo.root_path().to_path_buf(),
+            "custom-hook",
+        ),
+        (subdir, repo.root_path().to_path_buf(), "custom-hook"),
+        (linked.clone(), linked, "linked-hook"),
+    ];
+    for (cwd, expected_root, expected_hook) in &cases {
         let mut cmd = repo.wt_command();
         set_xdg_config_path(&mut cmd, temp_home.path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -5080,11 +5098,11 @@ fn test_project_config_path_env_var_relative(repo: TestRepo, temp_home: TempDir)
             serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
         assert_eq!(
             json["project"]["path"].as_str().unwrap(),
-            repo.root_path().join("custom-wt.toml").to_str().unwrap(),
+            expected_root.join("custom-wt.toml").to_str().unwrap(),
             "relative override should anchor to the worktree root from {cwd:?}"
         );
         assert_eq!(
-            json["project"]["config"]["pre-start"], "custom-hook",
+            json["project"]["config"]["pre-start"], *expected_hook,
             "relative override should load the root-anchored config from {cwd:?}, got: {}",
             json["project"]
         );
@@ -5115,7 +5133,9 @@ fn test_project_config_path_env_var_relative_no_worktree_errors() {
     );
 
     // Without the override, the same repo has no project config location at
-    // all; `wt config update` skips the project config rather than erroring.
+    // all; `wt config update` skips the project config rather than erroring,
+    // and `wt config show` reports the absence rather than claiming to be
+    // outside a git repository.
     let mut cmd = test.wt_command();
     cmd.args(["config", "update", "--yes"])
         .current_dir(test.bare_repo_path());
@@ -5124,6 +5144,21 @@ fn test_project_config_path_env_var_relative_no_worktree_errors() {
         output.status.success(),
         "config update should skip a missing project config location; stderr:\n{}",
         String::from_utf8_lossy(&output.stderr)
+    );
+
+    let mut cmd = test.wt_command();
+    cmd.args(["config", "show"])
+        .current_dir(test.bare_repo_path());
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "config show should succeed with no project config location; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.contains("No project config"),
+        "config show should report the missing project config location; stdout:\n{stdout}"
     );
 }
 
