@@ -5113,6 +5113,18 @@ fn test_project_config_path_env_var_relative_no_worktree_errors() {
         stderr.contains("WORKTRUNK_PROJECT_CONFIG_PATH is relative"),
         "error should name the env var and the problem; stderr:\n{stderr}"
     );
+
+    // Without the override, the same repo has no project config location at
+    // all; `wt config update` skips the project config rather than erroring.
+    let mut cmd = test.wt_command();
+    cmd.args(["config", "update", "--yes"])
+        .current_dir(test.bare_repo_path());
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "config update should skip a missing project config location; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 /// On Windows, an override that is neither fully absolute nor relative — a
