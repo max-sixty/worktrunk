@@ -16,10 +16,15 @@ already contains** one:
 - shipped automation that runs the above: `plugins/*/hooks/hooks.json`,
   `hooks/hooks.json`, `hooks/wt.sh`, and skill or alias examples users copy
 
-Both directions matter. A PR that adds a call is obvious. A PR that edits a file
-already holding one is the subtle case: a change near the force-delete path in
-`src/git/remove.rs` can alter its behavior without the destructive line
-appearing in the diff.
+Scope the hold to what the diff can reach, not mere co-location. In source
+(`src/git/remove.rs`), a change near the force-delete path can alter its
+behavior without the destructive line appearing in the diff — proximity within
+the same function or module holds. In structured config with independent entries
+(`hooks.json`, a multi-entry alias table), hold only when the diff touches the
+destructive entry itself: editing the creation-only `WorktreeCreate` command
+can't change what the separate `WorktreeRemove` hook does. Trace the diff to a
+data-destruction path; if it can't reach one, don't hold on the file's other
+contents.
 
 On a match:
 
