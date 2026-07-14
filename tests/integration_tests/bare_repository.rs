@@ -884,6 +884,62 @@ fn test_bare_repo_project_config_found_when_primary_on_non_default_branch() {
 }
 
 #[test]
+fn test_bare_repo_no_project_config_when_primary_off_branch_and_none_present() {
+    // Companion to the #3461 fix: the fallback that scans worktrees for a
+    // `.config/wt.toml` when the default branch is checked out nowhere must not
+    // conjure a config that doesn't exist. With the primary off the default
+    // branch and no worktree shipping a config, resolution stays `None` — the
+    // command succeeds and no project hook runs.
+    let test = BareRepoTest::new();
+
+    // Create main worktree (the primary worktree for bare repos) — no config
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit");
+
+    // Move the primary worktree off the default branch.
+    let output = test
+        .git_command(&main_worktree)
+        .args(["checkout", "-b", "feature-x"])
+        .run()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "checkout -b feature-x failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Run `wt switch --create foo` from the bare repo root. With no project
+    // config anywhere, it should still succeed.
+    let (cd_path, exec_path, _guard) = directive_files();
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    cmd.args(["switch", "--create", "foo", "--yes"])
+        .current_dir(test.bare_repo_path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt switch should succeed with no project config:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // No config exists, so no worktree should be reported as carrying one and
+    // no project hook can run. `wt config show` from the bare root confirms the
+    // fallback found nothing rather than resolving a phantom config.
+    let mut show = wt_command();
+    test.configure_wt_cmd(&mut show);
+    show.args(["config", "show"]).current_dir(test.bare_repo_path());
+    let show_out = show.output().unwrap();
+    let stdout = String::from_utf8_lossy(&show_out.stdout);
+    assert!(
+        !stdout.contains("[pre-start]") && !stdout.contains("[post-start]"),
+        "no project hooks should be resolved when no config exists:\n{stdout}"
+    );
+}
+
+#[test]
 fn test_bare_repo_project_config_found_with_dash_c_flag() {
     // Regression test for #1691 (comment): project config in the primary worktree
     // should be found when using `-C <repo>` from an unrelated directory.
