@@ -636,8 +636,11 @@ impl Repository {
     ///
     /// Otherwise: uses the current worktree when inside one (both normal and
     /// bare repos). For bare repos at the bare root (outside any worktree),
-    /// falls back to the primary worktree. Returns `None` when no worktree can
-    /// be determined (bare repo with no linked worktrees).
+    /// falls back to the primary worktree; if the default branch is checked out
+    /// in no worktree (so `primary_worktree()` is `None`), falls back further to
+    /// the first non-bare worktree that ships a `.config/wt.toml`, so project
+    /// config is not silently dropped while the primary is on another branch
+    /// (#3461). Returns `None` when no worktree carries a config.
     ///
     /// "The current worktree" is whatever this `Repository` was rooted at, so
     /// the answer to "which `.config/wt.toml` does a hook read" is decided by
@@ -662,10 +665,27 @@ impl Repository {
         }
 
         if self.is_bare().unwrap_or(false) {
-            // At bare repo root — use primary worktree
-            return Ok(self
-                .primary_worktree()?
-                .map(|p| p.join(".config").join("wt.toml")));
+            // At bare repo root — use the primary worktree (the one holding the
+            // default branch).
+            if let Some(primary) = self.primary_worktree()? {
+                return Ok(Some(primary.join(".config").join("wt.toml")));
+            }
+
+            // The default branch may be checked out in no worktree at all — a
+            // common transient in agent-driven workflows, where the primary
+            // worktree is briefly parked on a PR/feature branch. In that state
+            // `primary_worktree()` returns None, and returning None here would
+            // silently drop the entire project config (and every project hook)
+            // with no error (#3461). Project config is a repo-level artifact
+            // that lives in every worktree, so fall back to the first non-bare
+            // worktree that actually ships a `.config/wt.toml`.
+            for wt in self.list_worktrees()? {
+                let candidate = wt.path.join(".config").join("wt.toml");
+                if candidate.is_file() {
+                    return Ok(Some(candidate));
+                }
+            }
+            return Ok(None);
         }
 
         Ok(None)

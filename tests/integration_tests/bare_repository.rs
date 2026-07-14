@@ -803,6 +803,87 @@ fn test_bare_repo_project_config_found_from_bare_root() {
 }
 
 #[test]
+fn test_bare_repo_project_config_found_when_primary_on_non_default_branch() {
+    // Regression test for #3461: project config in the primary worktree must
+    // still be found from the bare root when the primary worktree is
+    // temporarily checked out to a *non-default* branch. This is the gap left
+    // by #1691's fix — `project_config_path()` locates the primary worktree
+    // via `primary_worktree()`, which looks it up by "which worktree holds the
+    // default branch". When an agent-driven workflow briefly checks out a PR
+    // branch in the primary worktree, no worktree holds the default branch, so
+    // the project source is dropped silently and NO project hooks fire.
+    let test = BareRepoTest::new();
+
+    // Create main worktree (the primary worktree for bare repos)
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit");
+
+    // Place project config in the primary worktree's .config/wt.toml
+    let config_dir = main_worktree.join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+
+    // Use a marker file to prove the hook ran
+    let marker_path = test.bare_repo_path().join("hook-ran-off-branch.marker");
+    let marker_str = marker_path.to_str().unwrap().replace('\\', "/");
+    fs::write(
+        config_dir.join("wt.toml"),
+        format!("post-start = \"echo hook-executed > '{}'\"\n", marker_str),
+    )
+    .unwrap();
+
+    // Commit the config so it's part of the worktree
+    let output = test
+        .git_command(&main_worktree)
+        .args(["add", ".config/wt.toml"])
+        .run()
+        .unwrap();
+    assert!(output.status.success());
+    test.commit_in(&main_worktree, "Add project config");
+
+    // Move the primary worktree off the default branch, so no worktree holds
+    // `main`. This is the exact state that triggers the regression.
+    let output = test
+        .git_command(&main_worktree)
+        .args(["checkout", "-b", "feature-x"])
+        .run()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "checkout -b feature-x failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Now run `wt switch --create test-repro` from the bare repo root.
+    let (cd_path, exec_path, _guard) = directive_files();
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    cmd.args(["switch", "--create", "test-repro", "--yes"])
+        .current_dir(test.bare_repo_path());
+
+    let output = cmd.output().unwrap();
+
+    if !output.status.success() {
+        panic!(
+            "wt switch failed:\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // The project hook must still run even though the primary worktree is on a
+    // non-default branch.
+    wait_for_file_content(&marker_path);
+    let content = fs::read_to_string(&marker_path).unwrap();
+    assert!(
+        content.contains("hook-executed"),
+        "Project hook must run from the bare root even when the primary worktree \
+         is on a non-default branch (#3461). Marker file content: {:?}",
+        content
+    );
+}
+
+#[test]
 fn test_bare_repo_project_config_found_with_dash_c_flag() {
     // Regression test for #1691 (comment): project config in the primary worktree
     // should be found when using `-C <repo>` from an unrelated directory.
