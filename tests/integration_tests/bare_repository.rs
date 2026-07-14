@@ -969,6 +969,99 @@ fn test_bare_repo_no_project_config_when_primary_off_branch_and_none_present() {
 }
 
 #[test]
+fn test_bare_repo_project_config_found_from_linked_worktree_when_primary_off_branch() {
+    // Regression for the #3461 fix: the object-store fallback must resolve the
+    // *default branch's* config by name, not via `HEAD`. `git show HEAD:...`
+    // resolves HEAD against the invocation cwd's per-worktree HEAD, so when `wt`
+    // runs from inside a linked worktree parked on another branch — the common
+    // agent case — HEAD is that worktree's branch, not the default. Reading
+    // HEAD there dropped the default branch's config and every project hook.
+    //
+    // This test runs `wt switch --create` from inside a *second* linked worktree
+    // whose branch has no `.config/wt.toml` on disk, with the default branch
+    // checked out nowhere, and asserts the default branch's committed hook still
+    // fires. `git show HEAD:...` would read the invoking worktree's branch
+    // (no config) and silently drop the hook; `git show <default>:...` finds it.
+    let test = BareRepoTest::new();
+
+    // Primary worktree on the default branch, carrying the project config.
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit");
+
+    let config_dir = main_worktree.join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    let marker_path = test.bare_repo_path().join("hook-ran-from-linked.marker");
+    let marker_str = marker_path.to_str().unwrap().replace('\\', "/");
+    fs::write(
+        config_dir.join("wt.toml"),
+        format!("post-start = \"echo hook-executed > '{}'\"\n", marker_str),
+    )
+    .unwrap();
+    let output = test
+        .git_command(&main_worktree)
+        .args(["add", ".config/wt.toml"])
+        .run()
+        .unwrap();
+    assert!(output.status.success());
+    test.commit_in(&main_worktree, "Add project config");
+
+    // A second linked worktree whose branch drops the config on disk, so
+    // resolution there must fall through to the object-store read.
+    let other_worktree = test.create_worktree("other", "other");
+    let output = test
+        .git_command(&other_worktree)
+        .args(["rm", ".config/wt.toml"])
+        .run()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git rm failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    test.commit_in(&other_worktree, "Remove project config on other branch");
+
+    // Park the primary off the default branch, so `main` is checked out nowhere.
+    let output = test
+        .git_command(&main_worktree)
+        .args(["checkout", "-b", "feature-x"])
+        .run()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "checkout -b feature-x failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Run `wt switch --create` from *inside* the `other` worktree (HEAD = other).
+    let (cd_path, exec_path, _guard) = directive_files();
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    cmd.args(["switch", "--create", "test-repro", "--yes"])
+        .current_dir(&other_worktree);
+
+    let output = cmd.output().unwrap();
+    if !output.status.success() {
+        panic!(
+            "wt switch failed:\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // The default branch's committed hook must run even though `wt` was invoked
+    // from a linked worktree whose own branch carries no config.
+    wait_for_file_content(&marker_path);
+    let content = fs::read_to_string(&marker_path).unwrap();
+    assert!(
+        content.contains("hook-executed"),
+        "Project hook must resolve the default branch's config by name (not via \
+         cwd `HEAD`) when invoked from a linked worktree. Marker content: {:?}",
+        content
+    );
+}
+
+#[test]
 fn test_bare_repo_project_config_found_with_dash_c_flag() {
     // Regression test for #1691 (comment): project config in the primary worktree
     // should be found when using `-C <repo>` from an unrelated directory.

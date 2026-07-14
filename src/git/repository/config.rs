@@ -712,14 +712,17 @@ impl Repository {
     /// error-swallowing shape `alias.rs` uses for config resolution, and safe
     /// because the fallback only ever adds hooks, never risks data.
     ///
-    /// The read uses `HEAD` rather than a resolved branch name: at the bare
-    /// root the repo's own `HEAD` is a symbolic ref to the default branch (it
-    /// is what local default-branch inference reads), so `HEAD:.config/wt.toml`
-    /// reads the default branch's committed config, always resolves in a bare
-    /// repo, and needs no separate branch lookup. The returned `PathBuf` is a
-    /// display-only label of the form `HEAD:.config/wt.toml` — a git revision
-    /// spec, not a filesystem path. Nothing is read from or written to it; it
-    /// only annotates diagnostics (e.g. a parse error) with the source.
+    /// The read resolves the default branch **by name**
+    /// (`<default-branch>:.config/wt.toml`), not via `HEAD`. `git show` resolves
+    /// `HEAD` against the invocation cwd's per-worktree HEAD, and this runs with
+    /// `discovery_path` as cwd — a linked worktree parked on some other branch
+    /// when `wt` is invoked from inside one (the common agent case). Reading
+    /// `HEAD` there would read that worktree's branch, dropping or mis-sourcing
+    /// the default branch's config; an absolute branch ref is cwd-independent.
+    /// The returned `PathBuf` is a display-only label of the form
+    /// `<default-branch>:.config/wt.toml` — a git revision spec, not a
+    /// filesystem path. Nothing is read from or written to it; it only
+    /// annotates diagnostics (e.g. a parse error) with the object-store source.
     pub fn default_branch_project_config_content(&self) -> Option<(String, PathBuf)> {
         if !self.is_bare().unwrap_or(false) {
             return None;
@@ -731,11 +734,11 @@ impl Repository {
             return None;
         }
 
-        let spec = "HEAD:.config/wt.toml";
-        match self.run_command_output(&["show", spec]) {
+        let spec = format!("{}:.config/wt.toml", self.default_branch()?);
+        match self.run_command_output(&["show", &spec]) {
             Ok(output) if output.status.success() => Some((
                 String::from_utf8_lossy(&output.stdout).into_owned(),
-                PathBuf::from(spec),
+                PathBuf::from(&spec),
             )),
             // A non-zero exit (typically 128, path absent from the tree) or a
             // rare spawn failure: treat as "no project config", the same result
