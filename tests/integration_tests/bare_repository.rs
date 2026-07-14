@@ -930,7 +930,8 @@ fn test_bare_repo_no_project_config_when_primary_off_branch_and_none_present() {
     // fallback found nothing rather than resolving a phantom config.
     let mut show = wt_command();
     test.configure_wt_cmd(&mut show);
-    show.args(["config", "show"]).current_dir(test.bare_repo_path());
+    show.args(["config", "show"])
+        .current_dir(test.bare_repo_path());
     let show_out = show.output().unwrap();
     let stdout = String::from_utf8_lossy(&show_out.stdout);
     assert!(
