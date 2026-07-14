@@ -2848,6 +2848,69 @@ fn test_config_show_powershell_detected_via_psmodulepath(mut repo: TestRepo, tem
     });
 }
 
+/// The process-tree shell wins over $SHELL in the diagnostics: with zsh as
+/// the detected ancestor and bash as the login shell, config show surfaces
+/// "Detected shell: zsh (process tree)" next to $SHELL, and the verify hint
+/// targets zsh.
+#[rstest]
+fn test_config_show_detected_shell_via_process_tree(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    // .zshrc has integration for the shell the process tree detects
+    fs::write(
+        temp_home.path().join(".zshrc"),
+        r#"if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)"; fi
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+        // Login shell differs from the process-tree ancestor. The override
+        // must come after configure_wt_cmd, which pins it to "".
+        cmd.env("SHELL", "/bin/bash");
+        cmd.env("WORKTRUNK_TEST_PARENT_SHELL", "zsh");
+        cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1");
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Without the test override, the real process-tree walk runs. Its result
+/// depends on the environment (dev shell, CI runner), so this asserts only
+/// that the walk completes and config show still renders — exercising the
+/// production walk end-to-end rather than the override shortcut.
+#[rstest]
+fn test_config_show_runs_real_ancestry_walk(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    repo.configure_mock_commands(&mut cmd);
+    cmd.arg("config").arg("show").current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    set_xdg_config_path(&mut cmd, temp_home.path());
+    cmd.env_remove("WORKTRUNK_TEST_PARENT_SHELL");
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "config show should succeed with the real walk: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Shell integration"),
+        "shell section should render: {stdout}"
+    );
+}
+
 /// Test that deprecated [commit-generation] section shows warning and creates migration file
 #[rstest]
 fn test_deprecated_commit_generation_section_shows_warning(repo: TestRepo, temp_home: TempDir) {

@@ -139,6 +139,12 @@ const UNSUPPORTED_SHELLS: &[&str] = &[
 /// True when `name` is `prefix` optionally followed by a version-ish suffix:
 /// "zsh" matches "zsh", "zsh-5.9", "zsh5" — but not "zshx" ("fishd",
 /// "bashtop", and "numactl" must not read as shells).
+///
+/// The dash boundary is deliberately permissive so versioned binaries keep
+/// matching (`zsh-5.9`, `pwsh-preview`); the cost is that a dashed tool name
+/// starting with a shell name (`bash-language-server`, or its 15-char
+/// `/proc` comm truncation `bash-language-s`) also classifies as that shell.
+/// Acceptable: such tools don't sit in wt's interactive ancestor chain.
 fn name_matches_shell(name: &str, prefix: &str) -> bool {
     name.strip_prefix(prefix)
         .is_some_and(|rest| !rest.chars().next().is_some_and(|c| c.is_ascii_alphabetic()))
@@ -172,23 +178,38 @@ fn detect_ancestor_shell() -> Option<AncestorShell> {
 
     #[cfg(unix)]
     {
-        let mut pid = std::os::unix::process::parent_id();
-        // Bounded: deep enough for wrappers (git, sudo, script runners), small
-        // enough that a cycle or exotic tree can't stall the warning path.
-        for _ in 0..16 {
-            if pid <= 1 {
-                return None;
-            }
-            let (name, ppid) = process_name_and_ppid(pid)?;
-            tracing::debug!(pid, ppid, name, "shell ancestry hop");
-            if let Some(found) = ancestor_from_name(&name) {
-                return Some(found);
-            }
-            if ppid == pid {
-                return None;
-            }
-            pid = ppid;
+        walk_ancestors(std::os::unix::process::parent_id(), process_name_and_ppid)
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
+
+/// Walk up the process tree from `pid`, looking each ancestor up in
+/// `lookup`, until a shell stops the walk. Bounded: deep enough for wrappers
+/// (git, sudo, script runners), small enough that a cycle or exotic tree
+/// can't stall the warning path. An unreadable hop ends the walk — without a
+/// parent pid there is nothing to continue from — and callers fall back to
+/// `$SHELL`.
+#[cfg(unix)]
+fn walk_ancestors(
+    mut pid: u32,
+    lookup: impl Fn(u32) -> Option<(String, u32)>,
+) -> Option<AncestorShell> {
+    for _ in 0..16 {
+        if pid <= 1 {
+            return None;
         }
+        let (name, ppid) = lookup(pid)?;
+        tracing::debug!(pid, ppid, name, "shell ancestry hop");
+        if let Some(found) = ancestor_from_name(&name) {
+            return Some(found);
+        }
+        if ppid == pid {
+            return None;
+        }
+        pid = ppid;
     }
     None
 }
@@ -511,6 +532,41 @@ mod tests {
                 ancestor.name
             );
         }
+    }
+
+    /// The ancestry walk stops at the nearest shell, passes through wrappers
+    /// and transparent interpreters, and terminates on init, cycles,
+    /// unreadable hops, and depth exhaustion.
+    #[cfg(unix)]
+    #[test]
+    fn test_walk_ancestors() {
+        use std::collections::HashMap;
+
+        // wt's parent chain: sh (transparent) ← git (wrapper) ← -zsh (login)
+        let table: HashMap<u32, (String, u32)> = HashMap::from([
+            (10, ("sh".to_string(), 9)),
+            (9, ("git".to_string(), 8)),
+            (8, ("-zsh".to_string(), 1)),
+        ]);
+        let found = walk_ancestors(10, |pid| table.get(&pid).cloned())
+            .expect("finds zsh through sh and git");
+        assert_eq!(found.shell, Some(Shell::Zsh));
+        assert_eq!(found.name, "zsh");
+
+        // An unsupported shell stops the walk even with a supported shell
+        // above it — the nearest enclosing shell owns the session.
+        let table: HashMap<u32, (String, u32)> =
+            HashMap::from([(10, ("tcsh".to_string(), 8)), (8, ("zsh".to_string(), 1))]);
+        let found = walk_ancestors(10, |pid| table.get(&pid).cloned()).unwrap();
+        assert_eq!(found.shell, None);
+        assert_eq!(found.name, "tcsh");
+
+        // Terminations, each with no result: starting at init, a ppid
+        // cycle, an unreadable hop, and a >16-deep non-shell chain.
+        assert!(walk_ancestors(1, |_| unreachable!("init is never looked up")).is_none());
+        assert!(walk_ancestors(10, |pid| Some(("looper".to_string(), pid))).is_none());
+        assert!(walk_ancestors(10, |_| None).is_none());
+        assert!(walk_ancestors(u32::MAX, |pid| Some(("wrapper".to_string(), pid - 1))).is_none());
     }
 
     /// The OS probe reads real entries: our own pid resolves to a non-empty
