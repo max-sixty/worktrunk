@@ -533,10 +533,10 @@ pub(crate) fn execute_llm_command(command: &str, prompt: &str) -> anyhow::Result
                     output.status.code().unwrap_or(-1)
                 );
             } else {
-                anyhow::bail!("{}", worktrunk::styling::normalize_carriage_returns(stdout));
+                anyhow::bail!("{}", stdout);
             }
         } else {
-            anyhow::bail!("{}", worktrunk::styling::normalize_carriage_returns(stderr));
+            anyhow::bail!("{}", stderr);
         }
     }
 

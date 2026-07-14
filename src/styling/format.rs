@@ -119,23 +119,6 @@ pub(super) fn wrap_text_at_width(text: &str, max_width: usize) -> Vec<String> {
     lines
 }
 
-/// Normalize carriage returns in captured subprocess output to `\n`.
-///
-/// Commands emit `\r` both in CRLF line endings and as bare progress-meter
-/// rewrites (git's `Receiving objects: 42%\r`). A bare `\r` reaching the
-/// terminal returns the cursor to column 0 and overprints the gutter or
-/// indent of whatever block quotes the output. Normalizing also gives
-/// consumers honest line structure: line counting, per-line truncation, and
-/// indenting all see the lines `\r` hid inside one.
-///
-/// One mechanism, applied at every capture edge: call it wherever subprocess
-/// output is captured into an error payload (`CommandError::from_failed_output`,
-/// `stream_exit_result`, the gh/glab and LLM-command failure captures) —
-/// renderers assume their input is already normalized.
-pub fn normalize_carriage_returns(s: &str) -> String {
-    s.replace("\r\n", "\n").replace('\r', "\n")
-}
-
 /// Formats text with a gutter (single-space with background color) on each line
 ///
 /// This creates a subtle visual separator for quoted content like commands or configuration.

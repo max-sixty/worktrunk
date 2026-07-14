@@ -407,33 +407,6 @@ command = "cat > /dev/null; echo 'Error: connection refused' >&2 && exit 1"
 }
 
 #[rstest]
-fn test_merge_squash_llm_error_stdout_fallback(mut repo_with_main_worktree: TestRepo) {
-    let repo = &mut repo_with_main_worktree;
-    // When the generation command fails with empty stderr, the error detail
-    // falls back to stdout — CR-normalized, so a progress rewrite (bare \r)
-    // renders as separate gutter lines instead of overprinting the gutter.
-
-    let feature_wt = repo.add_worktree("feature");
-    repo.commit_in_worktree(&feature_wt, "file1.txt", "content 1", "feat: new feature");
-    repo.commit_in_worktree(&feature_wt, "file2.txt", "content 2", "fix: bug fix");
-
-    // TOML `\\r` reaches the shell as literal `\r`, which printf converts to
-    // a carriage return on stdout; stderr stays empty.
-    let worktrunk_config = r#"
-[commit.generation]
-command = "cat > /dev/null; printf 'requesting 42%%\\rquota exceeded'; exit 1"
-"#;
-    fs::write(repo.test_config_path(), worktrunk_config).unwrap();
-
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        repo,
-        "merge",
-        &["main"],
-        Some(&feature_wt)
-    ));
-}
-
-#[rstest]
 fn test_merge_squash_single_commit(mut repo_with_main_worktree: TestRepo) {
     let repo = &mut repo_with_main_worktree;
     // Create a feature worktree with only one commit

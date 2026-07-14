@@ -68,7 +68,6 @@ use anyhow::{Context, bail};
 use crate::git::error::GitError;
 use crate::git::{GitRepoInfo, GitRepoProvider, RefType, Repository};
 use crate::shell_exec::Cmd;
-use crate::styling::normalize_carriage_returns;
 
 /// Provider trait for platform-specific PR/MR operations.
 ///
@@ -132,12 +131,11 @@ pub(super) fn run_cli_api(request: CliApiRequest<'_>) -> anyhow::Result<Output> 
 
 pub(super) fn cli_api_error_details(output: &Output) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let details = if stderr.trim().is_empty() {
+    if stderr.trim().is_empty() {
         String::from_utf8_lossy(&output.stdout).trim().to_string()
     } else {
         stderr.trim().to_string()
-    };
-    normalize_carriage_returns(&details)
+    }
 }
 
 pub(super) fn cli_api_error(ref_type: RefType, message: String, output: &Output) -> anyhow::Error {
@@ -516,43 +514,6 @@ fn azure_repo_segments(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn cli_api_error_details_prefers_stderr_and_normalizes_carriage_returns() {
-        // Raw wait status 256 encodes "exited with code 1" on unix; on
-        // Windows the raw value is the exit code itself.
-        #[cfg(unix)]
-        use std::os::unix::process::ExitStatusExt;
-        #[cfg(windows)]
-        use std::os::windows::process::ExitStatusExt;
-        #[cfg(unix)]
-        let status = std::process::ExitStatus::from_raw(256);
-        #[cfg(windows)]
-        let status = std::process::ExitStatus::from_raw(1);
-
-        // stderr wins when non-empty; bare progress-rewrite `\r`s become
-        // newlines so the rendered gutter can't be overprinted.
-        let with_stderr = Output {
-            status,
-            stdout: b"ignored".to_vec(),
-            stderr: b"requesting 42%\rquota exceeded".to_vec(),
-        };
-        assert_eq!(
-            cli_api_error_details(&with_stderr),
-            "requesting 42%\nquota exceeded"
-        );
-
-        // Empty stderr falls back to stdout, normalized the same way.
-        let stdout_only = Output {
-            status,
-            stdout: b"rate limited\rretry later".to_vec(),
-            stderr: b"  ".to_vec(),
-        };
-        assert_eq!(
-            cli_api_error_details(&stdout_only),
-            "rate limited\nretry later"
-        );
-    }
 
     #[test]
     fn test_ref_paths() {

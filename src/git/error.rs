@@ -31,7 +31,7 @@ use super::HookType;
 use crate::path::format_path_for_display;
 use crate::styling::{
     error_message, format_bash_with_gutter, format_with_gutter, hint_message, info_message,
-    normalize_carriage_returns, suggest_command,
+    suggest_command,
 };
 
 /// Platform-specific reference type (PR vs MR).
@@ -204,11 +204,12 @@ pub struct CommandError {
     pub program: String,
     /// Arguments, e.g., `["worktree", "list"]`.
     pub args: Vec<String>,
-    /// Captured stderr, CR-normalized (see [`Self::from_failed_output`]).
+    /// Captured stderr with `\r` normalized to `\n` (git emits `\r` for
+    /// progress; non-TTY contexts otherwise produce snapshot instability).
     pub stderr: String,
-    /// Captured stdout, CR-normalized like `stderr` — kept separate because
-    /// some git subcommands print errors here (e.g., `commit` with nothing
-    /// to commit).
+    /// Captured stdout, `\r`-normalized like `stderr` (a raw `\r` would
+    /// overprint the gutter when rendered) — kept separate because some git
+    /// subcommands print errors here (e.g., `commit` with nothing to commit).
     pub stdout: String,
     /// Process exit code; `None` if the child was killed by a signal.
     pub exit_code: Option<i32>,
@@ -216,19 +217,13 @@ pub struct CommandError {
 
 impl CommandError {
     /// Build from the captured `Output` of a non-zero exit.
-    ///
-    /// Both streams are normalized via [`normalize_carriage_returns`] at
-    /// capture rather than in renderers, so every consumer — gutter
-    /// rendering, the line counting and truncation in `wt list`'s
-    /// task-failure warnings, embedding in higher-level `GitError` fields —
-    /// sees honest line structure.
     pub fn from_failed_output(
         program: impl Into<String>,
         args: &[&str],
         output: &std::process::Output,
     ) -> Self {
-        let stderr = normalize_carriage_returns(&String::from_utf8_lossy(&output.stderr));
-        let stdout = normalize_carriage_returns(&String::from_utf8_lossy(&output.stdout));
+        let stderr = String::from_utf8_lossy(&output.stderr).replace('\r', "\n");
+        let stdout = String::from_utf8_lossy(&output.stdout).replace('\r', "\n");
         Self {
             program: program.into(),
             args: args.iter().map(|&s| s.to_string()).collect(),
@@ -257,9 +252,9 @@ impl CommandError {
     }
 
     /// stderr + stdout, trimmed and joined by `\n`, with empty pieces
-    /// dropped. Mirrors the legacy `bail!("{}", error_msg)` payload shape so
+    /// dropped. Mirrors the legacy `bail!("{}", error_msg)` payload so
     /// callers that previously parsed `e.to_string()` (notably
-    /// `GitError::RebaseConflict`) get the same join when they downcast.
+    /// `GitError::RebaseConflict`) get the same bytes when they downcast.
     pub fn combined_output(&self) -> String {
         [self.stderr.trim(), self.stdout.trim()]
             .into_iter()
@@ -2431,10 +2426,9 @@ mod tests {
         #[cfg(windows)]
         use std::os::windows::process::ExitStatusExt;
 
-        // Progress meters rewrite lines with bare `\r`; CRLF arrives from
-        // Windows tools. Both streams must reach renderers as real newlines —
-        // a raw `\r` in the rendered block would return the cursor to column
-        // 0 and overprint the gutter.
+        // Progress meters rewrite lines with bare `\r`; a raw `\r` in the
+        // rendered block would return the cursor to column 0 and overprint
+        // the gutter, so both streams must reach renderers as real newlines.
         // Raw wait status 256 encodes "exited with code 1" on unix; on
         // Windows the raw value is the exit code itself.
         #[cfg(unix)]
@@ -2444,12 +2438,12 @@ mod tests {
         let output = std::process::Output {
             status,
             stdout: b"Receiving objects: 42%\rReceiving objects: 100%".to_vec(),
-            stderr: b"warning: one\r\nfatal: two".to_vec(),
+            stderr: b"error: fetch interrupted".to_vec(),
         };
         let err = CommandError::from_failed_output("git", &["fetch"], &output);
         assert_eq!(
             err.combined_output(),
-            "warning: one\nfatal: two\nReceiving objects: 42%\nReceiving objects: 100%"
+            "error: fetch interrupted\nReceiving objects: 42%\nReceiving objects: 100%"
         );
         assert!(!err.render().contains('\r'));
     }
