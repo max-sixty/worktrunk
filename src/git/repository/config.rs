@@ -636,11 +636,13 @@ impl Repository {
     ///
     /// Otherwise: uses the current worktree when inside one (both normal and
     /// bare repos). For bare repos at the bare root (outside any worktree),
-    /// falls back to the primary worktree; if the default branch is checked out
-    /// in no worktree (so `primary_worktree()` is `None`), falls back further to
-    /// the first non-bare worktree that ships a `.config/wt.toml`, so project
-    /// config is not silently dropped while the primary is on another branch
-    /// (#3461). Returns `None` when no worktree carries a config.
+    /// falls back to the primary worktree. When the default branch is checked
+    /// out in no worktree (so `primary_worktree()` is `None`), there is no
+    /// on-disk path to return here — `ProjectConfig::load` reads the committed
+    /// default-branch config from the object store via
+    /// [`default_branch_project_config_content`](Self::default_branch_project_config_content)
+    /// so project config (and every project hook) isn't silently dropped while
+    /// the primary is parked on another branch (#3461).
     ///
     /// "The current worktree" is whatever this `Repository` was rooted at, so
     /// the answer to "which `.config/wt.toml` does a hook read" is decided by
@@ -666,29 +668,72 @@ impl Repository {
 
         if self.is_bare().unwrap_or(false) {
             // At bare repo root — use the primary worktree (the one holding the
-            // default branch).
-            if let Some(primary) = self.primary_worktree()? {
-                return Ok(Some(primary.join(".config").join("wt.toml")));
-            }
-
-            // The default branch may be checked out in no worktree at all — a
-            // common transient in agent-driven workflows, where the primary
-            // worktree is briefly parked on a PR/feature branch. In that state
-            // `primary_worktree()` returns None, and returning None here would
-            // silently drop the entire project config (and every project hook)
-            // with no error (#3461). Project config is a repo-level artifact
-            // that lives in every worktree, so fall back to the first non-bare
-            // worktree that actually ships a `.config/wt.toml`.
-            for wt in self.list_worktrees()? {
-                let candidate = wt.path.join(".config").join("wt.toml");
-                if candidate.is_file() {
-                    return Ok(Some(candidate));
-                }
-            }
-            return Ok(None);
+            // default branch). When the default branch is checked out in no
+            // worktree, `primary_worktree()` is `None` and there is no on-disk
+            // path; `ProjectConfig::load` then reads the committed
+            // default-branch config from the object store via
+            // `default_branch_project_config_content` (#3461).
+            return Ok(self
+                .primary_worktree()?
+                .map(|p| p.join(".config").join("wt.toml")));
         }
 
         Ok(None)
+    }
+
+    /// Content of the default branch's committed `.config/wt.toml`, read from
+    /// the object store via `git show`, for the one state where the on-disk
+    /// path can't supply it: a bare repo whose default branch is checked out in
+    /// no worktree.
+    ///
+    /// In a bare layout the primary worktree normally holds the default branch,
+    /// so its on-disk `.config/wt.toml` *is* the default branch's project
+    /// config and [`project_config_path`](Self::project_config_path) resolves
+    /// it directly. When the primary worktree is transiently parked on another
+    /// branch (a common agent-driven workflow), no worktree exposes the default
+    /// branch's config on disk; returning nothing there would silently drop the
+    /// entire project config and every project hook (#3461). Reading the
+    /// committed copy from the object store restores it without depending on
+    /// which branch is checked out where — and, unlike scanning worktrees for
+    /// any `.config/wt.toml`, always reads the *default branch's* config rather
+    /// than whatever branch a worktree happens to be parked on.
+    ///
+    /// Returns `None` cheaply — before touching the object store — for every
+    /// other repo shape (non-bare repos, and bare repos whose default branch is
+    /// checked out somewhere), so the common load path never pays for the extra
+    /// `git show`. Also returns `None` when the default branch ships no project
+    /// config (`git show` exits non-zero for a path absent from the tree),
+    /// matching the no-config case.
+    ///
+    /// The returned `PathBuf` is a display-only label of the form
+    /// `<default-branch>:.config/wt.toml` — a git revision spec, not a
+    /// filesystem path. Nothing is read from or written to it; it only
+    /// annotates diagnostics (e.g. a parse error) with the object-store source.
+    pub fn default_branch_project_config_content(
+        &self,
+    ) -> anyhow::Result<Option<(String, PathBuf)>> {
+        if !self.is_bare()? {
+            return Ok(None);
+        }
+        // Only the "default branch checked out nowhere" state needs this; when
+        // the primary worktree exists, its on-disk path already resolved.
+        if self.primary_worktree()?.is_some() {
+            return Ok(None);
+        }
+        let Some(branch) = self.default_branch() else {
+            return Ok(None);
+        };
+
+        let spec = format!("{branch}:.config/wt.toml");
+        let output = self.run_command_output(&["show", &spec])?;
+        if !output.status.success() {
+            // Non-zero (typically 128) means the default branch's tree has no
+            // `.config/wt.toml`. Treat as "no project config", not an error —
+            // same result as an absent file on disk.
+            return Ok(None);
+        }
+        let contents = String::from_utf8_lossy(&output.stdout).into_owned();
+        Ok(Some((contents, PathBuf::from(spec))))
     }
 
     /// Load the project configuration (.config/wt.toml) if it exists.

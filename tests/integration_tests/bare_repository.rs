@@ -804,14 +804,21 @@ fn test_bare_repo_project_config_found_from_bare_root() {
 
 #[test]
 fn test_bare_repo_project_config_found_when_primary_on_non_default_branch() {
-    // Regression test for #3461: project config in the primary worktree must
-    // still be found from the bare root when the primary worktree is
-    // temporarily checked out to a *non-default* branch. This is the gap left
-    // by #1691's fix — `project_config_path()` locates the primary worktree
-    // via `primary_worktree()`, which looks it up by "which worktree holds the
+    // Regression test for #3461: the project config must still be found from the
+    // bare root when the primary worktree is temporarily checked out to a
+    // *non-default* branch. This is the gap left by #1691's fix —
+    // `project_config_path()` locates the primary worktree via
+    // `primary_worktree()`, which looks it up by "which worktree holds the
     // default branch". When an agent-driven workflow briefly checks out a PR
     // branch in the primary worktree, no worktree holds the default branch, so
-    // the project source is dropped silently and NO project hooks fire.
+    // the project source was dropped silently and NO project hooks fired.
+    //
+    // The fix reads the committed default-branch config from the object store
+    // (`git show <default>:.config/wt.toml`), so this test also pins that it
+    // reads the *default branch's* config, not whatever the parked worktree
+    // happens to have on disk: after parking the primary off-branch, the
+    // working-tree config is overwritten with a divergent hook that must NOT
+    // run.
     let test = BareRepoTest::new();
 
     // Create main worktree (the primary worktree for bare repos)
@@ -822,9 +829,12 @@ fn test_bare_repo_project_config_found_when_primary_on_non_default_branch() {
     let config_dir = main_worktree.join(".config");
     fs::create_dir_all(&config_dir).unwrap();
 
-    // Use a marker file to prove the hook ran
+    // Marker written by the default branch's committed hook (the one that
+    // must run), plus a marker for a divergent on-disk hook that must not.
     let marker_path = test.bare_repo_path().join("hook-ran-off-branch.marker");
     let marker_str = marker_path.to_str().unwrap().replace('\\', "/");
+    let stale_marker_path = test.bare_repo_path().join("hook-ran-stale.marker");
+    let stale_marker_str = stale_marker_path.to_str().unwrap().replace('\\', "/");
     fs::write(
         config_dir.join("wt.toml"),
         format!("post-start = \"echo hook-executed > '{}'\"\n", marker_str),
@@ -853,6 +863,15 @@ fn test_bare_repo_project_config_found_when_primary_on_non_default_branch() {
         String::from_utf8_lossy(&output.stderr)
     );
 
+    // Overwrite the parked worktree's on-disk config with a divergent hook,
+    // uncommitted. If resolution read the parked worktree's files instead of
+    // the default branch's committed tree, this stale hook would run.
+    fs::write(
+        config_dir.join("wt.toml"),
+        format!("post-start = \"echo stale > '{}'\"\n", stale_marker_str),
+    )
+    .unwrap();
+
     // Now run `wt switch --create test-repro` from the bare repo root.
     let (cd_path, exec_path, _guard) = directive_files();
     let mut cmd = wt_command();
@@ -871,8 +890,8 @@ fn test_bare_repo_project_config_found_when_primary_on_non_default_branch() {
         );
     }
 
-    // The project hook must still run even though the primary worktree is on a
-    // non-default branch.
+    // The default branch's committed hook must run even though the primary
+    // worktree is parked on a non-default branch.
     wait_for_file_content(&marker_path);
     let content = fs::read_to_string(&marker_path).unwrap();
     assert!(
@@ -881,15 +900,24 @@ fn test_bare_repo_project_config_found_when_primary_on_non_default_branch() {
          is on a non-default branch (#3461). Marker file content: {:?}",
         content
     );
+
+    // The parked worktree's divergent on-disk hook must NOT run — resolution
+    // reads the default branch's committed config, not the checked-out files.
+    assert!(
+        !stale_marker_path.exists(),
+        "Resolution must read the default branch's committed config via `git \
+         show`, not the parked worktree's on-disk file"
+    );
 }
 
 #[test]
 fn test_bare_repo_no_project_config_when_primary_off_branch_and_none_present() {
-    // Companion to the #3461 fix: the fallback that scans worktrees for a
-    // `.config/wt.toml` when the default branch is checked out nowhere must not
-    // conjure a config that doesn't exist. With the primary off the default
-    // branch and no worktree shipping a config, resolution stays `None` — the
-    // command succeeds and no project hook runs.
+    // Companion to the #3461 fix: the object-store fallback that reads
+    // `git show <default>:.config/wt.toml` when the default branch is checked
+    // out nowhere must not conjure a config that doesn't exist. With the primary
+    // off the default branch and no config committed on the default branch,
+    // `git show` exits non-zero and resolution stays `None` — the command
+    // succeeds and no project hook runs.
     let test = BareRepoTest::new();
 
     // Create main worktree (the primary worktree for bare repos) — no config
