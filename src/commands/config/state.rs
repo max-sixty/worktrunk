@@ -1322,20 +1322,13 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
             if let Some((remote, remote_head)) = repo.remote_head()
                 && remote_head != branch
             {
-                writeln!(
-                    out,
-                    "{}",
-                    warning_message(cformat!(
-                        "Cached branch differs from <bold>{remote}/HEAD</> (<bold>{remote_head}</>)"
-                    ))
-                )?;
-                writeln!(
-                    out,
-                    "{}",
-                    hint_message(cformat!(
-                        "To adopt it, run <underline>wt config state default-branch set {remote_head}</>; to re-detect, run <underline>wt config state default-branch clear</>"
-                    ))
-                )?;
+                let warning = warning_message(cformat!(
+                    "Cached branch differs from <bold>{remote}/HEAD</> (<bold>{remote_head}</>)"
+                ));
+                let hint = hint_message(cformat!(
+                    "To adopt it, run <underline>wt config state default-branch set {remote_head}</>; to re-detect, run <underline>wt config state default-branch clear</>"
+                ));
+                writeln!(out, "{warning}\n{hint}")?;
             }
         }
         None => writeln!(out, "{}", format_with_gutter("(none)", None))?,
