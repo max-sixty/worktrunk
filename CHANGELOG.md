@@ -34,7 +34,7 @@
 
 - **Watchdog status lines name the running operation**: A long wait read "Waiting for the commit message (4s)", as if blocked on user input; it now reads "Waiting for the commit generation command (4s)", and likewise for version checks and PR/MR lookups. ([#3443](https://github.com/max-sixty/worktrunk/pull/3443))
 
-- **Carriage returns normalized in captured stdout**: A failing command with progress output on stdout (e.g. git's `Receiving objects: 42%\r…`) could return the cursor to column 0 and corrupt the rendered error block. stdout is now normalized as stderr already was, and eight git-plumbing failure sites that bypassed the standard error renderer now route through it. ([#3459](https://github.com/max-sixty/worktrunk/pull/3459), [#3474](https://github.com/max-sixty/worktrunk/pull/3474))
+- **Carriage returns normalized in captured stdout**: A failing command with progress output on stdout (e.g. git's `Receiving objects: 42%\r…`) could return the cursor to column 0 and corrupt the rendered error block. stdout is now normalized as stderr already was, and the failure sites that bypassed the standard error renderer (git plumbing, plugin CLI calls, LLM commands) now route through it, so every failed command shows the canonical `✗ <command> failed (exit N)` header and output gutter. ([#3459](https://github.com/max-sixty/worktrunk/pull/3459), [#3474](https://github.com/max-sixty/worktrunk/pull/3474), [#3483](https://github.com/max-sixty/worktrunk/pull/3483))
 
 - **PowerShell wrapper no longer leaks a stray exit-code line to stdout**. ([#3425](https://github.com/max-sixty/worktrunk/pull/3425))
 
