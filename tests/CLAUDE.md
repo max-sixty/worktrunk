@@ -14,7 +14,7 @@ A target-filtered run (`--lib`, `--test integration`, …) on a fresh `target/` 
 
 **Claude Code web:** `task setup-web` installs zsh/fish/nushell, `gh`, and dev tools. Install `task` first if needed: `sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b ~/bin` then `export PATH="$HOME/bin:$PATH"`. The permission tests (`test_permission_error_prevents_save`, `test_approval_prompt_permission_error`) skip automatically when running as root.
 
-**Shell/PTY tests** (`shell-integration-tests` feature: approval prompts, picker, progressive rendering, shell wrappers): tests that spawn interactive shells (`zsh -ic`, `bash -ic`) make nextest's InputHandler take SIGTTOU when restoring terminal settings, suspending the run mid-test (`zsh: suspended (tty output)`; see [nextest#2878](https://github.com/nextest-rs/nextest/issues/2878)). Use `cargo test` instead of `cargo nextest run`, or set `NEXTEST_NO_INPUT_HANDLER=1`. The pre-merge hook sets it automatically.
+**Shell/PTY tests** (`shell-integration-tests` feature): approval prompts, picker, progressive rendering, shell wrappers.
 
 ## Coverage Investigation
 

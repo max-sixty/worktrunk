@@ -254,8 +254,6 @@ jobs:
       run: rustup target add ${{ matrix.target }}
 
     - name: 🧪 Tests
-      env:
-        NEXTEST_NO_INPUT_HANDLER: 1
       run: cargo nextest run --target ${{ matrix.target }}
 
   check-unused-dependencies:

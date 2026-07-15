@@ -22,7 +22,7 @@ sync = 'if [ "{{ target }}" = "main" ]; then git pull && git push; fi'
 # `cargo update --locked` would also fail on dependencies merely behind latest.
 lockfile = "cargo update --workspace --locked"
 pre-commit = "pre-commit run --all-files"
-insta = """RUSTFLAGS='-D warnings' NEXTEST_NO_INPUT_HANDLER=1 cargo insta test --test-runner nextest --dnd --check $([ "$(uname)" = 'Linux' ] && echo '--unreferenced reject') --features shell-integration-tests"""
+insta = """RUSTFLAGS='-D warnings' cargo insta test --test-runner nextest --dnd --check $([ "$(uname)" = 'Linux' ] && echo '--unreferenced reject') --features shell-integration-tests"""
 doctest = "RUSTDOCFLAGS='-Dwarnings' cargo test --doc"
 doc = "RUSTDOCFLAGS='-Dwarnings' cargo doc --no-deps --document-private-items"
 

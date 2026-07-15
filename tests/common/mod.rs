@@ -380,12 +380,6 @@ pub fn merge_scenario_multi_commit(mut repo: TestRepo) -> (TestRepo, PathBuf) {
 ///
 /// Use this instead of `portable_pty::native_pty_system()` directly to ensure
 /// PTY tests work correctly across platforms.
-///
-/// NOTE: PTY tests are behind the `shell-integration-tests` feature because they can
-/// trigger a nextest bug where its InputHandler cleanup receives SIGTTOU. This happens
-/// when tests spawn interactive shells (zsh -ic, bash -ic) which take control of the
-/// foreground process group. See https://github.com/nextest-rs/nextest/issues/2878
-/// Workaround: run with NEXTEST_NO_INPUT_HANDLER=1. See CLAUDE.md for details.
 pub fn native_pty_system() -> Box<dyn portable_pty::PtySystem> {
     #[cfg(unix)]
     ignore_tty_signals();

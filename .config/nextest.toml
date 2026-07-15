@@ -1,15 +1,7 @@
-# IMPORTANT: Tests that spawn interactive shells (zsh -ic, bash -ic) cause
-# nextest's InputHandler to receive SIGTTOU when restoring terminal settings,
-# suspending the test process. See https://github.com/nextest-rs/nextest/issues/2878
-#
-# Solution: Run with NEXTEST_NO_INPUT_HANDLER=1 or use the pre-merge hook which
-# sets this automatically:
-#
-#   NEXTEST_NO_INPUT_HANDLER=1 cargo nextest run --features shell-integration-tests
-#
-# Or use `cargo test` which doesn't have this issue:
-#
-#   cargo test --test integration --features shell-integration-tests
+# Older nextest suspends (SIGTTOU) when a test spawns an interactive shell
+# (zsh -ic, bash -ic), as the shell-integration-tests feature does; fixed in
+# 0.9.118 (https://github.com/nextest-rs/nextest/issues/2878).
+nextest-version = "0.9.118"
 
 # Enable setup-scripts (still experimental in nextest) so the build-bins script
 # below can run before any test starts.
