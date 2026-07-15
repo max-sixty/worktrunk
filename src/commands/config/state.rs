@@ -79,8 +79,8 @@ use path_slash::PathExt as _;
 use worktrunk::git::{BranchRef, Repository, sha_cache};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
-    eprintln, format_heading, format_with_gutter, info_message, println, success_message,
-    warning_message,
+    eprintln, format_heading, format_with_gutter, hint_message, info_message, println,
+    success_message, warning_message,
 };
 
 use crate::cli::{OutputFormat, SwitchFormat};
@@ -1219,6 +1219,11 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
     // (see handle_state_show_table).
     let default_branch = repo.cached_default_branch();
 
+    // Git's local <remote>/HEAD branch, for scripts that want to detect drift
+    // from the cache above. Local-only (no ls-remote); None when unset or no
+    // remote.
+    let remote_head_branch = repo.remote_head().map(|(_, branch)| branch);
+
     // Get previous branch
     let previous_branch = repo.switch_previous();
 
@@ -1278,6 +1283,7 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
 
     let output = serde_json::json!({
         "default_branch": default_branch,
+        "remote_head_branch": remote_head_branch,
         "previous_branch": previous_branch,
         "markers": markers,
         "ci_status": ci_status,
@@ -1305,7 +1311,26 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     // or persist, or it would silently repopulate a just-cleared cache.
     writeln!(out, "{}", format_heading("DEFAULT BRANCH", None))?;
     match repo.cached_default_branch() {
-        Some(branch) => writeln!(out, "{}", format_with_gutter(&branch, None))?,
+        Some(branch) => {
+            writeln!(out, "{}", format_with_gutter(&branch, None))?;
+            // Flag drift between the persisted cache and git's <remote>/HEAD.
+            // Local-only (reads the symref, no network); fires only when both
+            // resolve and differ — e.g. after a default-branch rename plus
+            // `git remote set-head origin -a`, which the fast path in
+            // `default_branch()` never notices. The key doubles as a user
+            // override, so this surfaces only on inspection, never per-command.
+            if let Some((remote, remote_head)) = repo.remote_head()
+                && remote_head != branch
+            {
+                let warning = warning_message(cformat!(
+                    "Cached branch differs from <bold>{remote}/HEAD</> (<bold>{remote_head}</>)"
+                ));
+                let hint = hint_message(cformat!(
+                    "To adopt it, run <underline>wt config state default-branch set {remote_head}</>; to re-detect, run <underline>wt config state default-branch clear</>"
+                ));
+                writeln!(out, "{warning}\n{hint}")?;
+            }
+        }
         None => writeln!(out, "{}", format_with_gutter("(none)", None))?,
     }
     writeln!(out)?;

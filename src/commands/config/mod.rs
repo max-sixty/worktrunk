@@ -162,10 +162,10 @@ mod tests {
         // `template-append`) so the offending key surfaces nested.
         assert_snapshot!(
             warn_unknown_keys::<ProjectConfig>("[commit-generation]\ncommand = \"llm\"\n"),
-            @"[33m▲[39m [33mKey [1mcommit.generation.command[22m belongs in user config (will be ignored)[39m");
+            @"[33m▲[39m [33mKey [1mcommit.generation.command[22m belongs in user config (will be ignored); to scope it to this repo, add it under [projects.\"<id>\"] in user config[39m");
         assert_snapshot!(
             warn_unknown_keys::<ProjectConfig>("[commit.generation]\ncommand = \"llm\"\n"),
-            @"[33m▲[39m [33mKey [1mcommit.generation.command[22m belongs in user config (will be ignored)[39m");
+            @"[33m▲[39m [33mKey [1mcommit.generation.command[22m belongs in user config (will be ignored); to scope it to this repo, add it under [projects.\"<id>\"] in user config[39m");
 
         // The one project-valid key in the section is unaffected.
         assert!(

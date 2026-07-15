@@ -105,8 +105,20 @@ fn handle_config_show_json() -> anyhow::Result<()> {
 
     let (project_path, project_config, project_identifier) = if let Ok(repo) = Repository::current()
     {
-        let path = repo.project_config_path()?;
         let config = repo.load_project_config()?;
+        let on_disk = repo.project_config_path()?;
+        // When config resolved but not from an existing on-disk file, it came
+        // from the object-store fallback (bare repo, default branch checked out
+        // in no worktree — #3461). Surface that revision spec as the source so
+        // `path`/`exists`/`config` agree, instead of pointing `path` at a
+        // missing file while `config` is populated.
+        let path = match &on_disk {
+            Some(p) if p.exists() => on_disk.clone(),
+            _ if config.is_some() => repo
+                .default_branch_project_config_content()
+                .map(|(_, spec)| spec),
+            _ => on_disk.clone(),
+        };
         let identifier = repo.project_identifier().ok();
         (
             path,
@@ -128,7 +140,12 @@ fn handle_config_show_json() -> anyhow::Result<()> {
         },
         "project": {
             "path": project_path,
-            "exists": project_path.as_ref().is_some_and(|p| p.exists()),
+            // Config source resolved — an on-disk file or the object-store
+            // fallback — iff `config` is populated. Keying `exists` off the
+            // loaded config (not `path.exists()`) keeps it consistent with
+            // `config` in the object-store case, where `path` is a revision
+            // spec with no file on disk.
+            "exists": project_config.is_some(),
             "identifier": project_identifier,
             "config": project_config,
         },
@@ -766,7 +783,11 @@ fn format_show_warning(warning: &worktrunk::config::UnknownWarning) -> String {
         UnknownWarning::TopLevelWrongConfig {
             key,
             other_description,
-        } => cformat!("Key <bold>{key}</> belongs in {other_description} (will be ignored)"),
+        } => worktrunk::config::with_scope_note(
+            cformat!("Key <bold>{key}</> belongs in {other_description} (will be ignored)"),
+            other_description,
+            key,
+        ),
         UnknownWarning::TopLevelDeprecatedWrongConfig {
             key,
             other_description,
@@ -775,7 +796,11 @@ fn format_show_warning(warning: &worktrunk::config::UnknownWarning) -> String {
         UnknownWarning::NestedWrongConfig {
             path,
             other_description,
-        } => cformat!("Key <bold>{path}</> belongs in {other_description} (will be ignored)"),
+        } => worktrunk::config::with_scope_note(
+            cformat!("Key <bold>{path}</> belongs in {other_description} (will be ignored)"),
+            other_description,
+            path,
+        ),
         UnknownWarning::NestedUnknown { path } => {
             cformat!("Unknown key <bold>{path}</> will be ignored")
         }
@@ -798,46 +823,63 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
             return Ok(());
         }
     };
-    let config_path = match repo.project_config_path() {
-        Ok(Some(path)) => path,
-        _ => {
-            writeln!(
-                out,
-                "{}",
-                cformat!(
-                    "<dim>{}</>",
-                    format_heading("PROJECT CONFIG", Some("Not in a git repository"))
-                )
-            )?;
-            return Ok(());
+    // Helper: heading + project identifier, shared across the resolved and
+    // absent branches so their output stays uniform.
+    fn write_heading_and_identifier(
+        out: &mut String,
+        repo: &Repository,
+        source: &str,
+    ) -> anyhow::Result<()> {
+        writeln!(out, "{}", format_heading("PROJECT CONFIG", Some(source)))?;
+        // Project identifier — used as the key for [projects."..."] sections in
+        // user config. Surface it here so users can find the right key without
+        // hand-deriving it from the remote URL.
+        if let Ok(project_id) = repo.project_identifier() {
+            let line = info_message(cformat!("Identifier: <bold>{project_id}</>"));
+            writeln!(out, "{line}")?;
         }
+        Ok(())
+    }
+
+    // Resolve the effective config source, mirroring `ProjectConfig::load`: an
+    // on-disk `.config/wt.toml` when one exists, otherwise the committed
+    // default-branch config read from the object store (bare repo, default
+    // branch checked out in no worktree — #3461). Reading the raw text here
+    // rather than calling `load_project_config` keeps the deprecation and
+    // validation rendering below, which operates on the TOML source. Without
+    // this fallback, `config show` reports "Not found" while the hooks from the
+    // object-store config actually run — the opposite of reality.
+    let on_disk = repo.project_config_path()?;
+    let (config_path, contents) = match &on_disk {
+        Some(path) if path.exists() => {
+            let contents = std::fs::read_to_string(path).context("Failed to read config file")?;
+            let source = format!("@ {}", format_path_for_display(path));
+            write_heading_and_identifier(out, &repo, &source)?;
+            (path.clone(), contents)
+        }
+        _ => match repo.default_branch_project_config_content() {
+            Some((object_store_contents, spec)) => {
+                // `spec` is a git revision spec (`<default>:.config/wt.toml`),
+                // not a filesystem path — display it verbatim, tagged as the
+                // object-store source so it isn't mistaken for an on-disk file.
+                let source = format!("@ {} (from object store)", spec.to_string_lossy());
+                write_heading_and_identifier(out, &repo, &source)?;
+                (spec, object_store_contents)
+            }
+            None => {
+                // Neither an on-disk file nor a committed fallback resolved.
+                let Some(path) = on_disk else {
+                    let heading = format_heading("PROJECT CONFIG", Some("No project config"));
+                    writeln!(out, "{}", cformat!("<dim>{}</>", heading))?;
+                    return Ok(());
+                };
+                let source = format!("@ {}", format_path_for_display(&path));
+                write_heading_and_identifier(out, &repo, &source)?;
+                writeln!(out, "{}", hint_message("Not found"))?;
+                return Ok(());
+            }
+        },
     };
-
-    writeln!(
-        out,
-        "{}",
-        format_heading(
-            "PROJECT CONFIG",
-            Some(&format!("@ {}", format_path_for_display(&config_path)))
-        )
-    )?;
-
-    // Project identifier — used as the key for [projects."..."] sections in
-    // user config. Surface it here so users can find the right key without
-    // hand-deriving it from the remote URL.
-    if let Ok(project_id) = repo.project_identifier() {
-        let line = info_message(cformat!("Identifier: <bold>{project_id}</>"));
-        writeln!(out, "{line}")?;
-    }
-
-    // Check if file exists
-    if !config_path.exists() {
-        writeln!(out, "{}", hint_message("Not found"))?;
-        return Ok(());
-    }
-
-    // Read and display the file contents
-    let contents = std::fs::read_to_string(&config_path).context("Failed to read config file")?;
 
     if contents.trim().is_empty() {
         writeln!(out, "{}", hint_message("Empty file"))?;
@@ -1200,11 +1242,22 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
             }
         }
 
+        // Show the shell actually running wt — the process tree names the
+        // interactive shell even when $SHELL points at a different login shell
+        let ancestor = worktrunk::shell::ancestor_shell();
+        if let Some(ancestor) = ancestor {
+            debug_lines.push(cformat!(
+                "Detected shell: <bold>{}</> (process tree)",
+                ancestor.name
+            ));
+        }
         // Show $SHELL to help diagnose rc file sourcing issues
         let shell_env = std::env::var("SHELL").ok().filter(|s| !s.is_empty());
         if let Some(shell_env) = &shell_env {
             debug_lines.push(cformat!("$SHELL: <bold>{shell_env}</>"));
-        } else if let Some(detected) = worktrunk::shell::current_shell() {
+        } else if ancestor.is_none()
+            && let Some(detected) = worktrunk::shell::current_shell()
+        {
             debug_lines.push(cformat!(
                 "Detected shell: <bold>{detected}</> (via PSModulePath)"
             ));
@@ -1495,6 +1548,10 @@ fn render_version_check(out: &mut String) -> anyhow::Result<()> {
 
 /// Fetch the latest release version from GitHub
 fn fetch_latest_version() -> anyhow::Result<String> {
+    // Held for the whole lookup; the sub-startup-delay paths (test injection,
+    // fast failures, response parsing) return before it ever renders.
+    let _watchdog = worktrunk::progress::Watchdog::start("the version check", None);
+
     // Allow tests to inject a version without network access.
     // Set to "error" to simulate a fetch failure.
     if let Ok(version) = std::env::var("WORKTRUNK_TEST_LATEST_VERSION") {
@@ -1508,14 +1565,13 @@ fn fetch_latest_version() -> anyhow::Result<String> {
         "worktrunk/{} (https://worktrunk.dev)",
         env!("CARGO_PKG_VERSION")
     );
-    // The watchdog (below) supplies "still waiting" feedback, so the fetch needn't
+    // The watchdog (above) supplies "still waiting" feedback, so the fetch needn't
     // be cut off at an aggressive 5s. But the watchdog is TTY-gated — a
     // non-interactive run (CI, scripts, redirected stderr) gets no feedback — so a
     // hard ceiling still has to exist or such a run could hang silently:
     // --connect-timeout fails fast when offline, and a generous --max-time bounds a
     // connected-but-stalled host without cutting off a slow-but-progressing fetch.
     let output = {
-        let _watchdog = worktrunk::progress::Watchdog::start("the latest version", None);
         Cmd::new("curl")
             .args([
                 "--silent",

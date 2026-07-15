@@ -1,5 +1,5 @@
 use crate::common::{
-    TestRepo, canonical_temp_home, repo, set_temp_home_env, set_xdg_config_path,
+    BareRepoTest, TestRepo, canonical_temp_home, repo, set_temp_home_env, set_xdg_config_path,
     setup_home_snapshot_settings, setup_snapshot_settings, setup_snapshot_settings_with_home,
     temp_home, wt_command,
 };
@@ -2848,6 +2848,69 @@ fn test_config_show_powershell_detected_via_psmodulepath(mut repo: TestRepo, tem
     });
 }
 
+/// The process-tree shell wins over $SHELL in the diagnostics: with zsh as
+/// the detected ancestor and bash as the login shell, config show surfaces
+/// "Detected shell: zsh (process tree)" next to $SHELL, and the verify hint
+/// targets zsh.
+#[rstest]
+fn test_config_show_detected_shell_via_process_tree(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    // .zshrc has integration for the shell the process tree detects
+    fs::write(
+        temp_home.path().join(".zshrc"),
+        r#"if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)"; fi
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+        // Login shell differs from the process-tree ancestor. The override
+        // must come after configure_wt_cmd, which pins it to "".
+        cmd.env("SHELL", "/bin/bash");
+        cmd.env("WORKTRUNK_TEST_PARENT_SHELL", "zsh");
+        cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1");
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Without the test override, the real process-tree walk runs. Its result
+/// depends on the environment (dev shell, CI runner), so this asserts only
+/// that the walk completes and config show still renders — exercising the
+/// production walk end-to-end rather than the override shortcut.
+#[rstest]
+fn test_config_show_runs_real_ancestry_walk(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    repo.configure_mock_commands(&mut cmd);
+    cmd.arg("config").arg("show").current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    set_xdg_config_path(&mut cmd, temp_home.path());
+    cmd.env_remove("WORKTRUNK_TEST_PARENT_SHELL");
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "config show should succeed with the real walk: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Shell integration"),
+        "shell section should render: {stdout}"
+    );
+}
+
 /// Test that deprecated [commit-generation] section shows warning and creates migration file
 #[rstest]
 fn test_deprecated_commit_generation_section_shows_warning(repo: TestRepo, temp_home: TempDir) {
@@ -5022,4 +5085,166 @@ fn test_project_config_path_env_var_override(repo: TestRepo, temp_home: TempDir)
         "missing override path should resolve to no project config, got: {}",
         json["project"]["config"]
     );
+
+    // An empty override likewise means no project config — it must not fall
+    // back to the repo's own file or resolve to the worktree root directory.
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_xdg_config_path(&mut cmd, temp_home.path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_PROJECT_CONFIG_PATH", "");
+    cmd.args(["config", "show", "--format=json"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    assert!(
+        json["project"]["config"].is_null(),
+        "empty override should resolve to no project config, got: {}",
+        json["project"]["config"]
+    );
+}
+
+/// A relative `WORKTRUNK_PROJECT_CONFIG_PATH` resolves against the worktree
+/// root — the same anchor as the default `.config/wt.toml` — so the override
+/// behaves identically from any subdirectory instead of silently depending on
+/// the process cwd, and each worktree anchors to its own root.
+#[rstest]
+fn test_project_config_path_env_var_relative(mut repo: TestRepo, temp_home: TempDir) {
+    fs::write(
+        repo.root_path().join("custom-wt.toml"),
+        "pre-start = \"custom-hook\"\n",
+    )
+    .unwrap();
+    let subdir = repo.root_path().join("sub");
+    fs::create_dir_all(&subdir).unwrap();
+
+    // A linked worktree carries its own config file at the same relative
+    // location; running there must load that file, not the main worktree's.
+    let linked = repo.add_worktree("linked-anchor");
+    fs::write(
+        linked.join("custom-wt.toml"),
+        "pre-start = \"linked-hook\"\n",
+    )
+    .unwrap();
+
+    let cases = [
+        (
+            repo.root_path().to_path_buf(),
+            repo.root_path().to_path_buf(),
+            "custom-hook",
+        ),
+        (subdir, repo.root_path().to_path_buf(), "custom-hook"),
+        (linked.clone(), linked, "linked-hook"),
+    ];
+    for (cwd, expected_root, expected_hook) in &cases {
+        let mut cmd = repo.wt_command();
+        set_xdg_config_path(&mut cmd, temp_home.path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("WORKTRUNK_PROJECT_CONFIG_PATH", "custom-wt.toml");
+        cmd.args(["config", "show", "--format=json"])
+            .current_dir(cwd);
+
+        let output = cmd.output().unwrap();
+        assert!(
+            output.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let json: serde_json::Value =
+            serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+        assert_eq!(
+            json["project"]["path"].as_str().unwrap(),
+            expected_root.join("custom-wt.toml").to_str().unwrap(),
+            "relative override should anchor to the worktree root from {cwd:?}"
+        );
+        assert_eq!(
+            json["project"]["config"]["pre-start"], *expected_hook,
+            "relative override should load the root-anchored config from {cwd:?}, got: {}",
+            json["project"]
+        );
+    }
+}
+
+/// A relative `WORKTRUNK_PROJECT_CONFIG_PATH` with no worktree root to anchor
+/// it (bare repo, no linked worktrees) errors instead of silently resolving
+/// against the process cwd.
+#[test]
+fn test_project_config_path_env_var_relative_no_worktree_errors() {
+    let test = BareRepoTest::new();
+
+    let mut cmd = test.wt_command();
+    cmd.env("WORKTRUNK_PROJECT_CONFIG_PATH", "custom-wt.toml");
+    cmd.args(["config", "show", "--format=json"])
+        .current_dir(test.bare_repo_path());
+
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "a relative override without a worktree root should fail; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("WORKTRUNK_PROJECT_CONFIG_PATH is relative"),
+        "error should name the env var and the problem; stderr:\n{stderr}"
+    );
+
+    // Without the override, the same repo has no project config location at
+    // all; `wt config update` skips the project config rather than erroring,
+    // and `wt config show` reports the absence rather than claiming to be
+    // outside a git repository.
+    let mut cmd = test.wt_command();
+    cmd.args(["config", "update", "--yes"])
+        .current_dir(test.bare_repo_path());
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "config update should skip a missing project config location; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let mut cmd = test.wt_command();
+    cmd.args(["config", "show"])
+        .current_dir(test.bare_repo_path());
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "config show should succeed with no project config location; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.contains("No project config"),
+        "config show should report the missing project config location; stdout:\n{stdout}"
+    );
+}
+
+/// On Windows, an override that is neither fully absolute nor relative — a
+/// drive-relative (`C:cfg`) or rooted-but-driveless (`\cfg`) value — errors
+/// instead of silently resolving against the process drive or cwd.
+#[cfg(windows)]
+#[rstest]
+fn test_project_config_path_env_var_half_anchored_errors(repo: TestRepo) {
+    for value in [r"C:cfg\wt.toml", r"\cfg\wt.toml"] {
+        let mut cmd = repo.wt_command();
+        cmd.env("WORKTRUNK_PROJECT_CONFIG_PATH", value);
+        cmd.args(["config", "show", "--format=json"]);
+
+        let output = cmd.output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !output.status.success(),
+            "override {value} should be rejected; stderr:\n{stderr}"
+        );
+        assert!(
+            stderr.contains("neither fully absolute nor relative"),
+            "error should explain the rejected form for {value}; stderr:\n{stderr}"
+        );
+    }
 }

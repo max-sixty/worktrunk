@@ -149,13 +149,21 @@ addressed is intentional.
 
 When you need more information to diagnose a reported bug, the **primary
 ask is `wt -vv <command>`**. Re-running the failing command with `-vv`
-writes `.git/wt/logs/diagnostic.md` — a single report containing wt/git/OS
-versions, shell integration, `wt config show`, `git worktree list
---porcelain`, and a `trace.log` of every git invocation with its output —
-and prints a `gh gist create --web <path>` hint. One gist URL pasted into
-the issue gives us most of what we'd otherwise ask for piecemeal, so lead
-with this for unexplained failures rather than chaining version/config/repro
-questions across multiple round-trips.
+writes a diagnostic bundle — a single report containing wt/git/OS versions,
+shell integration, `wt config show`, `git worktree list --porcelain`, and a
+`trace.log` of every git invocation with its output. The `-vv` output prints
+the bundle's exact absolute path (`Logs, performance profile, and
+diagnostics saved @ …`) followed by a ready-to-run `gh gist create --web
+<path>` line — **point the user at those printed lines; don't hand them a
+hardcoded path**. In particular, never tell them to `cat
+.git/wt/logs/diagnostic.md`: inside a linked worktree `.git` is a gitdir
+*file*, not a directory, so that path fails with `Not a directory (os error
+20)` (`ENOTDIR`). The bundle actually lives under the git *common* dir —
+`"$(git rev-parse --git-common-dir)/wt/logs/diagnostic.md"` resolves from any
+worktree, and the printed absolute path already points there. One gist URL
+pasted into the issue gives us most of what we'd otherwise ask for piecemeal,
+so lead with this for unexplained failures rather than chaining
+version/config/repro questions across multiple round-trips.
 
 When the report is about a slow `wt` command, read its **Performance profile**
 section first. It renders the same breakdown as `wt config state logs profile`

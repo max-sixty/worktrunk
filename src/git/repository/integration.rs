@@ -291,15 +291,17 @@ impl Repository {
     /// than success is an error; exit 0 → [`MergeTreeOutcome::Clean`] with the
     /// resulting tree SHA (first line of stdout).
     fn compute_merge_tree_outcome(&self, a: &str, b: &str) -> anyhow::Result<MergeTreeOutcome> {
-        // Exit codes: 0 = clean merge, 1 = conflicts, 128+ = error (invalid ref, corrupt repo)
-        let output = self.run_command_output(&["merge-tree", "--write-tree", a, b])?;
+        // Exit codes: 0 = clean merge, 1 = conflicts (git also uses 1 for
+        // unresolvable args — callers pass pre-resolved commit SHAs, see
+        // `run_merge_tree`), anything else = error (corrupt repo, bad usage)
+        let args = ["merge-tree", "--write-tree", a, b];
+        let output = self.run_command_output(&args)?;
 
         if output.status.code() == Some(1) {
             return Ok(MergeTreeOutcome::Conflict);
         }
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("git merge-tree failed for {a} {b}: {}", stderr.trim());
+            return Err(crate::git::CommandError::from_failed_output("git", &args, &output).into());
         }
 
         // Clean merge — first line of stdout is the resulting tree SHA.
@@ -1125,6 +1127,30 @@ mod patch_id_tests {
             check_integration(&signals),
             Some(IntegrationReason::PatchIdMatch),
             "squash merge must be detected via patch-id regardless of diff.* config"
+        );
+    }
+}
+
+#[cfg(test)]
+mod merge_tree_error_tests {
+    use super::*;
+    use crate::testing::TestRepo;
+
+    /// A hard `git merge-tree` failure (here: a fatal config error, exit
+    /// 128) must surface as a typed `CommandError`, distinct from exit 1,
+    /// which means "merged with conflicts".
+    #[test]
+    fn hard_failure_is_command_error() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        std::fs::write(test.root_path().join(".git/config"), "[bad\n").unwrap();
+
+        let err = repo.compute_merge_tree_outcome("HEAD", "HEAD").unwrap_err();
+        let cmd_err =
+            crate::git::CommandError::find_in(&err).expect("error should carry a CommandError");
+        assert_eq!(
+            cmd_err.command_string(),
+            "git merge-tree --write-tree HEAD HEAD"
         );
     }
 }

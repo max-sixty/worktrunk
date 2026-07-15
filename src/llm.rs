@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use worktrunk::config::CommitGenerationConfig;
-use worktrunk::git::{CommitMessageDetail, Repository};
+use worktrunk::git::{CommandError, CommitMessageDetail, Repository};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::{Cmd, ShellConfig};
 use worktrunk::styling::{eprintln, warning_message};
@@ -100,9 +100,9 @@ pub(crate) fn render_llm_invocation(command: &str) -> anyhow::Result<String> {
 /// ([`generate_summary_core`](crate::summary::generate_summary_core), up to 8
 /// under a semaphore), where
 /// per-call spinners would interleave.
-fn watch_llm_command(command: &str, waiting_for: &str) -> worktrunk::progress::Watchdog {
+fn watch_llm_command(command: &str) -> worktrunk::progress::Watchdog {
     let invocation = render_llm_invocation(command).ok();
-    worktrunk::progress::Watchdog::start(waiting_for, invocation.as_deref())
+    worktrunk::progress::Watchdog::start("the commit generation command", invocation.as_deref())
 }
 
 /// Format a reproduction command, only wrapping with `sh -c` if needed.
@@ -767,18 +767,16 @@ pub(crate) fn generate_commit_message(
     // Check if commit generation is configured (non-empty command)
     if commit_generation_config.is_configured() {
         let command = commit_generation_config.command.as_ref().unwrap();
+        // Prompt-build failures (git plumbing) propagate as-is; only a
+        // failure of the LLM command itself gets the `LlmCommandFailed`
+        // wrapper — mirroring `generate_squash_message`.
+        let prompt = build_commit_prompt(commit_generation_config, index_override, project_append)?;
         // A slow or hung command is otherwise silent (stdout is captured); the
         // watchdog surfaces a "still waiting" status. Held until this function
         // returns, clearing the block before the caller prints the message.
-        let _watchdog = watch_llm_command(command, "the commit message");
+        let _watchdog = watch_llm_command(command);
         // Commit generation is explicitly configured - fail if it doesn't work
-        return try_generate_commit_message(
-            command,
-            commit_generation_config,
-            index_override,
-            project_append,
-        )
-        .map_err(|e| {
+        return execute_llm_command(command, &prompt).map_err(|e| {
             worktrunk::git::GitError::LlmCommandFailed {
                 command: command.clone(),
                 error: e.to_string(),
@@ -793,13 +791,11 @@ pub(crate) fn generate_commit_message(
 
     // Fallback: generate a descriptive commit message based on changed files
     let repo = Repository::current()?;
-    let mut name_only = Cmd::new("git")
-        .args(["diff", "--staged", "--name-only", "-z"])
-        .current_dir(repo.discovery_path());
-    if let Some(path) = index_override {
-        name_only = name_only.env("GIT_INDEX_FILE", path);
-    }
-    let file_list = run_git_capture(name_only, "diff --staged --name-only")?;
+    let file_list = run_git_capture(
+        &["diff", "--staged", "--name-only", "-z"],
+        repo.discovery_path(),
+        index_override,
+    )?;
     let staged_files = file_list
         .split('\0')
         .map(|s| s.trim())
@@ -826,28 +822,26 @@ pub(crate) fn generate_commit_message(
     Ok(message)
 }
 
-fn try_generate_commit_message(
-    command: &str,
-    config: &CommitGenerationConfig,
-    index_override: Option<&Path>,
-    project_append: Option<&str>,
-) -> anyhow::Result<String> {
-    let prompt = build_commit_prompt(config, index_override, project_append)?;
-    execute_llm_command(command, &prompt)
-}
-
-/// Run a git `Cmd` and bail on non-zero exit, mirroring [`Repository::run_command`].
+/// Run a git command and capture stdout, mirroring [`Repository::run_command`]
+/// (including its [`CommandError`] on non-zero exit).
 ///
 /// Used by call sites that need to set `GIT_INDEX_FILE` (`--dry-run`) and so can't go
 /// through `Repository::run_command`. Without this check, a failing `git diff` would
 /// silently feed an empty diff to the LLM.
-fn run_git_capture(cmd: Cmd, what: &str) -> anyhow::Result<String> {
+fn run_git_capture(
+    args: &[&str],
+    cwd: &Path,
+    index_override: Option<&Path>,
+) -> anyhow::Result<String> {
+    let mut cmd = Cmd::new("git").args(args.iter().copied()).current_dir(cwd);
+    if let Some(index) = index_override {
+        cmd = cmd.env("GIT_INDEX_FILE", index);
+    }
     let output = cmd
         .run()
-        .with_context(|| format!("Failed to execute git {what}"))?;
+        .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git {what} failed: {}", stderr.trim());
+        return Err(CommandError::from_failed_output("git", args, &output).into());
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
@@ -867,21 +861,16 @@ pub(crate) fn build_commit_prompt(
     project_append: Option<&str>,
 ) -> anyhow::Result<String> {
     let repo = Repository::current()?;
-    let cwd = repo.discovery_path().to_path_buf();
+    let cwd = repo.discovery_path();
 
-    let mut diff_cmd = Cmd::new("git")
-        .args(DIFF_PREFIX_OVERRIDES)
-        .args(["--no-pager", "diff", "--staged"])
-        .current_dir(&cwd);
-    let mut diff_stat_cmd = Cmd::new("git")
-        .args(["--no-pager", "diff", "--staged", "--stat"])
-        .current_dir(&cwd);
-    if let Some(index) = index_override {
-        diff_cmd = diff_cmd.env("GIT_INDEX_FILE", index);
-        diff_stat_cmd = diff_stat_cmd.env("GIT_INDEX_FILE", index);
-    }
-    let diff_output = run_git_capture(diff_cmd, "diff --staged")?;
-    let diff_stat = run_git_capture(diff_stat_cmd, "diff --staged --stat")?;
+    let mut diff_args: Vec<&str> = DIFF_PREFIX_OVERRIDES.to_vec();
+    diff_args.extend(["--no-pager", "diff", "--staged"]);
+    let diff_output = run_git_capture(&diff_args, cwd, index_override)?;
+    let diff_stat = run_git_capture(
+        &["--no-pager", "diff", "--staged", "--stat"],
+        cwd,
+        index_override,
+    )?;
 
     // Prepare diff (may filter if too large)
     let prepared = prepare_diff(diff_output, diff_stat);
@@ -935,7 +924,7 @@ pub(crate) fn generate_squash_message(
 
         // See `generate_commit_message` — keep a slow squash-message generation
         // from being silent.
-        let _watchdog = watch_llm_command(command, "the squash commit message");
+        let _watchdog = watch_llm_command(command);
         return execute_llm_command(command, &prompt).map_err(|e| {
             worktrunk::git::GitError::LlmCommandFailed {
                 command: command.clone(),
@@ -1053,7 +1042,7 @@ pub(crate) fn test_commit_generation(
 
     // The connectivity test shells out the same way real generation does, so a
     // slow command would be just as silent — surface the same waiting status.
-    let _watchdog = watch_llm_command(command, "the test commit message");
+    let _watchdog = watch_llm_command(command);
     execute_llm_command(command, &prompt).map_err(|e| {
         worktrunk::git::GitError::LlmCommandFailed {
             command: command.clone(),
@@ -1087,17 +1076,18 @@ mod tests {
         );
     }
 
-    /// `run_git_capture` must surface a non-zero exit as an error that names the `what`
-    /// label and includes the captured stderr — without that, the dry-run path would
-    /// feed an empty diff to the LLM on a `git` failure.
+    /// `run_git_capture` must surface a non-zero exit as a typed [`CommandError`]
+    /// carrying the command and its captured stderr — without that, the dry-run
+    /// path would feed an empty diff to the LLM on a `git` failure.
     #[test]
     fn test_run_git_capture_bails_on_nonzero_exit() {
-        let cmd = Cmd::new("git").args(["frobnicate-nonexistent"]);
-        let err = run_git_capture(cmd, "frobnicate").unwrap_err();
-        let msg = format!("{err}");
+        let err = run_git_capture(&["frobnicate-nonexistent"], Path::new("."), None).unwrap_err();
+        let cmd_err = CommandError::find_in(&err).expect("error should carry a CommandError");
+        assert_eq!(cmd_err.command_string(), "git frobnicate-nonexistent");
         assert!(
-            msg.contains("git frobnicate failed:"),
-            "error message should name the `what` label; got: {msg}"
+            cmd_err.stderr.contains("frobnicate-nonexistent"),
+            "stderr should name the failing command; got: {}",
+            cmd_err.stderr
         );
     }
 

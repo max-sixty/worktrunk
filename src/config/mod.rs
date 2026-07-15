@@ -123,6 +123,19 @@ pub(crate) fn schema_top_level_keys<T: schemars::JsonSchema>() -> Vec<String> {
     keys
 }
 
+/// Whether `key` is a top-level field of a `[projects."<id>"]` table (the
+/// [`UserProjectOverrides`] schema). Used to gate the "scope it to this repo"
+/// note: a misplaced user-config key only earns that advice when it can
+/// actually be placed under `[projects."<id>"]`. Root-only user settings such
+/// as `skip-shell-integration-prompt` are absent here and get no note.
+pub fn is_user_project_override_key(key: &str) -> bool {
+    use std::sync::OnceLock;
+    static KEYS: OnceLock<Vec<String>> = OnceLock::new();
+    KEYS.get_or_init(schema_top_level_keys::<UserProjectOverrides>)
+        .iter()
+        .any(|k| k == key)
+}
+
 // Re-export public types
 pub use approvals::{Approvals, approvals_path, require_approvals_path};
 pub use commands::{Command, CommandConfig, HookStep, append_aliases};
@@ -142,7 +155,8 @@ pub use deprecation::suppress_warnings;
 pub use deprecation::warnings_suppressed;
 pub use deprecation::{
     DEPRECATED_SECTION_KEYS, DeprecatedSection, UnknownKeyKind, classify_unknown_key,
-    key_belongs_in, nested_key_belongs_in, warn_unknown_fields,
+    key_belongs_in, nested_key_belongs_in, scope_to_repo_note, warn_unknown_fields,
+    with_scope_note,
 };
 pub use deprecation::{DeprecationKind, Deprecations};
 pub use expansion::{

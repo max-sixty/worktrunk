@@ -3,15 +3,18 @@
 //! Provides pager support for `--help` output, following git's pager precedence:
 //! GIT_PAGER → core.pager config → PAGER environment variable → "less" default.
 //!
-//! # Difference from diff pager
+//! # Difference from the diff preview pager
 //!
-//! This pager is INTERACTIVE (spawned with TTY access) unlike the diff renderer
-//! in src/git/repository/mod.rs which is DETACHED (spawned via setsid). This is
-//! intentional:
+//! This pager is INTERACTIVE (spawned with TTY access) so users can scroll
+//! `--help` output. The diff preview pager in `src/commands/picker/pager.rs`
+//! runs inside the picker's preview window — a non-TTY context — so it spawns
+//! differently:
 //!
-//! - Help pager: Top-level user command, needs TTY for interactive scrolling
-//! - Diff renderer: Used in TUI contexts (skim preview), must be detached to
-//!   prevent hangs from TTY access
+//! - Help pager: top-level user command, needs a TTY for interactive scrolling
+//! - Diff preview pager: pipes the diff over stdin, appends `--paging=never`
+//!   for pagers that would otherwise launch their own `less` (delta, bat), and
+//!   is killed by a `PAGER_TIMEOUT` watchdog if it blocks — it is never given a
+//!   TTY, so it can't hang the picker's event loop
 //!
 //! Both follow git's pager detection but spawn differently based on their usage context.
 //!

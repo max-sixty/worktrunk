@@ -118,7 +118,7 @@ use color_print::cformat;
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
 
-use anyhow::{Context, bail};
+use anyhow::Context;
 use dunce::canonicalize;
 
 use crate::config::{LoadError, ProjectConfig, ResolvedConfig, UserConfig};
@@ -891,16 +891,18 @@ impl Repository {
         // captures the surrounding canonicalize + cache-insert work too.
         let _span = crate::trace::Span::new("resolve_git_common_dir");
 
+        let args = ["rev-parse", "--git-common-dir"];
         let output = Cmd::new("git")
-            .args(["rev-parse", "--git-common-dir"])
+            .args(args)
             .current_dir(discovery_path)
             .context(path_to_logging_context(discovery_path))
             .run()
             .context("Failed to execute: git rev-parse --git-common-dir")?;
 
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("{}", stderr.trim());
+            return Err(
+                super::error::CommandError::from_failed_output("git", &args, &output).into(),
+            );
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1189,15 +1191,17 @@ impl Repository {
         &self,
     ) -> anyhow::Result<&std::sync::RwLock<indexmap::IndexMap<String, Vec<String>>>> {
         self.cache.all_config.get_or_try_init(|| {
+            let args = ["config", "--list", "-z"];
             let output = Cmd::new("git")
-                .args(["config", "--list", "-z"])
+                .args(args)
                 .current_dir(&self.git_common_dir)
                 .context(path_to_logging_context(&self.git_common_dir))
                 .run()
                 .context("failed to read git config")?;
             if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                bail!("git config --list failed: {}", stderr.trim());
+                return Err(
+                    super::error::CommandError::from_failed_output("git", &args, &output).into(),
+                );
             }
             Ok(std::sync::RwLock::new(parse_config_list_z(&output.stdout)))
         })

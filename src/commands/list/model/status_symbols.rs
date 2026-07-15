@@ -186,9 +186,11 @@
 //!
 //! 1. Each position's last-known state is displayed: resolved positions show
 //!    their symbol; unresolved positions show `·`.
-//! 2. The diagnostic footer already lists which tasks did not finish per
-//!    item — this continues unchanged and gives the user the mapping from
-//!    "`·` in position X" back to "`TaskKind::Foo` timed out."
+//! 2. The `·` is the whole signal — budget truncation is deliberate, so it
+//!    goes unreported, and nothing maps a `·` in position X back to the
+//!    `TaskKind` that didn't finish. (A task whose own git command times out
+//!    is a separate path: it reaches the summary footer as one of "N tasks
+//!    timed out", a count that likewise doesn't name the task.)
 //! 3. JSON output omits fields that correspond to unresolved gates
 //!    (`working_tree`, `main_state`, `operation_state`, `upstream_divergence`,
 //!    etc.) so machine consumers can distinguish "loading / timeout" from

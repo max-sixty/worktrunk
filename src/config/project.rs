@@ -255,17 +255,28 @@ impl ProjectConfig {
         repo: &crate::git::Repository,
         write_hints: bool,
     ) -> Result<Option<Self>, ConfigError> {
-        let config_path = match repo
+        let (contents, config_path) = match repo
             .project_config_path()
             .map_err(|e| ConfigError(format!("Failed to get config path: {}", e)))?
         {
-            Some(path) if path.exists() => path,
-            _ => return Ok(None),
+            Some(path) if path.exists() => {
+                // Load directly with toml crate to preserve insertion order
+                // (with preserve_order feature).
+                let contents = std::fs::read_to_string(&path)
+                    .map_err(|e| ConfigError(format!("Failed to read config file: {}", e)))?;
+                (contents, path)
+            }
+            // No config resolved on disk. In a bare layout with the default
+            // branch checked out in no worktree, the parked primary worktree's
+            // files aren't the default branch's config — read the committed
+            // copy from the object store rather than silently dropping project
+            // config and every project hook (#3461). `config_path` is then a
+            // display-only revision spec, used only for diagnostics.
+            _ => match repo.default_branch_project_config_content() {
+                Some((contents, display_path)) => (contents, display_path),
+                None => return Ok(None),
+            },
         };
-
-        // Load directly with toml crate to preserve insertion order (with preserve_order feature)
-        let contents = std::fs::read_to_string(&config_path)
-            .map_err(|e| ConfigError(format!("Failed to read config file: {}", e)))?;
 
         // Check for deprecated template variables and create migration file if needed
         // Only write migration file in main worktree, not linked worktrees

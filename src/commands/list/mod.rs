@@ -365,12 +365,17 @@ impl SummaryMetrics {
     }
 }
 
-/// Format a summary message for the given items (used by both collect/mod.rs and mod.rs)
+/// Format the summary line that closes the table.
+///
+/// The footer is the only home a timed-out task has: it leaves an empty cell
+/// and no message to print, so the count here is all that reports it. Tasks
+/// that failed instead get a named entry in the warning that follows the
+/// table, and that warning carries its own count — repeating it here would
+/// print the same number twice on adjacent lines.
 pub(crate) fn format_summary_message(
     items: &[ListItem],
     show_branches: bool,
     hidden_column_count: usize,
-    error_count: usize,
     timed_out_count: usize,
 ) -> String {
     let metrics = SummaryMetrics::from_items(items);
@@ -379,25 +384,11 @@ pub(crate) fn format_summary_message(
         .summary_parts(show_branches, hidden_column_count)
         .join(", ");
 
-    if error_count > 0 {
-        // "failed" and "timed out" are disjoint here, matching the warning
-        // that details the non-timeout failures after the table.
-        let failed_count = error_count - timed_out_count;
-        let failure_msg = match (failed_count, timed_out_count) {
-            (0, t) => {
-                let plural = if t == 1 { "" } else { "s" };
-                format!("{t} task{plural} timed out")
-            }
-            (f, 0) => {
-                let plural = if f == 1 { "" } else { "s" };
-                format!("{f} task{plural} failed")
-            }
-            (f, t) => {
-                let plural = if f == 1 { "" } else { "s" };
-                format!("{f} task{plural} failed, {t} timed out")
-            }
-        };
-        format!("{INFO_SYMBOL} {dim}Showing {summary}; {failure_msg}{dim:#}")
+    if timed_out_count > 0 {
+        let plural = if timed_out_count == 1 { "" } else { "s" };
+        format!(
+            "{INFO_SYMBOL} {dim}Showing {summary}; {timed_out_count} task{plural} timed out{dim:#}"
+        )
     } else {
         format!("{INFO_SYMBOL} {dim}Showing {summary}{dim:#}")
     }
@@ -538,20 +529,15 @@ mod tests {
     }
 
     #[test]
-    fn test_format_summary_message_error_variants() {
+    fn test_format_summary_message_timeout_variants() {
         use insta::assert_snapshot;
 
-        // No errors
-        assert_snapshot!(format_summary_message(&[], false, 0, 0, 0), @"[2m○[22m [2mShowing 0 worktrees[0m");
-        // All timeouts
-        assert_snapshot!(format_summary_message(&[], false, 0, 3, 3), @"[2m○[22m [2mShowing 0 worktrees; 3 tasks timed out[0m");
-        // Mixed errors and timeouts
-        assert_snapshot!(format_summary_message(&[], false, 0, 5, 3), @"[2m○[22m [2mShowing 0 worktrees; 2 tasks failed, 3 timed out[0m");
-        // Only failures, no timeouts
-        assert_snapshot!(format_summary_message(&[], false, 0, 2, 0), @"[2m○[22m [2mShowing 0 worktrees; 2 tasks failed[0m");
-        // Single error
-        assert_snapshot!(format_summary_message(&[], false, 0, 1, 0), @"[2m○[22m [2mShowing 0 worktrees; 1 task failed[0m");
+        // Nothing timed out. Failures alone leave the footer untouched — the
+        // warning after the table names them and carries their count.
+        assert_snapshot!(format_summary_message(&[], false, 0, 0), @"[2m○[22m [2mShowing 0 worktrees[0m");
         // Single timeout
-        assert_snapshot!(format_summary_message(&[], false, 0, 1, 1), @"[2m○[22m [2mShowing 0 worktrees; 1 task timed out[0m");
+        assert_snapshot!(format_summary_message(&[], false, 0, 1), @"[2m○[22m [2mShowing 0 worktrees; 1 task timed out[0m");
+        // Several timeouts
+        assert_snapshot!(format_summary_message(&[], false, 0, 3), @"[2m○[22m [2mShowing 0 worktrees; 3 tasks timed out[0m");
     }
 }

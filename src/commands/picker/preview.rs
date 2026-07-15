@@ -65,7 +65,25 @@ impl PreviewMode {
     pub(super) fn prev(self) -> Self {
         Self::from_u8(if self as u8 <= 1 { 7 } else { self as u8 - 1 })
     }
+
+    /// Whether this tab is in [`LOCAL_GIT_MODES`].
+    pub(super) fn is_local_git(self) -> bool {
+        LOCAL_GIT_MODES.contains(&self)
+    }
 }
+
+/// The four tabs computed from local git alone — the one canonical set both
+/// preview producers consume: the orchestrator precomputes exactly these
+/// (plus summaries), and the demand worker serves them on a cache miss (see
+/// `PreviewDemand`), so the two can't drift. Summary is excluded (an LLM
+/// call on tab navigation would be a surprise cost); Pr and Comments
+/// render/fetch through their own paths.
+pub(super) const LOCAL_GIT_MODES: [PreviewMode; 4] = [
+    PreviewMode::WorkingTree,
+    PreviewMode::Log,
+    PreviewMode::BranchDiff,
+    PreviewMode::UpstreamDiff,
+];
 
 /// Typical terminal character aspect ratio (width/height).
 ///

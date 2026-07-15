@@ -1,0 +1,41 @@
+---
+source: tests/integration_tests/config_state.rs
+expression: "String::from_utf8_lossy(&output.stdout)"
+---
+[36mDEFAULT BRANCH[39m
+[107m [0m old-default
+[33m▲[39m [33mCached branch differs from [1morigin/HEAD[22m ([1mmain[22m)[39m
+[2m↳[22m [2mTo adopt it, run [4mwt config state default-branch set main[24m; to re-detect, run [4mwt config state default-branch clear[24m[22m
+
+[36mPREVIOUS BRANCH[39m
+[107m [0m (none)
+
+[36mBRANCH MARKERS[39m
+[107m [0m (none)
+
+[36mVARS[39m
+[107m [0m (none)
+
+[36mCI STATUS CACHE[39m
+[107m [0m (none)
+
+[36mSUMMARY CACHE[39m
+[107m [0m (none)
+
+[36mGIT COMMANDS CACHE[39m
+[107m [0m (none)
+
+[36mHINTS[39m
+[107m [0m (none)
+
+[36mCOMMAND LOG[39m @ <PATH>
+[107m [0m (none)
+
+[36mHOOK OUTPUT[39m @ <PATH>
+[107m [0m (none)
+
+[36mDIAGNOSTIC[39m @ <PATH>
+[107m [0m (none)
+
+[36mTRASH[39m @ _REPO_/.git/wt/trash
+[107m [0m (none)

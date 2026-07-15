@@ -210,7 +210,7 @@ fn fetch_ref_info(
     repo: &Repository,
 ) -> anyhow::Result<RemoteRefInfo> {
     let _watchdog = worktrunk::progress::Watchdog::start(
-        &format!("the {} info", provider.ref_type().name()),
+        &format!("the {} lookup", provider.ref_type().name()),
         None,
     );
     provider.fetch_info(number, repo)
@@ -938,8 +938,6 @@ fn execute_switch(
                 SwitchResult::Existing { path }
             };
 
-            // Path mismatch is computed lazily by callers after first output,
-            // avoiding ~7 git commands on the hot path for existing switches.
             Ok((result, SwitchBranchInfo { branch }))
         }
 
@@ -1211,8 +1209,8 @@ fn execute_switch(
     }
 }
 
-/// Resolve the deferred path mismatch for existing worktree switches.
-///
+/// Build a `GitError::WorktreeCreationFailed` from a failed `git worktree add`,
+/// extracting the underlying command output for the error message.
 fn worktree_creation_error(
     err: &anyhow::Error,
     branch: String,

@@ -333,11 +333,13 @@ pub fn handle_configure_shell(
     //
     // We check when:
     // - User explicitly runs `install zsh` (they clearly want zsh integration)
-    // - User runs `install` (all shells) AND their $SHELL is zsh (they use zsh daily)
+    // - User runs `install` (all shells) AND their current shell (process
+    //   tree, falling back to $SHELL) is zsh (they use zsh daily)
     //
     // We skip if:
-    // - User runs `install` but their $SHELL is bash/fish (they may be configuring
-    //   zsh for occasional use; don't nag about their non-primary shell)
+    // - User runs `install` but their current shell is bash/fish (they may be
+    //   configuring zsh for occasional use; don't nag about their non-primary
+    //   shell)
     // - Zsh was already configured (AlreadyExists) - they've seen this before
     let zsh_was_configured = result
         .configured

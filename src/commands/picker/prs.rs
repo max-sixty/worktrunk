@@ -37,7 +37,7 @@
 
 use std::collections::HashSet;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -61,7 +61,7 @@ use super::pr_pane;
 use super::preview::PreviewMode;
 use super::preview_cache::CommentEntry;
 use super::preview_notify::PreviewNotifier;
-use super::preview_orchestrator::PreviewOrchestrator;
+use super::preview_orchestrator::{PreviewOrchestrator, SpawnGeneration};
 
 /// One-shot handoff from the collect thread (which builds the skeleton) to the
 /// `--prs` thread: the picker's column geometry, so PR rows align to the
@@ -266,15 +266,15 @@ pub(super) struct PrsShared {
     /// that — so PR rows always land after the worktree rows, never in the
     /// reserved header slot.
     pub shared_items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>>,
-    /// Session-shared spawn counter (`PipelineFactory::prs_epoch`); each spawn
-    /// bumps it. Read together with `current_epoch` to decide whether this
-    /// thread's append is still wanted — see the append in [`fetch_and_stream`].
-    pub epoch: Arc<AtomicUsize>,
-    /// This spawn's `epoch` value, captured when the thread was spawned. The
-    /// append into `shared_items` runs only while `epoch` still equals it, so a
-    /// stale forge call from a pre-refresh spawn (whose skim channel is already
-    /// dropped) can't pollute the list a newer spawn rebuilt.
-    pub current_epoch: usize,
+    /// This spawn's identity token (see [`SpawnGeneration`]), gating every
+    /// cross-spawn effect this thread has: the whole row batch is dropped
+    /// once superseded (see the bail in [`fetch_and_stream`]), the append
+    /// into `shared_items` re-checks inside the lock so a stale forge call
+    /// from a pre-refresh spawn (whose skim channel is already dropped)
+    /// can't pollute the list a newer spawn rebuilt, and the per-row
+    /// `log`/`comments` fetches carry it so their fills can't land in the
+    /// preview cache a refresh cleared.
+    pub spawn_gen: SpawnGeneration,
 }
 
 /// Stream the open PRs/MRs into the picker, then clear the header's "loading…"
@@ -356,6 +356,16 @@ fn fetch_and_stream(
         return;
     }
 
+    // An `alt-r` during the forge call supersedes this spawn: the rebuilt
+    // spawn's own `--prs` thread refetches everything, so building rows here
+    // would only fan out per-row fetches (up to 2×`MAX_PRS` forge
+    // subprocesses) whose fills all drop at the generation check, plus a
+    // doomed append below. Drop the whole batch instead. The check inside
+    // the `shared_items` lock below stays authoritative for the append.
+    if !shared.spawn_gen.is_current() {
+        return;
+    }
+
     // The forge call above (~1s) almost always outlasts the skeleton
     // (~50ms), so this returns immediately; the wait covers a mocked forge
     // CLI winning the race. A `None` (collect errored / zero rows) leaves both
@@ -385,19 +395,27 @@ fn fetch_and_stream(
     let items: Vec<Arc<dyn SkimItem>> = entries
         .into_iter()
         .map(|entry| {
-            spawn_pr_previews(orchestrator, &entry, layout.preview_dims);
+            spawn_pr_previews(orchestrator, &shared.spawn_gen, &entry, layout.preview_dims);
             // Shortcut lookup for this row: `alt-y` copies the PR/MR head
-            // branch, `alt-o` opens its already-known web URL.
-            shared.shortcut_table.lock().unwrap().insert(
-                entry.output_token(),
-                RowShortcutData {
-                    branch: Some(entry.head_branch.clone()),
-                    url: RowUrl::Static(entry.url.clone()),
-                    // A `--prs` row has no local worktree to remove, so `alt-x`
-                    // can't morph it.
-                    morph: None,
-                },
-            );
+            // branch, `alt-o` opens its already-known web URL. Re-checked
+            // inside the lock like the `shared_items` append below — an
+            // `alt-r` landing mid-build must not write this spawn's entries
+            // into the table the new spawn rebuilt.
+            {
+                let mut table = shared.shortcut_table.lock().unwrap();
+                if shared.spawn_gen.is_current() {
+                    table.insert(
+                        entry.output_token(),
+                        RowShortcutData {
+                            branch: Some(entry.head_branch.clone()),
+                            url: RowUrl::Static(entry.url.clone()),
+                            // A `--prs` row has no local worktree to remove,
+                            // so `alt-x` can't morph it.
+                            morph: None,
+                        },
+                    );
+                }
+            }
             Arc::new(listed_pr_row(
                 &entry,
                 grid.as_ref(),
@@ -412,15 +430,16 @@ fn fetch_and_stream(
     // pool rebuild (`resync_pool`) keeps them — they reach skim through its own
     // channel below, which the rebuild never reads. The skeleton has already
     // populated `shared_items` (the `grid_slot.wait` above gates on it), so this
-    // appends after the worktree rows. Done under the lock and gated on the spawn
-    // epoch: a stale forge call from a pre-refresh spawn (its skim channel already
-    // dropped) must not add rows to the list a newer spawn rebuilt — reading the
-    // epoch inside the lock pairs the check with the next spawn's `on_skeleton`
-    // overwrite, which holds the same lock. Ordered before `tx.send` so the rows
-    // reach `shared_items` no later than they reach skim's pool.
+    // appends after the worktree rows. Done under the lock and gated on the
+    // spawn generation: a stale forge call from a pre-refresh spawn (its skim
+    // channel already dropped) must not add rows to the list a newer spawn
+    // rebuilt — re-checking inside the lock pairs the check with the next
+    // spawn's `on_skeleton` overwrite, which holds the same lock (its
+    // generation bump precedes its overwrite). Ordered before `tx.send` so the
+    // rows reach `shared_items` no later than they reach skim's pool.
     {
         let mut list = shared.shared_items.lock().unwrap();
-        if shared.epoch.load(Ordering::SeqCst) == shared.current_epoch {
+        if shared.spawn_gen.is_current() {
             list.extend(items.iter().map(Arc::clone));
         }
     }
@@ -495,6 +514,7 @@ fn listed_pr_row(
 /// (a worktree row renders its `log` tab from the local object store instead).
 fn spawn_pr_previews(
     orchestrator: &PreviewOrchestrator,
+    spawn_gen: &SpawnGeneration,
     entry: &PrEntry,
     preview_dims: (usize, usize),
 ) {
@@ -503,7 +523,7 @@ fn spawn_pr_previews(
     let (width, height) = preview_dims;
     let head_oid = entry.head_oid.clone();
     let head_branch = entry.head_branch.clone();
-    orchestrator.spawn_compute((token.clone(), PreviewMode::Log), move |repo| {
+    orchestrator.spawn_compute(spawn_gen, (token.clone(), PreviewMode::Log), move |repo| {
         Some(
             compute_pr_log(
                 repo,
@@ -519,6 +539,7 @@ fn spawn_pr_previews(
     });
     spawn_comments_fetch(
         orchestrator,
+        spawn_gen,
         token,
         entry.kind,
         entry.number,
@@ -546,13 +567,14 @@ fn spawn_pr_previews(
 /// runs and nothing is written to disk — see [`compute_pr_comments`].
 fn spawn_comments_fetch(
     orchestrator: &PreviewOrchestrator,
+    spawn_gen: &SpawnGeneration,
     key_token: String,
     kind: RefKind,
     number: u32,
     updated_at: Option<String>,
     width: usize,
 ) {
-    orchestrator.spawn_compute((key_token, PreviewMode::Comments), move |repo| {
+    orchestrator.spawn_compute(spawn_gen, (key_token, PreviewMode::Comments), move |repo| {
         Some(
             compute_pr_comments(repo, kind, number, updated_at.as_deref(), width)
                 .unwrap_or_else(|| pr_unavailable_pane("comments")),
@@ -572,6 +594,7 @@ fn spawn_comments_fetch(
 /// forever. `ci_platform` reads the cached remote URL — no network.
 pub(super) fn spawn_worktree_comments_fetch(
     orchestrator: &PreviewOrchestrator,
+    spawn_gen: &SpawnGeneration,
     branch: String,
     number: u32,
     updated_at: Option<String>,
@@ -582,13 +605,22 @@ pub(super) fn spawn_worktree_comments_fetch(
         Some(CiPlatform::GitLab) => RefKind::Mr,
         _ => {
             orchestrator.fill_external(
+                spawn_gen,
                 (branch, PreviewMode::Comments),
                 comments_unsupported_forge_pane(),
             );
             return;
         }
     };
-    spawn_comments_fetch(orchestrator, branch, kind, number, updated_at, width);
+    spawn_comments_fetch(
+        orchestrator,
+        spawn_gen,
+        branch,
+        kind,
+        number,
+        updated_at,
+        width,
+    );
 }
 
 /// The `comments` tab pane for a worktree row whose branch has a PR on a forge
@@ -1847,8 +1879,7 @@ mod tests {
             grid_slot: Arc::new(GridSlot::new()),
             shortcut_table: Arc::new(Mutex::new(std::collections::HashMap::new())),
             shared_items: Arc::new(Mutex::new(Vec::new())),
-            epoch: Arc::new(AtomicUsize::new(1)),
-            current_epoch: 1,
+            spawn_gen: orchestrator.generation(),
         };
         let (rtx, mut rrx) = tokio::sync::mpsc::channel(8);
         let render_tx = OnceLock::new();

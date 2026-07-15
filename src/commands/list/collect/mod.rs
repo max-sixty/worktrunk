@@ -1987,8 +1987,6 @@ pub fn collect(
         item.refresh_status_symbols(primary_target);
     }
 
-    // Count errors for summary
-    let error_count = errors.len();
     let timed_out_count = errors.iter().filter(|e| e.is_timeout()).count();
 
     let table_render = render_table.then(|| TableRenderPlan {
@@ -2002,7 +2000,6 @@ pub fn collect(
             &all_items,
             show_branches || show_remotes,
             layout.hidden_column_count,
-            error_count,
             timed_out_count,
         ),
     });
