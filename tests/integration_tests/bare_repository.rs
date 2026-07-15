@@ -1122,6 +1122,107 @@ fn test_bare_repo_project_config_found_from_linked_worktree_when_primary_off_bra
 }
 
 #[test]
+fn test_bare_repo_config_show_reflects_object_store_fallback() {
+    // Regression for #3476: `wt config show` must display the config that
+    // `load_project_config` actually resolves. In the #3461 state — a bare repo
+    // whose default branch (carrying `.config/wt.toml`) is checked out in no
+    // worktree — the config comes from the object store, but `config show`
+    // previously keyed off `project_config_path()` alone and reported the
+    // config as absent (`Not found` / `exists: false`) while its hooks run.
+    let test = BareRepoTest::new();
+
+    // Primary worktree on the default branch, carrying the project config.
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit");
+
+    let config_dir = main_worktree.join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(config_dir.join("wt.toml"), "post-start = \"echo hi\"\n").unwrap();
+    let output = test
+        .git_command(&main_worktree)
+        .args(["add", ".config/wt.toml"])
+        .run()
+        .unwrap();
+    assert!(output.status.success());
+    test.commit_in(&main_worktree, "Add project config");
+
+    // A second linked worktree whose branch drops the config on disk, so
+    // resolution from inside it must fall through to the object-store read.
+    let other_worktree = test.create_worktree("other", "other");
+    let output = test
+        .git_command(&other_worktree)
+        .args(["rm", ".config/wt.toml"])
+        .run()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git rm failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    test.commit_in(&other_worktree, "Remove project config on other branch");
+
+    // Park the primary off the default branch, so `main` is checked out nowhere.
+    let output = test
+        .git_command(&main_worktree)
+        .args(["checkout", "-b", "feature-x"])
+        .run()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "checkout -b feature-x failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // JSON: `path`/`exists`/`config` must agree with the object-store source.
+    let mut cmd = test.wt_command();
+    cmd.args(["config", "show", "--format=json"])
+        .current_dir(&other_worktree);
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    assert_eq!(
+        json["project"]["config"]["post-start"], "echo hi",
+        "config show must surface the object-store config that hooks run from, got: {}",
+        json["project"]
+    );
+    assert_eq!(
+        json["project"]["exists"], true,
+        "`exists` must be true when config resolved from the object store, got: {}",
+        json["project"]
+    );
+    assert_eq!(
+        json["project"]["path"], "main:.config/wt.toml",
+        "`path` must name the object-store revision spec, not a missing file, got: {}",
+        json["project"]
+    );
+
+    // Text: the object-store source is labeled and the config is dumped —
+    // never `Not found`.
+    let mut cmd = test.wt_command();
+    cmd.args(["config", "show"]).current_dir(&other_worktree);
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("from object store") && stdout.contains("post-start"),
+        "config show text must label the object-store source and dump the config; stdout:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("Not found"),
+        "config show must not report the object-store config as `Not found`; stdout:\n{stdout}"
+    );
+}
+
+#[test]
 fn test_bare_repo_project_config_found_with_dash_c_flag() {
     // Regression test for #1691 (comment): project config in the primary worktree
     // should be found when using `-C <repo>` from an unrelated directory.
