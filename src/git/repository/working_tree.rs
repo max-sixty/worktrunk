@@ -519,7 +519,7 @@ impl<'a> WorkingTree<'a> {
         ];
         args.extend(paths);
         let output = idx
-            .git(args.clone())
+            .git(&args)
             .run()
             .context("Failed to compute untracked diff stats")?;
         if !output.status.success() {
