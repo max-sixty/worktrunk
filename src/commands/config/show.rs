@@ -862,14 +862,8 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
             None => {
                 // Neither an on-disk file nor a committed fallback resolved.
                 let Some(path) = on_disk else {
-                    writeln!(
-                        out,
-                        "{}",
-                        cformat!(
-                            "<dim>{}</>",
-                            format_heading("PROJECT CONFIG", Some("No project config"))
-                        )
-                    )?;
+                    let heading = format_heading("PROJECT CONFIG", Some("No project config"));
+                    writeln!(out, "{}", cformat!("<dim>{}</>", heading))?;
                     return Ok(());
                 };
                 let source = format!("@ {}", format_path_for_display(&path));
