@@ -1787,6 +1787,19 @@ pub fn nested_key_belongs_in<C: WorktrunkConfig>(path: &str) -> Option<&'static 
         .then(C::Other::description)
 }
 
+/// Note appended to a "belongs in user config" warning: a key placed in
+/// project config that really lives in user config is usually an attempt to
+/// scope a personal setting to one repo, which the `[projects."<id>"]` table
+/// in user config does directly. Returns `None` for any other destination.
+///
+/// Keyed off the destination *description* rather than a config-type gate so
+/// both warning formatters (load-time and `config show`) can share it — they
+/// hold only the `other_description` string, not the config type.
+pub fn scope_to_repo_note(other_description: &str) -> Option<&'static str> {
+    (other_description == crate::config::UserConfig::description())
+        .then_some(r#"to scope it to this repo, add it under [projects."<id>"] in user config"#)
+}
+
 /// Classification of an unknown config key for warning purposes.
 pub enum UnknownKeyKind {
     /// Deprecated key in its correct config type — deprecation system handles it
@@ -1871,8 +1884,11 @@ fn format_load_warning(label: &str, warning: &crate::config::UnknownWarning) -> 
         UnknownWarning::TopLevelWrongConfig {
             key,
             other_description,
-        } => cformat!(
-            "{label} has key <bold>{key}</> which belongs in {other_description} (will be ignored)"
+        } => with_scope_note(
+            cformat!(
+                "{label} has key <bold>{key}</> which belongs in {other_description} (will be ignored)"
+            ),
+            other_description,
         ),
         UnknownWarning::TopLevelDeprecatedWrongConfig {
             key,
@@ -1884,12 +1900,26 @@ fn format_load_warning(label: &str, warning: &crate::config::UnknownWarning) -> 
         UnknownWarning::NestedWrongConfig {
             path,
             other_description,
-        } => cformat!(
-            "{label} has key <bold>{path}</> which belongs in {other_description} (will be ignored)"
+        } => with_scope_note(
+            cformat!(
+                "{label} has key <bold>{path}</> which belongs in {other_description} (will be ignored)"
+            ),
+            other_description,
         ),
         UnknownWarning::NestedUnknown { path } => {
             cformat!("{label} has unknown field <bold>{path}</> (will be ignored)")
         }
+    }
+}
+
+/// Append the project-scoped-user-config note to `message` when the key's
+/// destination is user config (see [`scope_to_repo_note`]). Joined with a
+/// semicolon per the house style for related clauses. The note is plain text
+/// so its `[projects."<id>"]` placeholder isn't parsed as color-print markup.
+fn with_scope_note(message: String, other_description: &str) -> String {
+    match scope_to_repo_note(other_description) {
+        Some(note) => format!("{message}; {note}"),
+        None => message,
     }
 }
 
@@ -4488,6 +4518,84 @@ ff = true
             "[commit-generation]\ncommand = \"llm\"\n",
             &path,
             ConfigFileKind::Project,
+        );
+    }
+
+    #[test]
+    fn test_nested_user_only_key_redirects_generally() {
+        use crate::config::{ProjectConfig, UnknownWarning, UserConfig, collect_unknown_warnings};
+
+        // `[list]` is a valid *shared* section (project config accepts `url`),
+        // but `columns` / `full` are user-config display settings. Placing them
+        // in project config redirects to user config rather than reading
+        // "unknown field" — the general "valid in the other config" check, not
+        // the hard-coded commit.generation list (#3469).
+        let warnings = collect_unknown_warnings::<ProjectConfig>(
+            "[list]\ncolumns = [\"branch\"]\nfull = true\n",
+        );
+        assert!(
+            warnings.iter().all(|w| matches!(
+                w,
+                UnknownWarning::NestedWrongConfig { path, other_description }
+                    if (path == "list.columns" || path == "list.full")
+                        && *other_description == "user config"
+            )) && warnings.len() == 2,
+            "expected list.columns/list.full → user config, got {warnings:?}"
+        );
+
+        // A key unknown in *both* configs stays "unknown field".
+        let warnings =
+            collect_unknown_warnings::<ProjectConfig>("[list]\nnonsense-typo = true\n");
+        assert!(
+            matches!(
+                warnings.as_slice(),
+                [UnknownWarning::NestedUnknown { path }] if path == "list.nonsense-typo"
+            ),
+            "expected list.nonsense-typo → unknown, got {warnings:?}"
+        );
+
+        // The reverse direction: `url` is project-only, so it redirects to
+        // project config when found in user config — no scope-to-repo note
+        // there (that only applies to user-config destinations).
+        let warnings = collect_unknown_warnings::<UserConfig>("[list]\nurl = \"x\"\n");
+        assert!(
+            matches!(
+                warnings.as_slice(),
+                [UnknownWarning::NestedWrongConfig { path, other_description }]
+                    if path == "list.url" && *other_description == "project config"
+            ),
+            "expected list.url → project config, got {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn test_scope_to_repo_note_only_for_user_config() {
+        // The note fires for user-config destinations and nothing else.
+        assert!(scope_to_repo_note("user config").is_some());
+        assert!(scope_to_repo_note("project config").is_none());
+
+        // It reaches the rendered load-warning for a user-config redirect...
+        let note = "to scope it to this repo";
+        let msg = format_load_warning(
+            "Project config",
+            &crate::config::UnknownWarning::NestedWrongConfig {
+                path: "list.columns".to_string(),
+                other_description: "user config",
+            },
+        );
+        assert!(msg.contains(note), "user-config redirect should carry note: {msg}");
+
+        // ...but not a project-config redirect.
+        let msg = format_load_warning(
+            "User config",
+            &crate::config::UnknownWarning::NestedWrongConfig {
+                path: "list.url".to_string(),
+                other_description: "project config",
+            },
+        );
+        assert!(
+            !msg.contains(note),
+            "project-config redirect should not carry note: {msg}"
         );
     }
 

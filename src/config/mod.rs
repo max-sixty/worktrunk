@@ -142,7 +142,7 @@ pub use deprecation::suppress_warnings;
 pub use deprecation::warnings_suppressed;
 pub use deprecation::{
     DEPRECATED_SECTION_KEYS, DeprecatedSection, UnknownKeyKind, classify_unknown_key,
-    key_belongs_in, nested_key_belongs_in, warn_unknown_fields,
+    key_belongs_in, nested_key_belongs_in, scope_to_repo_note, warn_unknown_fields,
 };
 pub use deprecation::{DeprecationKind, Deprecations};
 pub use expansion::{

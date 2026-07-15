@@ -79,7 +79,7 @@ exit_code: 0
 [107m [0m \ No newline at end of file[m
 [107m [0m [32m+[m[32m[commit.generation][m
 [107m [0m [32m+[m[32mcommand = "claude"[m
-[33m▲[39m [33mKey [1mcommit.generation.command[22m belongs in user config (will be ignored)[39m
+[33m▲[39m [33mKey [1mcommit.generation.command[22m belongs in user config (will be ignored); to scope it to this repo, add it under [projects."<id>"] in user config[39m
 
 [36mSHELL INTEGRATION[39m
 [33m▲[39m [33mShell integration not configured[39m
