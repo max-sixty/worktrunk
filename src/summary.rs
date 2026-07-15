@@ -35,7 +35,7 @@ use minijinja::Environment;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use worktrunk::cache;
-use worktrunk::git::{ErrorExt, Repository};
+use worktrunk::git::{CommandError, ErrorExt, Repository};
 use worktrunk::path::sanitize_for_filename;
 use worktrunk::styling::INFO_SYMBOL;
 use worktrunk::sync::Semaphore;
@@ -357,15 +357,44 @@ pub(crate) fn generate_summary(
             let reset = Reset;
             cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no changes to summarize\n")
         }
-        // `display_message` surfaces the LLM command's captured stderr for
-        // typed command failures rather than the single-line chain summary.
-        Err(e) => format!("Error: {}", e.display_message()),
+        Err(e) => format_summary_error(&e),
+    }
+}
+
+/// Format a summary-generation error for the preview pane.
+///
+/// A typed command failure carries the LLM command's captured output —
+/// `display_message` surfaces that rather than the single-line chain
+/// summary. For anything else (shell spawn failure, template bug) keep
+/// the full anyhow chain, which `display_message` would collapse to its
+/// outermost line.
+fn format_summary_error(e: &anyhow::Error) -> String {
+    if CommandError::find_in(e).is_some() {
+        format!("Error: {}", e.display_message())
+    } else {
+        format!("Error: {e:#}")
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A non-command error (spawn failure, template bug) keeps its full
+    /// anyhow chain in the preview pane; command failures are covered by
+    /// `test_generate_summary_llm_error`.
+    #[test]
+    fn format_summary_error_keeps_chain_for_non_command_errors() {
+        use anyhow::Context;
+        let err = std::io::Error::new(std::io::ErrorKind::NotFound, "No such file or directory");
+        let err = anyhow::Result::<()>::Err(err.into())
+            .context("Failed to spawn LLM command")
+            .unwrap_err();
+        assert_eq!(
+            format_summary_error(&err),
+            "Error: Failed to spawn LLM command: No such file or directory"
+        );
+    }
 
     #[test]
     fn test_render_prompt_includes_diff_and_stat() {
