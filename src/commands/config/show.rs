@@ -116,8 +116,7 @@ fn handle_config_show_json() -> anyhow::Result<()> {
             Some(p) if p.exists() => on_disk.clone(),
             _ if config.is_some() => repo
                 .default_branch_project_config_content()
-                .map(|(_, spec)| spec)
-                .or_else(|| on_disk.clone()),
+                .map(|(_, spec)| spec),
             _ => on_disk.clone(),
         };
         let identifier = repo.project_identifier().ok();
