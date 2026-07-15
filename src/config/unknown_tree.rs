@@ -232,8 +232,9 @@ impl<'a> OtherStatus<'a> {
 ///
 /// A misplaced *nested* key is redirected to `C::Other` when it's valid there
 /// — determined by walking `C::Other`'s own unknown tree for the same content
-/// (see [`OtherStatus`]). If that other-config analysis is unreliable, the
-/// walk falls back to treating nested keys as unknown, so only the hard-coded
+/// (see the private `OtherStatus` helper). If that other-config analysis is
+/// unreliable, the walk falls back to treating nested keys as unknown, so only
+/// the hard-coded
 /// [`nested_key_belongs_in`](crate::config::nested_key_belongs_in) redirects
 /// still fire.
 ///
