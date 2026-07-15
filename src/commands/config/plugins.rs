@@ -4,7 +4,6 @@ use std::path::PathBuf;
 
 use anyhow::{Context, bail};
 use color_print::cformat;
-use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{eprintln, info_message, progress_message, success_message};
 
 use super::show::{
@@ -35,26 +34,13 @@ pub fn handle_claude_install(yes: bool) -> anyhow::Result<()> {
     }
 
     eprintln!("{}", progress_message("Adding plugin from marketplace..."));
-    let output = Cmd::new("claude")
-        .args(["plugin", "marketplace", "add", "max-sixty/worktrunk"])
-        .run()
-        .context("Failed to run claude CLI")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("claude plugin marketplace add failed: {}", stderr.trim());
-    }
+    super::run_plugin_cli(
+        "claude",
+        &["plugin", "marketplace", "add", "max-sixty/worktrunk"],
+    )?;
 
     eprintln!("{}", progress_message("Installing plugin..."));
-    let output = Cmd::new("claude")
-        .args(["plugin", "install", "worktrunk@worktrunk"])
-        .run()
-        .context("Failed to run claude CLI")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("claude plugin install failed: {}", stderr.trim());
-    }
+    super::run_plugin_cli("claude", &["plugin", "install", "worktrunk@worktrunk"])?;
 
     eprintln!("{}", success_message("Plugin installed"));
 
@@ -88,15 +74,7 @@ pub fn handle_claude_uninstall(yes: bool) -> anyhow::Result<()> {
     }
 
     eprintln!("{}", progress_message("Uninstalling plugin..."));
-    let output = Cmd::new("claude")
-        .args(["plugin", "uninstall", "worktrunk@worktrunk"])
-        .run()
-        .context("Failed to run claude CLI")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("claude plugin uninstall failed: {}", stderr.trim());
-    }
+    super::run_plugin_cli("claude", &["plugin", "uninstall", "worktrunk@worktrunk"])?;
 
     eprintln!("{}", success_message("Plugin uninstalled"));
 

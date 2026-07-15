@@ -198,22 +198,22 @@ fn list_ignored_entries(
     worktree_path: &Path,
     context: &str,
 ) -> anyhow::Result<Vec<(std::path::PathBuf, bool)>> {
+    let args = [
+        "ls-files",
+        "--ignored",
+        "--exclude-standard",
+        "-o",
+        "--directory",
+    ];
     let output = Cmd::new("git")
-        .args([
-            "ls-files",
-            "--ignored",
-            "--exclude-standard",
-            "-o",
-            "--directory",
-        ])
+        .args(args)
         .current_dir(worktree_path)
         .context(context)
         .run()
         .context("Failed to run git ls-files")?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git ls-files failed: {}", stderr.trim());
+        return Err(worktrunk::git::CommandError::from_failed_output("git", &args, &output).into());
     }
 
     // Parse output: directories end with /
@@ -227,4 +227,22 @@ fn list_ignored_entries(
         .collect();
 
     Ok(entries)
+}
+
+#[cfg(test)]
+mod tests {
+    use worktrunk::git::CommandError;
+    use worktrunk::testing::TestRepo;
+
+    /// A hard `git ls-files` failure (here: a fatal config error) must
+    /// surface as a typed `CommandError`.
+    #[test]
+    fn list_ignored_entries_failure_is_command_error() {
+        let test = TestRepo::with_initial_commit();
+        std::fs::write(test.root_path().join(".git/config"), "[bad\n").unwrap();
+
+        let err = super::list_ignored_entries(test.root_path(), "test").unwrap_err();
+        let cmd_err = CommandError::find_in(&err).expect("error should carry a CommandError");
+        assert!(cmd_err.command_string().starts_with("git ls-files"));
+    }
 }

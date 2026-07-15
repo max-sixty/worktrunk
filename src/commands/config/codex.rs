@@ -1,8 +1,7 @@
 //! Codex plugin marketplace management.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use color_print::cformat;
-use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{eprintln, hint_message, progress_message, success_message};
 
 use super::show::is_codex_available;
@@ -29,15 +28,10 @@ pub fn handle_codex_install(yes: bool) -> Result<()> {
     }
 
     eprintln!("{}", progress_message("Adding Codex plugin marketplace..."));
-    let output = Cmd::new("codex")
-        .args(["plugin", "marketplace", "add", MARKETPLACE_SOURCE])
-        .run()
-        .context("Failed to run codex CLI")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("codex plugin marketplace add failed: {}", stderr.trim());
-    }
+    super::run_plugin_cli(
+        "codex",
+        &["plugin", "marketplace", "add", MARKETPLACE_SOURCE],
+    )?;
 
     eprintln!("{}", success_message("Codex marketplace configured"));
     eprintln!(
@@ -84,15 +78,10 @@ pub fn handle_codex_uninstall(yes: bool) -> Result<()> {
         "{}",
         progress_message("Removing Codex plugin marketplace...")
     );
-    let output = Cmd::new("codex")
-        .args(["plugin", "marketplace", "remove", MARKETPLACE_NAME])
-        .run()
-        .context("Failed to run codex CLI")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("codex plugin marketplace remove failed: {}", stderr.trim());
-    }
+    super::run_plugin_cli(
+        "codex",
+        &["plugin", "marketplace", "remove", MARKETPLACE_NAME],
+    )?;
 
     eprintln!("{}", success_message("Codex marketplace removed"));
     eprintln!("{}", hint_message("Installed plugins are left unchanged"));

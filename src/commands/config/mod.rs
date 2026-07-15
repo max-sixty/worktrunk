@@ -31,6 +31,23 @@ pub use state::{
 };
 pub use update::handle_config_update;
 
+/// Run a plugin-CLI command (`claude` / `codex`), surfacing a non-zero exit
+/// as a typed [`worktrunk::git::CommandError`].
+fn run_plugin_cli(program: &str, args: &[&str]) -> anyhow::Result<()> {
+    use anyhow::Context;
+
+    let output = worktrunk::shell_exec::Cmd::new(program)
+        .args(args.iter().copied())
+        .run()
+        .with_context(|| format!("Failed to run {program} CLI"))?;
+    if !output.status.success() {
+        return Err(
+            worktrunk::git::CommandError::from_failed_output(program, args, &output).into(),
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use insta::assert_snapshot;

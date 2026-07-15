@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use worktrunk::config::CommitGenerationConfig;
-use worktrunk::git::{CommandError, CommitMessageDetail, Repository};
+use worktrunk::git::{CommandError, CommitMessageDetail, ErrorExt, Repository};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::{Cmd, ShellConfig};
 use worktrunk::styling::{eprintln, warning_message};
@@ -512,32 +512,29 @@ pub(crate) fn execute_llm_command(command: &str, prompt: &str) -> anyhow::Result
     // entirely. See conversation around PR #2136 for sketch.
 
     let shell = ShellConfig::get()?;
+    let args: Vec<&str> = shell
+        .args
+        .iter()
+        .map(String::as_str)
+        .chain([command])
+        .collect();
     let output = Cmd::new(shell.executable.to_string_lossy())
-        .args(&shell.args)
-        .arg(command)
+        .args(args.iter().copied())
         .external("commit.generation")
         .stdin_bytes(prompt)
         .run()
         .context("Failed to spawn LLM command")?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stderr = stderr.trim();
-        if stderr.is_empty() {
-            // Fall back to stdout or exit code when stderr is empty
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stdout = stdout.trim();
-            if stdout.is_empty() {
-                anyhow::bail!(
-                    "LLM command failed with exit code {}",
-                    output.status.code().unwrap_or(-1)
-                );
-            } else {
-                anyhow::bail!("{}", stdout);
-            }
-        } else {
-            anyhow::bail!("{}", stderr);
-        }
+        // Shell basename only — the full install path is noise (and on
+        // Windows leaks the Git Bash location); same rule as
+        // `render_llm_invocation`.
+        let shell_name = shell
+            .executable
+            .file_name()
+            .unwrap_or(shell.executable.as_os_str())
+            .to_string_lossy();
+        return Err(CommandError::from_failed_output(shell_name, &args, &output).into());
     }
 
     let message = String::from_utf8_lossy(&output.stdout).trim().to_owned();
@@ -779,7 +776,7 @@ pub(crate) fn generate_commit_message(
         return execute_llm_command(command, &prompt).map_err(|e| {
             worktrunk::git::GitError::LlmCommandFailed {
                 command: command.clone(),
-                error: e.to_string(),
+                error: e.display_message(),
                 reproduction_command: Some(format_reproduction_command(
                     "wt step commit --show-prompt",
                     command,
@@ -928,7 +925,7 @@ pub(crate) fn generate_squash_message(
         return execute_llm_command(command, &prompt).map_err(|e| {
             worktrunk::git::GitError::LlmCommandFailed {
                 command: command.clone(),
-                error: e.to_string(),
+                error: e.display_message(),
                 reproduction_command: Some(format_reproduction_command(
                     "wt step squash --show-prompt",
                     command,
@@ -1046,7 +1043,7 @@ pub(crate) fn test_commit_generation(
     execute_llm_command(command, &prompt).map_err(|e| {
         worktrunk::git::GitError::LlmCommandFailed {
             command: command.clone(),
-            error: e.to_string(),
+            error: e.display_message(),
             reproduction_command: None, // Already a test command
         }
         .into()
@@ -1088,6 +1085,23 @@ mod tests {
             cmd_err.stderr.contains("frobnicate-nonexistent"),
             "stderr should name the failing command; got: {}",
             cmd_err.stderr
+        );
+    }
+
+    /// A failing LLM command must surface as a typed [`CommandError`] carrying
+    /// the exit code and captured output — `LlmCommandFailed` and the summary
+    /// pane read the detail via `display_message`.
+    #[test]
+    fn test_execute_llm_command_failure_is_command_error() {
+        let err = execute_llm_command("printf 'oops' >&2; exit 3", "prompt").unwrap_err();
+        let cmd_err = CommandError::find_in(&err).expect("error should carry a CommandError");
+        assert_eq!(cmd_err.exit_code, Some(3));
+        assert_eq!(err.display_message(), "oops");
+        // Basename only — no install-path leakage (see render_llm_invocation).
+        assert!(
+            !cmd_err.program.contains('/') && !cmd_err.program.contains('\\'),
+            "shell program has directory components: {}",
+            cmd_err.program
         );
     }
 

@@ -35,7 +35,7 @@ use minijinja::Environment;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use worktrunk::cache;
-use worktrunk::git::Repository;
+use worktrunk::git::{ErrorExt, Repository};
 use worktrunk::path::sanitize_for_filename;
 use worktrunk::styling::INFO_SYMBOL;
 use worktrunk::sync::Semaphore;
@@ -357,7 +357,9 @@ pub(crate) fn generate_summary(
             let reset = Reset;
             cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no changes to summarize\n")
         }
-        Err(e) => format!("Error: {e:#}"),
+        // `display_message` surfaces the LLM command's captured stderr for
+        // typed command failures rather than the single-line chain summary.
+        Err(e) => format!("Error: {}", e.display_message()),
     }
 }
 
