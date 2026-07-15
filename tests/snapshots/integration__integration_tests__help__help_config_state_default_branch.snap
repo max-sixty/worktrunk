@@ -26,6 +26,7 @@ info:
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -82,7 +83,7 @@ Worktrunk detects the default branch automatically:
 3. [1mRemote query[0m — If not cached, queries [2mgit ls-remote[0m — typically 100ms–2s
 4. [1mLocal inference[0m — If no remote, infers from local branches
 
-Once detected, the result is cached in [2mworktrunk.default-branch[0m for fast access.
+Once detected, the result is cached in [2mworktrunk.default-branch[0m for fast access. The cache isn't re-validated on every command, so a later change to [2morigin/HEAD[0m — a renamed default branch followed by [2mgit remote set-head origin -a[0m — isn't picked up automatically. [2mwt config state[0m flags the drift when the cached value differs from the remote's local HEAD; [2mset[0m adopts the new branch and [2mclear[0m re-detects.
 
 The local inference fallback uses these heuristics in order:
 - If only one local branch exists, uses it

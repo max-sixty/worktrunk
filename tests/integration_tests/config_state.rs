@@ -222,6 +222,61 @@ fn test_state_clear_default_branch_empty(repo: TestRepo) {
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No default branch cache to clear");
 }
 
+#[rstest]
+fn test_state_show_default_branch_drift_warns(mut repo: TestRepo) {
+    // origin/HEAD points at main (the fixture default)...
+    repo.setup_remote("main");
+    // ...but the persisted cache still names a branch from before a rename.
+    // This is the shape after a GitHub default-branch rename + `git remote
+    // set-head origin -a`: the fast-path cache in default_branch() never
+    // re-validates against origin/HEAD, so `wt config state` calls it out.
+    repo.git_command()
+        .args(["config", "worktrunk.default-branch", "old-default"])
+        .run()
+        .unwrap();
+
+    let output = wt_state_get_cmd(&repo).output().unwrap();
+    assert!(output.status.success());
+    state_get_settings().bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    });
+}
+
+#[rstest]
+fn test_state_show_default_branch_no_drift_when_matching(mut repo: TestRepo) {
+    // Cache matches origin/HEAD — no warning, just the value.
+    repo.setup_remote("main");
+    repo.git_command()
+        .args(["config", "worktrunk.default-branch", "main"])
+        .run()
+        .unwrap();
+
+    let output = wt_state_get_cmd(&repo).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("DEFAULT BRANCH"));
+    // No drift → no divergence warning.
+    assert!(
+        !stdout.contains("differs from"),
+        "expected no drift warning when cache matches origin/HEAD:\n{stdout}"
+    );
+}
+
+#[rstest]
+fn test_state_get_json_reports_remote_head_branch(mut repo: TestRepo) {
+    repo.setup_remote("main");
+    repo.git_command()
+        .args(["config", "worktrunk.default-branch", "old-default"])
+        .run()
+        .unwrap();
+
+    let output = wt_state_get_json_cmd(&repo).output().unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    assert_eq!(json["default_branch"], "old-default");
+    assert_eq!(json["remote_head_branch"], "main");
+}
+
 // ============================================================================
 // previous-branch
 // ============================================================================
@@ -1850,6 +1905,7 @@ fn test_state_get_json_empty(repo: TestRepo) {
       "markers": [],
       "max_pr_number": null,
       "previous_branch": null,
+      "remote_head_branch": null,
       "summaries": [],
       "trash": [],
       "vars": []
@@ -1945,6 +2001,7 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
           ],
           "max_pr_number": null,
           "previous_branch": "feature",
+          "remote_head_branch": null,
           "summaries": [
             {
               "branch": "feature",
@@ -2047,6 +2104,7 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
           "markers": [],
           "max_pr_number": null,
           "previous_branch": null,
+          "remote_head_branch": null,
           "summaries": [],
           "trash": [],
           "vars": []

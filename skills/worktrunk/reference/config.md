@@ -1068,7 +1068,7 @@ Worktrunk detects the default branch automatically:
 3. **Remote query** — If not cached, queries `git ls-remote` — typically 100ms–2s
 4. **Local inference** — If no remote, infers from local branches
 
-Once detected, the result is cached in `worktrunk.default-branch` for fast access.
+Once detected, the result is cached in `worktrunk.default-branch` for fast access. The cache isn't re-validated on every command, so a later change to `origin/HEAD` — a renamed default branch followed by `git remote set-head origin -a` — isn't picked up automatically. `wt config state` flags the drift when the cached value differs from the remote's local HEAD; `set` adopts the new branch and `clear` re-detects.
 
 The local inference fallback uses these heuristics in order:
 - If only one local branch exists, uses it

@@ -625,6 +625,27 @@ impl Repository {
             .filter(|s| !s.is_empty())
     }
 
+    /// Read the primary remote's locally-cached HEAD without touching the
+    /// network, as `(remote_name, branch)` — the branch `<remote>/HEAD`
+    /// resolves to (e.g. `("origin", "main")`).
+    ///
+    /// Unlike [`default_branch`](Self::default_branch), this never queries the
+    /// remote (`git ls-remote`), never infers from local branches, and never
+    /// persists a result: it reports only git's own `<remote>/HEAD` symref.
+    /// Returns `None` when there is no primary remote or its HEAD is not set
+    /// locally (e.g. `git remote set-head` was never run).
+    ///
+    /// State inspection (`wt config state`) uses this to flag when the
+    /// persisted `worktrunk.default-branch` cache has drifted from
+    /// `origin/HEAD` — e.g. after a default-branch rename followed by
+    /// `git remote set-head origin -a`, which the fast-path cache in
+    /// `default_branch()` won't otherwise notice.
+    pub fn remote_head(&self) -> Option<(String, String)> {
+        let remote = self.primary_remote().ok()?;
+        let branch = self.local_default_branch(&remote).ok()?;
+        Some((remote, branch))
+    }
+
     // =========================================================================
     // Project config
     // =========================================================================
