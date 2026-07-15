@@ -766,9 +766,10 @@ fn format_show_warning(warning: &worktrunk::config::UnknownWarning) -> String {
         UnknownWarning::TopLevelWrongConfig {
             key,
             other_description,
-        } => with_scope_note(
+        } => worktrunk::config::with_scope_note(
             cformat!("Key <bold>{key}</> belongs in {other_description} (will be ignored)"),
             other_description,
+            key,
         ),
         UnknownWarning::TopLevelDeprecatedWrongConfig {
             key,
@@ -778,23 +779,14 @@ fn format_show_warning(warning: &worktrunk::config::UnknownWarning) -> String {
         UnknownWarning::NestedWrongConfig {
             path,
             other_description,
-        } => with_scope_note(
+        } => worktrunk::config::with_scope_note(
             cformat!("Key <bold>{path}</> belongs in {other_description} (will be ignored)"),
             other_description,
+            path,
         ),
         UnknownWarning::NestedUnknown { path } => {
             cformat!("Unknown key <bold>{path}</> will be ignored")
         }
-    }
-}
-
-/// Append the project-scoped-user-config note when the key belongs in user
-/// config, mirroring the load-time warning path. See
-/// [`scope_to_repo_note`](worktrunk::config::scope_to_repo_note).
-fn with_scope_note(message: String, other_description: &str) -> String {
-    match worktrunk::config::scope_to_repo_note(other_description) {
-        Some(note) => format!("{message}; {note}"),
-        None => message,
     }
 }
 
