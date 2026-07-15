@@ -4544,8 +4544,7 @@ ff = true
         );
 
         // A key unknown in *both* configs stays "unknown field".
-        let warnings =
-            collect_unknown_warnings::<ProjectConfig>("[list]\nnonsense-typo = true\n");
+        let warnings = collect_unknown_warnings::<ProjectConfig>("[list]\nnonsense-typo = true\n");
         assert!(
             matches!(
                 warnings.as_slice(),
@@ -4583,7 +4582,10 @@ ff = true
                 other_description: "user config",
             },
         );
-        assert!(msg.contains(note), "user-config redirect should carry note: {msg}");
+        assert!(
+            msg.contains(note),
+            "user-config redirect should carry note: {msg}"
+        );
 
         // ...but not a project-config redirect.
         let msg = format_load_warning(
