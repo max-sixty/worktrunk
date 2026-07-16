@@ -546,12 +546,13 @@ pub fn configure_cli_command(cmd: &mut Command) {
     // by the env-strip above.
     isolate_subprocess_env(cmd, None);
     cmd.env("WORKTRUNK_TEST_EPOCH", TEST_EPOCH.to_string());
-    // RUST_LOG intentionally NOT set: the flag baseline and `RUST_LOG`
+    // Do not inherit the host's RUST_LOG: the flag baseline and `RUST_LOG`
     // merge via the env-wins-when-set contract enforced by
     // `tracing_subscriber::EnvFilter` (see `logging::init`), so a blanket
-    // `RUST_LOG=warn` default would cap `-vv` tests at Warn and starve
-    // `trace.log` of debug-level `[wt-trace]` records. Tests that need
-    // warn-level output should opt in per-invocation.
+    // host `RUST_LOG=warn` would cap `-vv` tests at Warn and starve `trace.log`
+    // of debug-level `[wt-trace]` records. Tests that need warn-level output
+    // can opt in after command construction.
+    cmd.env_remove("RUST_LOG");
     // Treat Claude as not installed by default (tests can override with "1")
     cmd.env("WORKTRUNK_TEST_CLAUDE_INSTALLED", "0");
     // Treat Codex as not installed by default (tests can override with "1")
@@ -3123,6 +3124,22 @@ mod tests {
         assert_eq!(
             removed.get("WORKTRUNK_APPROVALS_PATH"),
             Some(&Some(DEFAULT_ISOLATED_APPROVALS.to_string()))
+        );
+    }
+
+    #[test]
+    fn configure_cli_command_scrubs_host_rust_log() {
+        let mut cmd = Command::new("true");
+        configure_cli_command(&mut cmd);
+
+        let rust_log = cmd
+            .get_envs()
+            .find(|(key, _)| key.to_string_lossy() == "RUST_LOG")
+            .map(|(_, value)| value);
+
+        assert!(
+            matches!(rust_log, Some(None)),
+            "RUST_LOG should be explicitly removed from CLI test children"
         );
     }
 
