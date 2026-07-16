@@ -13,6 +13,33 @@ tasks:
     desc: Run tests with coverage report
     cmd: cargo llvm-cov --html --features shell-integration-tests {{.CLI_ARGS}}
 
+  _help-snapshot-preflight:
+    internal: true
+    cmds:
+      - cargo build -p mock-stub
+      - |
+        selected=$(cargo test --test integration test_help -- --list)
+        printf '%s\n' "$selected"
+        count=$(printf '%s\n' "$selected" | sed -n '$s/ tests, 0 benchmarks//p')
+        if [ "$count" != "47" ]; then
+          echo "Expected 47 help tests, selected ${count:-unknown}" >&2
+          exit 1
+        fi
+
+  test-help-snapshots:
+    desc: Check only the 47 integration help snapshots without accepting changes
+    cmds:
+      - task: _help-snapshot-preflight
+      - defer: find src tests -name '*.snap.new' -print
+      - INSTA_UPDATE=no cargo insta test --test-runner cargo-test --test integration -- test_help
+
+  accept-help-snapshots:
+    desc: Explicitly accept changes to only the 47 integration help snapshots
+    cmds:
+      - task: _help-snapshot-preflight
+      - defer: find src tests -name '*.snap.new' -print
+      - cargo insta test --accept --test-runner cargo-test --test integration -- test_help
+
   setup-web:
     desc: Setup Claude Code web environment for development
     platforms: [linux]

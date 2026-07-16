@@ -114,6 +114,13 @@ jobs:
     - name: 🧪 Full test suite
       run: wt hook pre-merge --yes insta
 
+    # PowerShell has its own explicit feature/dependency boundary. Hosted
+    # Windows runners provide pwsh; the cross-platform shell suite therefore
+    # never fails merely because pwsh is absent on Linux or macOS.
+    - name: 🪟 PowerShell integration tests
+      if: runner.os == 'Windows'
+      run: cargo test --test integration --features powershell-integration-tests shell_powershell
+
     # Anything tests leave behind in the working tree is a leak we want to see
     # before it lands. `target/` is gitignored, so a normal run is clean —
     # untracked files here mean a test wrote outside its sandbox (the

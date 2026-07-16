@@ -3,7 +3,7 @@
 //! These tests verify that PowerShell shell integration works correctly.
 //! Requires pwsh (PowerShell Core), which is pre-installed on GitHub Actions runners.
 
-#![cfg(feature = "shell-integration-tests")]
+#![cfg(feature = "powershell-integration-tests")]
 
 use std::process::Command;
 

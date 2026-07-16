@@ -8,13 +8,17 @@ pre-commit run --all-files                                         # lints only
 cargo test --lib --bins                                            # unit tests
 cargo test --test integration                                      # integration (no shell tests)
 cargo test --test integration --features shell-integration-tests   # + shell tests
+task test-help-snapshots                                           # check only 47 help snapshots
+task accept-help-snapshots                                         # explicitly accept that same scope
 ```
 
 A target-filtered run (`--lib`, `--test integration`, …) on a fresh `target/` panics with "mock-stub binary not found" (a target filter skips the helper-bin build). Fix: `cargo build -p mock-stub`, or use `cargo nextest run` / `cargo llvm-cov nextest`.
 
 **Claude Code web:** `task setup-web` installs zsh/fish/nushell, `gh`, and dev tools. Install `task` first if needed: `sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b ~/bin` then `export PATH="$HOME/bin:$PATH"`. The permission tests (`test_permission_error_prevents_save`, `test_approval_prompt_permission_error`) skip automatically when running as root.
 
-**Shell/PTY tests** (`shell-integration-tests` feature): approval prompts, picker, progressive rendering, shell wrappers.
+**Shell/PTY tests** (`shell-integration-tests` feature): approval prompts, picker, progressive rendering, shell wrappers. PowerShell subprocess coverage is separate: `powershell-integration-tests` requires `pwsh` and is exercised by the Windows CI job.
+
+For narrow help-snapshot work, keep Cargo Insta's target selector before `--`, force `cargo-test`, and pass only the Rust substring filter after the separator. The canonical tasks build `mock-stub`, list and count the selected tests, and print any `*.snap.new` files even when the runner fails. `test-help-snapshots` is non-accepting; use `accept-help-snapshots` only after reviewing the proposed delta. An accepting run may update snapshots before a later unrelated failure, so inspect the diff and pending-file scan whenever it exits nonzero.
 
 ## Coverage Investigation
 
