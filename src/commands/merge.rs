@@ -329,7 +329,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let rebased = if rebase {
         // Auto-rebase onto target
         matches!(
-            super::step::handle_rebase(Some(&target_branch))?,
+            super::step::handle_rebase_onto_local_branch(&target_branch)?,
             super::step::RebaseResult::Rebased { .. }
         )
     } else {

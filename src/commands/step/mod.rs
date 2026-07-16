@@ -31,7 +31,7 @@ pub(crate) use copy_ignored::step_copy_ignored;
 pub(crate) use diff::step_diff;
 pub(crate) use promote::{PromoteResult, handle_promote};
 pub(crate) use prune::step_prune;
-pub(crate) use rebase::{RebaseResult, handle_rebase};
+pub(crate) use rebase::{RebaseResult, handle_rebase, handle_rebase_onto_local_branch};
 pub(crate) use relocate::step_relocate;
 pub(crate) use squash::{
     PreApprovedGuidance, SquashResult, handle_squash, step_dry_run_squash, step_show_squash_prompt,

@@ -506,6 +506,33 @@ impl Repository {
         Ok(reference)
     }
 
+    /// Fully qualify a remote-tracking shorthand when it exists or names a
+    /// configured remote.
+    ///
+    /// Git prefers `refs/heads/<name>` over `refs/remotes/<name>` for an
+    /// ambiguous short name. Explicit qualified inputs such as
+    /// `upstream/main` mean the remote-tracking ref when that ref exists;
+    /// callers keep the original string separately for user-facing output.
+    pub fn disambiguate_remote_ref(&self, reference: &str) -> anyhow::Result<String> {
+        if reference.starts_with("refs/") {
+            return Ok(reference.to_string());
+        }
+
+        let remote_ref = format!("refs/remotes/{reference}");
+        let configured_remote = if let Some((remote, _)) = reference.split_once('/') {
+            self.run_command(&["remote"])?
+                .lines()
+                .any(|configured| configured == remote)
+        } else {
+            false
+        };
+        if configured_remote || self.ref_exists(&remote_ref)? {
+            Ok(remote_ref)
+        } else {
+            Ok(reference.to_string())
+        }
+    }
+
     /// True when `branch` is checked out as an unborn HEAD (no commits yet)
     /// in some worktree — e.g. a freshly `git init`'d repo before its first
     /// commit. Such a branch has no `refs/heads/<branch>` ref, so the

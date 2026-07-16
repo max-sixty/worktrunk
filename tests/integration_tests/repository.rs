@@ -681,6 +681,37 @@ fn test_primary_remote_errors_with_no_remotes() {
     );
 }
 
+#[test]
+fn test_disambiguate_remote_ref_preserves_other_commitishes() {
+    let mut repo = TestRepo::standard();
+    repo.setup_custom_remote("upstream", "main");
+    repo.run_git(&["tag", "v1.0"]);
+    let sha = repo.head_sha();
+
+    let r = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    assert_eq!(
+        r.disambiguate_remote_ref("upstream/main").unwrap(),
+        "refs/remotes/upstream/main"
+    );
+    assert_eq!(r.disambiguate_remote_ref(&sha).unwrap(), sha);
+    assert_eq!(r.disambiguate_remote_ref("v1.0").unwrap(), "v1.0");
+    assert_eq!(
+        r.disambiguate_remote_ref("refs/tags/v1.0").unwrap(),
+        "refs/tags/v1.0"
+    );
+
+    repo.run_git(&["update-ref", "-d", "refs/remotes/upstream/main"]);
+    let r = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    assert_eq!(
+        r.disambiguate_remote_ref("upstream/main").unwrap(),
+        "refs/remotes/upstream/main"
+    );
+    assert_eq!(
+        r.disambiguate_remote_ref("vendor/main").unwrap(),
+        "vendor/main"
+    );
+}
+
 /// `require_target_ref(None)` surfaces `StaleDefaultBranch` when the
 /// persisted default branch no longer resolves locally. Covers the
 /// `target.is_none()` arm added alongside `require_target_branch` for

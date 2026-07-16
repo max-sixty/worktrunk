@@ -3265,6 +3265,170 @@ fn test_step_rebase_rebased_json(mut repo: TestRepo) {
     assert_eq!(parsed["target"], "main");
 }
 
+/// An explicit remote-tracking target must not collapse to a same-named local branch.
+#[rstest]
+fn test_step_rebase_preserves_explicit_remote_target(mut repo: TestRepo) {
+    let original_main = repo.head_sha();
+    repo.setup_custom_remote("upstream", "main");
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "feature.txt", "feature", "feat: feature");
+
+    fs::write(repo.root_path().join("upstream.txt"), "upstream").unwrap();
+    repo.run_git(&["add", "upstream.txt"]);
+    repo.run_git(&["commit", "-m", "upstream change"]);
+    let upstream_tip = repo.head_sha();
+    repo.run_git(&["push", "upstream", "main"]);
+    repo.run_git(&["reset", "--hard", &original_main]);
+    fs::write(repo.root_path().join("local-main.txt"), "local").unwrap();
+    repo.run_git(&["add", "local-main.txt"]);
+    repo.run_git(&["commit", "-m", "local main change"]);
+    let local_main = repo.head_sha();
+    repo.run_git(&["branch", "upstream/main", &local_main]);
+
+    let output = repo
+        .wt_command()
+        .args(["step", "rebase", "upstream/main", "--format=json"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "step rebase failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(parsed["outcome"], "rebased");
+    assert_eq!(parsed["target"], "upstream/main");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Rebased onto")
+            && stderr.contains("upstream/main")
+            && !stderr.contains("refs/remotes/upstream/main"),
+        "text output should report the resolved user-facing target: {stderr}"
+    );
+
+    let parent = repo
+        .git_command()
+        .args(["rev-parse", "HEAD^"])
+        .current_dir(&feature_wt)
+        .run()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&parent.stdout).trim(),
+        upstream_tip,
+        "feature should be replayed onto the exact remote-tracking tip"
+    );
+    assert_eq!(
+        repo.git_output(&["rev-parse", "main"]),
+        local_main,
+        "explicit remote rebase must not move local main"
+    );
+}
+
+/// A configured remote name must not fall back to a same-spelled local branch
+/// when the requested remote-tracking ref is missing.
+#[rstest]
+fn test_step_rebase_missing_explicit_remote_rejects_local_shadow(mut repo: TestRepo) {
+    repo.setup_custom_remote("upstream", "main");
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "feature.txt", "feature", "feat: feature");
+    let feature_head = repo.head_sha_in(&feature_wt);
+    let local_shadow = repo.git_output(&["rev-parse", "main"]);
+    repo.run_git(&["branch", "upstream/missing", &local_shadow]);
+
+    let output = repo
+        .wt_command()
+        .args(["step", "rebase", "upstream/missing"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert_eq!(repo.head_sha_in(&feature_wt), feature_head);
+    assert_eq!(
+        repo.git_output(&["rev-parse", "upstream/missing"]),
+        local_shadow
+    );
+    let status = repo
+        .git_command()
+        .args(["status", "--porcelain"])
+        .current_dir(&feature_wt)
+        .run()
+        .unwrap();
+    assert!(
+        status.stdout.is_empty(),
+        "failed resolution must stay clean"
+    );
+}
+
+/// `wt merge` has already resolved its target as a local branch, even when
+/// that branch's name also resembles an existing remote-tracking ref.
+#[rstest]
+fn test_merge_rebase_preserves_slash_named_local_target(mut repo: TestRepo) {
+    let protected_main = repo.head_sha();
+    repo.setup_custom_remote("upstream", "main");
+    let remote_tip = repo.git_output(&["rev-parse", "refs/remotes/upstream/main"]);
+
+    fs::write(repo.root_path().join("target.txt"), "local target").unwrap();
+    repo.run_git(&["add", "target.txt"]);
+    repo.run_git(&["commit", "-m", "local target"]);
+    let local_target = repo.head_sha();
+    repo.run_git(&["branch", "upstream/main", &local_target]);
+    repo.run_git(&["reset", "--hard", &protected_main]);
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "feature.txt", "feature", "feat: feature");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "merge",
+            "upstream/main",
+            "--no-squash",
+            "--no-remove",
+            "--no-hooks",
+        ])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "merge failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        repo.git_output(&["show", "upstream/main:target.txt"]),
+        "local target"
+    );
+    assert_eq!(
+        repo.git_output(&["show", "upstream/main:feature.txt"]),
+        "feature"
+    );
+    assert_eq!(
+        repo.git_output(&["rev-parse", "refs/remotes/upstream/main"]),
+        remote_tip
+    );
+    assert_eq!(repo.git_output(&["rev-parse", "main"]), protected_main);
+}
+
+/// Worktrunk symbols still expand to their branch names for output and Git operations.
+#[rstest]
+fn test_step_rebase_caret_reports_resolved_default_branch(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+    let output = repo
+        .wt_command()
+        .args(["step", "rebase", "^", "--format=json"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(parsed["outcome"], "up_to_date");
+    assert_eq!(parsed["target"], "main");
+}
+
 /// `step commit --show-prompt --format=json` is rejected — show-prompt emits
 /// raw text that would corrupt JSON output.
 #[rstest]
@@ -3322,6 +3486,8 @@ fn test_merge_invalid_target(mut repo: TestRepo) {
 fn test_step_rebase_invalid_target(mut repo: TestRepo) {
     // Create a feature worktree
     let feature_wt = repo.add_worktree("feature");
+    let feature_head = repo.head_sha_in(&feature_wt);
+    let main_head = repo.git_output(&["rev-parse", "main"]);
 
     // Try to rebase onto nonexistent ref - should fail with clear error
     assert_cmd_snapshot!(make_snapshot_cmd(
@@ -3330,6 +3496,8 @@ fn test_step_rebase_invalid_target(mut repo: TestRepo) {
         &["rebase", "nonexistent-ref"],
         Some(&feature_wt)
     ));
+    assert_eq!(repo.head_sha_in(&feature_wt), feature_head);
+    assert_eq!(repo.git_output(&["rev-parse", "main"]), main_head);
 }
 
 #[rstest]
