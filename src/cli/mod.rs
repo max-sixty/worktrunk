@@ -477,7 +477,7 @@ pub(crate) struct RemoveArgs {
     #[arg(add = crate::completion::local_branches_completer(), value_parser = crate::cli::non_empty_branch)]
     pub(crate) branches: Vec<String>,
 
-    /// Keep branch after removal
+    /// Keep branch after removal; acknowledges removing a linked default-branch worktree
     #[arg(long = "no-delete-branch", overrides_with = "delete_branch")]
     pub(crate) no_delete_branch: bool,
 
@@ -1288,6 +1288,8 @@ $ wt remove feature --force -D    # Both
 ```
 
 Use `--no-delete-branch` to keep the branch regardless of merge status.
+
+For a linked worktree that checks out the default branch, `--no-delete-branch` is also the required explicit acknowledgment to unregister only that worktree while preserving the branch. Config-only `delete-branch = false` does not acknowledge this operation. The main worktree remains non-removable, and a dirty linked worktree still requires `--force` separately.
 
 ## Background removal
 

@@ -70,6 +70,8 @@ $ wt remove feature --force -D    # Both
 
 Use `--no-delete-branch` to keep the branch regardless of merge status.
 
+For a linked worktree that checks out the default branch, `--no-delete-branch` is also the required explicit acknowledgment to unregister only that worktree while preserving the branch. Config-only `delete-branch = false` does not acknowledge this operation. The main worktree remains non-removable, and a dirty linked worktree still requires `--force` separately.
+
 ## Background removal
 
 Removal runs in the background by default — the command returns immediately. The worktree is renamed into `.git/wt/trash/` (instant same-filesystem rename), git metadata is pruned, the branch is deleted, and a detached `rm -rf` finishes cleanup. Cross-filesystem worktrees fall back to `git worktree remove`. Logs: `.git/wt/logs/{branch}/internal/remove.log`. Use `--foreground` to run in the foreground.
@@ -119,7 +121,7 @@ Arguments:
 
 Options:
       --no-delete-branch
-          Keep branch after removal
+          Keep branch after removal; acknowledges removing a linked default-branch worktree
 
   -D, --force-delete
           Delete unmerged branches

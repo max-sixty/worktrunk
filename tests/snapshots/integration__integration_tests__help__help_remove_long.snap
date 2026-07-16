@@ -44,7 +44,7 @@ Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[BRANCHES]...[0m
 
 [1m[32mOptions:[0m
       [1m[36m--no-delete-branch[0m
-          Keep branch after removal
+          Keep branch after removal; acknowledges removing a linked default-branch worktree
 
   [1m[36m-D[0m, [1m[36m--force-delete[0m
           Delete unmerged branches
@@ -150,6 +150,8 @@ Worktrunk has two force flags for different situations:
 [107m [0m [2m[0m[2m[34mwt[0m[2m remove feature [0m[2m[36m--force[0m[2m [0m[2m[36m-D[0m[2m    # Both[0m
 
 Use [2m--no-delete-branch[0m to keep the branch regardless of merge status.
+
+For a linked worktree that checks out the default branch, [2m--no-delete-branch[0m is also the required explicit acknowledgment to unregister only that worktree while preserving the branch. Config-only [2mdelete-branch = false[0m does not acknowledge this operation. The main worktree remains non-removable, and a dirty linked worktree still requires [2m--force[0m separately.
 
 [1m[32mBackground removal[0m
 

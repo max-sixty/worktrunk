@@ -46,12 +46,18 @@ pub trait RepositoryCliExt {
     /// `for-each-ref` scans when preparing many removals in a row (e.g.
     /// `step_prune` validates one candidate per loop iteration). Pass `None`
     /// to capture a fresh snapshot inside this call.
+    ///
+    /// `explicit_default_worktree_preservation` is true only for an invocation
+    /// that supplied `--no-delete-branch`. It acknowledges unregistering an
+    /// existing linked default-branch worktree; config-only branch retention,
+    /// branch-only deletion, and all main-worktree paths remain guarded.
     #[allow(clippy::too_many_arguments)]
     fn prepare_worktree_removal(
         &self,
         target: RemoveTarget,
         deletion_mode: BranchDeletionMode,
         force_worktree: bool,
+        explicit_default_worktree_preservation: bool,
         current_path: Option<PathBuf>,
         worktrees: Option<&[WorktreeInfo]>,
         snapshot: Option<&RefSnapshot>,
@@ -90,6 +96,7 @@ impl RepositoryCliExt for Repository {
         target: RemoveTarget,
         deletion_mode: BranchDeletionMode,
         force_worktree: bool,
+        explicit_default_worktree_preservation: bool,
         current_path: Option<PathBuf>,
         worktrees: Option<&[WorktreeInfo]>,
         snapshot: Option<&RefSnapshot>,
@@ -230,7 +237,12 @@ impl RepositoryCliExt for Repository {
             Resolved::Worktree { branch, .. } => branch.as_deref(),
             Resolved::BranchOnly { branch, .. } => Some(branch.as_str()),
         };
-        if let Some(branch) = branch_name {
+        let preserves_linked_default_worktree = explicit_default_worktree_preservation
+            && deletion_mode.should_keep()
+            && matches!(resolved, Resolved::Worktree { .. });
+        if let Some(branch) = branch_name
+            && !preserves_linked_default_worktree
+        {
             check_not_default_branch(self, branch, &deletion_mode)?;
         }
 

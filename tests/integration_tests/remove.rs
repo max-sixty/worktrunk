@@ -1212,6 +1212,192 @@ fn test_remove_default_branch_refused() {
     });
 }
 
+/// Explicit `--no-delete-branch` acknowledges unregistering a linked default
+/// branch worktree while preserving the branch at the exact same object ID.
+#[test]
+fn test_remove_linked_default_branch_preserves_ref_and_reports_json() {
+    let test = BareRepoTest::new();
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit on main");
+    let feature_worktree = test.create_worktree("feature", "feature");
+    let marker = test.temp_path().join("pre-remove-ran");
+    std::fs::write(
+        test.config_path(),
+        format!(
+            "worktree-path = \"{{{{ branch }}}}\"\npre-remove = \"echo ran > '{}'\"\n",
+            marker.to_slash_lossy()
+        ),
+    )
+    .unwrap();
+
+    let before = String::from_utf8(
+        test.git_command(test.bare_repo_path())
+            .args(["rev-parse", "refs/heads/main"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+
+    let output = test
+        .wt_command()
+        .args([
+            "remove",
+            "--foreground",
+            "--no-delete-branch",
+            "--format=json",
+            "--yes",
+            "main",
+        ])
+        .current_dir(&feature_worktree)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "branch-preserving unregister should succeed.\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json[0]["kind"], "worktree");
+    assert_eq!(json[0]["branch"], "main");
+    assert_eq!(json[0]["branch_deleted"], false);
+    assert!(!main_worktree.exists());
+    assert!(
+        marker.exists(),
+        "pre-remove hook should run before unregister"
+    );
+
+    let after = String::from_utf8(
+        test.git_command(test.bare_repo_path())
+            .args(["rev-parse", "refs/heads/main"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(
+        before.trim(),
+        after.trim(),
+        "default branch tip must not move"
+    );
+}
+
+#[test]
+fn test_remove_linked_default_branch_keeps_dirty_force_gate() {
+    let test = BareRepoTest::new();
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit on main");
+    let feature_worktree = test.create_worktree("feature", "feature");
+    std::fs::write(main_worktree.join("untracked.txt"), "keep me").unwrap();
+
+    let refused = test
+        .wt_command()
+        .args(["remove", "--foreground", "--no-delete-branch", "main"])
+        .current_dir(&feature_worktree)
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(main_worktree.join("untracked.txt").exists());
+
+    let forced = test
+        .wt_command()
+        .args([
+            "remove",
+            "--foreground",
+            "--no-delete-branch",
+            "--force",
+            "main",
+        ])
+        .current_dir(&feature_worktree)
+        .output()
+        .unwrap();
+    assert!(
+        forced.status.success(),
+        "explicit worktree force should allow dirty unregister: {}",
+        String::from_utf8_lossy(&forced.stderr)
+    );
+    assert!(!main_worktree.exists());
+    assert!(
+        test.git_command(test.bare_repo_path())
+            .args(["show-ref", "--verify", "--quiet", "refs/heads/main"])
+            .run()
+            .unwrap()
+            .status
+            .success(),
+        "default branch must survive forced worktree removal"
+    );
+}
+
+#[test]
+fn test_remove_parked_default_branch_worktree_preserves_ref() {
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+    let before = repo.git_output(&["rev-parse", "refs/heads/main"]);
+    repo.run_git(&["switch", "-c", "parking"]);
+    let linked_main = repo.root_path().parent().unwrap().join("parked-main");
+    let added = repo
+        .git_command()
+        .args(["worktree", "add", linked_main.to_str().unwrap(), "main"])
+        .run()
+        .unwrap();
+    assert!(added.status.success());
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "--foreground", "--no-delete-branch", "main"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "parked default worktree should unregister: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!linked_main.exists());
+    assert_eq!(repo.git_output(&["rev-parse", "refs/heads/main"]), before);
+    assert_eq!(repo.git_output(&["branch", "--show-current"]), "parking");
+}
+
+#[test]
+fn test_remove_default_branch_config_only_preservation_is_not_acknowledgment() {
+    let test = BareRepoTest::new();
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit on main");
+    let feature_worktree = test.create_worktree("feature", "feature");
+    std::fs::write(
+        test.config_path(),
+        "worktree-path = \"{{ branch }}\"\n[remove]\ndelete-branch = false\n",
+    )
+    .unwrap();
+
+    let output = test
+        .wt_command()
+        .args(["remove", "--foreground", "main"])
+        .current_dir(&feature_worktree)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(main_worktree.exists());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("default branch"));
+}
+
+#[rstest]
+fn test_remove_main_worktree_still_rejects_no_delete_branch(repo: TestRepo) {
+    let output = repo
+        .wt_command()
+        .args(["remove", "--foreground", "--no-delete-branch"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("main worktree"),
+        "main-worktree guard should remain authoritative: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(repo.root_path().exists());
+}
+
 /// BranchOnly path: when the default branch has no worktree (directory deleted),
 /// removal should be refused without -D, and allowed with -D.
 #[test]
@@ -1234,6 +1420,17 @@ fn test_remove_default_branch_branch_only() {
 
         assert_cmd_snapshot!("remove_default_branch_branch_only_refused", cmd);
     });
+
+    // Branch preservation only acknowledges removing an existing linked
+    // worktree; it must not turn a branch-only target into a no-op success.
+    let preserve_only = test
+        .wt_command()
+        .args(["remove", "--no-delete-branch", "main"])
+        .current_dir(&feature_worktree)
+        .output()
+        .unwrap();
+    assert!(!preserve_only.status.success());
+    assert!(String::from_utf8_lossy(&preserve_only.stderr).contains("default branch"));
 
     // With -D: should succeed (force-delete the default branch)
     settings.bind(|| {

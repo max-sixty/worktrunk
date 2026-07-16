@@ -206,6 +206,7 @@ fn try_remove(candidate: &Candidate, ctx: &RemovalContext<'_>) -> anyhow::Result
         target,
         BranchDeletionMode::SafeDelete,
         false,
+        false,
         None,
         Some(ctx.worktrees),
         Some(ctx.snapshot),
@@ -299,6 +300,7 @@ fn check_one(
             repo.prepare_worktree_removal(
                 target,
                 BranchDeletionMode::SafeDelete,
+                false,
                 false,
                 None,
                 Some(worktrees),

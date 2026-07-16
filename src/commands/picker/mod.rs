@@ -345,6 +345,7 @@ impl AltXRemover {
                 remove_target,
                 BranchDeletionMode::SafeDelete,
                 false,
+                false,
                 caller_path,
                 None,
                 None,
