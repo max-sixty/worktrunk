@@ -9,7 +9,7 @@ compatibility: Requires the `wt` CLI (https://worktrunk.dev)
 
 Help users work with Worktrunk, a CLI tool for managing git worktrees.
 
-## Available Documentation
+## Available documentation
 
 Reference files are synced from [worktrunk.dev](https://worktrunk.dev) documentation:
 
@@ -24,224 +24,77 @@ Reference files are synced from [worktrunk.dev](https://worktrunk.dev) documenta
 
 For command-specific options, run `wt <command> --help`. For configuration, follow the workflows below.
 
-## Two Types of Configuration
+## Two types of configuration
 
-Worktrunk uses two separate config files with different scopes and behaviors:
+Worktrunk uses two config files with different scopes and permission models:
 
-### User Config (`~/.config/worktrunk/config.toml`)
-- **Scope**: Personal preferences for the individual developer
-- **Location**: `~/.config/worktrunk/config.toml` (never checked into git)
-- **Contains**: LLM integration, worktree path templates, command settings, user hooks, approved commands
-- **Permission model**: Always propose changes and get consent before editing
-- **See**: `reference/config.md` for detailed guidance
+**User config** (`~/.config/worktrunk/config.toml`, never checked into git) holds personal preferences: LLM integration, worktree path templates, command settings, user hooks. Treat it conservatively — propose changes and get consent before editing, never install tools on the user's behalf, and preserve the file's existing structure and comments. See `reference/config.md`.
 
-### Project Config (`.config/wt.toml`)
-- **Scope**: Team-wide automation shared by all developers
-- **Location**: `<repo>/.config/wt.toml` (checked into git)
-- **Contains**: Hooks for worktree lifecycle (pre-start, pre-merge, etc.)
-- **Permission model**: Proactive (create directly, changes are reversible via git)
-- **See**: `reference/hook.md` for detailed guidance
+**Project config** (`<repo>/.config/wt.toml`, checked into git) holds team-wide automation: hooks for the worktree lifecycle (pre-start, pre-merge, etc.). Edit proactively — changes are versioned and reversible via git. Comment why each hook exists, and warn the user before adding destructive commands (`rm -rf`, `DROP TABLE`), network fetches piped to shells, or `sudo`. See `reference/hook.md`.
 
-## Determining Which Config to Use
+Some requests span both: commit-message generation is user config, while the team's quality checks are project config.
 
-When a user asks for configuration help, determine which type based on:
+## Core workflows
 
-**User config indicators**:
-- "set up LLM" or "configure commit generation"
-- "change where worktrees are created"
-- "customize commit message templates"
-- Affects only their environment
+### Setting up commit message generation (user config)
 
-**Project config indicators**:
-- "set up hooks for this project"
-- "automate npm install"
-- "run tests before merge"
-- Affects the entire team
+Detect which tools are installed (`which claude codex llm aichat`); if none, recommend Claude Code. Take the exact command for the chosen tool from `reference/llm-commits.md`, propose the `[commit.generation]` change, and apply it after approval (`wt config create` first if no config exists). To verify, `wt step commit --dry-run` renders the prompt, runs the LLM, and prints the message without committing.
 
-**Both configs may be needed**: For example, setting up commit message generation requires user config, but automating quality checks requires project config.
+### Configuring project hooks
 
-## Core Workflows
+Pick the hook type by when the command should run and whether it may block (10 types: 5 events × pre/post — full reference in `reference/hook.md`):
 
-### Setting Up Commit Message Generation (User Config)
+- Dependencies and env files a later step needs → `pre-start` (blocks creation)
+- Dev servers, long builds, cache copying → `post-start` (background)
+- Formatters, linters, type checks → `pre-commit`
+- Tests that must pass before merging → `pre-merge`
+- CI triggers, notifications → `post-commit`
+- Deployment → `post-merge`
+- Setup before branch resolution / terminal-IDE updates → `pre-switch` / `post-switch`
+- Cleanup before/after removal (save artifacts; stop servers, remove containers) → `pre-remove` / `post-remove`
 
-Most common request. See `reference/llm-commits.md` for supported tools and exact command syntax.
+Derive the commands from the project itself (`package.json` scripts, `Cargo.toml`, `pyproject.toml`) and verify they run before adding them.
 
-1. **Detect available tools**
-   ```bash
-   which claude codex llm aichat 2>/dev/null
-   ```
+When a new hook must wait for an existing one, convert the entry to a pipeline; independent commands in a named table run concurrently:
 
-2. **If none installed, recommend Claude Code** (already available in Claude Code sessions)
+```toml
+# Pipeline: install completes before migrate starts
+[[pre-start]]
+install = "npm install"
 
-3. **Propose config change** — Get the exact command from `reference/llm-commits.md`
-   ```toml
-   [commit.generation]
-   command = "..."  # see reference/llm-commits.md for tool-specific commands
-   ```
-   Ask: "Should I add this to your config?"
+[[pre-start]]
+migrate = "npm run db:migrate"
 
-4. **After approval, apply**
-   - Check if config exists: `wt config show`
-   - If not, guide through `wt config create`
-   - Read, modify, write preserving structure
-
-5. **Suggest testing**
-   ```bash
-   wt step commit --show-prompt | head  # verify prompt builds
-   wt merge  # in a repo with uncommitted changes
-   ```
-
-### Setting Up Project Hooks (Project Config)
-
-Common request for workflow automation. Follow discovery process:
-
-1. **Detect project type**
-   ```bash
-   ls package.json Cargo.toml pyproject.toml
-   ```
-
-2. **Identify available commands**
-   - For npm: Read `package.json` scripts
-   - For Rust: Common cargo commands
-   - For Python: Check pyproject.toml
-
-3. **Design appropriate hooks** (10 hook types: 5 events × pre/post — see `reference/hook.md`)
-   - Dependencies (fast, must complete) → `pre-start`
-   - Tests/linting (must pass) → `pre-commit` or `pre-merge`
-   - Long builds, dev servers → `post-start`
-   - Setup before branch resolution → `pre-switch`
-   - Terminal/IDE updates → `post-switch`
-   - After-commit triggers (CI, notifications) → `post-commit`
-   - Deployment → `post-merge`
-   - Cleanup before removal → `pre-remove`
-   - Cleanup after removal (stop servers, remove containers) → `post-remove`
-
-4. **Validate commands work**
-   ```bash
-   npm run lint  # verify exists
-   which cargo   # verify tool exists
-   ```
-
-5. **Create `.config/wt.toml`**
-   ```toml
-   # Install dependencies when creating worktrees
-   pre-start = "npm install"
-
-   # Validate code quality before committing
-   [pre-commit]
-   lint = "npm run lint"
-   typecheck = "npm run typecheck"
-
-   # Run tests before merging
-   pre-merge = "npm test"
-   ```
-
-6. **Add comments explaining choices**
-
-7. **Suggest testing**
-   ```bash
-   wt switch --create test-hooks
-   ```
-
-**See `reference/hook.md` for complete details.**
-
-### Adding Hooks to Existing Config
-
-When users want to add automation to an existing project:
-
-1. **Read existing config**: `cat .config/wt.toml`
-
-2. **Determine hook type** - When should this run? (10 types: 5 events × pre/post)
-   - Creating worktree (blocking) → `pre-start`
-   - Creating worktree (background) → `post-start`
-   - Before/after a switch → `pre-switch` / `post-switch`
-   - Before committing → `pre-commit`
-   - After committing (CI, notifications) → `post-commit`
-   - Before merging → `pre-merge`
-   - After merging → `post-merge`
-   - Before/after removal → `pre-remove` / `post-remove`
-
-3. **Handle format conversion if needed**
-
-   Single command to a pipeline of dependent steps:
-   ```toml
-   # Before
-   pre-start = "npm install"
-
-   # After (adding db:migrate, which needs install to finish first)
-   [[pre-start]]
-   install = "npm install"
-
-   [[pre-start]]
-   migrate = "npm run db:migrate"
-   ```
-
-   For independent commands, a named table runs them concurrently:
-   ```toml
-   [pre-start]
-   install = "npm install"
-   env = "cp .env.example .env"
-   ```
-
-4. **Preserve existing structure and comments**
-
-### Validation Before Adding Commands
-
-Before adding hooks, validate:
-
-```bash
-# Verify command exists
-which npm
-which cargo
-
-# For npm, verify script exists
-npm run lint --dry-run
-
-# For shell commands, check syntax
-bash -n -c "if [ true ]; then echo ok; fi"
+# Concurrent: independent commands in one table
+[pre-start]
+install = "npm install"
+env = "cp .env.example .env"
 ```
 
-**Dangerous patterns** — Warn users before creating hooks with:
-- Destructive commands: `rm -rf`, `DROP TABLE`
-- External dependencies: `curl http://...`
-- Privilege escalation: `sudo`
+Test with `wt switch --create test-hooks`.
 
-## Permission Models
+## Common tasks reference
 
-### User Config: Conservative
-- **Never edit without consent** - Always show proposed change and wait for approval
-- **Never install tools** - Provide commands for users to run themselves
-- **Preserve structure** - Keep existing comments and organization
-- **Validate first** - Ensure TOML is valid before writing
-
-### Project Config: Proactive
-- **Create directly** - Changes are versioned, easily reversible
-- **Validate commands** - Check commands exist before adding
-- **Explain choices** - Add comments documenting why hooks exist
-- **Warn on danger** - Flag destructive operations before adding
-
-## Common Tasks Reference
-
-### User Config Tasks
+### User config tasks
 - Set up commit message generation → `reference/llm-commits.md`
 - Customize worktree paths → `reference/config.md#worktree-path-template`
 - Custom commit templates → `reference/llm-commits.md#prompt-templates`
 - Configure command defaults → `reference/config.md#command-config`
 - Set up personal hooks → `reference/config.md#hooks`
 
-### Project Config Tasks
+### Project config tasks
 - Set up hooks for new project → `reference/hook.md`
 - Add hook to existing config → `reference/hook.md#hook-forms`
 - Use template variables → `reference/hook.md#template-variables`
 - Add dev server URL to list → `reference/config.md#dev-server-url`
 
-### Aliases & Multi-Worktree Tasks
+### Aliases & multi-worktree tasks
 - Create a `wt` alias → `reference/extending.md#aliases`
 - Run a command in every worktree → `reference/step.md#wt-step-for-each`
 - Rebase every worktree (up-style) → `reference/extending.md#recipe-rebase-every-worktree-onto-its-upstream`
 - Defer a template variable to a nested `wt` command → `reference/extending.md#deferring-expansion-to-a-nested-wt-command`
 
-## Key Commands
+## Key commands
 
 ```bash
 # View all configuration
@@ -254,18 +107,7 @@ wt config create
 wt config --help
 ```
 
-## Loading Additional Documentation
-
-Load **reference files** for detailed configuration, hook specifications, and troubleshooting.
-
-Find specific sections with grep:
-```bash
-grep -A 20 "## Setup" reference/llm-commits.md
-grep -A 30 "### pre-start" reference/hook.md
-grep -A 20 "## Warning Messages" reference/shell-integration.md
-```
-
-## Hook Approvals in Non-Interactive Sessions
+## Hook approvals in non-interactive sessions
 
 Worktrunk never runs a project's hooks or aliases until the user has explicitly approved them. The commands in `.config/wt.toml` are arbitrary shell code shipped in a repository the user may have just cloned, so on first run Worktrunk shows each command and waits for the user to approve it — an untrusted `.config/wt.toml` cannot silently execute anything. Approvals are stored per-project in `~/.config/worktrunk/approvals.toml` and re-prompted whenever a command template changes, so a hook can't be swapped for a different command after it was approved.
 
@@ -285,7 +127,7 @@ The resolution is for the user to make the trust decision themselves:
 
 **When invoked as an agent, stop and escalate to the user.** Approving a project's hooks is a security decision about whether this repository should be trusted to run arbitrary commands on the user's machine — that decision belongs to the user, not the agent. Tell the user to run `wt config approvals add` and let them review the commands. Do not run `--yes` on the user's behalf: it skips the approval gate for that invocation, so reaching for it to unblock a command defeats the protection. `--yes` exists for CI/CD pipelines that already control their own hook contents; it is not a shortcut for an interactive agent to silence an approval prompt.
 
-## Advanced: Agent Handoffs
+## Advanced: agent handoffs
 
 When the user requests spawning a worktree with an agent in a background session ("spawn a worktree for...", "hand off to another agent"), use the appropriate pattern for their terminal multiplexer. Substitute `<agent-cli>` with the CLI you are running as: `claude` for Claude Code, `'opencode run'` for OpenCode.
 

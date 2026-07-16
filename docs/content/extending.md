@@ -27,17 +27,7 @@ Hooks and aliases live in the same TOML config and share the [template engine](@
 
 ## Hooks
 
-Ten hooks cover five lifecycle events:
-
-| Event | `pre-` (blocking) | `post-` (background) |
-|-------|-------------------|---------------------|
-| **switch** | `pre-switch` | `post-switch` |
-| **start** | `pre-start` | `post-start` |
-| **commit** | `pre-commit` | `post-commit` |
-| **merge** | `pre-merge` | `post-merge` |
-| **remove** | `pre-remove` | `post-remove` |
-
-`pre-*` hooks block: failure aborts the operation. `post-*` hooks run in the background.
+Ten hooks cover five lifecycle events — switch, start, commit, merge, remove — each with a blocking `pre-` variant (failure aborts the operation) and a background `post-` variant. [`wt hook`](@/hook.md#hook-types) maps each hook to its timing and typical uses.
 
 ```toml
 [pre-start]

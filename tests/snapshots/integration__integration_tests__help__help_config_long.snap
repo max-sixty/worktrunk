@@ -24,6 +24,7 @@ info:
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -335,7 +336,7 @@ Persistent flag values for [2mwt remove[0m. Override on command line as needed
 [107m [0m [2m[36m[step.copy-ignored][0m
 [107m [0m [2mexclude = []   [0m[2m# Additional excludes (e.g., [".cache/", ".turbo/"])[0m
 
-Built-in excludes always apply: VCS metadata directories ([2m.bzr/[0m, [2m.hg/[0m, [2m.jj/[0m, [2m.pijul/[0m, [2m.sl/[0m, [2m.svn/[0m) and tool-state directories ([2m.conductor/[0m, [2m.entire/[0m, [2m.worktrees/[0m). User config and project config exclusions are combined.
+Built-in excludes (VCS metadata and tool-state directories) always apply; the [2mwt step copy-ignored[0m docs list them. User config and project config exclusions are combined.
 
 [32mAliases[0m
 
@@ -488,14 +489,14 @@ Default template:
 
 [1mAppending to the prompt [experimental][0m
 
-[2mtemplate-append[0m adds to the prompt instead of replacing it. The value is rendered as its own minijinja template (same variables) and injected into the default templates' [2m{{ user_guidance }}[0m slot — a [2m<user-guidance>[0m block right after [2m<style>[0m. It applies to both commit and squash. Use it for personal preferences without restating the whole template:
+[2mtemplate-append[0m adds personal conventions to the commit and squash prompts without restating the whole template:
 
 [107m [0m [2m[36m[commit.generation][0m
 [107m [0m [2mtemplate-append = [0m[2m[32m""[0m[2m[32m"[0m
 [107m [0m [2m[32m- Explain the rationale in the body, not just the change[0m
 [107m [0m [2m[32m"[0m[2m[32m""[0m
 
-The project config has a [2mtemplate-append[0m of its own; it renders into a separate [2m<project-guidance>[0m block right after [2m<user-guidance>[0m.
+How the fragment renders, and the project-config counterpart: the LLM commits guide.
 
 [1m[32mHooks[0m
 
@@ -531,7 +532,7 @@ Name the forge explicitly for SSH aliases or self-hosted instances, where it can
 
 [1m[32mCommit-message append [experimental][0m
 
-Project-wide commit-message conventions appended to the LLM commit and squash prompts inside a [2m<project-guidance>[0m block, after the main template's [2m<style>[0m section (and after any user [2m<user-guidance>[0m). Rendered as a minijinja template with the same variables as the main commit template ([2m{{ branch }}[0m, [2m{{ git_diff }}[0m, etc.), so it can reference them directly. The first time the fragment changes, [2mwt[0m prompts the user to approve it — the same one-shot gate as project-defined hooks.
+[2mtemplate-append[0m adds project-wide conventions to the LLM commit and squash prompts, shared so every teammate's LLM sees the same style guide:
 
 [107m [0m [2m[36m[commit.generation][0m
 [107m [0m [2mtemplate-append = [0m[2m[32m""[0m[2m[32m"[0m
@@ -539,7 +540,7 @@ Project-wide commit-message conventions appended to the LLM commit and squash pr
 [107m [0m [2m[32m- Reference the relevant issue ID in the body[0m
 [107m [0m [2m[32m"[0m[2m[32m""[0m
 
-Only [2mtemplate-append[0m is honored from the project file. The LLM command and the main prompt template stay in user config — they describe per-developer environment (which CLI is installed, which agent the developer prefers). User config has a [2m[commit.generation] template-append[0m of its own; it renders into a separate [2m<user-guidance>[0m block immediately before this one.
+The first time the fragment is used (and whenever it changes), [2mwt[0m prompts the user to approve it — the same one-shot gate as project-defined hooks. Only [2mtemplate-append[0m is honored from the project file; the LLM command and the main prompt template stay in user config, since they describe per-developer environment (which CLI is installed, which agent the developer prefers). How the fragment renders: the LLM commits guide.
 
 [1m[32mCopy-ignored excludes[0m
 
@@ -548,7 +549,7 @@ Additional excludes for [2mwt step copy-ignored[0m:
 [107m [0m [2m[36m[step.copy-ignored][0m
 [107m [0m [2mexclude = [[0m[2m[32m".cache/"[0m[2m, [0m[2m[32m".turbo/"[0m[2m][0m
 
-Built-in excludes always apply: VCS metadata directories ([2m.bzr/[0m, [2m.hg/[0m, [2m.jj/[0m, [2m.pijul/[0m, [2m.sl/[0m, [2m.svn/[0m) and tool-state directories ([2m.conductor/[0m, [2m.entire/[0m, [2m.worktrees/[0m). User config and project config exclusions are combined.
+Built-in excludes (VCS metadata and tool-state directories) always apply; the [2mwt step copy-ignored[0m docs list them. User config and project config exclusions are combined.
 
 [1m[32mAliases[0m
 

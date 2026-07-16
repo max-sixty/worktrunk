@@ -8,18 +8,13 @@ Subprocesses cannot change the parent shell's current directory. When
 `wt switch feature` runs, the `wt` binary runs as a child process and cannot
 `cd` the terminal.
 
-Worktrunk solves this with **split directive file passing**:
-
-1. Shell wrapper creates two temp files via `mktemp` (one for cd, one for exec)
-2. Shell sets `WORKTRUNK_DIRECTIVE_CD_FILE` and `WORKTRUNK_DIRECTIVE_EXEC_FILE`
-3. `wt` binary writes a raw path to the CD file (no shell escaping needed)
-4. `wt` writes shell commands to the EXEC file (only for `--execute`)
-5. Shell reads the CD file with `cd -- "$(< file)"` — no shell parsing
-6. Shell sources the EXEC file if non-empty
-7. Shell removes both temp files
-
-The split design eliminates shell injection from cd directives — the CD file
-holds a raw path that is never parsed as shell.
+Worktrunk solves this with **split directive file passing**: the shell wrapper
+creates two temp files, `wt` writes a raw path to one (cd) and shell commands
+to the other (`--execute` payloads), and the wrapper applies both after `wt`
+exits. The split design eliminates shell injection from cd directives — the CD
+file holds a raw path that is never parsed as shell. The wrapper's steps and a
+simplified implementation: [How the Shell Wrapper
+Works](#how-the-shell-wrapper-works).
 
 ## Installation
 
