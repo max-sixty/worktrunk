@@ -2627,7 +2627,10 @@ command = "{}"
             &["main", "--yes"],
             &feature_wt,
             &[],
-            &[("PATH", &path_with_bin)],
+            &[
+                ("PATH", &path_with_bin),
+                ("WORKTRUNK_TEST_WATCHDOG_MS", "-1"),
+            ],
         );
 
         output.assert_success();

@@ -69,6 +69,22 @@ mod imp {
     /// beneath the status — cleared with the rest of the block when the command
     /// finishes.
     const WATCHDOG_ESCALATE_DELAY: Duration = Duration::from_secs(10);
+    /// Test-harness override for deterministic PTY snapshots. `-1` disables
+    /// the watchdog; a non-negative integer replaces the startup delay in
+    /// milliseconds. Production invocations leave it unset.
+    const TEST_WATCHDOG_MS_ENV: &str = "WORKTRUNK_TEST_WATCHDOG_MS";
+
+    fn watchdog_startup_delay(value: Option<&str>) -> Option<Duration> {
+        match value {
+            Some("-1") => None,
+            Some(value) => value
+                .parse::<u64>()
+                .ok()
+                .map(Duration::from_millis)
+                .or(Some(WATCHDOG_STARTUP_DELAY)),
+            None => Some(WATCHDOG_STARTUP_DELAY),
+        }
+    }
 
     /// Shared state between the spinner and its ticker thread. `rendered` flips
     /// true once the ticker has actually drawn a line, so `Drop` clears the line
@@ -331,7 +347,23 @@ mod imp {
         /// context renders nothing.
         pub fn start(waiting_for: &str, command: Option<&str>) -> Self {
             let enabled = std::io::stderr().is_terminal() && crate::styling::verbosity() == 0;
-            Self::start_with(waiting_for, command, enabled)
+            let configured = std::env::var(TEST_WATCHDOG_MS_ENV).ok();
+            if configured.is_none() {
+                return Self::start_with(waiting_for, command, enabled);
+            }
+            let Some(startup_delay) = watchdog_startup_delay(configured.as_deref()) else {
+                return Self::disabled();
+            };
+            if enabled {
+                Self::enabled_with_delays(
+                    waiting_for,
+                    command,
+                    startup_delay,
+                    WATCHDOG_ESCALATE_DELAY,
+                )
+            } else {
+                Self::disabled()
+            }
         }
 
         /// Dispatch helper picking enabled/disabled from an explicit flag, so
@@ -522,6 +554,19 @@ mod imp {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn test_watchdog_delay_setting_disables_rendering() {
+            assert_eq!(watchdog_startup_delay(Some("-1")), None);
+            assert_eq!(
+                watchdog_startup_delay(Some("25")),
+                Some(Duration::from_millis(25))
+            );
+            assert_eq!(
+                watchdog_startup_delay(Some("invalid")),
+                Some(WATCHDOG_STARTUP_DELAY)
+            );
+        }
 
         #[test]
         fn test_format_line_empty() {
