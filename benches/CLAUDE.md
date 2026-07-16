@@ -13,7 +13,7 @@ cargo bench --bench list skeleton/warm
 # Run specific group (all variants)
 cargo bench --bench list full
 
-# GH #461 scenario (200 branches on rust-lang/rust)
+# GH #461 scenario (50 branches at varying history depths on rust-lang/rust)
 cargo bench --bench list real_repo_many_branches
 
 # All list benchmarks (~1 hour)

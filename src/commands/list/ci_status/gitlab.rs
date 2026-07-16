@@ -302,7 +302,7 @@ pub(super) fn detect_gitlab_pipeline(
 /// Use [`fetch_mr_details`] with the `iid` to get complete MR info.
 ///
 /// We include `source_project_id` for client-side filtering by source project.
-/// See `parse_owner_repo()` for why we filter by source, not by author.
+/// See the `# Filtering Strategy` docs on [`detect_gitlab`] for why we filter by source, not by author.
 #[derive(Debug, Default, Deserialize)]
 struct GitLabMrAuthor {
     #[serde(default)]

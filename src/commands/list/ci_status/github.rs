@@ -270,7 +270,7 @@ pub(super) fn detect_github_commit_checks(
 /// GitHub PR info from `gh pr list --json ...`
 ///
 /// Note: We include `headRepositoryOwner` for client-side filtering by source fork.
-/// See `parse_owner_repo()` for why this is necessary.
+/// See the `# Filtering Strategy` docs on [`detect_github`] for why this is necessary.
 ///
 /// Note: We don't include `state` because we already filter with `--state open`.
 #[derive(Debug, Deserialize)]
@@ -301,7 +301,7 @@ pub(crate) struct GitHubPrInfo {
     pub status_check_rollup: Option<Vec<GitHubCheck>>,
     pub url: Option<String>,
     /// The owner of the repository the PR's head branch comes from.
-    /// Used to filter PRs by source fork (see `parse_owner_repo()`).
+    /// Used to filter PRs by source fork (see the `# Filtering Strategy` docs on [`detect_github`]).
     #[serde(rename = "headRepositoryOwner")]
     pub head_repository_owner: Option<HeadRepositoryOwner>,
     /// GraphQL review decision: "APPROVED", "CHANGES_REQUESTED",
