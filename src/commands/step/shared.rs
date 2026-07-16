@@ -279,13 +279,10 @@ mod tests {
         std::fs::write(&ignored_path, "x").unwrap();
 
         let entries = super::list_ignored_entries(root, "test").unwrap();
-        let found = entries
+        let (path, is_dir) = entries
             .iter()
-            .find(|(path, _)| path.file_name().and_then(|n| n.to_str()) == Some(ignored_name));
-
-        let (path, is_dir) = found.unwrap_or_else(|| {
-            panic!("non-ASCII ignored file not discovered; entries: {entries:?}")
-        });
+            .find(|(path, _)| path.file_name().and_then(|n| n.to_str()) == Some(ignored_name))
+            .expect("non-ASCII ignored file should be discovered");
         assert!(!is_dir);
         assert!(
             path.exists(),
