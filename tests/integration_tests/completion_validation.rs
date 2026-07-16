@@ -42,7 +42,7 @@ fn completion_candidates(words: &[&str]) -> HashSet<String> {
 ///
 /// Each context also asserts a visible sibling is present. That guard is
 /// load-bearing: without it, a broken invocation returning *no* candidates would
-/// satisfy every "hidden flag absent" check vacuously — the exact failure mode
+/// satisfy every "hidden subcommand absent" check vacuously — the exact failure mode
 /// that let this test rot after completions moved from static generation
 /// (`wt config shell init`, which no longer emits any flag lines) to the dynamic
 /// engine.
