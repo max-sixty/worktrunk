@@ -79,17 +79,34 @@ fn test_hidden_subcommands_excluded_from_completions() {
         );
     }
 
-    // `wt config <Tab>` — the deprecated state subcommands (now folded into
-    // `wt config state`) and the internal `completions` generator are hidden.
-    let config = completion_candidates(&["wt", "config", ""]);
+    // `wt config shell <Tab>` — the internal `completions` generator (emits the
+    // package-manager completion registration) is hidden; the interactive setup
+    // subcommands are offered. `completions` lives here, not directly under
+    // `wt config`, so it must be probed at this level to actually exercise the
+    // hide filtering rather than the tree structure.
+    let config_shell = completion_candidates(&["wt", "config", "shell", ""]);
     assert!(
-        config.contains("show"),
-        "expected visible `show` in config completions: {config:?}"
+        config_shell.contains("install"),
+        "expected visible `install` in config shell completions: {config_shell:?}"
     );
-    for hidden in ["completions", "previous-branch", "hints", "ci-status"] {
+    assert!(
+        !config_shell.contains("completions"),
+        "hidden `config shell completions` leaked into completions: {config_shell:?}"
+    );
+
+    // `wt config state <Tab>` — the deprecated per-category subcommands (now
+    // folded into `wt config state cache`) are hidden; `cache` is offered. Like
+    // `completions` above, these live under `state`, not directly under
+    // `wt config`, so they must be probed at this level.
+    let config_state = completion_candidates(&["wt", "config", "state", ""]);
+    assert!(
+        config_state.contains("cache"),
+        "expected visible `cache` in config state completions: {config_state:?}"
+    );
+    for hidden in ["previous-branch", "hints", "ci-status"] {
         assert!(
-            !config.contains(hidden),
-            "hidden `config {hidden}` leaked into completions: {config:?}"
+            !config_state.contains(hidden),
+            "hidden `config state {hidden}` leaked into completions: {config_state:?}"
         );
     }
 }
