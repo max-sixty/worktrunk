@@ -46,12 +46,12 @@ use commands::{
     handle_config_create, handle_config_show, handle_config_update, handle_configure_shell,
     handle_custom_command, handle_hints_clear, handle_hints_get, handle_hook_show, handle_init,
     handle_list, handle_logs_list, handle_logs_profile, handle_merge, handle_opencode_install,
-    handle_opencode_uninstall, handle_promote, handle_rebase, handle_remove_command,
-    handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get,
-    handle_state_set, handle_state_show, handle_switch_command, handle_unconfigure_shell,
-    handle_vars_clear, handle_vars_get, handle_vars_list, handle_vars_set, list_approvals,
-    run_hook, step_commit, step_copy_ignored, step_diff, step_eval, step_for_each, step_prune,
-    step_relocate, step_tether,
+    handle_opencode_uninstall, handle_promote, handle_rebase, handle_remote_push,
+    handle_remove_command, handle_show_theme, handle_squash, handle_state_clear,
+    handle_state_clear_all, handle_state_get, handle_state_set, handle_state_show,
+    handle_switch_command, handle_unconfigure_shell, handle_vars_clear, handle_vars_get,
+    handle_vars_list, handle_vars_set, list_approvals, run_hook, step_commit, step_copy_ignored,
+    step_diff, step_eval, step_for_each, step_prune, step_relocate, step_tether,
 };
 
 use cli::{
@@ -59,8 +59,8 @@ use cli::{
     ConfigCommand, ConfigPluginsClaudeCommand, ConfigPluginsCodexCommand, ConfigPluginsCommand,
     ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction, GlobalFormatFlag,
     HintsAction, HookCommand, HookOptions, ListArgs, ListSubcommand, LogsAction, MarkerAction,
-    MergeArgs, PreviousBranchAction, StateCommand, StateWrite, StepCommand, SwitchFormat,
-    VarsAction,
+    MergeArgs, PreviousBranchAction, RemotePushArgs, StateCommand, StateWrite, StepCommand,
+    SwitchFormat, VarsAction,
 };
 
 /// Render a clap error to stderr, appending a wt-specific nested-subcommand
@@ -904,6 +904,11 @@ fn dispatch_command(
         Commands::Select { branches, remotes } => handle_select_command(branches, remotes),
         Commands::List(args) => handle_list_command(args),
         Commands::Switch(args) => handle_switch_command(args, yes),
+        Commands::Push(RemotePushArgs {
+            branch,
+            remote,
+            dry_run,
+        }) => handle_remote_push(&branch, remote.as_deref(), dry_run),
         Commands::Remove(args) => handle_remove_command(args, yes),
         Commands::Merge(args) => handle_merge_command(args, yes),
         // `working_dir` is the top-level `-C <path>` flag, applied as the

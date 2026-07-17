@@ -23,6 +23,7 @@ info:
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -37,6 +38,7 @@ Usage: wt [OPTIONS] [COMMAND]
 
 Commands:
   switch  Switch to a worktree; create if needed
+  push    Push a linked worktree branch to its remote
   list    List worktrees and their status
   remove  Remove worktree; delete branch if merged
   merge   Merge current branch into the target branch

@@ -3,6 +3,7 @@ source: tests/integration_tests/shell_wrapper.rs
 expression: completions
 ---
 switch
+push
 list
 remove
 merge

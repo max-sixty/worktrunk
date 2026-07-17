@@ -45,6 +45,7 @@ pub mod packaged_assets;
 pub mod post_start_commands;
 pub mod push;
 pub mod readme_sync;
+pub mod remote_push;
 pub mod remove;
 pub mod repository;
 pub mod security;

@@ -27,6 +27,8 @@ use path_slash::PathExt as _;
 const STDOUT_ALLOWED_PATHS: &[&str] = &[
     // Shell integration code for: eval "$(wt config shell init bash)"
     "init.rs",
+    // `wt push --dry-run` renders its non-mutating publication preview.
+    "remote_push.rs",
     // Status line text for shell prompts (PS1)
     "statusline.rs",
     // Table and summary output for wt list

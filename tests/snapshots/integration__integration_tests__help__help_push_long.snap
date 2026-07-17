@@ -3,6 +3,7 @@ source: tests/integration_tests/help.rs
 info:
   program: wt
   args:
+    - push
     - "--help"
   env:
     CLICOLOR_FORCE: "1"
@@ -32,26 +33,25 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-wt - Git worktree management for parallel AI agent workflows
+wt push - Push a linked worktree branch to its remote[0m
 
-Usage: [1m[36mwt[0m [36m[OPTIONS][0m [36m[COMMAND][0m
+Resolves the branch's existing linked worktree and Git push metadata. The optional remote overrides that metadata. Unlike [1mwt step push[0m, this publishes to a remote and never updates a local target branch.[0m
 
-[1m[32mCommands:[0m
-  [1m[36mswitch[0m  Switch to a worktree; create if needed
-  [1m[36mpush[0m    Push a linked worktree branch to its remote
-  [1m[36mlist[0m    List worktrees and their status
-  [1m[36mremove[0m  Remove worktree; delete branch if merged
-  [1m[36mmerge[0m   Merge current branch into the target branch
-  [1m[36mstep[0m    Run individual operations
-  [1m[36mhook[0m    Run configured hooks
-  [1m[36mconfig[0m  Manage user & project configs
+Usage: [1m[36mwt push[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [36m[REMOTE][0m
+
+[1m[32mArguments:[0m
+  [36m<BRANCH>[0m
+          Branch with a linked worktree
+
+  [36m[REMOTE][0m
+          Remote name (defaults to Git push metadata or the configured primary remote)
 
 [1m[32mOptions:[0m
+      [1m[36m--dry-run[0m
+          Preview the push without changing refs
+
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
-
-  [1m[36m-V[0m, [1m[36m--version[0m
-          Print version
 
 [1m[32mGlobal Options:[0m
   [1m[36m-C[0m[36m [0m[36m<path>[0m
@@ -69,17 +69,25 @@ Usage: [1m[36mwt[0m [36m[OPTIONS][0m [36m[COMMAND][0m
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
 
-Getting started
+[1m[32mExamples[0m
 
-  wt switch --create feature    # Create worktree and branch
-  wt switch feature             # Switch to worktree
-  wt list                       # Show all worktrees
-  wt remove                     # Remove worktree; delete branch if merged
+Push using the branch's Git push metadata:
 
-Run [2mwt config shell install[0m to set up directory switching.
-Run [2mwt config create[0m to customize worktree locations.
+[107m [0m [2m[0m[2m[34mwt[0m[2m push feature-auth[0m
+[107m [0m [2m[0m[2m[34m◎[0m[2m Pushing feature-auth to origin @ ~/repo.feature-auth[0m
+[107m [0m [2m[0m[2m[34m✓[0m[2m Pushed feature-auth to origin @ ~/repo.feature-auth[0m
 
-Docs: https://worktrunk.dev
-GitHub: https://github.com/max-sixty/worktrunk
+Override the remote:
+
+[107m [0m [2m[0m[2m[34mwt[0m[2m push feature-auth origin[0m
+
+Preview without updating remote refs:
+
+[107m [0m [2m[0m[2m[34mwt[0m[2m push feature-auth [0m[2m[36m--dry-run[0m
+[107m [0m [2m[0m[2m[34m○[0m[2m Would push feature-auth to origin @ ~/repo.feature-auth[0m
+
+The branch must already have a linked worktree. The omitted remote is resolved
+from [2mbranch.<name>.pushRemote[0m, [2mremote.pushDefault[0m, the tracking remote, then
+configured [2morigin[0m, [2mcheckout.defaultRemote[0m, or the first configured remote.
 
 ----- stderr -----

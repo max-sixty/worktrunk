@@ -92,7 +92,7 @@ const BUILTIN_STEP_COMMANDS: &[&str] = &[
 /// if `[aliases] list = …` is configured. Kept in sync with `Cli` via
 /// `test_top_level_builtins_match_clap`.
 pub(crate) const TOP_LEVEL_BUILTINS: &[&str] = &[
-    "config", "hook", "list", "merge", "remove", "select", "step", "switch",
+    "config", "hook", "list", "merge", "push", "remove", "select", "step", "switch",
 ];
 
 /// Whether `--help` or `-h` appears in `args` before any `--` literal-forward

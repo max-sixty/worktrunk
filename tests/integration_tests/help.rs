@@ -66,6 +66,7 @@ fn snapshot_help(test_name: &str, args: &[&str]) {
 #[case("help_list_long", "list --help")]
 #[case("help_switch_short", "switch -h")]
 #[case("help_switch_long", "switch --help")]
+#[case("help_push_long", "push --help")]
 #[case("help_remove_short", "remove -h")]
 #[case("help_remove_long", "remove --help")]
 #[case("help_merge_short", "merge -h")]

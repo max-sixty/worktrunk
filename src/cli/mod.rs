@@ -438,6 +438,20 @@ pub(crate) struct SwitchArgs {
 }
 
 #[derive(Args)]
+pub(crate) struct RemotePushArgs {
+    /// Branch with a linked worktree
+    #[arg(add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
+    pub(crate) branch: String,
+
+    /// Remote name (defaults to Git push metadata or the configured primary remote)
+    pub(crate) remote: Option<String>,
+
+    /// Preview the push without changing refs
+    #[arg(long)]
+    pub(crate) dry_run: bool,
+}
+
+#[derive(Args)]
 pub(crate) struct ListArgs {
     #[command(subcommand)]
     pub(crate) subcommand: Option<ListSubcommand>,
@@ -751,6 +765,40 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
 "#
     )]
     Switch(SwitchArgs),
+
+    /// Push a linked worktree branch to its remote
+    ///
+    /// Resolves the branch's existing linked worktree and Git push metadata.
+    /// The optional remote overrides that metadata. Unlike `wt step push`, this
+    /// publishes to a remote and never updates a local target branch.
+    #[command(after_long_help = r#"## Examples
+
+Push using the branch's Git push metadata:
+
+```console
+$ wt push feature-auth
+◎ Pushing feature-auth to origin @ ~/repo.feature-auth
+✓ Pushed feature-auth to origin @ ~/repo.feature-auth
+```
+
+Override the remote:
+
+```console
+$ wt push feature-auth origin
+```
+
+Preview without updating remote refs:
+
+```console
+$ wt push feature-auth --dry-run
+○ Would push feature-auth to origin @ ~/repo.feature-auth
+```
+
+The branch must already have a linked worktree. The omitted remote is resolved
+from `branch.<name>.pushRemote`, `remote.pushDefault`, the tracking remote, then
+configured `origin`, `checkout.defaultRemote`, or the first configured remote.
+"#)]
+    Push(RemotePushArgs),
 
     /// List worktrees and their status
     #[command(

@@ -3,6 +3,7 @@ source: tests/integration_tests/shell_wrapper.rs
 expression: "String::from_utf8_lossy(&output.stdout)"
 ---
 switch
+push
 list
 remove
 merge
