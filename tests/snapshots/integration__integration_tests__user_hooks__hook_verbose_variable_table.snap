@@ -37,6 +37,7 @@ info:
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -52,7 +53,7 @@ exit_code: 0
 [107m [0m [2m[0m[2m[34mtrue[0m
 [2m○[22m [1muser:noop[22m result
 [107m [0m [2m[0m[2m[34mtrue[0m
-[2m○[22m template variables:
+[2m○[22m [1mpre-switch[22m template variables:
 [107m [0m branch                = feature
 [107m [0m worktree_path         = _REPO_.feature
 [107m [0m worktree_name         = repo.feature
