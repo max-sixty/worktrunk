@@ -144,6 +144,14 @@ impl TaskResult {
 }
 
 impl TaskKind {
+    /// Whether this task runs Git plumbing that may create temporary objects.
+    pub fn requires_object_store(self) -> bool {
+        matches!(
+            self,
+            TaskKind::WouldMergeAdd | TaskKind::MergeTreeConflicts | TaskKind::WorkingTreeConflicts
+        )
+    }
+
     /// Whether this task requires network access.
     ///
     /// Network tasks are sorted to run last to avoid blocking local tasks.

@@ -271,7 +271,7 @@ impl Repository {
 
                 // Exit codes: 0 = found, 1 = no common ancestor, 128+ = invalid ref
                 let args = ["merge-base", sha1, sha2];
-                let output = self.run_command_output(&args)?;
+                let output = self.run_object_store_command_output(&args)?;
 
                 let result = if output.status.success() {
                     Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())

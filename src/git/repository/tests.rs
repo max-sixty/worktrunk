@@ -389,6 +389,7 @@ fn repo_path_error_when_is_bare_fails() {
         discovery_path: PathBuf::from("/nonexistent/repo"),
         git_common_dir: PathBuf::from("/nonexistent/.git"),
         cache: Arc::new(RepoCache::default()),
+        temporary_object_directory: None,
     };
 
     let err = repo.repo_path().unwrap_err();
@@ -431,6 +432,7 @@ fn repo_path_ignores_non_local_core_worktree() {
         discovery_path: tmp.path().to_path_buf(),
         git_common_dir: git_dir.clone(),
         cache: Arc::new(cache),
+        temporary_object_directory: None,
     };
 
     // Should fall through to parent(git_common_dir), ignoring the bulk value.
@@ -634,6 +636,23 @@ fn extract_failed_command_from_command_error() {
 }
 
 #[test]
+fn object_store_command_preserves_failed_git_command() {
+    use crate::git::CommandError;
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::with_initial_commit();
+    let args = ["rev-parse", "--verify", "refs/heads/missing"];
+    let err = test.repo.run_object_store_command(&args).unwrap_err();
+    let command = err
+        .downcast_ref::<CommandError>()
+        .expect("a failed git command should retain its structured error");
+
+    assert_eq!(command.program, "git");
+    assert_eq!(command.args, args);
+    assert!(command.exit_code.is_some());
+}
+
+#[test]
 fn is_builtin_fsmonitor_enabled_variants() {
     use super::RepoCache;
     use indexmap::IndexMap;
@@ -650,6 +669,7 @@ fn is_builtin_fsmonitor_enabled_variants() {
             discovery_path: PathBuf::from("/nonexistent/repo"),
             git_common_dir: PathBuf::from("/nonexistent/.git"),
             cache: Arc::new(cache),
+            temporary_object_directory: None,
         }
     }
 

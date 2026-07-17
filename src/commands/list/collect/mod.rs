@@ -800,6 +800,15 @@ pub fn collect(
     show_config: ShowConfig,
     render_target: RenderTarget,
 ) -> anyhow::Result<Option<super::model::ListData>> {
+    let (temporary_object_repo, temporary_object_error) =
+        match repo.with_temporary_object_directory() {
+            Ok(repo) => (Some(repo), None),
+            Err(error) => {
+                log::debug!("Failed to prepare temporary object directory for list: {error:#}");
+                (None, Some(error))
+            }
+        };
+    let repo = temporary_object_repo.as_ref().unwrap_or(repo);
     let show_progress = matches!(render_target, RenderTarget::Table { progressive: true });
     let render_table = matches!(render_target, RenderTarget::Table { .. });
     worktrunk::trace::instant("List collect started");
@@ -1295,7 +1304,7 @@ pub fn collect(
     };
     let prune_to_selection =
         render_table && progressive_handler.is_none() && !selected_columns.is_empty();
-    let tasks = if prune_to_selection {
+    let mut tasks = if prune_to_selection {
         listed_plan()
     } else {
         // Picker and JSON: the full set plus the selection's forced-on
@@ -1304,6 +1313,17 @@ pub fn collect(
         tasks.extend(listed_plan());
         tasks
     };
+
+    if temporary_object_error.is_some() {
+        let previous_len = tasks.len();
+        tasks.retain(|task| !task.requires_object_store());
+        if tasks.len() != previous_len && progressive_handler.is_none() {
+            eprintln!(
+                "{}",
+                warning_message("Temporary object storage unavailable; merge analysis was skipped")
+            );
+        }
+    }
 
     // The picker primes its CI cells from the local cache so the column paints
     // instantly, then the live `CiStatus` task (which the picker keeps — see

@@ -108,8 +108,10 @@
 //! The picker also maintains a `PreviewCache` (`Arc<DashMap>` in `commands/picker/items.rs`)
 //! for rendered preview output, scoped to a single picker session.
 
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, OnceLock};
 
 use crate::shell_exec::Cmd;
@@ -260,7 +262,7 @@ pub(super) struct RepoCache {
     /// branch row peels the same default-branch tip to its tree. Resolved via
     /// [`Repository::commit_to_tree_sha`].
     pub(super) commit_tree: DashMap<String, String>,
-    /// In-memory merge-tree outcome cache: (a_sha, b_sha) -> outcome.
+    /// In-memory merge-tree outcome cache: (a_sha, b_sha, object-store-id) -> outcome.
     /// `git merge-tree --write-tree` is the costliest op in `wt list`, and the
     /// conflict probe (`has_merge_conflicts_by_sha`) and the integration probe
     /// (`merge_integration_probe_by_sha` via `would_merge_add_to_target`) run
@@ -270,7 +272,7 @@ pub(super) struct RepoCache {
     /// subprocess twice; this front collapses both to one via the entry-lock
     /// pattern (same as [`Self::merge_base`]). Keys are commit SHAs in call
     /// order — see `Repository::merge_tree_outcome`.
-    pub(super) merge_tree: DashMap<(String, String), integration::MergeTreeOutcome>,
+    pub(super) merge_tree: DashMap<(String, String, u64), integration::MergeTreeOutcome>,
     /// Effective remote URLs: remote_name -> effective URL (with `url.insteadOf` applied).
     /// Separate from `all_config` because `git remote get-url` applies
     /// `url.insteadOf` rewrites that aren't visible in raw config.
@@ -489,7 +491,18 @@ pub struct Repository {
     git_common_dir: PathBuf,
     /// Cached data for this repository. Shared across clones via Arc.
     pub(super) cache: Arc<RepoCache>,
+    /// Temporary object database used by observational Git plumbing.
+    temporary_object_directory: Option<Arc<TemporaryObjectDirectory>>,
 }
+
+#[derive(Debug)]
+struct TemporaryObjectDirectory {
+    cache_id: u64,
+    directory: tempfile::TempDir,
+    alternates: OsString,
+}
+
+static NEXT_TEMPORARY_OBJECT_STORE_ID: AtomicU64 = AtomicU64::new(1);
 
 impl Repository {
     /// Discover the repository from the current directory.
@@ -545,7 +558,99 @@ impl Repository {
             discovery_path,
             git_common_dir,
             cache: Arc::new(cache),
+            temporary_object_directory: None,
         })
+    }
+
+    /// Clone this repository with object-writing plumbing redirected to a
+    /// temporary object database that reads the real database as an alternate.
+    ///
+    /// This mode is for observational commands such as `wt list`. Commands
+    /// that retain generated object IDs must use the normal persistent mode.
+    pub fn with_temporary_object_directory(&self) -> anyhow::Result<Self> {
+        let original = if std::env::var_os("GIT_OBJECT_DIRECTORY").is_some() {
+            let path = self.run_command(&["rev-parse", "--git-path", "objects"])?;
+            let path = PathBuf::from(path.trim());
+            self.discovery_path.join(path)
+        } else {
+            self.git_common_dir.join("objects")
+        };
+        let original = canonicalize(&original).unwrap_or(original);
+
+        let mut alternates = vec![original];
+        if let Some(inherited) = std::env::var_os("GIT_ALTERNATE_OBJECT_DIRECTORIES") {
+            alternates.extend(std::env::split_paths(&inherited));
+        }
+        let alternates = std::env::join_paths(alternates)
+            .context("Failed to encode Git alternate object directories")?;
+        let directory = tempfile::Builder::new()
+            .prefix("worktrunk-list-objects-")
+            .tempdir()
+            .context("Failed to create temporary Git object directory")?;
+
+        let mut clone = self.clone();
+        clone.temporary_object_directory = Some(Arc::new(TemporaryObjectDirectory {
+            cache_id: NEXT_TEMPORARY_OBJECT_STORE_ID.fetch_add(1, Ordering::Relaxed),
+            directory,
+            alternates,
+        }));
+        Ok(clone)
+    }
+
+    pub(super) fn object_store_environment(&self) -> Option<(&Path, &OsStr)> {
+        self.temporary_object_directory
+            .as_ref()
+            .map(|temporary| (temporary.directory.path(), temporary.alternates.as_os_str()))
+    }
+
+    pub(super) fn object_store_cache_id(&self) -> u64 {
+        self.temporary_object_directory
+            .as_ref()
+            .map_or(0, |temporary| temporary.cache_id)
+    }
+
+    fn object_store_command_at(&self, path: &Path, args: &[&str]) -> Cmd {
+        let command = Cmd::new("git")
+            .args(args.iter().copied())
+            .current_dir(path)
+            .context(path_to_logging_context(path));
+        if let Some((directory, alternates)) = self.object_store_environment() {
+            command
+                .env("GIT_OBJECT_DIRECTORY", directory)
+                .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", alternates)
+        } else {
+            command
+        }
+    }
+
+    pub(super) fn run_object_store_command(&self, args: &[&str]) -> anyhow::Result<String> {
+        self.run_object_store_command_at(&self.discovery_path, args)
+    }
+
+    pub(super) fn run_object_store_command_at(
+        &self,
+        path: &Path,
+        args: &[&str],
+    ) -> anyhow::Result<String> {
+        let output = self
+            .object_store_command_at(path, args)
+            .run()
+            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
+        if !output.status.success() {
+            return Err(
+                super::error::CommandError::from_failed_output("git", args, &output).into(),
+            );
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    pub(super) fn run_object_store_command_output(
+        &self,
+        args: &[&str],
+    ) -> anyhow::Result<std::process::Output> {
+        self.object_store_command_at(&self.discovery_path, args)
+            .run()
+            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))
     }
 
     /// Eagerly populate the process-wide git-discovery caches

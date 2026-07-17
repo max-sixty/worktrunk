@@ -753,7 +753,7 @@ impl Task for WorkingTreeConflictsTask {
                 .map_err(|e| ctx.error(Self::KIND, &e))?;
             String::from_utf8_lossy(&output.stdout).trim().to_string()
         } else {
-            wt.run_command(&["write-tree"])
+            wt.run_object_store_command(&["write-tree"])
                 .map(|s| s.trim().to_string())
                 .map_err(|e| ctx.error(Self::KIND, &e))?
         };

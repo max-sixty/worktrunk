@@ -250,8 +250,14 @@ impl Repository {
 
         // Cache miss — create an ephemeral commit so merge-tree can resolve
         // the merge-base. The commit is unreferenced and will be GC'd.
-        let head_commit =
-            self.run_command(&["commit-tree", tree_sha, "-p", branch_head_sha, "-m", ""])?;
+        let head_commit = self.run_object_store_command(&[
+            "commit-tree",
+            tree_sha,
+            "-p",
+            branch_head_sha,
+            "-m",
+            "",
+        ])?;
         let head_commit = head_commit.trim();
 
         self.run_merge_tree(base_sha, head_commit, base_sha, &cache_head)
@@ -277,7 +283,11 @@ impl Repository {
         // `(target, branch)`, so they already share a key, and the cached
         // outcome (a conflict flag, or the order-independent clean-merge tree)
         // doesn't depend on argument order — a symmetric key would buy nothing.
-        match self.cache.merge_tree.entry((a.to_string(), b.to_string())) {
+        match self.cache.merge_tree.entry((
+            a.to_string(),
+            b.to_string(),
+            self.object_store_cache_id(),
+        )) {
             Entry::Occupied(e) => Ok(e.get().clone()),
             Entry::Vacant(e) => {
                 let outcome = self.compute_merge_tree_outcome(a, b)?;
@@ -295,7 +305,7 @@ impl Repository {
         // unresolvable args — callers pass pre-resolved commit SHAs, see
         // `run_merge_tree`), anything else = error (corrupt repo, bad usage)
         let args = ["merge-tree", "--write-tree", a, b];
-        let output = self.run_command_output(&args)?;
+        let output = self.run_object_store_command_output(&args)?;
 
         if output.status.code() == Some(1) {
             return Ok(MergeTreeOutcome::Conflict);
@@ -1166,7 +1176,7 @@ mod merge_tree_cache_tests {
     /// integration column) both run `git merge-tree --write-tree <target>
     /// <branch>` for the same row but extract different answers — the conflict
     /// bit versus the resulting tree. They must key the in-memory cache
-    /// identically, in `(target, branch)` order, so the subprocess fires once
+    /// identically, in `(target, branch, object-store)` order, so the subprocess fires once
     /// per row rather than once per probe. An argument-order regression on
     /// either call site would split this into two entries (two spawns); this
     /// pins it at one.
@@ -1201,15 +1211,73 @@ mod merge_tree_cache_tests {
         assert!(!probe.is_patch_id_match);
 
         // Both probes resolved through a single shared merge-tree entry, keyed
-        // (target, branch) = (main, feature).
+        // (target, branch, persistent) = (main, feature, 0).
         assert_eq!(
             repo.cache.merge_tree.len(),
             1,
             "conflict + integration probes must share one merge-tree cache entry"
         );
         assert!(
-            repo.cache.merge_tree.contains_key(&(main_sha, feature_sha)),
-            "the shared entry must be keyed (target, branch)"
+            repo.cache
+                .merge_tree
+                .contains_key(&(main_sha, feature_sha, 0)),
+            "the shared entry must be keyed (target, branch, object-store)"
+        );
+    }
+
+    #[test]
+    fn temporary_object_stores_and_persistent_store_do_not_share_merge_tree_entries() {
+        let test = TestRepo::with_initial_commit();
+
+        test.run_git(&["checkout", "-b", "feature"]);
+        std::fs::write(test.root_path().join("feature.txt"), "feature\n").unwrap();
+        test.run_git(&["add", "feature.txt"]);
+        test.run_git(&["commit", "-m", "feature"]);
+        test.run_git(&["checkout", "main"]);
+        std::fs::write(test.root_path().join("main.txt"), "main\n").unwrap();
+        test.run_git(&["add", "main.txt"]);
+        test.run_git(&["commit", "-m", "main"]);
+
+        let main_sha = test.git_output(&["rev-parse", "main"]);
+        let feature_sha = test.git_output(&["rev-parse", "feature"]);
+        let repo = Repository::at(test.root_path()).unwrap();
+        let temporary = repo.with_temporary_object_directory().unwrap();
+        let clean_tree = |outcome| match outcome {
+            MergeTreeOutcome::Clean { tree } => tree,
+            MergeTreeOutcome::Conflict => panic!("test topology should merge cleanly"),
+        };
+
+        let temporary_tree = clean_tree(
+            temporary
+                .merge_tree_outcome(&main_sha, &feature_sha)
+                .unwrap(),
+        );
+        assert!(
+            !repo
+                .run_command_check(&["cat-file", "-e", &temporary_tree])
+                .unwrap(),
+            "temporary merge tree must not be written to the real object database"
+        );
+
+        let second_temporary = repo.with_temporary_object_directory().unwrap();
+        let second_temporary_tree = clean_tree(
+            second_temporary
+                .merge_tree_outcome(&main_sha, &feature_sha)
+                .unwrap(),
+        );
+        assert_eq!(second_temporary_tree, temporary_tree);
+
+        let persistent_tree = clean_tree(repo.merge_tree_outcome(&main_sha, &feature_sha).unwrap());
+        assert_eq!(persistent_tree, temporary_tree);
+        assert!(
+            repo.run_command_check(&["cat-file", "-e", &persistent_tree])
+                .unwrap(),
+            "persistent merge must materialize its tree in the real object database"
+        );
+        assert_eq!(
+            repo.cache.merge_tree.len(),
+            3,
+            "each temporary store and the persistent store need separate cache entries"
         );
     }
 }

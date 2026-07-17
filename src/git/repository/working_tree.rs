@@ -143,6 +143,12 @@ impl<'a> WorkingTree<'a> {
             .with_context(|| format!("Failed to execute: git {}", args.join(" ")))
     }
 
+    /// Run Git plumbing that may create objects, honoring the repository's
+    /// opt-in temporary object database.
+    pub fn run_object_store_command(&self, args: &[&str]) -> anyhow::Result<String> {
+        self.repo.run_object_store_command_at(&self.path, args)
+    }
+
     // =========================================================================
     // Worktree-specific methods
     // =========================================================================
@@ -567,6 +573,9 @@ impl<'a> WorkingTree<'a> {
             temp,
             worktree_root,
             log_ctx,
+            object_store_environment: self.repo.object_store_environment().map(
+                |(directory, alternates)| (directory.to_path_buf(), alternates.to_os_string()),
+            ),
         })
     }
 
@@ -675,6 +684,7 @@ pub struct TempIndex {
     temp: tempfile::TempPath,
     worktree_root: PathBuf,
     log_ctx: String,
+    object_store_environment: Option<(PathBuf, std::ffi::OsString)>,
 }
 
 impl TempIndex {
@@ -693,11 +703,18 @@ impl TempIndex {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        Cmd::new("git")
+        let command = Cmd::new("git")
             .args(args)
             .current_dir(&self.worktree_root)
             .context(self.log_ctx.clone())
-            .env("GIT_INDEX_FILE", self.path())
+            .env("GIT_INDEX_FILE", self.path());
+        if let Some((directory, alternates)) = &self.object_store_environment {
+            command
+                .env("GIT_OBJECT_DIRECTORY", directory)
+                .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", alternates)
+        } else {
+            command
+        }
     }
 }
 

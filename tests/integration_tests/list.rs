@@ -5,6 +5,82 @@ use crate::common::{
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 
+#[cfg(unix)]
+struct ReadOnlyObjectDirectory {
+    directories: Vec<(std::path::PathBuf, u32)>,
+}
+
+#[cfg(unix)]
+impl ReadOnlyObjectDirectory {
+    fn new(repo: &TestRepo) -> Self {
+        use std::os::unix::fs::PermissionsExt;
+
+        fn collect_directories(path: &std::path::Path, output: &mut Vec<std::path::PathBuf>) {
+            output.push(path.to_path_buf());
+            for entry in std::fs::read_dir(path).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    collect_directories(&path, output);
+                }
+            }
+        }
+
+        let mut paths = Vec::new();
+        collect_directories(&repo.root_path().join(".git/objects"), &mut paths);
+        let directories = paths
+            .into_iter()
+            .map(|path| {
+                let metadata = std::fs::metadata(&path).unwrap();
+                let original_mode = metadata.permissions().mode();
+                let mut permissions = metadata.permissions();
+                permissions.set_mode(original_mode & !0o222);
+                std::fs::set_permissions(&path, permissions).unwrap();
+                (path, original_mode)
+            })
+            .collect();
+        Self { directories }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ReadOnlyObjectDirectory {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+
+        for (path, original_mode) in self.directories.iter().rev() {
+            let mut permissions = std::fs::metadata(path).unwrap().permissions();
+            permissions.set_mode(*original_mode);
+            std::fs::set_permissions(path, permissions).unwrap();
+        }
+    }
+}
+
+#[cfg(unix)]
+fn list_feature_merge_conflicts(repo: &TestRepo, branch: &str) -> (bool, String) {
+    repo.write_test_config("[list]\njson-schema = 2\n");
+    let output = repo
+        .wt_command()
+        .args(["list", "--full", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "wt list should succeed");
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let item = json["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["branch"] == branch)
+        .unwrap_or_else(|| panic!("{branch} should appear in wt list output"));
+    let conflicts = item["default_branch"]["merge_conflicts"]
+        .as_bool()
+        .unwrap_or_else(|| panic!("merge conflict result should be resolved: {item}"));
+    (
+        conflicts,
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
 /// Creates worktrees with specific timestamps for ordering tests.
 /// Returns the path to feature-current (the worktree to run tests from).
 ///
@@ -3304,6 +3380,193 @@ fn test_list_full_clean_working_tree_uses_commit_conflicts(mut repo: TestRepo) {
         cmd.arg("--full");
         cmd
     });
+}
+
+#[cfg(unix)]
+#[rstest]
+fn test_list_committed_conflict_with_read_only_object_database(mut repo: TestRepo) {
+    std::fs::write(repo.root_path().join("shared.txt"), "original").unwrap();
+    repo.commit("Initial commit");
+
+    let feature = repo.add_worktree("feature");
+    std::fs::write(feature.join("shared.txt"), "feature").unwrap();
+    repo.run_git_in(&feature, &["add", "shared.txt"]);
+    repo.run_git_in(&feature, &["commit", "-m", "Feature changes shared.txt"]);
+
+    std::fs::write(repo.root_path().join("shared.txt"), "main").unwrap();
+    repo.commit("Main changes shared.txt");
+
+    let _read_only = ReadOnlyObjectDirectory::new(&repo);
+    let (conflicts, stderr) = list_feature_merge_conflicts(&repo, "feature");
+
+    assert!(conflicts, "committed conflict should remain available");
+    assert!(
+        !stderr.contains("merge-conflict check")
+            && !stderr.contains("unable to create temporary file"),
+        "object writes should not fail in the real object database: {stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[rstest]
+fn test_list_dirty_conflict_with_read_only_object_database(mut repo: TestRepo) {
+    std::fs::write(repo.root_path().join("shared.txt"), "original").unwrap();
+    repo.commit("Initial commit");
+
+    let feature = repo.add_worktree("feature");
+    std::fs::write(repo.root_path().join("shared.txt"), "main").unwrap();
+    repo.commit("Main changes shared.txt");
+    std::fs::write(feature.join("shared.txt"), "dirty feature").unwrap();
+    repo.run_git_in(&feature, &["add", "shared.txt"]);
+
+    let _read_only = ReadOnlyObjectDirectory::new(&repo);
+    let (conflicts, stderr) = list_feature_merge_conflicts(&repo, "feature");
+
+    assert!(
+        conflicts,
+        "dirty worktree conflict should remain available: {stderr}"
+    );
+    assert!(
+        !stderr.contains("working-tree conflict check")
+            && !stderr.contains("unable to create temporary file"),
+        "object writes should not fail in the real object database: {stderr}"
+    );
+}
+
+#[rstest]
+fn test_list_temporary_object_store_preserves_inherited_object_locations(mut repo: TestRepo) {
+    std::fs::write(repo.root_path().join("shared.txt"), "original").unwrap();
+    repo.commit("Initial commit");
+
+    let feature = repo.add_worktree("feature");
+    std::fs::write(feature.join("shared.txt"), "feature").unwrap();
+    repo.run_git_in(&feature, &["add", "shared.txt"]);
+    repo.run_git_in(&feature, &["commit", "-m", "Feature changes shared.txt"]);
+
+    std::fs::write(repo.root_path().join("shared.txt"), "main").unwrap();
+    repo.commit("Main changes shared.txt");
+    repo.write_test_config("[list]\njson-schema = 2\n");
+
+    let empty_objects = "override-objects";
+    std::fs::create_dir(repo.root_path().join(empty_objects)).unwrap();
+    let inherited_objects = std::env::join_paths([repo.root_path().join(".git/objects")]).unwrap();
+    let output = repo
+        .wt_command()
+        .env("GIT_OBJECT_DIRECTORY", empty_objects)
+        .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", inherited_objects)
+        .args(["list", "--full", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "wt list should succeed");
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let feature = json["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["branch"] == "feature")
+        .expect("feature should appear in wt list output");
+    assert_eq!(feature["default_branch"]["merge_conflicts"], true);
+}
+
+#[cfg(unix)]
+#[rstest]
+fn test_list_temporary_object_store_preserves_persistent_cache_writes(mut repo: TestRepo) {
+    std::fs::write(repo.root_path().join("shared.txt"), "original").unwrap();
+    repo.commit("Initial commit");
+
+    let feature = repo.add_worktree("feature");
+    std::fs::write(feature.join("shared.txt"), "feature").unwrap();
+    repo.run_git_in(&feature, &["add", "shared.txt"]);
+    repo.run_git_in(&feature, &["commit", "-m", "Feature changes shared.txt"]);
+
+    std::fs::write(repo.root_path().join("shared.txt"), "main").unwrap();
+    repo.commit("Main changes shared.txt");
+
+    let cache = repo.root_path().join(".git/wt/cache");
+    if cache.exists() {
+        std::fs::remove_dir_all(&cache).unwrap();
+    }
+
+    let (_conflicts, stderr) = list_feature_merge_conflicts(&repo, "feature");
+
+    fn paths_under(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut paths = Vec::new();
+        let Ok(entries) = std::fs::read_dir(root) else {
+            return paths;
+        };
+        for entry in entries {
+            let path = entry.unwrap().path();
+            paths.push(path.clone());
+            if path.is_dir() {
+                paths.extend(paths_under(&path));
+            }
+        }
+        paths
+    }
+    let cache_paths = paths_under(&cache);
+    let merge_conflicts_cache = cache.join("merge-tree-conflicts");
+
+    assert!(
+        cache_paths.iter().any(|path| {
+            path.parent() == Some(merge_conflicts_cache.as_path())
+                && path
+                    .extension()
+                    .is_some_and(|extension| extension == "json")
+        }),
+        "temporary object storage must preserve persistent merge-conflict caching: {cache_paths:#?}\n{stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[rstest]
+fn test_list_skips_object_probes_when_temporary_store_is_unavailable(mut repo: TestRepo) {
+    std::fs::write(repo.root_path().join("shared.txt"), "original").unwrap();
+    repo.commit("Initial commit");
+
+    let feature = repo.add_worktree("feature");
+    std::fs::write(feature.join("shared.txt"), "feature").unwrap();
+    repo.run_git_in(&feature, &["add", "shared.txt"]);
+    repo.run_git_in(&feature, &["commit", "-m", "Feature changes shared.txt"]);
+
+    std::fs::write(repo.root_path().join("shared.txt"), "main").unwrap();
+    repo.commit("Main changes shared.txt");
+    repo.write_test_config("[list]\njson-schema = 2\n");
+
+    let invalid_tmp = repo.root_path().join("not-a-directory");
+    std::fs::write(&invalid_tmp, "file").unwrap();
+    let output = repo
+        .wt_command()
+        .env("TMPDIR", &invalid_tmp)
+        .args(["list", "--full", "--format=json"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "independent list fields should render"
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let feature = json["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["branch"] == "feature")
+        .expect("feature should appear");
+    assert_eq!(
+        feature["default_branch"]["merge_conflicts"],
+        serde_json::Value::Null
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr
+            .lines()
+            .filter(|line| line.contains("Temporary object storage unavailable"))
+            .count(),
+        1,
+        "one warning should explain the degraded fields: {stderr}"
+    );
 }
 
 #[rstest]
