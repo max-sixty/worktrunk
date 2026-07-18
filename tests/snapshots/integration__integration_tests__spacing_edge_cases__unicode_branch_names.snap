@@ -1,6 +1,5 @@
 ---
 source: tests/integration_tests/spacing_edge_cases.rs
-assertion_line: 25
 info:
   program: wt
   args:
