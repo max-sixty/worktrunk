@@ -61,9 +61,9 @@ mod imp {
     /// Delay before the first frame renders, so sub-second operations stay silent.
     const STARTUP_DELAY: Duration = Duration::from_millis(300);
     /// `Watchdog` waits longer before nagging — a configured LLM routinely takes
-    /// a couple of seconds, and the caller has already printed a "Generating…"
+    /// a few seconds, and the caller has already printed a "Generating…"
     /// line, so the watchdog only surfaces once a command is genuinely slow.
-    const WATCHDOG_STARTUP_DELAY: Duration = Duration::from_secs(2);
+    const WATCHDOG_STARTUP_DELAY: Duration = Duration::from_secs(4);
     /// Second tier: once a command has run this long, the bare status line
     /// isn't enough to debug it, so the exact invocation is revealed in a gutter
     /// beneath the status — cleared with the rest of the block when the command
