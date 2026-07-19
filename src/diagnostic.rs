@@ -66,9 +66,7 @@ use worktrunk::config::ConfigFileKind;
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::Cmd;
-use worktrunk::styling::{
-    eprintln, format_with_gutter, hint_message, info_message, warning_message,
-};
+use worktrunk::styling::{eprintln, hint_message, info_message, warning_message};
 
 use crate::cli::version_str;
 use crate::output;
@@ -349,11 +347,12 @@ pub(crate) fn write_if_verbose(verbose: u8, command_line: &str, error_msg: Optio
         None => "Command completed successfully".to_string(),
     };
 
-    // Collect and write the diagnostic bundle. It leads with the performance
-    // profile and inlines a (truncated) `trace.log`, so `diagnostic.md` is the
-    // human-facing doc — the headline names what it captured. The raw
-    // companions it doesn't carry in full (`trace.jsonl` machine source,
-    // `subprocess.log` uncapped bodies) are listed beneath it.
+    // Collect and write the diagnostic bundle. `diagnostic.md` is the single
+    // human-facing doc — it's what the headline names. The raw companions
+    // (`trace.jsonl`, `subprocess.log`) live alongside it in the same
+    // directory (named at the start of every `-vv` run), and the report body
+    // points at them directly (subprocess_log_path in the template above;
+    // the performance profile section names `trace.jsonl` as its source).
     let report = DiagnosticReport::collect(&repo, command_line, context);
 
     match report.write_diagnostic_file(&repo) {
@@ -362,34 +361,17 @@ pub(crate) fn write_if_verbose(verbose: u8, command_line: &str, error_msg: Optio
             eprintln!(
                 "{}",
                 info_message(format!(
-                    "Logs, performance profile, and diagnostics saved @ {path_display}"
+                    "Diagnostics and performance profile saved @ {path_display}"
                 ))
             );
 
-            // The raw companions diagnostic.md doesn't carry in full, when their
-            // sinks opened; `trace.log` and the profile are omitted because the
-            // bundle already inlines them.
-            let companions: Vec<String> = [
-                crate::log_files::TRACE_JSONL.path(),
-                crate::log_files::SUBPROCESS.path(),
-            ]
-            .into_iter()
-            .flatten()
-            .map(|p| format_path_for_display(&p))
-            .collect();
-            if !companions.is_empty() {
-                eprintln!("{}", format_with_gutter(&companions.join("\n"), None));
-            }
-
             // Only show gh command if gh is installed
             if is_gh_installed() {
-                let path_str = format_path_for_display(&path);
-                // URL with prefilled body: ## Gist\n\n[Paste URL]\n\n## Description\n\n[Describe the issue]
-                let issue_url = "https://github.com/max-sixty/worktrunk/issues/new?body=%23%23%20Gist%0A%0A%5BPaste%20gist%20URL%5D%0A%0A%23%23%20Description%0A%0A%5BDescribe%20the%20issue%5D";
+                let issue_url = "https://github.com/max-sixty/worktrunk/issues/new";
                 eprintln!(
                     "{}",
                     hint_message(cformat!(
-                        "To report a bug, create a secret gist with <underline>gh gist create --web {path_str}</> and reference it from an issue at <underline>{issue_url}</>"
+                        "To report a bug, open an issue (<underline>{issue_url}</>) and attach a secret gist: <underline>gh gist create --web {path_display}</>"
                     ))
                 );
             }

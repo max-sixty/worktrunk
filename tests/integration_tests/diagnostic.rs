@@ -11,7 +11,7 @@
 //! - `test_diagnostic_contains_required_sections`: All sections present
 //! - `test_diagnostic_context_has_no_ansi_codes`: ANSI stripped for GitHub
 //! - `test_diagnostic_trace_log_contains_git_commands`: Log has useful data
-//! - `test_diagnostic_saved_message_with_vv`: -vv announces the saved report and its raw companions
+//! - `test_diagnostic_saved_message_with_vv`: -vv announces the saved report
 //! - `test_diagnostic_leads_with_profile`: Profile is the bundle's first section
 //! - `test_diagnostic_written_to_correct_location`: File in .git/wt/logs/
 //! - `test_diagnostic_gh_hint_with_vv`: Hint shows gist and issue URL when gh installed
@@ -90,7 +90,7 @@ fn test_diagnostic_report_file_format(mut repo: TestRepo) {
     // Verify the stderr mentions the diagnostic was saved
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("performance profile, and diagnostics saved"),
+        stderr.contains("Diagnostics and performance profile saved"),
         "Output should mention diagnostic was saved. stderr: {}",
         stderr
     );
@@ -312,10 +312,11 @@ fn test_diagnostic_trace_log_contains_git_commands(mut repo: TestRepo) {
     );
 }
 
-/// The `-vv` end block names what the run captured (headline mentions the
-/// performance profile) and lists the raw companions `diagnostic.md` doesn't
-/// inline — `trace.jsonl` and `subprocess.log` — while omitting the files it
-/// does carry (`trace.log`, and there's no `profile.txt`).
+/// The `-vv` end block names what the run captured and saved
+/// (`diagnostic.md`, the single human-facing doc). It doesn't re-list the
+/// raw companion logs (`trace.jsonl`, `subprocess.log`) — the start-of-run
+/// pointer (`Verbose logging to <dir>/`) already names the log directory,
+/// and the report body points at the companions directly.
 #[rstest]
 fn test_diagnostic_saved_message_with_vv(mut repo: TestRepo) {
     repo.add_worktree("feature");
@@ -325,20 +326,15 @@ fn test_diagnostic_saved_message_with_vv(mut repo: TestRepo) {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Headline names the profile and the diagnostic bundle.
+    // Headline names the diagnostics and performance profile.
     assert!(
-        stderr.contains("performance profile, and diagnostics saved"),
+        stderr.contains("Diagnostics and performance profile saved"),
         "end block should name what was captured. stderr: {stderr}"
     );
-    // The non-duplicative raw companions are pointed at.
+    // The raw companion logs are not re-listed in the end block.
     assert!(
-        stderr.contains("wt/logs/trace.jsonl") && stderr.contains("wt/logs/subprocess.log"),
-        "end block should list the raw companions diagnostic.md doesn't inline: {stderr}"
-    );
-    // Files whose content the bundle already carries are not re-listed.
-    assert!(
-        !stderr.contains("wt/logs/trace.log") && !stderr.contains("profile.txt"),
-        "end block should not list files inlined in the bundle: {stderr}"
+        !stderr.contains("wt/logs/trace.jsonl") && !stderr.contains("wt/logs/subprocess.log"),
+        "end block should not re-list the raw companion logs: {stderr}"
     );
 }
 
@@ -428,7 +424,7 @@ fn test_diagnostic_leads_with_profile(repo: TestRepo) {
         "the profile is folded into diagnostic.md, not announced separately: {stderr}"
     );
     assert!(
-        stderr.contains("performance profile, and diagnostics saved"),
+        stderr.contains("Diagnostics and performance profile saved"),
         "stderr should announce the diagnostic bundle. stderr: {stderr}"
     );
 }
@@ -839,7 +835,7 @@ fn test_vv_writes_diagnostic_on_success(repo: TestRepo) {
     // stderr should mention diagnostic was saved
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("performance profile, and diagnostics saved"),
+        stderr.contains("Diagnostics and performance profile saved"),
         "stderr should mention diagnostic was saved. stderr: {}",
         stderr
     );
@@ -868,7 +864,7 @@ fn test_vv_writes_diagnostic_on_error(mut repo: TestRepo) {
     // stderr should mention diagnostic was saved
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("performance profile, and diagnostics saved"),
+        stderr.contains("Diagnostics and performance profile saved"),
         "stderr should mention diagnostic was saved. stderr: {}",
         stderr
     );
@@ -900,13 +896,6 @@ fn test_vv_pointer_handles_split_init(repo: TestRepo) {
     assert!(
         logs_dir.join("trace.log").exists(),
         "trace.log should still be created"
-    );
-    // The end-of-run companion list surfaces the surviving raw file and drops
-    // subprocess.log, whose sink failed to open (`SUBPROCESS.path()` → None,
-    // filtered out by the `.flatten()` in `write_if_verbose`).
-    assert!(
-        stderr.contains("wt/logs/trace.jsonl") && !stderr.contains("wt/logs/subprocess.log"),
-        "end block should list the surviving companion and omit the failed subprocess.log: {stderr}"
     );
 }
 
