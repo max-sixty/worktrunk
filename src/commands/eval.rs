@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use color_print::cformat;
-use worktrunk::config::{UserConfig, expand_template};
+use worktrunk::config::{UserConfig, expand_template, format_base_variables};
 use worktrunk::git::Repository;
 use worktrunk::shell_exec::ShellEscapeMode;
 use worktrunk::styling::{eprintln, format_with_gutter, info_message, println, verbosity};
@@ -40,22 +40,14 @@ pub fn step_eval(template: &str, format: SwitchFormat) -> anyhow::Result<()> {
     let context_map = build_hook_context(&ctx, &[], None)?;
 
     if verbosity() >= 1 {
-        let width = context_map.keys().map(String::len).max().unwrap_or(0);
-        let mut keys: Vec<&str> = context_map.keys().map(String::as_str).collect();
-        keys.sort();
-        let listing = keys
-            .iter()
-            .map(|key| {
-                let pad = " ".repeat(width - key.len());
-                cformat!("<bold>{key}</>{pad} = {}", context_map[*key])
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
         eprintln!(
             "{}",
             info_message(cformat!("<bold>{EVAL_NAME}</> template variables:"))
         );
-        eprintln!("{}", format_with_gutter(&listing, None));
+        eprintln!(
+            "{}",
+            format_with_gutter(&format_base_variables(&context_map), None)
+        );
     }
 
     let vars: HashMap<&str, &str> = context_map
