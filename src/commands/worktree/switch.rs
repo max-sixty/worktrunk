@@ -1583,8 +1583,9 @@ impl SwitchPipeline<'_> {
         // (.git, .bare) before anything reads worktree-path config.
         offer_bare_repo_worktree_path_fix(repo, config, identifier)?;
 
-        // Run pre-switch hooks before branch resolution or worktree creation.
-        // {{ branch }} receives the raw user input (before resolution). Skip
+        // Run pre-switch hooks before worktree creation. run_pre_switch_hooks
+        // resolves symbolic args (`-`, `@`, `^`) first, so {{ branch }} and
+        // {{ target }} carry the concrete destination, not the raw token. Skip
         // when recovered — the source worktree is gone, nothing to run hooks
         // against. `yes` is the single switch-wide flag, so the picker (no
         // `--yes`) and the argument path gate `pre-switch` hooks identically.
