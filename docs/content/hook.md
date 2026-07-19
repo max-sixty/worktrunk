@@ -29,7 +29,7 @@ The most common creation hook is `post-start` — it runs background tasks (dev 
 
 | Hook | Purpose |
 |------|---------|
-| `pre-switch` | Runs before worktree creation. `{{ branch }}` is the resolved destination branch — symbolic args like `-`, `@`, `^` resolve to the concrete name |
+| `pre-switch` | Runs in the source worktree before switching — creating, switching to existing, or staying on current |
 | `post-switch` | Triggers on all switch results: creating, switching to existing, or staying on current |
 | `pre-start` | Runs once when a new worktree is created, blocking `post-start`/`--execute` until complete: dependency install, env file generation |
 | `post-start` | Runs once when a new worktree is created, in the background: dev servers, long builds, file watchers, copying caches |
