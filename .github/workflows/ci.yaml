@@ -94,7 +94,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: worktrunk
-        version: "=0.67.0"
+        version: "=0.68.0"
 
     - name: "Use fast D: drive for temp files (Windows)"
       if: runner.os == 'Windows'
@@ -162,7 +162,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: worktrunk
-        version: "=0.67.0"
+        version: "=0.68.0"
 
     - name: 🧪 Lockfile, doctests, rustdoc
       run: wt hook pre-merge --yes lockfile doctest doc
