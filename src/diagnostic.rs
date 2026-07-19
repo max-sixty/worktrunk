@@ -422,22 +422,6 @@ fn render_trace_profile(trace_jsonl: &str) -> Option<String> {
     Some(rendered.ansi_strip().to_string())
 }
 
-/// Largest offset `<= max` that lands on a UTF-8 char boundary of `s`.
-///
-/// Slicing at a raw byte offset (`&s[..max]`) panics when `max` falls inside a
-/// multi-byte character, so callers that cap by byte length snap the offset
-/// down first. Diagnostic input is user-controlled (config files, trace logs
-/// with non-ASCII branch names and paths), and this runs on the `-vv`
-/// bug-reporting path, so an unchecked slice would panic exactly when a user is
-/// gathering a report.
-fn floor_char_boundary(s: &str, max: usize) -> usize {
-    let mut i = max.min(s.len());
-    while i > 0 && !s.is_char_boundary(i) {
-        i -= 1;
-    }
-    i
-}
-
 /// Truncate log content to ~50KB if it's too large.
 ///
 /// Keeps the last ~50KB of the log, cutting at a line boundary.
@@ -449,7 +433,7 @@ fn truncate_log(content: &str) -> String {
 
     // Snap to a char boundary before slicing — the last ~50KB can begin
     // mid-character otherwise.
-    let start = floor_char_boundary(content, content.len() - MAX_LOG_SIZE);
+    let start = content.floor_char_boundary(content.len() - MAX_LOG_SIZE);
     // Find the next newline to avoid cutting mid-line
     let start = content[start..]
         .find('\n')
@@ -547,7 +531,7 @@ fn format_config_section(path: &std::path::Path, kind: ConfigFileKind) -> String
                 // boundary so a multi-byte character straddling offset 4000
                 // doesn't panic the slice.
                 let content = if content.len() > 4000 {
-                    let end = floor_char_boundary(&content, 4000);
+                    let end = content.floor_char_boundary(4000);
                     format!("{}...\n(truncated)", &content[..end])
                 } else {
                     content
