@@ -422,6 +422,22 @@ fn render_trace_profile(trace_jsonl: &str) -> Option<String> {
     Some(rendered.ansi_strip().to_string())
 }
 
+/// Largest offset `<= max` that lands on a UTF-8 char boundary of `s`.
+///
+/// Slicing at a raw byte offset (`&s[..max]`) panics when `max` falls inside a
+/// multi-byte character, so callers that cap by byte length snap the offset
+/// down first. Diagnostic input is user-controlled (config files, trace logs
+/// with non-ASCII branch names and paths), and this runs on the `-vv`
+/// bug-reporting path, so an unchecked slice would panic exactly when a user is
+/// gathering a report.
+fn floor_char_boundary(s: &str, max: usize) -> usize {
+    let mut i = max.min(s.len());
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
 /// Truncate log content to ~50KB if it's too large.
 ///
 /// Keeps the last ~50KB of the log, cutting at a line boundary.
@@ -431,7 +447,9 @@ fn truncate_log(content: &str) -> String {
         return content.to_string();
     }
 
-    let start = content.len() - MAX_LOG_SIZE;
+    // Snap to a char boundary before slicing — the last ~50KB can begin
+    // mid-character otherwise.
+    let start = floor_char_boundary(content, content.len() - MAX_LOG_SIZE);
     // Find the next newline to avoid cutting mid-line
     let start = content[start..]
         .find('\n')
@@ -525,9 +543,12 @@ fn format_config_section(path: &std::path::Path, kind: ConfigFileKind) -> String
         match std::fs::read_to_string(path) {
             Ok(content) if content.trim().is_empty() => output.push_str("(empty file)\n"),
             Ok(content) => {
-                // Include content, but truncate if very long
+                // Include content, but truncate if very long. Snap to a char
+                // boundary so a multi-byte character straddling offset 4000
+                // doesn't panic the slice.
                 let content = if content.len() > 4000 {
-                    format!("{}...\n(truncated)", &content[..4000])
+                    let end = floor_char_boundary(&content, 4000);
+                    format!("{}...\n(truncated)", &content[..end])
                 } else {
                     content
                 };
@@ -604,6 +625,20 @@ mod tests {
     }
 
     #[test]
+    fn test_format_config_section_truncates_multibyte_at_boundary() {
+        // A multi-byte char straddling the 4000-byte cut must not panic the
+        // slice. "🦀" is 4 bytes; padding 3998 ASCII bytes puts a crab boundary
+        // at 3998/4002/4006/... so byte 4000 lands mid-character.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("emoji.toml");
+        let content = format!("{}{}", "x".repeat(3998), "🦀".repeat(100));
+        std::fs::write(&path, &content).unwrap();
+
+        let result = format_config_section(&path, ConfigFileKind::User);
+        assert!(result.contains("(truncated)"));
+    }
+
+    #[test]
     fn test_render_trace_profile_summarizes_records() {
         let trace = r#"{"kind":"cmd_completed","ts":1000,"tid":1,"context":"main","cmd":"git status","dur_us":12000,"ok":true}
 {"kind":"cmd_completed","ts":1000,"tid":2,"context":"feature","cmd":"git status","dur_us":8000,"ok":true}
@@ -636,5 +671,16 @@ mod tests {
         let result = truncate_log(&content);
         assert!(result.starts_with("(log truncated to last ~50KB)"));
         assert!(result.len() < 55 * 1024);
+    }
+
+    #[test]
+    fn test_truncate_log_large_content_multibyte_at_boundary() {
+        // The 50KB-from-end offset must not split a multi-byte char. "€" is 3
+        // bytes and 51200 is not a multiple of 3, so a newline-free 3-byte-char
+        // tail forces the cut offset to land mid-character with no '\n' to
+        // realign on — the exact case that panicked before the boundary snap.
+        let content = format!("{}{}", "x".repeat(2000), "€".repeat(20000));
+        let result = truncate_log(&content);
+        assert!(result.starts_with("(log truncated to last ~50KB)"));
     }
 }
