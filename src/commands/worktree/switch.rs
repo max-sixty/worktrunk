@@ -1031,6 +1031,21 @@ fn execute_switch(
                         Repository::SLOW_OPERATION_DELAY_MS,
                         progress_msg,
                     ) {
+                        // A new branch whose name is a path prefix of (or sits
+                        // under) an existing branch can't be created: git stores
+                        // refs as file paths, so `release` and `release/2026.4`
+                        // can't coexist. Surface that as a clear, actionable
+                        // error instead of git's raw "cannot lock ref" text.
+                        if *create_branch
+                            && let Some(conflicting) =
+                                detect_branch_namespace_conflict(repo, &branch)
+                        {
+                            return Err(GitError::BranchNamespaceConflict {
+                                branch: branch.clone(),
+                                conflicting,
+                            }
+                            .into());
+                        }
                         return Err(worktree_creation_error(
                             &e,
                             branch.clone(),
@@ -1207,6 +1222,28 @@ fn execute_switch(
             ))
         }
     }
+}
+
+/// Detect a git ref directory/file (D/F) conflict for a branch about to be
+/// created, returning an existing branch it collides with.
+///
+/// Git stores refs as file paths under `refs/heads/`, so a branch name can't
+/// be both a file and a directory: creating `release` fails when
+/// `release/2026.4` exists, and creating `release/foo` fails when `release`
+/// exists. This inspects the cached local-branch inventory (no extra
+/// subprocess) for either shape and returns the first colliding branch.
+fn detect_branch_namespace_conflict(repo: &Repository, branch: &str) -> Option<String> {
+    let prefix = format!("{branch}/");
+    repo.local_branches()
+        .ok()?
+        .iter()
+        .map(|b| b.name.as_str())
+        .find(|name| {
+            // `branch` is a directory prefix of an existing branch, or an
+            // existing branch is a directory prefix of `branch`.
+            name.starts_with(&prefix) || branch.starts_with(&format!("{name}/"))
+        })
+        .map(String::from)
 }
 
 /// Build a `GitError::WorktreeCreationFailed` from a failed `git worktree add`,
