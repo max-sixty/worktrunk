@@ -50,4 +50,4 @@ exit_code: 1
 
 ----- stderr -----
 [31m✗[39m [31mCannot create branch [1mrelease[22m — it collides with existing branch [1mrelease/2026.4[22m[39m
-[2m↳[22m [2mGit stores branches as file paths, so [1mrelease[22m and [1mrelease/2026.4[22m can't both exist. Pick a different name, or rename the existing branch.[22m
+[2m↳[22m [2mGit stores branches as file paths, so [4mrelease[24m and [4mrelease/2026.4[24m can't both exist. Pick a different name, or rename the existing branch.[22m

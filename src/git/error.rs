@@ -1035,7 +1035,7 @@ impl GitError {
                     "{}\n{}",
                     error_message(&title),
                     hint_message(cformat!(
-                        "Git stores branches as file paths, so <bold>{branch}</> and <bold>{conflicting}</> can't both exist. Pick a different name, or rename the existing branch."
+                        "Git stores branches as file paths, so <underline>{branch}</> and <underline>{conflicting}</> can't both exist. Pick a different name, or rename the existing branch."
                     ))
                 )
             }
