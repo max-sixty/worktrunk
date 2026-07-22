@@ -1065,18 +1065,19 @@ fn print_help_to_stderr() {
 }
 
 fn main() {
-    // Capture the startup working directory before anything else. This is
-    // used by shell_exec to resolve relative `GIT_*` path variables inherited
-    // from a parent `git` (e.g. when invoked via `git wt ...` with
-    // `alias.wt = "!wt"`) against a stable reference, rather than against
-    // each child command's `current_dir`. See issue #1914.
+    // Capture startup state before anything else: the working directory
+    // (used by shell_exec to resolve relative `GIT_*` path variables
+    // inherited from a parent `git` — e.g. when invoked via `git wt ...`
+    // with `alias.wt = "!wt"` — against a stable reference, rather than
+    // against each child command's `current_dir`; see issue #1914) and the
+    // foreground thread (exempt from the command semaphore).
     //
     // `[wt-trace]` spans before the logger is registered would silently
-    // no-op, so the prelude up to `init_logging` — `init_startup_cwd`,
+    // no-op, so the prelude up to `init_logging` — `init_startup`,
     // `init_rayon_thread_pool`, `force_color_output`, `parse_cli` — isn't
     // attributed. If startup itself becomes the suspect, capture it as
     // wall-clock minus the sum of post-init spans.
-    worktrunk::shell_exec::init_startup_cwd();
+    worktrunk::shell_exec::init_startup();
 
     init_rayon_thread_pool();
 
