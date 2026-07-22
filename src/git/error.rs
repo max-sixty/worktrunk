@@ -213,6 +213,12 @@ pub struct CommandError {
     pub stdout: String,
     /// Process exit code; `None` if the child was killed by a signal.
     pub exit_code: Option<i32>,
+    /// Terminating signal (Unix), e.g. `Some(2)` for SIGINT — `None` when the
+    /// child exited normally or on non-Unix. Capture mode (`Cmd::run`) reads
+    /// the raw `ExitStatus`, so a Ctrl-C/SIGTERM forwarded to the child (which
+    /// shares the foreground process group) surfaces here; `interrupt_exit_code`
+    /// recovers it as `128 + signal` before higher-level classification runs.
+    pub signal: Option<i32>,
 }
 
 impl CommandError {
@@ -224,12 +230,17 @@ impl CommandError {
     ) -> Self {
         let stderr = String::from_utf8_lossy(&output.stderr).replace('\r', "\n");
         let stdout = String::from_utf8_lossy(&output.stdout).replace('\r', "\n");
+        #[cfg(unix)]
+        let signal = std::os::unix::process::ExitStatusExt::signal(&output.status);
+        #[cfg(not(unix))]
+        let signal = None;
         Self {
             program: program.into(),
             args: args.iter().map(|s| s.as_ref().to_string()).collect(),
             stderr,
             stdout,
             exit_code: output.status.code(),
+            signal,
         }
     }
 
@@ -1478,14 +1489,24 @@ impl ErrorExt for anyhow::Error {
     }
 
     fn interrupt_exit_code(&self) -> Option<i32> {
+        // Stream mode (`Cmd::stream`) reports a signal kill as a typed
+        // `ChildProcessExited { signal }`.
         if let Some(WorktrunkError::ChildProcessExited {
             signal: Some(sig), ..
         }) = self.downcast_ref::<WorktrunkError>()
         {
-            Some(128 + sig)
-        } else {
-            None
+            return Some(128 + sig);
         }
+        // Capture mode (`Cmd::run`) reports it as a `CommandError` carrying the
+        // raw `status.signal()`. Walk the chain so `.context(...)` layers (e.g.
+        // `run_command`'s "Failed to execute: git …") don't hide it.
+        if let Some(CommandError {
+            signal: Some(sig), ..
+        }) = CommandError::find_in(self)
+        {
+            return Some(128 + sig);
+        }
+        None
     }
 }
 
@@ -2396,6 +2417,7 @@ mod tests {
             stderr: "fatal: not a git repository\n".into(),
             stdout: String::new(),
             exit_code: Some(128),
+            signal: None,
         }
     }
 
@@ -2418,6 +2440,7 @@ mod tests {
             stderr: String::new(),
             stdout: String::new(),
             exit_code: Some(1),
+            signal: None,
         };
         assert_eq!(err.command_string(), "git");
         assert_eq!(err.to_string(), "git failed (exit 1)");
@@ -2431,6 +2454,7 @@ mod tests {
             stderr: "warning: line 1\nfatal: line 2\n\n".into(),
             stdout: "  trailing-stdout-error\n".into(),
             exit_code: Some(1),
+            signal: None,
         };
         // Both streams are trimmed, then joined with `\n`.
         assert_eq!(
@@ -2447,6 +2471,7 @@ mod tests {
             stderr: "   ".into(),
             stdout: "actual error on stdout".into(),
             exit_code: Some(1),
+            signal: None,
         };
         assert_eq!(err.combined_output(), "actual error on stdout");
     }
@@ -2488,6 +2513,7 @@ mod tests {
             stderr: String::new(),
             stdout: String::new(),
             exit_code: None,
+            signal: Some(2),
         };
         assert_eq!(err.to_string(), "git fetch failed");
     }
@@ -2514,5 +2540,32 @@ mod tests {
     fn command_error_find_in_returns_none_for_unrelated_error() {
         let err = anyhow::anyhow!("some other failure");
         assert!(CommandError::find_in(&err).is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn from_failed_output_preserves_signal_and_interrupt_exit_code_recovers_it() {
+        use std::os::unix::process::ExitStatusExt;
+
+        // Capture mode (`Cmd::run`) returns the raw `Output`; a child killed by
+        // SIGINT has wait status == signal number, so `.code()` is None and
+        // `.signal()` is Some(2). Before this the signal was dropped, so
+        // `interrupt_exit_code()` returned None even for a signal-killed child —
+        // the classification bug that surfaced a rebase interrupt as a conflict.
+        let output = std::process::Output {
+            status: std::process::ExitStatus::from_raw(2),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        };
+        let err = CommandError::from_failed_output("git", &["rebase"], &output);
+        assert_eq!(err.signal, Some(2));
+        assert_eq!(err.exit_code, None);
+
+        // The signal must survive `.context(...)` wrapping (run_command adds a
+        // "Failed to execute: git …" layer) and surface as 128 + signal.
+        let wrapped: anyhow::Error = Err::<(), _>(err)
+            .context("Failed to execute: git rebase")
+            .unwrap_err();
+        assert_eq!(wrapped.interrupt_exit_code(), Some(130));
     }
 }

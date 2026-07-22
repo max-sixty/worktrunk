@@ -108,7 +108,7 @@ fn classify_rebase_failure(e: anyhow::Error, is_rebasing: bool, target: &str) ->
 #[cfg(test)]
 mod tests {
     use super::classify_rebase_failure;
-    use worktrunk::git::{ErrorExt, GitError, WorktrunkError};
+    use worktrunk::git::{CommandError, ErrorExt, GitError, WorktrunkError};
 
     fn child_exit(code: i32, signal: Option<i32>) -> anyhow::Error {
         WorktrunkError::ChildProcessExited {
@@ -117,6 +117,48 @@ mod tests {
             signal,
         }
         .into()
+    }
+
+    /// The error shape `run_command` (capture mode) actually returns on a
+    /// signal-killed git: a `CommandError` carrying `status.signal()`, wrapped
+    /// by `run_command`'s `.context("Failed to execute: git …")` layer.
+    fn capture_signal_failure(signal: i32) -> anyhow::Error {
+        use anyhow::Context;
+        Err::<(), _>(CommandError {
+            program: "git".into(),
+            args: vec!["rebase".into()],
+            stderr: String::new(),
+            stdout: String::new(),
+            exit_code: None,
+            signal: Some(signal),
+        })
+        .context("Failed to execute: git rebase")
+        .unwrap_err()
+    }
+
+    #[test]
+    fn capture_mode_interrupt_is_not_classified_as_conflict() {
+        // This is the real path: `repo.run_command(["rebase", …])` returns a
+        // CommandError (not ChildProcessExited), so the classifier must recover
+        // the signal from the CommandError's `signal` field. With `is_rebasing`
+        // true (git left the worktree REBASING), the old code fell through to
+        // RebaseConflict; the interrupt must win.
+        let err = classify_rebase_failure(capture_signal_failure(2), true, "main");
+        assert_eq!(err.exit_code(), Some(130));
+        assert!(
+            matches!(
+                err.downcast_ref::<WorktrunkError>(),
+                Some(WorktrunkError::AlreadyDisplayed { exit_code: 130 })
+            ),
+            "capture-mode interrupt must surface as AlreadyDisplayed, not a rebase conflict"
+        );
+        assert!(
+            !matches!(
+                err.downcast_ref::<GitError>(),
+                Some(GitError::RebaseConflict { .. })
+            ),
+            "capture-mode interrupt must not be reclassified as a rebase conflict"
+        );
     }
 
     #[test]
