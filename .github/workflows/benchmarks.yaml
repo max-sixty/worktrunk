@@ -29,10 +29,6 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUSTFLAGS: -C debuginfo=0
-  # Pin wt-perf's fixture cache to an explicit path so the `actions/cache` step
-  # below and wt-perf itself can't drift (wt-perf would otherwise compute the
-  # root from the XDG cache dir, which honors $XDG_CACHE_HOME).
-  WT_PERF_CACHE_DIR: ${{ github.workspace }}/.wt-perf-cache
 
 jobs:
   benchmarks:
@@ -63,10 +59,10 @@ jobs:
     - name: 💰 Rust repo cache
       uses: actions/cache@v6
       with:
-        # wt-perf caches real-repo fixtures under WT_PERF_CACHE_DIR (set above),
-        # not target/, so they survive `cargo clean`. Referencing the same var
-        # here keeps the cached path and the path wt-perf writes in lockstep.
-        path: ${{ env.WT_PERF_CACHE_DIR }}/bench-repos
+        # wt-perf builds real-repo fixtures under target/wt-perf/bench-repos at
+        # the workspace root. `cargo clean` would wipe them, so this cache
+        # restores the ~15 GiB rust clone across runs.
+        path: target/wt-perf/bench-repos
         key: bench-repos-rust-${{ runner.os }}
 
     - name: 📊 Run benchmarks

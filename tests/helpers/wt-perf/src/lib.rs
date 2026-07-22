@@ -24,7 +24,6 @@
 //!
 //! See `wt-perf --help` for CLI usage.
 
-use etcetera::base_strategy::{BaseStrategy, choose_base_strategy};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -115,7 +114,7 @@ impl RepoConfig {
 /// identical); the composite fixtures build varied states instead:
 /// `mixed-W-B` via `create_mixed_repo_at`, `prune-M-U` via
 /// [`create_prune_repo_at`]. (`prune-real[-M-U]` is not a `SetupConfig`:
-/// it is cache-managed under `<cache>/bench-repos/` and takes no path — see
+/// it is managed under `target/wt-perf/bench-repos/` and takes no path — see
 /// [`ensure_prune_real_repo`].)
 pub enum SetupConfig {
     Flat(RepoConfig),
@@ -621,39 +620,36 @@ fn resolve_git_common_dir(repo_path: &Path) -> Option<PathBuf> {
     pointed.parent()?.parent().map(Path::to_path_buf)
 }
 
-/// Root of wt-perf's on-disk cache: `$WT_PERF_CACHE_DIR` if set, else the
-/// per-user cache directory `<cache>/wt-perf` (`~/.cache/wt-perf`, or
-/// `$XDG_CACHE_HOME/wt-perf`). `etcetera::choose_base_strategy` follows the
-/// XDG convention on macOS too, matching worktrunk's own base-dir strategy
-/// (`src/config/user/path.rs`), so the path is identical on Linux and macOS.
+/// Root of wt-perf's on-disk fixtures: `<workspace>/target/wt-perf`.
 ///
-/// Both entry points — benches (cwd = workspace root) and the `wt-perf` CLI
-/// (cwd = anywhere) — resolve the same machine-global path, so an expensive
-/// fixture is built once per machine rather than once per git worktree. A
-/// `target/`-rooted cache would be per-worktree (worktrees don't share
-/// `target/`) and wiped by `cargo clean`; the cache dir is neither.
-pub fn wt_perf_cache_dir() -> PathBuf {
-    // Treat an empty value as unset: `WT_PERF_CACHE_DIR=` would otherwise yield
-    // an empty root, so `setup <config>` would remove_dir_all a *relative*
-    // `<config>` in the cwd instead of a dir under the cache.
-    if let Some(dir) = std::env::var_os("WT_PERF_CACHE_DIR").filter(|d| !d.is_empty()) {
-        return PathBuf::from(dir);
-    }
-    choose_base_strategy()
-        .expect("no home directory; set WT_PERF_CACHE_DIR")
-        .cache_dir()
-        .join("wt-perf")
+/// Resolved from this crate's compile-time manifest dir (`tests/helpers/wt-perf`,
+/// three levels below the workspace root), so both entry points — benches
+/// (in-process) and the `wt-perf` CLI — land on the same path regardless of the
+/// caller's cwd or build profile.
+///
+/// Living under `target/` means `cargo clean` reaps every fixture and each git
+/// worktree keeps its own copy (worktrees don't share `target/`). That is cheap
+/// for the synthetic `setup` fixtures — rebuilt in seconds — but a deliberate
+/// cost for the ~15 GiB rust clone under `bench-repos/`, which then re-clones
+/// per worktree and after every `cargo clean`. There is no env override;
+/// relocate by hand (a symlink at `target/wt-perf`) if that cost bites.
+pub fn wt_perf_fixture_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .expect("wt-perf crate sits three levels below the workspace root")
+        .join("target/wt-perf")
 }
 
-/// The shared cache for real, cloned upstream fixtures (rust-lang/rust and the
-/// prune fixtures derived from it): `<cache>/bench-repos`.
+/// The shared store for real, cloned upstream fixtures (rust-lang/rust and the
+/// prune fixtures derived from it): `<workspace>/target/wt-perf/bench-repos`.
 fn bench_repos_dir() -> PathBuf {
-    wt_perf_cache_dir().join("bench-repos")
+    wt_perf_fixture_dir().join("bench-repos")
 }
 
 /// Get or clone the rust-lang/rust repository for real-world benchmarks.
 ///
-/// The repo is cached at `<cache>/bench-repos/rust` and reused across runs.
+/// The repo is cached at `target/wt-perf/bench-repos/rust` and reused across runs.
 fn ensure_rust_repo() -> PathBuf {
     RUST_REPO
         .get_or_init(|| {
@@ -1201,7 +1197,7 @@ pub const PRUNE_REAL_UNMERGED: usize = 24;
 /// Each linked worktree materializes a full working tree: ~400 MiB and ~3 s
 /// per worktree, so the default populations build in minutes and take ~15 GiB.
 /// Prefer [`ensure_prune_real_repo`], which builds once into
-/// `<cache>/bench-repos` and repairs consumed candidates on later runs.
+/// `target/wt-perf/bench-repos` and repairs consumed candidates on later runs.
 fn create_prune_real_repo_at(merged: usize, unmerged: usize, base_path: &Path) {
     clone_rust_repo_at(base_path);
     add_diverged_backdrop(base_path, unmerged, unmerged);
@@ -1276,7 +1272,7 @@ fn next_squash_round(repo: &Path) -> usize {
 
 /// Get or build the cached rust-scale prune fixture, returning the repo path.
 ///
-/// The fixture lives at `<cache>/bench-repos/rust-prune-<merged>-<unmerged>/repo`
+/// The fixture lives at `target/wt-perf/bench-repos/rust-prune-<merged>-<unmerged>/repo`
 /// (worktrees as siblings) so its minutes-long build (`create_prune_real_repo_at`)
 /// is paid once, not per bench run. On reuse it is validated by
 /// `prune_fixture_state`:

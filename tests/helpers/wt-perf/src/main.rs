@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use clap::{Parser, Subcommand};
 use wt_perf::{
     PRUNE_REAL_MERGED, PRUNE_REAL_UNMERGED, canonicalize, ensure_prune_real_repo,
-    invalidate_caches_auto, parse_config, parse_pair, wt_perf_cache_dir,
+    invalidate_caches_auto, parse_config, parse_pair, wt_perf_fixture_dir,
 };
 
 #[derive(Parser)]
@@ -28,7 +28,7 @@ enum Commands {
         /// Config name: typical-N, branches-N, branches-N-M, divergent, mixed-W-B, prune-M-U, prune-real[-M-U], picker-test
         config: String,
 
-        /// Directory to create repo in (default: wt-perf cache directory)
+        /// Directory to create repo in (default: target/wt-perf)
         #[arg(long)]
         path: Option<PathBuf>,
     },
@@ -76,7 +76,7 @@ enum Commands {
   wt-perf timeline --cold -- list
 
   # Cold run against a specific repo (setup prints the exact path)
-  wt-perf timeline --cold -- -C ~/.cache/wt-perf/typical-1 list
+  wt-perf timeline --cold -- -C target/wt-perf/typical-1 list
 
   # Chrome Trace Format JSON for Perfetto
   wt-perf timeline --chrome -- list > trace.json
@@ -102,7 +102,7 @@ fn main() {
     match cli.command {
         Commands::Setup { config, path } => {
             // `prune-real[-M-U]`: cache-managed rust-scale fixture (built once
-            // under the wt-perf cache dir, repaired after a live prune consumes
+            // under target/wt-perf/bench-repos, repaired after a live prune consumes
             // its candidates) — takes no --path and never offers cleanup.
             // Tested before parse_config so its `prune-` arm never sees it.
             let prune_real = if config == "prune-real" {
@@ -113,8 +113,8 @@ fn main() {
             if let Some((merged, unmerged)) = prune_real {
                 if path.is_some() {
                     eprintln!(
-                        "prune-real fixtures are cache-managed under {}; --path is not supported",
-                        wt_perf_cache_dir().join("bench-repos").display()
+                        "prune-real fixtures are managed under {}; --path is not supported",
+                        wt_perf_fixture_dir().join("bench-repos").display()
                     );
                     std::process::exit(1);
                 }
@@ -156,7 +156,7 @@ fn main() {
                     "  prune-M-U       - M squash-merged candidates + U unmerged worktrees/branches (wt step prune workload)"
                 );
                 eprintln!(
-                    "  prune-real[-M-U] - rust-lang/rust clone + M squash-merged candidates + U unmerged worktrees/branches, cached in the wt-perf cache dir (default {PRUNE_REAL_MERGED}-{PRUNE_REAL_UNMERGED}; first run clones from network)"
+                    "  prune-real[-M-U] - rust-lang/rust clone + M squash-merged candidates + U unmerged worktrees/branches, cached under target/wt-perf/bench-repos (default {PRUNE_REAL_MERGED}-{PRUNE_REAL_UNMERGED}; first run clones from network)"
                 );
                 eprintln!("  picker-test     - Config for wt switch interactive picker testing");
                 std::process::exit(1);
@@ -166,7 +166,7 @@ fn main() {
                 std::fs::create_dir_all(&p).unwrap();
                 canonicalize(&p).unwrap()
             } else {
-                let dir = wt_perf_cache_dir().join(&config);
+                let dir = wt_perf_fixture_dir().join(&config);
                 if dir.exists() {
                     std::fs::remove_dir_all(&dir).unwrap();
                 }

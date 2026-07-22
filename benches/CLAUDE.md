@@ -34,7 +34,7 @@ cargo bench --bench picker_preview warm          # warm only
 
 ## Rust Repo Caching
 
-Real repo benchmarks clone rust-lang/rust on first run (~2-5 minutes). The clone is cached in `~/.cache/wt-perf/bench-repos/` and reused. Corrupted caches are auto-recovered.
+Real repo benchmarks clone rust-lang/rust on first run (~2-5 minutes). The clone is cached in `target/wt-perf/bench-repos/` and reused. Corrupted caches are auto-recovered.
 
 ## Faster Iteration
 
@@ -183,7 +183,7 @@ diverged branches as backdrop, 200 commits, 100 files; `prune_real_repo` runs
 warm and probe-cold dry-runs on the `prune-real` fixture — a rust-lang/rust clone with 12
 squash-merged candidate pairs + 24 diverged worktrees and 24 diverged
 branches, i.e. 36 linked worktrees, cached and self-repairing in
-`~/.cache/wt-perf/bench-repos/rust-prune-12-24/`. That group is opt-in —
+`target/wt-perf/bench-repos/rust-prune-12-24/`. That group is opt-in —
 `cargo bench --bench prune --features real-repo-benches prune_real_repo` —
 because its ~15 GiB fixture must never build on a hosted CI runner):
 
@@ -251,7 +251,7 @@ cargo run -p wt-perf -- timeline -- -C /tmp/prune-repo step prune --min-age 0s
 **Live prune at real scale is a one-shot timeline, not a criterion group** —
 each live run consumes the candidates, and re-creating them on rust costs
 minutes per iteration. The `prune-real[-M-U]` fixture is built for this
-workflow: it lives in `~/.cache/wt-perf/bench-repos/` (no `--path`), and after a live
+workflow: it lives in `target/wt-perf/bench-repos/` (no `--path`), and after a live
 prune the next `wt-perf setup prune-real` or `prune_real_repo` bench run
 detects the consumed candidates and re-creates just them (~1 min) instead of
 rebuilding the ~15 GiB fixture. Don't run two builders concurrently (a bench
@@ -262,7 +262,7 @@ invalidated for measures a degraded scan:
 
 ```bash
 cargo run -p wt-perf -- setup prune-real     # build or validate/repair the cache
-cargo run -p wt-perf -- timeline -- -C ~/.cache/wt-perf/bench-repos/rust-prune-12-24/repo step prune --min-age 0s
+cargo run -p wt-perf -- timeline -- -C target/wt-perf/bench-repos/rust-prune-12-24/repo step prune --min-age 0s
 cargo run -p wt-perf -- setup prune-real     # repair the consumed candidates
 ```
 
@@ -281,15 +281,15 @@ count.
 
 ## Output Locations
 
-Fixture repos live under the wt-perf cache dir — `~/.cache/wt-perf/` (the XDG
-cache dir on Linux and macOS alike), or `$WT_PERF_CACHE_DIR` if set. This is
-per-user and shared across worktrees/checkouts, so an expensive fixture is built
-once per machine and survives `cargo clean` (a `target/`-rooted cache is
-per-worktree and clean-wiped). `wt-perf setup` prints the exact path.
+Fixture repos live under `target/wt-perf/` at the workspace root. That is
+per-worktree (git worktrees don't share `target/`) and reaped by `cargo clean`,
+so an expensive fixture — the ~15 GiB rust clone under `bench-repos/` — is
+rebuilt per worktree and after every `cargo clean`. `wt-perf setup` prints the
+exact path.
 
 - Results: `target/criterion/`
-- Cached rust repo: `~/.cache/wt-perf/bench-repos/rust/`
-- Cached rust prune fixture: `~/.cache/wt-perf/bench-repos/rust-prune-<M>-<U>/` (repo +
+- Cached rust repo: `target/wt-perf/bench-repos/rust/`
+- Cached rust prune fixture: `target/wt-perf/bench-repos/rust-prune-<M>-<U>/` (repo +
   sibling worktrees + `round` counter for candidate re-creation)
 - HTML reports: `target/criterion/*/report/index.html`
 
@@ -300,7 +300,7 @@ Use `wt-perf` to set up benchmark repos and generate Chrome Trace Format for vis
 ### Setting up benchmark repos
 
 ```bash
-# Set up a repo with 8 worktrees (persists at ~/.cache/wt-perf/typical-8; the
+# Set up a repo with 8 worktrees (persists at target/wt-perf/typical-8; the
 # next `setup typical-8` run wipes and rebuilds it)
 cargo run -p wt-perf -- setup typical-8
 
@@ -315,12 +315,12 @@ cargo run -p wt-perf -- setup typical-8
 #                     benches/prune.rs)
 #   prune-real[-M-U] - rust-lang/rust clone + M squash-merged candidate pairs
 #                     + U diverged worktrees/branches (default 12-24), cached
-#                     and self-repairing in ~/.cache/wt-perf/bench-repos/ (no --path);
+#                     and self-repairing in target/wt-perf/bench-repos/ (no --path);
 #                     first run clones from the network
 #   picker-test     - Config for wt switch interactive picker testing
 
 # Invalidate caches for cold run
-cargo run -p wt-perf -- invalidate ~/.cache/wt-perf/typical-8
+cargo run -p wt-perf -- invalidate target/wt-perf/typical-8
 ```
 
 ### Generating traces
@@ -335,7 +335,7 @@ Perfetto/chrome://tracing. `--cold` invalidates caches first.
 cargo run -p wt-perf -- timeline -- list --progressive
 
 # Cold-cache run (invalidates the traced repo — the `-C` arg, else cwd)
-cargo run -p wt-perf -- timeline --cold -- -C ~/.cache/wt-perf/typical-8 list --progressive
+cargo run -p wt-perf -- timeline --cold -- -C target/wt-perf/typical-8 list --progressive
 
 # Chrome Trace Format JSON for Perfetto
 cargo run -p wt-perf -- timeline --chrome -- list --progressive > trace.json
@@ -395,8 +395,8 @@ Three questions drive `wt list` performance work:
 
 ```bash
 # Trace on rust-lang/rust (must run benchmark first to clone)
-cargo run --release -q -- -vv -C ~/.cache/wt-perf/bench-repos/rust list --progressive --branches
-cargo run -p wt-perf -- trace ~/.cache/wt-perf/bench-repos/rust/.git/wt/logs/trace.jsonl > rust-trace.json
+cargo run --release -q -- -vv -C target/wt-perf/bench-repos/rust list --progressive --branches
+cargo run -p wt-perf -- trace target/wt-perf/bench-repos/rust/.git/wt/logs/trace.jsonl > rust-trace.json
 ```
 
 ## Key Performance Insights

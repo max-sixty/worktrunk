@@ -15,9 +15,6 @@ description = "Performance testing and tracing tools for worktrunk"
 # For repo setup
 tempfile = "3.27"
 dunce = "1"
-# Resolve the cache directory for reusable fixtures (XDG on macOS too,
-# matching worktrunk's own base-dir strategy in src/config/user/path.rs)
-etcetera = "0.11"
 
 # For CLI
 clap = { version = "4.6", features = ["derive"] }
