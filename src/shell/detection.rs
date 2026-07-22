@@ -313,7 +313,15 @@ fn scan_file(path: &std::path::Path, cmd: &str) -> Option<FileDetectionResult> {
     let mut unmatched_candidates = Vec::new();
     let mut bypass_aliases = Vec::new();
 
-    for (line_number, line) in reader.lines().map_while(Result::ok).enumerate() {
+    // Enumerate *before* filtering so a skipped line doesn't shift the numbers
+    // of later lines, and use `filter_map` (not `map_while`) so a single
+    // unreadable line — e.g. non-UTF-8 bytes in a hand-edited config — skips
+    // only that line instead of truncating the scan at the first error.
+    for (line_number, line) in reader
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| Some((index, line.ok()?)))
+    {
         let line_number = line_number + 1; // 1-based
         let trimmed = line.trim();
         // Skip empty lines and comments
@@ -1084,5 +1092,35 @@ mod tests {
     fn test_unrelated_alias_not_detected() {
         let result = detect_bypass_alias(r#"alias vim="nvim""#, "wt", 1);
         assert!(result.is_none());
+    }
+
+    /// A non-UTF-8 line earlier in the file must not hide integration lines
+    /// below it. `scan_file` reads line-by-line; a `map_while(Result::ok)`
+    /// would stop at the first unreadable line, so an accented comment stored
+    /// as Latin-1 (or any stray non-UTF-8 byte) above the `eval` line would
+    /// make detection report "not installed" for a config that is installed.
+    #[test]
+    fn test_scan_file_skips_non_utf8_line_before_integration() {
+        use std::io::Write;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".bashrc");
+        let mut file = fs::File::create(&path).unwrap();
+        // 0xE9 is `é` in Latin-1 — an invalid UTF-8 byte on its own.
+        file.write_all(b"# comment with a Latin-1 accent: \xE9\n")
+            .unwrap();
+        file.write_all(b"eval \"$(wt config shell init bash)\"\n")
+            .unwrap();
+        drop(file);
+
+        let result = scan_file(&path, "wt").expect("integration line should be detected");
+        assert_eq!(
+            result.matched_lines.len(),
+            1,
+            "the eval line below the non-UTF-8 line should still be matched"
+        );
+        // Enumeration happens before filtering, so the surviving line keeps its
+        // true 1-based position even though line 1 was skipped.
+        assert_eq!(result.matched_lines[0].line_number, 2);
     }
 }

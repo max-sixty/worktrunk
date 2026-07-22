@@ -2967,6 +2967,34 @@ check = "echo '{{ branch }}' > pre_switch_branch.txt"
     );
 }
 
+/// A symbolic switch argument (`@`, `-`, `^`) is resolved to its concrete branch
+/// name before the pre-switch hook runs, so `{{ branch }}` carries the resolved
+/// destination — not the literal token. Here `@` resolves to the current branch.
+#[rstest]
+fn test_user_pre_switch_branch_var_resolves_symbolic(repo: TestRepo) {
+    repo.write_test_config(
+        r#"[pre-switch]
+check = "echo '{{ branch }}' > pre_switch_symbolic.txt"
+"#,
+    );
+
+    // `@` resolves to the current branch (main), not the literal "@".
+    snapshot_switch("user_pre_switch_branch_symbolic", &repo, &["@"]);
+
+    let marker_file = repo.root_path().join("pre_switch_symbolic.txt");
+    assert!(
+        marker_file.exists(),
+        "Pre-switch hook should have created marker"
+    );
+    let contents = fs::read_to_string(&marker_file).unwrap();
+    assert_eq!(
+        contents.trim(),
+        "main",
+        "symbolic '@' should resolve to the concrete branch 'main', got: '{}'",
+        contents.trim(),
+    );
+}
+
 /// When removing the current worktree, post-switch hooks should fire
 /// because the user is implicitly switched back to the primary worktree.
 /// Regression test for https://github.com/max-sixty/worktrunk/issues/1450

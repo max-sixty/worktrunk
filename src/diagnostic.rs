@@ -66,9 +66,7 @@ use worktrunk::config::ConfigFileKind;
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::Cmd;
-use worktrunk::styling::{
-    eprintln, format_with_gutter, hint_message, info_message, warning_message,
-};
+use worktrunk::styling::{eprintln, hint_message, info_message, warning_message};
 
 use crate::cli::version_str;
 use crate::output;
@@ -349,11 +347,12 @@ pub(crate) fn write_if_verbose(verbose: u8, command_line: &str, error_msg: Optio
         None => "Command completed successfully".to_string(),
     };
 
-    // Collect and write the diagnostic bundle. It leads with the performance
-    // profile and inlines a (truncated) `trace.log`, so `diagnostic.md` is the
-    // human-facing doc — the headline names what it captured. The raw
-    // companions it doesn't carry in full (`trace.jsonl` machine source,
-    // `subprocess.log` uncapped bodies) are listed beneath it.
+    // Collect and write the diagnostic bundle. `diagnostic.md` is the single
+    // human-facing doc — it's what the headline names. The raw companions
+    // (`trace.jsonl`, `subprocess.log`) live alongside it in the same
+    // directory (named at the start of every `-vv` run), and the report body
+    // points at them directly (subprocess_log_path in the template above;
+    // the performance profile section names `trace.jsonl` as its source).
     let report = DiagnosticReport::collect(&repo, command_line, context);
 
     match report.write_diagnostic_file(&repo) {
@@ -362,34 +361,17 @@ pub(crate) fn write_if_verbose(verbose: u8, command_line: &str, error_msg: Optio
             eprintln!(
                 "{}",
                 info_message(format!(
-                    "Logs, performance profile, and diagnostics saved @ {path_display}"
+                    "Diagnostics and performance profile saved @ {path_display}"
                 ))
             );
 
-            // The raw companions diagnostic.md doesn't carry in full, when their
-            // sinks opened; `trace.log` and the profile are omitted because the
-            // bundle already inlines them.
-            let companions: Vec<String> = [
-                crate::log_files::TRACE_JSONL.path(),
-                crate::log_files::SUBPROCESS.path(),
-            ]
-            .into_iter()
-            .flatten()
-            .map(|p| format_path_for_display(&p))
-            .collect();
-            if !companions.is_empty() {
-                eprintln!("{}", format_with_gutter(&companions.join("\n"), None));
-            }
-
             // Only show gh command if gh is installed
             if is_gh_installed() {
-                let path_str = format_path_for_display(&path);
-                // URL with prefilled body: ## Gist\n\n[Paste URL]\n\n## Description\n\n[Describe the issue]
-                let issue_url = "https://github.com/max-sixty/worktrunk/issues/new?body=%23%23%20Gist%0A%0A%5BPaste%20gist%20URL%5D%0A%0A%23%23%20Description%0A%0A%5BDescribe%20the%20issue%5D";
+                let issue_url = "https://github.com/max-sixty/worktrunk/issues/new";
                 eprintln!(
                     "{}",
                     hint_message(cformat!(
-                        "To report a bug, create a secret gist with <underline>gh gist create --web {path_str}</> and reference it from an issue at <underline>{issue_url}</>"
+                        "To report a bug, open an issue (<underline>{issue_url}</>) and attach a secret gist: <underline>gh gist create --web {path_display}</>"
                     ))
                 );
             }
@@ -431,7 +413,9 @@ fn truncate_log(content: &str) -> String {
         return content.to_string();
     }
 
-    let start = content.len() - MAX_LOG_SIZE;
+    // Snap to a char boundary before slicing — the last ~50KB can begin
+    // mid-character otherwise.
+    let start = content.floor_char_boundary(content.len() - MAX_LOG_SIZE);
     // Find the next newline to avoid cutting mid-line
     let start = content[start..]
         .find('\n')
@@ -525,9 +509,12 @@ fn format_config_section(path: &std::path::Path, kind: ConfigFileKind) -> String
         match std::fs::read_to_string(path) {
             Ok(content) if content.trim().is_empty() => output.push_str("(empty file)\n"),
             Ok(content) => {
-                // Include content, but truncate if very long
+                // Include content, but truncate if very long. Snap to a char
+                // boundary so a multi-byte character straddling offset 4000
+                // doesn't panic the slice.
                 let content = if content.len() > 4000 {
-                    format!("{}...\n(truncated)", &content[..4000])
+                    let end = content.floor_char_boundary(4000);
+                    format!("{}...\n(truncated)", &content[..end])
                 } else {
                     content
                 };
@@ -604,6 +591,20 @@ mod tests {
     }
 
     #[test]
+    fn test_format_config_section_truncates_multibyte_at_boundary() {
+        // A multi-byte char straddling the 4000-byte cut must not panic the
+        // slice. "🦀" is 4 bytes; padding 3998 ASCII bytes puts a crab boundary
+        // at 3998/4002/4006/... so byte 4000 lands mid-character.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("emoji.toml");
+        let content = format!("{}{}", "x".repeat(3998), "🦀".repeat(100));
+        std::fs::write(&path, &content).unwrap();
+
+        let result = format_config_section(&path, ConfigFileKind::User);
+        assert!(result.contains("(truncated)"));
+    }
+
+    #[test]
     fn test_render_trace_profile_summarizes_records() {
         let trace = r#"{"kind":"cmd_completed","ts":1000,"tid":1,"context":"main","cmd":"git status","dur_us":12000,"ok":true}
 {"kind":"cmd_completed","ts":1000,"tid":2,"context":"feature","cmd":"git status","dur_us":8000,"ok":true}
@@ -636,5 +637,16 @@ mod tests {
         let result = truncate_log(&content);
         assert!(result.starts_with("(log truncated to last ~50KB)"));
         assert!(result.len() < 55 * 1024);
+    }
+
+    #[test]
+    fn test_truncate_log_large_content_multibyte_at_boundary() {
+        // The 50KB-from-end offset must not split a multi-byte char. "€" is 3
+        // bytes and 51200 is not a multiple of 3, so a newline-free 3-byte-char
+        // tail forces the cut offset to land mid-character with no '\n' to
+        // realign on — the exact case that panicked before the boundary snap.
+        let content = format!("{}{}", "x".repeat(2000), "€".repeat(20000));
+        let result = truncate_log(&content);
+        assert!(result.starts_with("(log truncated to last ~50KB)"));
     }
 }

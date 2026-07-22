@@ -3134,7 +3134,7 @@ fn test_format_rejected_on_write_action_writes_verbose_diagnostic(repo: TestRepo
         "stderr should include the clap conflict: {stderr}"
     );
     assert!(
-        stderr.contains("performance profile, and diagnostics saved"),
+        stderr.contains("Diagnostics and performance profile saved"),
         "stderr should mention the verbose diagnostic: {stderr}"
     );
 
