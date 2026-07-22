@@ -20,7 +20,8 @@ pub use detection::{
 };
 pub use paths::{completion_path, config_paths, legacy_fish_conf_d_path};
 pub use utils::{
-    current_shell, current_shell_name, detect_zsh_compinit, extract_filename_from_path,
+    AncestorShell, ancestor_shell, current_shell, current_shell_name, detect_zsh_compinit,
+    extract_filename_from_path,
 };
 
 /// Supported shells
@@ -179,7 +180,8 @@ impl Shell {
     /// Check if this shell has integration configured.
     ///
     /// Used for accurate warning messages that need to know about the user's
-    /// current shell specifically (e.g., "shell requires restart" vs "not installed").
+    /// current shell specifically (e.g., "installed but not active" vs "not
+    /// installed").
     pub fn is_shell_configured(&self, cmd: &str) -> Result<bool, std::io::Error> {
         let config_paths = self.config_paths(cmd)?;
 

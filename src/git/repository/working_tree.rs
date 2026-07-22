@@ -518,14 +518,12 @@ impl<'a> WorkingTree<'a> {
             "--".to_string(),
         ];
         args.extend(paths);
-        let command = args.join(" ");
         let output = idx
-            .git(args)
+            .git(&args)
             .run()
             .context("Failed to compute untracked diff stats")?;
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("git {} failed: {}", command, stderr.trim());
+            return Err(CommandError::from_failed_output("git", &args, &output).into());
         }
 
         let mut stats = LineDiff::default();
@@ -933,11 +931,30 @@ mod tests {
     }
 
     #[test]
+    fn untracked_diff_stats_unborn_head_is_command_error() {
+        // With an unborn HEAD the untracked files stage fine into the temp
+        // index, but `git diff --cached --numstat HEAD` cannot resolve HEAD —
+        // the failure must surface as a typed `CommandError`.
+        let test = TestRepo::new();
+        std::fs::write(test.root_path().join("new.txt"), "hello\n").unwrap();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let err = repo.current_worktree().untracked_diff_stats().unwrap_err();
+        let cmd_err =
+            crate::git::CommandError::find_in(&err).expect("error should carry a CommandError");
+        assert!(
+            cmd_err
+                .command_string()
+                .starts_with("git diff --cached --numstat HEAD")
+        );
+    }
+
+    #[test]
     fn temp_index_tolerates_missing_real_index() {
         // A worktree whose `<gitdir>/index` file is absent must not error
         // when callers ask for a temp index — git itself treats a missing
         // index as empty, and the WorkingTreeConflictsTask used to surface
-        // this as a misleading `working-tree-conflicts (Failed to copy
+        // this as a misleading `working-tree conflict check (Failed to copy
         // index file)` footer.
         let test = TestRepo::with_initial_commit();
         std::fs::write(test.root_path().join("tracked.txt"), "hello\n").unwrap();

@@ -1,4 +1,4 @@
-//! Integration tests for add-approvals and clear-approvals commands
+//! Integration tests for the `wt config approvals` subcommands
 
 use crate::common::{
     BareRepoTest, TestRepo, TestRepoBase, make_snapshot_cmd, repo, set_temp_home_env,
@@ -29,6 +29,104 @@ fn snapshot_clear_approvals(test_name: &str, repo: &TestRepo, args: &[&str]) {
         cmd.arg("approvals").arg("clear").args(args);
         assert_cmd_snapshot!(test_name, cmd);
     });
+}
+
+/// Helper to snapshot the list command
+fn snapshot_list_approvals(test_name: &str, repo: &TestRepo) {
+    let settings = setup_snapshot_settings(repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(repo, "config", &[], None);
+        cmd.arg("approvals").arg("list");
+        assert_cmd_snapshot!(test_name, cmd);
+    });
+}
+
+// ============================================================================
+// list tests
+// ============================================================================
+
+#[rstest]
+fn test_list_approvals_no_config(repo: TestRepo) {
+    snapshot_list_approvals("list_approvals_no_config", &repo);
+}
+
+/// The main listing: hooks, an alias, and commit-message guidance, with a mix
+/// of approved and unapproved commands, plus a stale approval whose command
+/// was removed from the config.
+#[rstest]
+fn test_list_approvals_mixed(repo: TestRepo) {
+    // Remove origin so project_identifier uses the canonical worktree path —
+    // matches what `Repository::project_identifier` computes at runtime.
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.write_project_config(
+        r#"pre-merge = "cargo test"
+
+[post-start]
+dev = "npm run dev"
+
+[aliases]
+deploy = "echo deploying {{ branch }}"
+
+[commit.generation]
+template-append = "Use conventional commits."
+"#,
+    );
+    repo.commit("Add config");
+
+    let project_id = repo.project_id();
+    let mut approvals = Approvals::default();
+    approvals
+        .approve_commands(
+            project_id,
+            vec![
+                "cargo test".to_string(),
+                "echo deploying {{ branch }}".to_string(),
+                "some removed command".to_string(),
+            ],
+            repo.test_approvals_path(),
+        )
+        .unwrap();
+
+    snapshot_list_approvals("list_approvals_mixed", &repo);
+}
+
+/// With everything approved, the UNAPPROVED section shows an explicit
+/// `(none)` so the all-clear is visible at a glance.
+#[rstest]
+fn test_list_approvals_all_approved(repo: TestRepo) {
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.write_project_config(r#"pre-merge = "cargo test""#);
+    repo.commit("Add config");
+
+    let mut approvals = Approvals::default();
+    approvals
+        .approve_command(
+            repo.project_id(),
+            "cargo test".to_string(),
+            repo.test_approvals_path(),
+        )
+        .unwrap();
+
+    snapshot_list_approvals("list_approvals_all_approved", &repo);
+}
+
+/// Without a project config there is nothing to require approval, but
+/// approvals already on record still list — all as stale.
+#[rstest]
+fn test_list_approvals_stale_only(repo: TestRepo) {
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.commit("Initial commit");
+
+    let mut approvals = Approvals::default();
+    approvals
+        .approve_command(
+            repo.project_id(),
+            "orphan command".to_string(),
+            repo.test_approvals_path(),
+        )
+        .unwrap();
+
+    snapshot_list_approvals("list_approvals_stale_only", &repo);
 }
 
 // ============================================================================
@@ -180,6 +278,86 @@ fn test_clear_approvals_after_clear(repo: TestRepo) {
 
     // Try to clear again (should show "no approvals")
     snapshot_clear_approvals("clear_approvals_after_clear", &repo, &[]);
+}
+
+/// `clear --stale` removes only the approvals whose commands left the project
+/// config, echoing what was removed; valid approvals survive, so the follow-up
+/// list shows the remaining command approved with no stale block.
+#[rstest]
+fn test_clear_approvals_stale(repo: TestRepo) {
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.write_project_config(r#"pre-merge = "cargo test""#);
+    repo.commit("Add config");
+
+    let mut approvals = Approvals::default();
+    approvals
+        .approve_commands(
+            repo.project_id(),
+            vec![
+                "cargo test".to_string(),
+                "some removed command".to_string(),
+                "other removed command".to_string(),
+            ],
+            repo.test_approvals_path(),
+        )
+        .unwrap();
+
+    snapshot_clear_approvals("clear_approvals_stale", &repo, &["--stale"]);
+    snapshot_list_approvals("list_approvals_after_clear_stale", &repo);
+}
+
+/// With every approval matching a config command, `clear --stale` is a no-op.
+#[rstest]
+fn test_clear_approvals_stale_none(repo: TestRepo) {
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.write_project_config(r#"pre-merge = "cargo test""#);
+    repo.commit("Add config");
+
+    let mut approvals = Approvals::default();
+    approvals
+        .approve_command(
+            repo.project_id(),
+            "cargo test".to_string(),
+            repo.test_approvals_path(),
+        )
+        .unwrap();
+
+    snapshot_clear_approvals("clear_approvals_stale_none", &repo, &["--stale"]);
+}
+
+/// Without a project config there is no frame to compute staleness against,
+/// so `clear --stale` errors like `add` — it must NOT treat every recorded
+/// approval as stale and wipe the project's approvals.
+#[rstest]
+fn test_clear_approvals_stale_no_config(repo: TestRepo) {
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.commit("Initial commit");
+
+    let mut approvals = Approvals::default();
+    approvals
+        .approve_command(
+            repo.project_id(),
+            "orphan command".to_string(),
+            repo.test_approvals_path(),
+        )
+        .unwrap();
+
+    snapshot_clear_approvals("clear_approvals_stale_no_config", &repo, &["--stale"]);
+
+    // The recorded approval survives the failed clear.
+    let content = fs::read_to_string(repo.test_approvals_path()).unwrap();
+    assert!(content.contains("orphan command"));
+}
+
+/// `--stale` is scoped to the current project's config, so it cannot combine
+/// with `--global`.
+#[rstest]
+fn test_clear_approvals_stale_global_conflict(repo: TestRepo) {
+    snapshot_clear_approvals(
+        "clear_approvals_stale_global_conflict",
+        &repo,
+        &["--stale", "--global"],
+    );
 }
 
 /// `clear` reads approvals from the legacy `[projects.X]` section in `config.toml`

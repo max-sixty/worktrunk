@@ -42,8 +42,19 @@ pub fn is_git_subcommand() -> bool {
 pub fn invocation_path() -> String {
     std::env::args_os()
         .next()
-        .map(|s| s.to_string_lossy().replace('\\', "/"))
+        .map(|arg0| normalize_invocation_path(&arg0))
         .unwrap_or_else(|| "wt".to_string())
+}
+
+/// Render an `argv[0]` value as a display string with forward-slash separators.
+///
+/// Uses [`path_slash`] rather than an unconditional `\` → `/` replacement so the
+/// conversion is platform-aware: on Windows (where `\` is a path separator) the
+/// separators become `/`, while a literal `\` in a Unix path — a valid filename
+/// character there, not a separator — is left untouched.
+fn normalize_invocation_path(arg0: &std::ffi::OsStr) -> String {
+    use path_slash::PathExt as _;
+    std::path::Path::new(arg0).to_slash_lossy().into_owned()
 }
 
 /// Check if we were invoked via an explicit path rather than PATH lookup.
@@ -112,4 +123,40 @@ pub fn was_invoked_with_explicit_path() -> bool {
             arg0.contains('/') || arg0.contains('\\')
         })
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn normalize_invocation_path_passes_through_forward_slash_paths() {
+        // Real `argv[0]` values on Unix carry no backslashes, so normalization
+        // is a pass-through and must not alter them.
+        assert_eq!(normalize_invocation_path(OsStr::new("wt")), "wt");
+        assert_eq!(normalize_invocation_path(OsStr::new("./wt")), "./wt");
+        assert_eq!(
+            normalize_invocation_path(OsStr::new("target/debug/wt")),
+            "target/debug/wt"
+        );
+        assert_eq!(
+            normalize_invocation_path(OsStr::new("/usr/local/bin/wt")),
+            "/usr/local/bin/wt"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn normalize_invocation_path_normalizes_backslashes_on_windows() {
+        // On Windows `\` is a path separator, so it renders as `/`.
+        assert_eq!(
+            normalize_invocation_path(OsStr::new(r"target\debug\wt.exe")),
+            "target/debug/wt.exe"
+        );
+        assert_eq!(
+            normalize_invocation_path(OsStr::new(r".\wt.exe")),
+            "./wt.exe"
+        );
+    }
 }

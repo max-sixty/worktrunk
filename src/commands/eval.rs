@@ -51,7 +51,10 @@ pub fn step_eval(template: &str, format: SwitchFormat) -> anyhow::Result<()> {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        eprintln!("{}", info_message("Available template variables"));
+        eprintln!(
+            "{}",
+            info_message(cformat!("<bold>{EVAL_NAME}</> template variables:"))
+        );
         eprintln!("{}", format_with_gutter(&listing, None));
     }
 

@@ -60,11 +60,11 @@ pub fn wt_bin() -> PathBuf {
     )
 }
 
-/// Path to a workspace member binary (e.g., `wt-perf`, `mock-stub`).
+/// Path to a workspace member binary (`mock-stub`).
 ///
-/// These are binaries from other workspace packages (not the main `wt` crate),
-/// so `CARGO_BIN_EXE_<name>` isn't available. Derives the path from the test
-/// executable's location in `target/debug/deps/`.
+/// Binaries from other workspace packages (not the main `wt` crate) have no
+/// `CARGO_BIN_EXE_<name>` in the main crate's tests. Derives the path from
+/// the test executable's location in `target/debug/deps/`.
 pub fn workspace_bin(name: &str) -> PathBuf {
     let mut path = std::env::current_exe().expect("failed to get test executable path");
     path.pop(); // Remove test binary name
@@ -235,7 +235,7 @@ pub const HOUR: i64 = 60 * MINUTE;
 pub const DAY: i64 = 24 * HOUR;
 pub const WEEK: i64 = 7 * DAY;
 
-/// The epoch used for deterministic timestamps in tests (2025-01-01T00:00:00Z).
+/// The epoch used for deterministic timestamps in tests (2025-01-02T00:00:00Z).
 /// Use this when creating test data with timestamps (cache entries, etc.).
 pub const TEST_EPOCH: u64 = 1735776000;
 
@@ -272,6 +272,13 @@ pub const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
     ("WORKTRUNK_TEST_FISH_INSTALLED", "0"),
     ("WORKTRUNK_TEST_NUSHELL_ENV", "0"),
     ("WORKTRUNK_TEST_POWERSHELL_INSTALLED", "0"),
+    // Disable the process-tree shell walk (see `shell::ancestor_shell`): the
+    // real ancestry of a spawned test wt is the test harness → nextest →
+    // cargo → the developer's or CI runner's shell, which would leak into
+    // shell-detection results nondeterministically. Empty = "no shell
+    // ancestor found", so tests drive detection via SHELL. Tests exercising
+    // the walk set a shell name instead.
+    ("WORKTRUNK_TEST_PARENT_SHELL", ""),
     // Disable PowerShell auto-detection (PSModulePath / SHELL signal).
     // Iteration is unconditional (matches the other shells); this var only
     // controls `allow_create` via `should_auto_configure_powershell()` so we
@@ -539,12 +546,13 @@ pub fn configure_cli_command(cmd: &mut Command) {
     // by the env-strip above.
     isolate_subprocess_env(cmd, None);
     cmd.env("WORKTRUNK_TEST_EPOCH", TEST_EPOCH.to_string());
-    // RUST_LOG intentionally NOT set: the flag baseline and `RUST_LOG`
+    // Do not inherit the host's RUST_LOG: the flag baseline and `RUST_LOG`
     // merge via the env-wins-when-set contract enforced by
     // `tracing_subscriber::EnvFilter` (see `logging::init`), so a blanket
-    // `RUST_LOG=warn` default would cap `-vv` tests at Warn and starve
-    // `trace.log` of debug-level `[wt-trace]` records. Tests that need
-    // warn-level output should opt in per-invocation.
+    // host `RUST_LOG=warn` would cap `-vv` tests at Warn and starve `trace.log`
+    // of debug-level `[wt-trace]` records. Tests that need warn-level output
+    // can opt in after command construction.
+    cmd.env_remove("RUST_LOG");
     // Treat Claude as not installed by default (tests can override with "1")
     cmd.env("WORKTRUNK_TEST_CLAUDE_INSTALLED", "0");
     // Treat Codex as not installed by default (tests can override with "1")
@@ -3116,6 +3124,22 @@ mod tests {
         assert_eq!(
             removed.get("WORKTRUNK_APPROVALS_PATH"),
             Some(&Some(DEFAULT_ISOLATED_APPROVALS.to_string()))
+        );
+    }
+
+    #[test]
+    fn configure_cli_command_scrubs_host_rust_log() {
+        let mut cmd = Command::new("true");
+        configure_cli_command(&mut cmd);
+
+        let rust_log = cmd
+            .get_envs()
+            .find(|(key, _)| key.to_string_lossy() == "RUST_LOG")
+            .map(|(_, value)| value);
+
+        assert!(
+            matches!(rust_log, Some(None)),
+            "RUST_LOG should be explicitly removed from CLI test children"
         );
     }
 

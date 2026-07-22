@@ -48,11 +48,15 @@ fn test_long_branch_names_longer_than_header(mut repo: TestRepo) {
 
 #[rstest]
 fn test_unicode_branch_names_width_calculation(mut repo: TestRepo) {
-    // Create worktrees with unicode characters that have different visual widths
-    // Note: Git may have restrictions on branch names, so use valid characters
-    repo.add_worktree("cafe");
-    repo.add_worktree("naive");
-    repo.add_worktree("resume");
+    // Wide (CJK) branch names whose display width differs from both their byte
+    // length and their char count — the list renderer pads columns by
+    // `unicode_width` display cells, so a byte- or char-count layout would
+    // misalign the Branch and Path columns for these. `日本語` is 3 chars /
+    // 9 bytes / 6 display cells; `中文` is 2 chars / 6 bytes / 4 cells. ASCII
+    // names (byte == char == cell) never exercise that path.
+    repo.add_worktree("日本語");
+    repo.add_worktree("中文");
+    repo.add_worktree("café");
 
     snapshot_list("unicode_branch_names", &repo);
 }

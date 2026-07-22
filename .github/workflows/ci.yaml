@@ -23,8 +23,6 @@ env:
   # with no benefit. Especially impactful on Windows where I/O is the bottleneck.
   CARGO_INCREMENTAL: 0
   RUSTFLAGS: -C debuginfo=0
-  # Authenticate lychee requests to GitHub to avoid rate limiting
-  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
   lint:
@@ -40,12 +38,6 @@ jobs:
         # supply), gated to main so PRs restore but never write.
         cache-bin: "false"
         save-if: ${{ github.ref == 'refs/heads/main' }}
-
-    - name: Install lychee
-      uses: baptiste0928/cargo-install@v3
-      with:
-        crate: lychee
-        version: "=0.24.2"
 
     - name: 🔍 Pre-commit hooks
       uses: pre-commit/action@v3.0.1
@@ -102,7 +94,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: worktrunk
-        version: "=0.62.0"
+        version: "=0.68.0"
 
     - name: "Use fast D: drive for temp files (Windows)"
       if: runner.os == 'Windows'
@@ -170,7 +162,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: worktrunk
-        version: "=0.62.0"
+        version: "=0.68.0"
 
     - name: 🧪 Lockfile, doctests, rustdoc
       run: wt hook pre-merge --yes lockfile doctest doc
@@ -234,7 +226,7 @@ jobs:
       uses: actions/checkout@v7
 
     - name: Setup Zola
-      uses: taiki-e/install-action@v2.82.7
+      uses: taiki-e/install-action@v2.84.0
       with:
         tool: zola@0.22.1
 
@@ -371,8 +363,6 @@ jobs:
           cargo-affected-db-v1-${{ runner.os }}-
 
     - name: 📊 Collect coverage data
-      env:
-        NEXTEST_NO_INPUT_HANDLER: 1
       run: cargo affected collect -- --features shell-integration-tests
 
     - name: 💾 Save coverage DB
@@ -465,7 +455,6 @@ jobs:
 
     - name: 🎯 Run affected tests
       env:
-        NEXTEST_NO_INPUT_HANDLER: 1
         # An empty affected selection is a valid outcome — a diff can touch
         # nothing with recorded coverage. nextest's default exits 4 ("no
         # tests to run"), which fails this advisory job spuriously. Windows
@@ -514,14 +503,12 @@ jobs:
     - name: Install nushell
       uses: hustcer/setup-nu@v3
       with:
-        version: '0.113.1'
+        version: '0.114.1'
 
     # Ensure nothing remains from caching
     - run: cargo llvm-cov clean --workspace
 
     - name: 📊 Generate coverage report
-      env:
-        NEXTEST_NO_INPUT_HANDLER: 1
       run: cargo llvm-cov --features shell-integration-tests --cobertura --output-path=cobertura.xml
 
     - name: Upload code coverage results

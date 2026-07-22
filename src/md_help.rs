@@ -486,10 +486,10 @@ fn colorize_status_symbols(text: &str) -> String {
     result = replace_dim(result, "⤵", warning);
     result = replace_dim(result, "✗", warning);
 
-    // Worktree state: BranchWorktreeMismatch (red), Prunable/Locked (yellow)
-    result = replace_dim(result, "⚑", error);
+    // Worktree state: Prunable/Locked (yellow), BranchWorktreeMismatch (dim yellow)
     result = replace_dim(result, "⊟", warning);
     result = replace_dim(result, "⊞", warning);
+    result = replace_dim(result, "⚑", warning.dimmed());
 
     // CI legend samples: replace dimmed `#` followed by a color name
     let dimmed_hash = format!("{dim}#{dim:#}");
@@ -727,7 +727,7 @@ mod tests {
 
     #[test]
     fn test_render_markdown_in_help_table() {
-        let result = render_markdown_in_help("| A | B |\n| - | - |\n| 1 | 2 |");
+        let result = render_markdown_in_help("| A | B |\n| --- | --- |\n| 1 | 2 |");
         assert_snapshot!(result, @"
          A   B  
         ─── ─── 
@@ -854,6 +854,33 @@ mod tests {
         A   B  
         1   2
         ");
+    }
+
+    #[test]
+    fn test_render_table_ragged_narrow_does_not_panic() {
+        // Regression for #3407. termimad <= 0.34.1 panicked with an out-of-bounds
+        // index when a *ragged* table — a row with more cells than the header —
+        // was rendered at a narrow width: its column fitter (`Table::fix_columns`
+        // in termimad's src/tbl.rs) took an error path that skipped cell padding,
+        // then indexed past the shorter row. PR-comment markdown is untrusted and
+        // can contain such a table, and the picker renders comment bodies through
+        // here, so this used to abort `wt switch`. Fixed upstream in termimad
+        // 0.35.1 (Canop/termimad#77); this guards against a regression or an
+        // accidental downgrade — the render must complete rather than panicking.
+        let lines = vec![
+            "| Key | Value |",
+            "| --- | --- |",
+            "| alpha | beta | gamma | delta | epsilon | zeta |",
+        ];
+        // The bug manifested as an out-of-bounds panic *during* rendering in the
+        // narrow-width band (16/20/24). termimad wraps cells hard and drops
+        // columns to fit width 20, so we don't assert on specific cell text —
+        // reaching this line at all is the proof the panic is gone.
+        let result = render_table(&lines, Some(20));
+        assert!(
+            !result.is_empty(),
+            "render should complete and produce output"
+        );
     }
 
     #[test]

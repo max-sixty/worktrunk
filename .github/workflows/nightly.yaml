@@ -9,10 +9,11 @@ name: nightly
 #   - minimal-versions: cargo check against minimum-version dep resolution
 #   - nix-flake: nix flake check (packaging-environment bugs, motivated by #2624)
 #   - crate-build: build the crates.io archive with no `.git` (faithful #3123 repro)
+#   - link-check: lychee over tracked .md/.txt files (external-link volatility)
 #
 # Runs daily on cron, on demand via workflow_dispatch, on pushes to main that
-# touch dependency or toolchain files, and on PRs that either (a) touch the
-# same dependency/toolchain files or (b) carry the `nightly` label. The
+# touch dependency, toolchain, or nix packaging files, and on PRs that either
+# (a) touch the same files or (b) carry the `nightly` label. The
 # label is the iteration knob for fixes targeting nightly-only failures
 # (e.g. nix-flake's sandbox suite); without it, contributors had to wait for
 # the cron run or `gh workflow run` manually. The cron still catches drift
@@ -32,6 +33,9 @@ on:
       - '**/Cargo.toml'
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
       - '.github/workflows/nightly.yaml'
   pull_request:
     branches: [main]
@@ -55,8 +59,8 @@ jobs:
     # Decides whether to run on PR events. Non-PR events (cron,
     # workflow_dispatch, push) pass through unconditionally. PR events
     # run when either the `nightly` label is attached OR the diff touches
-    # one of the dependency/toolchain files. The decision is exposed via
-    # `outputs.run`; downstream jobs gate on it.
+    # one of the dependency/toolchain/nix files. The decision is exposed
+    # via `outputs.run`; downstream jobs gate on it.
     #
     # `dorny/paths-filter` works against the GitHub API for PR events, so
     # no checkout step is needed.
@@ -75,6 +79,9 @@ jobs:
               - '**/Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
+              - 'flake.nix'
+              - 'flake.lock'
+              - 'nix/**'
               - '.github/workflows/nightly.yaml'
       - id: decide
         run: |
@@ -121,7 +128,7 @@ jobs:
         save-if: false
 
     - name: Install cargo-hack
-      uses: taiki-e/install-action@v2.82.7
+      uses: taiki-e/install-action@v2.84.0
       with:
         tool: cargo-hack
 
@@ -134,7 +141,7 @@ jobs:
     - name: Install nushell
       uses: hustcer/setup-nu@v3
       with:
-        version: '0.113.1'
+        version: '0.114.1'
 
     - run: cargo hack check --feature-powerset --no-dev-deps
 
@@ -176,7 +183,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: worktrunk
-        version: "=0.62.0"
+        version: "=0.68.0"
 
     - name: "Use fast D: drive for temp files (Windows)"
       if: runner.os == 'Windows'
@@ -247,8 +254,6 @@ jobs:
       run: rustup target add ${{ matrix.target }}
 
     - name: 🧪 Tests
-      env:
-        NEXTEST_NO_INPUT_HANDLER: 1
       run: cargo nextest run --target ${{ matrix.target }}
 
   check-unused-dependencies:
@@ -352,6 +357,35 @@ jobs:
     - name: 🧪 Build crates.io archive without .git
       run: cargo test --test integration crate_io_archive_builds_and_versions_without_git -- --ignored
 
+  link-check:
+    # The pre-commit `lychee-system` hook (manual stage) over every tracked
+    # .md/.txt file. It lives here, not in PR CI: link health depends on the
+    # outside world (429s, bot-blocking, transient outages), so it was the
+    # flakiest PR check — and link rot isn't PR-correlated anyway; links
+    # break when external sites change, not when code does. A failure opens
+    # the nightly-failure issue instead of reddening an unrelated PR.
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    env:
+      # Authenticate lychee requests to GitHub to avoid rate limiting
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v7
+
+    - name: Install lychee
+      uses: baptiste0928/cargo-install@v3
+      with:
+        crate: lychee
+        version: "=0.24.2"
+
+    - name: 🔗 Check links
+      # Through pre-commit so file selection (the `files` regex, symlink
+      # exclusion) has one definition; the manual stage keeps it out of the
+      # PR `lint` job and local `pre-commit run --all-files`.
+      run: pipx run pre-commit run lychee-system --all-files --hook-stage manual
+
   nix-flake:
     # Build and test under the nix sandbox so packaging-environment bugs
     # surface before a release / nixpkgs maintainer hits them. See #2624 for
@@ -384,11 +418,13 @@ jobs:
   create-issue-on-nightly-failure:
     needs:
       - feature-powerset
+      - full-tests
       - release-target
       - check-unused-dependencies
       - minimal-versions
       - nix-flake
       - crate-build
+      - link-check
     if: always() && contains(needs.*.result, 'failure') && github.repository_owner == 'max-sixty' && github.event_name == 'schedule'
     runs-on: ubuntu-24.04
     permissions:

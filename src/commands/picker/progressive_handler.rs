@@ -58,7 +58,7 @@ use super::items::{
 };
 use super::preview::PreviewMode;
 use super::preview_notify::PrStatusDelta;
-use super::preview_orchestrator::PreviewOrchestrator;
+use super::preview_orchestrator::{PreviewOrchestrator, SpawnGeneration};
 use crate::commands::list::collect::PickerProgressHandler;
 use crate::commands::list::model::{BranchScope, ItemKind, ListItem};
 
@@ -112,16 +112,21 @@ pub(super) struct PickerHandler {
     pub(super) local_content_slots: OnceLock<Box<[LocalContentSlot]>>,
     pub(super) preview_cache: PreviewCache,
     /// Fresh `Repository` for this spawn, used for the mutation-sensitive
-    /// `on_skeleton` reads (`list_worktrees`, `local_branches`). The
-    /// `orchestrator` carries its own startup-cloned repo shared across every
-    /// spawn — reading worktrees/branches through that re-probes a
-    /// `RepoCache.worktrees`/`local_branches` `OnceCell` primed at startup and
-    /// never invalidated, so after an in-picker removal it would yield the stale
-    /// pre-removal set. `spawn` rebuilds this repo per pass (same `spawn_repo`
-    /// the collect/prs threads use); read inventories through it, not through
-    /// `orchestrator.repo()`.
+    /// `on_skeleton` reads (`list_worktrees`, `local_branches`) — a
+    /// `RepoCache` is a set of `OnceCell`s that are never invalidated, so
+    /// these reads must go through a repo rebuilt after any in-picker
+    /// removal, or they'd yield the stale pre-removal inventory. `spawn`
+    /// rebuilds this repo per pass: the same `spawn_repo` the collect/prs
+    /// threads use and `PreviewOrchestrator::refresh` rebinds for preview
+    /// compute; this field is the handler's direct handle to it.
     pub(super) repo: Repository,
     pub(super) orchestrator: Arc<PreviewOrchestrator>,
+    /// This spawn's producer token (see [`SpawnGeneration`]): every
+    /// precompute spawn, comments fetch, and skim row this handler starts
+    /// carries it, so a refresh that supersedes this spawn also supersedes
+    /// everything it still has in flight — including this handler's own
+    /// `on_collect_complete` firing after the refresh.
+    pub(super) spawn_gen: SpawnGeneration,
     pub(super) preview_dims: (usize, usize),
     pub(super) llm_command: Option<String>,
     /// Filled into the Summary preview cache for every item when summaries
@@ -195,6 +200,16 @@ impl PickerHandler {
         branch_name: &str,
         pr_status: &Option<Option<PrStatus>>,
     ) {
+        // A superseded handler (its collect thread draining past an `alt-r`)
+        // must not act at all: its corrected-number path below *removes* the
+        // shared `(branch, Comments)` entry — possibly the one the live spawn
+        // just fetched — and its replacement fetch would then drop at `fill`
+        // on the stale token, stranding the tab on its loading placeholder
+        // (nothing else refills Comments; the live handler's dedup slot
+        // already records the number). Gate the removal with the fetch.
+        if !self.spawn_gen.is_current() {
+            return;
+        }
         let Some(Some(status)) = pr_status else {
             return;
         };
@@ -227,6 +242,7 @@ impl PickerHandler {
         }
         super::prs::spawn_worktree_comments_fetch(
             &self.orchestrator,
+            &self.spawn_gen,
             branch_name.to_string(),
             number as u32,
             status.updated_at.clone(),
@@ -331,7 +347,7 @@ impl PickerProgressHandler for PickerHandler {
         // the empty-list "No open PRs found", styled as a hint (the dim `↳` sits
         // in the pointer gutter, the text aligned with the row content at col 2).
         let loading = self.prs_loading.as_ref().map(|pending| {
-            let noun = super::prs::forge_noun(self.orchestrator.repo());
+            let noun = super::prs::forge_noun(&self.repo);
             HeaderLoading {
                 pending: Arc::clone(pending),
                 marker_ansi: cformat!("{HINT_SYMBOL} <dim>Loading open {noun}…</>"),
@@ -449,6 +465,9 @@ impl PickerProgressHandler for PickerHandler {
                 pr_status: pr_status_arc,
                 notifier: Arc::clone(self.orchestrator.notifier()),
                 local: Some(LocalCheckout {
+                    item: Arc::clone(&item_arc),
+                    demand: Arc::clone(self.orchestrator.demand()),
+                    spawn_gen: self.spawn_gen.clone(),
                     has_upstream,
                     summaries_enabled,
                     local_content: local_content_arc,
@@ -466,8 +485,25 @@ impl PickerProgressHandler for PickerHandler {
         let _ = self
             .local_content_slots
             .set(local_content_slots.into_boxed_slice());
-        *self.shared_items.lock().unwrap() = skim_items.clone();
-        *self.shortcut_table.lock().unwrap() = shortcut_map;
+        // The session-shared list and shortcut table take only the live
+        // spawn's rows: a superseded skeleton landing late (its collect
+        // thread scheduled after a rapid second `alt-r`'s spawn already
+        // published) would otherwise overwrite them with pre-refresh rows,
+        // and a later `alt-x` resync or `alt-y`/`alt-o` would act on those.
+        // Checked inside each lock so the check pairs with the live spawn's
+        // own overwrite — its generation bump precedes its publish.
+        {
+            let mut list = self.shared_items.lock().unwrap();
+            if self.spawn_gen.is_current() {
+                *list = skim_items.clone();
+            }
+        }
+        {
+            let mut table = self.shortcut_table.lock().unwrap();
+            if self.spawn_gen.is_current() {
+                *table = shortcut_map;
+            }
+        }
 
         // skim 4.x's item channel carries Vec batches; the skeleton is a single
         // batch. This append wakes skim's reader (`items_available`) and drives
@@ -492,6 +528,7 @@ impl PickerProgressHandler for PickerHandler {
         // of row tasks in `COLLECT_POOL`'s injector while workers are still
         // grinding through the row work.
         self.orchestrator.spawn_initial_precompute(
+            &self.spawn_gen,
             &list_items,
             self.preview_dims,
             self.llm_command.as_deref(),
@@ -504,8 +541,12 @@ impl PickerProgressHandler for PickerHandler {
         }
         // Static Summary hint is a synchronous in-memory insert, no
         // contention concern. Pre-fill every row at skeleton time so the
-        // Summary tab is usable for any selection immediately.
+        // Summary tab is usable for any selection immediately. Gated like
+        // the shared publish above: the seeding bypasses `fill` (static
+        // content, documented exception), so a superseded skeleton would
+        // otherwise write its stale rows' keys into the refreshed cache.
         if self.llm_command.is_none()
+            && self.spawn_gen.is_current()
             && let Some(hint) = self.summary_hint.as_deref()
         {
             self.orchestrator.seed_summary_hints(&list_items, hint);
@@ -612,6 +653,7 @@ impl PickerProgressHandler for PickerHandler {
             return;
         }
         self.orchestrator.spawn_deferred_precompute(
+            &self.spawn_gen,
             &items[1..],
             self.preview_dims,
             self.llm_command.as_deref(),
@@ -639,6 +681,7 @@ mod tests {
         render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
     ) -> PickerHandler {
         let preview_cache: PreviewCache = Arc::clone(&orchestrator.cache);
+        let spawn_gen = orchestrator.generation();
         PickerHandler {
             tx,
             render_tx,
@@ -652,6 +695,7 @@ mod tests {
             preview_cache,
             repo,
             orchestrator,
+            spawn_gen,
             preview_dims: (80, 24),
             llm_command: None,
             summary_hint: Some("disabled".to_string()),
@@ -1631,6 +1675,104 @@ mod tests {
             handler.preview_cache.iter().count(),
             before,
             "on_collect_complete must not spawn additional work for a single-item skeleton"
+        );
+    }
+
+    /// A handler superseded by a refresh must not publish its skeleton into
+    /// the session-shared row list / shortcut table, nor seed summary hints:
+    /// a rapid second `alt-r` can schedule the new spawn's skeleton before a
+    /// slow prior spawn's, and the stale skeleton landing second would
+    /// otherwise overwrite the live rows (feeding a later `alt-x` resync and
+    /// the `alt-y`/`alt-o` lookups) and write stale-row hint keys into the
+    /// refreshed cache.
+    #[test]
+    fn superseded_skeleton_leaves_shared_state_alone() {
+        let (handler, test, rx) = make_handler();
+        handler.orchestrator.refresh(test.repo.clone());
+
+        handler.on_skeleton(
+            vec![ListItem::new_branch("abc".into(), "stale".into())],
+            vec!["skel".into()],
+            header("hdr"),
+            grid(),
+        );
+        handler.orchestrator.wait_for_idle();
+
+        // The rows still stream to this spawn's (dead) skim channel...
+        let received = rx.recv().expect("skeleton batch");
+        assert_eq!(received.len(), 2, "header + row still sent");
+        // ...but nothing session-shared takes them.
+        assert!(
+            handler.shared_items.lock().unwrap().is_empty(),
+            "superseded skeleton must not overwrite the shared row list"
+        );
+        assert!(
+            handler.shortcut_table.lock().unwrap().is_empty(),
+            "superseded skeleton must not overwrite the shortcut table"
+        );
+        assert!(
+            handler.preview_cache.is_empty(),
+            "superseded skeleton must not seed hints into the refreshed cache"
+        );
+    }
+
+    /// A superseded handler's `maybe_spawn_comments` is fully inert. Its
+    /// corrected-number path would otherwise evict the live spawn's
+    /// `(branch, Comments)` entry from the shared cache while its own refetch
+    /// drops at `fill` on the stale token — stranding the tab on its loading
+    /// placeholder, since the live handler's dedup slot already records the
+    /// number and nothing else refills Comments.
+    #[test]
+    fn superseded_handler_does_not_evict_live_comments() {
+        use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef, PrStatus};
+
+        let status = |n: u64| {
+            Some(Some(PrStatus {
+                ci_status: CiStatus::Passed,
+                source: CiSource::PullRequest,
+                is_stale: false,
+                is_priming: false,
+                url: None,
+                number: Some(PrRef::pr(n)),
+                review_state: None,
+                title: None,
+                body: None,
+                author: None,
+                comment_count: None,
+                updated_at: None,
+            }))
+        };
+
+        let (handler, test, rx) = make_handler();
+        handler.on_skeleton(
+            vec![ListItem::new_branch("abc".into(), "b".into())],
+            vec!["skel".into()],
+            header("hdr"),
+            grid(),
+        );
+        let _ = rx.recv();
+        // Record PR #5 in this handler's dedup slot (the fetch resolves
+        // synchronously to the "unsupported forge" pane — the test repo has
+        // no forge remote — only the recorded number matters here).
+        handler.maybe_spawn_comments(0, "b", &status(5));
+
+        // A refresh supersedes this handler; the live spawn fetches the thread.
+        handler.orchestrator.refresh(test.repo.clone());
+        let key = ("b".to_string(), PreviewMode::Comments);
+        handler.orchestrator.fill_external(
+            &handler.orchestrator.generation(),
+            key.clone(),
+            "live thread".to_string(),
+        );
+
+        // The stale handler observing a corrected number must not touch the
+        // live spawn's entry.
+        handler.maybe_spawn_comments(0, "b", &status(6));
+        handler.orchestrator.wait_for_idle();
+        assert_eq!(
+            handler.preview_cache.get(&key).map(|v| v.clone()),
+            Some("live thread".to_string()),
+            "a superseded handler must not evict the live spawn's Comments entry"
         );
     }
 }

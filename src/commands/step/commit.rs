@@ -142,8 +142,27 @@ fn stage_to_temp_index(repo: &Repository, add_args: &[&str]) -> anyhow::Result<t
         .run()
         .context("Failed to stage changes into temp index")?;
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git {} failed: {}", add_args.join(" "), stderr.trim());
+        return Err(
+            worktrunk::git::CommandError::from_failed_output("git", add_args, &output).into(),
+        );
     }
     Ok(temp)
+}
+
+#[cfg(test)]
+mod tests {
+    use worktrunk::git::{CommandError, Repository};
+    use worktrunk::testing::TestRepo;
+
+    /// A failing `git add` into the temp index (here: an invalid pathspec)
+    /// must surface as a typed `CommandError`.
+    #[test]
+    fn stage_to_temp_index_failure_is_command_error() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let err = super::stage_to_temp_index(&repo, &["add", "--", ":(bad"]).unwrap_err();
+        let cmd_err = CommandError::find_in(&err).expect("error should carry a CommandError");
+        assert_eq!(cmd_err.command_string(), "git add -- :(bad");
+    }
 }

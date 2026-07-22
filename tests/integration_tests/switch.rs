@@ -130,6 +130,23 @@ fn test_switch_create_existing_branch_error(mut repo: TestRepo) {
     );
 }
 
+/// Creating a branch whose name is a path prefix of an existing branch is a git
+/// ref directory/file conflict: `release` can't be created while `release/2026.4`
+/// exists. Regression for #3527 — surface a clear namespace-collision error
+/// instead of git's raw "cannot lock ref" text.
+#[rstest]
+fn test_switch_create_branch_namespace_conflict(repo: TestRepo) {
+    // An existing branch living under the `release/` namespace.
+    repo.run_git(&["branch", "release/2026.4"]);
+
+    // `release` can't be both a branch and a directory of branches.
+    snapshot_switch(
+        "switch_create_namespace_conflict",
+        &repo,
+        &["--create", "release"],
+    );
+}
+
 /// When --execute is passed and the branch already exists, the error hint should
 /// include --execute and trailing args in the suggested command.
 #[rstest]
@@ -575,6 +592,49 @@ fn test_switch_internal_with_execute(repo: TestRepo) {
         "switch_internal_with_execute",
         &repo,
         &["--create", "exec-internal", "--execute", execute_cmd],
+    );
+}
+
+/// The `--execute` no-integration fallback relocates the payload into the
+/// switch target, so inherited git-discovery vars (`GIT_DIR`/`GIT_WORK_TREE`)
+/// must be scrubbed there like at the hook and for-each spawn sites — git
+/// resolves them before the cwd, so a forwarded value would misdirect the
+/// payload's `git` calls to the inherited repo while the "Executing @ …"
+/// header names the target (issue #3373; classification in
+/// `scrub_git_discovery_env_vars`).
+///
+/// `repo.wt_command()` configures no directive files, so wt executes the
+/// payload itself (unix: exec, non-unix: spawn — each platform's CI drives
+/// its own variant). The relative marker path resolves in the payload's cwd,
+/// pinning the relocation at the same time.
+#[rstest]
+fn test_switch_execute_fallback_does_not_inherit_git_discovery_vars(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "feature",
+            "--execute",
+            r#"printf '[%s][%s]' "$GIT_DIR" "$GIT_WORK_TREE" > git_env_seen.txt"#,
+        ])
+        .env("GIT_DIR", repo.root_path().join(".git"))
+        .env("GIT_WORK_TREE", repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "switch --execute failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let seen = fs::read_to_string(feature_path.join("git_env_seen.txt"))
+        .expect("payload should have run in the target worktree");
+    assert_eq!(
+        seen, "[][]",
+        "--execute payload inherited git-discovery vars ([GIT_DIR][GIT_WORK_TREE]): {seen}"
     );
 }
 
@@ -1475,7 +1535,7 @@ fn test_switch_no_warning_when_branch_matches(mut repo: TestRepo) {
 }
 
 #[rstest]
-fn test_switch_branch_worktree_mismatch_shows_hint(repo: TestRepo) {
+fn test_switch_branch_worktree_mismatch(repo: TestRepo) {
     // Create a worktree at a non-standard path (sibling to repo, not following template)
     let wrong_path = repo.root_path().parent().unwrap().join("wrong-path");
     repo.run_git(&[
@@ -1486,17 +1546,13 @@ fn test_switch_branch_worktree_mismatch_shows_hint(repo: TestRepo) {
         "feature",
     ]);
 
-    // Switch to feature - should show hint about branch-worktree mismatch
-    snapshot_switch_with_directive_file(
-        "switch_branch_worktree_mismatch_shows_hint",
-        &repo,
-        &["feature"],
-    );
+    // Switch to feature - no mismatch notice; the state shows only in wt list
+    snapshot_switch_with_directive_file("switch_branch_worktree_mismatch", &repo, &["feature"]);
 }
 
 ///
-/// When shell integration is not active, the branch-worktree mismatch warning should appear
-/// alongside the "cannot change directory" warning.
+/// Without shell integration, switching to a mismatched worktree shows only
+/// the "cannot change directory" warning — no mismatch notice.
 #[rstest]
 fn test_switch_worktree_mismatch_no_shell_integration(repo: TestRepo) {
     // Create a worktree at a non-standard path
@@ -1513,7 +1569,7 @@ fn test_switch_worktree_mismatch_no_shell_integration(repo: TestRepo) {
         "feature-mismatch",
     ]);
 
-    // Switch without directive file (no shell integration) - should show both warnings
+    // Switch without directive file (no shell integration)
     snapshot_switch(
         "switch_branch_worktree_mismatch_no_shell",
         &repo,
@@ -1523,7 +1579,7 @@ fn test_switch_worktree_mismatch_no_shell_integration(repo: TestRepo) {
 
 ///
 /// When already in a worktree whose path doesn't match the branch name,
-/// switching to that branch should show the branch-worktree mismatch warning.
+/// switching to that branch acknowledges the location with no mismatch notice.
 #[rstest]
 fn test_switch_already_at_with_branch_worktree_mismatch(repo: TestRepo) {
     // Create a worktree at a non-standard path
@@ -1540,7 +1596,7 @@ fn test_switch_already_at_with_branch_worktree_mismatch(repo: TestRepo) {
         "feature-already",
     ]);
 
-    // Switch from within the worktree with branch-worktree mismatch (AlreadyAt case)
+    // Switch from within the mismatched worktree (AlreadyAt case)
     snapshot_switch_from_dir(
         "switch_already_at_branch_worktree_mismatch",
         &repo,
@@ -2841,9 +2897,9 @@ fn test_switch_pr_create_conflict(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
-/// Test same-repo PR checkout (base.repo == head.repo)
+/// Test same-repo PR checkout with a custom SCP-style SSH user.
 #[rstest]
-fn test_switch_pr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
+fn test_switch_pr_same_repo_custom_ssh_user(#[from(repo_with_remote)] mut repo: TestRepo) {
     // Create a feature branch and push it to the remote
     repo.add_worktree("feature-auth");
     repo.run_git(&["push", "origin", "feature-auth"]);
@@ -2860,23 +2916,15 @@ fn test_switch_pr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
     .trim()
     .to_string();
 
-    // Set origin URL to GitHub-style so find_remote_for_repo() can match owner/test-repo
-    repo.run_git(&[
-        "remote",
-        "set-url",
-        "origin",
-        "https://github.com/owner/test-repo.git",
-    ]);
+    // GitHub requires this URL form when an organization enforces SSH certificates.
+    let github_url = "org-14957082@github.com:owner/test-repo.git";
+    repo.run_git(&["remote", "set-url", "origin", github_url]);
 
     // Configure git to redirect github.com URLs to the local bare remote.
     // This is necessary because:
     // 1. origin must have a GitHub URL for find_remote_for_repo() to match owner/repo
     // 2. But we need git fetch to actually succeed using the local bare remote
-    repo.run_git(&[
-        "config",
-        &format!("url.{}.insteadOf", bare_url),
-        "https://github.com/owner/test-repo.git",
-    ]);
+    repo.run_git(&["config", &format!("url.{}.insteadOf", bare_url), github_url]);
 
     // gh api repos/{owner}/{repo}/pulls/{number} format
     let gh_response = r#"{

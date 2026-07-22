@@ -1,6 +1,8 @@
 [workspace]
 members = ["tests/helpers/wt-perf", "tests/helpers/mock-stub"]
-# Include mock-stub and wt-perf so `cargo test` builds their binaries
+# Include the helper packages so a workspace `cargo test` builds their
+# binaries: mock-stub via its dummy tests/builds.rs, wt-perf via its real
+# in-package CLI tests.
 default-members = [".", "tests/helpers/mock-stub", "tests/helpers/wt-perf"]
 
 # cargo-affected input→test rules. cargo-affected selects tests by Rust-line
@@ -48,9 +50,9 @@ filterset = "test(/readme_sync/)"
 
 [package]
 name = "worktrunk"
-version = "0.64.0"
+version = "0.68.0"
 edition = "2024"
-rust-version = "1.95"
+rust-version = "1.96"
 build = "build.rs"
 repository = "https://github.com/max-sixty/worktrunk"
 homepage = "https://worktrunk.dev"
@@ -98,10 +100,13 @@ cli = [
 syntax-highlighting = ["dep:tree-sitter", "dep:tree-sitter-bash", "dep:tree-sitter-highlight"]
 # Enable shell/PTY integration tests (requires bash, zsh, fish installed on system)
 # Includes: shell wrapper tests, PTY-based approval prompts, TUI select, progressive rendering
-# These tests can cause nextest to suspend due to terminal foreground pgrp issues.
-# When enabled, run with NEXTEST_NO_INPUT_HANDLER=1 to avoid suspension.
-# See CLAUDE.md "Nextest Terminal Suspension" section for details.
 shell-integration-tests = []
+# Enable benchmarks whose fixture is too large for hosted CI: the rust-scale
+# prune fixture (~15 GiB of rust-lang/rust worktrees, cached in
+# target/bench-repos/). The daily benchmarks workflow runs plain `cargo bench`
+# and must never build it; opt in locally with
+# `cargo bench --bench prune --features real-repo-benches`.
+real-repo-benches = []
 # Install git-wt binary so `git wt` works as a git subcommand
 git-wt = []
 
@@ -212,7 +217,7 @@ which = "8.0.2"
 # Cross-platform path canonicalization that avoids Windows verbatim paths (\\?\)
 # which external tools like git cannot handle. On Unix, it's a no-op wrapper.
 dunce = "1.0"
-termimad = { version = "0.34.1", optional = true }
+termimad = { version = "0.35.1", optional = true }
 urlencoding = "2.1"
 regex = "1.12.3"
 ignore = "0.4"
@@ -271,7 +276,7 @@ wait-timeout = "0.2"
 # API, and earlier 4.x compile against an incompatible ratatui (`-Z
 # minimal-versions` otherwise resolves skim 4.6 against ratatui 0.30.1 and fails
 # to build).
-skim = { version = "4.8", optional = true, default-features = false, features = ["frizbee"] }
+skim = { version = "5.0", optional = true, default-features = false, features = ["frizbee"] }
 # Pinned to skim's ratatui line so the `Line` type `display()` returns is the
 # same one skim consumes. `ansi-to-tui` parses ANSI SGR codes into ratatui spans.
 # Floor is 0.30.1: 0.30.0 is a broken release (its `#[instability::unstable]`
@@ -330,15 +335,15 @@ name = "list"
 harness = false
 
 [[bench]]
-name = "cow_copy"
-harness = false
-
-[[bench]]
 name = "time_to_first_output"
 harness = false
 
 [[bench]]
 name = "remove"
+harness = false
+
+[[bench]]
+name = "prune"
 harness = false
 
 [[bench]]

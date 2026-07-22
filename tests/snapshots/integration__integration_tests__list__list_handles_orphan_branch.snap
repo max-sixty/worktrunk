@@ -52,6 +52,6 @@ exit_code: 0
 + feature-c      [2m↑[22m                 [32m↑1[0m        [32m+1[0m                ../repo.feature-c  [2m345c7c93[0m  [2m16h[0m   [2mAdd feature-c file[0m
 [2m/ [0massets        [2m/[22m[2m∅[22m                                                                [2m50209039[0m  [2m1d[0m    [2mAdd asset[0m
 
-[2m○[22m [2mShowing 4 worktrees, 1 branches, 3 ahead[0m
-
 ----- stderr -----
+
+[2m○[22m [2mShowing 4 worktrees, 1 branch, 3 ahead[0m

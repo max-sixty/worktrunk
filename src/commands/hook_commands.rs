@@ -27,6 +27,7 @@ use super::command_executor::{
 };
 use super::context::CommandEnv;
 use super::hooks::{HookAnnouncer, prepare_and_check, run_hooks_foreground};
+use super::project_config::command_label;
 use super::template_vars::TemplateVars;
 
 fn run_post_hook(
@@ -614,11 +615,7 @@ fn render_hook_commands(
     }
 
     for cmd in commands {
-        // Build label: "hook-type name:" or "hook-type:"
-        let label = match &cmd.name {
-            Some(name) => cformat!("{hook_type} <bold>{name}</>:"),
-            None => format!("{hook_type}:"),
-        };
+        let label = command_label(hook_type, cmd.name.as_deref());
 
         // Check approval status for project hooks
         let needs_approval = if let Some((approvals, Some(project_id))) = approval_context {

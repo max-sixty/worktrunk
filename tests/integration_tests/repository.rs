@@ -275,6 +275,25 @@ fn test_project_identifier_ssh_colon() {
 }
 
 #[test]
+fn test_project_identifier_scp_custom_user() {
+    let mut repo = TestRepo::with_initial_commit();
+    repo.setup_remote("main");
+    repo.git_command()
+        .args([
+            "remote",
+            "set-url",
+            "origin",
+            "org-14957082@github.com:openai/codex.git",
+        ])
+        .run()
+        .unwrap();
+
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    let id = repository.project_identifier().unwrap();
+    assert_eq!(id, "github.com/openai/codex");
+}
+
+#[test]
 fn test_project_identifier_ssh_protocol() {
     let mut repo = TestRepo::with_initial_commit();
     repo.setup_remote("main");

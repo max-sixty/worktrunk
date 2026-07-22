@@ -11,7 +11,7 @@
 //! - `test_diagnostic_contains_required_sections`: All sections present
 //! - `test_diagnostic_context_has_no_ansi_codes`: ANSI stripped for GitHub
 //! - `test_diagnostic_trace_log_contains_git_commands`: Log has useful data
-//! - `test_diagnostic_saved_message_with_vv`: -vv announces the saved report and its raw companions
+//! - `test_diagnostic_saved_message_with_vv`: -vv announces the saved report
 //! - `test_diagnostic_leads_with_profile`: Profile is the bundle's first section
 //! - `test_diagnostic_written_to_correct_location`: File in .git/wt/logs/
 //! - `test_diagnostic_gh_hint_with_vv`: Hint shows gist and issue URL when gh installed
@@ -90,7 +90,7 @@ fn test_diagnostic_report_file_format(mut repo: TestRepo) {
     // Verify the stderr mentions the diagnostic was saved
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("performance profile, and diagnostics saved"),
+        stderr.contains("Diagnostics and performance profile saved"),
         "Output should mention diagnostic was saved. stderr: {}",
         stderr
     );
@@ -201,6 +201,49 @@ fn test_diagnostic_contains_required_sections(mut repo: TestRepo) {
     );
 }
 
+/// The diagnostic surfaces the curated pager/terminal env vars and git's
+/// resolved `core.pager`, so a rendering bug like #3322 (a pager interaction
+/// suspending `wt config show`) can be diagnosed from the report alone. A set
+/// `PAGER` is echoed verbatim; an unset allowlisted var shows `(unset)`.
+#[rstest]
+fn test_diagnostic_includes_environment_variables(mut repo: TestRepo) {
+    repo.add_worktree("feature");
+    // Configure git's core.pager so its resolved value appears in the report.
+    repo.run_git(&["config", "core.pager", "my-test-pager --opt"]);
+
+    repo.wt_command()
+        .args(["list", "-vv"])
+        .env("PAGER", "my-test-pager")
+        .env_remove("GIT_PAGER")
+        .output()
+        .unwrap();
+
+    let content = fs::read_to_string(
+        repo.root_path()
+            .join(".git")
+            .join("wt/logs")
+            .join("diagnostic.md"),
+    )
+    .unwrap();
+
+    assert!(
+        content.contains("<summary>Environment variables</summary>"),
+        "Should have an environment-variables section. content: {content}"
+    );
+    assert!(
+        content.contains("PAGER=my-test-pager"),
+        "A set PAGER should be echoed verbatim. content: {content}"
+    );
+    assert!(
+        content.contains("GIT_PAGER=(unset)"),
+        "An unset allowlisted var should read (unset). content: {content}"
+    );
+    assert!(
+        content.contains("core.pager=my-test-pager --opt"),
+        "git's resolved core.pager should be surfaced. content: {content}"
+    );
+}
+
 /// The context field should have ANSI codes stripped for clean GitHub display.
 #[rstest]
 fn test_diagnostic_context_has_no_ansi_codes(mut repo: TestRepo) {
@@ -269,10 +312,11 @@ fn test_diagnostic_trace_log_contains_git_commands(mut repo: TestRepo) {
     );
 }
 
-/// The `-vv` end block names what the run captured (headline mentions the
-/// performance profile) and lists the raw companions `diagnostic.md` doesn't
-/// inline — `trace.jsonl` and `subprocess.log` — while omitting the files it
-/// does carry (`trace.log`, and there's no `profile.txt`).
+/// The `-vv` end block names what the run captured and saved
+/// (`diagnostic.md`, the single human-facing doc). It doesn't re-list the
+/// raw companion logs (`trace.jsonl`, `subprocess.log`) — the start-of-run
+/// pointer (`Verbose logging to <dir>/`) already names the log directory,
+/// and the report body points at the companions directly.
 #[rstest]
 fn test_diagnostic_saved_message_with_vv(mut repo: TestRepo) {
     repo.add_worktree("feature");
@@ -282,20 +326,15 @@ fn test_diagnostic_saved_message_with_vv(mut repo: TestRepo) {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Headline names the profile and the diagnostic bundle.
+    // Headline names the diagnostics and performance profile.
     assert!(
-        stderr.contains("performance profile, and diagnostics saved"),
+        stderr.contains("Diagnostics and performance profile saved"),
         "end block should name what was captured. stderr: {stderr}"
     );
-    // The non-duplicative raw companions are pointed at.
+    // The raw companion logs are not re-listed in the end block.
     assert!(
-        stderr.contains("wt/logs/trace.jsonl") && stderr.contains("wt/logs/subprocess.log"),
-        "end block should list the raw companions diagnostic.md doesn't inline: {stderr}"
-    );
-    // Files whose content the bundle already carries are not re-listed.
-    assert!(
-        !stderr.contains("wt/logs/trace.log") && !stderr.contains("profile.txt"),
-        "end block should not list files inlined in the bundle: {stderr}"
+        !stderr.contains("wt/logs/trace.jsonl") && !stderr.contains("wt/logs/subprocess.log"),
+        "end block should not re-list the raw companion logs: {stderr}"
     );
 }
 
@@ -385,7 +424,7 @@ fn test_diagnostic_leads_with_profile(repo: TestRepo) {
         "the profile is folded into diagnostic.md, not announced separately: {stderr}"
     );
     assert!(
-        stderr.contains("performance profile, and diagnostics saved"),
+        stderr.contains("Diagnostics and performance profile saved"),
         "stderr should announce the diagnostic bundle. stderr: {stderr}"
     );
 }
@@ -796,7 +835,7 @@ fn test_vv_writes_diagnostic_on_success(repo: TestRepo) {
     // stderr should mention diagnostic was saved
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("performance profile, and diagnostics saved"),
+        stderr.contains("Diagnostics and performance profile saved"),
         "stderr should mention diagnostic was saved. stderr: {}",
         stderr
     );
@@ -825,7 +864,7 @@ fn test_vv_writes_diagnostic_on_error(mut repo: TestRepo) {
     // stderr should mention diagnostic was saved
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("performance profile, and diagnostics saved"),
+        stderr.contains("Diagnostics and performance profile saved"),
         "stderr should mention diagnostic was saved. stderr: {}",
         stderr
     );
@@ -857,13 +896,6 @@ fn test_vv_pointer_handles_split_init(repo: TestRepo) {
     assert!(
         logs_dir.join("trace.log").exists(),
         "trace.log should still be created"
-    );
-    // The end-of-run companion list surfaces the surviving raw file and drops
-    // subprocess.log, whose sink failed to open (`SUBPROCESS.path()` → None,
-    // filtered out by the `.flatten()` in `write_if_verbose`).
-    assert!(
-        stderr.contains("wt/logs/trace.jsonl") && !stderr.contains("wt/logs/subprocess.log"),
-        "end block should list the surviving companion and omit the failed subprocess.log: {stderr}"
     );
 }
 
@@ -1052,37 +1084,44 @@ fn normalize_report(content: &str) -> String {
         .replace_all(&result, "$1 $2")
         .to_string();
 
+    // Truncate the environment-variables section - its values (TERM, SHELL,
+    // LANG, PAGER, …) are inherited from the host and differ per machine, so
+    // exact comparison is non-deterministic. We assert specific lines appear in
+    // a dedicated test instead.
+    truncate_details_section(&mut result, "Environment variables", "[ENV_VARS_CONTENT]");
+
     // Truncate performance profile section - its durations and by-type/slowest
     // ordering depend on the run's real timing, so exact comparison is flaky.
     // We verify the section exists separately in the test.
-    if let Some(start) = result.find("<summary>Performance profile</summary>") {
-        // Find the closing </details> after this point
-        if let Some(end_offset) = result[start..].find("</details>") {
-            let end = start + end_offset + "</details>".len();
-            let before = &result[..start];
-            let after = &result[end..];
-            result = format!(
-                "{}<summary>Performance profile</summary>\n\n[PERFORMANCE_PROFILE_CONTENT]\n</details>{}",
-                before, after
-            );
-        }
-    }
+    truncate_details_section(
+        &mut result,
+        "Performance profile",
+        "[PERFORMANCE_PROFILE_CONTENT]",
+    );
 
     // Truncate trace log section - it has parallel git commands that interleave
     // in different orders, making exact snapshot comparison flaky.
     // We verify the section exists separately in the test.
-    if let Some(start) = result.find("<summary>Trace log</summary>") {
-        // Find the closing </details> after this point
-        if let Some(end_offset) = result[start..].find("</details>") {
-            let end = start + end_offset + "</details>".len();
-            let before = &result[..start];
-            let after = &result[end..];
-            result = format!(
-                "{}<summary>Trace log</summary>\n\n[TRACE_LOG_CONTENT]\n</details>{}",
-                before, after
-            );
-        }
-    }
+    truncate_details_section(&mut result, "Trace log", "[TRACE_LOG_CONTENT]");
 
     result
+}
+
+/// Replace a `<details>` section's body with a fixed placeholder so
+/// host-specific or run-specific content (env values, timings, interleaved
+/// trace output) doesn't make the snapshot non-deterministic. The section is
+/// located by its `<summary>{title}</summary>` line and truncated up to the
+/// next `</details>`. A no-op when the section isn't present.
+fn truncate_details_section(result: &mut String, title: &str, placeholder: &str) {
+    let summary = format!("<summary>{title}</summary>");
+    if let Some(start) = result.find(&summary)
+        && let Some(end_offset) = result[start..].find("</details>")
+    {
+        let end = start + end_offset + "</details>".len();
+        *result = format!(
+            "{}{summary}\n\n{placeholder}\n</details>{}",
+            &result[..start],
+            &result[end..],
+        );
+    }
 }

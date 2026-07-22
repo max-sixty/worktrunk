@@ -1,49 +1,30 @@
-//! Trace log parsing and Chrome Trace Format export.
+//! Trace log parsing and analysis.
 //!
-//! This module provides tools for analyzing `wt-trace` log output to understand
-//! where time is spent during command execution.
+//! Tools for analyzing the `trace.jsonl` a `-vv` run captures (to
+//! `.git/wt/logs/`), to understand where time went during a `wt` invocation:
 //!
-//! # Features
+//! - [`emit`] — the authoritative `[wt-trace]` record emitter
+//! - [`parse`] — `trace.jsonl` lines → structured [`TraceEntry`] values
+//! - [`profile`] — the aggregate report behind `wt config state logs profile`:
+//!   where time goes (by command type / by context / slowest), parallelism,
+//!   and same-context cache misses
+//! - [`timeline`] — the per-record view behind `wt-perf timeline`
+//! - [`chrome`] — Chrome Trace Format export for visual critical-path
+//!   inspection in <https://ui.perfetto.dev> or chrome://tracing
 //!
-//! - **Trace parsing**: Parse `wt-trace` log lines into structured entries
-//! - **Chrome Trace Format**: Export for chrome://tracing or Perfetto visualization
-//! - **SQL analysis**: Use Perfetto's trace_processor for queries
-//!
-//! # Usage
-//!
-//! ```bash
-//! # Text timeline of one wt invocation
-//! cargo run -p wt-perf -- timeline -- list --progressive
-//!
-//! # Chrome Trace Format JSON for Perfetto/chrome://tracing
-//! # (--progressive forces TTY-gated events like `Skeleton rendered` to
-//! # fire even though wt-perf pipes wt's stdout to /dev/null)
-//! cargo run -p wt-perf -- timeline --chrome -- list --progressive > trace.json
-//!
-//! # From a trace.jsonl already captured to disk
-//! cargo run -p wt-perf -- trace .git/wt/logs/trace.jsonl > trace.json
-//!
-//! # Analyze with SQL (requires: curl -LO https://get.perfetto.dev/trace_processor)
-//! trace_processor trace.json -Q 'SELECT name, COUNT(*), SUM(dur)/1e6 as ms FROM slice GROUP BY name'
-//!
-//! # Find milestone events (instant events have dur=0)
-//! trace_processor trace.json -Q 'SELECT name, ts/1e6 as ms FROM slice WHERE dur = 0'
-//!
-//! # Time from start to skeleton render
-//! trace_processor trace.json -Q "
-//!   SELECT (skeleton.ts - start.ts)/1e6 as skeleton_ms
-//!   FROM slice start, slice skeleton
-//!   WHERE start.name = 'List collect started'
-//!     AND skeleton.name = 'Skeleton rendered'"
-//! ```
+//! Capture with `wt -vv <cmd>`, or let the `wt-perf timeline` helper run the
+//! capture and render in one step (`cargo run -p wt-perf -- timeline -- list
+//! --progressive`).
 
 pub mod chrome;
 pub mod emit;
 pub mod parse;
 pub mod profile;
+pub mod timeline;
 
 // Re-export main types for convenience
 pub use chrome::to_chrome_trace;
 pub use emit::{CommandTrace, Span, WT_TRACE_TARGET, instant, now_us, thread_id};
 pub use parse::{TraceEntry, TraceEntryKind, TraceResult, parse_lines};
 pub use profile::{CacheReport, Profile};
+pub use timeline::render_timeline;

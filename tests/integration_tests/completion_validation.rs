@@ -1,293 +1,112 @@
 use crate::common::wt_command;
 use std::collections::HashSet;
-use worktrunk::styling::SUCCESS_SYMBOL;
 
-/// Issue found during validation
-#[derive(Debug)]
-struct Issue {
-    shell: String,
-    severity: Severity,
-    category: Category,
-    message: String,
+/// Drive the dynamic completion engine for a command-line context and return
+/// the set of candidate values it offers.
+///
+/// A shell requests completions by invoking `COMPLETE=<shell> wt -- <words…>`,
+/// where the final (possibly empty) word is the token under the cursor. Worktrunk
+/// answers on stdout: one candidate per line, `value<TAB>help` for shells that
+/// render descriptions (fish/zsh). We key on `fish` and keep the value before the
+/// first tab.
+fn completion_candidates(words: &[&str]) -> HashSet<String> {
+    let mut cmd = wt_command();
+    cmd.env("COMPLETE", "fish");
+    cmd.arg("--");
+    cmd.args(words);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "completion invocation for {words:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.split('\t').next())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
-#[derive(Debug, PartialEq)]
-enum Severity {
-    Error,
-    Warning,
-}
-
-#[derive(Debug)]
-enum Category {
-    HiddenFlag,
-    Consistency,
-}
-
-impl Issue {
-    fn error(shell: impl Into<String>, category: Category, message: impl Into<String>) -> Self {
-        Self {
-            shell: shell.into(),
-            severity: Severity::Error,
-            category,
-            message: message.into(),
-        }
-    }
-
-    fn warning(shell: impl Into<String>, category: Category, message: impl Into<String>) -> Self {
-        Self {
-            shell: shell.into(),
-            severity: Severity::Warning,
-            category,
-            message: message.into(),
-        }
-    }
-}
-
-/// Validate fish shell completions
-fn validate_fish(_content: &str) -> Vec<Issue> {
-    // No hidden flags to check after removing --internal
-    Vec::new()
-}
-
-/// Validate bash shell completions
-fn validate_bash(_content: &str) -> Vec<Issue> {
-    // No hidden flags to check after removing --internal
-    Vec::new()
-}
-
-/// Validate zsh shell completions
-fn validate_zsh(_content: &str) -> Vec<Issue> {
-    // No hidden flags to check after removing --internal
-    Vec::new()
-}
-
-/// Extract flags from shell completion content
-fn extract_flags(content: &str, shell: &str) -> HashSet<String> {
-    let mut flags = HashSet::new();
-
-    match shell {
-        "fish" => {
-            // Only from 'complete -c wt' lines, not local variables
-            for line in content.lines() {
-                if line.contains("complete -c wt")
-                    && let Some(captures) = line.split("-l ").nth(1)
-                    && let Some(flag) = captures.split_whitespace().next()
-                {
-                    flags.insert(flag.to_string());
-                }
-            }
-        }
-        "bash" => {
-            // From opts= lines
-            for line in content.lines() {
-                if let Some(opts_start) = line.find("opts=\"") {
-                    // Find the closing quote
-                    let search_from = opts_start + 6;
-                    if let Some(rel_end) = line[search_from..].find('"') {
-                        let opts_end = search_from + rel_end;
-                        let opts_str = &line[search_from..opts_end];
-                        for word in opts_str.split_whitespace() {
-                            if let Some(flag) = word.strip_prefix("--") {
-                                flags.insert(flag.to_string());
-                            }
-                        }
-                    }
-                }
-            }
-            // Also from case statements
-            for line in content.lines() {
-                if let Some(stripped) = line
-                    .trim()
-                    .strip_prefix("--")
-                    .and_then(|s| s.strip_suffix(')'))
-                {
-                    flags.insert(stripped.to_string());
-                }
-            }
-        }
-        "zsh" => {
-            // From _arguments lines
-            for line in content.lines() {
-                if let Some(start) = line.find("'--")
-                    && let Some(rest) = line[start + 3..].split(&['[', '='][..]).next()
-                {
-                    flags.insert(rest.to_string());
-                }
-            }
-        }
-        _ => {}
-    }
-
-    flags
-}
-
-/// Validate cross-shell consistency
-fn validate_cross_shell(fish_content: &str, bash_content: &str, zsh_content: &str) -> Vec<Issue> {
-    let mut issues = Vec::new();
-
-    let fish_flags = extract_flags(fish_content, "fish");
-    let bash_flags = extract_flags(bash_content, "bash");
-    let zsh_flags = extract_flags(zsh_content, "zsh");
-
-    // Flags that should be hidden
-    let hidden_flags: HashSet<String> = ["internal"].iter().map(|s| s.to_string()).collect();
-
-    // Check if hidden flags appear anywhere
-    for flag in &hidden_flags {
-        let mut appears_in = Vec::new();
-        if fish_flags.contains(flag) {
-            appears_in.push("fish");
-        }
-        if bash_flags.contains(flag) {
-            appears_in.push("bash");
-        }
-        if zsh_flags.contains(flag) {
-            appears_in.push("zsh");
-        }
-
-        if !appears_in.is_empty() {
-            issues.push(Issue::error(
-                "cross-shell",
-                Category::HiddenFlag,
-                format!(
-                    "Hidden flag --{} appears in: {}",
-                    flag,
-                    appears_in.join(", ")
-                ),
-            ));
-        }
-    }
-
-    // Check for flags missing from some shells
-    // (only report if missing from multiple shells - single shell might be intentional)
-    let all_flags: HashSet<_> = fish_flags
-        .union(&bash_flags)
-        .chain(zsh_flags.iter())
-        .filter(|f| !hidden_flags.contains(*f))
-        .collect();
-
-    for flag in all_flags {
-        let in_fish = fish_flags.contains(flag);
-        let in_bash = bash_flags.contains(flag);
-        let in_zsh = zsh_flags.contains(flag);
-
-        let present_count = [in_fish, in_bash, in_zsh].iter().filter(|&&x| x).count();
-
-        // Only warn if flag is in exactly one shell (likely a bug)
-        // If it's in 2 shells, might be intentional
-        if present_count == 1 {
-            let mut missing = Vec::new();
-            if !in_fish {
-                missing.push("fish");
-            }
-            if !in_bash {
-                missing.push("bash");
-            }
-            if !in_zsh {
-                missing.push("zsh");
-            }
-
-            issues.push(Issue::warning(
-                "cross-shell",
-                Category::Consistency,
-                format!("Flag --{} missing from: {}", flag, missing.join(", ")),
-            ));
-        }
-    }
-
-    issues
-}
-
+/// `hide = true` subcommands must never appear in completions.
+///
+/// Worktrunk generates completions dynamically (clap_complete's completion
+/// engine, driven from `COMPLETE=<shell> wt`), assembled in
+/// `src/completion.rs`. Deprecated and internal subcommands are marked
+/// `#[command(hide = true)]` so they stay out of `--help` *and* out of
+/// completions; a regression that resurfaced one (e.g. an injection layer
+/// re-adding it, or a new internal subcommand missing `hide = true`) would leak
+/// it to every user's shell.
+///
+/// Each context also asserts a visible sibling is present. That guard is
+/// load-bearing: without it, a broken invocation returning *no* candidates would
+/// satisfy every "hidden subcommand absent" check vacuously — the exact failure mode
+/// that let this test rot after completions moved from static generation
+/// (`wt config shell init`, which no longer emits any flag lines) to the dynamic
+/// engine.
+///
+/// Hidden *flags* are deliberately not checked here: unlike subcommands, the
+/// completion assembly (`hide_non_positional_options_for_completion`) surfaces
+/// every long flag — hidden ones included — when the user explicitly types `--`,
+/// so "hidden flags never appear" is not an invariant the current design holds.
 #[test]
-fn test_completion_validation() {
-    // Generate completions
-    let fish_output = wt_command()
-        .arg("config")
-        .arg("shell")
-        .arg("init")
-        .arg("fish")
-        .output()
-        .unwrap();
+fn test_hidden_subcommands_excluded_from_completions() {
+    // `wt <Tab>` — the legacy `select` subcommand is hidden (superseded by the
+    // picker integrated into `wt switch`).
+    let top_level = completion_candidates(&["wt", ""]);
+    assert!(
+        top_level.contains("switch"),
+        "expected visible `switch` in top-level completions: {top_level:?}"
+    );
+    assert!(
+        !top_level.contains("select"),
+        "hidden `select` leaked into `wt` completions: {top_level:?}"
+    );
 
-    let bash_output = wt_command()
-        .arg("config")
-        .arg("shell")
-        .arg("init")
-        .arg("bash")
-        .output()
-        .unwrap();
-
-    let zsh_output = wt_command()
-        .arg("config")
-        .arg("shell")
-        .arg("init")
-        .arg("zsh")
-        .output()
-        .unwrap();
-
-    assert!(fish_output.status.success());
-    assert!(bash_output.status.success());
-    assert!(zsh_output.status.success());
-
-    let fish_content = String::from_utf8_lossy(&fish_output.stdout);
-    let bash_content = String::from_utf8_lossy(&bash_output.stdout);
-    let zsh_content = String::from_utf8_lossy(&zsh_output.stdout);
-
-    // Run all validators
-    let mut all_issues = Vec::new();
-    all_issues.extend(validate_fish(&fish_content));
-    all_issues.extend(validate_bash(&bash_content));
-    all_issues.extend(validate_zsh(&zsh_content));
-    all_issues.extend(validate_cross_shell(
-        &fish_content,
-        &bash_content,
-        &zsh_content,
-    ));
-
-    // Separate errors and warnings
-    let errors: Vec<_> = all_issues
-        .iter()
-        .filter(|i| i.severity == Severity::Error)
-        .collect();
-    let warnings: Vec<_> = all_issues
-        .iter()
-        .filter(|i| i.severity == Severity::Warning)
-        .collect();
-
-    // Report issues
-    if !errors.is_empty() {
-        eprintln!("\n{}", "=".repeat(80));
-        eprintln!("COMPLETION VALIDATION ERRORS ({})", errors.len());
-        eprintln!("{}", "=".repeat(80));
-        for issue in &errors {
-            eprintln!(
-                "❌ [{}] {:?}: {}",
-                issue.shell, issue.category, issue.message
-            );
-        }
-    }
-
-    if !warnings.is_empty() {
-        eprintln!("\n{}", "=".repeat(80));
-        eprintln!("COMPLETION VALIDATION WARNINGS ({})", warnings.len());
-        eprintln!("{}", "=".repeat(80));
-        for issue in &warnings {
-            eprintln!(
-                "⚠️  [{}] {:?}: {}",
-                issue.shell, issue.category, issue.message
-            );
-        }
-    }
-
-    // Fail on errors only
-    if !errors.is_empty() {
-        panic!(
-            "\n{} completion validation error(s) found - see output above",
-            errors.len()
+    // `wt hook <Tab>` — the internal `run-pipeline` runner and the deprecated
+    // `approvals` alias are hidden; the hook types are offered.
+    let hook = completion_candidates(&["wt", "hook", ""]);
+    assert!(
+        hook.contains("pre-merge"),
+        "expected visible `pre-merge` in hook completions: {hook:?}"
+    );
+    for hidden in ["run-pipeline", "approvals"] {
+        assert!(
+            !hook.contains(hidden),
+            "hidden `hook {hidden}` leaked into completions: {hook:?}"
         );
     }
 
-    if errors.is_empty() && warnings.is_empty() {
-        println!("{SUCCESS_SYMBOL} All shell completions validated successfully!");
+    // `wt config shell <Tab>` — the internal `completions` generator (emits the
+    // package-manager completion registration) is hidden; the interactive setup
+    // subcommands are offered. `completions` lives here, not directly under
+    // `wt config`, so it must be probed at this level to actually exercise the
+    // hide filtering rather than the tree structure.
+    let config_shell = completion_candidates(&["wt", "config", "shell", ""]);
+    assert!(
+        config_shell.contains("install"),
+        "expected visible `install` in config shell completions: {config_shell:?}"
+    );
+    assert!(
+        !config_shell.contains("completions"),
+        "hidden `config shell completions` leaked into completions: {config_shell:?}"
+    );
+
+    // `wt config state <Tab>` — the deprecated per-category subcommands (now
+    // folded into `wt config state cache`) are hidden; `cache` is offered. Like
+    // `completions` above, these live under `state`, not directly under
+    // `wt config`, so they must be probed at this level.
+    let config_state = completion_candidates(&["wt", "config", "state", ""]);
+    assert!(
+        config_state.contains("cache"),
+        "expected visible `cache` in config state completions: {config_state:?}"
+    );
+    for hidden in ["previous-branch", "hints", "ci-status"] {
+        assert!(
+            !config_state.contains(hidden),
+            "hidden `config state {hidden}` leaked into completions: {config_state:?}"
+        );
     }
 }

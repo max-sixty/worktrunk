@@ -40,6 +40,6 @@ exit_code: 0
 + [2mfeature1[0m      [2m_[22m                                             [2m../feature1[0m  [2mb37a293c[0m  [2m1d[0m    [2mMain commit[0m
 + [2mfeature2[0m      [2m_[22m                                             [2m../feature2[0m  [2mb37a293c[0m  [2m1d[0m    [2mMain commit[0m
 
-[2m○[22m [2mShowing 3 worktrees[0m
-
 ----- stderr -----
+
+○ Showing 3 worktrees

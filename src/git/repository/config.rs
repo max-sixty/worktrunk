@@ -7,6 +7,8 @@ use color_print::cformat;
 
 use crate::config::ProjectConfig;
 
+use crate::git::CommandError;
+
 use super::{DefaultBranchName, GitError, Repository};
 
 impl Repository {
@@ -67,15 +69,15 @@ impl Repository {
     /// Removes the canonical form (matching what git emits) to stay in
     /// sync with `set_config_value` and `config_last`.
     pub(super) fn unset_config_value(&self, key: &str) -> anyhow::Result<bool> {
-        let output = self.run_command_output(&["config", "--unset", key])?;
+        let args = ["config", "--unset", key];
+        let output = self.run_command_output(&args)?;
         let existed = if output.status.success() {
             true
         } else if output.status.code() == Some(5) {
             // --unset exit code 5 = key didn't exist
             false
         } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("git config --unset {}: {}", key, stderr.trim());
+            return Err(CommandError::from_failed_output("git", &args, &output).into());
         };
         if let Some(lock) = self.cache.all_config.get() {
             // `shift_remove` preserves remaining order (swap_remove would
@@ -94,15 +96,15 @@ impl Repository {
     /// surfaced as `Err`). Use this instead of `run_command` + `.unwrap_or_default()`,
     /// which conflates the two.
     pub fn get_config_regexp(&self, pattern: &str) -> anyhow::Result<String> {
-        let output = self.run_command_output(&["config", "--get-regexp", pattern])?;
+        let args = ["config", "--get-regexp", pattern];
+        let output = self.run_command_output(&args)?;
         if output.status.success() {
             Ok(String::from_utf8_lossy(&output.stdout).into_owned())
         } else if output.status.code() == Some(1) {
             // Exit 1 = no keys matched the pattern
             Ok(String::new())
         } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("git config --get-regexp {}: {}", pattern, stderr.trim());
+            Err(CommandError::from_failed_output("git", &args, &output).into())
         }
     }
 
@@ -623,6 +625,27 @@ impl Repository {
             .filter(|s| !s.is_empty())
     }
 
+    /// Read the primary remote's locally-cached HEAD without touching the
+    /// network, as `(remote_name, branch)` — the branch `<remote>/HEAD`
+    /// resolves to (e.g. `("origin", "main")`).
+    ///
+    /// Unlike [`default_branch`](Self::default_branch), this never queries the
+    /// remote (`git ls-remote`), never infers from local branches, and never
+    /// persists a result: it reports only git's own `<remote>/HEAD` symref.
+    /// Returns `None` when there is no primary remote or its HEAD is not set
+    /// locally (e.g. `git remote set-head` was never run).
+    ///
+    /// State inspection (`wt config state`) uses this to flag when the
+    /// persisted `worktrunk.default-branch` cache has drifted from
+    /// `origin/HEAD` — e.g. after a default-branch rename followed by
+    /// `git remote set-head origin -a`, which the fast-path cache in
+    /// `default_branch()` won't otherwise notice.
+    pub fn remote_head(&self) -> Option<(String, String)> {
+        let remote = self.primary_remote().ok()?;
+        let branch = self.local_default_branch(&remote).ok()?;
+        Some((remote, branch))
+    }
+
     // =========================================================================
     // Project config
     // =========================================================================
@@ -631,13 +654,25 @@ impl Repository {
     ///
     /// If `WORKTRUNK_PROJECT_CONFIG_PATH` is set, returns that path (used for
     /// test isolation so the spawned `wt` does not pick up this repo's
-    /// `.config/wt.toml`). A missing file at that path still resolves to
-    /// `Ok(None)` via `ProjectConfig::load`, matching the no-config case.
+    /// `.config/wt.toml`). An empty value means no project config. A relative
+    /// value resolves against the same worktree root the default
+    /// `.config/wt.toml` is anchored to — never the process cwd, which would
+    /// make the override silently depend on the invocation directory — and
+    /// errors when no worktree root exists to anchor it. A missing file at the
+    /// resulting path still resolves to `Ok(None)` via `ProjectConfig::load`,
+    /// matching the no-config case.
     ///
-    /// Otherwise: uses the current worktree when inside one (both normal and
-    /// bare repos). For bare repos at the bare root (outside any worktree),
-    /// falls back to the primary worktree. Returns `None` when no worktree can
-    /// be determined (bare repo with no linked worktrees).
+    /// Without the override: uses the current worktree when inside one (both
+    /// normal and bare repos). For bare repos at the bare root (outside any
+    /// worktree), falls back to the primary worktree. When the default branch
+    /// is checked out in no worktree (so `primary_worktree()` is `None`),
+    /// there is no on-disk path to return here — `ProjectConfig::load` reads
+    /// the committed default-branch config from the object store via
+    /// [`default_branch_project_config_content`](Self::default_branch_project_config_content)
+    /// so project config (and every project hook) isn't silently dropped while
+    /// the primary is parked on another branch (#3461). That fallback is for
+    /// the no-override case only: an override always names the config source
+    /// outright.
     ///
     /// "The current worktree" is whatever this `Repository` was rooted at, so
     /// the answer to "which `.config/wt.toml` does a hook read" is decided by
@@ -645,8 +680,34 @@ impl Repository {
     /// is resolved against — is the spec in the `commands::hooks` module docs
     /// (`src/commands/hooks.rs`).
     pub fn project_config_path(&self) -> anyhow::Result<Option<PathBuf>> {
-        if let Ok(path) = std::env::var("WORKTRUNK_PROJECT_CONFIG_PATH") {
-            return Ok(Some(PathBuf::from(path)));
+        let override_path = std::env::var_os("WORKTRUNK_PROJECT_CONFIG_PATH").map(PathBuf::from);
+        if let Some(path) = &override_path {
+            if path.as_os_str().is_empty() {
+                // An empty override means no project config, matching a
+                // missing file at the override path.
+                return Ok(None);
+            }
+            if path.is_absolute() {
+                return Ok(Some(path.clone()));
+            }
+            // Windows-only forms that are neither absolute nor purely
+            // relative — drive-relative (`C:cfg`) or rooted without a drive
+            // (`\cfg`, `/tmp/x`) — would resolve against the process drive or
+            // replace the anchor under `Path::join`; reject them rather than
+            // silently keep the cwd dependence this resolution exists to
+            // eliminate.
+            #[cfg(windows)]
+            if path.has_root()
+                || matches!(
+                    path.components().next(),
+                    Some(std::path::Component::Prefix(_))
+                )
+            {
+                anyhow::bail!(
+                    "WORKTRUNK_PROJECT_CONFIG_PATH ({}) is neither fully absolute nor relative; use an absolute path including the drive",
+                    path.display()
+                );
+            }
         }
 
         // Batched rev-parse: asks `--is-inside-work-tree` and also pre-warms
@@ -654,21 +715,103 @@ impl Repository {
         // forks on the typical alias path.
         let info = self.current_worktree().prewarm_info().unwrap_or_default();
 
-        if let Some(root) = info.root {
-            // Inside a worktree — use it (normal repo or linked worktree in
-            // bare repo). `root` is `Some` iff the batch saw us inside a work
-            // tree, so no separate `is_inside` check.
-            return Ok(Some(root.join(".config").join("wt.toml")));
+        // Inside a worktree — use it (normal repo or linked worktree in bare
+        // repo; `root` is `Some` iff the batch saw us inside a work tree). At
+        // the bare root, fall back to the primary worktree (the one holding
+        // the default branch); when the default branch is checked out in no
+        // worktree, there is no root and no on-disk path — `ProjectConfig::load`
+        // then reads the committed default-branch config from the object store
+        // via `default_branch_project_config_content` (#3461).
+        let root = match info.root {
+            Some(root) => Some(root),
+            None if self.is_bare().unwrap_or(false) => self.primary_worktree()?,
+            None => None,
+        };
+
+        let Some(relative) = override_path else {
+            return Ok(root.map(|root| root.join(".config").join("wt.toml")));
+        };
+        let Some(root) = root else {
+            anyhow::bail!(
+                "WORKTRUNK_PROJECT_CONFIG_PATH is relative ({}) but there is no worktree root to resolve it against; use an absolute path",
+                relative.display()
+            );
+        };
+        Ok(Some(root.join(relative)))
+    }
+
+    /// Content of the default branch's committed `.config/wt.toml`, read from
+    /// the object store via `git show`, for the one state where the on-disk
+    /// path can't supply it: a bare repo whose default branch is checked out in
+    /// no worktree.
+    ///
+    /// In a bare layout the primary worktree normally holds the default branch,
+    /// so its on-disk `.config/wt.toml` *is* the default branch's project
+    /// config and [`project_config_path`](Self::project_config_path) resolves
+    /// it directly. When the primary worktree is transiently parked on another
+    /// branch (a common agent-driven workflow), no worktree exposes the default
+    /// branch's config on disk; returning nothing there would silently drop the
+    /// entire project config and every project hook (#3461). Reading the
+    /// committed copy from the object store restores it without depending on
+    /// which branch is checked out where — and, unlike scanning worktrees for
+    /// any `.config/wt.toml`, always reads the *default branch's* config rather
+    /// than whatever branch a worktree happens to be parked on.
+    ///
+    /// Returns `None` cheaply — before touching the object store — for every
+    /// other repo shape (non-bare repos, and bare repos whose default branch is
+    /// checked out somewhere), so the common load path never pays for the extra
+    /// `git show`. Also returns `None` when the default branch ships no project
+    /// config (`git show` exits non-zero for a path absent from the tree),
+    /// matching the no-config case.
+    ///
+    /// This is a best-effort resolver: the `is_bare` / `primary_worktree`
+    /// checks re-run calls that `project_config_path` already made
+    /// successfully on this path, and a `git show` failure degrades to "no
+    /// project config" (no hooks) rather than surfacing — the same
+    /// error-swallowing shape `alias.rs` uses for config resolution, and safe
+    /// because the fallback only ever adds hooks, never risks data.
+    ///
+    /// The read resolves the default branch **by name**
+    /// (`<default-branch>:.config/wt.toml`), not via `HEAD`. `git show` resolves
+    /// `HEAD` against the invocation cwd's per-worktree HEAD, and this runs with
+    /// `discovery_path` as cwd — a linked worktree parked on some other branch
+    /// when `wt` is invoked from inside one (the common agent case). Reading
+    /// `HEAD` there would read that worktree's branch, dropping or mis-sourcing
+    /// the default branch's config; an absolute branch ref is cwd-independent.
+    /// The returned `PathBuf` is a display-only label of the form
+    /// `<default-branch>:.config/wt.toml` — a git revision spec, not a
+    /// filesystem path. Nothing is read from or written to it; it only
+    /// annotates diagnostics (e.g. a parse error) with the object-store source.
+    pub fn default_branch_project_config_content(&self) -> Option<(String, PathBuf)> {
+        // An explicit WORKTRUNK_PROJECT_CONFIG_PATH override names the config
+        // source outright — an empty value or a missing file at the override
+        // path means no project config — so the committed fallback must not
+        // supersede it (the override exists for test isolation, where reading
+        // the repo's own committed config is exactly the leak being prevented).
+        if std::env::var_os("WORKTRUNK_PROJECT_CONFIG_PATH").is_some() {
+            return None;
+        }
+        if !self.is_bare().unwrap_or(false) {
+            return None;
+        }
+        // Only the "default branch checked out nowhere" state needs this; when
+        // the default branch is checked out somewhere, its on-disk path already
+        // resolved (and stays authoritative — e.g. a deletion there wins).
+        if self.primary_worktree().ok().flatten().is_some() {
+            return None;
         }
 
-        if self.is_bare().unwrap_or(false) {
-            // At bare repo root — use primary worktree
-            return Ok(self
-                .primary_worktree()?
-                .map(|p| p.join(".config").join("wt.toml")));
+        let spec = format!("{}:.config/wt.toml", self.default_branch()?);
+        match self.run_command_output(&["show", &spec]) {
+            Ok(output) if output.status.success() => Some((
+                String::from_utf8_lossy(&output.stdout).into_owned(),
+                PathBuf::from(&spec),
+            )),
+            // A non-zero exit (typically 128, path absent from the tree) or a
+            // rare spawn failure: treat as "no project config", the same result
+            // as an absent file on disk.
+            _ => None,
         }
-
-        Ok(None)
     }
 
     /// Load the project configuration (.config/wt.toml) if it exists.
@@ -749,6 +892,44 @@ mod tests {
             .get_config_regexp(r"^worktrunk\.state\..+\.marker$")
             .unwrap();
         assert_eq!(output, "");
+    }
+
+    #[test]
+    fn test_get_config_regexp_failure_is_command_error() {
+        // A real failure (invalid pattern, exit 6) must surface as a typed
+        // `CommandError` — unlike exit 1, which means "no keys matched".
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let err = repo.get_config_regexp("(").unwrap_err();
+        let cmd_err = CommandError::find_in(&err).expect("error should carry a CommandError");
+        assert_eq!(cmd_err.command_string(), "git config --get-regexp (");
+    }
+
+    #[test]
+    fn test_unset_config_failure_is_command_error() {
+        // A real failure (invalid key, exit 1) must surface as a typed
+        // `CommandError` — unlike exit 5, which means "key didn't exist".
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let err = repo.unset_config("inva lid.key").unwrap_err();
+        let cmd_err = CommandError::find_in(&err).expect("error should carry a CommandError");
+        assert_eq!(cmd_err.command_string(), "git config --unset inva lid.key");
+    }
+
+    #[test]
+    fn test_config_read_failure_is_command_error() {
+        // Corrupting the config after the repository is open (the bulk map
+        // populates lazily) makes `git config --list -z` fail — the failure
+        // must surface as a typed `CommandError`.
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        std::fs::write(test.root_path().join(".git/config"), "[bad\n").unwrap();
+
+        let err = repo.config_value("user.name").unwrap_err();
+        let cmd_err = CommandError::find_in(&err).expect("error should carry a CommandError");
+        assert_eq!(cmd_err.command_string(), "git config --list -z");
     }
 
     #[test]

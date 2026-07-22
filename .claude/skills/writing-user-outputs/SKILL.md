@@ -120,11 +120,12 @@ Examples that page: `--help`, `wt config show`, `wt hook show`, `wt step {commit
 Build the whole output into a `String` first (don't stream), then:
 
 ```rust
-if let Err(e) = crate::help_pager::show_help_in_pager(&out, true) {
-    log::debug!("Pager failed, falling back to stdout: {}", e);
-    println!("{}", out);
-}
+crate::help_pager::show_help_in_pager(&out, true);
 ```
+
+The helper is infallible from the caller's perspective — it falls back to
+plain stdout itself when no pager is configured, stdout isn't a TTY, or the
+pager fails.
 
 ## Security
 
@@ -312,7 +313,7 @@ the message color before the symbol so it renders in its native styling. This
 requires breaking out of the message color and reopening it after the symbol.
 See `FlagNote` in `src/output/handlers.rs` for an example — it handles flag
 acknowledgment notes (like integration reasons) with proper color transitions
-via `after_cyan()` and `after_green()` methods.
+via its `after(color)` method, which reopens the message color after the symbol.
 
 **Comma + "but" + em-dash for limitations:** When stating an outcome with a
 limitation and its reason:
@@ -348,22 +349,25 @@ spawn_background(build_command_that_checks_merge_again());  // Duplicate check!
 
 ## Warning Ordering
 
-**Core principle:** Warnings about state discovered during evaluation appear
-**before** the action message that follows from that evaluation.
+**Core principle:** Messages about state discovered during evaluation
+(warnings, info notices) appear **before** the action message that follows
+from that evaluation.
 
 When a command evaluates state, discovers something unexpected, and proceeds
-anyway, the warning should come first:
+anyway, that message comes first:
 
 ```
-▲ Branch-worktree mismatch: feature @ ~/workspace/project.alias, expected @ ~/workspace/project.feature ⚑
-◎ Removing feature worktree & branch in background (same commit as main, _)
+▲ Auto-staging 1 untracked path:
+   ┃ notes.md
+◎ Generating commit message...
 ```
 
 Not:
 
 ```
-◎ Removing feature worktree & branch in background (same commit as main, _)
-▲ Branch-worktree mismatch: feature @ ~/workspace/project.alias, expected @ ~/workspace/project.feature ⚑
+◎ Generating commit message...
+▲ Auto-staging 1 untracked path:
+   ┃ notes.md
 ```
 
 Warnings that result from the action itself (something failed during execution)
@@ -379,6 +383,13 @@ naturally come after the action.
 | "Created worktree for feature"          | "Switched to worktree for feature"    |
 | "Created new worktree for feature"      | "Already on worktree for feature"     |
 | "Commands approved & saved"             | "All commands already approved"       |
+
+The same rule governs standalone symbols used as per-row markers in listings:
+✓ marks a completed action, never a state. A listing that reports per-item
+status marks it with ○ (state acknowledged) or ❯ (awaiting approval/user
+input) — the shared vocabulary of `wt hook show` and `wt config approvals
+list`. Reserve a per-row ✓ for outcomes of work the command just performed
+(shell-install action lines, `-v` subprocess trace glyphs).
 
 **Hint vs Info:** Hints suggest user action or provide additional non-essential
 context (supplementary details the user doesn't need but may find useful). Info

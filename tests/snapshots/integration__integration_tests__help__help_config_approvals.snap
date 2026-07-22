@@ -38,6 +38,7 @@ wt config approvals - Manage command approvals
 Usage: [1m[36mwt config approvals[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 
 [1m[32mCommands:[0m
+  [1m[36mlist[0m   List project commands and their approval status
   [1m[36madd[0m    Store approvals in approvals.toml
   [1m[36mclear[0m  Clear approved commands from approvals.toml
 
@@ -65,11 +66,17 @@ Project hooks and project aliases prompt for approval on first run to prevent un
 
 [1m[32mExamples[0m
 
+List commands and their approval status for current project:
+[107m [0m [2m[0m[2m[34mwt[0m[2m config approvals list[0m
+
 Pre-approve all hook and alias commands for current project:
 [107m [0m [2m[0m[2m[34mwt[0m[2m config approvals add[0m
 
 Clear approvals for current project:
 [107m [0m [2m[0m[2m[34mwt[0m[2m config approvals clear[0m
+
+Clear only approvals for commands no longer in the project config:
+[107m [0m [2m[0m[2m[34mwt[0m[2m config approvals clear [0m[2m[36m--stale[0m
 
 Clear global approvals:
 [107m [0m [2m[0m[2m[34mwt[0m[2m config approvals clear [0m[2m[36m--global[0m

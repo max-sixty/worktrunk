@@ -4,7 +4,6 @@
 //
 // Windows path differences are handled by snapshot filters in setup_snapshot_settings().
 
-pub mod analyze_trace;
 pub mod approval_pty;
 
 pub mod approval_save;

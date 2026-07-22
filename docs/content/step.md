@@ -375,7 +375,7 @@ copy = "wt step copy-ignored"
 
 ### What gets copied
 
-All gitignored files are copied by default, except for built-in excluded directories: VCS metadata (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state (`.conductor/`, `.entire/`, `.worktrees/`). Tracked files are never touched.
+All gitignored files are copied by default, except for built-in excluded directories: VCS metadata (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`), tool-state (`.conductor/`, `.entire/`, `.worktrees/`), and nested worktrees. Tracked files are never touched. Discovery handles nested `.gitignore` files, global excludes, and `.git/info/exclude`. Existing files in the destination are skipped, so re-running is safe; `--force` overwrites them.
 
 To limit what gets copied further, create `.worktreeinclude` with gitignore-style patterns. Files must be **both** gitignored **and** in `.worktreeinclude`:
 
@@ -409,14 +409,6 @@ Without `.worktreeinclude`, the command is a no-op (it reports that nothing was 
 | Build caches | `.cache/`, `.next/`, `.parcel-cache/`, `.turbo/` |
 | Generated assets | Images, ML models, binaries too large for git |
 | Environment files | `.env` (if not generated per-worktree) |
-
-### Features
-
-- Uses copy-on-write (reflink) when available for space-efficient copies
-- Handles nested `.gitignore` files, global excludes, and `.git/info/exclude`
-- Skips existing files by default (safe to re-run)
-- `--force` overwrites existing files in the destination
-- Always skips built-in excluded directories — VCS metadata (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state (`.conductor/`, `.entire/`, `.worktrees/`) — and nested worktrees
 
 ### Performance
 
@@ -461,7 +453,7 @@ Virtual environments contain absolute paths and can't be copied. Use `uv sync` i
 The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://code.claude.com/docs/en/desktop), which copies matching files when creating worktrees. Differences:
 
 - worktrunk copies all gitignored files by default; Claude Code requires `.worktreeinclude`. Pass `--require-include` to match Claude Code (copy nothing without `.worktreeinclude`)
-- worktrunk uses copy-on-write for large directories like `target/` — potentially 30x faster on macOS, 6x on Linux
+- worktrunk uses copy-on-write for large directories like `target/` (see Performance above)
 - worktrunk runs as a configurable hook in the worktree lifecycle
 
 ### Command reference
@@ -559,7 +551,7 @@ feature_auth_oauth2_a1b
 List the available template variables with `-v` (alongside the expansion, on stderr):
 
 {% terminal(cmd="wt step eval -v '__WT_OPEN__ branch __WT_CLOSE__'") %}
-○ Available template variables
+○ eval template variables:
   branch        = feature/auth-oauth2
   worktree_path = /home/user/projects/myapp-feature-auth-oauth2
 ○ eval source
@@ -569,8 +561,6 @@ List the available template variables with `-v` (alongside the expansion, on std
 
 feature/auth-oauth2
 {% end %}
-
-Note: This command is experimental and may change in future versions.
 
 ### Command reference
 
@@ -648,8 +638,6 @@ Each element is expanded fresh in every worktree, so `{{ branch }}` is that work
 Pull updates in worktrees with upstreams (skips others):
 
 {{ terminal(cmd="git fetch --prune && wt step for-each -- sh -c '[ __WT_QUOT__$(git rev-parse @{u} 2>/dev/null)__WT_QUOT__ ] || exit 0; git pull --autostash'") }}
-
-Note: This command is experimental and may change in future versions.
 
 ### Command reference
 
@@ -754,6 +742,16 @@ Usage: <b><span class=c>wt step promote</span></b> <span class=c>[OPTIONS]</span
 <b><span class=g>Options:</span></b>
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Automation:</span></b>
+      <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
+          Output format
+
+          JSON prints structured result to stdout after the promote completes. The mismatch warning
+          still appears on stderr in JSON mode (safety signal).
+
+          [default: text]
+          [possible values: text, json]
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
@@ -905,8 +903,6 @@ refuses), unless `--commit` is passed.
 - **Target blocked** (without `--clobber`) — use `--clobber` to backup blocker
 - **Detached HEAD** — no branch to compute expected path
 
-Note: This command is experimental and may change in future versions.
-
 ### Command reference
 
 {% terminal() %}
@@ -1006,8 +1002,6 @@ Run a dev server, torn down automatically when the worktree goes away:
 [post-start]
 server = "wt step tether -- npm run dev -- --port {{ branch | hash_port }}"
 ```
-
-Note: This command is experimental and may change in future versions.
 
 ### Command reference
 

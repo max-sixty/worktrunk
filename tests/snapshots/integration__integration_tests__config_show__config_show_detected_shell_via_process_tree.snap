@@ -1,12 +1,13 @@
 ---
-source: tests/integration_tests/switch.rs
+source: tests/integration_tests/config_show.rs
 info:
   program: wt
   args:
-    - switch
-    - feature
+    - config
+    - show
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
+    CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
@@ -21,22 +22,23 @@ info:
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
+    SHELL: /bin/bash
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
-    WORKTRUNK_DIRECTIVE_CD_FILE: "[DIRECTIVE_CD_FILE]"
-    WORKTRUNK_DIRECTIVE_EXEC_FILE: "[DIRECTIVE_EXEC_FILE]"
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_CODEX_INSTALLED: "0"
+    WORKTRUNK_TEST_COMPINIT_CONFIGURED: "1"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_FISH_INSTALLED: "0"
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_PARENT_SHELL: zsh
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -46,8 +48,26 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+[36mUSER CONFIG[39m @ ~/.config/worktrunk/config.toml
+[2m↳[22m [2mNot found; to create one, run [4mwt config create[24m[22m
+
+[36mPROJECT CONFIG[39m @ _REPO_/.config/wt.toml
+[2m○[22m Identifier: [1m../origin[22m
+[2m↳[22m [2mNot found[22m
+
+[36mSHELL INTEGRATION[39m
+[33m▲[39m [33mShell integration not active[39m
+[107m [0m Invoked as: [1m[PROJECT_ROOT]/target/[BUILD_MODE]/wt[22m
+[107m [0m Detected shell: [1mzsh[22m (process tree)
+[107m [0m $SHELL: [1m/bin/bash[22m
+
+[2m○[22m [1mzsh[22m: Already configured shell extension & completions @ ~/.zshrc:1
+[107m [0m [2m[0m[2m[35mif[0m[2m [0m[2m[34mcommand[0m[2m [0m[2m[36m-v[0m[2m wt [0m[2m[36m>[0m[2m/dev/null [0m[2m[33m2[0m[2m>&1; [0m[2m[35mthen[0m[2m [0m[2m[34meval[0m[2m [0m[2m[32m"$([0m[2m[34mcommand[0m[2m wt config shell init zsh)"[0m[2m; [0m[2m[35mfi[0m
+[2m↳[22m [2mTo verify wrapper loaded: [4mtype wt[24m[22m
+
+[36mOTHER[39m
+[2m○[22m wt: [1m[VERSION][22m
+[2m○[22m git: [1m[VERSION][22m
+[2m○[22m Hyperlinks: [1minactive[22m
 
 ----- stderr -----
-[33m▲[39m [33mBranch-worktree mismatch: [1mfeature[22m @ [1m_PARENT_/wrong-path[22m, expected @ [1m_REPO_.feature[22m [31m⚑[39m[39m
-[2m○[22m Switched to worktree for [1mfeature[22m @ [1m_PARENT_/wrong-path[22m
-[0m

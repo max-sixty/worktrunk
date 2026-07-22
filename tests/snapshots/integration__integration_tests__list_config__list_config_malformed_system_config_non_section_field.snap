@@ -50,8 +50,6 @@ exit_code: 0
 + feature-b      [2m↑[22m                 [32m↑1[0m        [32m+1[0m                ../repo.feature-b  [2mf62940fc[0m  [2m16h[0m   [2mAdd feature-b file[0m
 + feature-c      [2m↑[22m                 [32m↑1[0m        [32m+1[0m                ../repo.feature-c  [2m345c7c93[0m  [2m16h[0m   [2mAdd feature-c file[0m
 
-[2m○[22m [2mShowing 4 worktrees, 1 with changes, 3 ahead[0m
-
 ----- stderr -----
 [33m▲[39m [33mSystem config @ [TEST_SYSTEM_CONFIG_FILE] failed to parse, skipping[39m
 [107m [0m TOML parse error at line 1, column 33
@@ -59,3 +57,5 @@ exit_code: 0
 [107m [0m 1 | skip-shell-integration-prompt = "not-a-bool"
 [107m [0m   |                                 ^^^^^^^^^^^^
 [107m [0m invalid type: string "not-a-bool", expected a boolean
+
+[2m○[22m [2mShowing 4 worktrees, 1 with changes, 3 ahead[0m

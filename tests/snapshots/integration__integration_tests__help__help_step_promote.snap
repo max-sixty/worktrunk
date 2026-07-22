@@ -49,6 +49,15 @@ Usage: [1m[36mwt step promote[0m [36m[OPTIONS][0m [36m[BRANCH][0m
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
 
+[1m[32mAutomation:[0m
+      [1m[36m--format[0m[36m [0m[36m<FORMAT>[0m
+          Output format[0m
+          
+          JSON prints structured result to stdout after the promote completes. The mismatch warning still appears on stderr in JSON mode (safety signal).[0m
+          
+          [default: text]
+          [possible values: text, json]
+
 [1m[32mGlobal Options:[0m
   [1m[36m-C[0m[36m [0m[36m<path>[0m
           Working directory for this command

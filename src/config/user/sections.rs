@@ -178,6 +178,12 @@ pub struct ListConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<bool>,
 
+    /// JSON output schema for `wt list --format=json` (1 or 2).
+    /// Schema 2 wraps items in an envelope of per-item facts (see the
+    /// `wt list` JSON docs). Unset emits schema 1 with a warning.
+    #[serde(rename = "json-schema", skip_serializing_if = "Option::is_none")]
+    pub json_schema: Option<u8>,
+
     /// Per-task timeout in milliseconds.
     /// Kills individual git commands that exceed this duration. Applies to both
     /// `wt list` and the `wt switch` picker. Set to 0 to explicitly disable
@@ -285,6 +291,7 @@ impl Merge for ListConfig {
             branches: other.branches.or(self.branches),
             remotes: other.remotes.or(self.remotes),
             summary: other.summary.or(self.summary),
+            json_schema: other.json_schema.or(self.json_schema),
             task_timeout_ms: other.task_timeout_ms.or(self.task_timeout_ms),
             timeout_ms: other.timeout_ms.or(self.timeout_ms),
             columns,

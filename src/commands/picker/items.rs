@@ -29,6 +29,7 @@ use super::pr_pane;
 use super::preview::{PreviewMode, PreviewStateData};
 use super::preview_cache;
 use super::preview_notify::PreviewNotifier;
+use super::preview_orchestrator::{PreviewDemand, SpawnGeneration};
 
 /// Parse a pre-rendered ANSI string into a single ratatui `Line` for skim's
 /// item list. skim's `DisplayContext::to_line` only applies match-highlight
@@ -339,9 +340,14 @@ impl SkimItem for HeaderSkimItem {
     }
 }
 
-/// Common diff rendering: check stat, show stat + full diff if non-empty.
-/// Render a `git diff` preview (stat header, then the colored diff). `prefix`
-/// is the command through the `diff` subcommand (e.g. `["diff"]` or
+/// Render a `git diff` preview body (stat header, then the colored diff):
+/// `Some` when the diff is non-empty, `None` when it's empty (or the stat
+/// command failed). Callers render their own empty-state headline — the
+/// headline names the row's branch, which must stay out of the SHA-keyed
+/// disk cache (see [`preview_cache::BranchDiffCacheEntry`]), so this helper
+/// only ever produces the name-free body.
+///
+/// `prefix` is the command through the `diff` subcommand (e.g. `["diff"]` or
 /// `["-C", path, "diff"]`); `revs` are the positional revisions.
 ///
 /// The diff options precede an `--end-of-options` sentinel, which fences the
@@ -353,10 +359,8 @@ fn compute_diff_preview(
     repo: &Repository,
     prefix: &[&str],
     revs: &[&str],
-    no_changes_msg: &str,
     width: usize,
-) -> String {
-    let mut output = String::new();
+) -> Option<String> {
     let stat_width_arg = format!("--stat-width={width}");
 
     // Check stat output first.
@@ -369,25 +373,23 @@ fn compute_diff_preview(
     ]);
     stat_args.extend_from_slice(revs);
 
-    if let Ok(stat) = repo.run_command(&stat_args)
-        && !stat.trim().is_empty()
-    {
-        output.push_str(&stat);
-
-        // Build diff args with color.
-        let mut diff_args = prefix.to_vec();
-        diff_args.extend(["--color=always", "--end-of-options"]);
-        diff_args.extend_from_slice(revs);
-
-        if let Ok(diff) = repo.run_command(&diff_args) {
-            output.push_str(&diff);
-        }
-    } else {
-        output.push_str(no_changes_msg);
-        output.push('\n');
+    let stat = repo.run_command(&stat_args).ok()?;
+    if stat.trim().is_empty() {
+        return None;
     }
 
-    output
+    let mut output = stat;
+
+    // Build diff args with color.
+    let mut diff_args = prefix.to_vec();
+    diff_args.extend(["--color=always", "--end-of-options"]);
+    diff_args.extend_from_slice(revs);
+
+    if let Ok(diff) = repo.run_command(&diff_args) {
+        output.push_str(&diff);
+    }
+
+    Some(output)
 }
 
 /// Wrapper to implement SkimItem for ListItem.
@@ -485,6 +487,21 @@ pub(super) struct PickerRow {
 /// renders its local-checkout tabs (working-tree, branch-diff, upstream,
 /// summary) as placeholders.
 pub(super) struct LocalCheckout {
+    /// The row's snapshot `ListItem`, for the demand worker: a `preview()`
+    /// cache miss on a local-git tab sends this item to [`PreviewDemand`] so
+    /// the awaited tab is computed immediately instead of waiting for the
+    /// precompute queue. The same frozen skeleton-time snapshot the
+    /// orchestrator's precompute captures.
+    pub item: Arc<ListItem>,
+    /// The orchestrator's demand channel (see [`PreviewDemand`]), shared by
+    /// every local row like the notifier.
+    pub demand: Arc<PreviewDemand>,
+    /// The spawn this row belongs to. Carried into every demand request so
+    /// the channel can refuse a row an `alt-r` rebuild superseded — a
+    /// pre-refresh row repainting during the reload window would otherwise
+    /// re-seed the just-cleared cache from its frozen `item` (see the
+    /// orchestrator's *Spawn generations* docs).
+    pub spawn_gen: SpawnGeneration,
     /// Whether this branch has an upstream tracking ref, for the tab-4
     /// (remote⇅) empty state. A SYNCHRONOUS skeleton-time fact read from
     /// `Repository::local_branches()` at construction — never from the async
@@ -581,6 +598,30 @@ impl SkimItem for PickerRow {
         // (branch for a worktree row, `pr:N` for a `--prs` row) so the awaited
         // key matches the one the background fill writes.
         self.notifier.note_awaiting(self.preview_key(), mode);
+        // A miss on a local-git tab means the placeholder below would sit
+        // until background precompute reaches this (row, mode) — in a large
+        // repo, seconds. Ask the demand worker to compute it now; the fill
+        // then repaints via the awaited key recorded above. A morphed row is
+        // excluded like in `output()`: its frozen item still points at the
+        // worktree the alt-x removal is deleting, and a compute from it
+        // would cache an actively wrong pane under the kept branch. (Best
+        // effort: a request parked in the instant before the morph is still
+        // served from the frozen item.) A row an `alt-r` rebuild superseded
+        // is refused at the channel via the spawn token it posts.
+        if let Some(local) = &self.local
+            && mode.is_local_git()
+            && !local.morphed.load(Ordering::Relaxed)
+            && !self
+                .preview_cache
+                .contains_key(&(self.preview_key().to_string(), mode))
+        {
+            local.demand.request(
+                Arc::clone(&local.item),
+                mode,
+                (context.width, context.height),
+                local.spawn_gen.clone(),
+            );
+        }
         ItemPreview::AnsiText(self.render_preview(mode, context.width, context.height))
     }
 }
@@ -1340,20 +1381,16 @@ impl PickerRow {
         let path = wt_info.path.display().to_string();
 
         let reset = Reset;
-        compute_diff_preview(
-            repo,
-            &["-C", &path, "diff"],
-            &["HEAD"],
-            &cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no uncommitted changes"),
-            width,
-        )
+        compute_diff_preview(repo, &["-C", &path, "diff"], &["HEAD"], width).unwrap_or_else(|| {
+            cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no uncommitted changes\n")
+        })
     }
 
     /// Compute Tab 3: Branch diff preview (line diffs vs the comparison base)
     ///
-    /// Independent of `item.counts` — `compute_diff_preview`'s empty-diff
-    /// fallback covers the ahead=0 case, so the preview is correct even
-    /// before the list-row pipeline has populated counts.
+    /// Independent of `item.counts` — the empty-diff headline covers the
+    /// ahead=0 case, so the preview is correct even before the list-row
+    /// pipeline has populated counts.
     ///
     /// The base comes from [`Repository::branch_diff_spec`], which measures
     /// against the **upstream-aware comparison base** — the same ref the
@@ -1371,26 +1408,31 @@ impl PickerRow {
             );
         };
 
+        // The cached entry is shared by every branch at this (base, head)
+        // SHA pair, so the branch-named empty-diff headline renders here —
+        // on the hit and miss paths alike — never into the cache.
+        let render = |entry: &preview_cache::BranchDiffCacheEntry| match &entry.body {
+            Some(body) => body.clone(),
+            None => {
+                let base_name = &spec.base_name;
+                cformat!(
+                    "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no file changes vs <bold>{base_name}</>{reset}\n"
+                )
+            }
+        };
+
         if let Some(cached) =
             preview_cache::read_branch_diff(repo, &spec.cache_sha, item.head(), width)
         {
-            return cached;
+            return render(&cached);
         }
 
         let revs: Vec<&str> = spec.revs.iter().map(String::as_str).collect();
-        let base_name = &spec.base_name;
-        let result = compute_diff_preview(
-            repo,
-            &["diff"],
-            &revs,
-            &cformat!(
-                "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no file changes vs <bold>{base_name}</>{reset}"
-            ),
-            width,
-        );
-
-        preview_cache::write_branch_diff(repo, &spec.cache_sha, item.head(), width, &result);
-        result
+        let entry = preview_cache::BranchDiffCacheEntry {
+            body: compute_diff_preview(repo, &["diff"], &revs, width),
+        };
+        preview_cache::write_branch_diff(repo, &spec.cache_sha, item.head(), width, &entry);
+        render(&entry)
     }
 
     /// Compute Tab 4: Upstream diff preview (ahead/behind vs tracking branch)
@@ -1415,10 +1457,37 @@ impl PickerRow {
         };
         let upstream_sha = upstream_sha_raw.trim();
 
+        // Same sharing rule as the branch diff: the entry is keyed by SHAs
+        // only, so every branch-named headline renders here from the cached
+        // counts — on the hit and miss paths alike — never into the cache.
+        let render = |entry: &preview_cache::UpstreamDiffCacheEntry| {
+            if let Some(body) = &entry.body {
+                return body.clone();
+            }
+            let (ahead, behind) = (entry.ahead, entry.behind);
+            if ahead == 0 && behind == 0 {
+                cformat!(
+                    "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} is up to date with upstream\n"
+                )
+            } else if ahead > 0 && behind > 0 {
+                cformat!(
+                    "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has diverged (⇡{ahead} ⇣{behind}) but no unique file changes\n"
+                )
+            } else if ahead > 0 {
+                cformat!(
+                    "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no unpushed file changes\n"
+                )
+            } else {
+                cformat!(
+                    "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} is behind upstream (⇣{behind}) but no file changes\n"
+                )
+            }
+        };
+
         if let Some(cached) =
             preview_cache::read_upstream_diff(repo, item.head(), upstream_sha, width)
         {
-            return cached;
+            return render(&cached);
         }
 
         let probe_range = format!("{}...{upstream_sha}", item.head());
@@ -1448,45 +1517,27 @@ impl PickerRow {
             );
         };
 
-        let result = if ahead == 0 && behind == 0 {
-            cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} is up to date with upstream\n")
-        } else if ahead > 0 && behind > 0 {
-            let range = format!("{upstream_sha}...{}", item.head());
-            compute_diff_preview(
-                repo,
-                &["diff"],
-                &[&range],
-                &cformat!(
-                    "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has diverged (⇡{ahead} ⇣{behind}) but no unique file changes"
-                ),
-                width,
-            )
-        } else if ahead > 0 {
-            let range = format!("{upstream_sha}...{}", item.head());
-            compute_diff_preview(
-                repo,
-                &["diff"],
-                &[&range],
-                &cformat!(
-                    "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no unpushed file changes"
-                ),
-                width,
-            )
+        let body = if ahead == 0 && behind == 0 {
+            None
         } else {
-            let range = format!("{}...{upstream_sha}", item.head());
-            compute_diff_preview(
-                repo,
-                &["diff"],
-                &[&range],
-                &cformat!(
-                    "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} is behind upstream (⇣{behind}) but no file changes"
-                ),
-                width,
-            )
+            // Ahead or diverged shows this branch's unique changes
+            // (upstream…head); behind-only shows what upstream has
+            // (head…upstream).
+            let range = if ahead > 0 {
+                format!("{upstream_sha}...{}", item.head())
+            } else {
+                format!("{}...{upstream_sha}", item.head())
+            };
+            compute_diff_preview(repo, &["diff"], &[&range], width)
         };
 
-        preview_cache::write_upstream_diff(repo, item.head(), upstream_sha, width, &result);
-        result
+        let entry = preview_cache::UpstreamDiffCacheEntry {
+            ahead,
+            behind,
+            body,
+        };
+        preview_cache::write_upstream_diff(repo, item.head(), upstream_sha, width, &entry);
+        render(&entry)
     }
 
     /// Compute log preview for a worktree item.
@@ -1790,6 +1841,25 @@ mod tests {
         assert_eq!(out.spans[3].style.fg, None);
     }
 
+    /// A minimal `LocalCheckout` for row construction in tests: a branch-only
+    /// snapshot item, a demand channel with no worker behind it (requests
+    /// recorded, never served), and defaulted local signals (no upstream, no
+    /// summaries, unknown diff content).
+    fn test_local_checkout(branch: &str) -> LocalCheckout {
+        LocalCheckout {
+            item: Arc::new(ListItem::new_branch(
+                "0000000".to_string(),
+                branch.to_string(),
+            )),
+            demand: PreviewDemand::new(),
+            spawn_gen: SpawnGeneration::default(),
+            has_upstream: false,
+            summaries_enabled: false,
+            local_content: Arc::new(Mutex::new(LocalContent::default())),
+            morphed: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
     /// Build a worktree-backed [`PickerRow`] (`local: Some`) for tests, with the
     /// given branch, preview cache, and live `pr_status` slot value; the local
     /// signals default (no upstream, no summaries, unknown diff content).
@@ -1807,12 +1877,7 @@ mod tests {
             preview_cache,
             pr_status: Arc::new(Mutex::new(pr_status)),
             notifier: PreviewNotifier::detached(),
-            local: Some(LocalCheckout {
-                has_upstream: false,
-                summaries_enabled: false,
-                local_content: Arc::new(Mutex::new(LocalContent::default())),
-                morphed: Arc::new(AtomicBool::new(false)),
-            }),
+            local: Some(test_local_checkout(branch)),
         }
     }
 
@@ -1943,6 +2008,7 @@ mod tests {
                 remote: remote.map(String::from),
                 ahead: a,
                 behind: b,
+                ..Default::default()
             });
             LocalContent::from_item(&item).upstream_diverged
         };
@@ -2668,12 +2734,7 @@ mod tests {
             preview_cache: Arc::clone(&cache),
             pr_status: Arc::clone(&slot),
             notifier: PreviewNotifier::detached(),
-            local: Some(LocalCheckout {
-                has_upstream: false,
-                summaries_enabled: false,
-                local_content: Arc::new(Mutex::new(LocalContent::default())),
-                morphed: Arc::new(AtomicBool::new(false)),
-            }),
+            local: Some(test_local_checkout("feature")),
         };
 
         // First render populates the shared cache.
@@ -2870,11 +2931,31 @@ mod tests {
         repo.run_command(&["update-ref", "refs/heads/-weird", head.trim()])
             .unwrap();
 
-        let out =
-            compute_diff_preview(&repo, &["diff"], &[root.trim(), "-weird"], "NO CHANGES", 80);
+        let out = compute_diff_preview(&repo, &["diff"], &[root.trim(), "-weird"], 80)
+            .expect("non-empty diff between the two refs");
         assert!(
             out.contains("fenced.txt"),
             "the --end-of-options fence must let `-weird` resolve as a ref; got: {out:?}"
+        );
+    }
+
+    #[test]
+    fn working_tree_preview_clean_worktree_headline() {
+        // A worktree with no uncommitted changes renders the empty-state
+        // headline (the diff body is `None`).
+        use crate::commands::list::model::{ItemKind, WorktreeData};
+
+        let (t, repo) = repo_with_main();
+        let mut item = item_at(&repo, "main");
+        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
+            path: t.path().to_path_buf(),
+            ..Default::default()
+        }));
+
+        let output = PickerRow::compute_working_tree_preview(&repo, &item, 80);
+        assert!(
+            output.contains("main") && output.contains("has no uncommitted changes"),
+            "expected clean-worktree headline, got: {output:?}"
         );
     }
 
@@ -2893,10 +2974,51 @@ mod tests {
 
         let base_sha = repo.default_branch_sha().unwrap();
         let sentinel = "SENTINEL_FROM_CACHE";
-        super::preview_cache::write_branch_diff(&repo, &base_sha, item.head(), 80, sentinel);
+        super::preview_cache::write_branch_diff(
+            &repo,
+            &base_sha,
+            item.head(),
+            80,
+            &super::preview_cache::BranchDiffCacheEntry {
+                body: Some(sentinel.to_string()),
+            },
+        );
 
         let output = PickerRow::compute_branch_diff_preview(&repo, &item, 80);
         assert_eq!(output, sentinel, "cache hit must return cached value");
+    }
+
+    #[test]
+    fn branch_diff_cache_hit_renders_own_branch_name() {
+        // Regression: the cache key is (base_sha, head_sha, width) — no
+        // branch name — so branches parked at the same commit (common after
+        // `wt landed` resets merged branches to main's tip) share one entry.
+        // The empty-diff headline names the row's branch, so it must render
+        // on read; caching the finished pane served the first writer's name
+        // ("alpha has no file changes vs main") under every same-SHA row.
+        let (_t, repo) = repo_with_main();
+        repo.run_command(&["branch", "alpha"]).unwrap();
+        repo.run_command(&["branch", "beta"]).unwrap();
+
+        let alpha = item_at(&repo, "alpha");
+        let first = PickerRow::compute_branch_diff_preview(&repo, &alpha, 80);
+        assert!(
+            first.contains("alpha") && first.contains("has no file changes"),
+            "expected alpha's empty-diff headline, got: {first:?}"
+        );
+
+        // beta shares (base, head) with alpha, so its read hits alpha's entry.
+        let beta = item_at(&repo, "beta");
+        let base_sha = repo.default_branch_sha().unwrap();
+        assert!(
+            super::preview_cache::read_branch_diff(&repo, &base_sha, beta.head(), 80).is_some(),
+            "precondition: beta's key must already be populated by alpha's compute"
+        );
+        let second = PickerRow::compute_branch_diff_preview(&repo, &beta, 80);
+        assert!(
+            second.contains("beta") && !second.contains("alpha"),
+            "cache hit must render the reading row's branch name, got: {second:?}"
+        );
     }
 
     #[test]
@@ -3021,10 +3143,44 @@ mod tests {
             .trim()
             .to_string();
         let sentinel = "SENTINEL_UPSTREAM_VALUE";
-        super::preview_cache::write_upstream_diff(&repo, item.head(), &upstream_sha, 80, sentinel);
+        super::preview_cache::write_upstream_diff(
+            &repo,
+            item.head(),
+            &upstream_sha,
+            80,
+            &super::preview_cache::UpstreamDiffCacheEntry {
+                ahead: 0,
+                behind: 0,
+                body: Some(sentinel.to_string()),
+            },
+        );
 
         let output = PickerRow::compute_upstream_diff_preview(&repo, &item, 80);
         assert_eq!(output, sentinel);
+    }
+
+    #[test]
+    fn upstream_diff_cache_hit_renders_own_branch_name() {
+        // Same sharing rule as the branch diff: the key is (branch_sha,
+        // upstream_sha, width), so two branches tracking the same upstream
+        // from the same commit share one entry, and the headline must name
+        // the reading row's branch, not the first writer's.
+        let (_t, repo) = repo_with_tracked_pair();
+        repo.run_command(&["branch", "beta"]).unwrap();
+        repo.run_command(&["branch", "--set-upstream-to=upstream-base", "beta"])
+            .unwrap();
+
+        let first = PickerRow::compute_upstream_diff_preview(&repo, &item_at(&repo, "feature"), 80);
+        assert!(
+            first.contains("feature") && first.contains("is up to date with upstream"),
+            "expected feature's up-to-date headline, got: {first:?}"
+        );
+
+        let second = PickerRow::compute_upstream_diff_preview(&repo, &item_at(&repo, "beta"), 80);
+        assert!(
+            second.contains("beta") && !second.contains("feature"),
+            "cache hit must render the reading row's branch name, got: {second:?}"
+        );
     }
 
     #[test]
@@ -3113,6 +3269,45 @@ mod tests {
         assert!(
             output.contains("feat.txt") || output.contains("upstream.txt"),
             "expected diverged diff, got: {output:?}"
+        );
+    }
+
+    #[test]
+    fn upstream_diff_empty_diff_headlines() {
+        // Commits that change no files (--allow-empty) exercise the three
+        // count states whose diff body is empty, so the headline renders
+        // from the cached ahead/behind counts.
+        let (_t, repo) = repo_with_tracked_pair();
+
+        // Ahead only, no file changes.
+        repo.run_command(&["commit", "--allow-empty", "-m", "empty-ahead"])
+            .unwrap();
+        let output =
+            PickerRow::compute_upstream_diff_preview(&repo, &item_at(&repo, "feature"), 80);
+        assert!(
+            output.contains("has no unpushed file changes"),
+            "expected ahead-only empty-diff headline, got: {output:?}"
+        );
+
+        // Diverged, no unique file changes on either side.
+        repo.run_command(&["checkout", "upstream-base"]).unwrap();
+        repo.run_command(&["commit", "--allow-empty", "-m", "empty-upstream"])
+            .unwrap();
+        repo.run_command(&["checkout", "feature"]).unwrap();
+        let output =
+            PickerRow::compute_upstream_diff_preview(&repo, &item_at(&repo, "feature"), 80);
+        assert!(
+            output.contains("has diverged (⇡1 ⇣1) but no unique file changes"),
+            "expected diverged empty-diff headline, got: {output:?}"
+        );
+
+        // Behind only: feature back at main, upstream keeps its empty commit.
+        repo.run_command(&["reset", "--keep", "main"]).unwrap();
+        let output =
+            PickerRow::compute_upstream_diff_preview(&repo, &item_at(&repo, "feature"), 80);
+        assert!(
+            output.contains("is behind upstream (⇣1) but no file changes"),
+            "expected behind-only empty-diff headline, got: {output:?}"
         );
     }
 

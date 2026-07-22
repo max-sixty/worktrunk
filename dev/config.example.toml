@@ -67,7 +67,7 @@
 # ### Codex
 #
 # [commit.generation]
-# command = "codex exec -m gpt-5.4-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
+# command = "codex exec -m gpt-5.6-luna -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
 #
 # ### OpenCode
 #
@@ -98,6 +98,8 @@
 # full = false       # Show CI status and LLM summaries (--full)
 # branches = false   # Include branches without worktrees (--branches)
 # remotes = false    # Include remote-only branches (--remotes)
+#
+# json-schema = 2    # JSON output schema: 2 (envelope) or 1 (bare array, the current default); unset emits 1 with a warning
 #
 # columns = ["branch", "status", "ci", "path"]   # Columns to show, in order — built-ins or custom headers (omit for the default set)
 #
@@ -138,8 +140,10 @@
 # needs an LLM command (`[commit.generation]`), `url` needs a `[list] url`
 # template — since listing can't supply the data.
 #
-# The selection drives the table and the `wt switch` picker; `wt list --format
-# json` ignores it and emits every field.
+# The selection drives the table and the `wt switch` picker. `wt list --format
+# json` always emits every field, but a listed gated column (`ci`, `summary`)
+# still forces its data collection on, so the JSON carries the same data the
+# table shows.
 #
 # #### Custom columns [experimental]
 #
@@ -217,7 +221,7 @@
 # [step.copy-ignored]
 # exclude = []   # Additional excludes (e.g., [".cache/", ".turbo/"])
 #
-# Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.worktrees/`). User config and project config exclusions are combined.
+# Built-in excludes (VCS metadata and tool-state directories) always apply; the `wt step copy-ignored` docs (https://worktrunk.dev/step/#wt-step-copy-ignored) list them. User config and project config exclusions are combined.
 #
 # ### Aliases
 #
@@ -374,14 +378,14 @@
 #
 # #### Appending to the prompt [experimental]
 #
-# `template-append` adds to the prompt instead of replacing it. The value is rendered as its own minijinja template (same variables) and injected into the default templates' `{{ user_guidance }}` slot — a `<user-guidance>` block right after `<style>`. It applies to both commit and squash. Use it for personal preferences without restating the whole template:
+# `template-append` adds personal conventions to the commit and squash prompts without restating the whole template:
 #
 # [commit.generation]
 # template-append = """
 # - Explain the rationale in the body, not just the change
 # """
 #
-# The project config (https://worktrunk.dev/config/#project-configuration) has a `template-append` of its own; it renders into a separate `<project-guidance>` block right after `<user-guidance>`.
+# How the fragment renders, and the project-config counterpart: the LLM commits guide (https://worktrunk.dev/llm-commits/#appending-to-the-prompt).
 #
 # ## Hooks
 #

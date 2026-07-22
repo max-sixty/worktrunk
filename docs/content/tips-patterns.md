@@ -225,7 +225,7 @@ Structured output for dashboards, statuslines, and scripts. See [`wt list`](@/li
 
 ## Reuse `default-branch`
 
-Worktrunk maintains useful state. Default branch [detection](@/config.md#wt-config-state-default-branch), for instance, means scripts work on any repo — no need to hardcode `main` or `master`:
+Default branch [detection](@/config.md#wt-config-state-default-branch) means scripts work on any repo — no need to hardcode `main` or `master`:
 
 {{ terminal(cmd="git rebase $(wt config state default-branch)") }}
 
@@ -394,8 +394,6 @@ clean-derived = """
     done
 """
 ```
-
-This precisely targets only the DerivedData for the removed worktree, leaving caches for other worktrees and the main repository intact.
 
 ## Subdomain routing with Caddy
 <!-- Hand-tested 2026-03-07 -->

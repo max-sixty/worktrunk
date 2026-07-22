@@ -1,5 +1,5 @@
 use crate::common::{
-    TestRepo, canonical_temp_home, repo, set_temp_home_env, set_xdg_config_path,
+    BareRepoTest, TestRepo, canonical_temp_home, repo, set_temp_home_env, set_xdg_config_path,
     setup_home_snapshot_settings, setup_snapshot_settings, setup_snapshot_settings_with_home,
     temp_home, wt_command,
 };
@@ -2848,6 +2848,69 @@ fn test_config_show_powershell_detected_via_psmodulepath(mut repo: TestRepo, tem
     });
 }
 
+/// The process-tree shell wins over $SHELL in the diagnostics: with zsh as
+/// the detected ancestor and bash as the login shell, config show surfaces
+/// "Detected shell: zsh (process tree)" next to $SHELL, and the verify hint
+/// targets zsh.
+#[rstest]
+fn test_config_show_detected_shell_via_process_tree(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    // .zshrc has integration for the shell the process tree detects
+    fs::write(
+        temp_home.path().join(".zshrc"),
+        r#"if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)"; fi
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+        // Login shell differs from the process-tree ancestor. The override
+        // must come after configure_wt_cmd, which pins it to "".
+        cmd.env("SHELL", "/bin/bash");
+        cmd.env("WORKTRUNK_TEST_PARENT_SHELL", "zsh");
+        cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1");
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Without the test override, the real process-tree walk runs. Its result
+/// depends on the environment (dev shell, CI runner), so this asserts only
+/// that the walk completes and config show still renders — exercising the
+/// production walk end-to-end rather than the override shortcut.
+#[rstest]
+fn test_config_show_runs_real_ancestry_walk(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    repo.configure_mock_commands(&mut cmd);
+    cmd.arg("config").arg("show").current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    set_xdg_config_path(&mut cmd, temp_home.path());
+    cmd.env_remove("WORKTRUNK_TEST_PARENT_SHELL");
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "config show should succeed with the real walk: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Shell integration"),
+        "shell section should render: {stdout}"
+    );
+}
+
 /// Test that deprecated [commit-generation] section shows warning and creates migration file
 #[rstest]
 fn test_deprecated_commit_generation_section_shows_warning(repo: TestRepo, temp_home: TempDir) {
@@ -3265,6 +3328,9 @@ fn test_config_update_print_on_clean_config_is_silent(repo: TestRepo) {
     fs::write(
         repo.test_config_path(),
         r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[list]
+json-schema = 1
 "#,
     )
     .unwrap();
@@ -3325,10 +3391,13 @@ fn test_config_update_print_emits_migrated_without_writing(repo: TestRepo) {
 /// `wt config update` with no deprecated settings reports nothing to do
 #[rstest]
 fn test_config_update_no_deprecations(repo: TestRepo) {
-    // Write a clean config with no deprecated patterns
+    // Clean config: no deprecated patterns, json-schema explicitly set
     fs::write(
         repo.test_config_path(),
         r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[list]
+json-schema = 1
 "#,
     )
     .unwrap();
@@ -3340,6 +3409,67 @@ fn test_config_update_no_deprecations(repo: TestRepo) {
 
         assert_cmd_snapshot!(cmd);
     });
+}
+
+/// `wt config update` writes `[list] json-schema = 2` when the key is unset,
+/// adopting the upcoming default, and a second run has nothing left to do —
+/// the pending-default loop closes.
+#[rstest]
+fn test_config_update_adopts_json_schema(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        "worktree-path = \"../{{ repo }}.{{ branch }}\"\n",
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "update", "--yes"]);
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    assert_eq!(
+        fs::read_to_string(repo.test_config_path()).unwrap(),
+        "worktree-path = \"../{{ repo }}.{{ branch }}\"\n\n[list]\njson-schema = 2\n"
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["config", "update", "--yes"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("No deprecated settings found"),
+        "second run should have nothing to update"
+    );
+}
+
+/// A system config that sets `[list] json-schema` makes the resolved value
+/// explicit, so `wt config update` must not write the user file — a user-file
+/// value would override the deliberate system-level choice.
+#[rstest]
+fn test_config_update_json_schema_adopt_defers_to_system_config(repo: TestRepo) {
+    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_path = system_config_dir.path().join("config.toml");
+    fs::write(&system_config_path, "[list]\njson-schema = 1\n").unwrap();
+
+    // A user config with an unrelated deprecation: update applies that
+    // rewrite but must not insert json-schema alongside it.
+    fs::write(repo.test_config_path(), "[merge]\nno-ff = true\n").unwrap();
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["config", "update", "--yes"]);
+    cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+
+    assert_eq!(
+        fs::read_to_string(repo.test_config_path()).unwrap(),
+        "[merge]\nff = false\n",
+        "the no-ff rewrite applies; the json-schema write must not"
+    );
 }
 
 /// `wt config update --yes` applies template variable migration
@@ -3821,10 +3951,20 @@ fn test_codex_plugin_metadata_is_valid_json() {
     .unwrap();
 
     assert_eq!(plugin["name"], "worktrunk");
-    assert_eq!(plugin["skills"], "./skills/");
+    // No `skills` key: Codex scans <plugin-root>/skills/ by convention when
+    // the manifest omits it, and an explicit "./skills/" names the same
+    // directory (verified against codex-cli 0.144.1). The scanned tree is the
+    // real-file mirror of repo-root skills/ — `codex plugin add` copies the
+    // plugin into its cache with a copier that drops symlink entries, which
+    // is why the mirror exists. See CLAUDE.md → "Plugin skills are a
+    // generated mirror".
+    assert!(
+        plugin.get("skills").is_none(),
+        "the Codex manifest must not carry a `skills` key — Codex scans skills/ by convention"
+    );
     // Metadata must not drift back toward the Claude plugin: the Codex plugin
-    // ships only the configuration skill, and its URLs are the canonical site
-    // (not the `/claude-code/` doc slug).
+    // is scoped to configuration guidance (no activity-tracking claims), and
+    // its URLs are the canonical site (not the `/claude-code/` doc slug).
     for key in ["description", "homepage"] {
         let val = plugin[key].as_str().unwrap();
         assert!(
@@ -3847,14 +3987,44 @@ fn test_codex_plugin_metadata_is_valid_json() {
             .contains("claude-code"),
         "plugin.json interface.websiteURL must point at the canonical site"
     );
-    // The Codex plugin ships no activity-marker hooks: Codex's
-    // HookEventNameWire vocabulary (codex-cli 0.130.0) has no `Stop`/turn-end
-    // event, so a 🤖 set on UserPromptSubmit could never return to 💬 within a
-    // session. Keep the Codex manifest free of a `hooks` key, and its wrapper
-    // dir manifest-only, until Codex adds a turn-end hook event — see CLAUDE.md
-    // → "Plugin Layout". (plugins/worktrunk/hooks/ exists post-consolidation,
-    // but it is the *Claude* plugin's — Codex's manifest never references it.)
-    assert_eq!(plugin.get("hooks"), None);
+    // The Codex plugin ships activity-marker hooks *inline* in its manifest
+    // (`hooks` object, not a path). This is the functional definition of its
+    // Codex-native events, and it also overrides Codex's convention discovery
+    // (an absent `hooks` key makes Codex auto-discover a `hooks/hooks.json` at
+    // the plugin root). The Claude hooks file sits at that same conventional
+    // `hooks/hooks.json` (Claude's loader discovers it there — #3417), but the
+    // inline Codex override means Codex never loads it, so the #3362 collision
+    // (Codex surfacing the *Claude* file's events) stays closed. Codex added a
+    // `Stop` turn-end event (post codex-cli 0.130.0), so 🤖 returns to 💬 at
+    // turn end. See CLAUDE.md → "Plugin Layout".
+    let codex_hooks = plugin
+        .get("hooks")
+        .and_then(|h| h.get("hooks"))
+        .expect("Codex manifest must carry an inline `hooks` object");
+    // Exactly the Codex-native events — no `Notification`/`SessionEnd`/
+    // `WorktreeCreate`/`WorktreeRemove`, which are Claude-only and would be
+    // silently dropped by Codex.
+    for event in ["UserPromptSubmit", "PermissionRequest", "Stop"] {
+        assert!(
+            codex_hooks.get(event).is_some(),
+            "Codex hooks must define the {event} event"
+        );
+    }
+    // Commands use Codex's native `$PLUGIN_ROOT`, never the Claude-branded
+    // `$CLAUDE_PLUGIN_ROOT` compat alias — nothing Claude-branded in a Codex
+    // session (#3362).
+    let hooks_json = serde_json::to_string(codex_hooks).unwrap();
+    assert!(
+        hooks_json.contains("$PLUGIN_ROOT/hooks/wt.sh"),
+        "Codex hook commands must call the shim via $PLUGIN_ROOT"
+    );
+    assert!(
+        !hooks_json.contains("CLAUDE_PLUGIN_ROOT"),
+        "Codex hooks must not reference the Claude-branded $CLAUDE_PLUGIN_ROOT alias"
+    );
+    // Hooks are inline, so the wrapper dir still holds only plugin.json — no
+    // separate hooks file, and the inline override keeps Codex off the shared
+    // Claude `hooks/hooks.json`.
     assert!(
         !project_root
             .join("plugins/worktrunk/.codex-plugin/hooks")
@@ -3881,21 +4051,28 @@ fn test_codex_plugin_metadata_is_valid_json() {
 /// third loader-mandated repo-root pointer (`gemini-extension.json` +
 /// `hooks/hooks.json` — Gemini hard-probes `${extensionPath}/{hooks,skills}/`
 /// at the extension root with no path indirection). Verified end-to-end
-/// against the real CLIs: Claude (claude-cli 2.1.x) wants its manifest at the
-/// plugin root with NO `.claude-plugin/` wrapper (`source:
-/// "./plugins/worktrunk"` + `<subdir>/.claude-plugin/` fails "Plugin not
-/// found"); Gemini (gemini-cli 0.42) resolves the extension at the repo root,
-/// so `${extensionPath}/skills/` is the real single-sourced repo-root
-/// `skills/` and its hooks call the canonical
+/// against the real CLIs: Claude (claude-cli 2.1.207) reads the manifest at
+/// `<plugin-root>/.claude-plugin/plugin.json` — the only location `claude
+/// plugin validate` accepts — and discovers components by convention: hooks
+/// at `hooks/hooks.json`, skills by scanning `skills/*/SKILL.md`. A
+/// marketplace install of exactly this shape loads the skills and fires the
+/// hooks with no component keys in the manifest. Codex (codex-cli 0.144.1)
+/// also scans `skills/` by convention when the manifest omits the key, but
+/// its installer's cache copy drops symlink entries — which is why the
+/// plugin's `skills/` is a real-file mirror of the repo-root `skills/`,
+/// generated by `test_docs_are_in_sync` (see plugins/worktrunk/CLAUDE.md
+/// → "Plugin skills are a generated mirror"). Gemini
+/// (gemini-cli 0.42) resolves the extension at the repo root, so
+/// `${extensionPath}/skills/` is the real single-sourced repo-root `skills/`
+/// and its hooks call the canonical
 /// `${extensionPath}/plugins/worktrunk/hooks/wt.sh` — no symlink, no bundled
 /// copy, and `gemini extensions install owner/repo` works natively.
 ///
 /// Duplicated strings can't be `include!`d into JSON, so this test is the
 /// drift guard: the Claude marketplace/manifest descriptions stay
 /// byte-identical, every product description shares the canonical opening
-/// sentence, and every repo-root skill is listed in the Claude manifest
-/// (Claude has no skill auto-discovery — an unlisted skill is silently
-/// dropped).
+/// sentence, and the Claude manifest carries no component-path keys
+/// (conventions are the single loading mechanism).
 #[test]
 fn test_plugin_layout_is_consolidated() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -3911,13 +4088,48 @@ fn test_plugin_layout_is_consolidated() {
     let claude_mkt = json(".claude-plugin/marketplace.json");
     assert_eq!(claude_mkt["plugins"][0]["source"], "./plugins/worktrunk");
 
-    // Claude manifest at the plugin root (no wrapper); hooks relative to it.
-    let claude = json("plugins/worktrunk/plugin.json");
-    assert_eq!(claude["hooks"], "./hooks/hooks.json");
+    // Claude manifest in the plugin's own `.claude-plugin/` wrapper — the
+    // only manifest location `claude plugin validate` accepts (a bare
+    // plugin.json at the plugin root loads through an undocumented runtime
+    // fallback but fails validation).
+    let claude = json("plugins/worktrunk/.claude-plugin/plugin.json");
+    assert!(
+        !root.join("plugins/worktrunk/plugin.json").exists(),
+        "the Claude manifest lives at .claude-plugin/plugin.json; a root-level \
+         plugin.json rides an undocumented fallback and fails `claude plugin validate`"
+    );
+    // The manifest carries metadata only; hooks and skills load by convention.
+    // The override keys are worse than redundant: the string-path `hooks`
+    // override is not honored for plugin loads (#3417), so a `hooks` key can
+    // only mask a mislocated file, and a `skills` array re-adds directories
+    // the default `skills/` scan already picks up.
+    assert!(
+        claude.get("hooks").is_none() && claude.get("skills").is_none(),
+        "the Claude manifest must not carry `hooks`/`skills` keys — components \
+         load by convention (hooks/hooks.json; skills/*/SKILL.md)"
+    );
     assert!(
         root.join("plugins/worktrunk/hooks/hooks.json").exists()
             && root.join("plugins/worktrunk/hooks/wt.sh").exists(),
         "Claude hooks must live at the plugin root's hooks/"
+    );
+    // The Claude hooks file must sit at the conventional hooks/hooks.json.
+    // Claude Code discovers plugin hooks by that convention path and does NOT
+    // honor plugin.json's string-path `hooks` override for plugin loads, so a
+    // Claude-scoped name (hooks/claude-hooks.json) silently stops the hooks
+    // from loading — /hooks shows nothing and the 🤖/💬 markers never update
+    // (#3417). Sitting at the conventional path does NOT resurface the #3362
+    // Codex collision: the Codex manifest defines its hooks inline (verified
+    // above), taking Codex's Some(Inline) branch, which overrides convention
+    // discovery — so Codex never loads this file even though it is now at the
+    // discoverable path. Structural scoping via the filename is what broke
+    // Claude; the inline Codex manifest is what actually keeps Codex clean.
+    assert!(
+        !root
+            .join("plugins/worktrunk/hooks/claude-hooks.json")
+            .exists(),
+        "the Claude hooks file must sit at the conventional hooks/hooks.json that Claude \
+         Code's loader discovers, not a Claude-scoped name the string-path override can't rescue (#3417)"
     );
     assert!(
         !read("plugins/worktrunk/hooks/hooks.json").contains(".claude-plugin/hooks/"),
@@ -3928,7 +4140,8 @@ fn test_plugin_layout_is_consolidated() {
     // the Claude manifest — they must stay byte-identical.
     assert_eq!(
         claude_mkt["plugins"][0]["description"], claude["description"],
-        ".claude-plugin/marketplace.json and plugins/worktrunk/plugin.json descriptions drifted"
+        ".claude-plugin/marketplace.json and plugins/worktrunk/.claude-plugin/plugin.json \
+         descriptions drifted"
     );
 
     // Gemini extension: manifest + hooks are loader-mandated repo-root
@@ -3970,23 +4183,47 @@ fn test_plugin_layout_is_consolidated() {
         "no bundled Gemini wt.sh — hooks reference the canonical worktrunk shim"
     );
 
-    // Claude has no skill auto-discovery, so every repo-root skill dir MUST be
-    // listed explicitly in plugin.json — otherwise a new skill is silently
-    // invisible to Claude while Codex/Gemini (whole-dir) pick it up.
-    let listed: std::collections::BTreeSet<&str> = claude["skills"]
-        .as_array()
-        .expect("plugin.json `skills` must be an array")
-        .iter()
-        .map(|v| v.as_str().unwrap())
-        .collect();
+    // Claude and Codex auto-discover skills by scanning the plugin root's
+    // skills/ for <dir>/SKILL.md. That tree is a real-file mirror of the
+    // authored repo-root skills/, generated by test_docs_are_in_sync
+    // (sync_plugin_skills_mirror): Codex's plugin installer copies the plugin
+    // root with a copier that silently skips symlink entries, so a symlink
+    // anywhere in the tree — the old top-level `skills -> ../../skills` or a
+    // nested reference link — ships no content to Codex installs, and a
+    // symlink also materializes as a plain text file on Windows checkouts.
+    // Claude's installer dereferences symlinks, so real files serve it
+    // equally. The invariant here is structural: regular files all the way
+    // down.
+    let plugin_skills = root.join("plugins/worktrunk/skills");
+    assert!(
+        plugin_skills.is_dir() && !plugin_skills.is_symlink(),
+        "plugins/worktrunk/skills must be a real directory (mirror of repo-root skills/); \
+         Codex's installer drops symlinks"
+    );
+    let mut dirs = vec![plugin_skills];
+    while let Some(dir) = dirs.pop() {
+        for entry in fs::read_dir(&dir).unwrap() {
+            let entry = entry.unwrap();
+            assert!(
+                !entry.path().is_symlink(),
+                "{} is a symlink — the plugin skills mirror must hold only regular files \
+                 (Codex's installer silently drops symlinks)",
+                entry.path().display()
+            );
+            if entry.file_type().unwrap().is_dir() {
+                dirs.push(entry.path());
+            }
+        }
+    }
+    // Every repo-root skill dir carries a SKILL.md, since the convention scan
+    // silently ignores a directory without one.
     for entry in fs::read_dir(root.join("skills")).unwrap() {
         let entry = entry.unwrap();
         if entry.file_type().unwrap().is_dir() {
-            let listed_form = format!("./skills/{}", entry.file_name().to_string_lossy());
             assert!(
-                listed.contains(listed_form.as_str()),
-                "repo-root skill {listed_form} is not in plugins/worktrunk/plugin.json \
-                 `skills` (Claude has no auto-discovery — add it or it is silently dropped)"
+                entry.path().join("SKILL.md").exists(),
+                "skills/{} has no SKILL.md — Claude's convention scan silently ignores it",
+                entry.file_name().to_string_lossy()
             );
         }
     }
@@ -4045,7 +4282,10 @@ fn test_plugin_layout_is_consolidated() {
         "Worktrunk is a CLI for Git worktree management, designed for parallel AI agent workflows.";
     let codex = json("plugins/worktrunk/.codex-plugin/plugin.json");
     for (label, val) in [
-        ("plugins/worktrunk/plugin.json", &claude["description"]),
+        (
+            "plugins/worktrunk/.claude-plugin/plugin.json",
+            &claude["description"],
+        ),
         (
             ".claude-plugin/marketplace.json",
             &claude_mkt["plugins"][0]["description"],
@@ -4845,4 +5085,166 @@ fn test_project_config_path_env_var_override(repo: TestRepo, temp_home: TempDir)
         "missing override path should resolve to no project config, got: {}",
         json["project"]["config"]
     );
+
+    // An empty override likewise means no project config — it must not fall
+    // back to the repo's own file or resolve to the worktree root directory.
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_xdg_config_path(&mut cmd, temp_home.path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_PROJECT_CONFIG_PATH", "");
+    cmd.args(["config", "show", "--format=json"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    assert!(
+        json["project"]["config"].is_null(),
+        "empty override should resolve to no project config, got: {}",
+        json["project"]["config"]
+    );
+}
+
+/// A relative `WORKTRUNK_PROJECT_CONFIG_PATH` resolves against the worktree
+/// root — the same anchor as the default `.config/wt.toml` — so the override
+/// behaves identically from any subdirectory instead of silently depending on
+/// the process cwd, and each worktree anchors to its own root.
+#[rstest]
+fn test_project_config_path_env_var_relative(mut repo: TestRepo, temp_home: TempDir) {
+    fs::write(
+        repo.root_path().join("custom-wt.toml"),
+        "pre-start = \"custom-hook\"\n",
+    )
+    .unwrap();
+    let subdir = repo.root_path().join("sub");
+    fs::create_dir_all(&subdir).unwrap();
+
+    // A linked worktree carries its own config file at the same relative
+    // location; running there must load that file, not the main worktree's.
+    let linked = repo.add_worktree("linked-anchor");
+    fs::write(
+        linked.join("custom-wt.toml"),
+        "pre-start = \"linked-hook\"\n",
+    )
+    .unwrap();
+
+    let cases = [
+        (
+            repo.root_path().to_path_buf(),
+            repo.root_path().to_path_buf(),
+            "custom-hook",
+        ),
+        (subdir, repo.root_path().to_path_buf(), "custom-hook"),
+        (linked.clone(), linked, "linked-hook"),
+    ];
+    for (cwd, expected_root, expected_hook) in &cases {
+        let mut cmd = repo.wt_command();
+        set_xdg_config_path(&mut cmd, temp_home.path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("WORKTRUNK_PROJECT_CONFIG_PATH", "custom-wt.toml");
+        cmd.args(["config", "show", "--format=json"])
+            .current_dir(cwd);
+
+        let output = cmd.output().unwrap();
+        assert!(
+            output.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let json: serde_json::Value =
+            serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+        assert_eq!(
+            json["project"]["path"].as_str().unwrap(),
+            expected_root.join("custom-wt.toml").to_str().unwrap(),
+            "relative override should anchor to the worktree root from {cwd:?}"
+        );
+        assert_eq!(
+            json["project"]["config"]["pre-start"], *expected_hook,
+            "relative override should load the root-anchored config from {cwd:?}, got: {}",
+            json["project"]
+        );
+    }
+}
+
+/// A relative `WORKTRUNK_PROJECT_CONFIG_PATH` with no worktree root to anchor
+/// it (bare repo, no linked worktrees) errors instead of silently resolving
+/// against the process cwd.
+#[test]
+fn test_project_config_path_env_var_relative_no_worktree_errors() {
+    let test = BareRepoTest::new();
+
+    let mut cmd = test.wt_command();
+    cmd.env("WORKTRUNK_PROJECT_CONFIG_PATH", "custom-wt.toml");
+    cmd.args(["config", "show", "--format=json"])
+        .current_dir(test.bare_repo_path());
+
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "a relative override without a worktree root should fail; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("WORKTRUNK_PROJECT_CONFIG_PATH is relative"),
+        "error should name the env var and the problem; stderr:\n{stderr}"
+    );
+
+    // Without the override, the same repo has no project config location at
+    // all; `wt config update` skips the project config rather than erroring,
+    // and `wt config show` reports the absence rather than claiming to be
+    // outside a git repository.
+    let mut cmd = test.wt_command();
+    cmd.args(["config", "update", "--yes"])
+        .current_dir(test.bare_repo_path());
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "config update should skip a missing project config location; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let mut cmd = test.wt_command();
+    cmd.args(["config", "show"])
+        .current_dir(test.bare_repo_path());
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "config show should succeed with no project config location; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.contains("No project config"),
+        "config show should report the missing project config location; stdout:\n{stdout}"
+    );
+}
+
+/// On Windows, an override that is neither fully absolute nor relative — a
+/// drive-relative (`C:cfg`) or rooted-but-driveless (`\cfg`) value — errors
+/// instead of silently resolving against the process drive or cwd.
+#[cfg(windows)]
+#[rstest]
+fn test_project_config_path_env_var_half_anchored_errors(repo: TestRepo) {
+    for value in [r"C:cfg\wt.toml", r"\cfg\wt.toml"] {
+        let mut cmd = repo.wt_command();
+        cmd.env("WORKTRUNK_PROJECT_CONFIG_PATH", value);
+        cmd.args(["config", "show", "--format=json"]);
+
+        let output = cmd.output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !output.status.success(),
+            "override {value} should be rejected; stderr:\n{stderr}"
+        );
+        assert!(
+            stderr.contains("neither fully absolute nor relative"),
+            "error should explain the rejected form for {value}; stderr:\n{stderr}"
+        );
+    }
 }

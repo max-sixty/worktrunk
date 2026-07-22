@@ -16,10 +16,10 @@ already contains** one:
 - shipped automation that runs the above: `plugins/*/hooks/hooks.json`,
   `hooks/hooks.json`, `hooks/wt.sh`, and skill or alias examples users copy
 
-Both directions matter. A PR that adds a call is obvious. A PR that edits a file
-already holding one is the subtle case: a change near the force-delete path in
-`src/git/remove.rs` can alter its behavior without the destructive line
-appearing in the diff.
+Hold on what the diff can reach, not co-location. In source, a change near the
+force-delete path holds even when the destructive line isn't in the diff. In
+structured config with independent entries, hold only when the diff touches the
+destructive entry itself.
 
 On a match:
 
