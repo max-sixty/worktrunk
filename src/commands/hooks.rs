@@ -465,7 +465,10 @@ fn print_background_variable_table(pipelines: &[PendingPipeline], hook_type: Hoo
             PreparedStep::Single(cmd) => cmd,
             PreparedStep::Concurrent(cmds) => &cmds[0],
         };
-        eprintln!("{}", info_message("template variables:"));
+        eprintln!(
+            "{}",
+            info_message(cformat!("<bold>{hook_type}</> template variables:"))
+        );
         eprintln!(
             "{}",
             format_with_gutter(&format_hook_variables(hook_type, &cmd.context), None)

@@ -152,8 +152,8 @@ ask is `wt -vv <command>`**. Re-running the failing command with `-vv`
 writes a diagnostic bundle — a single report containing wt/git/OS versions,
 shell integration, `wt config show`, `git worktree list --porcelain`, and a
 `trace.log` of every git invocation with its output. The `-vv` output prints
-the bundle's exact absolute path (`Logs, performance profile, and
-diagnostics saved @ …`) followed by a ready-to-run `gh gist create --web
+the bundle's exact absolute path (`Diagnostics and performance profile
+saved @ …`) followed by a ready-to-run `gh gist create --web
 <path>` line — **point the user at those printed lines; don't hand them a
 hardcoded path**. In particular, never tell them to `cat
 .git/wt/logs/diagnostic.md`: inside a linked worktree `.git` is a gitdir

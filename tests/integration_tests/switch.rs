@@ -130,6 +130,23 @@ fn test_switch_create_existing_branch_error(mut repo: TestRepo) {
     );
 }
 
+/// Creating a branch whose name is a path prefix of an existing branch is a git
+/// ref directory/file conflict: `release` can't be created while `release/2026.4`
+/// exists. Regression for #3527 — surface a clear namespace-collision error
+/// instead of git's raw "cannot lock ref" text.
+#[rstest]
+fn test_switch_create_branch_namespace_conflict(repo: TestRepo) {
+    // An existing branch living under the `release/` namespace.
+    repo.run_git(&["branch", "release/2026.4"]);
+
+    // `release` can't be both a branch and a directory of branches.
+    snapshot_switch(
+        "switch_create_namespace_conflict",
+        &repo,
+        &["--create", "release"],
+    );
+}
+
 /// When --execute is passed and the branch already exists, the error hint should
 /// include --execute and trailing args in the suggested command.
 #[rstest]

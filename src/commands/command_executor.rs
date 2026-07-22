@@ -628,7 +628,10 @@ fn announce_command(cmd: &PreparedCommand, kind: &PipelineKind, command_str: &st
     };
     if verbosity() >= 1 {
         let vars = format_hook_variables(*hook_type, &cmd.context);
-        eprintln!("{}", info_message("template variables:"));
+        eprintln!(
+            "{}",
+            info_message(cformat!("<bold>{hook_type}</> template variables:"))
+        );
         eprintln!("{}", format_with_gutter(&vars, None));
     }
     eprintln!("{}", progress_message(message));

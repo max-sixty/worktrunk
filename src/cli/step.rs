@@ -439,7 +439,7 @@ List the available template variables with `-v` (alongside the expansion, on std
 
 ```console
 $ wt step eval -v '{{ branch }}'
-○ Available template variables
+○ eval template variables:
   branch        = feature/auth-oauth2
   worktree_path = /home/user/projects/myapp-feature-auth-oauth2
 ○ eval source

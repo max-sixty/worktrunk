@@ -392,9 +392,9 @@ impl WorkingTreeStatus {
 #[derive(Debug, Clone, Default)]
 pub struct StatusSymbols {
     /// Gate 3 output (position 4). `None` = loading; `Some(MainState::None)`
-    /// = resolved to nothing. Priority: IsMain (^) > Orphan > WouldConflict
-    /// (✗) > Empty (_) > SameCommit (–) > Integrated (⊂) > Diverged (↕) >
-    /// Ahead (↑) > Behind (↓).
+    /// = resolved to nothing. Priority: IsMain (^) > Orphan (∅) > Empty (_) >
+    /// Integrated (⊂) > WouldConflict (✗) > SameCommit (–) > Diverged (↕) >
+    /// Ahead (↑) > Behind (↓). (Canonical order: see `MainState` in `state.rs`.)
     pub(crate) main_state: Option<MainState>,
 
     /// Gate 2 output — operation family (position 3). `None` = loading (we

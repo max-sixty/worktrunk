@@ -463,6 +463,16 @@ pub enum GitError {
         /// The git command that failed, shown separately from git output
         command: Option<FailedCommand>,
     },
+    /// A new branch can't be created because its name collides with the
+    /// directory namespace of an existing branch. Git stores refs as file
+    /// paths, so `release` and `release/2026.4` can't both exist — one would
+    /// have to be a file and a directory at the same path.
+    BranchNamespaceConflict {
+        /// The branch the user tried to create.
+        branch: String,
+        /// An existing branch whose name collides with `branch`.
+        conflicting: String,
+    },
     WorktreeRemovalFailed {
         branch: String,
         path: PathBuf,
@@ -667,6 +677,13 @@ impl GitError {
                 ),
                 None => cformat!("Failed to create worktree for <bold>{branch}</>"),
             },
+
+            GitError::BranchNamespaceConflict {
+                branch,
+                conflicting,
+            } => cformat!(
+                "Cannot create branch <bold>{branch}</> — it collides with existing branch <bold>{conflicting}</>"
+            ),
 
             GitError::WorktreeRemovalFailed { branch, path, .. } => {
                 let path_display = format_path_for_display(path);
@@ -1006,6 +1023,21 @@ impl GitError {
                     )?;
                 }
                 Ok(())
+            }
+
+            GitError::BranchNamespaceConflict {
+                branch,
+                conflicting,
+            } => {
+                let title = self.title();
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(&title),
+                    hint_message(cformat!(
+                        "Git stores branches as file paths, so <underline>{branch}</> and <underline>{conflicting}</> can't both exist. Pick a different name, or rename the existing branch."
+                    ))
+                )
             }
 
             GitError::WorktreeRemovalFailed {

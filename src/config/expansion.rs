@@ -287,6 +287,17 @@ pub fn format_alias_variables(
     format_variables_table(&vars, &display_ctx, referenced)
 }
 
+/// Format the resolved template variables for a bare template expansion
+/// (`wt step eval`), whose scope is exactly [`base_vars`] — no hook operation
+/// or infrastructure vars, no alias `args`.
+///
+/// Same curated ordering and `(unset)` treatment as [`format_hook_variables`],
+/// so the four `-v` variable listings (hook foreground, hook background, alias,
+/// eval) render one family.
+pub fn format_base_variables(ctx: &HashMap<String, String>) -> String {
+    format_variables_table(&base_vars(), ctx, None)
+}
+
 /// Extend `referenced` with the implicit context-map keys an alias dispatch
 /// needs:
 ///

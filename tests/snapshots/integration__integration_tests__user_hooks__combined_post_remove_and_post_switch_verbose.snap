@@ -38,6 +38,7 @@ info:
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -52,7 +53,7 @@ exit_code: 0
 [36m◎[39m [36mRemoving [1mfeature[22m worktree & branch in background (--force-delete)[39m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m
-[2m○[22m template variables:
+[2m○[22m [1mpost-remove[22m template variables:
 [107m [0m branch                = feature
 [107m [0m worktree_path         = _REPO_.feature
 [107m [0m worktree_name         = repo.feature
@@ -71,7 +72,7 @@ exit_code: 0
 [107m [0m cwd                   = _REPO_
 [107m [0m hook_type             = post-remove
 [107m [0m hook_name             = cleanup
-[2m○[22m template variables:
+[2m○[22m [1mpost-switch[22m template variables:
 [107m [0m branch                = main
 [107m [0m worktree_path         = _REPO_
 [107m [0m worktree_name         = repo

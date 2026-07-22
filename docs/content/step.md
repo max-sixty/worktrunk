@@ -551,7 +551,7 @@ feature_auth_oauth2_a1b
 List the available template variables with `-v` (alongside the expansion, on stderr):
 
 {% terminal(cmd="wt step eval -v '__WT_OPEN__ branch __WT_CLOSE__'") %}
-○ Available template variables
+○ eval template variables:
   branch        = feature/auth-oauth2
   worktree_path = /home/user/projects/myapp-feature-auth-oauth2
 ○ eval source

@@ -12,6 +12,7 @@
 #![cfg(not(windows))]
 
 use crate::common::{add_standard_env_redactions, wt_command};
+use ansi_str::AnsiStr as _;
 use insta::Settings;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -52,6 +53,29 @@ fn snapshot_help(test_name: &str, args: &[&str]) {
         cmd.args(args);
         assert_cmd_snapshot!(test_name, cmd);
     });
+}
+
+#[test]
+fn test_merge_help_describes_exact_shape_no_rebase() {
+    let output = wt_command()
+        .args(["merge", "--help"])
+        .output()
+        .expect("failed to run wt merge --help");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = stdout.ansi_strip();
+    assert!(
+        stdout.contains("Skip rebase; require the target to fast-forward to the resulting tip"),
+        "missing graph-preservation contract:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("wt merge --no-commit --no-rebase"),
+        "missing exact-shape example:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("explicit --no-rebase preserves the graph produced by earlier steps"),
+        "missing no-ff qualification:\n{stdout}"
+    );
 }
 
 // Root command (wt)
