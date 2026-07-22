@@ -25,10 +25,18 @@
 //! **Two layers, two scopes.** Cached state lives in either of:
 //! - `RepoCache` — per-`Repository::at()` instance. Most repo-wide values
 //!   (config, branches, worktree inventory) live here.
-//! - Process-wide `LazyLock<DashMap>` statics — `GIT_COMMON_DIR_CACHE`,
-//!   `WORKTREE_ROOTS`, `GIT_DIRS`, `CURRENT_BRANCHES`. The git-discovery
-//!   data they hold is keyed by canonicalized filesystem path, so two
-//!   `Repository` instances pointed at the same path see the same answer.
+//! - Process-wide statics that survive across `RepoCache` instances:
+//!   - `WORKTREE_ROOTS`, `GIT_DIRS`, `CURRENT_BRANCHES` (`LazyLock<DashMap>`),
+//!     keyed by canonicalized worktree path, so two `Repository` instances
+//!     pointed at the same path see the same answer.
+//!   - `GIT_COMMON_DIR_CACHE` and `GIT_CONFIG_PRELOAD` (`LazyLock<DashMap>`),
+//!     keyed by the *raw* discovery path passed to [`Repository::at`] /
+//!     [`Repository::prewarm`] — not canonicalized, since both the prewarm
+//!     producer and the `at()` consumer go through `base_path()` and share the
+//!     same `PathBuf`.
+//!   - `WORKTRUNK_USER_CONFIG_PRELOAD` (`OnceLock<UserConfig>`), process-scoped
+//!     rather than path-keyed (the config-path rule is process-invariant).
+//!
 //!   This lets [`Repository::prewarm`] populate the maps once at the start
 //!   of `main` and have every later `Repository::current()` (each builds a
 //!   fresh `RepoCache`) reuse the result.
@@ -88,9 +96,15 @@
 //! (repo-wide `OnceCell` vs per-key `DashMap`) and their infallible/fallible variants.
 //!
 //! **Invariants:**
-//! - A cached value, once written, is never updated within the same command.
-//! - All cache access is lock-free at the call site — `OnceCell` and `DashMap` handle
-//!   synchronization internally.
+//! - A cached value, once written, is never updated within the same command —
+//!   with one exception: the `all_config` map is an `OnceCell<RwLock<..>>` whose
+//!   *contents* stay coherent with in-process writes via
+//!   [`Repository::set_config_value`]. The `OnceCell` slot is still written
+//!   once; only the config values it holds can change.
+//! - Cache access is lock-free at the call site for the `OnceCell`/`DashMap`
+//!   caches, which handle synchronization internally. The one exception is
+//!   `all_config`, whose `RwLock` callers lock explicitly (e.g. `config_last`)
+//!   so config writes stay visible to later reads.
 //! - Code that mutates repository state (committing, creating worktrees) must not read
 //!   its own mutations through the cache. Use direct git commands for post-mutation
 //!   state.

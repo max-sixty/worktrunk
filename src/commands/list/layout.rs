@@ -160,7 +160,7 @@
 //! // Allocate columns in priority order, building pending list
 //! for candidate in candidates {
 //!     if candidate.spec.kind == ColumnKind::Message {
-//!         // Special handling: flexible width (min 20, preferred 50)
+//!         // Special handling: flexible width (min 10, max 100)
 //!     } else if let Some(ideal) = candidate.spec.kind.ideal(...) {
 //!         if let allocated = try_allocate(&mut remaining, ideal.width, ...) {
 //!             pending.push(PendingColumn { spec: candidate.spec, width: allocated, format: ideal.format });
@@ -1048,7 +1048,7 @@ fn allocate_columns_with_priority(
 /// - Age: 4 chars ("11mo" short format)
 /// - CI: sized from `max_pr_number` (the cached largest PR/MR number seen,
 ///   e.g. "#3035"); 5 chars ("#9999") before the first fetch populates it
-/// - Message: flexible (20-100 chars)
+/// - Message: flexible (10-100 chars)
 /// - URL: estimated from template + longest branch
 pub fn calculate_layout_with_width(
     items: &[super::model::ListItem],
