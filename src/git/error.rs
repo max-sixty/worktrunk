@@ -512,6 +512,18 @@ pub enum GitError {
         target_branch: String,
         error: String,
     },
+    /// `wt merge` would squash/rebase against a *local* target ref that has
+    /// fallen behind its upstream, folding commits already published on the
+    /// upstream into a new commit on that local ref — corrupting it (#3519).
+    /// Detected locally, with no fetch (worktrunk is local-first): the target
+    /// branch has an upstream that resolves locally and
+    /// `merge-base(HEAD, upstream)` is not an ancestor of the local target, so
+    /// the merge span reaches commits the upstream already contains. Refused
+    /// rather than silently mutating a stale ref, per the Data Safety posture.
+    MergeTargetBehindUpstream {
+        target_branch: String,
+        upstream: String,
+    },
 
     // Validation/other errors
     NotInteractive,
@@ -725,6 +737,13 @@ impl GitError {
             GitError::PushFailed { target_branch, .. } => {
                 cformat!("Can't push to local <bold>{target_branch}</> branch")
             }
+
+            GitError::MergeTargetBehindUpstream {
+                target_branch,
+                upstream,
+            } => cformat!(
+                "Local <bold>{target_branch}</> is behind <bold>{upstream}</> — merging would fold already-upstream commits into <bold>{target_branch}</>"
+            ),
 
             GitError::NotInteractive => {
                 "Cannot prompt for approval in non-interactive environment".to_string()
@@ -1189,6 +1208,21 @@ impl GitError {
             GitError::PushFailed { error, .. } => {
                 let title = self.title();
                 write!(f, "{}", format_error_block(error_message(&title), error))
+            }
+
+            GitError::MergeTargetBehindUpstream {
+                target_branch,
+                upstream,
+            } => {
+                let title = self.title();
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(&title),
+                    hint_message(cformat!(
+                        "Update <underline>{target_branch}</> from <underline>{upstream}</> before merging, or specify a different target"
+                    ))
+                )
             }
 
             GitError::NotInteractive => {

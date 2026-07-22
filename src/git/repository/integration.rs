@@ -727,6 +727,45 @@ impl Repository {
         self.rev_parse_commit(r)
     }
 
+    /// Whether merging `HEAD` into the local `target_branch` ref would fold in
+    /// commits already reachable from the target's upstream — the #3519
+    /// stale-local-default-branch hazard.
+    ///
+    /// `wt merge` squashes/rebases the span `merge-base(target, HEAD)..HEAD`
+    /// and fast-forwards the *local* `target` ref to the result. When that
+    /// local ref is behind its upstream (e.g. the primary checkout's `main` is
+    /// behind `origin/main`) and `HEAD` descends from the newer upstream tip,
+    /// the span sweeps in commits already published upstream, folding them into
+    /// a new commit and leaving the local ref diverged from its upstream.
+    ///
+    /// Detected locally, with no fetch (worktrunk is local-first): fires when
+    /// the target branch has a configured upstream and `merge-base(HEAD,
+    /// upstream)` is not an ancestor of the local `target` ref — i.e. the merge
+    /// span reaches commits the upstream already contains. Quiet on a
+    /// legitimately-diverged local target (where the span is only the feature's
+    /// own commits, so the fork point is still an ancestor of the local target)
+    /// and on an orphan feature with no shared history (nothing upstream to
+    /// re-fold). Returns the upstream's short name (e.g. `origin/main`) for the
+    /// caller's error; `None` when there's no upstream or the span is clean.
+    pub fn merge_target_behind_upstream(
+        &self,
+        target_branch: &str,
+    ) -> anyhow::Result<Option<String>> {
+        // `upstream()` already excludes a `[gone]` upstream, so a `Some` value
+        // is a live remote-tracking ref that `merge_base` resolves locally — no
+        // fetch, and no separate existence check.
+        let Some(upstream) = self.branch(target_branch).upstream()? else {
+            return Ok(None);
+        };
+        let target_sha = self.resolve_to_commit_sha(target_branch)?;
+        match self.merge_base("HEAD", &upstream)? {
+            Some(fork_point) if !self.is_ancestor_by_sha(&fork_point, &target_sha)? => {
+                Ok(Some(upstream))
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// Check if a branch is integrated into a target.
     ///
     /// Combines [`compute_integration_lazy()`] and [`check_integration()`], and

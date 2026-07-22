@@ -4400,6 +4400,109 @@ fn test_merge_removes_branch_when_local_main_diverged_from_upstream(
     );
 }
 
+/// Data-safety regression (#3519): `wt merge` must refuse to squash/rebase
+/// against a *local* target ref that has fallen behind its upstream. Otherwise
+/// the merge span `merge-base(local-main, HEAD)..HEAD` sweeps in commits already
+/// on `origin/main` and folds them into a new squash commit on the local ref —
+/// corrupting the primary checkout's `main` and, if later pushed, duplicating
+/// upstream content under new SHAs.
+///
+/// Contrast with `test_merge_removes_branch_when_local_main_diverged_from_upstream`:
+/// there the feature forks from the *shared base*, so the span is only the
+/// feature's own commit and the merge legitimately succeeds. Here the feature
+/// forks from the newer `origin/main` tip, so the span reaches already-upstream
+/// commits and the merge must fail rather than mutate the stale ref.
+#[rstest]
+fn test_merge_refuses_stale_local_default_behind_upstream(
+    #[from(repo_with_remote)] repo: TestRepo,
+) {
+    let remote_path = repo.remote_path().unwrap().to_path_buf();
+
+    // Advance origin/main by two commits (stand-ins for already-merged PRs)
+    // from a second clone, without touching the primary's local main.
+    let github_sim = repo.home_path().join("github-sim");
+    repo.run_git_in(
+        repo.home_path(),
+        &["clone", remote_path.to_str().unwrap(), "github-sim"],
+    );
+    for (file, msg) in [
+        ("upstream-1.txt", "Upstream PR 1 (already merged)"),
+        ("upstream-2.txt", "Upstream PR 2 (already merged)"),
+    ] {
+        fs::write(github_sim.join(file), "upstream").unwrap();
+        repo.run_git_in(&github_sim, &["add", file]);
+        repo.run_git_in(&github_sim, &["commit", "-m", msg]);
+    }
+    repo.run_git_in(&github_sim, &["push", "origin", "main"]);
+
+    // Primary fetches origin (so origin/main is known locally) but leaves its
+    // local main stale — behind origin/main by the two upstream commits.
+    repo.run_git(&["fetch", "origin"]);
+    let stale_main = repo.git_output(&["rev-parse", "main"]);
+    assert!(
+        !repo
+            .git_command()
+            .args(["merge-base", "--is-ancestor", "origin/main", "main"])
+            .run()
+            .unwrap()
+            .status
+            .success(),
+        "setup: local main should be behind origin/main"
+    );
+
+    // Create a feature worktree off the *newer* origin/main tip (mirrors
+    // `wt switch --create feature --base origin/main`) with one real commit.
+    let feature_wt = repo.root_path().parent().unwrap().join("repo.feature");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "feature",
+        feature_wt.to_str().unwrap(),
+        "origin/main",
+    ]);
+    fs::write(feature_wt.join("feature.txt"), "feature").unwrap();
+    repo.run_git_in(&feature_wt, &["add", "feature.txt"]);
+    repo.run_git_in(
+        &feature_wt,
+        &["commit", "-m", "the one real feature commit"],
+    );
+
+    // Merge must fail rather than fold the two upstream commits into main.
+    let output = repo
+        .wt_command()
+        .args(["merge", "main", "--yes", "--no-hooks"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "merge must refuse a stale local default branch\nstderr:\n{stderr}",
+    );
+    assert!(
+        stderr.contains("is behind"),
+        "error should explain the stale local target\nstderr:\n{stderr}",
+    );
+
+    // The local main ref must be untouched — not fast-forwarded, not squashed.
+    assert_eq!(
+        repo.git_output(&["rev-parse", "main"]),
+        stale_main,
+        "local main must not be mutated by a refused merge",
+    );
+    // The feature branch must survive a refused merge (no removal).
+    assert!(
+        repo.git_command()
+            .args(["rev-parse", "--verify", "--quiet", "refs/heads/feature"])
+            .run()
+            .unwrap()
+            .status
+            .success(),
+        "feature branch must survive a refused merge",
+    );
+}
+
 /// Approval-boundary TOCTOU regression: a `post-merge` command that enters the
 /// invoking worktree's `.config/wt.toml` only via the rebase — after the gate
 /// froze the plan — must not run.

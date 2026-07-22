@@ -204,6 +204,20 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
 
     // Get and validate target branch (must be a branch since we're updating it)
     let target_branch = repo.require_target_branch(target)?;
+
+    // Data-safety guard (#3519): refuse to squash/rebase against a local target
+    // ref that has fallen behind its upstream. Doing so would fold commits
+    // already published on the upstream into a new commit on the local ref,
+    // corrupting it (and, if later pushed, duplicating upstream content under
+    // new SHAs). Local-only check — no fetch, consistent with local-first merge.
+    if let Some(upstream) = repo.merge_target_behind_upstream(&target_branch)? {
+        return Err(worktrunk::git::GitError::MergeTargetBehindUpstream {
+            target_branch: target_branch.clone(),
+            upstream,
+        }
+        .into());
+    }
+
     // Worktree for target is optional: if present we use it for safety checks and as destination.
     let target_worktree_path = repo.worktree_for_branch(&target_branch)?;
     // Where `post-merge` / `post-remove` / `post-switch` run: the target

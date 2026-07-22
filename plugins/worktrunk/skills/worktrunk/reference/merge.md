@@ -74,6 +74,8 @@ $ wt merge --no-commit --no-rebase
 
 Use `--no-commit` to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless `--no-rebase` is passed. Combining both flags preserves the exact source graph and requires the target to be its ancestor. Useful after preparing commits manually with `wt step commit`. Requires a clean working tree.
 
+`wt merge` targets the *local* default-branch ref and never fetches. When that ref has fallen behind its upstream — e.g. a primary checkout's `main` left behind `origin/main` — the merge is refused rather than folding already-upstream commits into it. Updating the local branch from its upstream lifts the refusal.
+
 ## Local CI
 
 For personal projects, pre-merge hooks open up the possibility of a workflow with much faster iteration — an order of magnitude more small changes instead of fewer large ones.
