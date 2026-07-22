@@ -1031,7 +1031,15 @@ worktree-path = "../{{ undefined_var }}.{{ branch }}"
 /// Relocating a worktree the user is standing inside preserves their
 /// subdirectory position, routing the `cd` through the same
 /// `resolve_subdir_in_target` helper as `switch`/`remove` (issue #3343 unify).
+///
+/// Ignored on Windows: subdir preservation only fires when the cwd is inside the
+/// moving worktree — which is exactly when `git worktree move` (a directory
+/// rename) fails with a sharing violation, because a live process holds that cwd.
+/// Unlike `remove` (where shell integration cds to main before removing), a real
+/// Windows user hits this too: their shell holds the cwd across the move. So the
+/// preservation path is reachable, and testable, only on Unix.
 #[rstest]
+#[cfg_attr(windows, ignore)]
 fn test_relocate_preserves_subdir(repo: TestRepo) {
     let parent = worktree_parent(&repo);
     let (cd_path, exec_path, _guard) = directive_files();
