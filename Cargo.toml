@@ -102,8 +102,8 @@ syntax-highlighting = ["dep:tree-sitter", "dep:tree-sitter-bash", "dep:tree-sitt
 # Includes: shell wrapper tests, PTY-based approval prompts, TUI select, progressive rendering
 shell-integration-tests = []
 # Enable benchmarks whose fixture is too large for hosted CI: the rust-scale
-# prune fixture (~15 GiB of rust-lang/rust worktrees, cached in
-# target/bench-repos/). The daily benchmarks workflow runs plain `cargo bench`
+# prune fixture (~15 GiB of rust-lang/rust worktrees, cached in the wt-perf
+# cache dir). The daily benchmarks workflow runs plain `cargo bench`
 # and must never build it; opt in locally with
 # `cargo bench --bench prune --features real-repo-benches`.
 real-repo-benches = []

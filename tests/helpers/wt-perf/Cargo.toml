@@ -15,6 +15,8 @@ description = "Performance testing and tracing tools for worktrunk"
 # For repo setup
 tempfile = "3.27"
 dunce = "1"
+# Resolve the platform cache directory for reusable fixtures
+dirs = "6.0"
 
 # For CLI
 clap = { version = "4.6", features = ["derive"] }

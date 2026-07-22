@@ -175,7 +175,7 @@ fn bench_prune_e2e(c: &mut Criterion) {
 /// --write-tree` ~130 ms, `git status` over ~60k files — vs the synthetic
 /// fixture where probes bottom out at subprocess spawn. First run clones
 /// rust-lang/rust from the network (minutes), then builds ~36 worktrees at
-/// ~3 s each; both are cached in `target/bench-repos/` across runs.
+/// ~3 s each; both are cached in the wt-perf cache dir across runs.
 ///
 /// Dry-runs only, in two flavors: warm (steady-state re-scan) and probe-cold
 /// (`.git/wt/cache/` cleared per iteration — the "first prune after fetching

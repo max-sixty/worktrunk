@@ -59,7 +59,10 @@ jobs:
     - name: 💰 Rust repo cache
       uses: actions/cache@v6
       with:
-        path: target/bench-repos
+        # wt-perf caches real-repo fixtures under the platform cache dir
+        # (~/.cache/wt-perf on the Linux runner), not target/, so they survive
+        # `cargo clean` and are shared across checkouts.
+        path: ~/.cache/wt-perf/bench-repos
         key: bench-repos-rust-${{ runner.os }}
 
     - name: 📊 Run benchmarks
