@@ -281,12 +281,11 @@ count.
 
 ## Output Locations
 
-Fixture repos live under the wt-perf cache dir — `~/.cache/wt-perf/` on Linux,
-`~/Library/Caches/wt-perf/` on macOS, or `$WT_PERF_CACHE_DIR` if set. This is
+Fixture repos live under the wt-perf cache dir — `~/.cache/wt-perf/` (the XDG
+cache dir on Linux and macOS alike), or `$WT_PERF_CACHE_DIR` if set. This is
 per-user and shared across worktrees/checkouts, so an expensive fixture is built
 once per machine and survives `cargo clean` (a `target/`-rooted cache is
-per-worktree and clean-wiped). `wt-perf setup` prints the exact path. Paths below
-show the Linux location.
+per-worktree and clean-wiped). `wt-perf setup` prints the exact path.
 
 - Results: `target/criterion/`
 - Cached rust repo: `~/.cache/wt-perf/bench-repos/rust/`

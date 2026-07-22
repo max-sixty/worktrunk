@@ -4597,8 +4597,8 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "criterion",
- "dirs",
  "dunce",
+ "etcetera",
  "serde_json",
  "tempfile",
  "worktrunk",

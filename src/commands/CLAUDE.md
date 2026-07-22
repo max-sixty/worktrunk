@@ -10,7 +10,7 @@ When debugging TUI commands like `wt switch` (interactive picker), use the `tmux
 cargo run -p wt-perf -- setup picker-test
 ```
 
-This creates a reproducible test repo under the wt-perf cache dir and prints its exact path — `~/.cache/wt-perf/picker-test/` on Linux, `~/Library/Caches/wt-perf/picker-test/` on macOS. `WT_PERF_CACHE_DIR` overrides the root. The Linux path is used in the examples below.
+This creates a reproducible test repo at `~/.cache/wt-perf/picker-test/` (XDG cache dir on Linux and macOS; `WT_PERF_CACHE_DIR` overrides the root). `wt-perf setup` also prints the exact path.
 
 ### 2. Test Interactively
 

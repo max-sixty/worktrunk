@@ -27,6 +27,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
+use etcetera::base_strategy::{BaseStrategy, choose_base_strategy};
 use tempfile::TempDir;
 use worktrunk::testing::{NULL_DEVICE, configure_git_cmd};
 
@@ -621,20 +622,23 @@ fn resolve_git_common_dir(repo_path: &Path) -> Option<PathBuf> {
 }
 
 /// Root of wt-perf's on-disk cache: `$WT_PERF_CACHE_DIR` if set, else the
-/// per-user platform cache directory (`~/.cache/wt-perf` on Linux,
-/// `~/Library/Caches/wt-perf` on macOS).
+/// per-user cache directory `<cache>/wt-perf` (`~/.cache/wt-perf`, or
+/// `$XDG_CACHE_HOME/wt-perf`). `etcetera::choose_base_strategy` follows the
+/// XDG convention on macOS too, matching worktrunk's own base-dir strategy
+/// (`src/config/user/path.rs`), so the path is identical on Linux and macOS.
 ///
 /// Both entry points — benches (cwd = workspace root) and the `wt-perf` CLI
 /// (cwd = anywhere) — resolve the same machine-global path, so an expensive
 /// fixture is built once per machine rather than once per git worktree. A
 /// `target/`-rooted cache would be per-worktree (worktrees don't share
-/// `target/`) and wiped by `cargo clean`; the platform cache dir is neither.
+/// `target/`) and wiped by `cargo clean`; the cache dir is neither.
 pub fn wt_perf_cache_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("WT_PERF_CACHE_DIR") {
         return PathBuf::from(dir);
     }
-    dirs::cache_dir()
-        .expect("no platform cache directory; set WT_PERF_CACHE_DIR")
+    choose_base_strategy()
+        .expect("no home directory; set WT_PERF_CACHE_DIR")
+        .cache_dir()
         .join("wt-perf")
 }
 
