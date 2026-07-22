@@ -620,25 +620,61 @@ fn resolve_git_common_dir(repo_path: &Path) -> Option<PathBuf> {
     pointed.parent()?.parent().map(Path::to_path_buf)
 }
 
-/// Root of wt-perf's on-disk fixtures: `<workspace>/target/wt-perf`.
+/// Root of wt-perf's on-disk fixtures: `<cargo-target-dir>/wt-perf`.
 ///
-/// Resolved from this crate's compile-time manifest dir (`tests/helpers/wt-perf`,
-/// three levels below the workspace root), so both entry points — benches
-/// (in-process) and the `wt-perf` CLI — land on the same path regardless of the
-/// caller's cwd or build profile.
+/// The target dir is `cargo_target_dir`, derived from the running executable, so
+/// it tracks wherever cargo actually built — the default `<workspace>/target`, a
+/// `CARGO_TARGET_DIR` / `build.target-dir` override, or cargo-llvm-cov's
+/// relocated dir — keeping fixtures co-located with build output and reaped by
+/// `cargo clean`.
 ///
 /// Living under `target/` means `cargo clean` reaps every fixture and each git
 /// worktree keeps its own copy (worktrees don't share `target/`). That is cheap
 /// for the synthetic `setup` fixtures — rebuilt in seconds — but a deliberate
 /// cost for the ~15 GiB rust clone under `bench-repos/`, which then re-clones
-/// per worktree and after every `cargo clean`. There is no env override;
-/// relocate by hand (a symlink at `target/wt-perf`) if that cost bites.
+/// per worktree and after every `cargo clean`. Relocate it with cargo's own
+/// `CARGO_TARGET_DIR` if that cost bites.
 pub fn wt_perf_fixture_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(3)
-        .expect("wt-perf crate sits three levels below the workspace root")
-        .join("target/wt-perf")
+    cargo_target_dir().join("wt-perf")
+}
+
+/// The cargo target directory containing the current executable.
+///
+/// Both entry points live inside it — the `wt-perf` CLI at
+/// `<target>/debug/wt-perf`, the in-process benches at
+/// `<target>/release/deps/<bench>` — so the closest ancestor named `debug` or
+/// `release` (the profile dir) has the target dir as its parent. Reading the
+/// running binary's path rather than `CARGO_TARGET_DIR` alone also honors a
+/// config-file `build.target-dir` and cargo-llvm-cov's `--target-dir`: the
+/// binary is physically inside whichever dir cargo used. Falls back to
+/// `<workspace>/target` (from the compile-time manifest dir) if the executable
+/// isn't under a recognizable profile dir.
+fn cargo_target_dir() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| target_dir_from_exe(&exe))
+        .unwrap_or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .ancestors()
+                .nth(3)
+                .expect("wt-perf crate sits three levels below the workspace root")
+                .join("target")
+        })
+}
+
+/// The target dir containing `exe`: the closest ancestor named `debug` or
+/// `release` (the cargo profile dir) has the target dir as its parent. `None`
+/// if `exe` isn't under such a dir.
+fn target_dir_from_exe(exe: &Path) -> Option<PathBuf> {
+    exe.ancestors()
+        .find(|p| {
+            matches!(
+                p.file_name().and_then(|n| n.to_str()),
+                Some("debug" | "release")
+            )
+        })?
+        .parent()
+        .map(Path::to_path_buf)
 }
 
 /// The shared store for real, cloned upstream fixtures (rust-lang/rust and the
@@ -1395,6 +1431,42 @@ pub fn parse_config(s: &str) -> Option<SetupConfig> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `target_dir_from_exe` finds the cargo target dir as the parent of the
+    /// closest `debug`/`release` profile dir, so fixtures track wherever cargo
+    /// actually built: a relocated `CARGO_TARGET_DIR`, a bench binary under
+    /// `release/deps/`, or cargo-llvm-cov's nested target. A binary outside any
+    /// target dir yields `None`, so the caller uses the workspace fallback.
+    #[test]
+    fn target_dir_from_exe_finds_cargo_target() {
+        let cases = [
+            // CLI binary at <target>/debug/wt-perf
+            ("/w/target/debug/wt-perf", Some("/w/target")),
+            // Relocated via CARGO_TARGET_DIR / build.target-dir
+            ("/tmp/tgt/debug/wt-perf", Some("/tmp/tgt")),
+            // Bench binary at <target>/release/deps/<bench>
+            ("/w/target/release/deps/list-abc123", Some("/w/target")),
+            // cargo-llvm-cov's nested target dir
+            (
+                "/w/target/llvm-cov-target/debug/deps/x-1",
+                Some("/w/target/llvm-cov-target"),
+            ),
+            // Closest profile dir wins even if an ancestor is literally "release"
+            (
+                "/home/release/proj/target/debug/wt-perf",
+                Some("/home/release/proj/target"),
+            ),
+            // Installed outside any target dir → None (caller uses the fallback)
+            ("/usr/local/bin/wt-perf", None),
+        ];
+        for (exe, expected) in cases {
+            assert_eq!(
+                target_dir_from_exe(Path::new(exe)),
+                expected.map(PathBuf::from),
+                "{exe}"
+            );
+        }
+    }
 
     /// Regression: `create_repo_at` ends with `git gc`, which packs every loose
     /// ref into `.git/packed-refs` and prunes the loose copies. A prior version
