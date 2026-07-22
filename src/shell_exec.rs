@@ -1390,9 +1390,10 @@ impl Cmd {
     ///
     /// `stdin_bytes` on the source feeds the pipeline's input (the sink's
     /// stdin always comes from the source). Timeouts and `external()` logging
-    /// are not supported on either side. The pipeline consumes one semaphore
-    /// permit even though it runs two processes concurrently — acquiring two
-    /// would deadlock under `concurrency = 1`.
+    /// are not supported on either side. On a background thread the pipeline
+    /// consumes one semaphore permit even though it runs two processes
+    /// concurrently — acquiring two would deadlock under `concurrency = 1`;
+    /// the foreground thread is exempt (see `CMD_SEMAPHORE`).
     pub fn pipe_into(
         mut self,
         next: Cmd,
