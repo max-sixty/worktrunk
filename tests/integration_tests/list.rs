@@ -3985,3 +3985,54 @@ fn test_list_full_survives_read_only_object_database(mut repo: TestRepo) {
     assert_eq!(feature["main"]["behind"], 1, "entry: {feature}");
     assert_eq!(feature["main"]["diff"]["added"], 1, "entry: {feature}");
 }
+
+/// `wt list statusline` is a separate entry point from `wt list` (it calls
+/// `populate_item` directly, not `collect()`) and renders on every Claude Code
+/// prompt inside the managed read-only sandbox this targets. Its merge/conflict
+/// probes must redirect too, or the statusline silently drops `main_state` and
+/// the integration symbols in a read-only object database.
+#[cfg(unix)]
+#[rstest]
+fn test_list_statusline_survives_read_only_object_database(mut repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
+
+    let feature =
+        repo.add_worktree_with_commit("feature", "feature.txt", "feature\n", "Add feature");
+    repo.commit("main diverges");
+
+    // All object-writing setup is done; freeze the object database.
+    let _read_only = ReadOnlyObjectDirectory::new(&repo);
+
+    // Statusline reports the current worktree, so run it from the feature tree.
+    let output = repo
+        .wt_command()
+        .current_dir(&feature)
+        .args(["list", "statusline", "--format", "json"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "wt list statusline must succeed with a read-only object database.\nstderr:\n{stderr}"
+    );
+    for marker in [
+        "insufficient permission",
+        "unable to create",
+        "Operation not permitted",
+        "failed to write",
+    ] {
+        assert!(
+            !stdout.contains(marker) && !stderr.contains(marker),
+            "a read-only object database leaked a write error ({marker}).\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+
+    // The integration classification comes from the object-writing probe; it
+    // must be present, not silently dropped to null.
+    let items: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
+    let feature = &items[0];
+    assert_eq!(feature["branch"], "feature", "entry: {feature}");
+    assert_eq!(feature["main_state"], "diverged", "entry: {feature}");
+}

@@ -2212,6 +2212,16 @@ pub fn populate_item(
     item: &mut ListItem,
     mut options: CollectOptions,
 ) -> anyhow::Result<()> {
+    // Mirror `collect()`: in a read-only checkout, redirect this item's
+    // object-writing merge/conflict probes into a temporary object database so
+    // the statusline still classifies integration state. `wt list statusline`
+    // is a separate entry point from `collect()` (its only callers are in
+    // `commands/statusline.rs`) and renders on every Claude Code prompt inside
+    // exactly the managed read-only sandbox this targets. See
+    // `Repository::redirect_objects_if_read_only`.
+    let redirected = repo.redirect_objects_if_read_only();
+    let repo = redirected.as_ref().unwrap_or(repo);
+
     // Populate commit data directly. The main `collect()` path batches this
     // across all items pre-skeleton; the single-item statusline path has no
     // such batch, so fetch the one SHA here. Skip null OIDs (unborn branches).
