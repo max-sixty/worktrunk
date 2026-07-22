@@ -633,7 +633,10 @@ fn resolve_git_common_dir(repo_path: &Path) -> Option<PathBuf> {
 /// `target/`-rooted cache would be per-worktree (worktrees don't share
 /// `target/`) and wiped by `cargo clean`; the cache dir is neither.
 pub fn wt_perf_cache_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("WT_PERF_CACHE_DIR") {
+    // Treat an empty value as unset: `WT_PERF_CACHE_DIR=` would otherwise yield
+    // an empty root, so `setup <config>` would remove_dir_all a *relative*
+    // `<config>` in the cwd instead of a dir under the cache.
+    if let Some(dir) = std::env::var_os("WT_PERF_CACHE_DIR").filter(|d| !d.is_empty()) {
         return PathBuf::from(dir);
     }
     choose_base_strategy()
