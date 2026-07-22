@@ -24,10 +24,10 @@
 //!
 //! See `wt-perf --help` for CLI usage.
 
+use etcetera::base_strategy::{BaseStrategy, choose_base_strategy};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
-use etcetera::base_strategy::{BaseStrategy, choose_base_strategy};
 use tempfile::TempDir;
 use worktrunk::testing::{NULL_DEVICE, configure_git_cmd};
 
