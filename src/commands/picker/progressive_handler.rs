@@ -1,8 +1,8 @@
 //! Progressive-rendering glue between `collect::collect` and the skim picker.
 //!
-//! Each event funnels into three places: skim's item stream (`tx`, alive
-//! while updates may arrive so the picker stays non-idle), each item's
-//! shared `rendered` mutex (in-place redraws), and `shared_items` used by
+//! Each event funnels into three places: skim's item stream (`tx`, consumed
+//! by the skeleton batch — the handler's only send), each item's shared
+//! `rendered` mutex (in-place redraws), and `shared_items` used by
 //! `PickerCollector` for alt-x.
 //!
 //! # Why updates poke a render
@@ -64,13 +64,17 @@ use crate::commands::list::model::{BranchScope, ItemKind, ListItem};
 
 /// Handler owned by the background collect thread. Implements the
 /// `PickerProgressHandler` trait that `collect` drives.
-///
-/// The `tx` clone lives as long as this handler is referenced — dropping the
-/// handler (when the collect thread exits) drops the last sender, which signals
-/// EOF to skim's reader. That's the explicit contract: once background work is
-/// done, the picker can go idle.
 pub(super) struct PickerHandler {
-    pub(super) tx: SkimItemSender,
+    /// skim's item channel, consumed by `on_skeleton`'s single send. Sending
+    /// the skeleton batch takes the sender out and drops it, so the channel
+    /// closes as soon as the last live sender (the `--prs` thread's clone, if
+    /// any) finishes — not when the handler itself drops. Row updates after the
+    /// skeleton are in-place (`rendered` mutexes + `request_render`), never
+    /// resent, so nothing needs the channel past that send, and holding it open
+    /// is expensive: skim's reader polls an open-but-empty channel with kanal's
+    /// `recv_timeout`, whose wait yields instead of parking — a full core spun
+    /// for as long as collect still grinds (a slow CI fetch, an LLM summary).
+    pub(super) tx: Mutex<Option<SkimItemSender>>,
     /// skim's event sender, published by the picker once `Skim::init_tui` has
     /// run. `None` until then — early skeleton sends drive the first paint via
     /// the item channel, so a missed poke before the TUI exists is harmless.
@@ -510,8 +514,13 @@ impl PickerProgressHandler for PickerHandler {
         // the first paint. Later field updates happen in place through each
         // item's shared `rendered` mutex and are *not* resent — they surface via
         // `request_render` (see module docstring), since skim won't repaint a
-        // silent in-place mutation on its own.
-        let _ = self.tx.send(skim_items);
+        // silent in-place mutation on its own. Sending consumes the sender
+        // (see the `tx` field doc): this is the handler's only send, and
+        // releasing it here lets skim's reader stop polling the channel while
+        // collect's remaining tasks grind on.
+        if let Some(tx) = self.tx.lock().unwrap().take() {
+            let _ = tx.send(skim_items);
+        }
 
         // Skeleton is in skim's channel; now wake the `--prs` thread (see the
         // `shown_branches` note above). Its rows append after the skeleton, so a PR
@@ -683,7 +692,7 @@ mod tests {
         let preview_cache: PreviewCache = Arc::clone(&orchestrator.cache);
         let spawn_gen = orchestrator.generation();
         PickerHandler {
-            tx,
+            tx: Mutex::new(Some(tx)),
             render_tx,
             last_render_poke: Mutex::new(Instant::now()),
             shared_items: Arc::new(Mutex::new(Vec::new())),
@@ -862,6 +871,34 @@ mod tests {
         handler.repaint_rows(vec!["rev-one".into(), "rev-two".into()]);
         assert_eq!(*slots[0].lock().unwrap(), "rev-one");
         assert_eq!(*slots[1].lock().unwrap(), "rev-two");
+    }
+
+    /// The skeleton send consumes the handler's sender (see the `tx` field
+    /// doc): with no `--prs` clone in play, the channel closes at the skeleton
+    /// batch even though the handler — and the collect thread driving it —
+    /// lives on. Held open instead, skim's reader would spin a full core on the
+    /// empty channel (kanal's `recv_timeout` yields rather than parking) for as
+    /// long as collect's slower tasks (a CI fetch, an LLM summary) keep running.
+    #[test]
+    fn skeleton_send_consumes_sender_and_closes_channel() {
+        let (handler, _test, rx) = make_handler();
+        handler.on_skeleton(
+            vec![ListItem::new_branch("abc".into(), "one".into())],
+            vec!["skel".into()],
+            header("hdr"),
+            grid(),
+        );
+
+        let received = rx.recv().expect("skeleton batch");
+        assert_eq!(received.len(), 2, "expected header + 1 item");
+        assert!(
+            rx.recv().is_err(),
+            "channel should be closed after the skeleton send"
+        );
+        assert!(
+            handler.tx.lock().unwrap().is_none(),
+            "the sender should be consumed, not merely unused"
+        );
     }
 
     /// `on_update` mirrors a row's live CI status into the preview-feeding slots,

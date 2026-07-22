@@ -1403,10 +1403,12 @@ struct SpawnedPipeline {
 impl PipelineFactory {
     /// Build a fresh handler + item channel, start the `picker-collect` thread
     /// (and the `picker-prs` thread when `--prs` is active), and hand back the
-    /// receiver skim reads. The handler holds the only non-thread `tx` clone, so
-    /// once the spawned threads finish the channel closes and skim's reader sees
-    /// EOF — the "background work done → picker idle" contract, which a refresh
-    /// relies on to end its `reload`.
+    /// receiver skim reads. Every sender drops as soon as its batch is sent —
+    /// the handler's at the skeleton send, the `--prs` thread's when its rows
+    /// land — so skim's reader sees EOF once the last batch is in, which is
+    /// what ends a refresh's `reload`. Collect keeps grinding past that point
+    /// (CI fetches, summaries) through in-place row updates that never touch
+    /// the channel.
     /// `rebuild_repo` controls the worktree/branch inventory source. A refresh
     /// (`alt-r`) passes `true` to rebuild a fresh `Repository`, re-enumerating
     /// after an in-picker removal, and to run `PreviewOrchestrator::refresh` —
@@ -1481,7 +1483,7 @@ impl PipelineFactory {
 
         let handler: Arc<progressive_handler::PickerHandler> =
             Arc::new(progressive_handler::PickerHandler {
-                tx: tx.clone(),
+                tx: Mutex::new(Some(tx.clone())),
                 render_tx: Arc::clone(&self.render_tx),
                 last_render_poke: Mutex::new(Instant::now()),
                 shared_items: Arc::clone(&self.shared_items),
@@ -1577,8 +1579,9 @@ impl PipelineFactory {
             None
         };
 
-        // Drop the local `tx` so the handler's clone (and the threads' clones)
-        // are the only senders left — their drop is what signals EOF to skim.
+        // Drop the local `tx` so the handler's clone (consumed at the skeleton
+        // send) and the `--prs` thread's clone are the only senders left —
+        // their release is what signals EOF to skim.
         drop(tx);
 
         Ok(SpawnedPipeline {
@@ -2052,11 +2055,12 @@ summary = true
     install_remove_keybinding(&mut options.keymap, alt_x_remover);
     worktrunk::trace::instant("Picker skim options built");
 
-    // Spawn the collect pipeline (and the `--prs` thread when active). The
-    // handler holds the only non-thread `tx` clone; when the bg threads exit,
-    // `tx` drops, skim's reader sees EOF, and the picker goes idle. The initial
-    // spawn reuses the startup-primed inventory (`false`); every alt-r refresh
-    // re-runs `factory.spawn(true)` to re-enumerate — see `PipelineFactory`.
+    // Spawn the collect pipeline (and the `--prs` thread when active). Each
+    // sender drops with its one batch sent (skeleton, PR rows), so skim's
+    // reader sees EOF as soon as the last batch lands — see
+    // `PipelineFactory::spawn`. The initial spawn reuses the startup-primed
+    // inventory (`false`); every alt-r refresh re-runs `factory.spawn(true)`
+    // to re-enumerate.
     let SpawnedPipeline {
         rx,
         handler,
