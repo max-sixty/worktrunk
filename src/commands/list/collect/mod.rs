@@ -804,15 +804,10 @@ pub fn collect(
     // (`write-tree`, `commit-tree`, `merge-tree --write-tree`). In a read-only
     // checkout those writes fail; redirect them into a temporary object
     // database (real database as a read-only alternate) so the analysis still
-    // runs — see `Repository::redirect_objects_if_read_only`. Setup failure is
-    // non-fatal: fall back to the real database and let any object-writing task
-    // surface its own error.
-    let redirected = repo
-        .redirect_objects_if_read_only()
-        .unwrap_or_else(|error| {
-            log::debug!("Object-store redirect for read-only checkout unavailable: {error:#}");
-            None
-        });
+    // runs — see `Repository::redirect_objects_if_read_only`. A `None` (writable
+    // store, or no writable temp dir) leaves object-writing tasks on the real
+    // database, where they surface their own errors.
+    let redirected = repo.redirect_objects_if_read_only();
     let repo = redirected.as_ref().unwrap_or(repo);
     let show_progress = matches!(render_target, RenderTarget::Table { progressive: true });
     let render_table = matches!(render_target, RenderTarget::Table { .. });

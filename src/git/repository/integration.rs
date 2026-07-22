@@ -1238,13 +1238,6 @@ mod read_only_object_store_tests {
         (test, main_sha, feature_sha)
     }
 
-    fn clean_tree(outcome: MergeTreeOutcome) -> String {
-        match outcome {
-            MergeTreeOutcome::Clean { tree } => tree,
-            MergeTreeOutcome::Conflict => panic!("test topology merges cleanly"),
-        }
-    }
-
     /// A writable object database must never redirect — the normal path is
     /// left byte-for-byte unchanged.
     #[test]
@@ -1252,7 +1245,7 @@ mod read_only_object_store_tests {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
         assert!(
-            repo.redirect_objects_if_read_only().unwrap().is_none(),
+            repo.redirect_objects_if_read_only().is_none(),
             "a writable object database must not trigger a redirect"
         );
     }
@@ -1266,20 +1259,25 @@ mod read_only_object_store_tests {
     #[test]
     fn redirected_object_writes_stay_out_of_the_real_database() {
         let (test, main_sha, feature_sha) = diverged_repo();
+        let merge_tree = |repo: &Repository| {
+            repo.run_command(&["merge-tree", "--write-tree", &main_sha, &feature_sha])
+                .unwrap()
+                .lines()
+                .next()
+                .unwrap()
+                .trim()
+                .to_string()
+        };
 
         // Redirected clone: the merge tree lands in the temporary store only.
         let redirected = Repository::at(test.root_path())
             .unwrap()
             .with_temporary_object_directory()
             .unwrap();
-        let ephemeral_tree = clean_tree(
-            redirected
-                .merge_tree_outcome(&main_sha, &feature_sha)
-                .unwrap(),
-        );
+        let ephemeral_tree = merge_tree(&redirected);
 
-        // A separate, non-redirected repository (distinct cache) reads the real
-        // database directly. The redirected tree is absent there.
+        // A separate, non-redirected repository reads the real database
+        // directly; the redirected tree is absent there.
         let real = Repository::at(test.root_path()).unwrap();
         assert!(
             !real
@@ -1290,7 +1288,7 @@ mod read_only_object_store_tests {
 
         // The persistent path yields the same content-addressed tree, this time
         // materialized in the real database.
-        let persistent_tree = clean_tree(real.merge_tree_outcome(&main_sha, &feature_sha).unwrap());
+        let persistent_tree = merge_tree(&real);
         assert_eq!(persistent_tree, ephemeral_tree);
         assert!(
             real.run_command_check(&["cat-file", "-e", &persistent_tree])

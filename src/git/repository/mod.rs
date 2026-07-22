@@ -582,7 +582,7 @@ impl Repository {
     /// read-only object database also blocks the ref/index/worktree writes
     /// those commands need, keeping them on the persistent database makes them
     /// fail loudly rather than silently succeed into a store that vanishes.
-    pub fn redirect_objects_if_read_only(&self) -> anyhow::Result<Option<Self>> {
+    pub fn redirect_objects_if_read_only(&self) -> Option<Self> {
         let objects = self.object_database_path();
 
         // Probe effective writability by creating a file in the object
@@ -595,35 +595,32 @@ impl Repository {
             .tempfile_in(&objects)
             .is_ok()
         {
-            return Ok(None);
+            return None;
         }
 
-        self.with_temporary_object_directory().map(Some)
+        self.with_temporary_object_directory()
     }
 
     /// Build a clone whose object writes are redirected into a fresh temporary
-    /// object database, with the real database (plus any inherited alternates)
-    /// as read-only alternates. This is the *mechanism*; the *policy* — whether
-    /// to redirect at all — lives in [`Self::redirect_objects_if_read_only`],
-    /// the only production caller.
-    fn with_temporary_object_directory(&self) -> anyhow::Result<Self> {
-        let mut alternates = vec![self.object_database_path()];
-        if let Some(inherited) = std::env::var_os("GIT_ALTERNATE_OBJECT_DIRECTORIES") {
-            alternates.extend(std::env::split_paths(&inherited));
-        }
-        let alternates = std::env::join_paths(alternates)
-            .context("Failed to encode Git alternate object directories")?;
+    /// object database, with the real database as a read-only alternate so
+    /// existing objects still resolve. Returns `None` when the temporary store
+    /// can't be created (no writable temp dir), leaving the caller on the real
+    /// database. This is the *mechanism*; the *policy* — whether to redirect at
+    /// all — lives in [`Self::redirect_objects_if_read_only`], the only
+    /// production caller.
+    fn with_temporary_object_directory(&self) -> Option<Self> {
+        let alternates = self.object_database_path().into_os_string();
         let directory = tempfile::Builder::new()
             .prefix("worktrunk-list-objects-")
             .tempdir()
-            .context("Failed to create temporary Git object directory")?;
+            .ok()?;
 
         let mut clone = self.clone();
         clone.temporary_object_directory = Some(Arc::new(TemporaryObjectDirectory {
             directory,
             alternates,
         }));
-        Ok(clone)
+        Some(clone)
     }
 
     /// Absolute path to this repository's shared object database — the store a
