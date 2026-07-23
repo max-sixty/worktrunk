@@ -512,15 +512,13 @@ pub enum GitError {
         target_branch: String,
         error: String,
     },
-    /// `wt merge` would squash/rebase against a *local* target ref that has
-    /// fallen behind its upstream, folding commits already published on the
-    /// upstream into a new commit on that local ref — corrupting it (#3519).
-    /// Detected locally, with no fetch (worktrunk is local-first): the target
-    /// branch has an upstream that resolves locally and
-    /// `merge-base(HEAD, upstream)` is not an ancestor of the local target, so
-    /// the merge span reaches commits the upstream already contains. Refused
-    /// rather than silently mutating a stale ref, per the Data Safety posture.
-    MergeTargetBehindUpstream {
+    /// `wt merge` requires the local target ref to fast-forward to the merge
+    /// result. When the target has both fallen behind its upstream and grown
+    /// its own commits — diverged — while the branch is based past it on the
+    /// upstream side, no fast-forward exists in any mode: the target's own
+    /// commits first need reconciling with the upstream (#3519). Detected
+    /// locally, with no fetch, before any rewrite or approval prompt.
+    MergeTargetDivergedFromUpstream {
         target_branch: String,
         upstream: String,
     },
@@ -738,11 +736,11 @@ impl GitError {
                 cformat!("Can't push to local <bold>{target_branch}</> branch")
             }
 
-            GitError::MergeTargetBehindUpstream {
+            GitError::MergeTargetDivergedFromUpstream {
                 target_branch,
                 upstream,
             } => cformat!(
-                "Local <bold>{target_branch}</> is behind <bold>{upstream}</> — merging would fold already-upstream commits into <bold>{target_branch}</>"
+                "Local <bold>{target_branch}</> has diverged from <bold>{upstream}</> — can't fast-forward to a branch based on <bold>{upstream}</>"
             ),
 
             GitError::NotInteractive => {
@@ -1210,7 +1208,7 @@ impl GitError {
                 write!(f, "{}", format_error_block(error_message(&title), error))
             }
 
-            GitError::MergeTargetBehindUpstream {
+            GitError::MergeTargetDivergedFromUpstream {
                 target_branch,
                 upstream,
             } => {
@@ -1220,7 +1218,7 @@ impl GitError {
                     "{}\n{}",
                     error_message(&title),
                     hint_message(cformat!(
-                        "Update <underline>{target_branch}</> from <underline>{upstream}</> before merging, or specify a different target"
+                        "Reconcile <underline>{target_branch}</> with <underline>{upstream}</> (rebase or merge its local commits), or specify a different target"
                     ))
                 )
             }

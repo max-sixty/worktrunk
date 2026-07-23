@@ -4400,26 +4400,11 @@ fn test_merge_removes_branch_when_local_main_diverged_from_upstream(
     );
 }
 
-/// Data-safety regression (#3519): `wt merge` must refuse to squash/rebase
-/// against a *local* target ref that has fallen behind its upstream. Otherwise
-/// the merge span `merge-base(local-main, HEAD)..HEAD` sweeps in commits already
-/// on `origin/main` and folds them into a new squash commit on the local ref —
-/// corrupting the primary checkout's `main` and, if later pushed, duplicating
-/// upstream content under new SHAs.
-///
-/// Contrast with `test_merge_removes_branch_when_local_main_diverged_from_upstream`:
-/// there the feature forks from the *shared base*, so the span is only the
-/// feature's own commit and the merge legitimately succeeds. Here the feature
-/// forks from the newer `origin/main` tip, so the span reaches already-upstream
-/// commits and the merge must fail rather than mutate the stale ref.
-#[rstest]
-fn test_merge_refuses_stale_local_default_behind_upstream(
-    #[from(repo_with_remote)] repo: TestRepo,
-) {
+/// Set up the #3519 stale-local-default topology: origin/main advanced by two
+/// commits (stand-ins for already-merged PRs) that the primary has fetched but
+/// not fast-forwarded into its local main.
+fn setup_stale_local_main(repo: &TestRepo) {
     let remote_path = repo.remote_path().unwrap().to_path_buf();
-
-    // Advance origin/main by two commits (stand-ins for already-merged PRs)
-    // from a second clone, without touching the primary's local main.
     let github_sim = repo.home_path().join("github-sim");
     repo.run_git_in(
         repo.home_path(),
@@ -4435,10 +4420,9 @@ fn test_merge_refuses_stale_local_default_behind_upstream(
     }
     repo.run_git_in(&github_sim, &["push", "origin", "main"]);
 
-    // Primary fetches origin (so origin/main is known locally) but leaves its
-    // local main stale — behind origin/main by the two upstream commits.
+    // Fetch so origin/main is known locally, but leave local main stale —
+    // behind origin/main by the two upstream commits.
     repo.run_git(&["fetch", "origin"]);
-    let stale_main = repo.git_output(&["rev-parse", "main"]);
     assert!(
         !repo
             .git_command()
@@ -4449,9 +4433,15 @@ fn test_merge_refuses_stale_local_default_behind_upstream(
             .success(),
         "setup: local main should be behind origin/main"
     );
+}
 
-    // Create a feature worktree off the *newer* origin/main tip (mirrors
-    // `wt switch --create feature --base origin/main`) with one real commit.
+/// Add a `feature` worktree branched from `base`, with commits for the given
+/// (file, message) pairs.
+fn add_feature_worktree(
+    repo: &TestRepo,
+    base: &str,
+    commits: &[(&str, &str)],
+) -> std::path::PathBuf {
     let feature_wt = repo.root_path().parent().unwrap().join("repo.feature");
     repo.run_git(&[
         "worktree",
@@ -4459,16 +4449,211 @@ fn test_merge_refuses_stale_local_default_behind_upstream(
         "-b",
         "feature",
         feature_wt.to_str().unwrap(),
-        "origin/main",
+        base,
     ]);
-    fs::write(feature_wt.join("feature.txt"), "feature").unwrap();
-    repo.run_git_in(&feature_wt, &["add", "feature.txt"]);
-    repo.run_git_in(
-        &feature_wt,
-        &["commit", "-m", "the one real feature commit"],
+    for (file, msg) in commits {
+        fs::write(feature_wt.join(file), "feature").unwrap();
+        repo.run_git_in(&feature_wt, &["add", file]);
+        repo.run_git_in(&feature_wt, &["commit", "-m", msg]);
+    }
+    feature_wt
+}
+
+/// #3519: `wt merge` from a branch based on origin/main, with the primary's
+/// local main left behind it, measures the squash against the *upstream* — so
+/// only the branch's own commits fold — and the final fast-forward carries
+/// local main through the upstream commits by their real SHAs.
+///
+/// Contrast with `test_merge_removes_branch_when_local_main_diverged_from_upstream`:
+/// there the feature forks from the *shared base*, so the span is only the
+/// feature's own commit and the merge proceeds against the local ref unchanged.
+#[rstest]
+fn test_merge_carries_stale_local_main_through_upstream(#[from(repo_with_remote)] repo: TestRepo) {
+    setup_stale_local_main(&repo);
+    let upstream_tip = repo.git_output(&["rev-parse", "origin/main"]);
+    // Two feature commits so the squash step actually rewrites (one commit
+    // takes the AlreadySingleCommit early-out).
+    let feature_wt = add_feature_worktree(
+        &repo,
+        "origin/main",
+        &[
+            ("feature-1.txt", "feature commit one"),
+            ("feature-2.txt", "feature commit two"),
+        ],
     );
 
-    // Merge must fail rather than fold the two upstream commits into main.
+    let output = repo
+        .wt_command()
+        .args(["merge", "main", "--yes", "--no-hooks", "--no-remove"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "merge must carry a stale local main through its upstream\nstderr:\n{stderr}",
+    );
+    assert!(
+        stderr.contains("2 commits behind"),
+        "merge should announce the carry\nstderr:\n{stderr}",
+    );
+
+    // The squash folded only the branch's own commits: the merged tip sits
+    // directly on the origin/main tip and its message names no upstream PR.
+    assert_eq!(
+        repo.git_output(&["rev-parse", "main^"]),
+        upstream_tip,
+        "squash commit must sit on the origin/main tip",
+    );
+    let tip_message = repo.git_output(&["log", "-1", "--format=%B", "main"]);
+    assert!(
+        tip_message.contains("feature commit one") && !tip_message.contains("Upstream PR"),
+        "squash must fold only the branch's own commits\nmessage:\n{tip_message}",
+    );
+    // The upstream commits arrived by their real SHAs — main descends from
+    // origin/main instead of duplicating its content.
+    assert!(
+        repo.git_command()
+            .args(["merge-base", "--is-ancestor", "origin/main", "main"])
+            .run()
+            .unwrap()
+            .status
+            .success(),
+        "origin/main must be an ancestor of the merged main",
+    );
+}
+
+/// #3519 (standalone step): `wt step squash` measures against the target's
+/// upstream when the local target ref is stale, folding only the branch's own
+/// commits — and never touches the target ref at all.
+#[rstest]
+fn test_step_squash_measures_against_upstream_when_local_main_stale(
+    #[from(repo_with_remote)] repo: TestRepo,
+) {
+    setup_stale_local_main(&repo);
+    let stale_main = repo.git_output(&["rev-parse", "main"]);
+    let upstream_tip = repo.git_output(&["rev-parse", "origin/main"]);
+    let feature_wt = add_feature_worktree(
+        &repo,
+        "origin/main",
+        &[
+            ("feature-1.txt", "feature commit one"),
+            ("feature-2.txt", "feature commit two"),
+        ],
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["step", "squash", "main", "--yes", "--no-hooks"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "step squash must succeed against the upstream span\nstderr:\n{stderr}",
+    );
+
+    // Only the branch's own commits folded: the squash sits on the origin/main
+    // tip, and no upstream commit was swept into it.
+    assert_eq!(
+        repo.git_output(&["rev-parse", "feature^"]),
+        upstream_tip,
+        "squash commit must sit on the origin/main tip",
+    );
+    let tip_message = repo.git_output(&["log", "-1", "--format=%B", "feature"]);
+    assert!(
+        tip_message.contains("feature commit two") && !tip_message.contains("Upstream PR"),
+        "squash must fold only the branch's own commits\nmessage:\n{tip_message}",
+    );
+    // A standalone squash rewrites the branch only — the target ref is not its
+    // business.
+    assert_eq!(
+        repo.git_output(&["rev-parse", "main"]),
+        stale_main,
+        "step squash must never move the target ref",
+    );
+}
+
+/// #3519 (standalone step): `wt step rebase` with a stale local target rebases
+/// onto the target's *upstream*, replaying only the branch's own commits.
+/// Rebasing onto the stale local ref would replay the upstream commits too,
+/// duplicating them under new SHAs.
+#[rstest]
+fn test_step_rebase_targets_upstream_when_local_main_stale(
+    #[from(repo_with_remote)] repo: TestRepo,
+) {
+    setup_stale_local_main(&repo);
+    let stale_main = repo.git_output(&["rev-parse", "main"]);
+    // A branch forked from the *old* local main tip that then merged
+    // origin/main — non-linear history whose local-main span contains the
+    // upstream commits, so the rebase step actually rewrites.
+    let feature_wt = add_feature_worktree(
+        &repo,
+        "main",
+        &[("feature.txt", "the one real feature commit")],
+    );
+    repo.run_git_in(&feature_wt, &["merge", "--no-edit", "origin/main"]);
+
+    let output = repo
+        .wt_command()
+        .args(["step", "rebase", "main"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "step rebase must succeed onto the upstream\nstderr:\n{stderr}",
+    );
+    assert!(
+        stderr.contains("origin/main"),
+        "rebase should name the upstream it targeted\nstderr:\n{stderr}",
+    );
+
+    // The upstream commits stay by their real SHAs (origin/main is an
+    // ancestor), the merge commit is linearized away, and the local target ref
+    // is untouched.
+    assert!(
+        repo.git_command()
+            .args(["merge-base", "--is-ancestor", "origin/main", "feature"])
+            .run()
+            .unwrap()
+            .status
+            .success(),
+        "origin/main must be an ancestor of the rebased branch",
+    );
+    assert_eq!(
+        repo.git_output(&["rev-list", "--merges", "--count", "feature"]),
+        "0",
+        "rebase must linearize the branch",
+    );
+    assert_eq!(
+        repo.git_output(&["rev-parse", "main"]),
+        stale_main,
+        "step rebase must never move the target ref",
+    );
+}
+
+/// #3519: a local target that has *diverged* from its upstream — its own
+/// commits and behind — can never fast-forward to a branch based on the
+/// upstream. The merge refuses up front, mutating nothing.
+#[rstest]
+fn test_merge_refuses_diverged_target_when_branch_based_on_upstream(
+    #[from(repo_with_remote)] repo: TestRepo,
+) {
+    setup_stale_local_main(&repo);
+    // Give local main its own commit so it diverges from origin/main.
+    fs::write(repo.root_path().join("local-only.txt"), "local").unwrap();
+    repo.run_git(&["add", "local-only.txt"]);
+    repo.run_git(&["commit", "-m", "local-only commit on main"]);
+    let diverged_main = repo.git_output(&["rev-parse", "main"]);
+    let feature_wt = add_feature_worktree(
+        &repo,
+        "origin/main",
+        &[("feature.txt", "the one real feature commit")],
+    );
+
     let output = repo
         .wt_command()
         .args(["merge", "main", "--yes", "--no-hooks"])
@@ -4478,20 +4663,17 @@ fn test_merge_refuses_stale_local_default_behind_upstream(
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !output.status.success(),
-        "merge must refuse a stale local default branch\nstderr:\n{stderr}",
+        "merge must refuse a diverged local target\nstderr:\n{stderr}",
     );
     assert!(
-        stderr.contains("is behind"),
-        "error should explain the stale local target\nstderr:\n{stderr}",
+        stderr.contains("has diverged"),
+        "error should explain the divergence\nstderr:\n{stderr}",
     );
-
-    // The local main ref must be untouched — not fast-forwarded, not squashed.
     assert_eq!(
         repo.git_output(&["rev-parse", "main"]),
-        stale_main,
+        diverged_main,
         "local main must not be mutated by a refused merge",
     );
-    // The feature branch must survive a refused merge (no removal).
     assert!(
         repo.git_command()
             .args(["rev-parse", "--verify", "--quiet", "refs/heads/feature"])

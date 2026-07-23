@@ -21,6 +21,13 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
 
     // Get and validate target ref (any commit-ish for rebase)
     let integration_target = repo.require_target_ref(target)?;
+    // #3519: when the branch's history extends past the local target into the
+    // target's upstream, rebase onto the upstream instead — replaying the span
+    // onto the stale local ref would duplicate commits the upstream already
+    // contains under new SHAs.
+    let integration_target = repo
+        .span_upstream(&integration_target)?
+        .unwrap_or(integration_target);
 
     // Check if already up-to-date (linear extension of target, no merge commits)
     if repo.is_rebased_onto(&integration_target)? {
