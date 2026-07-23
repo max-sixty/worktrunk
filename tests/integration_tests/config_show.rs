@@ -4275,6 +4275,27 @@ fn test_plugin_layout_is_consolidated() {
          hooks.json:\n{hooks}"
     );
 
+    // The WorktreeCreate hook pipes `wt … --format=json | jq -er .path`. Without
+    // `set -o pipefail` the pipeline's exit status is jq's, and `jq -er .path`
+    // on the empty stdout of a failed `wt` exits 0 on jq 1.6 — so a `wt` failure
+    // (e.g. an existing-branch collision after the branch/worktree were already
+    // created) is swallowed and Claude Code reports the misleading "hook
+    // succeeded but returned no worktree path" instead of wt's real error
+    // (#3545). pipefail makes the pipeline surface wt's nonzero exit regardless
+    // of jq version. The wrapper must be `bash -c` (dash rejects `set -o
+    // pipefail` fatally; some login shells are fish, which has no shell options)
+    // — see skills/wt-switch-create/rationale.md, "The hooks.json pipefail wrapper".
+    let worktree_create_cmd = hooks_json["hooks"]["WorktreeCreate"][0]["hooks"][0]["command"]
+        .as_str()
+        .expect("WorktreeCreate hook must define a command");
+    assert!(
+        worktree_create_cmd.contains("set -o pipefail"),
+        "WorktreeCreate hook pipes `wt … | jq -er .path`; without `set -o pipefail` a \
+         failed wt with empty stdout is swallowed (jq 1.6 exits 0 on empty input) and \
+         Claude Code reports \"hook succeeded but returned no worktree path\" instead \
+         of wt's real error (#3545). command:\n{worktree_create_cmd}"
+    );
+
     // The product description must not drift across tools. Byte-identical is
     // schema-impossible (Codex omits the activity clause, Gemini says
     // "extension"), but every manifest shares the canonical opening sentence.

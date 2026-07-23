@@ -721,7 +721,7 @@ fn announce_trace_destination() {
     let dir_display = worktrunk::path::format_path_for_display(dir);
     eprintln!(
         "{}",
-        info_message(format!("Verbose logging to {dir_display}/"))
+        info_message(format!("Verbose logging @ {dir_display}/"))
     );
 }
 

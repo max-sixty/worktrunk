@@ -135,10 +135,13 @@ impl<'a> WorkingTree<'a> {
     /// Use this when you need to check exit codes directly (e.g., for commands
     /// where non-zero exit is not an error condition).
     pub fn run_command_output(&self, args: &[&str]) -> anyhow::Result<std::process::Output> {
-        Cmd::new("git")
-            .args(args.iter().copied())
-            .current_dir(&self.path)
-            .context(path_to_logging_context(&self.path))
+        self.repo
+            .with_object_store_env(
+                Cmd::new("git")
+                    .args(args.iter().copied())
+                    .current_dir(&self.path)
+                    .context(path_to_logging_context(&self.path)),
+            )
             .run()
             .with_context(|| format!("Failed to execute: git {}", args.join(" ")))
     }
@@ -567,6 +570,9 @@ impl<'a> WorkingTree<'a> {
             temp,
             worktree_root,
             log_ctx,
+            object_store_environment: self.repo.object_store_environment().map(
+                |(directory, alternates)| (directory.to_path_buf(), alternates.to_os_string()),
+            ),
         })
     }
 
@@ -675,6 +681,10 @@ pub struct TempIndex {
     temp: tempfile::TempPath,
     worktree_root: PathBuf,
     log_ctx: String,
+    /// Copied from the [`Repository`] so a redirected `wt list` writes the temp
+    /// index's `write-tree` objects into the temporary store. `None` on the
+    /// normal persistent path. See [`Repository::redirect_objects_if_read_only`].
+    object_store_environment: Option<(PathBuf, std::ffi::OsString)>,
 }
 
 impl TempIndex {
@@ -693,11 +703,17 @@ impl TempIndex {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        Cmd::new("git")
+        let command = Cmd::new("git")
             .args(args)
             .current_dir(&self.worktree_root)
             .context(self.log_ctx.clone())
-            .env("GIT_INDEX_FILE", self.path())
+            .env("GIT_INDEX_FILE", self.path());
+        match &self.object_store_environment {
+            Some((directory, alternates)) => command
+                .env("GIT_OBJECT_DIRECTORY", directory)
+                .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", alternates),
+            None => command,
+        }
     }
 }
 

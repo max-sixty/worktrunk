@@ -1213,3 +1213,87 @@ mod merge_tree_cache_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod read_only_object_store_tests {
+    use super::*;
+    use crate::testing::TestRepo;
+
+    /// A cleanly-mergeable but diverged topology: `main` and `feature` touch
+    /// different files off a shared base, so `merge-tree --write-tree` must
+    /// write a genuinely new tree (not a fast-forward that reuses an existing
+    /// one). Returns `(main_sha, feature_sha)`.
+    fn diverged_repo() -> (TestRepo, String, String) {
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&["checkout", "-b", "feature"]);
+        std::fs::write(test.root_path().join("feature.txt"), "feature\n").unwrap();
+        test.run_git(&["add", "feature.txt"]);
+        test.run_git(&["commit", "-m", "feature"]);
+        test.run_git(&["checkout", "main"]);
+        std::fs::write(test.root_path().join("main.txt"), "main\n").unwrap();
+        test.run_git(&["add", "main.txt"]);
+        test.run_git(&["commit", "-m", "main"]);
+        let main_sha = test.git_output(&["rev-parse", "main"]);
+        let feature_sha = test.git_output(&["rev-parse", "feature"]);
+        (test, main_sha, feature_sha)
+    }
+
+    /// A writable object database must never redirect — the normal path is
+    /// left byte-for-byte unchanged.
+    #[test]
+    fn writable_object_database_is_not_redirected() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        assert!(
+            repo.redirect_objects_if_read_only().is_none(),
+            "a writable object database must not trigger a redirect"
+        );
+    }
+
+    /// The safety property behind scoping the redirect to observational
+    /// commands: a redirected merge tree is computed correctly but written only
+    /// to the throwaway store, so it is *not* in the real object database. A
+    /// mutating command that redirected would therefore lose its commit — which
+    /// is why mutating commands keep the persistent path and fail loudly on a
+    /// read-only store instead.
+    #[test]
+    fn redirected_object_writes_stay_out_of_the_real_database() {
+        let (test, main_sha, feature_sha) = diverged_repo();
+        let merge_tree = |repo: &Repository| {
+            repo.run_command(&["merge-tree", "--write-tree", &main_sha, &feature_sha])
+                .unwrap()
+                .lines()
+                .next()
+                .unwrap()
+                .trim()
+                .to_string()
+        };
+
+        // Redirected clone: the merge tree lands in the temporary store only.
+        let redirected = Repository::at(test.root_path())
+            .unwrap()
+            .with_temporary_object_directory()
+            .unwrap();
+        let ephemeral_tree = merge_tree(&redirected);
+
+        // A separate, non-redirected repository reads the real database
+        // directly; the redirected tree is absent there.
+        let real = Repository::at(test.root_path()).unwrap();
+        assert!(
+            !real
+                .run_command_check(&["cat-file", "-e", &ephemeral_tree])
+                .unwrap(),
+            "a redirected merge tree must not be written to the real object database"
+        );
+
+        // The persistent path yields the same content-addressed tree, this time
+        // materialized in the real database.
+        let persistent_tree = merge_tree(&real);
+        assert_eq!(persistent_tree, ephemeral_tree);
+        assert!(
+            real.run_command_check(&["cat-file", "-e", &persistent_tree])
+                .unwrap(),
+            "the persistent path must materialize its merge tree in the real database"
+        );
+    }
+}
