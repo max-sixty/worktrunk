@@ -1240,8 +1240,9 @@ mod tests {
             let joined = StatuslineSegment::join(&fitted);
             let out = truncate_visible(&format!("{} {joined}", anstyle::Reset), max_width);
 
-            // Opener and closer both begin `\e]8;;`, so an intact link
-            // contributes exactly two — an odd count means one was severed.
+            // Opener and closer both begin `\e]8;;`, so the segment is either
+            // present whole (two markers) or dropped whole (none). Anything
+            // else is a link the cut landed inside.
             match out.matches("\u{1b}]8;;").count() {
                 2 => kept += 1,
                 0 => dropped += 1,
