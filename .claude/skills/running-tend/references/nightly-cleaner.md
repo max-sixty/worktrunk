@@ -12,6 +12,6 @@ For each `.rs` file in the survey, also check:
 
 ## Session Budget — One Deliverable
 
-The session runs under a harness timeout. When it expires the kill lands mid-work and pre-empts the result event, so the run reports as `failure` with `$0.00` and 0 tokens, and the summary is lost with it. Ship the sweep PR, then monitor only *its* CI per the `running-in-ci` CI-monitoring loop.
+The session runs under a harness timeout. The kill pre-empts the result event, so an overrun reports as `failure` with `$0.00` and 0 tokens and loses its summary. Ship the sweep PR, then monitor only *its* CI per the `running-in-ci` CI-monitoring loop.
 
 A failure in an unrelated, repo-wide job (one that fails identically on `main` and every PR, such as a broken system-package install in `code-coverage`) belongs to `tend-ci-fix`, which fires on every `ci`-workflow `failure` on `main`; a non-required job failing is enough to trigger it. Record the breakage in the summary and finish rather than opening a second investigate-and-fix PR the session has no budget to land.
