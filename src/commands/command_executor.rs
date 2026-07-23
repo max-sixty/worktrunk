@@ -71,7 +71,7 @@ impl PreparedStep {
 /// Receives the failing command, the message extracted from the inner error,
 /// and the optional exit code (set when the inner error is
 /// `WorktrunkError::ChildProcessExited`). Signal-derived errors bypass this
-/// wrapper and short-circuit to `AlreadyDisplayed` — see
+/// wrapper and short-circuit to `Interrupted` — see
 /// [`handle_command_error`] for the rationale.
 ///
 /// The wrapper is invoked on the calling thread after concurrent children
@@ -668,19 +668,19 @@ pub fn alias_error_wrapper(alias_name: String) -> ErrorWrapper {
 
 /// Handle a command execution error via the step's `ErrorWrapper`.
 ///
-/// Signal-derived child exits (SIGINT/SIGTERM) bypass the wrapper and
-/// `failure_strategy`: the error is returned as `AlreadyDisplayed` with the
-/// `128 + signal` exit code so the enclosing loop aborts. This enforces the
-/// project-wide Ctrl-C cancellation policy — see the "Signal Handling"
-/// section of the root `CLAUDE.md` for the rationale.
+/// Signal-derived child exits bypass the wrapper and `failure_strategy`:
+/// the error is returned as `Interrupted` (exiting `128 + signal`) so the
+/// enclosing loop aborts. This enforces the project-wide Ctrl-C cancellation
+/// policy — see the "Signal Handling" section of the root `CLAUDE.md` for
+/// the rationale.
 fn handle_command_error(
     err: anyhow::Error,
     cmd: &PreparedCommand,
     error_wrapper: &ErrorWrapper,
     failure_strategy: FailureStrategy,
 ) -> anyhow::Result<()> {
-    if let Some(exit_code) = err.interrupt_exit_code() {
-        return Err(WorktrunkError::AlreadyDisplayed { exit_code }.into());
+    if let Some(signal) = err.interrupt_signal() {
+        return Err(WorktrunkError::Interrupted { signal, hint: None }.into());
     }
 
     let (err_msg, exit_code) = if let Some(wt_err) = err.downcast_ref::<WorktrunkError>() {
@@ -895,7 +895,10 @@ mod tests {
         let wt_err = err.downcast_ref::<WorktrunkError>().unwrap();
         assert!(matches!(
             wt_err,
-            WorktrunkError::AlreadyDisplayed { exit_code: 143 }
+            WorktrunkError::Interrupted {
+                signal: 15,
+                hint: None
+            }
         ));
     }
 

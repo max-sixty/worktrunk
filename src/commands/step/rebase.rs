@@ -79,13 +79,21 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
 ///
 /// A forwarded Ctrl-C/SIGTERM kills git mid-rebase and leaves the worktree in
 /// `REBASING` state, which is otherwise indistinguishable from a merge
-/// conflict. The interrupt is surfaced as its exit code *before* the conflict
+/// conflict. The interrupt is surfaced as `Interrupted` *before* the conflict
 /// check, per the signal-handling policy in `CLAUDE.md`: otherwise a user who
 /// aborts `wt merge` gets conflict-resolution guidance and a non-130 exit code
-/// instead of a clean interrupt.
+/// instead of a clean interrupt. When the kill left the worktree mid-rebase,
+/// the interrupt carries a recovery hint — git ran in capture mode, so none
+/// of its output was shown, and without the hint the otherwise-clean exit
+/// would hide the `REBASING` state left behind.
 fn classify_rebase_failure(e: anyhow::Error, is_rebasing: bool, target: &str) -> anyhow::Error {
-    if let Some(exit_code) = e.interrupt_exit_code() {
-        return worktrunk::git::WorktrunkError::AlreadyDisplayed { exit_code }.into();
+    if let Some(signal) = e.interrupt_signal() {
+        let hint = is_rebasing.then(|| {
+            cformat!(
+                "Rebase onto <underline>{target}</> left in progress; to abort, run <underline>git rebase --abort</>"
+            )
+        });
+        return worktrunk::git::WorktrunkError::Interrupted { signal, hint }.into();
     }
 
     // Pull git's stderr from the typed leaf when present so we get the raw
@@ -108,7 +116,7 @@ fn classify_rebase_failure(e: anyhow::Error, is_rebasing: bool, target: &str) ->
 #[cfg(test)]
 mod tests {
     use super::classify_rebase_failure;
-    use worktrunk::git::WorktrunkError::AlreadyDisplayed;
+    use worktrunk::git::WorktrunkError::Interrupted;
     use worktrunk::git::{CommandError, ErrorExt, GitError, WorktrunkError};
 
     fn child_exit(code: i32, signal: Option<i32>) -> anyhow::Error {
@@ -152,8 +160,20 @@ mod tests {
         // the opener line read as missed in patch coverage.
         let wt_err = err.downcast_ref::<WorktrunkError>();
         assert!(
-            matches!(wt_err, Some(AlreadyDisplayed { exit_code: 130 })),
-            "capture-mode interrupt must surface as AlreadyDisplayed, not a rebase conflict"
+            matches!(wt_err, Some(Interrupted { signal: 2, .. })),
+            "capture-mode interrupt must surface as Interrupted, not a rebase conflict"
+        );
+        // Mid-rebase, the interrupt carries the recovery hint for the
+        // REBASING state it leaves behind.
+        let Some(Interrupted {
+            hint: Some(hint), ..
+        }) = wt_err
+        else {
+            panic!("mid-rebase interrupt must carry a recovery hint, got {wt_err:?}");
+        };
+        assert!(
+            hint.contains("git rebase --abort"),
+            "hint must name the recovery command, got: {hint}"
         );
         let git_err = err.downcast_ref::<GitError>();
         assert!(
@@ -186,20 +206,28 @@ mod tests {
     #[test]
     fn interrupt_during_rebase_is_not_classified_as_conflict() {
         // SIGINT (2) forwarded to git leaves the worktree REBASING; it must
-        // surface as a silent interrupt carrying exit 130, not a RebaseConflict
+        // surface as an interrupt carrying exit 130, not a RebaseConflict
         // with resolution guidance. Before the interrupt check this returned a
         // GitError::RebaseConflict, whose exit_code() is None.
         let err = classify_rebase_failure(child_exit(130, Some(2)), true, "main");
         assert_eq!(err.exit_code(), Some(130));
         let wt_err = err.downcast_ref::<WorktrunkError>();
         assert!(
-            matches!(wt_err, Some(AlreadyDisplayed { exit_code: 130 })),
-            "interrupt must surface as AlreadyDisplayed, not a rebase conflict"
+            matches!(wt_err, Some(Interrupted { signal: 2, .. })),
+            "interrupt must surface as Interrupted, not a rebase conflict"
         );
         let git_err = err.downcast_ref::<GitError>();
         assert!(
             !matches!(git_err, Some(GitError::RebaseConflict { .. })),
             "interrupt must not be reclassified as a rebase conflict"
+        );
+
+        // Outside REBASING state there's nothing to recover — no hint.
+        let err = classify_rebase_failure(child_exit(130, Some(2)), false, "main");
+        let wt_err = err.downcast_ref::<WorktrunkError>();
+        assert!(
+            matches!(wt_err, Some(Interrupted { hint: None, .. })),
+            "interrupt outside REBASING must carry no hint, got {wt_err:?}"
         );
     }
 

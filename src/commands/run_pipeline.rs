@@ -312,7 +312,7 @@ fn create_command_log(spec: &PipelineSpec, name: &str) -> anyhow::Result<fs::Fil
 /// Signal-killed children surface as `WorktrunkError::ChildProcessExited`
 /// with `signal: Some(sig)` and `code: 128 + sig`, matching the foreground
 /// convention established by `shell_exec`. That lets `exit_code()` and
-/// `interrupt_exit_code()` work consistently and the `wt hook run-pipeline`
+/// `interrupt_signal()` work consistently and the `wt hook run-pipeline`
 /// process exits 130 on SIGINT and 143 on SIGTERM — the expectation the
 /// "Signal Handling" section of the project `CLAUDE.md` sets for every
 /// command loop.
@@ -404,9 +404,9 @@ mod tests {
             assert_eq!(code, expected_code, "exit code for {sig}");
             assert_eq!(message, expected_msg, "message for {sig}");
             assert_eq!(
-                err.interrupt_exit_code(),
-                Some(expected_code),
-                "interrupt_exit_code for {sig}",
+                err.interrupt_signal(),
+                Some(sig),
+                "interrupt_signal for {sig}"
             );
         }
     }
@@ -421,6 +421,6 @@ mod tests {
         assert_eq!(code, 2);
         assert_eq!(message, "command failed with exit code 2: my-step");
         // Non-signal errors must NOT trip the interrupt abort path.
-        assert_eq!(err.interrupt_exit_code(), None);
+        assert_eq!(err.interrupt_signal(), None);
     }
 }

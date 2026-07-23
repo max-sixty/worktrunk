@@ -59,9 +59,9 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
 
     let mut failed: Vec<String> = Vec::new();
     let mut json_results: Vec<serde_json::Value> = Vec::new();
-    // Set when a child dies from a signal (Ctrl-C / SIGTERM). We abort the
-    // loop and propagate an equivalent exit code rather than visiting the
-    // remaining worktrees — the user asked for the work to stop.
+    // The signal a child died from (Ctrl-C / SIGTERM), if any. We abort the
+    // loop and propagate `Interrupted` rather than visiting the remaining
+    // worktrees — the user asked for the work to stop.
     let mut interrupted: Option<i32> = None;
     let total = worktrees.len();
 
@@ -113,7 +113,7 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                 }
             }
             Err(err) => {
-                let signal_exit = err.interrupt_exit_code();
+                let signal_exit = err.interrupt_signal();
                 // Two error strings: a styled block for stderr (preserves
                 // hints from typed diagnostics) and a plain string for
                 // JSON (consumers shouldn't see ANSI codes or symbols).
@@ -153,15 +153,15 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                         "error": json_detail,
                     }));
                 }
-                if let Some(code) = signal_exit {
-                    interrupted = Some(code);
+                if let Some(signal) = signal_exit {
+                    interrupted = Some(signal);
                     break;
                 }
             }
         }
     }
 
-    if let Some(exit_code) = interrupted {
+    if let Some(signal) = interrupted {
         if json_mode {
             println!("{}", serde_json::to_string_pretty(&json_results)?);
         } else {
@@ -171,7 +171,7 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                 warning_message("Interrupted — skipped remaining worktrees")
             );
         }
-        return Err(WorktrunkError::AlreadyDisplayed { exit_code }.into());
+        return Err(WorktrunkError::Interrupted { signal, hint: None }.into());
     }
 
     if json_mode {

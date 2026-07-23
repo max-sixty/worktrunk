@@ -184,7 +184,7 @@ pub fn run_concurrent_commands(
     // user-visible exit code shouldn't be 137 — they only ever sent SIGINT, and
     // wt's escalation to SIGKILL on the second press is an implementation
     // detail. Override each child's reported signal with the originating signal
-    // so wt's `exit_code()` and `interrupt_exit_code()` reflect the user's
+    // so wt's `exit_code()` and `interrupt_signal()` reflect the user's
     // intent (130 from SIGINT, not 137 from SIGKILL).
     if let Some(orig) = originating_signal {
         for outcome in &mut outcomes {

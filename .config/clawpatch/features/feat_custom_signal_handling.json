@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "featureId": "feat_custom_signal_handling",
   "title": "Signal handling: Ctrl-C aborts every child-process loop",
-  "summary": "wt installs a signal_hook SIGINT/SIGTERM handler that forwards signals to child process groups, so wt itself does not die from the user's Ctrl-C, only the current child does. Every foreground loop that runs multiple child processes (`wt step for-each`, hook pipelines, alias steps, concurrent groups) MUST abort on a signal-derived child exit instead of charging into the next iteration: otherwise one Ctrl-C against `wt merge` runs the remaining hook steps, with FailureStrategy::Warn silently swallowing each interrupt. Detect via `err.interrupt_exit_code()` (the worktrunk::git::ErrorExt trait); the check happens before any FailureStrategy branch. The structured channel is WorktrunkError::ChildProcessExited { signal }, never sniff code >= 128. See CLAUDE.md > Signal Handling.",
+  "summary": "wt installs a signal_hook SIGINT/SIGTERM handler that forwards signals to child process groups, so wt itself does not die from the user's Ctrl-C, only the current child does. Every foreground loop that runs multiple child processes (`wt step for-each`, hook pipelines, alias steps, concurrent groups) MUST abort on a signal-derived child exit instead of charging into the next iteration: otherwise one Ctrl-C against `wt merge` runs the remaining hook steps, with FailureStrategy::Warn silently swallowing each interrupt. Detect via `err.interrupt_signal()` (the worktrunk::git::ErrorExt trait); the check happens before any FailureStrategy branch. The structured channel is WorktrunkError::ChildProcessExited { signal }, never sniff code >= 128. See CLAUDE.md > Signal Handling.",
   "kind": "library",
   "source": "manual",
   "confidence": "high",
@@ -25,7 +25,7 @@
     },
     {
       "path": "src/git/error.rs",
-      "reason": "ErrorExt::interrupt_exit_code and the WorktrunkError::ChildProcessExited signal channel"
+      "reason": "ErrorExt::interrupt_signal and the WorktrunkError::ChildProcessExited signal channel"
     }
   ],
   "contextFiles": [
