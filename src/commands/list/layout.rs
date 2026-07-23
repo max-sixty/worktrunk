@@ -599,10 +599,6 @@ struct PendingColumn<'a> {
     format: ColumnFormat,
 }
 
-/// Estimate URL column width using heuristics.
-///
-/// When hyperlinks are supported, URLs display as `:PORT` (6 chars for 5-digit ports).
-/// Otherwise, estimates full URL width from template structure.
 /// Format the dev-server URL, optionally as an OSC 8 hyperlink.
 ///
 /// A linked cell shows just the port (e.g. `:3000`) — the URL rides inside the
@@ -627,6 +623,10 @@ pub(crate) fn format_url_cell(url: &str, include_link: bool) -> String {
     url.to_string()
 }
 
+/// Estimate URL column width using heuristics.
+///
+/// When hyperlinks are supported, URLs display as `:PORT` (6 chars for 5-digit ports).
+/// Otherwise, estimates full URL width from template structure.
 fn estimate_url_width(url_template: Option<&str>, hyperlinks_supported: bool) -> usize {
     let Some(template) = url_template else {
         return 0;
