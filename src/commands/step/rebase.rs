@@ -108,6 +108,7 @@ fn classify_rebase_failure(e: anyhow::Error, is_rebasing: bool, target: &str) ->
 #[cfg(test)]
 mod tests {
     use super::classify_rebase_failure;
+    use worktrunk::git::WorktrunkError::AlreadyDisplayed;
     use worktrunk::git::{CommandError, ErrorExt, GitError, WorktrunkError};
 
     fn child_exit(code: i32, signal: Option<i32>) -> anyhow::Error {
@@ -145,18 +146,18 @@ mod tests {
         // RebaseConflict; the interrupt must win.
         let err = classify_rebase_failure(capture_signal_failure(2), true, "main");
         assert_eq!(err.exit_code(), Some(130));
+        // Downcasts are bound (and the variant imported) so each `matches!`
+        // stays on one line: a passing positive `matches!` never runs its
+        // generated false arm, and with a multi-line opener that region makes
+        // the opener line read as missed in patch coverage.
+        let wt_err = err.downcast_ref::<WorktrunkError>();
         assert!(
-            matches!(
-                err.downcast_ref::<WorktrunkError>(),
-                Some(WorktrunkError::AlreadyDisplayed { exit_code: 130 })
-            ),
+            matches!(wt_err, Some(AlreadyDisplayed { exit_code: 130 })),
             "capture-mode interrupt must surface as AlreadyDisplayed, not a rebase conflict"
         );
+        let git_err = err.downcast_ref::<GitError>();
         assert!(
-            !matches!(
-                err.downcast_ref::<GitError>(),
-                Some(GitError::RebaseConflict { .. })
-            ),
+            !matches!(git_err, Some(GitError::RebaseConflict { .. })),
             "capture-mode interrupt must not be reclassified as a rebase conflict"
         );
     }
@@ -169,11 +170,9 @@ mod tests {
         // the REBASING state makes it a RebaseConflict, whose rendering
         // carries the --abort hint), never a silent interrupt exit.
         let crashed = classify_rebase_failure(capture_signal_failure(11), true, "main");
+        let git_err = crashed.downcast_ref::<GitError>();
         assert!(
-            matches!(
-                crashed.downcast_ref::<GitError>(),
-                Some(GitError::RebaseConflict { .. })
-            ),
+            matches!(git_err, Some(GitError::RebaseConflict { .. })),
             "a crashed git mid-rebase must surface, not exit silently"
         );
 
@@ -192,18 +191,14 @@ mod tests {
         // GitError::RebaseConflict, whose exit_code() is None.
         let err = classify_rebase_failure(child_exit(130, Some(2)), true, "main");
         assert_eq!(err.exit_code(), Some(130));
+        let wt_err = err.downcast_ref::<WorktrunkError>();
         assert!(
-            matches!(
-                err.downcast_ref::<WorktrunkError>(),
-                Some(WorktrunkError::AlreadyDisplayed { exit_code: 130 })
-            ),
+            matches!(wt_err, Some(AlreadyDisplayed { exit_code: 130 })),
             "interrupt must surface as AlreadyDisplayed, not a rebase conflict"
         );
+        let git_err = err.downcast_ref::<GitError>();
         assert!(
-            !matches!(
-                err.downcast_ref::<GitError>(),
-                Some(GitError::RebaseConflict { .. })
-            ),
+            !matches!(git_err, Some(GitError::RebaseConflict { .. })),
             "interrupt must not be reclassified as a rebase conflict"
         );
     }
