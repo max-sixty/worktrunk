@@ -1207,6 +1207,52 @@ mod tests {
         );
     }
 
+    /// Width fitting must never cut inside the CI segment's OSC 8 sequence:
+    /// `truncate_visible` closes with `\e[0m`, which resets color but leaves a
+    /// hyperlink open, so a split link would make the rest of the terminal
+    /// line clickable. Priority ordering is what prevents it — CI is the
+    /// lowest-priority segment, so it is dropped whole long before the
+    /// highest-priority survivor is character-truncated.
+    #[test]
+    fn test_statusline_fitting_never_splits_the_ci_hyperlink() {
+        use super::super::list::columns::ColumnKind;
+
+        let ci = StatuslineSegment::from_column(
+            format!(
+                "{}#3550{}",
+                osc8::Hyperlink::new("https://github.com/max-sixty/worktrunk/pull/3550"),
+                osc8::Hyperlink::END
+            ),
+            ColumnKind::CiStatus,
+        );
+        let segments = vec![
+            StatuslineSegment::from_column(
+                "statusline-osc8-hyperlinks".to_string(),
+                ColumnKind::Branch,
+            ),
+            ci,
+        ];
+
+        let (mut kept, mut dropped) = (0, 0);
+        for max_width in 1usize..=80 {
+            let fitted =
+                StatuslineSegment::fit_to_width(segments.clone(), max_width.saturating_sub(1));
+            let joined = StatuslineSegment::join(&fitted);
+            let out = truncate_visible(&format!("{} {joined}", anstyle::Reset), max_width);
+
+            // Opener and closer both begin `\e]8;;`, so an intact link
+            // contributes exactly two — an odd count means one was severed.
+            match out.matches("\u{1b}]8;;").count() {
+                2 => kept += 1,
+                0 => dropped += 1,
+                n => panic!("severed hyperlink at width {max_width} ({n} markers): {out:?}"),
+            }
+        }
+
+        // The sweep is only meaningful if it spans both regimes.
+        assert!(kept > 0 && dropped > 0, "kept={kept} dropped={dropped}");
+    }
+
     #[test]
     fn test_statusline_truncation() {
         use color_print::cformat;
