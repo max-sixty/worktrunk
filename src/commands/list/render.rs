@@ -4,9 +4,8 @@ use std::path::Path;
 use unicode_width::UnicodeWidthStr;
 use worktrunk::styling::{Stream, StyledLine, supports_hyperlinks};
 
-use super::collect::parse_port_from_url;
 use super::columns::{ColumnKind, DiffVariant};
-use super::layout::{ColumnFormat, ColumnLayout, DiffColumnConfig, LayoutConfig};
+use super::layout::{ColumnFormat, ColumnLayout, DiffColumnConfig, LayoutConfig, format_url_cell};
 use super::model::{ItemKind, ListItem, PositionMask};
 
 /// Placeholder glyph for unresolved Status positions — both "still loading" and
@@ -630,27 +629,6 @@ impl ColumnLayout {
             }
         }
     }
-}
-
-/// Format the dev-server URL, optionally as an OSC 8 hyperlink.
-///
-/// A linked cell shows just the port (e.g. `:3000`) — the URL rides inside the
-/// escape sequence, so the cell costs the port's width rather than the whole
-/// URL's. Without links there is nowhere to hide the URL, so it renders in
-/// full and stays copyable.
-///
-/// Callers pass the decision rather than probing the terminal here: the
-/// statusline's stdout is a pipe to its editor, so `supports_hyperlinks` reports
-/// false there even though the consumer renders OSC 8.
-pub(crate) fn format_url_cell(url: &str, include_link: bool) -> String {
-    if include_link && let Some(port) = parse_port_from_url(url) {
-        return format!(
-            "{}:{port}{}",
-            osc8::Hyperlink::new(url),
-            osc8::Hyperlink::END
-        );
-    }
-    url.to_string()
 }
 
 #[cfg(test)]

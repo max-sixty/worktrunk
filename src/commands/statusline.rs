@@ -990,7 +990,7 @@ fn filter_redundant_branch(segments: Vec<StatuslineSegment>, dir: &str) -> Vec<S
 
 /// Get git status as prioritized segments for the current worktree.
 ///
-/// CI status renders as a clickable OSC 8 hyperlink to the PR/pipeline URL.
+/// CI status and the dev-server URL render as clickable OSC 8 hyperlinks.
 fn git_status_segments(repo: &Repository, cwd: &Path) -> Result<Vec<StatuslineSegment>> {
     use super::list::columns::ColumnKind;
 
@@ -1207,15 +1207,24 @@ mod tests {
         );
     }
 
-    /// Width fitting must never cut inside the CI segment's OSC 8 sequence:
-    /// `truncate_visible` closes with `\e[0m`, which resets color but leaves a
-    /// hyperlink open, so a split link would make the rest of the terminal
-    /// line clickable. Priority ordering is what prevents it — CI is the
-    /// lowest-priority segment, so it is dropped whole long before the
-    /// highest-priority survivor is character-truncated.
+    /// Width fitting must never cut inside a linked segment's OSC 8 sequence.
+    /// `truncate_visible` ends its cut with `\e[0m`, which resets colour but
+    /// leaves a hyperlink *open*, so a severed link would make the rest of the
+    /// terminal line clickable.
+    ///
+    /// What rules it out is that the two cuts can't meet. `fit_to_width` drops
+    /// whole segments, worst priority first, and stops at one; character
+    /// truncation only ever reaches that lone survivor, which is always a
+    /// best-priority segment — Directory (0), Branch or Model (1). Every
+    /// link-bearing segment is strictly worse — CI (5), URL (9) — so each is
+    /// dropped entire long before the survivor is cut into.
+    ///
+    /// The sweep covers both, and they leave at different pressures: URL is
+    /// the worst priority in the table, so it goes before CI.
     #[test]
-    fn test_statusline_fitting_never_splits_the_ci_hyperlink() {
+    fn test_statusline_fitting_never_splits_a_hyperlink() {
         use super::super::list::columns::ColumnKind;
+        use super::super::list::layout::format_url_cell;
 
         let ci = StatuslineSegment::from_column(
             format!(
@@ -1225,33 +1234,56 @@ mod tests {
             ),
             ColumnKind::CiStatus,
         );
+        let url = StatuslineSegment::from_column(
+            format_url_cell("http://127.0.0.1:17913", true),
+            ColumnKind::Url,
+        );
         let segments = vec![
             StatuslineSegment::from_column(
                 "statusline-osc8-hyperlinks".to_string(),
                 ColumnKind::Branch,
             ),
             ci,
+            url,
         ];
 
-        let (mut kept, mut dropped) = (0, 0);
-        for max_width in 1usize..=80 {
+        // Count of intact links seen at each width, so the sweep can prove it
+        // exercised every drop stage rather than only the roomy ones.
+        let mut seen_link_counts = std::collections::BTreeSet::new();
+        for max_width in 1usize..=90 {
             let fitted =
                 StatuslineSegment::fit_to_width(segments.clone(), max_width.saturating_sub(1));
             let joined = StatuslineSegment::join(&fitted);
             let out = truncate_visible(&format!("{} {joined}", anstyle::Reset), max_width);
 
-            // Opener and closer both begin `\e]8;;`, so the segment is either
-            // present whole (two markers) or dropped whole (none). Anything
-            // else is a link the cut landed inside.
-            match out.matches("\u{1b}]8;;").count() {
-                2 => kept += 1,
-                0 => dropped += 1,
-                n => panic!("severed hyperlink at width {max_width} ({n} markers): {out:?}"),
+            // Opener and closer both begin `\e]8;;`, so every surviving link
+            // contributes exactly two markers. An odd total is a link the cut
+            // landed inside.
+            let markers = out.matches("\u{1b}]8;;").count();
+            assert_eq!(
+                markers % 2,
+                0,
+                "severed hyperlink at width {max_width} ({markers} markers): {out:?}"
+            );
+            seen_link_counts.insert(markers / 2);
+
+            // When only one link is left it must be CI's: the URL is the
+            // worst priority in the table, so it is the first to go.
+            if markers / 2 == 1 {
+                assert!(
+                    out.contains("/pull/3550") && !out.contains("127.0.0.1"),
+                    "URL should drop before CI, got {out:?}"
+                );
             }
         }
 
-        // The sweep is only meaningful if it spans both regimes.
-        assert!(kept > 0 && dropped > 0, "kept={kept} dropped={dropped}");
+        // Both links, then one, then none — if fitting stopped dropping them
+        // the sweep would silently cover only one regime.
+        assert_eq!(
+            seen_link_counts,
+            [0, 1, 2].into_iter().collect(),
+            "sweep should span every drop stage"
+        );
     }
 
     #[test]

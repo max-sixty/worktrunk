@@ -408,7 +408,7 @@ The original bare-array format, and the default while unset:
  [2murl[0m                string      Dev server URL from project config; absent when not configured                                   
  [2murl_active[0m         boolean     Whether the URL's port is listening; absent when not configured                                  
  [2msummary[0m            string      LLM-generated branch summary; [2m--full[0m only, then absent when not configured or no summary         
- [2mstatusline[0m         string      Pre-formatted status with ANSI colors, plus OSC 8 hyperlinks on the PR and URL cells             
+ [2mstatusline[0m         string      Pre-formatted status with colors and links                                                       
  [2msymbols[0m            string      Raw status symbols without colors (e.g., [2m"!?↓"[0m)                                                  
  [2mvars[0m               object      Per-branch variables from [2mwt config state vars[0m (absent when empty)                               
  [2mcolumns[0m            object      Rendered custom column values keyed by header; empty cells omitted (absent when none configured) 

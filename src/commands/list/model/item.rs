@@ -12,6 +12,7 @@ use super::stats::{AheadBehind, BranchDiffTotals, CommitDetails, UpstreamStatus}
 use super::status_symbols::{StatusSymbols, WorkingTreeStatus};
 use crate::commands::list::ci_status::PrStatus;
 use crate::commands::list::columns::ColumnKind;
+use crate::commands::list::layout::format_url_cell;
 
 /// Compute the `WorktreeState` from `WorktreeData` metadata alone.
 ///
@@ -518,7 +519,7 @@ impl ListItem {
             ));
         }
 
-        // 5. Branch diff vs main (priority 5)
+        // 5. Branch diff vs main (priority 6)
         if let Some(branch_diff) = self.branch_diff()
             && !branch_diff.diff.is_empty()
             && let Some(formatted) = ColumnKind::BranchDiff
@@ -530,7 +531,7 @@ impl ListItem {
             ));
         }
 
-        // 6. Upstream status (priority 7)
+        // 6. Upstream status (priority 8)
         if let Some(ref upstream) = self.upstream
             && let Some(active) = upstream.active()
             && let Some(formatted) =
@@ -542,7 +543,7 @@ impl ListItem {
             ));
         }
 
-        // 7. CI status (priority 9) — PR/MR reference when one exists,
+        // 7. CI status (priority 5) — PR/MR reference when one exists,
         // bare `#` otherwise (no width cap in the statusline)
         if let Some(Some(ref pr_status)) = self.pr_status {
             segments.push(StatuslineSegment::from_column(
@@ -551,10 +552,10 @@ impl ListItem {
             ));
         }
 
-        // 8. URL (priority 8) — the port as a link to the dev server, as in `wt list`
+        // 8. URL (priority 9) — the port as a link to the dev server, as in `wt list`
         if let Some(ref url) = self.url {
             segments.push(StatuslineSegment::from_column(
-                crate::commands::list::render::format_url_cell(url, true),
+                format_url_cell(url, true),
                 ColumnKind::Url,
             ));
         }
