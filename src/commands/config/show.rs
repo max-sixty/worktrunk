@@ -107,31 +107,39 @@ fn handle_config_show_json() -> anyhow::Result<()> {
         None
     };
 
-    let (project_path, project_config, project_identifier) = if let Ok(repo) = Repository::current()
-    {
-        let config = repo.load_project_config()?;
-        let on_disk = repo.project_config_path()?;
-        // When config resolved but not from an existing on-disk file, it came
-        // from the object-store fallback (bare repo, default branch checked out
-        // in no worktree — #3461). Surface that revision spec as the source so
-        // `path`/`exists`/`config` agree, instead of pointing `path` at a
-        // missing file while `config` is populated.
-        let path = match &on_disk {
-            Some(p) if p.exists() => on_disk.clone(),
-            _ if config.is_some() => repo
-                .default_branch_project_config_content()
-                .map(|(_, spec)| spec),
-            _ => on_disk.clone(),
+    let (project_path, project_config, project_identifier, project_source) =
+        if let Ok(repo) = Repository::current() {
+            let config = repo.load_project_config()?;
+            let source = config.as_ref().map(|c| match c.source {
+                worktrunk::config::ProjectConfigSource::GitConfig => "git-config",
+                worktrunk::config::ProjectConfigSource::File => "file",
+            });
+            let from_git = source == Some("git-config");
+            let on_disk = repo.project_config_path()?;
+            // When config resolved but not from an existing on-disk file, it
+            // came from the object-store fallback (bare repo, default branch
+            // checked out in no worktree — #3461). Surface that revision spec
+            // as the source so `path`/`exists`/`config` agree, instead of
+            // pointing `path` at a missing file while `config` is populated.
+            // The git-config source has no path at all (`source` names it).
+            let path = match &on_disk {
+                _ if from_git => None,
+                Some(p) if p.exists() => on_disk.clone(),
+                _ if config.is_some() => repo
+                    .default_branch_project_config_content()
+                    .map(|(_, spec)| spec),
+                _ => on_disk.clone(),
+            };
+            let identifier = repo.project_identifier().ok();
+            (
+                path,
+                config.map(|c| serde_json::to_value(&c)).transpose()?,
+                identifier,
+                source,
+            )
+        } else {
+            (None, None, None, None)
         };
-        let identifier = repo.project_identifier().ok();
-        (
-            path,
-            config.map(|c| serde_json::to_value(&c)).transpose()?,
-            identifier,
-        )
-    } else {
-        (None, None, None)
-    };
 
     let system_path = system_config_path().or_else(default_system_config_path);
     let system_exists = system_path.as_ref().is_some_and(|p| p.exists());
@@ -144,13 +152,16 @@ fn handle_config_show_json() -> anyhow::Result<()> {
         },
         "project": {
             "path": project_path,
-            // Config source resolved — an on-disk file or the object-store
-            // fallback — iff `config` is populated. Keying `exists` off the
-            // loaded config (not `path.exists()`) keeps it consistent with
-            // `config` in the object-store case, where `path` is a revision
-            // spec with no file on disk.
+            // Config source resolved — an on-disk file, the object-store
+            // fallback, or git config — iff `config` is populated. Keying
+            // `exists` off the loaded config (not `path.exists()`) keeps it
+            // consistent with `config` when `path` is a revision spec or
+            // absent (git-config source).
             "exists": project_config.is_some(),
             "identifier": project_identifier,
+            // "file" | "git-config" (experimental worktrunk.config.* source),
+            // absent when no config resolved.
+            "source": project_source,
             "config": project_config,
         },
         "system": {
@@ -784,6 +795,49 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
             writeln!(out, "{line}")?;
         }
         Ok(())
+    }
+
+    // Experimental git-config source (#3454), mirroring `ProjectConfig::load`:
+    // any `worktrunk.config.*` keys in the merged effective git config are the
+    // project config, and the file (when one resolves) is superseded. Rendered
+    // first so the section reports the source that actually runs.
+    let git_pairs = repo.worktrunk_config_git_pairs().unwrap_or_default();
+    if !git_pairs.is_empty() {
+        let source = format!("@ {}", worktrunk::config::GIT_CONFIG_SOURCE_LABEL);
+        write_heading_and_identifier(out, &repo, &source)?;
+        if let Some(superseded) = worktrunk::config::superseded_project_file_label(&repo) {
+            writeln!(
+                out,
+                "{}",
+                warning_message(cformat!(
+                    "Project config file @ <bold>{superseded}</> is superseded by these keys"
+                ))
+            )?;
+        }
+        writeln!(
+            out,
+            "{}",
+            hint_message(cformat!(
+                "To list the keys and their origins, run <underline>{}</>",
+                worktrunk::config::GIT_CONFIG_LIST_COMMAND
+            ))
+        )?;
+        match worktrunk::config::render_git_source_toml(&git_pairs) {
+            Ok(rendered) => {
+                // Same validation rendering as the file branch below.
+                if let Err(e) = toml::from_str::<ProjectConfig>(&rendered) {
+                    writeln!(out, "{}", error_message("Invalid config"))?;
+                    writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
+                } else {
+                    out.push_str(&warn_unknown_keys::<ProjectConfig>(&rendered));
+                }
+                writeln!(out, "{}", format_toml(&rendered))?;
+            }
+            Err(e) => {
+                writeln!(out, "{}", error_message(e.to_string()))?;
+            }
+        }
+        return Ok(());
     }
 
     // Resolve the effective config source, mirroring `ProjectConfig::load`: an

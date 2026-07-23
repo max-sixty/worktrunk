@@ -609,6 +609,29 @@ url = "echo http://localhost:{{ branch | hash_port }}"
 Aliases defined here are shared with teammates. For personal aliases, use the [user config](https://worktrunk.dev/config/#aliases) `[aliases]` section instead.
 <!-- PROJECT_CONFIG_END -->
 
+## Private project config in git config [experimental]
+
+Project config normally lives in `.config/wt.toml`, committed and shared. Some settings are better kept private: a hook that runs a personal script, a machine-specific dev-server URL. Git config can hold these.
+
+Any key under the `worktrunk.config.` prefix in git config becomes project config. Strip the prefix; what remains is the exact TOML key path from the sections above:
+
+```bash
+$ git config worktrunk.config.post-start 'pnpm install'
+$ git config worktrunk.config.list.url 'http://localhost:3000'
+```
+
+`.git/config` is local to the repository and never committed, so these keys stay on one machine — and every linked worktree sees them, because the local scope lives in the shared git dir. `--global` puts a key in every repository. Git's normal precedence applies: local overrides global, and conditional includes work.
+
+Selection is all-or-nothing. When any `worktrunk.config.*` key exists, those keys are the complete project config and `.config/wt.toml` is ignored — a warning names the superseded file. There is no key-level merging between the two sources. To return to the file, remove the keys.
+
+Values are strings, one per key. Settings that need other TOML types (such as the `step.copy-ignored.exclude` array) cannot be expressed here. Hooks and aliases defined this way go through the same approval prompt as file-based project config.
+
+To list every active key with its scope and origin file:
+
+```bash
+$ git config --show-scope --show-origin --get-regexp '^worktrunk\.config\.'
+```
+
 # Shell Integration
 
 Worktrunk needs shell integration to change directories when switching worktrees. Install with:
