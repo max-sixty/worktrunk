@@ -228,6 +228,23 @@ fn display_detached_head_no_action() {
     assert_snapshot!("detached_head_no_action", err.render());
 }
 
+/// The refusal names the blocked action and defers to `git status` for what is
+/// open and how to leave it, so no operation appears in the message at all.
+#[test]
+fn display_operation_in_progress() {
+    let rendered: Vec<String> = ["rebase", "merge"]
+        .into_iter()
+        .map(|action| {
+            GitError::OperationInProgress {
+                action: action.into(),
+            }
+            .render()
+        })
+        .collect();
+
+    assert_snapshot!("operation_in_progress", rendered.join("\n\n"));
+}
+
 #[test]
 fn display_uncommitted_changes() {
     let err = GitError::UncommittedChanges {

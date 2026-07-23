@@ -2,7 +2,7 @@
 
 use anyhow::Context;
 use color_print::cformat;
-use worktrunk::git::{ErrorExt, Repository};
+use worktrunk::git::{ErrorExt, InProgressOperation, Repository};
 use worktrunk::styling::{eprintln, progress_message, success_message};
 
 use super::super::repository_ext::RepositoryCliExt;
@@ -18,6 +18,11 @@ pub enum RebaseResult {
 /// Handle shared rebase workflow (used by `wt step rebase` and `wt merge`)
 pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
     let repo = Repository::current()?;
+
+    // Refuse before reading ancestry: a worktree stopped mid-rebase has HEAD
+    // detached on a linear extension of the target, so the up-to-date check
+    // below would report success over a tree that still holds conflict markers.
+    repo.ensure_no_operation_in_progress("rebase")?;
 
     // Get and validate target ref (any commit-ish for rebase)
     let integration_target = repo.require_target_ref(target)?;
@@ -47,9 +52,8 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
     // If rebase failed, check if it's due to conflicts
     if let Err(e) = rebase_result {
         // Check if it's a rebase conflict
-        let is_rebasing = repo
-            .worktree_state()?
-            .is_some_and(|s| s.starts_with("REBASING"));
+        let state = repo.worktree_state()?;
+        let is_rebasing = matches!(state, Some(InProgressOperation::Rebase));
         // Pull git's stderr from the typed leaf when present so we get the
         // raw conflict-marker bytes regardless of how many `.context(...)`
         // layers wrap the error.

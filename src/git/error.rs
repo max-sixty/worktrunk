@@ -385,6 +385,15 @@ pub enum GitError {
     DetachedHead {
         action: Option<String>,
     },
+    /// The worktree is partway through a git operation, so a command that
+    /// replays commits (`wt merge`, `wt step rebase`) refuses to start.
+    ///
+    /// Carries no operation: `git status` names it and how to finish it, so
+    /// there is no table here to drift from what git actually accepts.
+    OperationInProgress {
+        /// The action the user asked for ("merge", "rebase").
+        action: String,
+    },
     UncommittedChanges {
         action: Option<String>,
         /// Branch name (for multi-worktree operations)
@@ -601,6 +610,10 @@ impl GitError {
                 Some(action) => cformat!("Cannot {action}: not on a branch (detached HEAD)"),
                 None => "Not on a branch (detached HEAD)".to_string(),
             },
+
+            GitError::OperationInProgress { action } => {
+                cformat!("Cannot {action}: a git operation is already in progress")
+            }
 
             GitError::UncommittedChanges { action, branch, .. } => match (action, branch) {
                 (Some(action), Some(b)) => {
@@ -822,6 +835,18 @@ impl GitError {
                     error_message(&title),
                     hint_message(cformat!(
                         "To switch to a branch, run <underline>git switch <<branch>></>"
+                    ))
+                )
+            }
+
+            GitError::OperationInProgress { .. } => {
+                let title = self.title();
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(&title),
+                    hint_message(cformat!(
+                        "To see what is in progress and how to finish it, run <underline>git status</>"
                     ))
                 )
             }

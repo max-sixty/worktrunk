@@ -367,6 +367,31 @@ pub enum ResolvedWorktree {
     },
 }
 
+/// A git operation a worktree is partway through, detected from the state files
+/// git writes under its git dir (`MERGE_HEAD`, `rebase-merge/`, `BISECT_LOG`, …).
+///
+/// Produced by [`Repository::worktree_state`]. Detection only: it reports what
+/// git left on disk and deliberately maps nothing to a remedy. `git status`
+/// already names the operation and the way out of it, in git's own words and
+/// git's own translations, including states worktrunk has no variant for — so
+/// the refusal points there rather than restating a table that has to be
+/// maintained against every git release.
+///
+/// Structured rather than a display string so [`Rebase`](Self::Rebase) can be
+/// recognised without matching on user-visible text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InProgressOperation {
+    Merge,
+    /// Rebase, from either backend. `git am` shares the am backend's
+    /// `rebase-apply` directory and lands here too, which costs nothing: the
+    /// only caller that cares is classifying a rebase worktrunk itself just
+    /// started, and this gate stops that from happening during an am session.
+    Rebase,
+    CherryPick,
+    Revert,
+    Bisect,
+}
+
 /// Global base path for repository operations, set by -C flag.
 static BASE_PATH: OnceLock<PathBuf> = OnceLock::new();
 
@@ -1458,51 +1483,61 @@ impl Repository {
     }
 
     /// Get merge/rebase status for the worktree at this repository's discovery path.
-    pub fn worktree_state(&self) -> anyhow::Result<Option<String>> {
+    pub fn worktree_state(&self) -> anyhow::Result<Option<InProgressOperation>> {
         let git_dir = self.worktree_at(self.discovery_path()).git_dir()?;
 
         // Check for merge
         if git_dir.join("MERGE_HEAD").exists() {
-            return Ok(Some("MERGING".to_string()));
+            return Ok(Some(InProgressOperation::Merge));
         }
 
         // Check for rebase. `rebase-merge` (interactive/merge backend) and
-        // `rebase-apply` (am backend) are mutually exclusive; probe each once.
-        let rebase_merge = git_dir.join("rebase-merge");
-        let rebase_apply = git_dir.join("rebase-apply");
-        if let Some(rebase_dir) = rebase_merge
-            .exists()
-            .then_some(rebase_merge)
-            .or_else(|| rebase_apply.exists().then_some(rebase_apply))
-        {
-            if let (Ok(msgnum), Ok(end)) = (
-                std::fs::read_to_string(rebase_dir.join("msgnum")),
-                std::fs::read_to_string(rebase_dir.join("end")),
-            ) {
-                let current = msgnum.trim();
-                let total = end.trim();
-                return Ok(Some(format!("REBASING {}/{}", current, total)));
-            }
-
-            return Ok(Some("REBASING".to_string()));
+        // `rebase-apply` (am backend, also used by `git am`) are mutually
+        // exclusive; either one means commits are mid-replay.
+        if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
+            return Ok(Some(InProgressOperation::Rebase));
         }
 
         // Check for cherry-pick
         if git_dir.join("CHERRY_PICK_HEAD").exists() {
-            return Ok(Some("CHERRY-PICKING".to_string()));
+            return Ok(Some(InProgressOperation::CherryPick));
         }
 
         // Check for revert
         if git_dir.join("REVERT_HEAD").exists() {
-            return Ok(Some("REVERTING".to_string()));
+            return Ok(Some(InProgressOperation::Revert));
         }
 
         // Check for bisect
         if git_dir.join("BISECT_LOG").exists() {
-            return Ok(Some("BISECTING".to_string()));
+            return Ok(Some(InProgressOperation::Bisect));
         }
 
         Ok(None)
+    }
+
+    /// Fail when the worktree is already partway through a git operation.
+    ///
+    /// A precondition for the commit-replaying commands (`wt step rebase`,
+    /// `wt merge`). Mid-rebase, HEAD is detached on a linear extension of the
+    /// target, so [`is_rebased_onto`](crate::git::Repository) — and every
+    /// ancestry check like it — reads as "already up to date"; without this
+    /// gate a caller reports success over a tree that still holds conflict
+    /// markers. The other states are gated for the same reason rather than
+    /// their own symptom: a rebase started from any of them either compounds
+    /// the half-finished operation or dies inside git with its own plumbing
+    /// error, and neither tells the user what to do next.
+    ///
+    /// The refusal names no operation, so nothing here has to track what git
+    /// calls each state or how to leave it; `git status` answers both.
+    pub fn ensure_no_operation_in_progress(&self, action: &str) -> anyhow::Result<()> {
+        match self.worktree_state()? {
+            Some(_) => Err(crate::git::GitError::OperationInProgress {
+                action: action.to_string(),
+            }
+            .into()),
+            None => Ok(()),
+        }
     }
 
     // =========================================================================

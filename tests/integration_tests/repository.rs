@@ -1,8 +1,9 @@
 //! Tests for git repository methods to improve code coverage.
 
 use std::fs;
+use std::path::Path;
 
-use worktrunk::git::{RefType, Repository};
+use worktrunk::git::{InProgressOperation, RefType, Repository};
 
 use crate::common::{BareRepoTest, TestRepo};
 
@@ -46,113 +47,53 @@ fn test_is_bare_returns_true_for_bare_repo() {
 // worktree_state() tests - simulate various git operation states
 // =============================================================================
 
-#[test]
-fn test_worktree_state_normal() {
+/// Build a repo, let `setup` plant state files under its git dir, and report
+/// what `worktree_state` makes of them.
+fn worktree_state_after(setup: impl FnOnce(&Path)) -> Option<InProgressOperation> {
     let repo = TestRepo::new();
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-
-    // Normal state - no special files
-    let state = repository.worktree_state().unwrap();
-    assert!(state.is_none());
+    setup(&repo.root_path().join(".git"));
+    repository.worktree_state().unwrap()
 }
 
+/// `worktree_state` reads each in-progress operation off the state files git
+/// writes under the git dir. Both rebase backends report as a rebase:
+/// `rebase-merge` (interactive/merge) and `rebase-apply` (am backend, shared
+/// with `git am`).
 #[test]
-fn test_worktree_state_merging() {
-    let repo = TestRepo::new();
-    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+fn test_worktree_state_detects_each_operation() {
+    assert_eq!(worktree_state_after(|_| {}), None, "clean worktree");
 
-    // Simulate merge state by creating MERGE_HEAD
-    let git_dir = repo.root_path().join(".git");
-    fs::write(git_dir.join("MERGE_HEAD"), "abc123\n").unwrap();
-
-    let state = repository.worktree_state().unwrap();
-    assert_eq!(state, Some("MERGING".to_string()));
-}
-
-#[test]
-fn test_worktree_state_rebasing_with_progress() {
-    let repo = TestRepo::new();
-    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-
-    // Simulate rebase state with progress
-    let git_dir = repo.root_path().join(".git");
-    let rebase_dir = git_dir.join("rebase-merge");
-    fs::create_dir_all(&rebase_dir).unwrap();
-    fs::write(rebase_dir.join("msgnum"), "2\n").unwrap();
-    fs::write(rebase_dir.join("end"), "5\n").unwrap();
-
-    let state = repository.worktree_state().unwrap();
-    assert_eq!(state, Some("REBASING 2/5".to_string()));
-}
-
-#[test]
-fn test_worktree_state_rebasing_apply() {
-    let repo = TestRepo::new();
-    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-
-    // Simulate rebase-apply state (git am or git rebase without -m)
-    let git_dir = repo.root_path().join(".git");
-    let rebase_dir = git_dir.join("rebase-apply");
-    fs::create_dir_all(&rebase_dir).unwrap();
-    fs::write(rebase_dir.join("msgnum"), "3\n").unwrap();
-    fs::write(rebase_dir.join("end"), "7\n").unwrap();
-
-    let state = repository.worktree_state().unwrap();
-    assert_eq!(state, Some("REBASING 3/7".to_string()));
-}
-
-#[test]
-fn test_worktree_state_rebasing_no_progress() {
-    let repo = TestRepo::new();
-    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-
-    // Simulate rebase state without progress files
-    let git_dir = repo.root_path().join(".git");
-    let rebase_dir = git_dir.join("rebase-merge");
-    fs::create_dir_all(&rebase_dir).unwrap();
-    // No msgnum/end files - just the directory
-
-    let state = repository.worktree_state().unwrap();
-    assert_eq!(state, Some("REBASING".to_string()));
-}
-
-#[test]
-fn test_worktree_state_cherry_picking() {
-    let repo = TestRepo::new();
-    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-
-    // Simulate cherry-pick state
-    let git_dir = repo.root_path().join(".git");
-    fs::write(git_dir.join("CHERRY_PICK_HEAD"), "def456\n").unwrap();
-
-    let state = repository.worktree_state().unwrap();
-    assert_eq!(state, Some("CHERRY-PICKING".to_string()));
-}
-
-#[test]
-fn test_worktree_state_reverting() {
-    let repo = TestRepo::new();
-    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-
-    // Simulate revert state
-    let git_dir = repo.root_path().join(".git");
-    fs::write(git_dir.join("REVERT_HEAD"), "789abc\n").unwrap();
-
-    let state = repository.worktree_state().unwrap();
-    assert_eq!(state, Some("REVERTING".to_string()));
-}
-
-#[test]
-fn test_worktree_state_bisecting() {
-    let repo = TestRepo::new();
-    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-
-    // Simulate bisect state
-    let git_dir = repo.root_path().join(".git");
-    fs::write(git_dir.join("BISECT_LOG"), "# bisect log\n").unwrap();
-
-    let state = repository.worktree_state().unwrap();
-    assert_eq!(state, Some("BISECTING".to_string()));
+    assert_eq!(
+        worktree_state_after(|d| fs::write(d.join("MERGE_HEAD"), "abc123\n").unwrap()),
+        Some(InProgressOperation::Merge),
+        "merge",
+    );
+    assert_eq!(
+        worktree_state_after(|d| fs::create_dir_all(d.join("rebase-merge")).unwrap()),
+        Some(InProgressOperation::Rebase),
+        "rebase, merge backend",
+    );
+    assert_eq!(
+        worktree_state_after(|d| fs::create_dir_all(d.join("rebase-apply")).unwrap()),
+        Some(InProgressOperation::Rebase),
+        "rebase, am backend",
+    );
+    assert_eq!(
+        worktree_state_after(|d| fs::write(d.join("CHERRY_PICK_HEAD"), "def456\n").unwrap()),
+        Some(InProgressOperation::CherryPick),
+        "cherry-pick",
+    );
+    assert_eq!(
+        worktree_state_after(|d| fs::write(d.join("REVERT_HEAD"), "789abc\n").unwrap()),
+        Some(InProgressOperation::Revert),
+        "revert",
+    );
+    assert_eq!(
+        worktree_state_after(|d| fs::write(d.join("BISECT_LOG"), "# bisect log\n").unwrap()),
+        Some(InProgressOperation::Bisect),
+        "bisect",
+    );
 }
 
 // =============================================================================
