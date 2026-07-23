@@ -770,11 +770,11 @@ pub fn run(format: StatuslineFormat) -> Result<()> {
         None
     };
 
-    // Git status segments (skip links in claude-code mode - OSC 8 not supported)
+    // Git status segments
     if let Ok(repo) = Repository::current()
         && repo.worktree_at(&cwd).git_dir().is_ok()
     {
-        let git_segments = git_status_segments(&repo, &cwd, !claude_code)?;
+        let git_segments = git_status_segments(&repo, &cwd)?;
 
         // In claude-code mode, skip branch segment if directory matches worktrunk template
         let git_segments = if let Some(ref dir) = dir_str {
@@ -990,12 +990,8 @@ fn filter_redundant_branch(segments: Vec<StatuslineSegment>, dir: &str) -> Vec<S
 
 /// Get git status as prioritized segments for the current worktree.
 ///
-/// When `include_links` is true, CI status includes clickable OSC 8 hyperlinks.
-fn git_status_segments(
-    repo: &Repository,
-    cwd: &Path,
-    include_links: bool,
-) -> Result<Vec<StatuslineSegment>> {
+/// CI status renders as a clickable OSC 8 hyperlink to the PR/pipeline URL.
+fn git_status_segments(repo: &Repository, cwd: &Path) -> Result<Vec<StatuslineSegment>> {
     use super::list::columns::ColumnKind;
 
     // Get current worktree info
@@ -1065,7 +1061,7 @@ fn git_status_segments(
     list::populate_item(repo, &mut item, options)?;
 
     // Get prioritized segments
-    let segments = item.format_statusline_segments(include_links);
+    let segments = item.format_statusline_segments();
 
     if segments.is_empty() {
         // Fallback: just show branch name

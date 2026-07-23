@@ -529,7 +529,7 @@ impl PrStatus {
     /// `#3035` would be indistinguishable from a conflicted PR.
     ///
     /// When `include_link` is false, the cell is colored but not clickable
-    /// (for environments without OSC 8 hyperlinks, e.g. Claude Code).
+    /// (for renderers that strip OSC 8, e.g. the skim-based picker).
     pub fn format_cell(&self, max_width: usize, include_link: bool) -> String {
         match self.number {
             Some(r) if !matches!(self.ci_status, CiStatus::Error) && r.width() <= max_width => {
