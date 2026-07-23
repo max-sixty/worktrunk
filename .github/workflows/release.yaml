@@ -150,6 +150,35 @@ jobs:
           # Actually do builds and make zips and whatnot
           dist build ${{ needs.plan.outputs.tag-flag }} --print=linkage --output-format=json ${{ matrix.dist_args }} > dist-manifest.json
           echo "dist ran successfully"
+      # SignPath is on a self-signed test certificate while the project's OSS
+      # application is under review, so signing failures are expected and must
+      # not block crates.io/homebrew/winget/AUR publishing.
+      - name: Upload unsigned Windows artifact
+        if: contains(matrix.targets, 'x86_64-pc-windows-msvc')
+        id: upload-unsigned-windows-artifact
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: unsigned-windows-zip
+          path: target/distrib/worktrunk-x86_64-pc-windows-msvc.zip
+      - name: Submit SignPath signing request
+        if: contains(matrix.targets, 'x86_64-pc-windows-msvc') && steps.upload-unsigned-windows-artifact.outcome == 'success'
+        continue-on-error: true
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          organization-id: '9424a34f-9491-47e1-a8a2-e0ff32b2a099'
+          project-slug: 'Worktrunk'
+          signing-policy-slug: 'Test_signing'
+          github-artifact-id: '${{ steps.upload-unsigned-windows-artifact.outputs.artifact-id }}'
+          wait-for-completion: true
+          output-artifact-directory: 'target/distrib'
+      - name: Recompute checksum for signed Windows artifact
+        if: contains(matrix.targets, 'x86_64-pc-windows-msvc')
+        shell: bash
+        run: |
+          cd target/distrib
+          sha256sum worktrunk-x86_64-pc-windows-msvc.zip > worktrunk-x86_64-pc-windows-msvc.zip.sha256
       - id: cargo-dist
         name: Post-build
         # We force bash here just because github makes it really hard to get values up
