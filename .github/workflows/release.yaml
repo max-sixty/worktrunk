@@ -167,9 +167,9 @@ jobs:
         uses: signpath/github-action-submit-signing-request@v2
         with:
           api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
-          organization-id: '9424a34f-9491-47e1-a8a2-e0ff32b2a099'
-          project-slug: 'Worktrunk'
-          signing-policy-slug: 'Test_signing'
+          organization-id: '56bf7020-7661-4b4e-ad77-b627278eaefd'
+          project-slug: 'worktrunk'
+          signing-policy-slug: 'test-signing'
           github-artifact-id: '${{ steps.upload-unsigned-windows-artifact.outputs.artifact-id }}'
           wait-for-completion: true
           output-artifact-directory: 'target/distrib'
