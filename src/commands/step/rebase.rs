@@ -162,6 +162,29 @@ mod tests {
     }
 
     #[test]
+    fn capture_mode_crash_signal_stays_a_visible_error() {
+        // SIGSEGV/SIGKILL can't be wt's own doing in capture mode — no signal
+        // forwarding or escalation exists there — so the child crashed or was
+        // killed externally. That must surface as a visible error (mid-rebase,
+        // the REBASING state makes it a RebaseConflict, whose rendering
+        // carries the --abort hint), never a silent interrupt exit.
+        let crashed = classify_rebase_failure(capture_signal_failure(11), true, "main");
+        assert!(
+            matches!(
+                crashed.downcast_ref::<GitError>(),
+                Some(GitError::RebaseConflict { .. })
+            ),
+            "a crashed git mid-rebase must surface, not exit silently"
+        );
+
+        let killed = classify_rebase_failure(capture_signal_failure(9), false, "main");
+        assert!(matches!(
+            killed.downcast_ref::<GitError>(),
+            Some(GitError::Other { .. })
+        ));
+    }
+
+    #[test]
     fn interrupt_during_rebase_is_not_classified_as_conflict() {
         // SIGINT (2) forwarded to git leaves the worktree REBASING; it must
         // surface as a silent interrupt carrying exit 130, not a RebaseConflict

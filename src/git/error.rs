@@ -215,11 +215,19 @@ pub struct CommandError {
     pub exit_code: Option<i32>,
     /// Terminating signal (Unix), e.g. `Some(2)` for SIGINT — `None` when the
     /// child exited normally or on non-Unix. Capture mode (`Cmd::run`) reads
-    /// the raw `ExitStatus`, so a Ctrl-C/SIGTERM forwarded to the child (which
+    /// the raw `ExitStatus`, so a Ctrl-C/SIGTERM delivered to the child (which
     /// shares the foreground process group) surfaces here; `interrupt_exit_code`
-    /// recovers it as `128 + signal` before higher-level classification runs.
+    /// recovers SIGINT/SIGTERM as `128 + signal` before higher-level
+    /// classification runs, while other signals (a crash, an external kill)
+    /// stay on the visible error path.
     pub signal: Option<i32>,
 }
+
+/// POSIX signal numbers, defined locally so the interrupt classification
+/// compiles on Windows too (where [`CommandError::signal`] is always `None`);
+/// the `nix`/`signal-hook` crates that export these are unix-gated.
+const SIGINT: i32 = 2;
+const SIGTERM: i32 = 15;
 
 impl CommandError {
     /// Build from the captured `Output` of a non-zero exit.
@@ -277,9 +285,10 @@ impl CommandError {
 
 impl std::fmt::Display for CommandError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.exit_code {
-            Some(code) => write!(f, "{} failed (exit {})", self.command_string(), code),
-            None => write!(f, "{} failed", self.command_string()),
+        match (self.exit_code, self.signal) {
+            (Some(code), _) => write!(f, "{} failed (exit {})", self.command_string(), code),
+            (None, Some(sig)) => write!(f, "{} failed (signal {})", self.command_string(), sig),
+            (None, None) => write!(f, "{} failed", self.command_string()),
         }
     }
 }
@@ -1499,9 +1508,18 @@ impl ErrorExt for anyhow::Error {
         }
         // Capture mode (`Cmd::run`) reports it as a `CommandError` carrying the
         // raw `status.signal()`. Walk the chain so `.context(...)` layers (e.g.
-        // `run_command`'s "Failed to execute: git …") don't hide it.
+        // `run_command`'s "Failed to execute: git …") don't hide it. Only
+        // SIGINT/SIGTERM classify as interrupts here: capture children get no
+        // signal forwarding or escalation (unlike stream mode, where a
+        // SIGKILL death can be wt's own escalation of a second Ctrl-C,
+        // normalized upstream to the originating signal), so any other signal
+        // means the child fell over on its own — and because its captured
+        // output was never displayed, a silent `AlreadyDisplayed` exit would
+        // discard the evidence. Those fall through to the caller's visible
+        // error path.
         if let Some(CommandError {
-            signal: Some(sig), ..
+            signal: Some(sig @ (SIGINT | SIGTERM)),
+            ..
         }) = CommandError::find_in(self)
         {
             return Some(128 + sig);
@@ -1809,6 +1827,27 @@ mod tests {
             anyhow::anyhow!("some unrelated failure").interrupt_exit_code(),
             None,
         );
+    }
+
+    #[test]
+    fn interrupt_exit_code_capture_mode_narrows_to_sigint_sigterm() {
+        // Capture mode has no signal forwarding or escalation, so SIGINT and
+        // SIGTERM are the only signals a user interrupt can deliver; anything
+        // else (a crash, an OOM kill) must stay on the visible error path
+        // rather than exiting silently and discarding the captured output.
+        let cases = [(2, Some(130)), (15, Some(143)), (9, None), (11, None)];
+        for (sig, expected) in cases {
+            let err: anyhow::Error = CommandError {
+                program: "git".into(),
+                args: vec!["rebase".into()],
+                stderr: String::new(),
+                stdout: String::new(),
+                exit_code: None,
+                signal: Some(sig),
+            }
+            .into();
+            assert_eq!(err.interrupt_exit_code(), expected, "signal {sig}");
+        }
     }
 
     #[test]
@@ -2506,14 +2545,25 @@ mod tests {
     }
 
     #[test]
-    fn command_error_signal_kill_omits_exit_code() {
+    fn command_error_signal_kill_shows_signal_not_exit_code() {
+        // A signal-killed child has no exit code; the summary names the
+        // signal instead so the surfaced error says what happened. Matters
+        // for non-interrupt signals (SIGSEGV, SIGKILL), which reach the
+        // visible error path rather than the silent interrupt exit.
         let err = CommandError {
             program: "git".into(),
             args: vec!["fetch".into()],
             stderr: String::new(),
             stdout: String::new(),
             exit_code: None,
-            signal: Some(2),
+            signal: Some(11),
+        };
+        assert_eq!(err.to_string(), "git fetch failed (signal 11)");
+
+        // No exit code and no signal (e.g. hand-built in tests): bare summary.
+        let err = CommandError {
+            signal: None,
+            ..err
         };
         assert_eq!(err.to_string(), "git fetch failed");
     }

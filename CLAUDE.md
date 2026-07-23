@@ -122,8 +122,9 @@ When a child process exits from a signal (SIGINT, SIGTERM), every loop in the fo
 
 Why: wt installs a `signal_hook` SIGINT/SIGTERM handler so it can forward signals to child process groups before exiting cleanly. As a side effect wt itself does not die from the user's Ctrl-C — only the current child does. Without this policy a single Ctrl-C against `wt merge` would charge through the remaining hook steps, with `FailureStrategy::Warn` silently swallowing each interrupt.
 
-- Signal-derived child exits surface as `WorktrunkError::ChildProcessExited { signal: Some(sig), .. }`. The `signal` field is the structured channel — never sniff `code >= 128` or parse error messages.
+- Signal-derived child exits surface structurally: stream mode (`Cmd::stream`) as `WorktrunkError::ChildProcessExited { signal: Some(sig), .. }`, capture mode (`Cmd::run`) as `CommandError { signal: Some(sig), .. }`. These fields are the structured channel — never sniff `code >= 128` or parse error messages.
 - Detect via `err.interrupt_exit_code()` (the `worktrunk::git::ErrorExt` trait). When it returns `Some(exit_code)`, propagate as `WorktrunkError::AlreadyDisplayed { exit_code }` (`128 + sig` by convention — 130 SIGINT, 143 SIGTERM) and break the loop.
+- In capture mode only SIGINT/SIGTERM classify as interrupts. Capture children get no forwarding or escalation, and their captured output would be discarded by the silent exit — so a child killed by any other signal (a crash, an OOM kill) surfaces as a visible error instead. Stream mode counts any signal: output already streamed to the terminal, and user-initiated kills are normalized upstream to the originating SIGINT/SIGTERM (`seen_signal` in `shell_exec`, the concurrent runner's originating-signal override).
 - The check happens **before** any `FailureStrategy` branch — Warn must NOT swallow signal-derived errors.
 - `handle_command_error` in `src/commands/command_executor.rs` enforces this for hook and alias pipelines (foreground and concurrent groups); `for_each.rs` enforces it for the worktree loop. New code that loops over child processes calls `.interrupt_exit_code()` on per-iteration errors and breaks.
 
