@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.69.0
+
+### Improved
+
+- **`wt switch` statusline links in Claude Code**: The Claude Code statusline suppressed OSC 8 hyperlinks, so its CI segment printed colored but inert and its dev-server URL printed in full. Claude Code renders OSC 8, so both segments now link, matching `wt list`. ([#3550](https://github.com/max-sixty/worktrunk/pull/3550))
+
+- **`wt merge --no-rebase` accepts merge-shaped histories**: `--no-rebase` previously required a strictly linear rebased history and rejected a branch carrying a merge commit, even when the target could already fast-forward to its tip. It now accepts any history the target can fast-forward to, so `wt merge --no-commit --no-rebase` preserves an exact commit graph — merge commits and all. ([#3509](https://github.com/max-sixty/worktrunk/pull/3509), thanks @reneleonhardt)
+
+- **`-v` variable blocks name their template and render consistently**: The four `-v` template-variable listings (foreground/background hooks, aliases, `wt step eval`) now label each block with the template it belongs to, and `eval` renders through the shared formatter — curated help-table order rather than its own alphabetical layout. ([#3495](https://github.com/max-sixty/worktrunk/pull/3495), [#3536](https://github.com/max-sixty/worktrunk/pull/3536))
+
+### Fixed
+
+- **`wt switch` picker responsiveness**: Accepting a row could stall for ~10s on a large repo (indefinitely under sustained background traffic) while the switch queued behind per-row preview diffs; the foreground thread now bypasses the command-concurrency semaphore. Separately, an idle picker with pending background work — a slow CI fetch, or an LLM branch summary (`[list] summary = true`) — spun 100% of a CPU core; the reader now exits once the last row batch lands. ([#3544](https://github.com/max-sixty/worktrunk/pull/3544), [#3534](https://github.com/max-sixty/worktrunk/pull/3534))
+
+- **Clear error when a new branch name collides with an existing branch namespace**: Creating `feat` while `feat/x` exists (or the reverse) failed with git's raw ref-lock error; `wt switch --create` now explains the namespace conflict. ([#3528](https://github.com/max-sixty/worktrunk/pull/3528))
+
+- **`wt switch` picker no longer shows another row's branch name in an empty diff preview**: The branch-diff and upstream-diff caches are keyed by SHA, so branches parked at the same commit (common after merged branches reset to the default branch's tip) shared one entry — and the cached pane had the first row's branch name baked into its "no file changes" headline. The cached value is now branch-agnostic and the headline renders per row. ([#3481](https://github.com/max-sixty/worktrunk/pull/3481))
+
+- **`WorktreeRemove` plugin hook no longer strands a completed session**: Claude Code fires the hook on session teardown for the recorded worktree path, which may already be gone (removed by `wt merge` or `wt remove`). In that case the hook exited non-zero, which Claude Code read as a failed removal, leaving the completed session row undeletable; it now exits 0 when the worktree is already gone ([#3493](https://github.com/max-sixty/worktrunk/pull/3493), closes [#3488](https://github.com/max-sixty/worktrunk/issues/3488)). Separately, the hook now anchors at the project directory rather than inheriting the session's working directory ([#3489](https://github.com/max-sixty/worktrunk/pull/3489)). Thanks @judewang for reporting [#3488](https://github.com/max-sixty/worktrunk/issues/3488) and for [#3489](https://github.com/max-sixty/worktrunk/pull/3489).
+
+- **`WorktreeCreate` plugin hook surfaces `wt` failures**: The hook piped `wt switch --create … --format=json` into `jq` without `set -o pipefail`, so a failed `wt` (e.g. a branch collision after a partial creation) took `jq`'s exit status — 0 on empty input — and Claude Code saw a successful hook that returned no path. The hook now sets `pipefail`. ([#3546](https://github.com/max-sixty/worktrunk/pull/3546), closes [#3545](https://github.com/max-sixty/worktrunk/issues/3545), thanks @avdi for reporting)
+
+- **Picker no longer crashes on the legacy Windows console**: skim 5.3.1 drives keyboard-enhancement handling the legacy Windows console API doesn't support, crashing the picker at startup; skim is held at 5.1.0 until the upstream regression is resolved. ([#3538](https://github.com/max-sixty/worktrunk/pull/3538))
+
+- **Non-ASCII and non-UTF-8 content handled throughout**: Diagnostics no longer panic slicing a config or log at a non-UTF-8 byte boundary, the shell-integration config scan no longer truncates at a non-UTF-8 line, and `wt step copy-ignored` handles non-ASCII filenames (git's `quotePath` escaping). ([#3514](https://github.com/max-sixty/worktrunk/pull/3514), [#3499](https://github.com/max-sixty/worktrunk/pull/3499), [#3487](https://github.com/max-sixty/worktrunk/pull/3487))
+
+- **`-vv` output cleanup**: The end-of-run block names only `diagnostic.md`, dropping the redundant `trace.jsonl`/`subprocess.log` gutter lines the report body already links; and the startup pointer uses `@` before the log directory, matching the rest of `wt`'s path output. ([#3521](https://github.com/max-sixty/worktrunk/pull/3521), [#3543](https://github.com/max-sixty/worktrunk/pull/3543))
+
+### Internal
+
+- **Windows release binaries are submitted to SignPath for code signing**: Signed with a test certificate for now, while the project's OSS-program application is under review, and non-blocking so a signing failure can't hold up publishing to crates.io, Homebrew, winget, or AUR. ([#3553](https://github.com/max-sixty/worktrunk/pull/3553), [#3556](https://github.com/max-sixty/worktrunk/pull/3556))
+
+- **`wt list` runs its merge analysis in a read-only object database**: When the git object store is read-only, `wt list` and `wt list statusline` redirect their object-writing merge/conflict probes into a temporary object database layered over the real one, so the full analysis still runs. Mutating commands keep the persistent store and fail loudly on a read-only one. ([#3535](https://github.com/max-sixty/worktrunk/pull/3535))
+
+- **`wt step relocate` preserves your subdirectory position**: Routed through the shared subdir-resolution helper, so `relocate` follows the cwd into the moved worktree like `switch`, `remove`, and `merge` already do. ([#3346](https://github.com/max-sixty/worktrunk/pull/3346))
+
 ## 0.68.0
 
 ### Improved
