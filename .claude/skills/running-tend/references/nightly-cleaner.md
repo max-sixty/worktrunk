@@ -10,8 +10,6 @@ For each `.rs` file in the survey, also check:
 
 `nightly/clean-$GITHUB_RUN_ID`
 
-## Session Budget — One Deliverable
+## Repo-Wide CI Breakage
 
-The session runs under a harness timeout. The kill pre-empts the result event, so an overrun reports as `failure` with `$0.00` and 0 tokens and loses its summary. Ship the sweep PR, then monitor only *its* CI per the `running-in-ci` CI-monitoring loop.
-
-A failure in an unrelated, repo-wide job (one that fails identically on `main` and every PR, such as a broken system-package install in `code-coverage`) belongs to `tend-ci-fix`, which fires on every `ci`-workflow `failure` on `main`; a non-required job failing is enough to trigger it. Record the breakage in the summary and finish rather than opening a second investigate-and-fix PR the session has no budget to land.
+A failure that reproduces identically on `main` and every PR (a broken system-package install in `code-coverage`, say) belongs to `tend-ci-fix`, which fires on any `ci`-workflow `failure` on `main`; a non-required job failing is enough to trigger it. It does not fire on runs that end `cancelled`, so record the breakage in the summary rather than assuming the handoff lands.
