@@ -173,12 +173,18 @@ jobs:
           github-artifact-id: '${{ steps.upload-unsigned-windows-artifact.outputs.artifact-id }}'
           wait-for-completion: true
           output-artifact-directory: 'target/distrib'
+          # Without this, the action extracts the zip's contents as loose
+          # files instead of saving back the signed zip under its original
+          # name, silently breaking the checksum step and the release upload.
+          skip-decompress: true
       - name: Recompute checksum for signed Windows artifact
         if: contains(matrix.targets, 'x86_64-pc-windows-msvc')
         shell: bash
         run: |
           cd target/distrib
-          sha256sum worktrunk-x86_64-pc-windows-msvc.zip > worktrunk-x86_64-pc-windows-msvc.zip.sha256
+          # -b matches cargo-dist's own checksum format (`<hash> *<filename>`);
+          # sha256sum's default text mode omits the asterisk.
+          sha256sum -b worktrunk-x86_64-pc-windows-msvc.zip > worktrunk-x86_64-pc-windows-msvc.zip.sha256
       - id: cargo-dist
         name: Post-build
         # We force bash here just because github makes it really hard to get values up
