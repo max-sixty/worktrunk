@@ -2162,9 +2162,16 @@ summary = true
         let query = out.query.trim().to_string();
         let identifier = resolve_identifier(&action, query, selected_name)?;
 
-        // Load config — reuse the recovered repo if we recovered earlier.
+        // Rebuild fresh rather than reuse `repo` (whose `OnceCell` worktree/
+        // branch caches were primed at picker startup and never invalidated,
+        // same discipline `spawn`'s `rebuild_repo` doc explains): an in-picker
+        // alt-x/alt-r during this session can have removed or added
+        // worktrees/branches since. `Repository::current()` re-discovers from
+        // cwd, which fails after a deleted-CWD recovery, so the recovered arm
+        // rebuilds via `Repository::at` on the already-recovered discovery
+        // path instead of reusing the stale startup snapshot.
         let repo = if is_recovered {
-            repo.clone()
+            Repository::at(repo.discovery_path()).context("Failed to switch worktree")?
         } else {
             Repository::current().context("Failed to switch worktree")?
         };

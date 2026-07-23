@@ -308,6 +308,14 @@ impl ApprovedHookPlan {
         }
     }
 
+    /// True when the plan has no entries for any hook type or anchor — the
+    /// common case (no project hooks configured). Lets a caller skip building
+    /// a render context before finding out `lookup` would return `&[]`
+    /// anyway.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     /// The frozen selection for `(hook_type, anchor)`, by exact match.
     ///
     /// Every covered gate anchors at the identical path its executor passes:
