@@ -108,6 +108,7 @@
 //! The picker also maintains a `PreviewCache` (`Arc<DashMap>` in `commands/picker/items.rs`)
 //! for rendered preview output, scoped to a single picker session.
 
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, LazyLock, OnceLock};
@@ -489,6 +490,24 @@ pub struct Repository {
     git_common_dir: PathBuf,
     /// Cached data for this repository. Shared across clones via Arc.
     pub(super) cache: Arc<RepoCache>,
+    /// When set, object-writing git plumbing is redirected into a temporary
+    /// object database so observational commands run in a read-only checkout.
+    /// `None` for the normal (persistent) path. See
+    /// [`Repository::redirect_objects_if_read_only`].
+    temporary_object_directory: Option<Arc<TemporaryObjectDirectory>>,
+}
+
+/// A throwaway object database that a redirected [`Repository`] writes new
+/// objects into, with the real database (plus any inherited alternates) as
+/// read-only alternates so existing objects still resolve.
+///
+/// Held behind an `Arc` so cloning a `Repository` — as `wt list` does for its
+/// parallel tasks — shares one store and one `TempDir` lifetime; the directory
+/// is removed when the last clone drops.
+#[derive(Debug)]
+struct TemporaryObjectDirectory {
+    directory: tempfile::TempDir,
+    alternates: OsString,
 }
 
 impl Repository {
@@ -545,7 +564,99 @@ impl Repository {
             discovery_path,
             git_common_dir,
             cache: Arc::new(cache),
+            temporary_object_directory: None,
         })
+    }
+
+    /// If this repository's object database is read-only, return a clone whose
+    /// object-writing git plumbing is redirected into a temporary object
+    /// database (with the real database as a read-only alternate); otherwise
+    /// return `Ok(None)` and let the caller keep using `self` unchanged.
+    ///
+    /// Only *observational* commands may redirect. `wt list`'s merge and
+    /// conflict probes create ephemeral objects (`write-tree`, `commit-tree`,
+    /// `merge-tree --write-tree`) that are never referenced, so writing them to
+    /// a throwaway store is harmless and lets the command run in a read-only
+    /// checkout. A *mutating* command must never redirect — its commit would be
+    /// written to the throwaway store and lost at process exit. Because a
+    /// read-only object database also blocks the ref/index/worktree writes
+    /// those commands need, keeping them on the persistent database makes them
+    /// fail loudly rather than silently succeed into a store that vanishes.
+    pub fn redirect_objects_if_read_only(&self) -> Option<Self> {
+        let objects = self.object_database_path();
+
+        // Probe effective writability by creating a file in the object
+        // database — the same thing git's object writers do, so this fails
+        // exactly when they would (a read-only mount and a `chmod`ed directory
+        // both surface here, unlike the owner-write permission bit). A
+        // successful probe file is dropped immediately.
+        if tempfile::Builder::new()
+            .prefix(".worktrunk-write-probe-")
+            .tempfile_in(&objects)
+            .is_ok()
+        {
+            return None;
+        }
+
+        self.with_temporary_object_directory()
+    }
+
+    /// Build a clone whose object writes are redirected into a fresh temporary
+    /// object database, with the real database as a read-only alternate so
+    /// existing objects still resolve. Returns `None` when the temporary store
+    /// can't be created (no writable temp dir), leaving the caller on the real
+    /// database. This is the *mechanism*; the *policy* — whether to redirect at
+    /// all — lives in [`Self::redirect_objects_if_read_only`], the only
+    /// production caller.
+    fn with_temporary_object_directory(&self) -> Option<Self> {
+        let alternates = self.object_database_path().into_os_string();
+        let directory = tempfile::Builder::new()
+            .prefix("worktrunk-list-objects-")
+            .tempdir()
+            .ok()?;
+
+        let mut clone = self.clone();
+        clone.temporary_object_directory = Some(Arc::new(TemporaryObjectDirectory {
+            directory,
+            alternates,
+        }));
+        Some(clone)
+    }
+
+    /// Absolute path to this repository's shared object database — the store a
+    /// redirected repository probes for writability and names as its read-only
+    /// alternate.
+    ///
+    /// This is the common dir's `objects`, shared by every linked worktree. It
+    /// does not resolve an inherited `GIT_OBJECT_DIRECTORY` (set only when `wt`
+    /// runs under a git alias); that combined with a read-only store and a
+    /// `wt list` is vanishingly rare, and the redirect degrades to reading the
+    /// common store rather than failing.
+    fn object_database_path(&self) -> PathBuf {
+        let objects = self.git_common_dir.join("objects");
+        canonicalize(&objects).unwrap_or(objects)
+    }
+
+    /// The `(object-directory, alternates)` environment for a redirected
+    /// repository, or `None` when object writes go to the real database.
+    /// Copied into [`WorkingTree`]'s [`TempIndex`], which builds its own `Cmd`.
+    pub(super) fn object_store_environment(&self) -> Option<(&Path, &OsStr)> {
+        self.temporary_object_directory
+            .as_ref()
+            .map(|temporary| (temporary.directory.path(), temporary.alternates.as_os_str()))
+    }
+
+    /// Add the temporary-object-database environment to `cmd` when this
+    /// repository is redirected; otherwise return `cmd` unchanged. Applied to
+    /// every git command the repository runs, so a redirected repository's
+    /// object writes all land in the temporary store.
+    fn with_object_store_env(&self, cmd: Cmd) -> Cmd {
+        match self.object_store_environment() {
+            Some((directory, alternates)) => cmd
+                .env("GIT_OBJECT_DIRECTORY", directory)
+                .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", alternates),
+            None => cmd,
+        }
     }
 
     /// Eagerly populate the process-wide git-discovery caches
@@ -1418,10 +1529,13 @@ impl Repository {
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn run_command(&self, args: &[&str]) -> anyhow::Result<String> {
-        let output = Cmd::new("git")
-            .args(args.iter().copied())
-            .current_dir(&self.discovery_path)
-            .context(self.logging_context())
+        let output = self
+            .with_object_store_env(
+                Cmd::new("git")
+                    .args(args.iter().copied())
+                    .current_dir(&self.discovery_path)
+                    .context(self.logging_context()),
+            )
             .run()
             .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
 
@@ -1500,12 +1614,14 @@ impl Repository {
     /// Use this when exit codes have semantic meaning beyond success/failure.
     /// For most cases, prefer `run_command` (returns stdout) or `run_command_check` (returns bool).
     pub(super) fn run_command_output(&self, args: &[&str]) -> anyhow::Result<std::process::Output> {
-        Cmd::new("git")
-            .args(args.iter().copied())
-            .current_dir(&self.discovery_path)
-            .context(self.logging_context())
-            .run()
-            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))
+        self.with_object_store_env(
+            Cmd::new("git")
+                .args(args.iter().copied())
+                .current_dir(&self.discovery_path)
+                .context(self.logging_context()),
+        )
+        .run()
+        .with_context(|| format!("Failed to execute: git {}", args.join(" ")))
     }
 
     /// Extract structured failure info from a command-runner error.

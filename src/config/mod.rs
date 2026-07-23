@@ -162,10 +162,10 @@ pub use deprecation::{DeprecationKind, Deprecations};
 pub use expansion::{
     ACTIVE_VARS, ALIAS_ARGS_KEY, DEPRECATED_TEMPLATE_VARS, EXEC_BASE_VARS, REPO_VARS,
     TemplateExpandError, ValidationScope, alias_context_filter, base_vars, expand_template,
-    format_alias_variables, format_hook_variables, redact_credentials, referenced_vars_for_config,
-    sanitize_branch_name, sanitize_db, short_hash, template_environment, template_references_var,
-    validate_list_column_template, validate_template, validate_template_syntax, vars_available_in,
-    vars_map_to_value,
+    format_alias_variables, format_base_variables, format_hook_variables, redact_credentials,
+    referenced_vars_for_config, sanitize_branch_name, sanitize_db, short_hash,
+    template_environment, template_references_var, validate_list_column_template,
+    validate_template, validate_template_syntax, vars_available_in, vars_map_to_value,
 };
 pub use hooks::HooksConfig;
 pub use project::{

@@ -315,7 +315,7 @@ fn test_diagnostic_trace_log_contains_git_commands(mut repo: TestRepo) {
 /// The `-vv` end block names what the run captured and saved
 /// (`diagnostic.md`, the single human-facing doc). It doesn't re-list the
 /// raw companion logs (`trace.jsonl`, `subprocess.log`) — the start-of-run
-/// pointer (`Verbose logging to <dir>/`) already names the log directory,
+/// pointer (`Verbose logging @ <dir>/`) already names the log directory,
 /// and the report body points at the companions directly.
 #[rstest]
 fn test_diagnostic_saved_message_with_vv(mut repo: TestRepo) {
@@ -649,7 +649,7 @@ fn test_vv_debug_pipeline_silent_on_stderr(repo: TestRepo) {
     // Stderr at -vv opens with a one-line pointer to the log directory (the
     // per-file rundown is deferred to the end-of-run diagnostic announcement).
     assert!(
-        stderr.contains("Verbose logging to") && stderr.contains("wt/logs"),
+        stderr.contains("Verbose logging @") && stderr.contains("wt/logs"),
         "stderr should point at the log directory at startup: {stderr}"
     );
 }
@@ -890,7 +890,7 @@ fn test_vv_pointer_handles_split_init(repo: TestRepo) {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
-        stderr.contains("Verbose logging to") && stderr.contains("wt/logs"),
+        stderr.contains("Verbose logging @") && stderr.contains("wt/logs"),
         "startup pointer should still name the log directory when subprocess.log can't open: {stderr}"
     );
     assert!(
@@ -965,7 +965,7 @@ fn test_vv_outside_repo_no_crash() {
     // announce_trace_destination took its early-return path.
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !stderr.contains("Verbose logging to"),
+        !stderr.contains("Verbose logging @"),
         "no startup pointer when trace.log can't open: {stderr}"
     );
 }

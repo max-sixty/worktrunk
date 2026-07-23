@@ -59,7 +59,10 @@ jobs:
     - name: 💰 Rust repo cache
       uses: actions/cache@v6
       with:
-        path: target/bench-repos
+        # wt-perf builds real-repo fixtures under target/wt-perf/bench-repos at
+        # the workspace root. `cargo clean` would wipe them, so this cache
+        # restores the ~15 GiB rust clone across runs.
+        path: target/wt-perf/bench-repos
         key: bench-repos-rust-${{ runner.os }}
 
     - name: 📊 Run benchmarks

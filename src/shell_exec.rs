@@ -58,7 +58,25 @@ use crate::trace::CommandTrace;
 
 /// Semaphore to limit concurrent command execution.
 /// Prevents resource exhaustion when spawning many parallel git commands.
+///
+/// Only background threads consume permits. The foreground thread runs
+/// commands one at a time, so it can't contribute to fan-out — and it is what
+/// the user is waiting on: were it to queue here, background work that
+/// saturates the permits (per-row preview diffs in the picker, each holding a
+/// permit for seconds on a large repo) would stall the accept path of
+/// `wt switch` until the pool drained. The cap is deliberately approximate:
+/// a work-stealing pool (rayon) can run a capped closure on the foreground
+/// thread, briefly exceeding the limit.
 static CMD_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
+
+/// The thread that entered `main()`, captured by [`init_startup`]. Commands
+/// on this thread bypass [`CMD_SEMAPHORE`] (see there). Unset when `wt` runs
+/// as a library (unit tests), where every thread is capped.
+static FOREGROUND_THREAD: OnceLock<std::thread::ThreadId> = OnceLock::new();
+
+fn is_foreground_thread() -> bool {
+    FOREGROUND_THREAD.get() == Some(&std::thread::current().id())
+}
 
 /// The working directory at `wt` startup. Captured once so relative `GIT_*`
 /// path variables inherited from a parent `git` process can be resolved to
@@ -83,14 +101,17 @@ pub const INHERITED_GIT_PATH_VARS: &[&str] = &[
     "GIT_OBJECT_DIRECTORY",
 ];
 
-/// Record the current working directory at `wt` startup so relative `GIT_*`
-/// path variables inherited from a parent process can later be resolved to
-/// absolute paths by [`Cmd`]'s env setup.
+/// Record process-startup facts: the current working directory (so relative
+/// `GIT_*` path variables inherited from a parent process can later be
+/// resolved to absolute paths by [`Cmd`]'s env setup) and the calling thread
+/// (the foreground thread, exempt from the command semaphore —
+/// see `CMD_SEMAPHORE`).
 ///
-/// Call once during `wt` startup, before any code changes the process's
-/// working directory. Subsequent calls are no-ops.
-pub fn init_startup_cwd() {
+/// Call once from `main()`, before any code changes the process's working
+/// directory and before spawning threads. Subsequent calls are no-ops.
+pub fn init_startup() {
     STARTUP_CWD.get_or_init(|| std::env::current_dir().ok());
+    FOREGROUND_THREAD.get_or_init(|| std::thread::current().id());
 }
 
 fn startup_cwd() -> Option<&'static PathBuf> {
@@ -1286,8 +1307,8 @@ impl Cmd {
         let external_log = ExternalCommandLog::new(self.external_label.clone(), cmd_str.clone());
         self.log_run_start(&cmd_str);
 
-        // Acquire semaphore to limit concurrent commands
-        let _guard = semaphore().acquire();
+        // Limit concurrent commands (background threads only; see CMD_SEMAPHORE)
+        let _guard = (!is_foreground_thread()).then(|| semaphore().acquire());
 
         let mut trace = CommandTrace::new(self.context.as_deref(), &cmd_str)
             .reads_stdin(self.stdin_data.is_some());
@@ -1369,9 +1390,10 @@ impl Cmd {
     ///
     /// `stdin_bytes` on the source feeds the pipeline's input (the sink's
     /// stdin always comes from the source). Timeouts and `external()` logging
-    /// are not supported on either side. The pipeline consumes one semaphore
-    /// permit even though it runs two processes concurrently — acquiring two
-    /// would deadlock under `concurrency = 1`.
+    /// are not supported on either side. On a background thread the pipeline
+    /// consumes one semaphore permit even though it runs two processes
+    /// concurrently — acquiring two would deadlock under `concurrency = 1`;
+    /// the foreground thread is exempt (see `CMD_SEMAPHORE`).
     pub fn pipe_into(
         mut self,
         next: Cmd,
@@ -1407,7 +1429,7 @@ impl Cmd {
         self.log_run_start(&first_cmd_str);
         next.log_run_start(&second_cmd_str);
 
-        let _guard = semaphore().acquire();
+        let _guard = (!is_foreground_thread()).then(|| semaphore().acquire());
 
         // Validate both commands before spawning either. Nothing has spawned
         // yet, so a precondition failure emits a one-shot failed record rather
@@ -1973,6 +1995,19 @@ pub fn forward_signal_with_escalation(pgid: i32, sig: i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The only test allowed to set `FOREGROUND_THREAD` (a process-wide
+    /// set-once): with it unset, `is_foreground_thread()` is false everywhere,
+    /// which is the state every other test runs under.
+    #[test]
+    fn test_foreground_thread_exempt_after_init() {
+        assert!(!is_foreground_thread());
+        init_startup();
+        assert!(is_foreground_thread());
+        // Threads other than the initializing one stay capped.
+        let from_spawned = std::thread::spawn(is_foreground_thread).join().unwrap();
+        assert!(!from_spawned);
+    }
 
     #[test]
     fn test_powershell_escape() {
