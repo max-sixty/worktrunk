@@ -73,6 +73,27 @@ Removal runs in the background by default — the command returns immediately. T
 
 After each `wt remove`, entries in `.git/wt/trash/` older than 24 hours are swept by a detached `rm -rf` — eventual cleanup for directories orphaned when a previous background removal was interrupted (SIGKILL, reboot, disk full).
 
+## Reaping processes
+
+<span class="badge-experimental"></span>
+
+`--reap` terminates processes left running in the worktree before it is removed — a `post-start` dev server, a file watcher, a language server — freeing the ports and file handles they hold. Processes are discovered by working directory: any process whose current directory is at or under the worktree path (`SIGTERM`, then `SIGKILL` for survivors).
+
+{% terminal(cmd="wt remove --reap feature") %}
+◎ Reaping 2 processes under feature worktree
+   ┃ 51234 node
+   ┃ 51240 esbuild
+✓ Reaped 2 processes
+◎ Removing feature worktree & branch in background (same commit as main, _)
+{% end %}
+
+To avoid killing work the user did not mean to kill, two guards keep `--reap` conservative:
+
+- **Interactive processes are spared.** A process holding a controlling terminal — an interactive shell, or a terminal editor such as `vim` with unsaved buffers — is never reaped. Only detached processes remain candidates.
+- **Discovery is by working directory only.** A process that started in the worktree and later changed directory, or a daemon that reparented to `init`, no longer reports a directory under the worktree and is not found. To reliably reap those, launch them with [`wt step tether`](@/step.md#wt-step-tether), which kills the whole process group when the worktree is removed.
+
+Reaping runs before the worktree directory is touched, so it is independent of foreground/background removal and the `--force` flag. Unix only; on Windows `--reap` is rejected.
+
 ## Hooks
 
 `pre-remove` hooks run before the worktree is deleted (with access to worktree files). `post-remove` hooks run after removal. See [`wt hook`](@/hook.md) for configuration.
@@ -97,7 +118,7 @@ Usage: <b><span class=c>wt remove</span></b> <span class=c>[OPTIONS]</span> <spa
 
 <b><span class=g>Arguments:</span></b>
   <span class=c>[BRANCHES]...</span>
-          Branch name [default: current]
+          Branch name or worktree path [default: current]
 
 <b><span class=g>Options:</span></b>
       <b><span class=c>--no-delete-branch</span></b>
@@ -108,6 +129,13 @@ Usage: <b><span class=c>wt remove</span></b> <span class=c>[OPTIONS]</span> <spa
 
       <b><span class=c>--foreground</span></b>
           Run removal in foreground (block until complete)
+
+      <b><span class=c>--reap</span></b>
+          Kill processes started in the worktree [experimental]
+
+          Before removal, terminate processes whose working directory is under the worktree — dev
+          servers, watchers, language servers. Processes holding a controlling terminal (interactive
+          shells, terminal editors) are left alone. Unix only.
 
   <b><span class=c>-f</span></b>, <b><span class=c>--force</span></b>
           Force worktree removal
@@ -127,11 +155,8 @@ Usage: <b><span class=c>wt remove</span></b> <span class=c>[OPTIONS]</span> <spa
 
           JSON prints structured result to stdout after removal completes.
 
-          Possible values:
-          - <b><span class=c>text</span></b>: Human-readable text output
-          - <b><span class=c>json</span></b>: JSON output
-
           [default: text]
+          [possible values: text, json]
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
@@ -140,9 +165,13 @@ Usage: <b><span class=c>wt remove</span></b> <span class=c>[OPTIONS]</span> <spa
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
+      <b><span class=c>--config-set</span></b><span class=c> &lt;toml&gt;</span>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/)
+          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
+          apply the same level everywhere — including shell completion, which no flag can reach
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts

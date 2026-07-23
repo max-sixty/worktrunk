@@ -10,6 +10,7 @@ use dunce::canonicalize;
 
 use super::{GitError, LineDiff, Repository};
 use crate::git::CommandError;
+use crate::git::parse_numstat_line;
 
 /// Parse `git submodule status` output and detect whether any submodule is initialized.
 ///
@@ -134,10 +135,13 @@ impl<'a> WorkingTree<'a> {
     /// Use this when you need to check exit codes directly (e.g., for commands
     /// where non-zero exit is not an error condition).
     pub fn run_command_output(&self, args: &[&str]) -> anyhow::Result<std::process::Output> {
-        Cmd::new("git")
-            .args(args.iter().copied())
-            .current_dir(&self.path)
-            .context(path_to_logging_context(&self.path))
+        self.repo
+            .with_object_store_env(
+                Cmd::new("git")
+                    .args(args.iter().copied())
+                    .current_dir(&self.path)
+                    .context(path_to_logging_context(&self.path)),
+            )
             .run()
             .with_context(|| format!("Failed to execute: git {}", args.join(" ")))
     }
@@ -460,21 +464,79 @@ impl<'a> WorkingTree<'a> {
     /// Working-tree diff stats vs HEAD that also count untracked files,
     /// matching the diff `wt step diff` shows.
     ///
-    /// Registers untracked files in a [`TempIndex`] via
-    /// `git add --intent-to-add .`, then runs `git diff --shortstat HEAD`
-    /// against that temp index. The real index is untouched.
+    /// Tracked changes come from the normal `git diff HEAD` path. Untracked
+    /// files are staged separately in a [`TempIndex`] and diffed by path, so
+    /// the real index is untouched and Git does not need to rediscover tracked
+    /// modifications from a copied index.
     pub fn working_tree_diff_stats_with_untracked(&self) -> anyhow::Result<LineDiff> {
+        let mut stats = self.working_tree_diff_stats()?;
+        let untracked = self.untracked_diff_stats()?;
+        stats.added += untracked.added;
+        stats.deleted += untracked.deleted;
+        Ok(stats)
+    }
+
+    fn untracked_diff_stats(&self) -> anyhow::Result<LineDiff> {
+        let output =
+            self.run_command_output(&["ls-files", "--others", "--exclude-standard", "-z"])?;
+        if !output.status.success() {
+            return Err(CommandError::from_failed_output(
+                "git",
+                &["ls-files", "--others", "--exclude-standard", "-z"],
+                &output,
+            )
+            .into());
+        }
+
+        let paths: Vec<String> = output
+            .stdout
+            .split(|&b| b == 0)
+            .filter(|path| !path.is_empty())
+            .map(|path| String::from_utf8_lossy(path).into_owned())
+            .collect();
+        if paths.is_empty() {
+            return Ok(LineDiff::default());
+        }
+
         let idx = self.temp_index()?;
-        idx.git(["add", "--intent-to-add", "."])
+        let add_output = idx
+            .git(["add", "--pathspec-from-file=-", "--pathspec-file-nul"])
+            .stdin_bytes(output.stdout)
             .run()
-            .context("Failed to register untracked files")?;
+            .context("Failed to stage untracked files")?;
+        if !add_output.status.success() {
+            return Err(CommandError::from_failed_output(
+                "git",
+                &["add", "--pathspec-from-file=-", "--pathspec-file-nul"],
+                &add_output,
+            )
+            .into());
+        }
+
+        let mut args = vec![
+            "diff".to_string(),
+            "--cached".to_string(),
+            "--numstat".to_string(),
+            "HEAD".to_string(),
+            "--".to_string(),
+        ];
+        args.extend(paths);
         let output = idx
-            .git(["diff", "--shortstat", "HEAD"])
+            .git(&args)
             .run()
-            .context("Failed to compute working-tree diff stats")?;
-        Ok(LineDiff::from_shortstat(&String::from_utf8_lossy(
-            &output.stdout,
-        )))
+            .context("Failed to compute untracked diff stats")?;
+        if !output.status.success() {
+            return Err(CommandError::from_failed_output("git", &args, &output).into());
+        }
+
+        let mut stats = LineDiff::default();
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            if let Some((added, deleted)) = parse_numstat_line(line) {
+                stats.added += added;
+                stats.deleted += deleted;
+            }
+        }
+        Ok(stats)
     }
 
     /// Open a working copy of this worktree's index for staging
@@ -486,17 +548,31 @@ impl<'a> WorkingTree<'a> {
         let real_index = git_dir.join("index");
         let log_ctx = path_to_logging_context(self.path());
 
-        let temp = tempfile::NamedTempFile::new().context("Failed to create temporary index")?;
-        std::fs::copy(&real_index, temp.path()).context("Failed to copy index file")?;
+        // A missing `<gitdir>/index` is semantically an empty index (nothing
+        // staged), so mirror git's own behaviour. Close the
+        // freshly-created 0-byte tempfile's handle (Windows leaves the name
+        // delete-pending if it's still open) and remove the file; if a real
+        // index exists, copy it back, otherwise leave the path empty and
+        // let the first `git` call against `GIT_INDEX_FILE` create a fresh
+        // valid index there.
+        let temp = tempfile::NamedTempFile::new()
+            .context("Failed to create temporary index")?
+            .into_temp_path();
+        std::fs::remove_file(&temp).context("Failed to clear temporary index")?;
+        if real_index.exists() {
+            std::fs::copy(&real_index, &temp).context("Failed to copy index file")?;
+        }
         // Validate UTF-8 once so `TempIndex::path` is infallible.
-        temp.path()
-            .to_str()
+        temp.to_str()
             .context("Temporary index path is not valid UTF-8")?;
 
         Ok(TempIndex {
             temp,
             worktree_root,
             log_ctx,
+            object_store_environment: self.repo.object_store_environment().map(
+                |(directory, alternates)| (directory.to_path_buf(), alternates.to_os_string()),
+            ),
         })
     }
 
@@ -602,18 +678,19 @@ impl<'a> WorkingTree<'a> {
 /// merge-conflict probing), and `wt step diff` (diff vs target merge-base
 /// with untracked).
 pub struct TempIndex {
-    temp: tempfile::NamedTempFile,
+    temp: tempfile::TempPath,
     worktree_root: PathBuf,
     log_ctx: String,
+    /// Copied from the [`Repository`] so a redirected `wt list` writes the temp
+    /// index's `write-tree` objects into the temporary store. `None` on the
+    /// normal persistent path. See [`Repository::redirect_objects_if_read_only`].
+    object_store_environment: Option<(PathBuf, std::ffi::OsString)>,
 }
 
 impl TempIndex {
     /// UTF-8 path to the temp index file. Validated at construction.
     pub fn path(&self) -> &str {
-        self.temp
-            .path()
-            .to_str()
-            .expect("validated in temp_index()")
+        self.temp.to_str().expect("validated in temp_index()")
     }
 
     /// Build a `git` command pointed at this temp index.
@@ -626,11 +703,17 @@ impl TempIndex {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        Cmd::new("git")
+        let command = Cmd::new("git")
             .args(args)
             .current_dir(&self.worktree_root)
             .context(self.log_ctx.clone())
-            .env("GIT_INDEX_FILE", self.path())
+            .env("GIT_INDEX_FILE", self.path());
+        match &self.object_store_environment {
+            Some((directory, alternates)) => command
+                .env("GIT_OBJECT_DIRECTORY", directory)
+                .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", alternates),
+            None => command,
+        }
     }
 }
 
@@ -638,6 +721,7 @@ impl TempIndex {
 mod tests {
     use super::has_initialized_submodules_from_status;
     use crate::git::Repository;
+    use crate::shell_exec::Cmd;
     use crate::testing::TestRepo;
 
     #[test]
@@ -859,6 +943,73 @@ mod tests {
         assert_eq!(
             index_before, index_after,
             "real index must not be mutated by the temp-index path"
+        );
+    }
+
+    #[test]
+    fn untracked_diff_stats_unborn_head_is_command_error() {
+        // With an unborn HEAD the untracked files stage fine into the temp
+        // index, but `git diff --cached --numstat HEAD` cannot resolve HEAD —
+        // the failure must surface as a typed `CommandError`.
+        let test = TestRepo::new();
+        std::fs::write(test.root_path().join("new.txt"), "hello\n").unwrap();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let err = repo.current_worktree().untracked_diff_stats().unwrap_err();
+        let cmd_err =
+            crate::git::CommandError::find_in(&err).expect("error should carry a CommandError");
+        assert!(
+            cmd_err
+                .command_string()
+                .starts_with("git diff --cached --numstat HEAD")
+        );
+    }
+
+    #[test]
+    fn temp_index_tolerates_missing_real_index() {
+        // A worktree whose `<gitdir>/index` file is absent must not error
+        // when callers ask for a temp index — git itself treats a missing
+        // index as empty, and the WorkingTreeConflictsTask used to surface
+        // this as a misleading `working-tree conflict check (Failed to copy
+        // index file)` footer.
+        let test = TestRepo::with_initial_commit();
+        std::fs::write(test.root_path().join("tracked.txt"), "hello\n").unwrap();
+        std::fs::write(test.root_path().join("untracked.txt"), "world\n").unwrap();
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let wt = repo.worktree_at(test.root_path());
+        let real_index = wt.git_dir().unwrap().join("index");
+        std::fs::remove_file(&real_index).unwrap();
+        assert!(!real_index.exists(), "precondition: real index removed");
+
+        // (a) temp_index() succeeds without <gitdir>/index.
+        let idx = wt
+            .temp_index()
+            .expect("temp_index tolerates missing real index");
+
+        // (b) git add -A against the resulting temp index produces a tree
+        // containing the working-tree files.
+        idx.git(["add", "-A"]).run().unwrap();
+        let write_tree = idx.git(["write-tree"]).run().unwrap();
+        let tree_sha = String::from_utf8_lossy(&write_tree.stdout)
+            .trim()
+            .to_string();
+        let ls_tree = Cmd::new("git")
+            .args(["ls-tree", "-r", "--name-only", &tree_sha])
+            .current_dir(test.root_path())
+            .run()
+            .unwrap();
+        let mut names: Vec<&str> = std::str::from_utf8(&ls_tree.stdout)
+            .unwrap()
+            .lines()
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["file.txt", "tracked.txt", "untracked.txt"]);
+
+        // (c) the real index is still absent afterward.
+        assert!(
+            !real_index.exists(),
+            "temp_index must not resurrect the real index"
         );
     }
 }

@@ -9,13 +9,26 @@
 //!
 //! The backup name is only second-resolution (`.bak.<YYYYmmdd-HHMMSS>`), so an
 //! `exists()` check followed by a rename would race: another process could
-//! create that path in the gap. [`renamore::rename_exclusive`] closes the gap
-//! — an atomic no-overwrite rename (`renameat2(RENAME_NOREPLACE)` on Linux,
-//! `renamex_np(RENAME_EXCL)` on macOS, `MoveFileExW` on Windows) that fails
-//! closed rather than overwriting an existing backup. `std::fs::rename`
+//! create that path in the gap. [`renamore::rename_exclusive_fallback`] closes
+//! the gap — an atomic no-overwrite rename (`renameat2(RENAME_NOREPLACE)` on
+//! Linux, `renamex_np(RENAME_EXCL)` on macOS, `MoveFileExW` on Windows) that
+//! fails closed rather than overwriting an existing backup. `std::fs::rename`
 //! silently replaces an existing file or empty directory and cannot be used
 //! here. A name collision is not fatal: the move counts up (`…-2`, `…-3`, …)
 //! until it lands on a free name.
+//!
+//! # Why the `_fallback` variant
+//!
+//! Some filesystems don't implement the atomic no-overwrite syscall:
+//! `renameat2(RENAME_NOREPLACE)` returns `EINVAL` on NFS, overlayfs, FUSE, and
+//! older kernels, which surfaces as [`std::io::ErrorKind::Unsupported`]. Using
+//! the non-fallback [`renamore::rename_exclusive`] there would abort the
+//! clobber outright. [`renamore::rename_exclusive_fallback`] instead degrades
+//! to a non-atomic `try_exists()` + `rename` when the atomic path is
+//! unsupported; it still returns [`std::io::ErrorKind::AlreadyExists`] on a
+//! collision, so the count-up loop is unaffected. The small race window the
+//! fallback reintroduces only applies on those filesystems, and is preferable
+//! to failing the command.
 
 use std::path::{Path, PathBuf};
 
@@ -53,10 +66,11 @@ fn generate_backup_path(path: &Path, suffix: &str) -> anyhow::Result<PathBuf> {
 ///
 /// If that name is already taken — a same-second clobber, or a path that raced
 /// in after planning — it counts up (`…-2`, `…-3`, …) until it finds a free
-/// name. Every attempt is an atomic no-overwrite rename
-/// ([`renamore::rename_exclusive`]), so an existing backup is never overwritten;
-/// the move just lands on the next free name. Returns the path the blocking
-/// directory was moved to.
+/// name. Every attempt is a no-overwrite rename
+/// ([`renamore::rename_exclusive_fallback`] — atomic where the filesystem
+/// supports it, a non-atomic fallback otherwise), so an existing backup is
+/// never overwritten; the move just lands on the next free name. Returns the
+/// path the blocking directory was moved to.
 ///
 /// `base_suffix` is a parameter rather than computed internally so tests can
 /// pass a fixed value; [`back_up_clobbered_path_now`] is the production entry
@@ -73,8 +87,12 @@ fn back_up_clobbered_path(blocking_path: &Path, base_suffix: &str) -> anyhow::Re
             format!("{base_suffix}-{n}")
         };
         let candidate = generate_backup_path(blocking_path, &suffix)?;
-        match renamore::rename_exclusive(blocking_path, &candidate) {
-            Ok(()) => return Ok(candidate),
+        // `_fallback` degrades to a non-atomic rename on filesystems without
+        // `renameat2(RENAME_NOREPLACE)` (NFS, overlayfs, FUSE, older kernels),
+        // where the atomic variant would error with `Unsupported`. The `bool`
+        // it returns (whether the atomic path was taken) is irrelevant here.
+        match renamore::rename_exclusive_fallback(blocking_path, &candidate) {
+            Ok(_) => return Ok(candidate),
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
             Err(err) => {
                 return Err(anyhow::Error::new(err).context(format!(

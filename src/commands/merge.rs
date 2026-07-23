@@ -10,9 +10,9 @@ use super::command_approval::approve_commit_template_append;
 use super::command_executor::FailureStrategy;
 use super::commit::{CommitOptions, HookGate};
 use super::context::CommandEnv;
+use super::flag_pair;
 use super::hook_plan::{ApprovedHookPlan, HookPlanBuilder, execute_planned_hook};
 use super::hooks::HookAnnouncer;
-use super::repository_ext::RepositoryCliExt;
 use super::template_vars::TemplateVars;
 use super::worktree::{
     FinishAfterMergeArgs, MergeOperations, PushKind, finish_after_merge, handle_no_ff_merge,
@@ -33,12 +33,12 @@ pub struct MergeFlagOverrides {
 impl MergeFlagOverrides {
     pub fn from_cli(args: &crate::cli::MergeArgs) -> Self {
         Self {
-            squash: crate::flag_pair(args.squash, args.no_squash),
-            commit: crate::flag_pair(args.commit, args.no_commit),
-            rebase: crate::flag_pair(args.rebase, args.no_rebase),
-            remove: crate::flag_pair(args.remove, args.no_remove),
-            ff: crate::flag_pair(args.ff, args.no_ff),
-            verify: crate::flag_pair(args.verify, args.no_hooks || args.no_verify),
+            squash: flag_pair(args.squash, args.no_squash),
+            commit: flag_pair(args.commit, args.no_commit),
+            rebase: flag_pair(args.rebase, args.no_rebase),
+            remove: flag_pair(args.remove, args.no_remove),
+            ff: flag_pair(args.ff, args.no_ff),
+            verify: flag_pair(args.verify, args.no_hooks || args.no_verify),
         }
     }
 
@@ -267,7 +267,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // (from auto-commit or squash), post-remove + post-switch (from worktree
     // removal), and post-merge share a single `◎ Running …` line flushed at
     // the end.
-    let mut announcer = HookAnnouncer::new(repo, config, false);
+    let mut announcer = HookAnnouncer::new(repo, false);
 
     // The project commit-append is gated independently of hook approval:
     // declining it drops only the append, never the (possibly already-approved)
@@ -332,11 +332,22 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             super::step::RebaseResult::Rebased { .. }
         )
     } else {
-        // --no-rebase: verify already rebased, fail if not
-        if !repo.is_rebased_onto(&target_branch)? {
+        // --no-rebase preserves the graph produced by the commit/squash stages
+        // above. Merge commits in that graph are valid as long as the target
+        // can fast-forward to the final tip.
+        let target_ref = format!("refs/heads/{target_branch}");
+        let target_sha = repo
+            .run_command(&["rev-parse", "--verify", "--end-of-options", &target_ref])?
+            .trim()
+            .to_string();
+        let source_sha = repo
+            .run_command(&["rev-parse", "--verify", "HEAD"])?
+            .trim()
+            .to_string();
+        if !repo.is_ancestor_by_sha(&target_sha, &source_sha)? {
             return Err(worktrunk::git::GitError::NotRebased { target_branch }.into());
         }
-        false // Already rebased, no rebase occurred
+        false // Rebase skipped; the graph produced by earlier stages remains
     };
 
     // Run pre-merge checks unless --no-hooks was specified

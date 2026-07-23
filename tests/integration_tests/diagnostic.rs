@@ -11,7 +11,8 @@
 //! - `test_diagnostic_contains_required_sections`: All sections present
 //! - `test_diagnostic_context_has_no_ansi_codes`: ANSI stripped for GitHub
 //! - `test_diagnostic_trace_log_contains_git_commands`: Log has useful data
-//! - `test_diagnostic_saved_message_with_vv`: Output shows "Diagnostic saved" with -vv
+//! - `test_diagnostic_saved_message_with_vv`: -vv announces the saved report
+//! - `test_diagnostic_leads_with_profile`: Profile is the bundle's first section
 //! - `test_diagnostic_written_to_correct_location`: File in .git/wt/logs/
 //! - `test_diagnostic_gh_hint_with_vv`: Hint shows gist and issue URL when gh installed
 
@@ -75,6 +76,12 @@ fn test_diagnostic_report_file_format(mut repo: TestRepo) {
         "Diagnostic should include trace log section when run with -vv"
     );
 
+    // The rendered performance profile rides alongside the raw trace.
+    assert!(
+        content.contains("<summary>Performance profile</summary>"),
+        "Diagnostic should include a performance profile section when run with -vv"
+    );
+
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         assert_snapshot!("diagnostic_file_format", normalize_report(&content));
@@ -83,7 +90,7 @@ fn test_diagnostic_report_file_format(mut repo: TestRepo) {
     // Verify the stderr mentions the diagnostic was saved
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Diagnostic saved"),
+        stderr.contains("Diagnostics and performance profile saved"),
         "Output should mention diagnostic was saved. stderr: {}",
         stderr
     );
@@ -194,6 +201,49 @@ fn test_diagnostic_contains_required_sections(mut repo: TestRepo) {
     );
 }
 
+/// The diagnostic surfaces the curated pager/terminal env vars and git's
+/// resolved `core.pager`, so a rendering bug like #3322 (a pager interaction
+/// suspending `wt config show`) can be diagnosed from the report alone. A set
+/// `PAGER` is echoed verbatim; an unset allowlisted var shows `(unset)`.
+#[rstest]
+fn test_diagnostic_includes_environment_variables(mut repo: TestRepo) {
+    repo.add_worktree("feature");
+    // Configure git's core.pager so its resolved value appears in the report.
+    repo.run_git(&["config", "core.pager", "my-test-pager --opt"]);
+
+    repo.wt_command()
+        .args(["list", "-vv"])
+        .env("PAGER", "my-test-pager")
+        .env_remove("GIT_PAGER")
+        .output()
+        .unwrap();
+
+    let content = fs::read_to_string(
+        repo.root_path()
+            .join(".git")
+            .join("wt/logs")
+            .join("diagnostic.md"),
+    )
+    .unwrap();
+
+    assert!(
+        content.contains("<summary>Environment variables</summary>"),
+        "Should have an environment-variables section. content: {content}"
+    );
+    assert!(
+        content.contains("PAGER=my-test-pager"),
+        "A set PAGER should be echoed verbatim. content: {content}"
+    );
+    assert!(
+        content.contains("GIT_PAGER=(unset)"),
+        "An unset allowlisted var should read (unset). content: {content}"
+    );
+    assert!(
+        content.contains("core.pager=my-test-pager --opt"),
+        "git's resolved core.pager should be surfaced. content: {content}"
+    );
+}
+
 /// The context field should have ANSI codes stripped for clean GitHub display.
 #[rstest]
 fn test_diagnostic_context_has_no_ansi_codes(mut repo: TestRepo) {
@@ -248,21 +298,25 @@ fn test_diagnostic_trace_log_contains_git_commands(mut repo: TestRepo) {
         trace_section.contains("git worktree list"),
         "Trace log should contain git worktree list command"
     );
+    // Records are humanized: a ✓/✗ glyph reports each command's outcome with a
+    // compact duration, replacing the old `[wt-trace] … dur_us=… ok=…` grammar.
     assert!(
-        trace_section.contains("[wt-trace]"),
-        "Trace log should contain wt-trace entries"
+        trace_section.contains("✓ git worktree list")
+            || trace_section.contains("✗ git worktree list"),
+        "Trace log should contain the humanized git worktree list completion record"
     );
+    // In-process spans are humanized too (◷ glyph + duration).
     assert!(
-        trace_section.contains("dur_us="),
-        "Trace log should contain command durations in microseconds"
-    );
-    assert!(
-        trace_section.contains("ok="),
-        "Trace log should contain success/failure indicators"
+        trace_section.contains("◷ init_logging"),
+        "Trace log should contain the init_logging span record"
     );
 }
 
-/// Diagnostic is saved with -vv and output mentions it.
+/// The `-vv` end block names what the run captured and saved
+/// (`diagnostic.md`, the single human-facing doc). It doesn't re-list the
+/// raw companion logs (`trace.jsonl`, `subprocess.log`) — the start-of-run
+/// pointer (`Verbose logging @ <dir>/`) already names the log directory,
+/// and the report body points at the companions directly.
 #[rstest]
 fn test_diagnostic_saved_message_with_vv(mut repo: TestRepo) {
     repo.add_worktree("feature");
@@ -272,11 +326,15 @@ fn test_diagnostic_saved_message_with_vv(mut repo: TestRepo) {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Verify diagnostic was saved
+    // Headline names the diagnostics and performance profile.
     assert!(
-        stderr.contains("Diagnostic saved"),
-        "Should mention diagnostic was saved. stderr: {}",
-        stderr
+        stderr.contains("Diagnostics and performance profile saved"),
+        "end block should name what was captured. stderr: {stderr}"
+    );
+    // The raw companion logs are not re-listed in the end block.
+    assert!(
+        !stderr.contains("wt/logs/trace.jsonl") && !stderr.contains("wt/logs/subprocess.log"),
+        "end block should not re-list the raw companion logs: {stderr}"
     );
 }
 
@@ -326,8 +384,48 @@ fn test_log_files_created(mut repo: TestRepo) {
     let trace = fs::read_to_string(&trace_log).unwrap();
     assert!(!trace.is_empty(), "trace.log should not be empty");
     assert!(
-        trace.contains("[wt-trace]"),
-        "trace.log should contain trace entries"
+        trace.contains("◷ init_logging"),
+        "trace.log should contain humanized trace records"
+    );
+}
+
+/// At `-vv` the performance profile is the diagnostic bundle's lead section —
+/// promoted above the raw Environment/Worktrees/Config dumps — and there is no
+/// standalone `profile.txt` (the bundle is the single human-facing doc).
+#[rstest]
+fn test_diagnostic_leads_with_profile(repo: TestRepo) {
+    let output = repo.wt_command().args(["list", "-vv"]).output().unwrap();
+
+    let logs_dir = repo.root_path().join(".git").join("wt/logs");
+
+    // The standalone profile.txt is gone — the profile lives in the bundle.
+    assert!(
+        !logs_dir.join("profile.txt").exists(),
+        "profile.txt should not be written; the profile rides inside diagnostic.md"
+    );
+
+    // The bundle leads with the profile: its section precedes Environment.
+    let content = fs::read_to_string(logs_dir.join("diagnostic.md")).unwrap();
+    let profile_at = content
+        .find("<summary>Performance profile</summary>")
+        .expect("diagnostic.md should contain the performance profile section");
+    let env_at = content
+        .find("<summary>Environment</summary>")
+        .expect("diagnostic.md should contain the Environment section");
+    assert!(
+        profile_at < env_at,
+        "profile section should precede Environment in diagnostic.md: {content}"
+    );
+
+    // The profile is no longer announced separately — only diagnostic.md is.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("Performance profile saved"),
+        "the profile is folded into diagnostic.md, not announced separately: {stderr}"
+    );
+    assert!(
+        stderr.contains("Diagnostics and performance profile saved"),
+        "stderr should announce the diagnostic bundle. stderr: {stderr}"
     );
 }
 
@@ -343,8 +441,8 @@ fn test_vv_splits_full_and_bounded_output(repo: TestRepo) {
     let output = fs::read_to_string(logs_dir.join("subprocess.log")).unwrap();
 
     assert!(
-        trace.contains("[wt-trace]"),
-        "trace.log should contain [wt-trace] records at -vv"
+        trace.contains("◷ init_logging"),
+        "trace.log should contain humanized trace records at -vv"
     );
     // Captured stdout is emitted line-by-line with the `  ` / `  ! `
     // continuation prefix used by log_output. Full subprocess output lives
@@ -353,17 +451,120 @@ fn test_vv_splits_full_and_bounded_output(repo: TestRepo) {
         output.lines().any(|l| l.contains("  worktree ")),
         "subprocess.log should contain `git worktree list --porcelain` stdout lines at -vv"
     );
-    // Structured trace records stay in trace.log only, not subprocess.log.
+    // Trace records stay in trace.log only, not subprocess.log (which holds
+    // raw bodies under their `$ cmd … [seq=N tid=T]` headers).
     assert!(
-        !output.contains("[wt-trace]"),
-        "subprocess.log should not contain [wt-trace] records"
+        !output.contains("◷ init_logging"),
+        "subprocess.log should not contain trace records"
+    );
+}
+
+/// Each command's block in `subprocess.log` is introduced by a
+/// `$ cmd … [seq=N tid=T]` header, and that `seq` also tags the command's
+/// record in the machine `trace.jsonl` — so an otherwise-undelimited raw output
+/// block can be segmented and joined back to its timed command record. (The
+/// humanized `trace.log` drops `seq`; the join lives in `trace.jsonl`.) Guards
+/// the segmentation + correlation contract the files share.
+#[rstest]
+fn test_vv_subprocess_log_headers_join_trace(repo: TestRepo) {
+    repo.wt_command().args(["list", "-vv"]).output().unwrap();
+
+    let logs_dir = repo.root_path().join(".git").join("wt/logs");
+    let subprocess = fs::read_to_string(logs_dir.join("subprocess.log")).unwrap();
+    let trace = fs::read_to_string(logs_dir.join("trace.jsonl")).unwrap();
+
+    // Pick a known captured command (`wt list` runs `git worktree list
+    // --porcelain`) so the join can be checked by command identity, not just by
+    // a seq value that — being process-global and dense — exists on *some*
+    // record regardless. A header starts with `$ ` (body lines start with `  `,
+    // so blocks self-segment) and carries the `seq` join key.
+    let header = subprocess
+        .lines()
+        .find(|l| l.starts_with("$ ") && l.contains("git worktree list") && l.contains("[seq="))
+        .expect("subprocess.log should head the `git worktree list` block with `$ … [seq=N …]`");
+
+    let seq: u64 = header
+        .split("[seq=")
+        .nth(1)
+        .and_then(|s| s.split([' ', ']']).next())
+        .and_then(|s| s.parse().ok())
+        .expect("the subprocess.log header should carry a numeric seq");
+
+    // The trace.jsonl record carrying that seq must be the SAME command —
+    // asserting both `seq` and `cmd` closes the gap where a dense seq coincides
+    // with an unrelated record. (serde_json emits compact `"key":value`.)
+    assert!(
+        trace.lines().any(|l| {
+            l.contains(&format!(r#""seq":{seq},"#)) && l.contains(r#""cmd":"git worktree list"#)
+        }),
+        "trace.jsonl should carry the record for `git worktree list` with seq={seq} to join the subprocess.log block:\n{header}"
+    );
+}
+
+/// A command that pipes stdin has it captured in its `subprocess.log` block
+/// under a `  < ` prefix, so the deep log shows what was fed in, not just what
+/// came out. `wt list --full` counts each worktree's diff including untracked
+/// files, staging them via `git add --pathspec-from-file=-` (stdin), which
+/// exercises the path.
+#[rstest]
+fn test_vv_subprocess_log_captures_stdin(repo: TestRepo) {
+    for path in repo.worktrees.values() {
+        std::fs::write(path.join("untracked-probe.txt"), "stdin probe\n").unwrap();
+    }
+    repo.wt_command()
+        .args(["list", "--full", "-vv"])
+        .output()
+        .unwrap();
+
+    let subprocess =
+        fs::read_to_string(repo.root_path().join(".git").join("wt/logs/subprocess.log")).unwrap();
+    assert!(
+        subprocess.lines().any(|l| l.starts_with("  < ")),
+        "subprocess.log should capture piped stdin under a `  < ` prefix:\n{subprocess}"
+    );
+}
+
+/// Control bytes in captured subprocess output must be escaped on the
+/// human-facing routes (stderr + `trace.log`) but kept verbatim in
+/// `subprocess.log`. `wt list` runs `git for-each-ref --format=…%00…`
+/// (`LOCAL_BRANCH_FORMAT`), so its captured stdout carries NUL bytes between
+/// fields — a real instance of the bytes that, left raw, make `diagnostic.md`
+/// sniff as binary and break its `gh gist create` upload (issue #2988).
+#[rstest]
+fn test_vv_escapes_control_bytes_in_trace_not_subprocess(repo: TestRepo) {
+    repo.wt_command().args(["list", "-vv"]).output().unwrap();
+
+    let logs_dir = repo.root_path().join(".git").join("wt/logs");
+    let trace = fs::read_to_string(logs_dir.join("trace.log")).unwrap();
+    let subprocess = fs::read_to_string(logs_dir.join("subprocess.log")).unwrap();
+    let diagnostic = fs::read_to_string(logs_dir.join("diagnostic.md")).unwrap();
+
+    // subprocess.log is the raw byte stream — NUL survives verbatim.
+    assert!(
+        subprocess.contains('\u{0}'),
+        "subprocess.log should keep raw NUL bytes from for-each-ref output"
+    );
+    // The bounded preview in trace.log is escaped: visible `\0`, no raw NUL.
+    assert!(
+        trace.contains(r"\0"),
+        "trace.log should render NUL as the escaped `\\0`"
+    );
+    assert!(
+        !trace.contains('\u{0}'),
+        "trace.log must not carry raw NUL bytes (would sniff as binary)"
+    );
+    // diagnostic.md inlines trace.log plus config / worktree list — the upload
+    // boundary must be free of raw control bytes so the gist upload succeeds.
+    assert!(
+        !diagnostic.contains('\u{0}'),
+        "diagnostic.md must not carry raw NUL bytes (binary file → gist upload fails)"
     );
 }
 
 /// At `-vv`, Debug-level records (the noisy ones) stay out of stderr —
 /// the bounded subprocess preview lands in `trace.log` (not stderr), and
 /// `subprocess.log` still holds the unbounded body. Info-level routing
-/// from `-v` still applies at `-vv` (it's a superset), so the "Tracing
+/// from `-v` still applies at `-vv` (it's a superset), so the "Writing
 /// to ..." pointer and similar status lines DO appear on stderr; they're
 /// asserted at the end of this test. Guards against a regression that
 /// re-routes the debug stream to stderr and floods the terminal.
@@ -434,22 +635,22 @@ fn test_vv_debug_pipeline_silent_on_stderr(repo: TestRepo) {
     );
 
     // The full subprocess stdout still lands in subprocess.log, and trace.log
-    // still captures the `$ cmd` / `[wt-trace]` records — confirm both so a
+    // still captures the humanized trace records — confirm both so a
     // regression that disables the file sinks fails loudly here too.
     assert!(
         raw.lines().any(|l| l.contains("refs/heads/many-branch-")),
         "subprocess.log should contain the captured for-each-ref stdout"
     );
     assert!(
-        trace.contains("[wt-trace]"),
-        "trace.log should contain [wt-trace] records at -vv"
+        trace.contains("◷ init_logging"),
+        "trace.log should contain humanized trace records at -vv"
     );
 
-    // Stderr at -vv should contain the new pointer line (and the existing
-    // diagnostic line), so the user knows where the trace went.
+    // Stderr at -vv opens with a one-line pointer to the log directory (the
+    // per-file rundown is deferred to the end-of-run diagnostic announcement).
     assert!(
-        stderr.contains("Writing to") && stderr.contains("trace.log"),
-        "stderr should announce the trace destination at -vv: {stderr}"
+        stderr.contains("Verbose logging @") && stderr.contains("wt/logs"),
+        "stderr should point at the log directory at startup: {stderr}"
     );
 }
 
@@ -461,16 +662,17 @@ fn test_vv_debug_pipeline_silent_on_stderr(repo: TestRepo) {
 /// where `-v`/`-vv` hardcoded `filter_level(...)` and silently dropped
 /// `RUST_LOG`.
 ///
-/// The probe is the `[wt-trace]` grammar — those records are emitted at
-/// `log::debug!`, so they're suppressed at the Info baseline `-v` selects
-/// and surface when `RUST_LOG=debug` raises it. (At `-v 0` the same
+/// The probe is the `◷ init_logging` span record — emitted at `log::debug!`,
+/// unique to the trace stream (so it can't be confused with normal output),
+/// and present on every run. It's suppressed at the Info baseline `-v` selects
+/// and surfaces when `RUST_LOG=debug` raises it. (At `-v 0` the same
 /// `RUST_LOG=debug` path is already covered by
 /// `test_rust_log_debug_fallback_without_vv`; at `-vv` the baseline is
 /// already Debug so there's no flag/env conflict to assert.)
 #[rstest]
 fn test_rust_log_overrides_verbose_flag(repo: TestRepo) {
-    // Baseline: -v alone caps at Info, so debug-level [wt-trace] records
-    // are dropped from stderr.
+    // Baseline: -v alone caps at Info, so debug-level trace records are
+    // dropped from stderr.
     let info_only = repo
         .wt_command()
         .args(["list", "-v"])
@@ -480,11 +682,11 @@ fn test_rust_log_overrides_verbose_flag(repo: TestRepo) {
         .expect("wt list -v");
     let info_stderr = String::from_utf8_lossy(&info_only.stderr);
     assert!(
-        !info_stderr.contains("[wt-trace]"),
-        "-v alone (Info baseline) should not surface [wt-trace] records: {info_stderr}"
+        !info_stderr.contains("init_logging"),
+        "-v alone (Info baseline) should not surface trace records: {info_stderr}"
     );
 
-    // RUST_LOG=debug + -v raises the level: [wt-trace] records appear.
+    // RUST_LOG=debug + -v raises the level: trace records appear.
     let with_env = repo
         .wt_command()
         .args(["list", "-v"])
@@ -494,8 +696,8 @@ fn test_rust_log_overrides_verbose_flag(repo: TestRepo) {
         .expect("wt list -v");
     let env_stderr = String::from_utf8_lossy(&with_env.stderr);
     assert!(
-        env_stderr.contains("[wt-trace]"),
-        "RUST_LOG=debug at -v should surface [wt-trace] records on stderr: {env_stderr}"
+        env_stderr.contains("init_logging"),
+        "RUST_LOG=debug at -v should surface trace records on stderr: {env_stderr}"
     );
 }
 
@@ -539,6 +741,66 @@ fn test_rust_log_debug_fallback_without_vv(repo: TestRepo) {
     );
 }
 
+/// `WORKTRUNK_VERBOSE` sets the verbosity level from the environment, mirroring
+/// the `-v`/`-vv` flags so logging can be turned on with no CLI flag — the only
+/// way to reach shell completion, which has nowhere to pass `-vv` (see the
+/// completion suite). The env and the flag combine via `max`: the env is a
+/// baseline the flags raise but never lower. Level 2 opens the on-disk trace
+/// files exactly like `-vv`; level 1 does not, proving the count is threaded
+/// rather than collapsed to a boolean "verbose on".
+#[rstest]
+fn test_worktrunk_verbose_env_sets_level(repo: TestRepo) {
+    let logs_dir = repo.root_path().join(".git").join("wt/logs");
+    let trace_log = logs_dir.join("trace.log");
+
+    // Level 2 with no flag opens the trace files, just like `-vv`.
+    let _ = fs::remove_dir_all(&logs_dir);
+    let out = repo
+        .wt_command()
+        .args(["list"])
+        .env("WORKTRUNK_VERBOSE", "2")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("wt list");
+    assert!(out.status.success());
+    assert!(
+        trace_log.exists(),
+        "WORKTRUNK_VERBOSE=2 should open trace.log like -vv"
+    );
+
+    // Level 1 with no flag does NOT — the trace files are a level-2 artifact,
+    // so the env must carry the count, not just a boolean.
+    let _ = fs::remove_dir_all(&logs_dir);
+    let out = repo
+        .wt_command()
+        .args(["list"])
+        .env("WORKTRUNK_VERBOSE", "1")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("wt list");
+    assert!(out.status.success());
+    assert!(
+        !trace_log.exists(),
+        "WORKTRUNK_VERBOSE=1 should not open the -vv trace files"
+    );
+
+    // An explicit `-vv` wins over a lower env baseline (`max`, not env-wins):
+    // env 0 + `-vv` still writes the files.
+    let _ = fs::remove_dir_all(&logs_dir);
+    let out = repo
+        .wt_command()
+        .args(["list", "-vv"])
+        .env("WORKTRUNK_VERBOSE", "0")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("wt list -vv");
+    assert!(out.status.success());
+    assert!(
+        trace_log.exists(),
+        "an explicit -vv must win over WORKTRUNK_VERBOSE=0"
+    );
+}
+
 // =============================================================================
 // Tests for -vv verbosity level (always write diagnostic)
 // =============================================================================
@@ -573,7 +835,7 @@ fn test_vv_writes_diagnostic_on_success(repo: TestRepo) {
     // stderr should mention diagnostic was saved
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Diagnostic saved"),
+        stderr.contains("Diagnostics and performance profile saved"),
         "stderr should mention diagnostic was saved. stderr: {}",
         stderr
     );
@@ -602,16 +864,16 @@ fn test_vv_writes_diagnostic_on_error(mut repo: TestRepo) {
     // stderr should mention diagnostic was saved
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Diagnostic saved"),
+        stderr.contains("Diagnostics and performance profile saved"),
         "stderr should mention diagnostic was saved. stderr: {}",
         stderr
     );
 }
 
-/// If one of the `-vv` log files can't be opened (here: pre-existing path
-/// of the wrong type), the user still gets a "Writing to ..." pointer for
-/// the one that opened, and the elision marker reflects the asymmetric
-/// state instead of telling a `-vv` user to "rerun with -vv".
+/// If one of the `-vv` log files can't be opened (here: subprocess.log's path
+/// is occupied by a directory), the startup pointer still appears — it's
+/// anchored on the log directory, which trace.log's open makes available — and
+/// trace.log is still written.
 #[rstest]
 fn test_vv_pointer_handles_split_init(repo: TestRepo) {
     let logs_dir = repo.root_path().join(".git").join("wt/logs");
@@ -628,12 +890,8 @@ fn test_vv_pointer_handles_split_init(repo: TestRepo) {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
-        stderr.contains("Writing to") && stderr.contains("trace.log"),
-        "stderr should point at trace.log even when subprocess.log can't open: {stderr}"
-    );
-    assert!(
-        stderr.contains("subprocess.log unavailable"),
-        "stderr should note subprocess.log is unavailable: {stderr}"
+        stderr.contains("Verbose logging @") && stderr.contains("wt/logs"),
+        "startup pointer should still name the log directory when subprocess.log can't open: {stderr}"
     );
     assert!(
         logs_dir.join("trace.log").exists(),
@@ -642,7 +900,8 @@ fn test_vv_pointer_handles_split_init(repo: TestRepo) {
 }
 
 /// With just -v, info-level logging goes to stderr but no log files are written.
-/// `-vv` is the threshold for `trace.log`, `subprocess.log`, and `diagnostic.md`.
+/// `-vv` is the threshold for `trace.log`, `trace.jsonl`, `subprocess.log`, and
+/// `diagnostic.md`.
 #[rstest]
 fn test_v_does_not_write_log_files(repo: TestRepo) {
     // Run a successful command with just -v
@@ -652,7 +911,12 @@ fn test_v_does_not_write_log_files(repo: TestRepo) {
 
     // None of the -vv diagnostic files should exist with just -v
     let wt_logs = repo.root_path().join(".git").join("wt/logs");
-    for name in ["diagnostic.md", "trace.log", "subprocess.log"] {
+    for name in [
+        "diagnostic.md",
+        "trace.log",
+        "trace.jsonl",
+        "subprocess.log",
+    ] {
         assert!(
             !wt_logs.join(name).exists(),
             "{name} should NOT be created with just -v (requires -vv)"
@@ -701,7 +965,7 @@ fn test_vv_outside_repo_no_crash() {
     // announce_trace_destination took its early-return path.
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !stderr.contains("Writing to"),
+        !stderr.contains("Verbose logging @"),
         "no startup pointer when trace.log can't open: {stderr}"
     );
 }
@@ -820,21 +1084,44 @@ fn normalize_report(content: &str) -> String {
         .replace_all(&result, "$1 $2")
         .to_string();
 
+    // Truncate the environment-variables section - its values (TERM, SHELL,
+    // LANG, PAGER, …) are inherited from the host and differ per machine, so
+    // exact comparison is non-deterministic. We assert specific lines appear in
+    // a dedicated test instead.
+    truncate_details_section(&mut result, "Environment variables", "[ENV_VARS_CONTENT]");
+
+    // Truncate performance profile section - its durations and by-type/slowest
+    // ordering depend on the run's real timing, so exact comparison is flaky.
+    // We verify the section exists separately in the test.
+    truncate_details_section(
+        &mut result,
+        "Performance profile",
+        "[PERFORMANCE_PROFILE_CONTENT]",
+    );
+
     // Truncate trace log section - it has parallel git commands that interleave
     // in different orders, making exact snapshot comparison flaky.
     // We verify the section exists separately in the test.
-    if let Some(start) = result.find("<summary>Trace log</summary>") {
-        // Find the closing </details> after this point
-        if let Some(end_offset) = result[start..].find("</details>") {
-            let end = start + end_offset + "</details>".len();
-            let before = &result[..start];
-            let after = &result[end..];
-            result = format!(
-                "{}<summary>Trace log</summary>\n\n[TRACE_LOG_CONTENT]\n</details>{}",
-                before, after
-            );
-        }
-    }
+    truncate_details_section(&mut result, "Trace log", "[TRACE_LOG_CONTENT]");
 
     result
+}
+
+/// Replace a `<details>` section's body with a fixed placeholder so
+/// host-specific or run-specific content (env values, timings, interleaved
+/// trace output) doesn't make the snapshot non-deterministic. The section is
+/// located by its `<summary>{title}</summary>` line and truncated up to the
+/// next `</details>`. A no-op when the section isn't present.
+fn truncate_details_section(result: &mut String, title: &str, placeholder: &str) {
+    let summary = format!("<summary>{title}</summary>");
+    if let Some(start) = result.find(&summary)
+        && let Some(end_offset) = result[start..].find("</details>")
+    {
+        let end = start + end_offset + "</details>".len();
+        *result = format!(
+            "{}{summary}\n\n{placeholder}\n</details>{}",
+            &result[..start],
+            &result[end..],
+        );
+    }
 }

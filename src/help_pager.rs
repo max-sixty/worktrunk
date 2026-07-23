@@ -3,15 +3,18 @@
 //! Provides pager support for `--help` output, following git's pager precedence:
 //! GIT_PAGER → core.pager config → PAGER environment variable → "less" default.
 //!
-//! # Difference from diff pager
+//! # Difference from the diff preview pager
 //!
-//! This pager is INTERACTIVE (spawned with TTY access) unlike the diff renderer
-//! in src/git/repository/mod.rs which is DETACHED (spawned via setsid). This is
-//! intentional:
+//! This pager is INTERACTIVE (spawned with TTY access) so users can scroll
+//! `--help` output. The diff preview pager in `src/commands/picker/pager.rs`
+//! runs inside the picker's preview window — a non-TTY context — so it spawns
+//! differently:
 //!
-//! - Help pager: Top-level user command, needs TTY for interactive scrolling
-//! - Diff renderer: Used in TUI contexts (skim preview), must be detached to
-//!   prevent hangs from TTY access
+//! - Help pager: top-level user command, needs a TTY for interactive scrolling
+//! - Diff preview pager: pipes the diff over stdin, appends `--paging=never`
+//!   for pagers that would otherwise launch their own `less` (delta, bat), and
+//!   is killed by a `PAGER_TIMEOUT` watchdog if it blocks — it is never given a
+//!   TTY, so it can't hang the picker's event loop
 //!
 //! Both follow git's pager detection but spawn differently based on their usage context.
 //!
@@ -58,7 +61,7 @@ fn detect_help_pager() -> Option<String> {
     if shell.is_posix {
         Some("less".to_string())
     } else {
-        log::debug!("No POSIX shell available, skipping pager (less not available)");
+        tracing::debug!("No POSIX shell available, skipping pager (less not available)");
         None
     }
 }
@@ -84,13 +87,13 @@ fn detect_help_pager() -> Option<String> {
 pub(crate) fn show_help_in_pager(help_text: &str, use_pager: bool) {
     // Short help (-h) never uses a pager
     if !use_pager {
-        log::debug!("Short help (-h) requested, printing directly to stdout");
+        tracing::debug!("Short help (-h) requested, printing directly to stdout");
         print!("{}", help_text);
         return;
     }
 
     let Some(pager_cmd) = detect_help_pager() else {
-        log::debug!("No pager configured, printing help directly to stdout");
+        tracing::debug!("No pager configured, printing help directly to stdout");
         print!("{}", help_text);
         return;
     };
@@ -98,14 +101,14 @@ pub(crate) fn show_help_in_pager(help_text: &str, use_pager: bool) {
     // Only page when our output destination is a terminal.
     // If stdout is piped/redirected (e.g., `wt --help | grep foo`), print directly.
     if !std::io::stdout().is_terminal() {
-        log::debug!("stdout is not a TTY, skipping pager");
+        tracing::debug!("stdout is not a TTY, skipping pager");
         print!("{}", help_text);
         return;
     }
 
-    log::debug!("Invoking pager: {}", pager_cmd);
+    tracing::debug!(pager_cmd = %pager_cmd, "Invoking pager: {}", pager_cmd);
     if let Err(e) = pipe_through_pager(&pager_cmd, help_text) {
-        log::debug!("Pager failed, falling back to stdout: {}", e);
+        tracing::debug!(error = %e, "Pager failed, falling back to stdout: {}", e);
         print!("{}", help_text);
     }
 }
@@ -119,7 +122,7 @@ pub(crate) fn show_help_in_pager(help_text: &str, use_pager: bool) {
 fn pipe_through_pager(pager_cmd: &str, help_text: &str) -> std::io::Result<()> {
     let less_flags = compute_less_flags(std::env::var("LESS").ok().as_deref());
     let shell = ShellConfig::get().map_err(std::io::Error::other)?;
-    log::debug!("$ {} (pager)", pager_cmd);
+    tracing::debug!(pager_cmd = %pager_cmd, "$ {} (pager)", pager_cmd);
     let mut cmd = shell.command(pager_cmd);
     worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
     let mut child = cmd.stdin(Stdio::piped()).env("LESS", &less_flags).spawn()?;
@@ -135,12 +138,36 @@ fn pipe_through_pager(pager_cmd: &str, help_text: &str) -> std::io::Result<()> {
 /// Returns flags suitable for setting LESS env var when spawning less.
 /// Ensures F (quit if one screen), R (colors), X (no termcap init) are always active.
 fn compute_less_flags(user_less: Option<&str>) -> String {
-    format!("{} -FRX", user_less.unwrap_or_default())
+    compute_less_flags_for(user_less, cfg!(windows))
+}
+
+/// Platform-parameterized core of [`compute_less_flags`], split out so both
+/// branches are testable on any host.
+///
+/// On Windows we additionally pass `-K` (`--quit-on-intr`) so that pressing
+/// Ctrl-C makes `less` exit cleanly — running its normal deinit that restores
+/// the console input mode — instead of returning to its own prompt. `wt` has
+/// no Windows console Ctrl-C handler (signal forwarding is Unix-only, see
+/// `signal_forwarder.rs`), so a Ctrl-C otherwise terminates both `less` and
+/// the blocked `wt` parent before the console mode is restored, leaving the
+/// terminal wedged (#2968). `-K` routes Ctrl-C through the same clean-exit
+/// path as quitting with `q`, which restores the terminal correctly.
+///
+/// `-K` is Windows-only on purpose: on Unix the signal forwarder coordinates a
+/// clean teardown, and many users rely on Ctrl-C returning `less` to its
+/// prompt rather than quitting.
+fn compute_less_flags_for(user_less: Option<&str>, windows: bool) -> String {
+    let base = user_less.unwrap_or_default();
+    if windows {
+        format!("{base} -FRX -K")
+    } else {
+        format!("{base} -FRX")
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_less_flags, parse_pager_value};
+    use super::{compute_less_flags_for, parse_pager_value};
 
     /// `cat > /dev/null` exercises the full spawn → write → wait path with a
     /// stand-in pager that always succeeds. Covers every line of
@@ -171,31 +198,49 @@ mod tests {
     #[test]
     fn test_compute_less_flags_empty() {
         // Leading space is fine - less ignores it
-        assert_eq!(compute_less_flags(None), " -FRX");
-        assert_eq!(compute_less_flags(Some("")), " -FRX");
+        assert_eq!(compute_less_flags_for(None, false), " -FRX");
+        assert_eq!(compute_less_flags_for(Some(""), false), " -FRX");
     }
 
     #[test]
     fn test_compute_less_flags_short_options() {
         // Common case: user has -R (oh-my-zsh default)
-        assert_eq!(compute_less_flags(Some("-R")), "-R -FRX");
+        assert_eq!(compute_less_flags_for(Some("-R"), false), "-R -FRX");
         // User has multiple short flags
-        assert_eq!(compute_less_flags(Some("-iMRS")), "-iMRS -FRX");
+        assert_eq!(compute_less_flags_for(Some("-iMRS"), false), "-iMRS -FRX");
     }
 
     #[test]
     fn test_compute_less_flags_long_options() {
         // Issue #594: --mouse must not become --mouseFRX
-        assert_eq!(compute_less_flags(Some("--mouse")), "--mouse -FRX");
+        assert_eq!(
+            compute_less_flags_for(Some("--mouse"), false),
+            "--mouse -FRX"
+        );
         // Multiple long options
         assert_eq!(
-            compute_less_flags(Some("--mouse --shift=4")),
+            compute_less_flags_for(Some("--mouse --shift=4"), false),
             "--mouse --shift=4 -FRX"
         );
     }
 
     #[test]
     fn test_compute_less_flags_mixed() {
-        assert_eq!(compute_less_flags(Some("-R --mouse")), "-R --mouse -FRX");
+        assert_eq!(
+            compute_less_flags_for(Some("-R --mouse"), false),
+            "-R --mouse -FRX"
+        );
+    }
+
+    #[test]
+    fn test_compute_less_flags_windows_appends_quit_on_intr() {
+        // #2968: on Windows we add -K so Ctrl-C makes less exit cleanly and
+        // restore the console, instead of wedging the terminal.
+        assert_eq!(compute_less_flags_for(None, true), " -FRX -K");
+        assert_eq!(compute_less_flags_for(Some("-R"), true), "-R -FRX -K");
+        assert_eq!(
+            compute_less_flags_for(Some("--mouse"), true),
+            "--mouse -FRX -K"
+        );
     }
 }

@@ -59,15 +59,30 @@ pub fn require_config_path() -> Result<PathBuf, ConfigError> {
     })
 }
 
+/// Resolve the user config path for display, formatted with `~` and falling
+/// back to the canonical location when none can be determined.
+///
+/// The display counterpart of [`config_path`]: user-facing messages that name
+/// "the config file wt would load or write" route through this, so the
+/// `--config` / `WORKTRUNK_CONFIG_PATH` / `$XDG_CONFIG_HOME` resolution and the
+/// fallback literal live in one place. Use [`require_config_path`] for the
+/// actual mutation; this is display-only.
+pub fn config_path_for_display() -> String {
+    config_path()
+        .map(|p| crate::path::format_path_for_display(&p))
+        .unwrap_or_else(|| "~/.config/worktrunk/config.toml".to_string())
+}
+
 /// Platform-specific default config path, without CLI or env var overrides.
 ///
 /// Returns the etcetera-based platform default. Called by `config_path()`
 /// as the final fallback when no CLI or env var override is set.
 ///
-///
-/// Uses the `etcetera` crate which returns:
-/// - Linux: `$XDG_CONFIG_HOME/worktrunk/config.toml` (default `~/.config/...`)
-/// - macOS: `~/Library/Application Support/worktrunk/config.toml`
+/// `etcetera::choose_base_strategy` follows the CLI convention of using XDG
+/// on every Unix platform (including macOS) and the native APPDATA strategy on
+/// Windows. Concretely:
+/// - Unix (Linux + macOS): `$XDG_CONFIG_HOME/worktrunk/config.toml`
+///   (default `~/.config/worktrunk/config.toml`)
 /// - Windows: `%APPDATA%\worktrunk\config.toml`
 pub fn default_config_path() -> Option<PathBuf> {
     let strategy = choose_base_strategy().ok()?;

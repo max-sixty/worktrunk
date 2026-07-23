@@ -8,13 +8,9 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
-    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
-    NO_COLOR: ""
-    PSModulePath: ""
-    SHELL: ""
     TERM: alacritty
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -46,7 +42,7 @@ Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET][0m
 [1m[32mOptions:[0m
       [1m[36m--no-squash[0m      Skip commit squashing
       [1m[36m--no-commit[0m      Skip commit and squash
-      [1m[36m--no-rebase[0m      Skip rebase (fail if not already rebased)
+      [1m[36m--no-rebase[0m      Skip rebase; require the target to fast-forward to the resulting tip
       [1m[36m--no-remove[0m      Keep worktree after merge
       [1m[36m--no-ff[0m          Create a merge commit (no fast-forward)
       [1m[36m--stage[0m[36m [0m[36m<STAGE>[0m  What to stage before committing [default: all] [possible values: all, tracked, none]
@@ -57,9 +53,10 @@ Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET][0m
       [1m[36m--format[0m[36m [0m[36m<FORMAT>[0m  Output format [default: text] [possible values: text, json]
 
 [1m[32mGlobal Options:[0m
-  [1m[36m-C[0m[36m [0m[36m<path>[0m            Working directory for this command
-      [1m[36m--config[0m[36m [0m[36m<path>[0m  User config file path
-  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m     Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/)
-  [1m[36m-y[0m, [1m[36m--yes[0m            Skip approval prompts
+  [1m[36m-C[0m[36m [0m[36m<path>[0m                Working directory for this command
+      [1m[36m--config[0m[36m [0m[36m<path>[0m      User config file path
+      [1m[36m--config-set[0m[36m [0m[36m<toml>[0m  Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m         Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to apply the same level everywhere — including shell completion, which no flag can reach
+  [1m[36m-y[0m, [1m[36m--yes[0m                Skip approval prompts
 
 ----- stderr -----

@@ -10,13 +10,9 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
-    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
-    NO_COLOR: ""
-    PSModulePath: ""
-    SHELL: ""
     TERM: alacritty
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -43,8 +39,9 @@ wt config state logs - Operation and debug logs
 Usage: [1m[36mwt config state logs[0m [36m[OPTIONS][0m [36m[COMMAND][0m
 
 [1m[32mCommands:[0m
-  [1m[36mget[0m    List all log file paths
-  [1m[36mclear[0m  Clear all log files
+  [1m[36mget[0m      List all log file paths
+  [1m[36mprofile[0m  Performance profile from a trace
+  [1m[36mclear[0m    Clear all log files
 
 [1m[32mOptions:[0m
   [1m[36m-h[0m, [1m[36m--help[0m
@@ -61,8 +58,11 @@ Usage: [1m[36mwt config state logs[0m [36m[OPTIONS][0m [36m[COMMAND][0m
       [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
+      [1m[36m--config-set[0m[36m [0m[36m<toml>[0m
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to apply the same level everywhere — including shell completion, which no flag can reach
 
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
@@ -73,7 +73,7 @@ View and manage log files — hook output, command audit trail, and debug diagno
 
 Three kinds of logs live in [2m.git/wt/logs/[0m:
 
-[32mCommand log (`commands.jsonl`)[0m
+[32mCommand log (commands.jsonl)[0m
 
 All hook executions and LLM commands are recorded automatically — one JSON object per line. Rotates to [2mcommands.jsonl.old[0m at 1MB (~2MB total). Fields:
 
@@ -104,10 +104,12 @@ All [2mpost-*[0m hooks (post-start, post-switch, post-commit, post-merge) run 
       File        Created when   
  ────────────── ──────────────── 
  [2mtrace.log[0m      Running with [2m-vv[0m 
+ [2mtrace.jsonl[0m    Running with [2m-vv[0m 
  [2msubprocess.log[0m Running with [2m-vv[0m 
  [2mdiagnostic.md[0m  Running with [2m-vv[0m 
 
-[2mtrace.log[0m captures debug-level records at [2m-vv[0m — commands, [2m[wt-trace][0m records, bounded subprocess previews. [2msubprocess.log[0m holds the raw uncapped subprocess stdout/stderr bodies. [2mdiagnostic.md[0m is a markdown bug-report bundle that inlines [2mtrace.log[0m; [2mwt[0m prints a [2mgh gist create[0m command pointing at it. All three are overwritten on each [2m-vv[0m run.
+[2mtrace.log[0m is the human-readable trace at [2m-vv[0m — each command's start ([2m$ …[0m) and completion ([2m✓[0m/[2m✗ … 12.3ms[0m), in-process spans, milestones, and bounded subprocess previews. [2mtrace.jsonl[0m is the same event stream as one JSON object per line, for machines ([2mjq[0m, chrome://tracing); [2mwt config state logs profile[0m reads it to summarize a performance report (where time went, parallelism, redundant commands). [2msubprocess.log[0m holds the raw uncapped subprocess stdout/stderr bodies. [2mdiagnostic.md[0m is a markdown 
+bug-report bundle that leads with that same performance profile and inlines [2mtrace.log[0m; [2mwt[0m prints a [2mgh gist create[0m command pointing at it. All four are overwritten on each [2m-vv[0m run.
 
 [1m[32mLocation[0m
 
@@ -126,10 +128,10 @@ Query the command log:
 [107m [0m [2m[0m[2m[34mtail[0m[2m [0m[2m[36m-5[0m[2m .git/wt/logs/commands.jsonl [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m .[0m
 
 Path to one hook log (e.g. the [2mpost-start[0m [2mserver[0m hook for the current branch):
-[107m [0m [2m[0m[2m[34mwt[0m[2m config state logs [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[36m-r[0m[2m [0m[2m[32m'.hook_output[] | select(.source == "user" and .hook_type == "post-start" and (.name | startswith("server"))) | .path'[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config state logs [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[36m-r[0m[2m [0m[2m[32m'.hook_output[] | select(.source == "user" and .hook_type == "post-start" and (.name | startswith("server"))) | .path'[0m
 
 Logs for a specific branch:
-[107m [0m [2m[0m[2m[34mwt[0m[2m config state logs [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.hook_output[] | select(.branch | startswith("feature"))'[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config state logs [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.hook_output[] | select(.branch | startswith("feature"))'[0m
 
 Clear all logs:
 [107m [0m [2m[0m[2m[34mwt[0m[2m config state logs clear[0m

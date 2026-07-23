@@ -42,9 +42,12 @@
 //!   `share_parent_pgroup=false`, the child is in its own pgroup and we
 //!   escalate SIGINT → SIGTERM → SIGKILL with grace windows.
 //! - **Multi PGID** ([`forward_to_pgids`]) — `wt step <concurrent-alias>`.
-//!   Always escalates per-pgroup. A second user signal SIGKILLs every
-//!   still-live pgroup immediately to short-circuit the otherwise
-//!   serialized N × 400 ms escalation walk.
+//!   Forwards the user's signal once per pgroup; a second user signal
+//!   SIGKILLs every still-live pgroup. No per-child escalation —
+//!   cooperative children die from the user's signal so `wt`'s exit code
+//!   reflects intent (130 on Ctrl-C, not 143 from a SIGTERM landed during
+//!   a sub-second escalation grace window under CI scheduling latency).
+//!   Stubborn children require a second Ctrl-C, matching `make` / `cargo`.
 //!
 //! [`forward_to_pid`]: ForegroundSignals::forward_to_pid
 //!
@@ -92,26 +95,24 @@ impl ForegroundSignals {
         })
     }
 
-    /// Begin forwarding to N children's PGIDs with per-PGID escalation.
-    /// A second user signal SIGKILLs every still-live PGID immediately —
-    /// per-PGID escalation is serialized, so without the impatient path a
-    /// user mashing Ctrl-C might wait `N × 400 ms` for the chain to walk.
+    /// Begin forwarding to N children's PGIDs. Forwards the same signal
+    /// once on the first press; a second user signal SIGKILLs every
+    /// still-live PGID immediately.
+    ///
+    /// No per-child escalation: cooperative children die from the user's
+    /// signal, so `child.wait()` reports a cause of death that matches
+    /// intent (e.g. `wt step <alias>` exits 130 on Ctrl-C, not 143 from a
+    /// SIGTERM that landed during a 200 ms escalation grace window under
+    /// CI scheduling latency). Stubborn children that ignore SIGINT
+    /// require a second Ctrl-C — matching `make` / `cargo` behavior.
     pub fn forward_to_pgids(self, child_pgids: Vec<i32>) -> ActiveForwarder {
         let mut seen_once = false;
         self.run_listener(move |sig, originating| {
             record_originating(originating, sig);
-            if !seen_once {
-                seen_once = true;
-                for &pgid in &child_pgids {
-                    forward_signal_with_escalation(pgid, sig);
-                }
-            } else {
-                for &pgid in &child_pgids {
-                    let _ = nix::sys::signal::killpg(
-                        nix::unistd::Pid::from_raw(pgid),
-                        nix::sys::signal::Signal::SIGKILL,
-                    );
-                }
+            let signal_to_send = pgid_broadcast_signal(sig, seen_once);
+            seen_once = true;
+            for &pgid in &child_pgids {
+                let _ = nix::sys::signal::killpg(nix::unistd::Pid::from_raw(pgid), signal_to_send);
             }
         })
     }
@@ -150,6 +151,22 @@ fn record_originating(slot: &AtomicI32, sig: i32) -> bool {
         .is_ok()
 }
 
+/// The signal to broadcast to every still-live pgroup on a user signal. The
+/// first press forwards the user's own signal so cooperative children die with
+/// the cause the user intended; any later press escalates to SIGKILL. The
+/// listener registers only SIGINT and SIGTERM, so a non-SIGTERM press is
+/// necessarily SIGINT.
+fn pgid_broadcast_signal(sig: i32, already_signaled: bool) -> nix::sys::signal::Signal {
+    use nix::sys::signal::Signal;
+    if already_signaled {
+        Signal::SIGKILL
+    } else if sig == SIGTERM {
+        Signal::SIGTERM
+    } else {
+        Signal::SIGINT
+    }
+}
+
 /// Running signal-forwarder. Returned from
 /// [`ForegroundSignals::forward_to_pid`] / [`ForegroundSignals::forward_to_pgids`].
 /// Call [`stop`] after every child has been waited on.
@@ -173,5 +190,23 @@ impl ActiveForwarder {
             0 => None,
             sig => Some(sig),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nix::sys::signal::Signal;
+
+    #[test]
+    fn first_press_forwards_the_user_signal() {
+        assert_eq!(pgid_broadcast_signal(SIGINT, false), Signal::SIGINT);
+        assert_eq!(pgid_broadcast_signal(SIGTERM, false), Signal::SIGTERM);
+    }
+
+    #[test]
+    fn later_press_escalates_to_sigkill() {
+        assert_eq!(pgid_broadcast_signal(SIGINT, true), Signal::SIGKILL);
+        assert_eq!(pgid_broadcast_signal(SIGTERM, true), Signal::SIGKILL);
     }
 }

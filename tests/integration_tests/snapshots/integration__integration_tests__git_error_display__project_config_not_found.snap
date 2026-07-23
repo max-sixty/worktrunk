@@ -1,6 +1,6 @@
 ---
 source: tests/integration_tests/git_error_display.rs
-expression: err.to_string()
+expression: err.render()
 ---
 [31m✗[39m [31mNo project configuration found[39m
 [2m↳[22m [2mCreate a config file at: [4m/tmp/repo/.config/wt.toml[24m[22m

@@ -17,7 +17,6 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use anyhow::Context;
 use color_print::cformat;
 use minijinja::value::{Enumerator, Object, ObjectRepr};
 use minijinja::{Environment, ErrorKind, UndefinedBehavior, Value};
@@ -99,6 +98,13 @@ pub const DEPRECATED_TEMPLATE_VARS: &[&str] = &[
     "worktree",
     "main_worktree_path",
 ];
+
+/// Variables available in `wt list` custom-column templates (plus `vars.*`).
+///
+/// Deliberately narrower than [`base_vars`]: column values are computed per
+/// row before the table skeleton renders, so only row-identity data that is
+/// already in memory at that point is offered.
+pub const LIST_COLUMN_VARS: &[&str] = &["branch", "worktree_path", "worktree_name"];
 
 /// The context in which a template will be expanded.
 ///
@@ -279,6 +285,17 @@ pub fn format_alias_variables(
         display_ctx.insert(ALIAS_ARGS_KEY.into(), shell_join(&args));
     }
     format_variables_table(&vars, &display_ctx, referenced)
+}
+
+/// Format the resolved template variables for a bare template expansion
+/// (`wt step eval`), whose scope is exactly [`base_vars`] — no hook operation
+/// or infrastructure vars, no alias `args`.
+///
+/// Same curated ordering and `(unset)` treatment as [`format_hook_variables`],
+/// so the four `-v` variable listings (hook foreground, hook background, alias,
+/// eval) render one family.
+pub fn format_base_variables(ctx: &HashMap<String, String>) -> String {
+    format_variables_table(&base_vars(), ctx, None)
 }
 
 /// Extend `referenced` with the implicit context-map keys an alias dispatch
@@ -713,9 +730,11 @@ fn build_undefined_vars_error(
 
 /// Set up a minijinja environment with worktrunk's custom filters and functions.
 ///
-/// Shared by [`expand_template`] and [`validate_template`] to ensure both use
-/// the same filters, functions, and undefined-behavior settings.
-fn setup_template_env(repo: &Repository) -> Environment<'static> {
+/// Shared by [`expand_template`], [`validate_template`], and the `wt list`
+/// custom-column renderer (which holds one environment across all rows) so
+/// every template user gets the same filters, functions, and
+/// undefined-behavior settings.
+pub fn template_environment(repo: &Repository) -> Environment<'static> {
     let mut env = Environment::new();
     // SemiStrict: errors on undefined variable use (printing, iteration) but allows
     // truthiness checks ({% if var %}). This catches typos while supporting optional vars.
@@ -790,13 +809,19 @@ pub fn template_references_var(template: &str, var: &str) -> bool {
 /// a binding candidate for the whole invocation. A syntax error in any
 /// template fails here so the user sees it before flags are routed — a
 /// silent skip could mask a typo and change how subsequent CLI args bind.
-pub fn referenced_vars_for_config(cfg: &super::CommandConfig) -> anyhow::Result<BTreeSet<String>> {
+/// `name` labels the failing alias or hook in the error, which matches
+/// [`expand_template`]'s parse-failure shape so syntax errors render
+/// identically wherever they surface.
+pub fn referenced_vars_for_config(
+    cfg: &super::CommandConfig,
+    name: &str,
+) -> anyhow::Result<BTreeSet<String>> {
     let env = minijinja::Environment::new();
     let mut out = BTreeSet::new();
     for cmd in cfg.commands() {
         let tmpl = env
             .template_from_str(&cmd.template)
-            .with_context(|| format!("Failed to parse template: {:?}", cmd.template))?;
+            .map_err(|e| build_template_error(&e, &cmd.template, name, Vec::new()))?;
         out.extend(tmpl.undeclared_variables(false));
     }
     Ok(out)
@@ -804,13 +829,17 @@ pub fn referenced_vars_for_config(cfg: &super::CommandConfig) -> anyhow::Result<
 
 /// Parse-only syntax check for a template.
 ///
-/// Used on lazy-expansion paths (hooks + aliases) where rendering would fail
-/// because `vars.*` values are only known at execution time — we still want
-/// to catch typos like `{{ vars..foo }}` upfront.
-pub fn validate_template_syntax(template: &str, name: &str) -> Result<(), minijinja::Error> {
+/// Hook and alias preparation runs this on every template so syntax errors
+/// (e.g. `{{ vars..foo }}`) abort before the first pipeline step runs;
+/// rendering — and with it semantic errors like undefined variables — is
+/// deferred to execution time. The error matches [`expand_template`]'s
+/// parse-failure shape so syntax errors render identically wherever they
+/// surface.
+pub fn validate_template_syntax(template: &str, name: &str) -> Result<(), TemplateExpandError> {
     minijinja::Environment::new()
         .template_from_named_str(name, template)
         .map(|_| ())
+        .map_err(|e| build_template_error(&e, template, name, Vec::new()))
 }
 
 /// Validate that a template can be expanded without errors in the given scope.
@@ -855,7 +884,7 @@ pub fn validate_template(
         );
     }
 
-    let env = setup_template_env(repo);
+    let env = template_environment(repo);
 
     let tmpl = env
         .template_from_named_str(name, template)
@@ -936,7 +965,7 @@ pub fn expand_template(
         }
     }
 
-    let mut env = setup_template_env(repo);
+    let mut env = template_environment(repo);
     if escape_mode != ShellEscapeMode::Literal {
         // Preserve trailing newlines in templates (important for multiline shell commands)
         env.set_keep_trailing_newline(true);
@@ -970,11 +999,12 @@ pub fn expand_template(
     // -vv: Full debug logging with vars
     // Redact credentials from values to prevent leaking tokens in logs
     if verbose >= 2 {
-        log::debug!("[template:{name}] template={template:?}");
+        tracing::debug!(name = %name, template = ?template, "[template:{name}] template={template:?}");
         // Sort keys for deterministic output in tests
         let mut sorted_vars: Vec<_> = vars.iter().collect();
         sorted_vars.sort_by_key(|(k, _)| *k);
-        log::debug!(
+        tracing::debug!(
+            name = %name,
             "[template:{name}] vars={{{}}}",
             sorted_vars
                 .iter()
@@ -995,24 +1025,13 @@ pub fn expand_template(
     // Only look up vars data if the parsed template references the top-level
     // `vars` object (avoids a git process spawn per expansion while supporting
     // every MiniJinja access form without false positives from literal text).
-    // JSON objects/arrays are parsed so nested access works; plain strings and
-    // numbers stay as-is.
     if tmpl.undeclared_variables(false).contains("vars")
         && let Some(branch) = vars.get("branch")
     {
-        let entries = repo.vars_entries(branch);
-        let vars_map: std::collections::BTreeMap<String, Value> = entries
-            .into_iter()
-            .map(|(k, v)| {
-                let value = serde_json::from_str::<serde_json::Value>(&v)
-                    .ok()
-                    .filter(|j| j.is_object() || j.is_array())
-                    .map(|j| Value::from_serialize(&j))
-                    .unwrap_or_else(|| Value::from(v));
-                (k, value)
-            })
-            .collect();
-        context.insert("vars".to_string(), Value::from_serialize(&vars_map));
+        context.insert(
+            "vars".to_string(),
+            vars_map_to_value(&repo.vars_entries(branch)),
+        );
     }
 
     let result = tmpl
@@ -1026,22 +1045,120 @@ pub fn expand_template(
     // -vv: Full debug logging with result
     // Redact credentials from result to prevent leaking tokens in logs
     if verbose >= 2 {
-        log::debug!("[template:{name}] result={:?}", redact_credentials(&result));
+        tracing::debug!(name = %name, "[template:{name}] result={:?}", redact_credentials(&result));
     }
 
-    // -v: Nice styled output showing template expansion
-    // Info message for header, gutter for quoted content (template → result)
+    // -v: Nice styled output showing template expansion. The source template
+    // and the rendered result each get a labeled info header above a bash gutter
+    // block, so the eye separates input from output. Callers that emit several
+    // expansions in a row (or a single standalone one, like `wt step eval`) add
+    // a trailing blank to separate them; in a command pipeline the executor
+    // already provides that separation.
     // Single atomic write to avoid interleaving in multi-threaded execution
     if verbose == 1 {
-        let header = info_message(cformat!("Expanding <bold>{name}</>"));
-        // Format template and result as bash (dim + syntax highlighting),
-        // with a dim → separator that bypasses the syntax highlighter
-        let template_gutter = format_bash_with_gutter(template);
-        let arrow = format_with_gutter(&cformat!("<dim>→</>"), None);
+        let source_header = info_message(cformat!("<bold>{name}</> source"));
+        let source_gutter = format_bash_with_gutter(template);
+        let result_header = info_message(cformat!("<bold>{name}</> result"));
         let result_gutter = format_bash_with_gutter(&result);
-        eprintln!("{header}\n{template_gutter}\n{arrow}\n{result_gutter}");
+        eprintln!("{source_header}\n{source_gutter}\n{result_header}\n{result_gutter}");
     }
     Ok(result)
+}
+
+/// Convert raw vars entries into a minijinja object value.
+///
+/// JSON objects/arrays are parsed so nested access (`{{ vars.config.port }}`)
+/// works; plain strings and numbers stay as-is.
+pub fn vars_map_to_value(entries: &std::collections::BTreeMap<String, String>) -> Value {
+    let vars_map: std::collections::BTreeMap<&str, Value> = entries
+        .iter()
+        .map(|(k, v)| {
+            let value = serde_json::from_str::<serde_json::Value>(v)
+                .ok()
+                .filter(|j| j.is_object() || j.is_array())
+                .map(|j| Value::from_serialize(&j))
+                .unwrap_or_else(|| Value::from(v.clone()));
+            (k.as_str(), value)
+        })
+        .collect();
+    Value::from_serialize(&vars_map)
+}
+
+/// A stand-in for the `vars` / `git.branch` maps that answers every key
+/// with a placeholder string.
+///
+/// Used only by [`validate_list_column_template`]'s trial render: list
+/// columns lean on `{{ vars.key }}` / `{{ git.branch.key }}` for keys that
+/// only some branches set, so validating against an empty map (as
+/// [`validate_template`] does) would wrongly reject the dominant pattern.
+/// Answering every key keeps the trial render exercising filters without
+/// constraining which keys exist.
+#[derive(Debug)]
+struct AnyKeyVars;
+
+impl Object for AnyKeyVars {
+    fn get_value(self: &Arc<Self>, _key: &Value) -> Option<Value> {
+        Some(Value::from("PLACEHOLDER"))
+    }
+}
+
+/// Validate a `wt list` custom-column template.
+///
+/// Checks syntax, restricts top-level variables to `LIST_COLUMN_VARS` ∪
+/// `{vars, git}`, and trial-renders with placeholder values so filter errors
+/// (e.g. a misspelled filter name) surface at config resolution rather than as
+/// silently empty cells. `vars.*` and `git.branch.*` access is unconstrained —
+/// any key validates, since which keys exist is per-branch runtime state.
+pub fn validate_list_column_template(
+    template: &str,
+    repo: &Repository,
+    name: &str,
+) -> Result<(), TemplateExpandError> {
+    let env = template_environment(repo);
+    let tmpl = env
+        .template_from_named_str(name, template)
+        .map_err(|e| build_template_error(&e, template, name, Vec::new()))?;
+
+    let mut undefined: Vec<String> = tmpl
+        .undeclared_variables(false)
+        .into_iter()
+        .filter(|var| var != "vars" && var != "git" && !LIST_COLUMN_VARS.contains(&var.as_str()))
+        .collect();
+    undefined.sort();
+    if !undefined.is_empty() {
+        let mut available = LIST_COLUMN_VARS.to_vec();
+        available.push("vars.<key>");
+        available.push("git.branch.<key>");
+        return Err(build_undefined_vars_error(
+            name,
+            &undefined,
+            sorted_available_vars(&available),
+        ));
+    }
+
+    let mut context: HashMap<String, Value> = LIST_COLUMN_VARS
+        .iter()
+        .map(|&k| (k.to_string(), Value::from("PLACEHOLDER")))
+        .collect();
+    context.insert("vars".to_string(), Value::from_object(AnyKeyVars));
+    // git.branch.<key> resolves to a placeholder; nesting AnyKeyVars under
+    // `branch` lets the trial render exercise `{{ git.branch.* }}` filters.
+    let git = HashMap::from([("branch".to_string(), Value::from_object(AnyKeyVars))]);
+    context.insert("git".to_string(), Value::from_object(git));
+    match tmpl.render(Value::from_object(context)) {
+        Ok(_) => Ok(()),
+        // At runtime an undefined value renders as an empty cell by design
+        // (e.g. nested access like `{{ vars.config.port }}` against the flat
+        // placeholder), so it is never a config error here. Everything else —
+        // unknown filters, type errors — is a real config problem.
+        Err(e) if e.kind() == ErrorKind::UndefinedError => Ok(()),
+        Err(e) => Err(build_template_error(
+            &e,
+            template,
+            name,
+            sorted_available_vars(LIST_COLUMN_VARS),
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -2767,9 +2884,9 @@ mod tests {
     #[test]
     fn test_referenced_vars_for_config_syntax_error_propagates() {
         let cfg = super::super::CommandConfig::single("echo {{ unclosed");
-        let err = referenced_vars_for_config(&cfg).unwrap_err();
+        let err = referenced_vars_for_config(&cfg, "deploy").unwrap_err();
         let msg = format!("{err:#}");
-        assert!(msg.contains("Failed to parse template"), "got: {msg}");
+        assert!(msg.contains("Failed to expand deploy"), "got: {msg}");
         assert!(msg.contains("syntax error"), "got: {msg}");
     }
 
@@ -2886,5 +3003,67 @@ mod tests {
         // `(unset)`, which means the key was absent entirely. `args` sits last
         // in alias ordering, so the output ends with it.
         assert!(out.ends_with("args                  = "), "got: {out:?}");
+    }
+
+    #[test]
+    fn test_vars_map_to_value_parses_json() {
+        let mut entries = std::collections::BTreeMap::new();
+        entries.insert("ticket".to_string(), "JIRA-1".to_string());
+        entries.insert("config".to_string(), r#"{"port": 8080}"#.to_string());
+        let value = vars_map_to_value(&entries);
+
+        // Plain strings stay as-is; JSON objects support nested access
+        assert_eq!(
+            value.get_attr("ticket").unwrap(),
+            Value::from("JIRA-1".to_string())
+        );
+        assert_eq!(
+            value.get_attr("config").unwrap().get_attr("port").unwrap(),
+            Value::from(8080)
+        );
+    }
+
+    #[test]
+    fn test_validate_list_column_template() {
+        let test = test_repo();
+
+        // Row-identity vars, unconstrained vars.* keys, and filters validate
+        validate_list_column_template("{{ branch }} {{ worktree_name }}", &test.repo, "t").unwrap();
+        validate_list_column_template("{{ vars.any_key_at_all }}", &test.repo, "t").unwrap();
+        validate_list_column_template("{{ branch | sanitize }}", &test.repo, "t").unwrap();
+        // Nested vars access (JSON values at runtime) must not be rejected
+        // even though the trial render's placeholder vars are flat strings
+        validate_list_column_template("{{ vars.config.port }}", &test.repo, "t").unwrap();
+        // git.branch.* mirrors vars.*: any key validates, filters apply
+        validate_list_column_template("{{ git.branch.jira }}", &test.repo, "t").unwrap();
+        validate_list_column_template(
+            "{{ git.branch.description | lines | first }}",
+            &test.repo,
+            "t",
+        )
+        .unwrap();
+
+        // Unknown top-level variables list the available set, both namespaces included
+        let err = validate_list_column_template("{{ branhc }}", &test.repo, "t").unwrap_err();
+        assert!(err.message.contains("branhc"), "got: {}", err.message);
+        assert_eq!(
+            err.available_vars,
+            vec![
+                "branch",
+                "git.branch.<key>",
+                "vars.<key>",
+                "worktree_name",
+                "worktree_path"
+            ]
+        );
+
+        // Syntax errors fail
+        validate_list_column_template("{{ branch", &test.repo, "t").unwrap_err();
+
+        // Misspelled filters surface via the trial render rather than as
+        // silently empty cells at runtime
+        let err =
+            validate_list_column_template("{{ branch | nosuch }}", &test.repo, "t").unwrap_err();
+        assert!(err.message.contains("nosuch"), "got: {}", err.message);
     }
 }

@@ -8,6 +8,12 @@ expression: normalize_report(&content)
 **Command:** `[PROJECT_ROOT]/target/[BUILD_MODE]/wt list -vv`
 **Result:** Command completed successfully
 
+<details open>
+<summary>Performance profile</summary>
+
+[PERFORMANCE_PROFILE_CONTENT]
+</details>
+
 <details>
 <summary>Environment</summary>
 
@@ -16,6 +22,12 @@ wt [VERSION] ([OS] [ARCH])
 git [GIT_VERSION]
 Shell integration: inactive
 ```
+</details>
+
+<details>
+<summary>Environment variables</summary>
+
+[ENV_VARS_CONTENT]
 </details>
 
 <details>

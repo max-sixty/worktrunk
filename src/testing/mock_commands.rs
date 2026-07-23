@@ -78,6 +78,7 @@ pub struct MockResponse {
     output: Option<String>,
     stderr: Option<String>,
     exit_code: i32,
+    delay_ms: u64,
 }
 
 impl MockResponse {
@@ -88,6 +89,7 @@ impl MockResponse {
             output: None,
             stderr: None,
             exit_code: 0,
+            delay_ms: 0,
         }
     }
 
@@ -98,6 +100,7 @@ impl MockResponse {
             output: Some(text.to_string()),
             stderr: None,
             exit_code: 0,
+            delay_ms: 0,
         }
     }
 
@@ -108,6 +111,7 @@ impl MockResponse {
             output: None,
             stderr: Some(text.to_string()),
             exit_code: 0,
+            delay_ms: 0,
         }
     }
 
@@ -118,6 +122,7 @@ impl MockResponse {
             output: None,
             stderr: None,
             exit_code: code,
+            delay_ms: 0,
         }
     }
 
@@ -130,6 +135,13 @@ impl MockResponse {
     /// Add stderr output (chainable).
     pub fn with_stderr(mut self, text: &str) -> Self {
         self.stderr = Some(text.to_string());
+        self
+    }
+
+    /// Sleep this long before responding, to simulate a slow command (e.g. a
+    /// forge call) so a test can observe the caller's in-flight UI.
+    pub fn with_delay_ms(mut self, ms: u64) -> Self {
+        self.delay_ms = ms;
         self
     }
 
@@ -148,6 +160,9 @@ impl MockResponse {
             || (self.file.is_none() && self.output.is_none() && self.stderr.is_none())
         {
             obj.insert("exit_code".to_string(), json!(self.exit_code));
+        }
+        if self.delay_ms != 0 {
+            obj.insert("delay_ms".to_string(), json!(self.delay_ms));
         }
         serde_json::Value::Object(obj)
     }
@@ -287,32 +302,6 @@ API authentication.
 - Add JWT encoding/decoding with signature verification
 - Create test suite covering all authentication flows",
             ),
-        )
-        .write(bin_dir);
-}
-
-/// Create a mock llm command for API endpoint commits.
-pub fn create_mock_llm_api(bin_dir: &Path) {
-    MockConfig::new("llm")
-        .command(
-            "_default",
-            MockResponse::output(
-                "feat(api): Add user authentication endpoints
-
-Implement login and token refresh endpoints with JWT validation.
-Includes comprehensive test coverage and input validation.",
-            ),
-        )
-        .write(bin_dir);
-}
-
-/// Create a mock llm command for quickstart documentation.
-/// Simple output for clean documentation examples.
-pub fn create_mock_llm_quickstart(bin_dir: &Path) {
-    MockConfig::new("llm")
-        .command(
-            "_default",
-            MockResponse::output("Add authentication module"),
         )
         .write(bin_dir);
 }

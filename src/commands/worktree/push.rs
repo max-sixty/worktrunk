@@ -127,7 +127,12 @@ impl MergeContext {
         let commit_count = repo.count_commits(&target_branch, "HEAD")?;
 
         let stats_summary = if commit_count > 0 {
-            repo.diff_stats_summary(&["diff", "--shortstat", &format!("{}..HEAD", target_branch)])
+            repo.diff_stats_summary(&[
+                "diff",
+                "--shortstat",
+                "--end-of-options",
+                &format!("{}..HEAD", target_branch),
+            ])
         } else {
             Vec::new()
         };
@@ -183,6 +188,7 @@ impl MergeContext {
             "--color=always",
             "--graph",
             "--oneline",
+            "--end-of-options",
             &format!("{}..HEAD", self.target_branch),
         ])?;
         eprintln!("{}", format_with_gutter(&log_output, None));
@@ -346,7 +352,10 @@ pub fn handle_push(
 ///
 /// Uses git plumbing (`commit-tree` + `update-ref`) to create a merge commit
 /// on the target branch without needing to check it out. This is safe because
-/// rebase has already run, so the feature branch tree IS the correct merge result.
+/// [`MergeContext::prepare`] verified that the target is an ancestor of the
+/// feature tip, so the feature tree is the correct integration result. The
+/// source may be rebased or may retain an explicitly preserved merge-shaped
+/// graph.
 ///
 /// If the target branch has a checked-out worktree, its working tree is synced
 /// via `read-tree -m -u` after the ref update. We use a two-tree merge
@@ -374,7 +383,8 @@ pub fn handle_no_ff_merge(
     }
 
     // Create the merge commit using git plumbing.
-    // Since rebase has already run, HEAD's tree is the correct merge result.
+    // The target-is-ancestor check makes HEAD's tree the correct merge result,
+    // whether the source was rebased or explicitly preserved.
     let tree = ctx
         .repo
         .run_command(&["rev-parse", "HEAD^{tree}"])?
@@ -438,7 +448,7 @@ pub fn handle_no_ff_merge(
                     worktrunk::path::format_path_for_display(wt_path)
                 ))
             );
-            log::warn!("Failed to sync target worktree: {e}");
+            tracing::warn!(error = %e, "Failed to sync target worktree: {e}");
         }
     }
 

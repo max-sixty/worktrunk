@@ -12,14 +12,27 @@
 #![cfg(not(windows))]
 
 use crate::common::{add_standard_env_redactions, wt_command};
+use ansi_str::AnsiStr as _;
 use insta::Settings;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 
-fn snapshot_help(test_name: &str, args: &[&str]) {
+/// Insta settings shared by every help / version / usage snapshot: the
+/// standard env redactions plus the snapshot path. Routing all of them through
+/// one builder is deliberate — a test that constructs its own `Settings` and
+/// forgets `add_standard_env_redactions` leaks host-specific env (e.g.
+/// `LLVM_PROFILE_FILE`'s temp path) into the recorded `env:` block, which then
+/// diffs whenever the snapshot is regenerated on another machine. Callers layer
+/// extra filters (e.g. the version-string filter) on the returned value.
+fn help_settings() -> Settings {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
     add_standard_env_redactions(&mut settings);
+    settings
+}
+
+fn snapshot_help(test_name: &str, args: &[&str]) {
+    let settings = help_settings();
     settings.bind(|| {
         let mut cmd = wt_command();
         cmd.args(args);
@@ -42,6 +55,29 @@ fn snapshot_help(test_name: &str, args: &[&str]) {
     });
 }
 
+#[test]
+fn test_merge_help_describes_exact_shape_no_rebase() {
+    let output = wt_command()
+        .args(["merge", "--help"])
+        .output()
+        .expect("failed to run wt merge --help");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = stdout.ansi_strip();
+    assert!(
+        stdout.contains("Skip rebase; require the target to fast-forward to the resulting tip"),
+        "missing graph-preservation contract:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("wt merge --no-commit --no-rebase"),
+        "missing exact-shape example:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("explicit --no-rebase preserves the graph produced by earlier steps"),
+        "missing no-ff qualification:\n{stdout}"
+    );
+}
+
 // Root command (wt)
 #[rstest]
 #[case("help_root_short", "-h")]
@@ -61,6 +97,7 @@ fn snapshot_help(test_name: &str, args: &[&str]) {
 #[case("help_step_short", "step -h")]
 #[case("help_step_long", "step --help")]
 #[case("help_step_promote", "step promote --help")]
+#[case("help_step_copy_ignored", "step copy-ignored --help")]
 // Config subcommands (long help only - these are less frequently accessed)
 #[case("help_config_shell", "config shell --help")]
 #[case("help_config_create", "config create --help")]
@@ -72,6 +109,7 @@ fn snapshot_help(test_name: &str, args: &[&str]) {
     "config plugins codex install --help"
 )]
 #[case("help_config_state", "config state --help")]
+#[case("help_config_state_cache", "config state cache --help")]
 #[case(
     "help_config_state_default_branch",
     "config state default-branch --help"
@@ -83,6 +121,7 @@ fn snapshot_help(test_name: &str, args: &[&str]) {
 #[case("help_config_state_ci_status", "config state ci-status --help")]
 #[case("help_config_state_marker", "config state marker --help")]
 #[case("help_config_state_logs", "config state logs --help")]
+#[case("help_config_state_logs_profile", "config state logs profile --help")]
 #[case("help_config_state_get", "config state get --help")]
 #[case("help_config_state_clear", "config state clear --help")]
 #[case("help_config_approvals", "config approvals --help")]
@@ -99,8 +138,7 @@ fn test_help(#[case] test_name: &str, #[case] args_str: &str) {
 
 #[test]
 fn test_version() {
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
+    let mut settings = help_settings();
     // Filter out version number for stable snapshots
     // Formats:
     // - wt v0.4.0-25-gc9bcf6c0 (version with git commit info)
@@ -143,11 +181,12 @@ fn test_help_goes_to_stdout() {
 }
 
 /// When stdout is piped, help must be plain text — no ANSI escapes leaking into
-/// `wt --help > file.txt` or `wt --help | less`. Uses the raw binary so
-/// `CLICOLOR_FORCE` (set by `wt_command`) doesn't override color detection.
+/// `wt --help > file.txt` or `wt --help | less`. Built from `wt_command()` for
+/// HOME/config isolation, then clears the `CLICOLOR_FORCE` it sets so color
+/// detection sees a non-tty (piped) stdout.
 #[test]
 fn test_help_strips_ansi_when_piped() {
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_wt"))
+    let output = wt_command()
         .arg("--help")
         .env_remove("CLICOLOR_FORCE")
         .env("NO_COLOR", "1")
@@ -186,9 +225,7 @@ fn test_version_goes_to_stdout() {
 
 #[test]
 fn test_help_md() {
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
-    settings.bind(|| {
+    help_settings().bind(|| {
         let mut cmd = wt_command();
         cmd.args(["--help-md"]);
         assert_cmd_snapshot!("help_md_root", cmd);
@@ -197,28 +234,44 @@ fn test_help_md() {
 
 #[test]
 fn test_help_md_subcommand() {
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
-    settings.bind(|| {
+    help_settings().bind(|| {
         let mut cmd = wt_command();
         cmd.args(["merge", "--help-md"]);
         assert_cmd_snapshot!("help_md_merge", cmd);
     });
 }
 
-/// Verifies that markdown tables remain intact (no mid-row breaks) even when
-/// table width exceeds terminal width. Tables should extend past 80 columns
-/// rather than wrap incorrectly.
+/// Verifies width handling when help is narrower than its content:
+/// - Markdown tables stay intact (no mid-row breaks), extending past 80 columns.
+/// - Captured `wt list` example tables (`<!-- wt list … -->` blocks) are chopped
+///   to width with an ellipsis — like real `wt list` — instead of word-wrapping,
+///   while hand-authored command sessions (the `jq` examples) still wrap.
 #[test]
 fn test_help_list_narrow_terminal() {
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
-    settings.bind(|| {
+    help_settings().bind(|| {
         let mut cmd = wt_command();
         cmd.env("COLUMNS", "80");
         cmd.args(["list", "--help"]);
         assert_cmd_snapshot!("help_list_narrow_80", cmd);
     });
+}
+
+/// With no detectable width (piped output, no COLUMNS), `terminal_width()`
+/// returns `None` and the markdown renderer falls back to its own defaults.
+/// Back when "no width" was a `usize::MAX` sentinel, `wt list --help` panicked
+/// with a capacity overflow trying to render a `---` rule that wide.
+#[test]
+fn test_help_without_detectable_width() {
+    let mut cmd = wt_command();
+    cmd.env_remove("COLUMNS");
+    cmd.args(["list", "--help"]);
+    let output = cmd.output().expect("failed to run command");
+    assert!(
+        output.status.success(),
+        "wt list --help without COLUMNS failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!output.stdout.is_empty(), "help output should not be empty");
 }
 
 /// Tests --help-description outputs the meta description for docs frontmatter.
@@ -286,9 +339,7 @@ fn test_nested_subcommand_suggestion(
     #[case] subcommand: &str,
     #[case] expected_suggestion: &str,
 ) {
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
-    settings.bind(|| {
+    help_settings().bind(|| {
         let mut cmd = wt_command();
         cmd.arg(subcommand);
         let output = cmd.output().expect("failed to run wt");

@@ -123,10 +123,24 @@ pub(crate) fn schema_top_level_keys<T: schemars::JsonSchema>() -> Vec<String> {
     keys
 }
 
+/// Whether `key` is a top-level field of a `[projects."<id>"]` table (the
+/// [`UserProjectOverrides`] schema). Used to gate the "scope it to this repo"
+/// note: a misplaced user-config key only earns that advice when it can
+/// actually be placed under `[projects."<id>"]`. Root-only user settings such
+/// as `skip-shell-integration-prompt` are absent here and get no note.
+pub fn is_user_project_override_key(key: &str) -> bool {
+    use std::sync::OnceLock;
+    static KEYS: OnceLock<Vec<String>> = OnceLock::new();
+    KEYS.get_or_init(schema_top_level_keys::<UserProjectOverrides>)
+        .iter()
+        .any(|k| k == key)
+}
+
 // Re-export public types
 pub use approvals::{Approvals, approvals_path, require_approvals_path};
 pub use commands::{Command, CommandConfig, HookStep, append_aliases};
 pub use deprecation::CheckAndMigrateResult;
+pub use deprecation::ConfigFileKind;
 pub use deprecation::DeprecationInfo;
 pub use deprecation::check_and_migrate;
 pub use deprecation::compute_migrated_content;
@@ -138,17 +152,20 @@ pub use deprecation::format_migration_diff;
 pub use deprecation::migrate_content;
 pub use deprecation::normalize_template_vars;
 pub use deprecation::suppress_warnings;
+pub use deprecation::warnings_suppressed;
 pub use deprecation::{
     DEPRECATED_SECTION_KEYS, DeprecatedSection, UnknownKeyKind, classify_unknown_key,
-    key_belongs_in, nested_key_belongs_in, warn_unknown_fields,
+    key_belongs_in, nested_key_belongs_in, scope_to_repo_note, warn_unknown_fields,
+    with_scope_note,
 };
 pub use deprecation::{DeprecationKind, Deprecations};
 pub use expansion::{
     ACTIVE_VARS, ALIAS_ARGS_KEY, DEPRECATED_TEMPLATE_VARS, EXEC_BASE_VARS, REPO_VARS,
     TemplateExpandError, ValidationScope, alias_context_filter, base_vars, expand_template,
-    format_alias_variables, format_hook_variables, redact_credentials, referenced_vars_for_config,
-    sanitize_branch_name, sanitize_db, short_hash, template_references_var, validate_template,
-    validate_template_syntax, vars_available_in,
+    format_alias_variables, format_base_variables, format_hook_variables, redact_credentials,
+    referenced_vars_for_config, sanitize_branch_name, sanitize_db, short_hash,
+    template_environment, template_references_var, validate_list_column_template,
+    validate_template, validate_template_syntax, vars_available_in, vars_map_to_value,
 };
 pub use hooks::HooksConfig;
 pub use project::{
@@ -160,10 +177,11 @@ pub use unknown_tree::{
 };
 pub(crate) use user::LoadError;
 pub use user::{
-    CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListConfig, MergeConfig, RemoveConfig,
-    ResolvedConfig, StageMode, StepConfig, SwitchConfig, SwitchPickerConfig, UserConfig,
-    UserProjectOverrides, config_path, default_config_path, default_system_config_path,
-    require_config_path, set_config_path, system_config_path, valid_user_config_keys,
+    CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListColumnConfig, ListConfig,
+    MergeConfig, RemoveConfig, ResolvedConfig, StageMode, StepConfig, SwitchConfig,
+    SwitchPickerConfig, UserConfig, UserProjectOverrides, config_path, config_path_for_display,
+    default_config_path, default_system_config_path, require_config_path, set_config_overrides,
+    set_config_path, system_config_path, valid_user_config_keys,
 };
 
 #[cfg(test)]
@@ -547,66 +565,6 @@ task2 = "echo 'Task 2 running' > task2.txt"
         )
         .unwrap();
         assert_eq!(result, "/path/to/repo/target -> /path/to/worktree/target");
-    }
-
-    #[test]
-    fn test_commit_generation_config_mutually_exclusive_validation() {
-        // Test that deserialization rejects both template and template-file
-        let toml_content = r#"
-worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[commit.generation]
-command = "llm"
-template = "inline template"
-template-file = "~/file.txt"
-"#;
-
-        // Parse the TOML directly
-        let config_result: Result<UserConfig, _> = toml::from_str(toml_content);
-
-        // The deserialization should succeed, but validation in load() would fail
-        // Since we can't easily test load() without env vars, we verify the fields deserialize
-        if let Ok(config) = config_result {
-            let generation = config.commit.generation.as_ref();
-            // Verify validation logic: both fields should not be Some
-            let has_both = generation
-                .map(|g| g.template.is_some() && g.template_file.is_some())
-                .unwrap_or(false);
-            assert!(
-                has_both,
-                "Config should have both template fields set for this test"
-            );
-        }
-    }
-
-    #[test]
-    fn test_squash_template_mutually_exclusive_validation() {
-        // Test that deserialization rejects both squash-template and squash-template-file
-        let toml_content = r#"
-worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[commit.generation]
-command = "llm"
-squash-template = "inline template"
-squash-template-file = "~/file.txt"
-"#;
-
-        // Parse the TOML directly
-        let config_result: Result<UserConfig, _> = toml::from_str(toml_content);
-
-        // The deserialization should succeed, but validation in load() would fail
-        // Since we can't easily test load() without env vars, we verify the fields deserialize
-        if let Ok(config) = config_result {
-            let generation = config.commit.generation.as_ref();
-            // Verify validation logic: both fields should not be Some
-            let has_both = generation
-                .map(|g| g.squash_template.is_some() && g.squash_template_file.is_some())
-                .unwrap_or(false);
-            assert!(
-                has_both,
-                "Config should have both squash template fields set for this test"
-            );
-        }
     }
 
     #[test]

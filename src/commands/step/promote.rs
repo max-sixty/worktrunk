@@ -154,8 +154,17 @@ fn distribute_staged(
 
 /// Result of a promote operation
 pub enum PromoteResult {
-    /// Branch was promoted successfully
-    Promoted,
+    /// Branch was promoted successfully.
+    ///
+    /// `mismatch` is `true` when the promote did not restore canonical state
+    /// (i.e. the target branch is not the default branch). Consumers can use
+    /// this to detect that the safety warning was printed.
+    Promoted {
+        target: String,
+        main_branch: String,
+        swapped: usize,
+        mismatch: bool,
+    },
     /// Already in canonical state (requested branch is already in main)
     AlreadyInMain(String),
 }
@@ -399,7 +408,9 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
         0
     };
 
-    // Print success messages only after everything succeeded
+    // Print success messages only after everything succeeded. These go to
+    // stderr regardless of --format, matching `rebase`/`push`: the human
+    // status line is stderr, the JSON envelope on stdout is unaffected.
     eprintln!(
         "{}",
         success_message(cformat!(
@@ -415,7 +426,12 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
         );
     }
 
-    Ok(PromoteResult::Promoted)
+    Ok(PromoteResult::Promoted {
+        target: target_branch,
+        main_branch,
+        swapped,
+        mismatch: !is_restoring,
+    })
 }
 
 #[cfg(test)]

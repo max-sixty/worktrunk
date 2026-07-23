@@ -39,6 +39,7 @@ use std::process::Command;
 use crate::config::sanitize_branch_name;
 use crate::git::Repository;
 use crate::shell_exec::{Cmd, INHERITED_GIT_PATH_VARS};
+use path_slash::PathExt;
 
 use self::mock_commands::{MockConfig, MockResponse};
 
@@ -59,11 +60,11 @@ pub fn wt_bin() -> PathBuf {
     )
 }
 
-/// Path to a workspace member binary (e.g., `wt-perf`, `mock-stub`).
+/// Path to a workspace member binary (`mock-stub`).
 ///
-/// These are binaries from other workspace packages (not the main `wt` crate),
-/// so `CARGO_BIN_EXE_<name>` isn't available. Derives the path from the test
-/// executable's location in `target/debug/deps/`.
+/// Binaries from other workspace packages (not the main `wt` crate) have no
+/// `CARGO_BIN_EXE_<name>` in the main crate's tests. Derives the path from
+/// the test executable's location in `target/debug/deps/`.
 pub fn workspace_bin(name: &str) -> PathBuf {
     let mut path = std::env::current_exe().expect("failed to get test executable path");
     path.pop(); // Remove test binary name
@@ -160,22 +161,30 @@ fn copy_standard_fixture(dest: &Path) -> FixtureWorktrees {
     // Canonicalize dest for worktrees map (on macOS /var -> /private/var)
     let canonical_dest = canonicalize(dest).unwrap();
 
-    // Fix gitdir files - fixture uses _git which we rename to .git
-    // Paths are relative so no absolute path replacement needed
+    // Fix gitdir files: the fixture uses _git which we rename to .git, and
+    // each copied repo needs links that point at its own tempdir. Use absolute
+    // paths, matching `git worktree add`, so `git worktree list` does not
+    // interpret fixture-relative paths from the wrong base on some Git builds.
     for wt in ["feature-a", "feature-b", "feature-c"] {
+        let worktree_path = canonical_dest.join(format!("repo.{wt}"));
+        let worktree_gitdir = worktree_path.join(".git").to_slash_lossy().into_owned();
+        let main_worktree_gitdir = canonical_dest
+            .join("repo")
+            .join(".git")
+            .join("worktrees")
+            .join(format!("repo.{wt}"))
+            .to_slash_lossy()
+            .into_owned();
+
         let gitdir_path = dest.join(format!("repo.{wt}/.git"));
         if gitdir_path.exists() {
-            let content = std::fs::read_to_string(&gitdir_path).unwrap();
-            let fixed = content.replace("_git", ".git");
-            std::fs::write(&gitdir_path, fixed).unwrap();
+            std::fs::write(&gitdir_path, format!("gitdir: {main_worktree_gitdir}\n")).unwrap();
         }
 
         // Fix main repo's worktree gitdir reference
         let main_gitdir = dest.join(format!("repo/.git/worktrees/repo.{wt}/gitdir"));
         if main_gitdir.exists() {
-            let content = std::fs::read_to_string(&main_gitdir).unwrap();
-            let fixed = content.replace("_git", ".git");
-            std::fs::write(&main_gitdir, fixed).unwrap();
+            std::fs::write(&main_gitdir, format!("{worktree_gitdir}\n")).unwrap();
         }
     }
 
@@ -226,7 +235,7 @@ pub const HOUR: i64 = 60 * MINUTE;
 pub const DAY: i64 = 24 * HOUR;
 pub const WEEK: i64 = 7 * DAY;
 
-/// The epoch used for deterministic timestamps in tests (2025-01-01T00:00:00Z).
+/// The epoch used for deterministic timestamps in tests (2025-01-02T00:00:00Z).
 /// Use this when creating test data with timestamps (cache entries, etc.).
 pub const TEST_EPOCH: u64 = 1735776000;
 
@@ -263,6 +272,13 @@ pub const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
     ("WORKTRUNK_TEST_FISH_INSTALLED", "0"),
     ("WORKTRUNK_TEST_NUSHELL_ENV", "0"),
     ("WORKTRUNK_TEST_POWERSHELL_INSTALLED", "0"),
+    // Disable the process-tree shell walk (see `shell::ancestor_shell`): the
+    // real ancestry of a spawned test wt is the test harness → nextest →
+    // cargo → the developer's or CI runner's shell, which would leak into
+    // shell-detection results nondeterministically. Empty = "no shell
+    // ancestor found", so tests drive detection via SHELL. Tests exercising
+    // the walk set a shell name instead.
+    ("WORKTRUNK_TEST_PARENT_SHELL", ""),
     // Disable PowerShell auto-detection (PSModulePath / SHELL signal).
     // Iteration is unconditional (matches the other shells); this var only
     // controls `allow_create` via `should_auto_configure_powershell()` so we
@@ -530,12 +546,13 @@ pub fn configure_cli_command(cmd: &mut Command) {
     // by the env-strip above.
     isolate_subprocess_env(cmd, None);
     cmd.env("WORKTRUNK_TEST_EPOCH", TEST_EPOCH.to_string());
-    // RUST_LOG intentionally NOT set: the flag baseline and `RUST_LOG`
+    // Do not inherit the host's RUST_LOG: the flag baseline and `RUST_LOG`
     // merge via the env-wins-when-set contract enforced by
     // `tracing_subscriber::EnvFilter` (see `logging::init`), so a blanket
-    // `RUST_LOG=warn` default would cap `-vv` tests at Warn and starve
-    // `trace.log` of debug-level `[wt-trace]` records. Tests that need
-    // warn-level output should opt in per-invocation.
+    // host `RUST_LOG=warn` would cap `-vv` tests at Warn and starve `trace.log`
+    // of debug-level `[wt-trace]` records. Tests that need warn-level output
+    // can opt in after command construction.
+    cmd.env_remove("RUST_LOG");
     // Treat Claude as not installed by default (tests can override with "1")
     cmd.env("WORKTRUNK_TEST_CLAUDE_INSTALLED", "0");
     // Treat Codex as not installed by default (tests can override with "1")
@@ -735,6 +752,10 @@ pub fn set_temp_home_env(cmd: &mut Command, home: &Path) {
     // OpenCode: override config dir to avoid platform-specific dirs::config_dir() differences
     // (Linux: ~/.config, macOS: ~/Library/Application Support, Windows: AppData\Roaming)
     cmd.env("OPENCODE_CONFIG_DIR", home.join("opencode-config"));
+    // Claude Code: pin the config dir to the temp home's `.claude` so detection
+    // matches the setup helpers and stays hermetic against an ambient
+    // CLAUDE_CONFIG_DIR inherited from the test runner's environment.
+    cmd.env("CLAUDE_CONFIG_DIR", home.join(".claude"));
 }
 
 /// Override `WORKTRUNK_CONFIG_PATH` to point to the XDG-derived user config path
@@ -2094,6 +2115,35 @@ impl TestRepo {
         self.mock_bin_path = Some(mock_bin);
     }
 
+    /// Set up mock glab with no MRs and a successful `ci list` pipeline.
+    ///
+    /// Used to test `detect_gitlab_pipeline`'s success path: a branch
+    /// pipeline with no MR renders the bare `#` colored by pipeline status.
+    pub fn setup_mock_glab_with_pipeline(&mut self, pipeline_json: &str, project_id: Option<u64>) {
+        let mock_bin = self.temp_dir.path().join("mock-bin");
+        std::fs::create_dir_all(&mock_bin).unwrap();
+
+        let project_id_response = match project_id {
+            Some(id) => format!(r#"{{"id": {}}}"#, id),
+            None => r#"{"error": "not found"}"#.to_string(),
+        };
+
+        // glab mock: mr list returns empty (no MRs), ci list returns the pipeline
+        MockConfig::new("glab")
+            .version("glab version 1.0.0 (mock)")
+            .command("auth", MockResponse::exit(0))
+            .command("mr list", MockResponse::output("[]")) // No MRs - triggers ci list fallback
+            .command("repo", MockResponse::output(&project_id_response))
+            .command("ci", MockResponse::output(pipeline_json))
+            .write(&mock_bin);
+
+        MockConfig::new("gh")
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+
+        self.mock_bin_path = Some(mock_bin);
+    }
+
     /// Set up mock glab that returns a rate limit error on `ci list`.
     ///
     /// Used to test the `is_retriable_error` path in `detect_gitlab_pipeline`.
@@ -2693,6 +2743,28 @@ fn exponential_sleep(attempt: u32) {
     ExponentialBackoff::default().sleep(attempt);
 }
 
+/// Fixed window for an **absence** assertion, proving that something did
+/// *not* happen (a hook that must not fire, a marker that must not appear).
+///
+/// The polarity of the assertion decides the tool. A **presence** assertion
+/// waits for an event that *will* happen: poll with [`wait_for_file`] and
+/// friends, which return the instant the event lands and tolerate a slow CI
+/// runner via a generous timeout. An **absence** assertion has no event to
+/// wait for, so polling can't help: the only option is to wait long enough
+/// that the thing would have happened if it were going to, then assert it
+/// didn't. 500ms is the floor; a starved background process needs a wide
+/// margin for the window to be conclusive.
+///
+/// Use this constant rather than a bare `Duration::from_millis(500)` so
+/// absence sleeps are greppable and self-documenting. Never pair it with a
+/// presence assertion in the same test: a fixed sleep before a "did happen"
+/// check is the flaky pattern this constant exists to keep out of the
+/// assertion path. When the absence is *structural* (the event is gated on a
+/// condition the test never sets up, so it can't fire at all), no window is
+/// needed: poll the positive precondition instead and the absence holds by
+/// construction.
+pub const SLEEP_FOR_ABSENCE_CHECK: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// True when a worktree's contents have been removed — either the path
 /// is gone, or it's an empty placeholder directory.
 ///
@@ -3052,6 +3124,22 @@ mod tests {
         assert_eq!(
             removed.get("WORKTRUNK_APPROVALS_PATH"),
             Some(&Some(DEFAULT_ISOLATED_APPROVALS.to_string()))
+        );
+    }
+
+    #[test]
+    fn configure_cli_command_scrubs_host_rust_log() {
+        let mut cmd = Command::new("true");
+        configure_cli_command(&mut cmd);
+
+        let rust_log = cmd
+            .get_envs()
+            .find(|(key, _)| key.to_string_lossy() == "RUST_LOG")
+            .map(|(_, value)| value);
+
+        assert!(
+            matches!(rust_log, Some(None)),
+            "RUST_LOG should be explicitly removed from CLI test children"
         );
     }
 

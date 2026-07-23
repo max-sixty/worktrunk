@@ -2,4 +2,4 @@
 source: src/shell/mod.rs
 expression: "Shell::Nushell.config_line(\"wt\")"
 ---
-if (which wt | is-not-empty) { wt config shell init nu | save --force ($nu.default-config-dir | path join vendor/autoload/wt.nu) }
+if (which wt | is-not-empty) { wt config shell init nu | save --force ($nu.vendor-autoload-dirs | last | path join wt.nu) }

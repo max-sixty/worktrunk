@@ -1,0 +1,330 @@
+---
+source: tests/integration_tests/list.rs
+info:
+  program: wt
+  args:
+    - list
+    - "--format=json"
+  env:
+    APPDATA: "[TEST_CONFIG_HOME]"
+    CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_TERMINAL_PROMPT: "0"
+    HOME: "[TEST_HOME]"
+    LANG: C
+    LC_ALL: C
+    LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
+    MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
+    PATH: "[PATH]"
+    TERM: alacritty
+    USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
+    WORKTRUNK_TEST_BASH_INSTALLED: "0"
+    WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_CODEX_INSTALLED: "0"
+    WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
+    WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_FISH_INSTALLED: "0"
+    WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_POWERSHELL_ENV: "0"
+    WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WORKTRUNK_TEST_ZSH_INSTALLED: "0"
+    XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
+---
+success: true
+exit_code: 0
+----- stdout -----
+{
+  "schema": 2,
+  "repo": {
+    "default_branch": "main"
+  },
+  "collected": {
+    "ci": false,
+    "summary": false
+  },
+  "items": [
+    {
+      "branch": "main",
+      "head": {
+        "sha": "05a4a45d0b981dad5c27db59dca482836d59f89e",
+        "short_sha": "05a4a45",
+        "subject": "Initial commit",
+        "committed_at": "2025-01-01T08:00:00Z"
+      },
+      "worktree": {
+        "path": "_REPO_",
+        "main": true,
+        "current": true,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "upstream": {
+        "remote": "origin",
+        "branch": "main",
+        "ahead": 0,
+        "behind": 0
+      },
+      "display": {
+        "state": "is_main",
+        "symbols": "^|",
+        "statusline": "main  \u001b[2m^\u001b[22m\u001b[2m|\u001b[22m"
+      }
+    },
+    {
+      "branch": "feature-a",
+      "head": {
+        "sha": "1b87d4731ea707905d15a726e193531c20affa14",
+        "short_sha": "1b87d47",
+        "subject": "Add feature-a file",
+        "committed_at": "2025-01-01T08:00:00Z"
+      },
+      "worktree": {
+        "path": "_REPO_.feature-a",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 1,
+        "behind": 0,
+        "diff": {
+          "added": 1,
+          "deleted": 0
+        },
+        "orphan": false,
+        "merge_conflicts": false
+      },
+      "display": {
+        "state": "ahead",
+        "symbols": "↑",
+        "statusline": "feature-a  \u001b[2m↑\u001b[22m  \u001b[32m↑1\u001b[0m  ^\u001b[32m+1\u001b[0m"
+      }
+    },
+    {
+      "branch": "feature-b",
+      "head": {
+        "sha": "f62940fcec424585adf98625e722fdf990810614",
+        "short_sha": "f62940f",
+        "subject": "Add feature-b file",
+        "committed_at": "2025-01-01T08:00:00Z"
+      },
+      "worktree": {
+        "path": "_REPO_.feature-b",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 1,
+        "behind": 0,
+        "diff": {
+          "added": 1,
+          "deleted": 0
+        },
+        "orphan": false,
+        "merge_conflicts": false
+      },
+      "display": {
+        "state": "ahead",
+        "symbols": "↑",
+        "statusline": "feature-b  \u001b[2m↑\u001b[22m  \u001b[32m↑1\u001b[0m  ^\u001b[32m+1\u001b[0m"
+      }
+    },
+    {
+      "branch": "feature-c",
+      "head": {
+        "sha": "345c7c93ad7c3d8f5b08380898d78e024019599c",
+        "short_sha": "345c7c9",
+        "subject": "Add feature-c file",
+        "committed_at": "2025-01-01T08:00:00Z"
+      },
+      "worktree": {
+        "path": "_REPO_.feature-c",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 1,
+        "behind": 0,
+        "diff": {
+          "added": 1,
+          "deleted": 0
+        },
+        "orphan": false,
+        "merge_conflicts": false
+      },
+      "display": {
+        "state": "ahead",
+        "symbols": "↑",
+        "statusline": "feature-c  \u001b[2m↑\u001b[22m  \u001b[32m↑1\u001b[0m  ^\u001b[32m+1\u001b[0m"
+      }
+    },
+    {
+      "branch": "feature-detached",
+      "head": {
+        "sha": "05a4a45d0b981dad5c27db59dca482836d59f89e",
+        "short_sha": "05a4a45",
+        "subject": "Initial commit",
+        "committed_at": "2025-01-01T08:00:00Z"
+      },
+      "worktree": {
+        "path": "_REPO_.feature-detached",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 0,
+        "behind": 0,
+        "diff": {
+          "added": 0,
+          "deleted": 0
+        },
+        "orphan": false,
+        "integration": {
+          "reason": "same_commit"
+        },
+        "merge_conflicts": false
+      },
+      "display": {
+        "state": "empty",
+        "symbols": "_",
+        "statusline": "feature-detached  \u001b[2m_\u001b[22m"
+      }
+    },
+    {
+      "branch": "locked-feature",
+      "head": {
+        "sha": "05a4a45d0b981dad5c27db59dca482836d59f89e",
+        "short_sha": "05a4a45",
+        "subject": "Initial commit",
+        "committed_at": "2025-01-01T08:00:00Z"
+      },
+      "worktree": {
+        "path": "_REPO_.locked-feature",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "locked": {
+          "reason": "Testing"
+        },
+        "branch_mismatch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 0,
+        "behind": 0,
+        "diff": {
+          "added": 0,
+          "deleted": 0
+        },
+        "orphan": false,
+        "integration": {
+          "reason": "same_commit"
+        },
+        "merge_conflicts": false
+      },
+      "display": {
+        "state": "empty",
+        "symbols": "_⊞",
+        "statusline": "locked-feature  \u001b[33m⊞\u001b[39m\u001b[2m_\u001b[22m"
+      }
+    }
+  ]
+}
+
+----- stderr -----

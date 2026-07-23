@@ -117,9 +117,17 @@ pub fn pty_safe() {
 #[rstest::fixture]
 pub fn repo() -> TestRepo {
     let repo = TestRepo::standard();
-    // Bind insta snapshot filters for this test thread. `mem::forget` intentionally
-    // leaks the scope guard so settings persist without storing the guard in TestRepo.
-    // Safe: each test sets its own settings, and thread-locals are cleaned up on exit.
+    // Bind insta snapshot filters for this test thread, leaking the guard:
+    // rstest has no teardown, and the guard can't ride along in TestRepo
+    // (insta is a dev-dependency, invisible to the lib crate defining
+    // TestRepo; the guard is also !Send by design). Under nextest (process
+    // per test) the leak ends with the process. Under libtest the binding
+    // persists on the reused worker thread and bleeds into later tests on
+    // it — so a test must never rely on settings it didn't bind itself,
+    // and a missing redaction can be masked here but exposed under nextest.
+    // `test_no_host_specific_paths_in_snapshots` (snapshot_formatting_guard)
+    // enforces the observable invariant: no host-specific paths in committed
+    // snapshots.
     let guard =
         setup_snapshot_settings_for_paths(repo.root_path(), &repo.worktrees).bind_to_scope();
     std::mem::forget(guard);
@@ -143,6 +151,25 @@ pub fn repo() -> TestRepo {
 #[rstest::fixture]
 pub fn temp_home() -> TempDir {
     TempDir::new().unwrap()
+}
+
+/// Canonicalize a `temp_home` for use as a base when building paths that
+/// production code will compare against the exported HOME.
+///
+/// `set_temp_home_env` exports HOME via `dunce::canonicalize`, so paths the
+/// command later prints (e.g. the nushell vendor-autoload dir) only tilde-
+/// shorten in `format_path_for_display` when they share that canonical prefix.
+/// Two platform pitfalls make a bare `temp_home.path()` wrong:
+///
+/// - **macOS**: the temp dir lives under `/var`, a symlink to `/private/var`.
+///   Canonicalizing resolves it to match the exported HOME, so the printed path
+///   shortens to `~/...` instead of the full temp path.
+/// - **Windows**: `std::fs::canonicalize` returns a `\\?\` verbatim path, where
+///   the forward slashes in a later `.join("a/b/c")` are treated as literal
+///   filename characters rather than separators — breaking both the file write
+///   and `.exists()`. `dunce::canonicalize` returns an ordinary path.
+pub fn canonical_temp_home(temp_home: &TempDir) -> std::path::PathBuf {
+    dunce::canonicalize(temp_home.path()).unwrap()
 }
 
 /// Repo with remote tracking set up.
@@ -353,12 +380,6 @@ pub fn merge_scenario_multi_commit(mut repo: TestRepo) -> (TestRepo, PathBuf) {
 ///
 /// Use this instead of `portable_pty::native_pty_system()` directly to ensure
 /// PTY tests work correctly across platforms.
-///
-/// NOTE: PTY tests are behind the `shell-integration-tests` feature because they can
-/// trigger a nextest bug where its InputHandler cleanup receives SIGTTOU. This happens
-/// when tests spawn interactive shells (zsh -ic, bash -ic) which take control of the
-/// foreground process group. See https://github.com/nextest-rs/nextest/issues/2878
-/// Workaround: run with NEXTEST_NO_INPUT_HANDLER=1. See CLAUDE.md for details.
 pub fn native_pty_system() -> Box<dyn portable_pty::PtySystem> {
     #[cfg(unix)]
     ignore_tty_signals();
@@ -556,8 +577,18 @@ pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
     settings.add_redaction(".env.PWD", "[PWD]");
     // Mock commands directory (temp path for mock gh/glab binaries)
     settings.add_redaction(".env.MOCK_CONFIG_DIR", "[MOCK_CONFIG_DIR]");
+    // Nushell vendor-autoload override (temp path pinned by shell-integration tests)
+    settings.add_redaction(
+        ".env.WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR",
+        "[TEST_NU_VENDOR_AUTOLOAD]",
+    );
     // OpenCode config directory (platform-independent override for tests)
     settings.add_redaction(".env.OPENCODE_CONFIG_DIR", "[TEST_OPENCODE_CONFIG]");
+    // Claude Code config directory: `set_temp_home_env` pins it to the temp
+    // home's `.claude` for hermeticity, so the value is a per-run temp path that
+    // would leak (and fail the host-path guard) when regenerated under an
+    // ambient CLAUDE_CONFIG_DIR. Redact it like its OpenCode sibling above.
+    settings.add_redaction(".env.CLAUDE_CONFIG_DIR", "[TEST_CLAUDE_CONFIG]");
     // `wt config show --full` tests inject WORKTRUNK_TEST_LATEST_VERSION = the
     // current crate version (so the version-check line reads "Up to date"), which
     // would otherwise churn this `info` block on every release bump. Redact any
@@ -653,6 +684,27 @@ fn add_repo_and_worktree_path_filters(
     settings.add_filter(&regex::escape(&root_str_normalized), "_REPO_");
     settings.add_filter(&regex::escape(&to_posix_path(root_str)), "_REPO_");
 
+    // Filters rewrite snapshot *content* only; the structured `info` block
+    // insta-cmd records is reachable solely via redactions. A test that
+    // passes a repo path as a CLI argument (`wt -C <root> list`) would
+    // otherwise bake the per-test temp path into the snapshot's `args:`
+    // block. Mirror the body filters: root-prefixed args become `_REPO_…`.
+    // No POSIX form here — args are built in-process from `root_path()`.
+    let arg_prefixes = [root_str.to_string(), root_str_normalized.clone()];
+    settings.add_dynamic_redaction(".args[]", move |value, _path| {
+        if let Some(arg) = value.as_str() {
+            for prefix in &arg_prefixes {
+                if let Some(suffix) = arg.strip_prefix(prefix.as_str()) {
+                    return insta::internals::Content::from(format!(
+                        "_REPO_{}",
+                        suffix.replace('\\', "/")
+                    ));
+                }
+            }
+        }
+        value
+    });
+
     // In tests, HOME is set to the temp directory containing the repo. Commands being tested
     // see HOME=temp_dir, so format_path_for_display() outputs ~/repo instead of the full path.
     // The repo is always at {temp_dir}/repo, so we hardcode ~/repo for the filter.
@@ -732,16 +784,6 @@ fn add_placeholder_cleanup_filters(settings: &mut insta::Settings) {
     settings.add_filter(
         r"(\x1b\[1m)(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/[^\x1b]+\.toml)(\x1b\[m)",
         "$1--- a$2$3",
-    );
-
-    // Normalize syntax highlighting around placeholders.
-    settings.add_filter(
-        r"\x1b\[2m \x1b\[0m\x1b\[2m(?:\x1b\[32m)?(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:\.[a-zA-Z0-9_-]+)?)(?:\x1b\[0m)?\x1b\[2m \x1b\[0m",
-        "\x1b[2m $1 \x1b[0m",
-    );
-    settings.add_filter(
-        r"(?:\x1b\[\d+m)*\x1b\[32m(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:/[^\x1b\s]+)?)(?:\x1b\[\d+m)*",
-        "$1",
     );
 }
 
@@ -1074,22 +1116,6 @@ fn setup_snapshot_settings_for_paths_with_home(
         "${1}[BINARY_PATH]$2$3",
     );
 
-    // Remove trailing ANSI reset codes at end of lines for cross-platform consistency
-    // Windows terminal strips these trailing resets that Unix includes
-    settings.add_filter(r"\x1b\[0m$", "");
-    settings.add_filter(r"\x1b\[0m\n", "\n");
-
-    // Normalize tree-sitter bash syntax highlighting differences between platforms.
-    // On Linux, tree-sitter-bash may parse paths as "string" tokens (green: [32m),
-    // while on macOS the same paths are just dimmed (no color). This causes snapshot
-    // mismatches when the same code produces different ANSI sequences.
-    // Strip green color from _REPO_ placeholders and normalize the surrounding sequences.
-    // Pattern: [2m [0m[2m[32m_REPO_...[0m[2m [0m[2m  ->  [2m _REPO_... [0m[2m
-    settings.add_filter(
-        r"\x1b\[2m \x1b\[0m\x1b\[2m\x1b\[32m(_REPO_[^\x1b]*)\x1b\[0m\x1b\[2m \x1b\[0m\x1b\[2m",
-        "\x1b[2m $1 \x1b[0m\x1b[2m",
-    );
-
     // Normalize commit hashes throughout output.
     // Git on Windows produces different tree hashes due to filemode handling, causing
     // commit hashes to differ between platforms. Redact to [HASH] for consistency.
@@ -1254,20 +1280,11 @@ fn add_remove_stats_byte_filter(settings: &mut insta::Settings) {
 
 /// Add filters for PTY-specific artifacts that vary between platforms.
 ///
-/// This handles:
-/// - macOS PTY control sequences (^D followed by backspaces)
-/// - Leading ANSI reset codes that vary between macOS and Linux
-///
 /// Note: CRLF normalization is done eagerly in PTY exec functions, not here.
 pub fn add_pty_filters(settings: &mut insta::Settings) {
     // macOS PTYs emit ^D (literal caret-D) followed by backspaces (0x08)
     // when EOF is signaled. Linux PTYs don't. Strip these for consistency.
     settings.add_filter(r"\^D\x08+", "");
-
-    // Remove redundant leading reset codes per line.
-    // macOS and Linux PTYs generate ANSI codes slightly differently.
-    // This handles lines that start with ESC[0m (reset).
-    settings.add_filter(r"(?m)^\x1b\[0m", "");
 }
 
 /// Add filters for binary paths (target/debug/wt) in PTY output.

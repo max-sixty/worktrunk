@@ -2,7 +2,6 @@
 Require wt
 Require git
 
-Env CLAUDECODE ""
 Env IS_DEMO "1"
 Env GIT_TERMINAL_PROMPT "0"
 Env GIT_PAGER "{{GIT_PAGER}}"

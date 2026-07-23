@@ -10,13 +10,9 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
-    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
-    NO_COLOR: ""
-    PSModulePath: ""
-    SHELL: ""
     TERM: alacritty
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -57,13 +53,16 @@ Usage: [1m[36mwt config plugins codex[0m [36m[OPTIONS][0m [36m<COMMAND>[0
       [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
+      [1m[36m--config-set[0m[36m [0m[36m<toml>[0m
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to apply the same level everywhere — including shell completion, which no flag can reach
 
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
 
-Bundles a configuration skill — documentation Codex can read to help set up LLM commits, project hooks, and worktree paths. Activity markers in [2mwt list[0m are Claude Code only: Codex exposes no turn-end hook event, so the Codex plugin omits them until it does.
+Bundles a configuration skill — documentation Codex can read to help set up LLM commits, project hooks, and worktree paths — plus activity-marker hooks that show 🤖/💬 in [2mwt list[0m while a Codex session runs. Codex has no session-exit event, so a marker persists after a session ends.
 
 [1m[32mExamples[0m
 

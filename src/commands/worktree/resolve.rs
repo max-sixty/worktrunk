@@ -133,21 +133,6 @@ pub fn is_worktree_at_expected_path(
     }
 }
 
-/// Returns the expected path if `actual_path` differs from the template-computed path.
-///
-/// Returns `Some(expected_path)` when there's a mismatch, `None` when paths match.
-/// Used to show path mismatch warnings in switch, picker, remove, and merge.
-pub fn path_mismatch(
-    repo: &Repository,
-    branch: &str,
-    actual_path: &std::path::Path,
-    config: &UserConfig,
-) -> Option<PathBuf> {
-    compute_worktree_path(repo, branch, config)
-        .ok()
-        .filter(|expected| !paths_match(actual_path, expected))
-}
-
 /// Compute a user-facing display name for a worktree.
 ///
 /// Returns styled content with branch names bolded:
@@ -199,8 +184,16 @@ fn template_references_repo_name(template: &str) -> bool {
 pub fn offer_bare_repo_worktree_path_fix(
     repo: &Repository,
     config: &mut UserConfig,
+    branch: &str,
 ) -> anyhow::Result<bool> {
     if !repo.is_bare()? {
+        return Ok(false);
+    }
+
+    // Symbolic identifiers (-, @, ^, pr:N, mr:N) haven't been resolved to a real
+    // branch name yet, so the example paths would be misleading. Skip the prompt;
+    // it will surface on the next switch with a concrete branch name.
+    if branch == "-" || branch == "@" || branch == "^" || branch.contains(':') {
         return Ok(false);
     }
 
@@ -210,11 +203,7 @@ pub fn offer_bare_repo_worktree_path_fix(
         return Ok(false);
     }
 
-    if repo
-        .config_value("worktrunk.skip-bare-repo-prompt")
-        .unwrap_or(None)
-        .is_some()
-    {
+    if repo.has_shown_hint("skip-bare-repo-prompt") {
         return Ok(false);
     }
 
@@ -235,13 +224,14 @@ pub fn offer_bare_repo_worktree_path_fix(
         .and_then(|n| n.to_str())
         .unwrap_or("project");
 
-    // Example paths to show the user what changes
-    let example_bad = format!("{parent_name}/{repo_name}.feature-auth");
-    let example_good = format!("{parent_name}/feature-auth");
+    // Use the actual branch being switched to in example paths. Calling
+    // `sanitize_branch_name` keeps the displayed example aligned with what
+    // the `sanitize` Jinja filter applies inside `BARE_REPO_WORKTREE_PATH`.
+    let sanitized = worktrunk::config::sanitize_branch_name(branch);
+    let example_bad = format!("{parent_name}/{repo_name}.{sanitized}");
+    let example_good = format!("{parent_name}/{sanitized}");
 
-    let config_path_display = worktrunk::config::config_path()
-        .map(|p| format_path_for_display(&p).to_string())
-        .unwrap_or_else(|| "~/.config/worktrunk/config.toml".to_string());
+    let config_path_display = worktrunk::config::config_path_for_display();
 
     // Non-interactive: warn and show the config to add.
     if !std::io::stdin().is_terminal() {
@@ -297,9 +287,9 @@ pub fn offer_bare_repo_worktree_path_fix(
             Ok(true)
         }
         PromptResponse::Declined => {
-            if let Err(e) = repo.set_config("worktrunk.skip-bare-repo-prompt", "true") {
-                log::warn!("Failed to save skip-bare-repo-prompt to git config: {e}");
-            }
+            // Best-effort, like every other hint write: a failed persist just
+            // means the prompt may reappear on the next switch.
+            let _ = repo.mark_hint_shown("skip-bare-repo-prompt");
             Ok(false)
         }
     }

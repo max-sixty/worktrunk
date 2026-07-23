@@ -5,7 +5,7 @@
 use anyhow::Context;
 use color_print::cformat;
 use std::path::PathBuf;
-use worktrunk::config::require_config_path;
+use worktrunk::config::{ConfigFileKind, require_config_path};
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{eprintln, hint_message, info_message, success_message};
@@ -43,20 +43,26 @@ pub(super) fn comment_out_config(content: &str) -> String {
 pub fn handle_config_create(project: bool) -> anyhow::Result<()> {
     if project {
         let repo = Repository::current()?;
-        let config_path = repo
-            .project_config_path()?
-            .context("Cannot determine project config location — no worktree found")?;
+        let config_path = repo.project_config_path()?.ok_or_else(|| {
+            if repo.is_bare().unwrap_or(false) {
+                anyhow::anyhow!(
+                    "Bare repository has no linked worktrees yet.\n\
+                     Run `wt switch <branch>` to create a worktree first, then run `wt config create --project` from inside it."
+                )
+            } else {
+                anyhow::anyhow!("Cannot determine project config location — no worktree found")
+            }
+        })?;
         let user_config_exists = require_config_path().map(|p| p.exists()).unwrap_or(false);
         create_config_file(
             config_path,
             PROJECT_CONFIG_EXAMPLE,
-            "Project config",
+            ConfigFileKind::Project,
             &[
                 "Edit this file to configure hooks for this repository",
                 "See https://worktrunk.dev/hook/ for hook documentation",
             ],
             user_config_exists,
-            true, // is_project
         )
     } else {
         let project_config_exists = Repository::current()
@@ -68,10 +74,9 @@ pub fn handle_config_create(project: bool) -> anyhow::Result<()> {
         create_config_file(
             require_config_path()?,
             USER_CONFIG_EXAMPLE,
-            "User config",
+            ConfigFileKind::User,
             &["Edit this file to customize worktree paths and LLM settings"],
             project_config_exists,
-            false, // is_project
         )
     }
 }
@@ -80,17 +85,17 @@ pub fn handle_config_create(project: bool) -> anyhow::Result<()> {
 fn create_config_file(
     path: PathBuf,
     content: &str,
-    config_type: &str,
+    kind: ConfigFileKind,
     success_hints: &[&str],
     other_config_exists: bool,
-    is_project: bool,
 ) -> anyhow::Result<()> {
     // Check if file already exists
     if path.exists() {
         eprintln!(
             "{}",
             info_message(cformat!(
-                "{config_type} already exists: <bold>{}</>",
+                "{} already exists: <bold>{}</>",
+                kind.label(),
                 format_path_for_display(&path)
             ))
         );
@@ -99,7 +104,7 @@ fn create_config_file(
         let hint = if other_config_exists {
             // Both configs exist
             cformat!("To view both user and project configs, run <underline>wt config show</>")
-        } else if is_project {
+        } else if kind == ConfigFileKind::Project {
             // Project config exists, no user config
             cformat!(
                 "To view, run <underline>wt config show</>. To create a user config, run <underline>wt config create</>"
@@ -128,7 +133,7 @@ fn create_config_file(
         "{}",
         success_message(cformat!(
             "Created {}: <bold>{}</>",
-            config_type.to_lowercase(),
+            kind.label().to_lowercase(),
             format_path_for_display(&path)
         ))
     );

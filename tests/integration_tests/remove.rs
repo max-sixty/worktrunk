@@ -1,6 +1,6 @@
 use crate::common::{
-    BareRepoTest, TestRepo, TestRepoBase, configure_directive_files, directive_files,
-    make_snapshot_cmd, repo, repo_with_remote, setup_snapshot_settings,
+    BareRepoTest, SLEEP_FOR_ABSENCE_CHECK, TestRepo, TestRepoBase, configure_directive_files,
+    directive_files, make_snapshot_cmd, repo, repo_with_remote, setup_snapshot_settings,
     setup_temp_snapshot_settings, wt_command,
 };
 use ansi_str::AnsiStr;
@@ -8,7 +8,6 @@ use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
 use path_slash::PathExt as _;
 use rstest::rstest;
-use std::time::Duration; // For absence checks (SLEEP_FOR_ABSENCE_CHECK pattern)
 
 #[rstest]
 fn test_remove_already_on_default(repo: TestRepo) {
@@ -35,6 +34,108 @@ fn test_remove_from_worktree(mut repo: TestRepo) {
         &[],
         Some(&worktree_path)
     ));
+}
+
+// `--reap` (experimental) with no processes running under the worktree: the
+// reap phase reports it found nothing, then removal proceeds normally. A fresh
+// worktree has no processes with a cwd under it, so this is deterministic
+// (and identical whether or not `lsof` is installed on the runner).
+#[cfg(unix)]
+#[rstest]
+fn test_remove_reap_no_processes(mut repo: TestRepo) {
+    repo.add_worktree("feature-reap");
+
+    // Remove by name from the primary worktree so the reap scans the removed
+    // worktree's path, not the current one.
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["--reap", "feature-reap"],
+        None
+    ));
+}
+
+// `--reap` (experimental) with a real process running under the worktree: the
+// detached child is discovered and terminated before removal. Whether the
+// controlling-terminal guard reaps it depends on the test's own terminal
+// (none in CI → reaped; a TTY on a dev box → spared), so the assertion is
+// driven off the guard's verdict rather than assuming either — keeping the
+// found-processes path exercised in CI without becoming host-dependent.
+#[cfg(unix)]
+#[rstest]
+fn test_remove_reap_kills_process(mut repo: TestRepo) {
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+    use worktrunk::git::reap;
+
+    let worktree_path = repo.add_worktree("feature-reapkill");
+    let canonical = std::fs::canonicalize(&worktree_path).unwrap();
+
+    // A detached child whose cwd is the worktree — the shape `--reap` targets.
+    let mut child = Command::new("sleep")
+        .arg("60")
+        .current_dir(&canonical)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+
+    // Wait until lsof reports the child's cwd (fast, but not instant).
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !reap::processes_under(&canonical)
+        .iter()
+        .any(|p| p.pid == pid)
+    {
+        assert!(
+            Instant::now() < deadline,
+            "child {pid} never discovered — is lsof installed and able to read process cwds?"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    // The guard reaps the child iff it holds no controlling terminal.
+    let will_reap = reap::collect_reapable(&canonical)
+        .iter()
+        .any(|p| p.pid == pid);
+
+    let run_remove = |repo: &TestRepo| {
+        let output = repo
+            .wt_command()
+            .args(["remove", "--reap", "feature-reapkill"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&output.stderr).into_owned()
+    };
+
+    if will_reap {
+        // `sleep` is a child of *this* test process, so once `wt` signals it,
+        // its parent (us) must `wait()` to reap the zombie — otherwise it
+        // lingers and `wt`'s liveness check (`kill(pid, 0)`) still sees it.
+        // Real reap targets aren't `wt`'s children, so they simply vanish. A
+        // thread already blocked in `wait()` reaps it the instant it exits.
+        let reaper = std::thread::spawn(move || child.wait().unwrap());
+        let stderr = run_remove(&repo);
+        let status = reaper.join().unwrap();
+
+        assert!(
+            stderr.contains("Reaping 1 process under") && stderr.contains("Reaped 1 process"),
+            "expected reap output, got:\n{stderr}"
+        );
+        // Terminated by a signal (SIGTERM, or SIGKILL if it ignored SIGTERM).
+        assert!(!status.success());
+    } else {
+        let stderr = run_remove(&repo);
+        assert!(
+            stderr.contains("No processes to reap"),
+            "expected no-reap output, got:\n{stderr}"
+        );
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 }
 
 #[rstest]
@@ -2134,8 +2235,8 @@ approved-commands = ["echo 'hook ran' > {}"]
         None
     ));
 
-    // Wait for any potential hook execution (absence check - can't poll, use 500ms per guidelines)
-    thread::sleep(Duration::from_millis(500));
+    // Give a wrongly-spawned hook time to create its marker before asserting it didn't.
+    thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
 
     // Marker file should NOT exist - --no-hooks skips the hook
     assert!(
@@ -2331,9 +2432,10 @@ approved-commands = ["echo 'branch={{{{ branch }}}}' > {branch_path}"]
 
 ///
 /// When a worktree is created at a path that doesn't match the config template,
-/// `wt remove` should show a warning about the path mismatch.
+/// `wt remove` proceeds with no mismatch notice (the state is informational,
+/// surfaced only by the `wt list` glyph).
 #[rstest]
-fn test_remove_path_mismatch_warning(repo: TestRepo) {
+fn test_remove_path_mismatch(repo: TestRepo) {
     // Create a worktree at a non-standard path using raw git
     // (wt switch --create would put it at the expected path)
     let unexpected_path = repo
@@ -2353,12 +2455,12 @@ fn test_remove_path_mismatch_warning(repo: TestRepo) {
         .run()
         .unwrap();
 
-    // Remove the worktree - should show path mismatch warning
+    // Remove the worktree - no mismatch notice
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &["feature"], None));
 }
 
 #[rstest]
-fn test_remove_path_mismatch_warning_foreground(repo: TestRepo) {
+fn test_remove_path_mismatch_foreground(repo: TestRepo) {
     // Create a worktree at a non-standard path using raw git
     let unexpected_path = repo
         .root_path()
@@ -2377,7 +2479,7 @@ fn test_remove_path_mismatch_warning_foreground(repo: TestRepo) {
         .run()
         .unwrap();
 
-    // Remove in foreground mode - should show path mismatch warning
+    // Remove in foreground mode - no mismatch notice
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "remove",
@@ -3050,6 +3152,63 @@ fn test_remove_sweeps_stale_trash_entries(mut repo: TestRepo) {
     assert!(
         fresh_entry.exists(),
         "fresh trash entry (age 0) must not be swept"
+    );
+}
+
+/// `wt remove -vv` traces the end-of-command fsmonitor sweep: the
+/// `enumerate-fsmonitor-daemons` span appears and the machine-wide daemon
+/// count is surfaced, so a slow sweep (per-PID `lsof` resolution) is
+/// explainable from the trace. `pgrep` is mocked to report one bogus PID —
+/// CI runners have no real fsmonitor daemons, so the count line is otherwise
+/// unreachable — and `lsof` is mocked to fail its per-PID resolution, which
+/// the best-effort sweep treats as "no daemons".
+#[rstest]
+#[cfg(unix)]
+fn test_remove_vv_traces_fsmonitor_sweep(mut repo: TestRepo) {
+    use crate::common::mock_commands::{MockConfig, MockResponse};
+
+    let bin_dir = repo.root_path().join(".bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    MockConfig::new("pgrep")
+        .command("_default", MockResponse::output("999999999\n"))
+        .write(&bin_dir);
+    MockConfig::new("lsof")
+        .command("_default", MockResponse::exit(1))
+        .write(&bin_dir);
+
+    let mut paths: Vec<std::path::PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default();
+    paths.insert(0, bin_dir.clone());
+    let new_path = std::env::join_paths(&paths).unwrap();
+
+    repo.add_worktree("feature-fsmon");
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature-fsmon", "-vv"])
+        .env("PATH", &new_path)
+        .env("MOCK_CONFIG_DIR", &bin_dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt remove should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // -vv streams primary output to stderr but writes trace records to the
+    // log files; the sweep runs in the foreground process, so its records are
+    // complete once the command exits.
+    let trace_log =
+        crate::common::resolve_git_common_dir(repo.root_path()).join("wt/logs/trace.log");
+    let trace = std::fs::read_to_string(&trace_log).unwrap();
+    assert!(
+        trace.contains("◷ enumerate-fsmonitor-daemons"),
+        "sweep span should appear in the -vv trace. trace.log: {trace}"
+    );
+    assert!(
+        trace.contains("resolving sockets for 1 daemon(s) via lsof"),
+        "sweep should surface the daemon count. trace.log: {trace}"
     );
 }
 

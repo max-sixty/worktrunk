@@ -1,6 +1,6 @@
 use crate::common::{
-    TestRepo, repo, set_temp_home_env, set_xdg_config_path, setup_home_snapshot_settings,
-    temp_home, wt_command,
+    TestRepo, canonical_temp_home, repo, set_temp_home_env, set_xdg_config_path,
+    setup_home_snapshot_settings, temp_home, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -37,7 +37,7 @@ fn test_configure_shell_with_yes(repo: TestRepo, temp_home: TempDir) {
 
         [32m✓[39m [32mConfigured 1 shell[39m
         [33m▲[39m [33mCompletions require compinit; add to ~/.zshrc before the wt line:[39m
-        [107m [0m [2m[0m[2m[34mautoload[0m[2m [0m[2m[36m-Uz[0m[2m compinit [0m[2m[36m&&[0m[2m [0m[2m[34mcompinit[0m[2m
+        [107m [0m [2m[0m[2m[34mautoload[0m[2m [0m[2m[36m-Uz[0m[2m compinit [0m[2m[36m&&[0m[2m [0m[2m[34mcompinit[0m
         [2m↳[22m [2mRestart shell to activate shell integration[22m
         ");
     });
@@ -78,7 +78,7 @@ fn test_configure_shell_specific_shell(repo: TestRepo, temp_home: TempDir) {
 
         [32m✓[39m [32mConfigured 1 shell[39m
         [33m▲[39m [33mCompletions require compinit; add to ~/.zshrc before the wt line:[39m
-        [107m [0m [2m[0m[2m[34mautoload[0m[2m [0m[2m[36m-Uz[0m[2m compinit [0m[2m[36m&&[0m[2m [0m[2m[34mcompinit[0m[2m
+        [107m [0m [2m[0m[2m[34mautoload[0m[2m [0m[2m[36m-Uz[0m[2m compinit [0m[2m[36m&&[0m[2m [0m[2m[34mcompinit[0m
         [2m↳[22m [2mRestart shell to activate shell integration[22m
         ");
     });
@@ -842,7 +842,7 @@ fn test_configure_shell_multiple_configs(repo: TestRepo, temp_home: TempDir) {
 
         [32m✓[39m [32mConfigured 2 shells[39m
         [33m▲[39m [33mCompletions require compinit; add to ~/.zshrc before the wt line:[39m
-        [107m [0m [2m[0m[2m[34mautoload[0m[2m [0m[2m[36m-Uz[0m[2m compinit [0m[2m[36m&&[0m[2m [0m[2m[34mcompinit[0m[2m
+        [107m [0m [2m[0m[2m[34mautoload[0m[2m [0m[2m[36m-Uz[0m[2m compinit [0m[2m[36m&&[0m[2m [0m[2m[34mcompinit[0m
         [2m↳[22m [2mRestart shell to activate shell integration[22m
         ");
     });
@@ -900,7 +900,7 @@ fn test_configure_shell_mixed_states(repo: TestRepo, temp_home: TempDir) {
 
         [32m✓[39m [32mConfigured 1 shell[39m
         [33m▲[39m [33mCompletions require compinit; add to ~/.zshrc before the wt line:[39m
-        [107m [0m [2m[0m[2m[34mautoload[0m[2m [0m[2m[36m-Uz[0m[2m compinit [0m[2m[36m&&[0m[2m [0m[2m[34mcompinit[0m[2m
+        [107m [0m [2m[0m[2m[34mautoload[0m[2m [0m[2m[36m-Uz[0m[2m compinit [0m[2m[36m&&[0m[2m [0m[2m[34mcompinit[0m
         [2m↳[22m [2mRestart shell to activate shell integration[22m
         ");
     });
@@ -937,6 +937,13 @@ fn test_uninstall_shell(repo: TestRepo, temp_home: TempDir) {
         repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
+        // Pin the nushell vendor-autoload dir so the "not found" path is
+        // deterministic across platforms and independent of whether `nu` is on
+        // the runner's PATH.
+        cmd.env(
+            "WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR",
+            canonical_temp_home(&temp_home).join(".local/share/nushell/vendor/autoload"),
+        );
         cmd.arg("config")
             .arg("shell")
             .arg("uninstall")
@@ -952,7 +959,7 @@ fn test_uninstall_shell(repo: TestRepo, temp_home: TempDir) {
         [32m✓[39m [32mRemoved shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
         [2m↳[22m [2mNo [4mbash[24m shell extension & completions in ~/.bashrc[22m
         [2m↳[22m [2mNo [4mfish[24m shell extension in ~/.config/fish/functions[22m
-        [2m↳[22m [2mNo [4mnu[24m shell extension & completions in ~/.config/nushell/vendor/autoload[22m
+        [2m↳[22m [2mNo [4mnu[24m shell extension & completions in ~/.local/share/nushell/vendor/autoload[22m
         [2m↳[22m [2mNo [4mfish[24m completions in ~/.config/fish/completions[22m
 
         [32m✓[39m [32mRemoved integration from 1 shell[39m
@@ -994,6 +1001,13 @@ fn test_uninstall_shell_multiple(repo: TestRepo, temp_home: TempDir) {
         repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
+        // Pin the nushell vendor-autoload dir so the "not found" path is
+        // deterministic across platforms and independent of whether `nu` is on
+        // the runner's PATH.
+        cmd.env(
+            "WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR",
+            canonical_temp_home(&temp_home).join(".local/share/nushell/vendor/autoload"),
+        );
         cmd.arg("config")
             .arg("shell")
             .arg("uninstall")
@@ -1009,7 +1023,7 @@ fn test_uninstall_shell_multiple(repo: TestRepo, temp_home: TempDir) {
         [32m✓[39m [32mRemoved shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m[39m
         [32m✓[39m [32mRemoved shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
         [2m↳[22m [2mNo [4mfish[24m shell extension in ~/.config/fish/functions[22m
-        [2m↳[22m [2mNo [4mnu[24m shell extension & completions in ~/.config/nushell/vendor/autoload[22m
+        [2m↳[22m [2mNo [4mnu[24m shell extension & completions in ~/.local/share/nushell/vendor/autoload[22m
         [2m↳[22m [2mNo [4mfish[24m completions in ~/.config/fish/completions[22m
 
         [32m✓[39m [32mRemoved integration from 2 shells[39m
@@ -1512,7 +1526,7 @@ fn test_configure_shell_create_zshrc_when_missing(repo: TestRepo, temp_home: Tem
 
         [32m✓[39m [32mConfigured 1 shell[39m
         [33m▲[39m [33mCompletions require compinit; add to ~/.zshrc before the wt line:[39m
-        [107m [0m [2m[0m[2m[34mautoload[0m[2m [0m[2m[36m-Uz[0m[2m compinit [0m[2m[36m&&[0m[2m [0m[2m[34mcompinit[0m[2m
+        [107m [0m [2m[0m[2m[34mautoload[0m[2m [0m[2m[36m-Uz[0m[2m compinit [0m[2m[36m&&[0m[2m [0m[2m[34mcompinit[0m
         [2m↳[22m [2mRestart shell to activate shell integration[22m
         ");
     });
@@ -1900,10 +1914,15 @@ fn test_uninstall_shell_dry_run_multiple(repo: TestRepo, temp_home: TempDir) {
 /// `shell extension & completions`.
 #[rstest]
 fn test_uninstall_shell_dry_run_nushell(repo: TestRepo, temp_home: TempDir) {
+    let autoload = temp_home
+        .path()
+        .join(".local/share/nushell/vendor/autoload");
+
     // Install nushell integration first so dry-run uninstall finds something.
     let mut install_cmd = wt_command();
     repo.configure_wt_cmd(&mut install_cmd);
     set_temp_home_env(&mut install_cmd, temp_home.path());
+    install_cmd.env("WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR", &autoload);
     install_cmd.env("SHELL", "/bin/nu");
     install_cmd
         .args(["config", "shell", "install", "nu", "--yes"])
@@ -1918,6 +1937,7 @@ fn test_uninstall_shell_dry_run_nushell(repo: TestRepo, temp_home: TempDir) {
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
     set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR", &autoload);
     cmd.env("SHELL", "/bin/nu");
     cmd.args(["config", "shell", "uninstall", "nu", "--dry-run"])
         .current_dir(repo.root_path());
@@ -1929,10 +1949,11 @@ fn test_uninstall_shell_dry_run_nushell(repo: TestRepo, temp_home: TempDir) {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    // The dry-run preview is the command's answer, so it lands on stdout.
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stderr.contains("shell extension & completions for") && stderr.contains("nu"),
-        "Dry-run output should label nushell as 'shell extension & completions':\n{stderr}"
+        stdout.contains("shell extension & completions for") && stdout.contains("nu"),
+        "Dry-run output should label nushell as 'shell extension & completions':\n{stdout}"
     );
 }
 
@@ -1971,6 +1992,11 @@ mod pty_tests {
         cmd.env("WORKTRUNK_TEST_FISH_INSTALLED", "0");
         cmd.env("WORKTRUNK_TEST_POWERSHELL_INSTALLED", "0");
         cmd.env("WORKTRUNK_TEST_NUSHELL_ENV", "0");
+        // Disable the process-tree shell walk so detection keys on SHELL:
+        // the real ancestry here is the test harness and whatever shell runs
+        // it (zsh on a dev box, bash on CI), which would flip the zsh-only
+        // compinit/restart output between environments.
+        cmd.env("WORKTRUNK_TEST_PARENT_SHELL", "");
         cmd.env("SHELL", "/bin/zsh");
         // Skip the compinit probe and force the advisory to appear. The probe spawns
         // `zsh -ic` which triggers global zshrc configs that can produce "insecure
@@ -2039,6 +2065,31 @@ mod pty_tests {
         );
     }
 
+    /// Typing `?` at the install prompt re-shows the preview (the interactive
+    /// re-preview path), then declining with `n` leaves the rcfile untouched.
+    #[rstest]
+    fn test_install_preview_question_mark(repo: TestRepo, temp_home: TempDir) {
+        let zshrc_path = temp_home.path().join(".zshrc");
+        fs::write(&zshrc_path, "# Existing config\n").unwrap();
+
+        // `?` re-shows the preview, then `n` declines (both lines are buffered
+        // and consumed across the two prompt cycles).
+        let (output, exit_code) = exec_install_in_pty(&temp_home, &repo, "?\nn\n");
+
+        assert_eq!(exit_code, 1, "declining returns exit 1:\n{output}");
+        assert!(
+            output.contains("wt config shell init"),
+            "Typing ? should re-show the install preview:\n{output}"
+        );
+
+        // Declined, so the file is untouched.
+        let content = fs::read_to_string(&zshrc_path).unwrap();
+        assert!(
+            !content.contains("wt config shell init"),
+            "File should not be modified when user declines"
+        );
+    }
+
     /// Declining the interactive `wt config shell uninstall` prompt
     /// exercises `prompt_for_uninstall_confirmation` — the one render
     /// path that neither `--yes` nor `--dry-run` reaches. Verifies the
@@ -2067,6 +2118,9 @@ mod pty_tests {
         cmd.env("WORKTRUNK_TEST_FISH_INSTALLED", "0");
         cmd.env("WORKTRUNK_TEST_POWERSHELL_INSTALLED", "0");
         cmd.env("WORKTRUNK_TEST_NUSHELL_ENV", "0");
+        // Disable the process-tree shell walk so detection keys on SHELL
+        // (see exec_install_in_pty).
+        cmd.env("WORKTRUNK_TEST_PARENT_SHELL", "");
         cmd.env("SHELL", "/bin/zsh");
 
         let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["n\n"], "[y/N");
@@ -2087,16 +2141,20 @@ mod pty_tests {
 
 /// Test installing nushell shell integration
 ///
-/// Runs `install nu --yes` and verifies the wrapper file was created.
-/// This covers the nushell-specific wrapper generation path in configure_shell.
-///
-/// set_temp_home_env sets XDG_CONFIG_HOME to home/.config, and the `nu` binary
-/// isn't available in tests, so nushell_config_dir falls back to XDG_CONFIG_HOME/nushell.
+/// Runs `install nu --yes` and verifies the wrapper file was created in the
+/// vendor-autoload directory (issue #2878). Pins that directory via
+/// `WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR` so the target is deterministic on
+/// every platform (and doesn't depend on `nu` being installed).
 #[rstest]
 fn test_configure_shell_nushell(repo: TestRepo, temp_home: TempDir) {
+    let home = canonical_temp_home(&temp_home);
+    let autoload = home.join(".local/share/nushell/vendor/autoload");
+    let nu_config = autoload.join("wt.nu");
+
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
     set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR", &autoload);
     cmd.env("SHELL", "/bin/nu");
     cmd.arg("config")
         .arg("shell")
@@ -2119,18 +2177,9 @@ fn test_configure_shell_nushell(repo: TestRepo, temp_home: TempDir) {
         stderr
     );
 
-    // set_temp_home_env sets XDG_CONFIG_HOME → home/.config, so the nushell
-    // vendor autoload path is deterministic (nu binary not available in tests).
-    let home = std::fs::canonicalize(temp_home.path()).unwrap();
-    let nu_config = home
-        .join(".config")
-        .join("nushell")
-        .join("vendor")
-        .join("autoload")
-        .join("wt.nu");
     assert!(
         nu_config.exists(),
-        "wt.nu should be created at {:?}",
+        "wt.nu should be created in the vendor-autoload dir at {:?}",
         nu_config
     );
 
@@ -2142,24 +2191,67 @@ fn test_configure_shell_nushell(repo: TestRepo, temp_home: TempDir) {
     );
 }
 
+/// Dry-run install for nushell previews what would be added, on stdout (the
+/// command's answer), including the experimental note, without writing the file.
+#[rstest]
+fn test_configure_shell_nushell_dry_run(repo: TestRepo, temp_home: TempDir) {
+    let home = canonical_temp_home(&temp_home);
+    let autoload = home.join(".local/share/nushell/vendor/autoload");
+    let nu_config = autoload.join("wt.nu");
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR", &autoload);
+    cmd.env("SHELL", "/bin/nu");
+    cmd.arg("config")
+        .arg("shell")
+        .arg("install")
+        .arg("nu")
+        .arg("--dry-run")
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().expect("Failed to execute command");
+    assert!(
+        output.status.success(),
+        "Dry-run install should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The dry-run preview is the command's answer, so it lands on stdout, and
+    // for nushell it carries the experimental note.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("shell extension & completions for") && stdout.contains("nu"),
+        "Dry-run preview should show nushell would be added:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Nushell support is experimental"),
+        "Dry-run preview should include the nushell experimental note:\n{stdout}"
+    );
+
+    // Nothing should be written in dry-run mode.
+    assert!(
+        !nu_config.exists(),
+        "wt.nu should NOT be created with --dry-run: {nu_config:?}"
+    );
+}
+
 /// Test uninstalling nushell shell integration
 ///
 /// Installs nushell integration first, then uninstalls it.
 /// This covers the nushell-specific uninstall block in configure_shell.
 #[rstest]
 fn test_uninstall_shell_nushell(repo: TestRepo, temp_home: TempDir) {
-    let home = std::fs::canonicalize(temp_home.path()).unwrap();
-    let nu_config = home
-        .join(".config")
-        .join("nushell")
-        .join("vendor")
-        .join("autoload")
-        .join("wt.nu");
+    let home = canonical_temp_home(&temp_home);
+    let autoload = home.join(".local/share/nushell/vendor/autoload");
+    let nu_config = autoload.join("wt.nu");
 
     // First install to create the wrapper file
     let mut install_cmd = wt_command();
     repo.configure_wt_cmd(&mut install_cmd);
     set_temp_home_env(&mut install_cmd, temp_home.path());
+    install_cmd.env("WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR", &autoload);
     install_cmd.env("SHELL", "/bin/nu");
     install_cmd
         .args(["config", "shell", "install", "nu", "--yes"])
@@ -2181,6 +2273,7 @@ fn test_uninstall_shell_nushell(repo: TestRepo, temp_home: TempDir) {
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
     set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR", &autoload);
     cmd.env("SHELL", "/bin/nu");
     cmd.args(["config", "shell", "uninstall", "nu", "--yes"])
         .current_dir(repo.root_path());
@@ -2207,20 +2300,22 @@ fn test_uninstall_shell_nushell(repo: TestRepo, temp_home: TempDir) {
     );
 }
 
-/// Test that nushell uninstall cleans up config files at all candidate locations.
-///
-/// Exercises the fix where uninstall iterates all nushell config candidates,
-/// not just the first. Simulates the scenario where the file was installed at
-/// a location that is no longer the primary candidate (e.g., `nu` reported
-/// a different path during install than what we'd pick now).
+/// Test that nushell uninstall cleans up the wrapper at every candidate
+/// location — the canonical vendor-autoload dir and the legacy
+/// `<config-dir>/vendor/autoload` paths older worktrunk stranded files at
+/// (issue #2878). `config_paths(Nushell)` returns all of them and uninstall
+/// iterates the full list.
 #[rstest]
 fn test_uninstall_nushell_cleans_all_candidate_locations(repo: TestRepo, temp_home: TempDir) {
-    let home = std::fs::canonicalize(temp_home.path()).unwrap();
+    let home = canonical_temp_home(&temp_home);
+    let autoload = home.join(".local/share/nushell/vendor/autoload");
+    let canonical = autoload.join("wt.nu");
 
-    // Install nushell integration normally (goes to XDG_CONFIG_HOME/nushell)
+    // Install nushell integration to the canonical vendor-autoload dir.
     let mut install_cmd = wt_command();
     repo.configure_wt_cmd(&mut install_cmd);
     set_temp_home_env(&mut install_cmd, temp_home.path());
+    install_cmd.env("WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR", &autoload);
     install_cmd.env("SHELL", "/bin/nu");
     install_cmd
         .args(["config", "shell", "install", "nu", "--yes"])
@@ -2232,38 +2327,21 @@ fn test_uninstall_nushell_cleans_all_candidate_locations(repo: TestRepo, temp_ho
         "Install should succeed:\nstderr: {}",
         String::from_utf8_lossy(&install_output.stderr)
     );
+    assert!(canonical.exists(), "Canonical config should exist");
 
-    let primary_config = home
-        .join(".config")
-        .join("nushell")
-        .join("vendor")
-        .join("autoload")
-        .join("wt.nu");
-    assert!(primary_config.exists(), "Primary config should exist");
+    // Simulate a wrapper stranded by an older worktrunk at the legacy
+    // config-dir location (set_temp_home_env points XDG_CONFIG_HOME at
+    // ~/.config, so that's a legacy candidate).
+    let legacy_dir = home.join(".config/nushell/vendor/autoload");
+    fs::create_dir_all(&legacy_dir).unwrap();
+    let legacy_config = legacy_dir.join("wt.nu");
+    fs::copy(&canonical, &legacy_config).unwrap();
 
-    // Copy the config to a secondary candidate location (~/.config is the XDG default,
-    // but also manually create one at a different path to simulate install at a
-    // non-primary location). Use a custom XDG_CONFIG_HOME to make a second candidate
-    // be the primary during uninstall.
-    let secondary_dir = home
-        .join("custom-config")
-        .join("nushell")
-        .join("vendor")
-        .join("autoload");
-    fs::create_dir_all(&secondary_dir).unwrap();
-    let secondary_config = secondary_dir.join("wt.nu");
-    fs::copy(&primary_config, &secondary_config).unwrap();
-
-    // Uninstall with XDG_CONFIG_HOME pointing to the custom location.
-    // The custom path becomes the first candidate, but the original at ~/.config/nushell
-    // should also be cleaned up since uninstall checks all candidates.
+    // Uninstall should remove the wrapper at both the canonical and legacy paths.
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
-    // Override XDG_CONFIG_HOME to point to custom dir, making it the primary candidate
-    cmd.env("HOME", &home);
-    cmd.env("USERPROFILE", &home);
-    cmd.env("XDG_CONFIG_HOME", home.join("custom-config"));
-    cmd.env("APPDATA", home.join("custom-config"));
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR", &autoload);
     cmd.env("SHELL", "/bin/nu");
     cmd.args(["config", "shell", "uninstall", "nu", "--yes"])
         .current_dir(repo.root_path());
@@ -2277,12 +2355,12 @@ fn test_uninstall_nushell_cleans_all_candidate_locations(repo: TestRepo, temp_ho
 
     // Both locations should be cleaned up
     assert!(
-        !primary_config.exists(),
-        "Primary config at ~/.config/nushell should be deleted: {primary_config:?}"
+        !canonical.exists(),
+        "Canonical wrapper should be deleted: {canonical:?}"
     );
     assert!(
-        !secondary_config.exists(),
-        "Secondary config at custom XDG path should be deleted: {secondary_config:?}"
+        !legacy_config.exists(),
+        "Stranded legacy wrapper should be deleted: {legacy_config:?}"
     );
 }
 
@@ -2351,11 +2429,15 @@ fn test_nushell_auto_detection_creates_vendor_autoload(repo: TestRepo, temp_home
     // Don't create vendor/autoload - the whole point is that it doesn't exist yet
     // but nushell IS detected on the system
 
+    let home = canonical_temp_home(&temp_home);
+    let autoload = home.join(".local/share/nushell/vendor/autoload");
+
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
     set_temp_home_env(&mut cmd, temp_home.path());
     // Force nushell detection via test env var (parallels WORKTRUNK_TEST_POWERSHELL_ENV)
     cmd.env("WORKTRUNK_TEST_NUSHELL_ENV", "1");
+    cmd.env("WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR", &autoload);
     cmd.env("SHELL", "/bin/zsh");
     cmd.arg("config")
         .arg("shell")
@@ -2383,14 +2465,8 @@ fn test_nushell_auto_detection_creates_vendor_autoload(repo: TestRepo, temp_home
         stderr
     );
 
-    // Verify the nushell wrapper was created with vendor/autoload/ directory
-    let home = std::fs::canonicalize(temp_home.path()).unwrap();
-    let nu_config = home
-        .join(".config")
-        .join("nushell")
-        .join("vendor")
-        .join("autoload")
-        .join("wt.nu");
+    // Verify the nushell wrapper was created in the vendor-autoload directory
+    let nu_config = autoload.join("wt.nu");
     assert!(
         nu_config.exists(),
         "wt.nu should be created at {:?}",
@@ -2413,10 +2489,15 @@ fn test_nushell_auto_detection_creates_vendor_autoload(repo: TestRepo, temp_home
 fn test_config_show_detects_nushell_integration(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
 
+    let autoload = temp_home
+        .path()
+        .join(".local/share/nushell/vendor/autoload");
+
     // Install nushell integration
     let mut install_cmd = wt_command();
     repo.configure_wt_cmd(&mut install_cmd);
     set_temp_home_env(&mut install_cmd, temp_home.path());
+    install_cmd.env("WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR", &autoload);
     install_cmd.env("SHELL", "/bin/nu");
     install_cmd
         .args(["config", "shell", "install", "nu", "--yes"])
@@ -2433,6 +2514,7 @@ fn test_config_show_detects_nushell_integration(mut repo: TestRepo, temp_home: T
     repo.configure_wt_cmd(&mut cmd);
     repo.configure_mock_commands(&mut cmd);
     set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR", &autoload);
     cmd.env("SHELL", "/bin/nu");
     cmd.args(["config", "show"]).current_dir(repo.root_path());
 
@@ -2441,5 +2523,162 @@ fn test_config_show_detects_nushell_integration(mut repo: TestRepo, temp_home: T
     assert!(
         stdout.contains("wt.nu") || stdout.contains("nushell"),
         "config show should detect nushell integration:\n{stdout}"
+    );
+}
+
+/// Installing nushell removes a wrapper stranded by older worktrunk at the
+/// legacy `<config-dir>/vendor/autoload` location (issue #2878), and writes the
+/// wrapper to the canonical vendor-autoload dir instead. Cross-platform: the
+/// target dir is pinned via the test override so it doesn't depend on `nu`.
+#[rstest]
+fn test_nushell_install_cleans_stranded_legacy(repo: TestRepo, temp_home: TempDir) {
+    let home = canonical_temp_home(&temp_home);
+    let autoload = home.join(".local/share/nushell/vendor/autoload");
+    let canonical = autoload.join("wt.nu");
+
+    // A wrapper stranded by an older worktrunk at the legacy config-dir location
+    // (set_temp_home_env points XDG_CONFIG_HOME at ~/.config). The worktrunk
+    // header marks it as ours to remove.
+    let legacy_dir = home.join(".config/nushell/vendor/autoload");
+    fs::create_dir_all(&legacy_dir).unwrap();
+    let legacy = legacy_dir.join("wt.nu");
+    fs::write(
+        &legacy,
+        "# worktrunk shell integration for nushell\ndef --wrapped wt [...args] { command wt-old ...$args }\n",
+    )
+    .unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR", &autoload);
+    cmd.env("SHELL", "/bin/nu");
+    cmd.args(["config", "shell", "install", "nu", "--yes"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().expect("Failed to execute install");
+    assert!(
+        output.status.success(),
+        "Install should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Wrapper written to the canonical vendor-autoload dir...
+    assert!(
+        canonical.exists(),
+        "wrapper should be written to the vendor-autoload dir: {canonical:?}"
+    );
+    // ...and the stranded legacy copy removed.
+    assert!(
+        !legacy.exists(),
+        "stranded legacy wrapper should be removed: {legacy:?}"
+    );
+
+    // The cleanup is surfaced to the user.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("deprecated"),
+        "install should report the stranded-file cleanup:\n{stderr}"
+    );
+}
+
+/// Data safety: install must NOT delete a `wt.nu` at a legacy location that
+/// isn't worktrunk-managed (no worktrunk header) — it could be the user's own
+/// file. Only files carrying the worktrunk header are cleaned up (issue #2878).
+#[rstest]
+fn test_nushell_install_keeps_unmanaged_legacy_file(repo: TestRepo, temp_home: TempDir) {
+    let home = canonical_temp_home(&temp_home);
+    let autoload = home.join(".local/share/nushell/vendor/autoload");
+
+    // A user-authored wt.nu at the legacy config-dir location — no worktrunk
+    // header, so it must be left untouched.
+    let legacy_dir = home.join(".config/nushell/vendor/autoload");
+    fs::create_dir_all(&legacy_dir).unwrap();
+    let legacy = legacy_dir.join("wt.nu");
+    let user_content = "# my own wt helper\ndef wt [] { echo hi }\n";
+    fs::write(&legacy, user_content).unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR", &autoload);
+    cmd.env("SHELL", "/bin/nu");
+    cmd.args(["config", "shell", "install", "nu", "--yes"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().expect("Failed to execute install");
+    assert!(
+        output.status.success(),
+        "Install should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Canonical wrapper written, user's legacy file preserved verbatim.
+    assert!(autoload.join("wt.nu").exists(), "canonical wrapper missing");
+    assert!(
+        legacy.exists(),
+        "unmanaged legacy wt.nu must be preserved: {legacy:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(&legacy).unwrap(),
+        user_content,
+        "unmanaged legacy file must be left unchanged"
+    );
+}
+
+/// End-to-end guard for issue #2878 using the real `nu` binary (no override):
+/// after `install nu`, the wrapper worktrunk wrote must live inside one of the
+/// directories `nu` actually autoloads (`$nu.vendor-autoload-dirs`). This fails
+/// against the old `<config-dir>/vendor/autoload` behavior — that path is in
+/// neither autoload list — and passes once the write path follows
+/// `$nu.vendor-autoload-dirs`.
+///
+/// Gated on `shell-integration-tests` (CI installs `nu` on non-Windows runners).
+#[cfg(all(unix, feature = "shell-integration-tests"))]
+#[rstest]
+fn test_nushell_install_target_is_a_vendor_autoload_dir(repo: TestRepo, temp_home: TempDir) {
+    let home = canonical_temp_home(&temp_home);
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/nu");
+    cmd.args(["config", "shell", "install", "nu", "--yes"])
+        .current_dir(repo.root_path());
+    let output = cmd.output().expect("Failed to execute install");
+    assert!(
+        output.status.success(),
+        "Install should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Ask the same `nu` (HOME isolated to temp_home) where it autoloads vendor
+    // files, then confirm worktrunk's wrapper landed in one of those dirs.
+    let listing = std::process::Command::new("nu")
+        .args([
+            "--no-config-file",
+            "-c",
+            "$nu.vendor-autoload-dirs | str join (char newline)",
+        ])
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .output()
+        .expect("nu must be on PATH (installed by .github/actions/test-setup)");
+    assert!(
+        listing.status.success(),
+        "querying nu vendor-autoload-dirs failed:\nstderr: {}",
+        String::from_utf8_lossy(&listing.stderr)
+    );
+    let dirs = String::from_utf8(listing.stdout).unwrap();
+
+    let installed_in_autoload = dirs
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .any(|d| std::path::Path::new(d).join("wt.nu").exists());
+    assert!(
+        installed_in_autoload,
+        "worktrunk must install wt.nu into one of nu's vendor-autoload dirs (issue #2878).\n\
+         vendor-autoload-dirs:\n{dirs}"
     );
 }

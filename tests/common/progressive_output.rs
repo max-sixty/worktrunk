@@ -192,6 +192,9 @@ pub struct ProgressiveOutput {
     pub exit_code: i32,
     /// Total execution time
     pub total_duration: Duration,
+    /// Cursor position (row, col) after all output drained — where the shell
+    /// prompt would print
+    pub final_cursor: (u16, u16),
 }
 
 impl ProgressiveOutput {
@@ -521,11 +524,13 @@ pub fn capture_progressive_output(
         .unwrap_or_else(|_| panic!("Failed to wait for 'wt {}' to exit", subcommand));
     let exit_code = exit_status.exit_code() as i32;
     let total_duration = start_time.elapsed();
+    let final_cursor = parser.screen().cursor_position();
 
     ProgressiveOutput {
         stages: snapshots,
         exit_code,
         total_duration,
+        final_cursor,
     }
 }
 
@@ -616,6 +621,7 @@ mod tests {
             stages,
             exit_code: 0,
             total_duration: Duration::from_millis(150),
+            final_cursor: (0, 0),
         };
 
         // Test samples
@@ -656,6 +662,7 @@ mod tests {
             stages,
             exit_code: 0,
             total_duration: Duration::from_millis(150),
+            final_cursor: (0, 0),
         };
 
         // Should verify successfully

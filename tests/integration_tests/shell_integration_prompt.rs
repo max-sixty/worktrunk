@@ -202,6 +202,105 @@ fn test_switch_no_shell_env_shows_hint(repo: TestRepo) {
     );
 }
 
+///
+/// $SHELL names the login shell (zsh, with integration installed), but the
+/// process tree says wt is really running under fish. Restart advice would be
+/// wrong — restarting fish activates nothing — so the warning must take the
+/// not-installed shape for the shell actually in use.
+#[cfg(unix)]
+#[rstest]
+fn test_login_shell_mismatch_uses_process_tree_shell(repo: TestRepo) {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+
+    repo.configure_shell_integration(); // writes the zsh eval line to ~/.zshrc
+
+    let mut cmd = repo.wt_command();
+    cmd.env("SHELL", "/bin/zsh");
+    cmd.env("WORKTRUNK_TEST_PARENT_SHELL", "fish");
+    cmd.arg0("wt"); // PATH-style invocation, not the explicit-path warning
+
+    let output = cmd
+        .args(["switch", "--create", "feature"])
+        .stdin(Stdio::piped())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "Switch should succeed");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("shell integration not installed"),
+        "The actual shell (fish) has no integration: {stderr}"
+    );
+    assert!(
+        !stderr.contains("restart"),
+        "Restart advice targets the wrong shell here: {stderr}"
+    );
+}
+
+///
+/// The process tree names a supported shell whose integration IS installed;
+/// $SHELL points at a different, unconfigured shell. The process tree wins:
+/// the warning takes the installed-but-not-active shape with the hedged
+/// restart hint.
+#[cfg(unix)]
+#[rstest]
+fn test_process_tree_shell_configured_shows_restart_hint(repo: TestRepo) {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+
+    repo.configure_shell_integration(); // writes the zsh eval line to ~/.zshrc
+
+    let mut cmd = repo.wt_command();
+    cmd.env("SHELL", "/bin/bash"); // login shell without integration
+    cmd.env("WORKTRUNK_TEST_PARENT_SHELL", "zsh");
+    cmd.arg0("wt");
+
+    let output = cmd
+        .args(["switch", "--create", "feature"])
+        .stdin(Stdio::piped())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "Switch should succeed");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("shell integration installed but not active"),
+        "zsh (from the process tree) has integration: {stderr}"
+    );
+    assert!(
+        stderr.contains("A shell restart usually activates shell integration"),
+        "Should show the hedged restart hint: {stderr}"
+    );
+}
+
+///
+/// The process tree names a known-but-unsupported shell (tcsh); $SHELL points
+/// at a supported one. The unsupported-shell hint must name the shell actually
+/// in use rather than trusting $SHELL.
+#[cfg(unix)]
+#[rstest]
+fn test_process_tree_unsupported_shell_overrides_shell_env(repo: TestRepo) {
+    use std::process::Stdio;
+
+    let mut cmd = repo.wt_command();
+    cmd.env("SHELL", "/bin/zsh");
+    cmd.env("WORKTRUNK_TEST_PARENT_SHELL", "tcsh");
+
+    let output = cmd
+        .args(["switch", "--create", "feature"])
+        .stdin(Stdio::piped())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "Switch should succeed");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not yet supported for tcsh"),
+        "Should name the shell from the process tree: {stderr}"
+    );
+}
+
 // PTY-based tests for interactive scenarios
 #[cfg(all(unix, feature = "shell-integration-tests"))]
 mod pty_tests {
@@ -670,6 +769,54 @@ mod commit_generation_prompt_tests {
         assert!(
             output.contains("Would add to") && output.contains("[commit.generation]"),
             "Should show preview: {output}"
+        );
+    }
+
+    /// Test: LLM tool available, user accepts, but the config save fails
+    ///
+    /// Points WORKTRUNK_CONFIG_PATH at a path whose parent is a regular file,
+    /// so the write fails with ENOTDIR — exercising the save-failure hint,
+    /// which names the resolved config path via `config_path_for_display`.
+    #[rstest]
+    fn test_user_accepts_but_save_fails_shows_manual_hint(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+        let bin_dir = setup_fake_claude(temp_home.path());
+
+        // Stage a change
+        let test_file = repo.root_path().join("test.txt");
+        fs::write(&test_file, "test content\n").unwrap();
+        repo.run_git(&["add", "test.txt"]);
+
+        // A regular file standing in for the config's parent directory makes
+        // every write under it fail with ENOTDIR — root-proof, unlike chmod.
+        let blocker = temp_home.path().join("blocker");
+        fs::write(&blocker, "x").unwrap();
+        let unwritable_config = blocker.join("config.toml");
+
+        let mut env_vars = repo.test_env_vars();
+        let path = format!("{}:/usr/bin:/bin", bin_dir.display());
+        env_vars.push(("PATH".to_string(), path));
+        // Overrides the WORKTRUNK_CONFIG_PATH from test_env_vars (last wins).
+        env_vars.push((
+            "WORKTRUNK_CONFIG_PATH".to_string(),
+            unwritable_config.to_string_lossy().to_string(),
+        ));
+
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["step", "commit"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["y\n"], "[y/N");
+
+        // The commit still completes with a fallback message; only the config
+        // save fails, so the manual-add hint fires.
+        assert_eq!(exit_code, 0, "Command should succeed: {output}");
+        assert!(
+            output.contains("Config save failed"),
+            "Should show manual-add hint on save failure: {output}"
         );
     }
 }

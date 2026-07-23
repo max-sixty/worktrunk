@@ -30,6 +30,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use worktrunk::trace::CommandTrace;
 
 /// How often the reaper re-checks whether the worktree still exists. Teardown
 /// of an already-orphaned server within this bound is imperceptible next to a
@@ -38,23 +39,40 @@ const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 /// Run `command` supervised; tear its whole process tree down when the command
 /// exits or its worktree is removed.
-pub(crate) fn step_tether(command: &[String]) -> Result<()> {
+///
+/// `working_dir` is the global `-C <path>` flag — applied as the child's
+/// current directory so the tethered command can run from a subdirectory (a
+/// dev server in `frontend/`, zola in `docs/`), the same way `-C` works for
+/// custom subcommands. The reaper still watches the captured cwd (the worktree
+/// root), not `working_dir`, so a relative `-C docs` server is still torn down
+/// when the worktree is removed.
+pub(crate) fn step_tether(command: &[String], working_dir: Option<&Path>) -> Result<()> {
     // post-start hooks run with cwd at the worktree root; capture it now so
     // the reaper can notice the worktree being removed. `None` (cwd
     // unavailable) degrades to "tear down only on the command's own exit",
-    // never a false teardown.
+    // never a false teardown. Captured before applying `-C` to the child so
+    // the reaper watches the worktree root even when the command runs in a
+    // subdirectory.
     let worktree = std::env::current_dir().ok();
 
     let mut cmd = std::process::Command::new(&command[0]);
     cmd.args(&command[1..]);
+    if let Some(dir) = working_dir {
+        cmd.current_dir(dir);
+    }
     // Direct exec, no implicit shell, same as `wt step for-each`; scrub the
     // directive env vars so a long-lived child can't write to the parent
     // shell's cd/exec directive files.
     worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
     set_new_process_group(&mut cmd);
-    let mut child = cmd
-        .spawn()
-        .with_context(|| format!("spawn tethered command: {}", command[0]))?;
+    let mut trace = CommandTrace::new(None, &command.join(" "));
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            trace.fail(&e);
+            return Err(e).with_context(|| format!("spawn tethered command: {}", command[0]));
+        }
+    };
     let id = child.id();
 
     // Reaper: polls until the worktree is gone, then kills the tree so the
@@ -71,7 +89,10 @@ pub(crate) fn step_tether(command: &[String]) -> Result<()> {
     }
 
     // Block until the child exits — killed by the reaper, or on its own.
-    let _ = child.wait();
+    match child.wait() {
+        Ok(status) => trace.complete(status.success()),
+        Err(e) => trace.fail(&e),
+    }
 
     // Final sweep: on a self-exit, descendants may still be running (Unix:
     // reparented but in this pgid; Windows: while the tree is intact). On a
@@ -136,4 +157,23 @@ fn kill_process_tree(pid: u32) {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn step_tether_spawn_failure_resolves_trace() {
+        // A non-existent program fails at spawn, before the reaper thread is
+        // started — exercising the `trace.fail` arm. (The success path, where
+        // the child runs and is reaped, is covered by the `step_tether`
+        // integration tests.)
+        let err = step_tether(&["worktrunk-nonexistent-binary-7f3a9b2c".to_string()], None)
+            .expect_err("spawning a missing binary should fail");
+        assert!(
+            err.to_string().contains("spawn tethered command"),
+            "expected spawn-failure context, got: {err}"
+        );
+    }
 }

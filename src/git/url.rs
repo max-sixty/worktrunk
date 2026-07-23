@@ -1,7 +1,90 @@
 //! Git remote URL parsing.
 //!
 //! Parses git remote URLs into structured components (host, owner, repo).
-//! Supports HTTPS, SSH, and git@ URL formats.
+//! Supports HTTPS, SSH, and SCP-style SSH URL formats.
+
+use schemars::JsonSchema;
+use serde::Serialize;
+
+use super::ci_platform::CiPlatform;
+
+/// Parsed, provider-neutral repository metadata.
+///
+/// This is the single shape behind the `repo` / `ci.repo` JSON objects of
+/// `wt list`; serde controls the field rename/skip rules so there is no
+/// parallel output-only struct.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct GitRepoInfo {
+    /// Repository web URL.
+    pub url: String,
+    /// Forge provider, or [`GitRepoProvider::Unknown`] for parseable URLs whose
+    /// host and config do not identify a supported provider.
+    pub provider: GitRepoProvider,
+    /// Web host for the repository URL.
+    pub host: String,
+    /// Repository owner, organization, or namespace path.
+    pub owner: String,
+    /// Repository name.
+    pub name: String,
+    /// Azure DevOps project name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    /// Local git remote this metadata was derived from. Set only for the
+    /// top-level `repo` of `wt list`; absent for PR/MR-URL-derived metadata
+    /// such as `ci.repo`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote: Option<String>,
+}
+
+/// Supported forge providers for repository metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+pub enum GitRepoProvider {
+    #[serde(rename = "github")]
+    GitHub,
+    #[serde(rename = "gitlab")]
+    GitLab,
+    #[serde(rename = "gitea")]
+    Gitea,
+    #[serde(rename = "azure-devops")]
+    AzureDevOps,
+    #[serde(rename = "unknown")]
+    Unknown,
+}
+
+impl GitRepoProvider {
+    /// Parse a configured `[forge].platform` value.
+    ///
+    /// Returns `None` for absent or unrecognized values so callers can fall
+    /// back to URL host heuristics.
+    pub fn from_platform(value: Option<&str>) -> Option<Self> {
+        value?.parse::<CiPlatform>().ok().map(Into::into)
+    }
+
+    fn from_remote_host(url: &GitRemoteUrl) -> Option<Self> {
+        if url.is_github() {
+            Some(Self::GitHub)
+        } else if url.is_gitlab() {
+            Some(Self::GitLab)
+        } else if url.is_gitea() {
+            Some(Self::Gitea)
+        } else if url.is_azure_devops() {
+            Some(Self::AzureDevOps)
+        } else {
+            None
+        }
+    }
+}
+
+impl From<CiPlatform> for GitRepoProvider {
+    fn from(platform: CiPlatform) -> Self {
+        match platform {
+            CiPlatform::GitHub => Self::GitHub,
+            CiPlatform::GitLab => Self::GitLab,
+            CiPlatform::Gitea => Self::Gitea,
+            CiPlatform::AzureDevOps => Self::AzureDevOps,
+        }
+    }
+}
 
 /// Parsed git remote URL with host, owner (namespace), and repository components.
 ///
@@ -10,7 +93,7 @@
 /// - `https://<host>/<namespace>/<repo>.git`
 /// - `http://<host>/<namespace>/<repo>.git`
 /// - `git://<host>/<namespace>/<repo>.git`
-/// - `git@<host>:<namespace>/<repo>.git`
+/// - `<user>@<host>:<namespace>/<repo>.git`
 /// - `ssh://git@<host>/<namespace>/<repo>.git`
 /// - `ssh://git@<host>:<port>/<namespace>/<repo>.git`
 /// - `ssh://<host>/<namespace>/<repo>.git`
@@ -63,6 +146,15 @@ fn split_namespace_repo(path: &str) -> Option<(String, String)> {
     Some((namespace, repo.to_string()))
 }
 
+pub(crate) fn canonical_url_path_segment(segment: &str) -> String {
+    let decoded = urlencoding::decode(segment).unwrap_or(std::borrow::Cow::Borrowed(segment));
+    urlencoding::encode(decoded.as_ref()).into_owned()
+}
+
+pub(crate) fn url_path_segments_eq(left: &str, right: &str) -> bool {
+    canonical_url_path_segment(left).eq_ignore_ascii_case(&canonical_url_path_segment(right))
+}
+
 impl GitRemoteUrl {
     /// Parse a git remote URL into structured components.
     ///
@@ -98,10 +190,15 @@ impl GitRemoteUrl {
             let host = host_with_port.split(':').next().unwrap_or(host_with_port);
             let (namespace, repo) = split_namespace_repo(path)?;
             (host, namespace, repo)
-        } else if let Some(rest) = url.strip_prefix("git@") {
-            // git@github.com:owner/repo.git
-            // git@gitlab.com:group/subgroup/repo.git
-            let (host, path) = rest.split_once(':')?;
+        } else if let Some((authority, path)) = url.split_once(':')
+            && !authority.contains('/')
+        {
+            // SCP-style SSH: user@github.com:owner/repo.git
+            // Split the authority before looking for `@` so `@` remains valid in the path.
+            let (user, host) = authority.rsplit_once('@')?;
+            if user.is_empty() || host.is_empty() {
+                return None;
+            }
             let (namespace, repo) = split_namespace_repo(path)?;
             (host, namespace, repo)
         } else {
@@ -212,6 +309,145 @@ impl GitRemoteUrl {
             parts.first().copied()
         }
     }
+
+    /// Build the repository web URL from the already-parsed components.
+    ///
+    /// Local-only: derives purely from the parsed remote, with no network
+    /// access. This is the single place that knows the per-forge "web URL from
+    /// a parsed remote" shape.
+    ///
+    /// - Standard forges (GitHub, GitLab incl. nested groups, Gitea, generic):
+    ///   `https://{host}/{owner}/{repo}`.
+    /// - Azure DevOps: `https://dev.azure.com/{org}/{project}/_git/{repo}`, or
+    ///   `https://{host}/{project}/_git/{repo}` for legacy `*.visualstudio.com`
+    ///   (where the org is in the hostname). The naive `host/owner/repo` form is
+    ///   wrong for the SSH (`ssh.dev.azure.com:v3/...`) remote shape, so the
+    ///   [`azure_organization`](Self::azure_organization) /
+    ///   [`azure_project`](Self::azure_project) accessors feed the canonical
+    ///   [`fork_remote_url`](crate::git::remote_ref::azure::fork_remote_url)
+    ///   builder. The SSH `ssh.dev.azure.com` host is normalized to the
+    ///   `dev.azure.com` web host.
+    ///
+    /// Returns `None` only when an Azure DevOps URL is missing its org/project.
+    pub fn web_url(&self) -> Option<String> {
+        if self.is_azure_devops() {
+            let organization = self.azure_organization()?;
+            let project = self.azure_project()?;
+            // `*.visualstudio.com` keeps the org in the hostname; every other
+            // Azure remote shape (including `ssh.dev.azure.com`) maps to the
+            // `dev.azure.com` web host.
+            let host = if self
+                .host
+                .to_ascii_lowercase()
+                .ends_with(".visualstudio.com")
+            {
+                self.host.as_str()
+            } else {
+                "dev.azure.com"
+            };
+            return Some(crate::git::remote_ref::azure::fork_remote_url(
+                host,
+                organization,
+                project,
+                &self.repo,
+            ));
+        }
+        Some(format!(
+            "https://{}/{}/{}",
+            self.host, self.owner, self.repo
+        ))
+    }
+
+    /// Build provider-neutral repository metadata from this parsed remote URL.
+    ///
+    /// `provider_override` is the optional `[forge].platform` value. A
+    /// recognized override refines provider detection for opaque or
+    /// non-canonical hosts; an absent or unrecognized value falls back to host
+    /// heuristics, then [`GitRepoProvider::Unknown`].
+    pub fn repo_info(&self, provider_override: Option<&str>) -> Option<GitRepoInfo> {
+        let provider_override = GitRepoProvider::from_platform(provider_override);
+        let provider_from_host = GitRepoProvider::from_remote_host(self);
+        let provider = provider_override
+            .or(provider_from_host)
+            .unwrap_or(GitRepoProvider::Unknown);
+
+        if provider == GitRepoProvider::AzureDevOps {
+            if let Some((host, organization, project)) = self.azure_repo_info_parts() {
+                return Some(GitRepoInfo {
+                    url: crate::git::remote_ref::azure::fork_remote_url(
+                        &host,
+                        &organization,
+                        &project,
+                        &self.repo,
+                    ),
+                    provider,
+                    host,
+                    owner: organization,
+                    name: self.repo.clone(),
+                    project: Some(project),
+                    remote: None,
+                });
+            }
+
+            if provider_override == Some(GitRepoProvider::AzureDevOps)
+                && provider_from_host != Some(GitRepoProvider::AzureDevOps)
+            {
+                return Some(GitRepoInfo {
+                    url: self.web_url()?,
+                    provider: GitRepoProvider::Unknown,
+                    host: self.host.clone(),
+                    owner: self.owner.clone(),
+                    name: self.repo.clone(),
+                    project: None,
+                    remote: None,
+                });
+            }
+        }
+
+        Some(GitRepoInfo {
+            url: self.web_url()?,
+            provider,
+            host: self.host.clone(),
+            owner: self.owner.clone(),
+            name: self.repo.clone(),
+            project: None,
+            remote: None,
+        })
+    }
+
+    fn azure_repo_info_parts(&self) -> Option<(String, String, String)> {
+        if let (Some(organization), Some(project)) =
+            (self.azure_organization(), self.azure_project())
+        {
+            let host = if self
+                .host
+                .to_ascii_lowercase()
+                .ends_with(".visualstudio.com")
+            {
+                self.host.clone()
+            } else {
+                "dev.azure.com".to_string()
+            };
+            return Some((host, organization.to_string(), project.to_string()));
+        }
+
+        let parts: Vec<&str> = self.owner.split('/').collect();
+        if parts.len() >= 3 && parts[2] == "_git" {
+            return Some((
+                self.host.clone(),
+                parts[0].to_string(),
+                parts[1].to_string(),
+            ));
+        }
+        if parts.len() >= 3 && parts[0] == "v3" {
+            return Some((
+                self.host.clone(),
+                parts[1].to_string(),
+                parts[2].to_string(),
+            ));
+        }
+        None
+    }
 }
 
 /// Extract owner and repository name from a git remote URL.
@@ -250,7 +486,7 @@ mod tests {
     }
 
     #[test]
-    fn test_git_at_urls() {
+    fn test_scp_style_ssh_urls() {
         let url = GitRemoteUrl::parse("git@github.com:owner/repo.git").unwrap();
         assert_eq!(url.project_identifier(), "github.com/owner/repo");
 
@@ -265,6 +501,31 @@ mod tests {
         // Bitbucket
         let url = GitRemoteUrl::parse("git@bitbucket.org:owner/repo.git").unwrap();
         assert!(url.project_identifier().starts_with("bitbucket.org/"));
+
+        // GitHub organization-scoped SSH certificate user
+        let url = GitRemoteUrl::parse("org-14957082@github.com:openai/codex.git").unwrap();
+        assert_eq!(
+            url,
+            GitRemoteUrl {
+                host: "github.com".to_string(),
+                owner: "openai".to_string(),
+                repo: "codex".to_string(),
+            }
+        );
+        assert_eq!(url.project_identifier(), "github.com/openai/codex");
+        assert_eq!(
+            url,
+            GitRemoteUrl::parse("https://github.com/openai/codex.git").unwrap()
+        );
+
+        // The final `@` separates the SSH user from the host.
+        let url = GitRemoteUrl::parse("alice@alias@github.com:owner/repo.git").unwrap();
+        assert_eq!(url.host(), "github.com");
+
+        // `@` in the repository path must not be treated as the user delimiter.
+        let url = GitRemoteUrl::parse("deploy@github.com:org@company/repo.git").unwrap();
+        assert_eq!(url.host(), "github.com");
+        assert_eq!(url.owner(), "org@company");
     }
 
     #[test]
@@ -332,6 +593,10 @@ mod tests {
         assert!(GitRemoteUrl::parse("https://github.com/owner/").is_none());
         assert!(GitRemoteUrl::parse("git@github.com:").is_none());
         assert!(GitRemoteUrl::parse("git@github.com:owner/").is_none());
+        assert!(GitRemoteUrl::parse("@github.com:owner/repo.git").is_none());
+        assert!(GitRemoteUrl::parse("user@:owner/repo.git").is_none());
+        assert!(GitRemoteUrl::parse("github.com:owner/repo.git").is_none());
+        assert!(GitRemoteUrl::parse("path/to/user@host:owner/repo.git").is_none());
         assert!(GitRemoteUrl::parse("ftp://github.com/owner/repo.git").is_none());
     }
 
@@ -699,6 +964,7 @@ mod tests {
             "https://gitlab.com/group/subgroup/repo.git",
             "https://gitlab.com/group/subgroup/repo",
             "git@gitlab.com:group/subgroup/repo.git",
+            "deploy@gitlab.com:group/subgroup/repo.git",
             "git@gitlab.com:group/subgroup/repo",
             "ssh://git@gitlab.com/group/subgroup/repo.git",
             "ssh://gitlab.com/group/subgroup/repo.git",
@@ -1081,5 +1347,245 @@ mod tests {
         let url = GitRemoteUrl::parse("https://github.com/owner/repo").unwrap();
         assert_eq!(url.azure_organization(), None);
         assert_eq!(url.azure_project(), None);
+    }
+
+    #[test]
+    fn git_repo_provider_serializes_json_values() {
+        let cases = [
+            (GitRepoProvider::GitHub, "\"github\""),
+            (GitRepoProvider::GitLab, "\"gitlab\""),
+            (GitRepoProvider::Gitea, "\"gitea\""),
+            (GitRepoProvider::AzureDevOps, "\"azure-devops\""),
+            (GitRepoProvider::Unknown, "\"unknown\""),
+        ];
+
+        for (provider, expected) in cases {
+            assert_eq!(serde_json::to_string(&provider).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn repo_info_from_remote_github_https_and_ssh() {
+        for input in [
+            "https://github.com/owner/repo.git",
+            "git@github.com:owner/repo.git",
+        ] {
+            let info = GitRemoteUrl::parse(input).unwrap().repo_info(None).unwrap();
+            assert_eq!(info.url, "https://github.com/owner/repo");
+            assert_eq!(info.provider, GitRepoProvider::GitHub);
+            assert_eq!(info.host, "github.com");
+            assert_eq!(info.owner, "owner");
+            assert_eq!(info.name, "repo");
+            assert_eq!(info.project, None);
+        }
+    }
+
+    #[test]
+    fn repo_info_from_remote_gitlab_nested_namespace() {
+        let info = GitRemoteUrl::parse("git@gitlab.com:group/subgroup/repo.git")
+            .unwrap()
+            .repo_info(None)
+            .unwrap();
+        assert_eq!(info.url, "https://gitlab.com/group/subgroup/repo");
+        assert_eq!(info.provider, GitRepoProvider::GitLab);
+        assert_eq!(info.host, "gitlab.com");
+        assert_eq!(info.owner, "group/subgroup");
+        assert_eq!(info.name, "repo");
+        assert_eq!(info.project, None);
+    }
+
+    #[test]
+    fn repo_info_from_remote_gitea_host_and_configured_host() {
+        let info = GitRemoteUrl::parse("https://gitea.example.com/owner/repo.git")
+            .unwrap()
+            .repo_info(None)
+            .unwrap();
+        assert_eq!(info.url, "https://gitea.example.com/owner/repo");
+        assert_eq!(info.provider, GitRepoProvider::Gitea);
+        assert_eq!(info.host, "gitea.example.com");
+        assert_eq!(info.owner, "owner");
+        assert_eq!(info.name, "repo");
+
+        let info = GitRemoteUrl::parse("https://codeberg.org/owner/repo.git")
+            .unwrap()
+            .repo_info(Some("gitea"))
+            .unwrap();
+        assert_eq!(info.url, "https://codeberg.org/owner/repo");
+        assert_eq!(info.provider, GitRepoProvider::Gitea);
+        assert_eq!(info.host, "codeberg.org");
+        assert_eq!(info.owner, "owner");
+        assert_eq!(info.name, "repo");
+    }
+
+    #[test]
+    fn repo_info_from_remote_unknown_parseable_host() {
+        let info = GitRemoteUrl::parse("https://git.example.com/team/repo.git")
+            .unwrap()
+            .repo_info(None)
+            .unwrap();
+        assert_eq!(info.url, "https://git.example.com/team/repo");
+        assert_eq!(info.provider, GitRepoProvider::Unknown);
+        assert_eq!(info.host, "git.example.com");
+        assert_eq!(info.owner, "team");
+        assert_eq!(info.name, "repo");
+        assert_eq!(info.project, None);
+    }
+
+    #[test]
+    fn repo_info_from_remote_configured_azure_generic_host_is_unknown() {
+        let info = GitRemoteUrl::parse("https://git.example.com/myorg/myrepo.git")
+            .unwrap()
+            .repo_info(Some("azure-devops"))
+            .unwrap();
+        assert_eq!(info.url, "https://git.example.com/myorg/myrepo");
+        assert_eq!(info.provider, GitRepoProvider::Unknown);
+        assert_eq!(info.host, "git.example.com");
+        assert_eq!(info.owner, "myorg");
+        assert_eq!(info.name, "myrepo");
+        assert_eq!(info.project, None);
+    }
+
+    #[test]
+    fn repo_info_from_remote_platform_override_uses_ci_platform_parser() {
+        let info = GitRemoteUrl::parse("https://git.example.com/owner/repo.git")
+            .unwrap()
+            .repo_info(Some(" github "))
+            .unwrap();
+        assert_eq!(info.url, "https://git.example.com/owner/repo");
+        assert_eq!(info.provider, GitRepoProvider::Unknown);
+        assert_eq!(info.owner, "owner");
+        assert_eq!(info.name, "repo");
+
+        assert_eq!(
+            GitRepoProvider::from_platform(Some("gitlab")),
+            Some(GitRepoProvider::GitLab)
+        );
+    }
+
+    #[test]
+    fn repo_info_from_remote_azure_devops_urls() {
+        let cases = [
+            (
+                "https://dev.azure.com/myorg/myproject/_git/myrepo",
+                "dev.azure.com",
+                "https://dev.azure.com/myorg/myproject/_git/myrepo",
+            ),
+            (
+                "git@ssh.dev.azure.com:v3/myorg/myproject/myrepo",
+                "dev.azure.com",
+                "https://dev.azure.com/myorg/myproject/_git/myrepo",
+            ),
+            (
+                "https://myorg.visualstudio.com/myproject/_git/myrepo",
+                "myorg.visualstudio.com",
+                "https://myorg.visualstudio.com/myproject/_git/myrepo",
+            ),
+        ];
+
+        for (input, expected_host, expected_url) in cases {
+            let info = GitRemoteUrl::parse(input).unwrap().repo_info(None).unwrap();
+            assert_eq!(info.url, expected_url, "input: {input}");
+            assert_eq!(info.provider, GitRepoProvider::AzureDevOps);
+            assert_eq!(info.host, expected_host, "input: {input}");
+            assert_eq!(info.owner, "myorg", "input: {input}");
+            assert_eq!(info.name, "myrepo", "input: {input}");
+            assert_eq!(info.project.as_deref(), Some("myproject"), "input: {input}");
+        }
+    }
+
+    #[test]
+    fn repo_info_from_remote_configured_azure_noncanonical_host() {
+        let info = GitRemoteUrl::parse("https://git.example.com/myorg/myproject/_git/myrepo")
+            .unwrap()
+            .repo_info(Some("azure-devops"))
+            .unwrap();
+        assert_eq!(
+            info.url,
+            "https://git.example.com/myorg/myproject/_git/myrepo"
+        );
+        assert_eq!(info.provider, GitRepoProvider::AzureDevOps);
+        assert_eq!(info.host, "git.example.com");
+        assert_eq!(info.owner, "myorg");
+        assert_eq!(info.name, "myrepo");
+        assert_eq!(info.project.as_deref(), Some("myproject"));
+
+        let info = GitRemoteUrl::parse("https://git.example.com/myorg/myproject/_git/myrepo")
+            .unwrap()
+            .repo_info(Some("azuredevops"))
+            .unwrap();
+        assert_eq!(
+            info.url,
+            "https://git.example.com/myorg/myproject/_git/myrepo"
+        );
+        assert_eq!(info.provider, GitRepoProvider::AzureDevOps);
+        assert_eq!(info.host, "git.example.com");
+        assert_eq!(info.owner, "myorg");
+        assert_eq!(info.name, "myrepo");
+        assert_eq!(info.project.as_deref(), Some("myproject"));
+
+        let info = GitRemoteUrl::parse("git@git.example.com:v3/myorg/myproject/myrepo")
+            .unwrap()
+            .repo_info(Some("azure-devops"))
+            .unwrap();
+        assert_eq!(
+            info.url,
+            "https://git.example.com/myorg/myproject/_git/myrepo"
+        );
+        assert_eq!(info.provider, GitRepoProvider::AzureDevOps);
+        assert_eq!(info.host, "git.example.com");
+        assert_eq!(info.owner, "myorg");
+        assert_eq!(info.name, "myrepo");
+        assert_eq!(info.project.as_deref(), Some("myproject"));
+    }
+
+    #[test]
+    fn test_web_url() {
+        let web_url = |input: &str| GitRemoteUrl::parse(input).unwrap().web_url();
+
+        // github.com: SSH input produces HTTPS output (the core value).
+        assert_eq!(
+            web_url("git@github.com:owner/repo.git"),
+            Some("https://github.com/owner/repo".to_string())
+        );
+        assert_eq!(
+            web_url("https://github.com/owner/repo.git"),
+            Some("https://github.com/owner/repo".to_string())
+        );
+
+        // GitHub Enterprise host.
+        assert_eq!(
+            web_url("git@github.mycompany.com:owner/repo.git"),
+            Some("https://github.mycompany.com/owner/repo".to_string())
+        );
+
+        // GitLab nested group.
+        assert_eq!(
+            web_url("git@gitlab.com:group/subgroup/repo.git"),
+            Some("https://gitlab.com/group/subgroup/repo".to_string())
+        );
+
+        // Gitea.
+        assert_eq!(
+            web_url("git@gitea.example.com:owner/repo.git"),
+            Some("https://gitea.example.com/owner/repo".to_string())
+        );
+
+        // Azure DevOps: HTTPS dev.azure.com.
+        assert_eq!(
+            web_url("https://dev.azure.com/myorg/myproject/_git/myrepo"),
+            Some("https://dev.azure.com/myorg/myproject/_git/myrepo".to_string())
+        );
+
+        // Azure DevOps: SSH ssh.dev.azure.com normalizes to the dev.azure.com web host.
+        assert_eq!(
+            web_url("git@ssh.dev.azure.com:v3/myorg/myproject/myrepo"),
+            Some("https://dev.azure.com/myorg/myproject/_git/myrepo".to_string())
+        );
+
+        // Azure DevOps: legacy *.visualstudio.com keeps the org in the hostname.
+        assert_eq!(
+            web_url("https://myorg.visualstudio.com/myproject/_git/myrepo"),
+            Some("https://myorg.visualstudio.com/myproject/_git/myrepo".to_string())
+        );
     }
 }

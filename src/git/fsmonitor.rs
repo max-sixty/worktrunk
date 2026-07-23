@@ -307,6 +307,7 @@ impl ProcessSignaller for NixSignaller {
 fn enumerate_daemons() -> Vec<DaemonProcess> {
     use crate::shell_exec::Cmd;
 
+    let _span = crate::trace::Span::new("enumerate-fsmonitor-daemons");
     let timeout = std::time::Duration::from_secs(5);
 
     let Ok(output) = Cmd::new("pgrep")
@@ -324,6 +325,15 @@ fn enumerate_daemons() -> Vec<DaemonProcess> {
         .lines()
         .filter_map(|l| l.trim().parse::<u32>().ok())
         .collect();
+    // The per-PID `lsof` resolution below is the expensive part of the whole
+    // sweep (~50ms each on macOS), and it scales with the MACHINE-wide daemon
+    // count, not this repo — surface the count so a slow sweep is explainable
+    // from the trace.
+    tracing::debug!(
+        count = pids.len(),
+        "fsmonitor sweep: resolving sockets for {} daemon(s) via lsof",
+        pids.len()
+    );
 
     pids.into_iter()
         .filter_map(|pid| {
@@ -422,13 +432,16 @@ pub fn reap_orphan_fsmonitor_daemons(repo: &Repository) {
             return;
         }
 
-        log::debug!(
+        tracing::debug!(
+            count = orphans.len(),
             "Reaping {} orphaned fsmonitor daemon(s): {:?}",
             orphans.len(),
             orphans
         );
         let gone = escalate_terminate(&NixSignaller, &orphans, REAP_KILL_DEADLINE);
-        log::debug!(
+        tracing::debug!(
+            gone = %gone,
+            count = orphans.len(),
             "Orphaned fsmonitor reap: {gone}/{} terminated",
             orphans.len()
         );
@@ -734,6 +747,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn nix_signaller_escalates_to_sigkill_when_sigterm_ignored() {
+        use std::os::unix::process::CommandExt;
         use std::process::Command;
         use std::time::Duration;
 
@@ -741,6 +755,12 @@ mod tests {
         // child touches `ready` *after* the trap is installed; the test waits
         // for that file so the first SIGTERM can't race trap installation
         // (which would let the child die on SIGTERM and report signal 15).
+        //
+        // The trap also forces the shell to fork a separate `sleep` child
+        // rather than exec it, so the tree is sh → sleep. `process_group(0)`
+        // makes sh a group leader (the `sleep` inherits its group) so the
+        // orphaned grandchild can be reaped after sh is killed — see the group
+        // SIGKILL below.
         let tmp = tempfile::tempdir().unwrap();
         let ready = tmp.path().join("ready");
         let mut child = Command::new("sh")
@@ -749,6 +769,7 @@ mod tests {
                 "trap '' TERM; : > {}; sleep 30",
                 ready.to_str().unwrap()
             ))
+            .process_group(0)
             .spawn()
             .unwrap();
         let pid = child.id();
@@ -766,6 +787,17 @@ mod tests {
         // tests already cover that the production `REAP_KILL_DEADLINE` value
         // flows through unchanged.
         escalate_terminate(&NixSignaller, &[pid], Duration::from_millis(200));
+
+        // `escalate_terminate` SIGKILLs only sh's pid, orphaning the forked
+        // `sleep` grandchild — reparented to init, it would linger ~30s holding
+        // this test's inherited stdout/stderr, which nextest reports as a leak.
+        // sh leads its own process group, so SIGKILL the whole group (negative
+        // pid) to reap the grandchild before the test returns. sh is already a
+        // zombie here, so this only reaches the `sleep`.
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(-(pid as i32)),
+            nix::sys::signal::Signal::SIGKILL,
+        );
 
         // Must have been SIGKILLed despite ignoring SIGTERM.
         use std::os::unix::process::ExitStatusExt;

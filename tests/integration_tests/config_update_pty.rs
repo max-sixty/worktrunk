@@ -38,6 +38,9 @@ fn test_config_update_prompt_accept(repo: TestRepo) {
         config_path,
         r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 pre-start = "ln -sf {{ repo_root }}/node_modules"
+
+[list]
+json-schema = 1
 "#,
     )
     .unwrap();
@@ -61,6 +64,9 @@ fn test_config_update_prompt_decline(repo: TestRepo) {
     let config_path = repo.test_config_path();
     let original_content = r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 pre-start = "ln -sf {{ repo_root }}/node_modules"
+
+[list]
+json-schema = 1
 "#;
     fs::write(config_path, original_content).unwrap();
 

@@ -37,8 +37,13 @@ Results update cells progressively as they complete.
 ## Adding New Features
 
 Default: defer to post-skeleton. Only add a pre-skeleton operation when the
-skeleton literally cannot render without the data. File I/O and template
-expansion always wait; new columns can render a placeholder until data arrives.
+skeleton literally cannot render without the data. Current exceptions, all
+small local reads: column sizing (the CI column's cached width hint), custom
+`[list.custom-columns]` expansion (values come from the in-memory config snapshot and
+must be measured for layout), and the picker's CI cache prime (paints the column
+instantly; the live CiStatus task the picker runs refreshes each cell behind the
+first frame). Template expansion and other file I/O wait; new columns can render a
+placeholder until data arrives.
 
 ## Benchmarking Skeleton Time
 
@@ -53,4 +58,6 @@ Measures pure skeleton latency. Target: <60ms.
 - `collect/` — orchestrates collection, manages pre/post-skeleton phases, task definitions and execution (see `collect/mod.rs` module docstring for phase details)
 - `render.rs` — row formatting, skeleton rows, cell rendering
 - `layout.rs` — column width calculation
-- `progressive_table.rs` — terminal rendering with in-place updates
+- `progressive_table.rs` — terminal rendering with in-place updates; reserves
+  blank rows below the table so the shell prompt printed after exit renders
+  into pre-scrolled rows instead of jerking the settled table up

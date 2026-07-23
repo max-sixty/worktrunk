@@ -3,7 +3,7 @@ use clap::{Args, Subcommand};
 #[derive(Args)]
 pub struct CommitArgs {
     /// Branch to operate on (defaults to current worktree)
-    #[arg(short, long, add = crate::completion::worktree_only_completer())]
+    #[arg(short, long, add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
     pub(crate) branch: Option<String>,
 
     #[command(flatten)]
@@ -33,7 +33,7 @@ pub struct SquashArgs {
     /// Target branch
     ///
     /// Defaults to default branch.
-    #[arg(add = crate::completion::branch_value_completer())]
+    #[arg(add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
     pub(crate) target: Option<String>,
 
     #[command(flatten)]
@@ -73,7 +73,7 @@ pub enum StepCommand {
 
 ## Options
 
-### `--stage`
+### Staging
 
 Controls what to stage before committing:
 
@@ -94,7 +94,7 @@ Configure the default in user config:
 stage = "tracked"
 ```
 
-### `--dry-run`
+### Dry run
 
 Render the prompt, print the LLM command, generate the message, and exit without staging, running hooks, or committing:
 
@@ -115,7 +115,7 @@ Three sections are printed: the rendered prompt, the shell command that would in
 
 ## Options
 
-### `--stage`
+### Staging
 
 Controls what to stage before squashing:
 
@@ -136,7 +136,7 @@ Configure the default in user config:
 stage = "tracked"
 ```
 
-### `--dry-run`
+### Dry run
 
 Render the prompt, print the LLM command, generate the squash message, and exit without resetting, running hooks, or committing:
 
@@ -165,7 +165,7 @@ $ wt step rebase develop    # Rebase onto develop
         /// Target branch
         ///
         /// Defaults to default branch.
-        #[arg(add = crate::completion::branch_value_completer())]
+        #[arg(add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         target: Option<String>,
 
         /// Output format
@@ -177,7 +177,7 @@ $ wt step rebase develop    # Rebase onto develop
 
     /// Fast-forward target to current branch
     #[command(
-        after_long_help = r#"Updates the local target branch (e.g., `main`) to include current commits.
+        after_long_help = r#"Updates the local target branch to include current commits.
 
 ## Examples
 
@@ -193,7 +193,7 @@ Similar to `git push . HEAD:<target>`, but uses `receive.denyCurrentBranch=updat
         /// Target branch
         ///
         /// Defaults to default branch.
-        #[arg(add = crate::completion::branch_value_completer())]
+        #[arg(add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         target: Option<String>,
 
         /// Create a merge commit (no fast-forward)
@@ -216,6 +216,16 @@ Similar to `git push . HEAD:<target>`, but uses `receive.denyCurrentBranch=updat
     /// Includes committed, staged, unstaged, and untracked files.
     #[command(
         after_long_help = r#"This is what `wt merge` would include — a single diff against the merge base.
+
+## Operating on another worktree
+
+`--branch` diffs another worktree's branch without leaving the current one:
+
+```console
+$ wt step diff --branch feature
+```
+
+The branch must have a checked-out worktree.
 
 ## Extra git diff arguments
 
@@ -250,8 +260,12 @@ $ GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state defau
         /// Target branch
         ///
         /// Defaults to default branch.
-        #[arg(add = crate::completion::branch_value_completer())]
+        #[arg(add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         target: Option<String>,
+
+        /// Branch to operate on (defaults to current worktree)
+        #[arg(short, long, add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
+        branch: Option<String>,
 
         /// Extra arguments forwarded to `git diff`
         #[arg(last = true)]
@@ -273,7 +287,7 @@ copy = "wt step copy-ignored"
 
 ## What gets copied
 
-All gitignored files are copied by default, except for built-in excluded directories: VCS metadata (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state (`.conductor/`, `.entire/`, `.worktrees/`). Tracked files are never touched.
+All gitignored files are copied by default, except for built-in excluded directories: VCS metadata (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`), tool-state (`.conductor/`, `.entire/`, `.worktrees/`), and nested worktrees. Tracked files are never touched. Discovery handles nested `.gitignore` files, global excludes, and `.git/info/exclude`. Existing files in the destination are skipped, so re-running is safe; `--force` overwrites them.
 
 To limit what gets copied further, create `.worktreeinclude` with gitignore-style patterns. Files must be **both** gitignored **and** in `.worktreeinclude`:
 
@@ -291,6 +305,14 @@ After `.worktreeinclude` selects entries, you can add more gitignore-style exclu
 exclude = [".cache/", ".turbo/"]
 ```
 
+To copy nothing unless `.worktreeinclude` exists — matching Claude Code desktop, where the file is required — pass `--require-include`:
+
+```console
+wt step copy-ignored --require-include
+```
+
+Without `.worktreeinclude`, the command is a no-op (it reports that nothing was copied and why). With the file present, only matching files copy as above. To apply this across every repository, put the flag in a user-config hook: `post-start = "wt step copy-ignored --require-include"`.
+
 ## Common patterns
 
 | Type | Patterns |
@@ -299,14 +321,6 @@ exclude = [".cache/", ".turbo/"]
 | Build caches | `.cache/`, `.next/`, `.parcel-cache/`, `.turbo/` |
 | Generated assets | Images, ML models, binaries too large for git |
 | Environment files | `.env` (if not generated per-worktree) |
-
-## Features
-
-- Uses copy-on-write (reflink) when available for space-efficient copies
-- Handles nested `.gitignore` files, global excludes, and `.git/info/exclude`
-- Skips existing files by default (safe to re-run)
-- `--force` overwrites existing files in the destination
-- Always skips built-in excluded directories — VCS metadata (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state (`.conductor/`, `.entire/`, `.worktrees/`) — and nested worktrees
 
 ## Performance
 
@@ -350,21 +364,21 @@ Virtual environments contain absolute paths and can't be copied. Use `uv sync` i
 
 The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://code.claude.com/docs/en/desktop), which copies matching files when creating worktrees. Differences:
 
-- worktrunk copies all gitignored files by default; Claude Code requires `.worktreeinclude`
-- worktrunk uses copy-on-write for large directories like `target/` — potentially 30x faster on macOS, 6x on Linux
+- worktrunk copies all gitignored files by default; Claude Code requires `.worktreeinclude`. Pass `--require-include` to match Claude Code (copy nothing without `.worktreeinclude`)
+- worktrunk uses copy-on-write for large directories like `target/` (see Performance above)
 - worktrunk runs as a configurable hook in the worktree lifecycle
 "#)]
     CopyIgnored {
         /// Source worktree branch
         ///
         /// Defaults to main worktree.
-        #[arg(long, add = crate::completion::worktree_only_completer())]
+        #[arg(long, add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
         from: Option<String>,
 
         /// Destination worktree branch
         ///
         /// Defaults to current worktree.
-        #[arg(long, add = crate::completion::worktree_only_completer())]
+        #[arg(long, add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
         to: Option<String>,
 
         /// Show what would be copied
@@ -374,6 +388,10 @@ The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://c
         /// Overwrite existing files in destination
         #[arg(long)]
         force: bool,
+
+        /// Require .worktreeinclude to copy anything
+        #[arg(long)]
+        require_include: bool,
 
         /// Output format
         ///
@@ -417,33 +435,38 @@ $ wt step eval '{{ branch | sanitize_db }}'
 feature_auth_oauth2_a1b
 ```
 
-Show available template variables:
+List the available template variables with `-v` (alongside the expansion, on stderr):
 
 ```console
-$ wt step eval --dry-run '{{ branch }}'
-branch=feature/auth-oauth2
-worktree_path=/home/user/projects/myapp-feature-auth-oauth2
----
-Result: feature/auth-oauth2
-```
+$ wt step eval -v '{{ branch }}'
+○ eval template variables:
+  branch        = feature/auth-oauth2
+  worktree_path = /home/user/projects/myapp-feature-auth-oauth2
+○ eval source
+  {{ branch }}
+○ eval result
+  feature/auth-oauth2
 
-Note: This command is experimental and may change in future versions.
+feature/auth-oauth2
+```
 "#
     )]
     Eval {
         /// Template expression to evaluate
         template: String,
 
-        /// Show template variables and expanded result
-        #[arg(long)]
-        dry_run: bool,
+        /// Output format
+        ///
+        /// JSON prints `{name, template, result}` to stdout instead of the bare result.
+        #[arg(long, default_value = "text", help_heading = "Automation")]
+        format: crate::cli::SwitchFormat,
     },
 
     /// \[experimental\] Run command in each worktree
     ///
-    /// Executes sequentially with real-time output; continues on failure.
+    /// Executes sequentially with real-time output; continues past command failures.
     #[command(
-        after_long_help = r#"A summary of successes and failures is shown at the end. Context JSON is piped to stdin for scripts that need structured data.
+        after_long_help = r#"A summary of successes and failures is shown at the end. A template-expansion error (a malformed `{{ … }}` argument) aborts the whole run; only command failures are tolerated and reported. Context JSON — a flat object of every template variable — is piped to stdin for scripts that need structured data.
 
 ## Arguments
 
@@ -469,6 +492,8 @@ Variables substitute into each argv element before exec. See [`wt hook` template
 $ wt step for-each -- echo 'Branch: {{ branch }}'
 ```
 
+Each element is expanded fresh in every worktree, so `{{ branch }}` is that worktree's branch. An alias wrapping for-each renders templates earlier, in the invoking worktree; [deferring expansion in an alias](@/extending.md#deferring-expansion-to-a-nested-wt-command) shows how to keep a variable per-worktree.
+
 ## Examples
 
 Pull updates in worktrees with upstreams (skips others):
@@ -476,12 +501,10 @@ Pull updates in worktrees with upstreams (skips others):
 ```console
 $ git fetch --prune && wt step for-each -- sh -c '[ "$(git rev-parse @{u} 2>/dev/null)" ] || exit 0; git pull --autostash'
 ```
-
-Note: This command is experimental and may change in future versions.
 "#
     )]
     ForEach {
-        /// Output format (text, json)
+        /// Output format
         #[arg(long, default_value = "text")]
         format: crate::cli::SwitchFormat,
 
@@ -539,8 +562,15 @@ The swap uses `rename()` for each entry — fast regardless of entry size, since
         /// Branch to promote to main worktree
         ///
         /// Defaults to current branch, or default branch from main worktree.
-        #[arg(add = crate::completion::worktree_only_completer())]
+        #[arg(add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
+
+        /// Output format
+        ///
+        /// JSON prints structured result to stdout after the promote completes.
+        /// The mismatch warning still appears on stderr in JSON mode (safety signal).
+        #[arg(long, default_value = "text", help_heading = "Automation")]
+        format: crate::cli::SwitchFormat,
     },
 
     /// \[experimental\] Remove worktrees merged into the default branch
@@ -588,7 +618,7 @@ $ wt step prune
         #[arg(long)]
         foreground: bool,
 
-        /// Output format (text, json)
+        /// Output format
         #[arg(long, default_value = "text")]
         format: crate::cli::SwitchFormat,
     },
@@ -641,18 +671,22 @@ The main worktree can't be moved with `git worktree move`. Instead, relocate
 switches it to the default branch and creates a new linked worktree at the
 expected path. Untracked and gitignored files remain at the original location.
 
+## Dirty worktrees
+
+Linked worktrees relocate as-is — `git worktree move` carries uncommitted
+changes along. Only the main worktree skips when dirty (its `git checkout`
+refuses), unless `--commit` is passed.
+
 ## Skipped worktrees
 
-- **Dirty** (without `--commit`) — use `--commit` to auto-commit first
+- **Dirty main worktree** (without `--commit`) — use `--commit` to auto-commit first
 - **Locked** — unlock with `git worktree unlock`
 - **Target blocked** (without `--clobber`) — use `--clobber` to backup blocker
 - **Detached HEAD** — no branch to compute expected path
-
-Note: This command is experimental and may change in future versions.
 "#)]
     Relocate {
         /// Worktrees to relocate (defaults to all mismatched)
-        #[arg(add = crate::completion::worktree_only_completer())]
+        #[arg(add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
         branches: Vec<String>,
 
         /// Show what would be moved
@@ -705,6 +739,14 @@ For pipes, redirects, variables, or globs, wrap in `sh -c`:
 $ wt step tether -- sh -c 'PORT=$P npm run dev | tee dev.log'
 ```
 
+To run the command from a subdirectory, pass the global `-C` flag (teardown
+still watches the worktree root, so a server launched with a relative `-C` is
+torn down with the worktree):
+
+```console
+$ wt step tether -C frontend -- npm run dev
+```
+
 ## Examples
 
 Run a dev server, torn down automatically when the worktree goes away:
@@ -714,8 +756,6 @@ Run a dev server, torn down automatically when the worktree goes away:
 [post-start]
 server = "wt step tether -- npm run dev -- --port {{ branch | hash_port }}"
 ```
-
-Note: This command is experimental and may change in future versions.
 "#)]
     Tether {
         /// Command to run (after `--`, run directly, no shell)

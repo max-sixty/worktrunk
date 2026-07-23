@@ -114,7 +114,9 @@ fn recover_from_path(deleted_path: &Path) -> Option<Repository> {
     let mut candidate = deleted_path.parent()?;
     loop {
         if candidate.is_dir() {
-            log::debug!(
+            tracing::debug!(
+                path = %deleted_path.display(),
+                ancestor = %candidate.display(),
                 "Deleted CWD recovery: path={}, checking ancestor={}",
                 deleted_path.display(),
                 candidate.display()

@@ -65,13 +65,13 @@ The URL column in `wt list` shows each worktree's dev server:
 
 {% terminal(cmd="wt list") %}
 <span class="cmd">wt list</span>
-  <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Remote⇅</b>  <b>URL</b>                     <b>Commit</b>    <b>Age</b>
-@ main           <span class=c>?</span> <span class=d>^</span><span class=d>⇅</span>                         <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=d>http://localhost:12107</span>  <span class=d>41ee0834</span>  <span class=d>4d</span>
-+ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>⇡3</span>      <span class=d>http://localhost:10703</span>  <span class=d>6814f02a</span>  <span class=d>30m</span>
-+ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>     <span class=d>|</span>     <span class=d>http://localhost:16460</span>  <span class=d>b772e68b</span>  <span class=d>5h</span>
-+ <span class=d>fix-typos</span>        <span class=d>_</span><span class=d>|</span>                           <span class=d>|</span>     <span class=d>http://localhost:14301</span>  <span class=d>41ee0834</span>  <span class=d>4d</span>
+  <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Remote⇅</b>  <b>URL</b>                     <b>Commit</b>
+@ main           <span class=c>?</span> <span class=d>^</span><span class=d>⇅</span>                                    <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=d>http://localhost:12107</span>  <span class=d>41ee0834</span>
++ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>   <span class=g>⇡3</span>      <span class=d>http://localhost:10703</span>  <span class=d>6814f02a</span>
++ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+25</span>  <span class=r>-11</span>     <span class=d>|</span>     <span class=d>http://localhost:16460</span>  <span class=d>b772e68b</span>
++ <span class=d>fix-typos</span>        <span class=d>_</span><span class=d>|</span>                                      <span class=d>|</span>     <span class=d>http://localhost:14301</span>  <span class=d>41ee0834</span>
 
-<span class=d>○</span> <span class=d>Showing 4 worktrees, 2 with changes, 2 ahead, 2 columns hidden</span>
+<span class=d>○</span> <span class=d>Showing 4 worktrees, 2 with changes, 2 ahead, 3 columns hidden</span>
 {% end %}
 
 <!-- END AUTO-GENERATED -->
@@ -105,13 +105,36 @@ docker run -d --rm \
 db-stop = "docker stop {{ vars.container }} 2>/dev/null || true"
 ```
 
-The first pipeline step derives values from the branch and stores them as vars. The second step references `{{ vars.container }}` and `{{ vars.port }}` — expanded at execution time, after the vars are set. `post-remove` reads the same vars to stop the container.
+The first pipeline step derives values from the branch and stores them as vars. The second step references `{{ vars.container }}` and `{{ vars.port }}` — templates render when each step runs, so the vars are already set. `pre-remove` reads the same vars to stop the container.
 
 The `('db-' ~ branch)` concatenation hashes differently than plain `branch`, so database and dev server ports don't collide. The `sanitize_db` filter produces database-safe identifiers (lowercase, underscores, no leading digits, with a short hash suffix).
 
 The connection string is accessible anywhere — not just in hooks:
 
 {{ terminal(cmd="DATABASE_URL=$(wt config state vars get db_url) npm start") }}
+
+## Per-worktree env vars
+
+To scope environment variables to a worktree — a tool's package path, a profile, an API endpoint — use a directory environment manager like [direnv](https://direnv.net) or [mise](https://mise.jdx.dev). Both hook the shell prompt, so they activate on the `cd` that `wt switch` already performs — no worktrunk configuration needed. Commit the config at the repo root and every worktree gets its own copy, with paths resolving relative to that worktree.
+
+**direnv** — commit `.envrc` at the repo root:
+
+```sh
+export MY_PACKAGES_PATH="$PWD/.packages"
+```
+
+Run `direnv allow` once per worktree to trust the file ([getting started](https://direnv.net/#getting-started)). After that, switching into a worktree loads the env; switching out unloads it.
+
+**mise** — commit `mise.toml` at the repo root:
+
+```toml
+[env]
+MY_PACKAGES_PATH = "{{ config_root }}/.packages"
+```
+
+`{{ config_root }}` is the project root mise resolves relative paths against ([env directives](https://mise.jdx.dev/environments/)) — the worktree root, not the primary worktree. mise also covers Windows / PowerShell, which direnv doesn't natively.
+
+Both set real environment variables in the shell session, so every child process inherits them — hooks, build tools, subshells — without the `--execute` workaround. Each new worktree is a new path, so it needs its own one-time trust step (`direnv allow` / `mise trust`); worktrunk deliberately doesn't bypass that prompt, the same safety reasoning behind [disabling `--execute` in project alias and hook bodies](https://github.com/max-sixty/worktrunk/issues/2101).
 
 ## Eliminate cold starts
 
@@ -202,9 +225,11 @@ Structured output for dashboards, statuslines, and scripts. See [`wt list`](@/li
 
 ## Reuse `default-branch`
 
-Worktrunk maintains useful state. Default branch [detection](@/config.md#wt-config-state-default-branch), for instance, means scripts work on any repo — no need to hardcode `main` or `master`:
+Default branch [detection](@/config.md#wt-config-state-default-branch) means scripts work on any repo — no need to hardcode `main` or `master`:
 
 {{ terminal(cmd="git rebase $(wt config state default-branch)") }}
+
+In hooks and aliases, the same value is the `{{ default_branch }}` [template variable](@/hook.md#template-variables); reserve this command for plain shell scripts.
 
 ## Task runners in hooks
 
@@ -232,7 +257,7 @@ test = "npm test"
 build = "npm run build"
 ```
 
-`pre-commit` runs on every squash commit during `wt merge`; `pre-merge` runs once per merge after the rebase, so it's the right place for the slow tests.
+`pre-commit` runs during `wt merge`, before the squash commit; `pre-merge` runs once per merge after the rebase, so it's the right place for the slow tests.
 
 ## Target-specific hooks
 
@@ -314,7 +339,7 @@ tmux = "tmux kill-session -t {{ branch | sanitize }} 2>/dev/null || true"
 To create a worktree and immediately attach:
 
 {% terminal() %}
-<span class="cmd">wt switch --create feature -x 'tmux attach -t {{ branch | sanitize }}'</span>
+<span class="cmd">wt switch --create feature -x tmux -- attach -t '{{ branch | sanitize }}'</span>
 {% end %}
 
 ## cmux workspace per worktree
@@ -369,8 +394,6 @@ clean-derived = """
     done
 """
 ```
-
-This precisely targets only the DerivedData for the removed worktree, leaving caches for other worktrees and the main repository intact.
 
 ## Subdomain routing with Caddy
 <!-- Hand-tested 2026-03-07 -->
@@ -432,20 +455,42 @@ With `worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"`, worktrees b
 ```
 myproject/
 ├── .git/       # bare repository
-├── main/       # default branch
-├── feature/    # feature branch
-└── bugfix/     # bugfix branch
+├── main/       # default branch worktree
+├── feature/    # feature branch worktree
+└── bugfix/     # bugfix branch worktree
 ```
 
-Configure worktrunk:
+### Configure the worktree path
+
+On first `wt switch` in a bare repo at a hidden path (`.git`, `.bare`), worktrunk detects that the default template would produce broken paths like `myproject/.git.main` and offers a fix:
+
+```
+▲ Bare repo at myproject/.git — worktrees will be at myproject/.git.main
+◎ Configure worktree-path to place worktrees at myproject/main? [y/N/?]
+```
+
+Accepting writes a project-scoped entry to user config:
 
 ```toml
 # ~/.config/worktrunk/config.toml
+[projects."github.com/myorg/myrepo"]
 worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"
 ```
 
-Create the first worktree:
+Run `wt config show` from inside any worktree to find the project identifier (`Identifier: …` in the PROJECT CONFIG section). Set it globally with `worktree-path = "..."` at the top level if this layout is preferred for all bare repos.
 
-{{ terminal(cmd="wt switch --create main") }}
+### Create the first worktree
+
+{{ terminal(cmd="wt switch main") }}
+
+For a freshly cloned bare repo the default branch already exists, so `wt switch main` (without `--create`) is enough. Use `wt switch --create <branch>` for new branches.
 
 Now `wt switch --create feature` creates `myproject/feature/`.
+
+### Set up the project config
+
+The project config (`.config/wt.toml`) must live inside a worktree — the bare `.git` directory has no tracked files. Once the first worktree exists, create it from there:
+
+{{ terminal(cmd="cd myproject/main|||wt config create --project") }}
+
+Commit the file and it will appear in every worktree automatically.

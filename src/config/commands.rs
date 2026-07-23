@@ -14,17 +14,8 @@
 //! | Primitive | Example | Resulting `steps` |
 //! |---|---|---|
 //! | string | `hook = "cmd"` | `[Single(unnamed)]` |
-//! | dict | `[hook]` + keys, or `hook = {a="...", b="..."}` | `[Concurrent(all entries)]` — always `Concurrent`, even for one entry |
+//! | dict | `[hook]` + keys, or `hook = {a="...", b="..."}` | one step: 1-key → `Single(named)`; multi-key → `Concurrent` (see `map_to_step`) |
 //! | list | `hook = [{a="..."}, "cmd", ...]` | one step per element: string → `Single(unnamed)`; 1-key dict → `Single(named)`; multi-key dict → `Concurrent` |
-//!
-//! ## Dict-at-top vs. dict-in-list is asymmetric
-//!
-//! A top-level dict always becomes `Concurrent`. A one-entry dict inside a
-//! list becomes `Single(named)` instead (see `map_to_step`). So
-//! `{test="..."}` and `[{test="..."}]` have the same command set but
-//! different `HookStep` variants. For pre-* hooks this is invisible
-//! (everything runs serially anyway); for post-* hooks it controls
-//! parallelism.
 //!
 //! ## `[[hook]]` header form is not a full alternative to pipeline form
 //!
@@ -44,45 +35,27 @@ use schemars::JsonSchema;
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 
-/// Represents a command with its template and optionally expanded form.
+/// Represents a configured command template.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Command {
     /// Optional name for the command (e.g., "build", "test")
     pub name: Option<String>,
     /// Template string that may contain variables like {{ branch }}, {{ worktree }}
     pub template: String,
-    /// Expanded command with variables substituted (same as template if not expanded yet)
-    pub expanded: String,
 }
 
 impl Command {
-    /// Create a new command from a template (not yet expanded)
     pub fn new(name: Option<String>, template: String) -> Self {
-        Self {
-            name,
-            expanded: template.clone(),
-            template,
-        }
-    }
-
-    /// Create a command with both template and expanded forms
-    pub fn with_expansion(name: Option<String>, template: String, expanded: String) -> Self {
-        Self {
-            name,
-            template,
-            expanded,
-        }
+        Self { name, template }
     }
 }
 
 /// A step in a hook pipeline.
 ///
-/// The execution model depends on the hook type and config form:
-/// - **Post-* hooks**: `Single` steps run serially, `Concurrent` steps spawn in parallel.
-///   The entire pipeline runs in the background as one detached process.
-/// - **Pre-* hooks (pipeline form)**: `Single` steps run serially, `Concurrent` steps
-///   run in parallel. The pipeline blocks until complete.
-/// - **Pre-* hooks (deprecated table form)**: All commands run serially.
+/// `Single` steps run serially; a `Concurrent` step runs all its commands in
+/// parallel. The model is uniform across hook types — pre-* pipelines block
+/// in the foreground, post-* pipelines run in the background as one detached
+/// process.
 #[derive(Debug, Clone, PartialEq)]
 pub enum HookStep {
     /// A single command (from a string in a list, or a single-entry map).
@@ -95,17 +68,13 @@ pub enum HookStep {
 ///
 /// Internally stores a pipeline of `HookStep`s. Deserializes from three TOML forms:
 /// - Single string: `post-start = "npm install"`
-/// - Named table: `[post-start]` with `name = "command"` entries → one Concurrent step
+/// - Named table: `[post-start]` with `name = "command"` entries → one step
 /// - Pipeline: `post-start = ["cmd", { a = "cmd1", b = "cmd2" }]` → serial steps
 ///
 /// **Order preservation:** Named commands preserve TOML insertion order (IndexMap).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CommandConfig {
     steps: Vec<HookStep>,
-    /// Whether this config was deserialized from a pipeline form (TOML array:
-    /// `[[hook]]` blocks or inline `hook = [...]`). Non-pipeline forms are a
-    /// bare string (`hook = "cmd"`) or a single table (`[hook]`).
-    pipeline: bool,
 }
 
 impl CommandConfig {
@@ -113,7 +82,6 @@ impl CommandConfig {
     pub fn single(template: impl Into<String>) -> Self {
         Self {
             steps: vec![HookStep::Single(Command::new(None, template.into()))],
-            pipeline: false,
         }
     }
 
@@ -123,12 +91,6 @@ impl CommandConfig {
             HookStep::Single(cmd) => std::slice::from_ref(cmd).iter(),
             HookStep::Concurrent(cmds) => cmds.iter(),
         })
-    }
-
-    /// Whether this config uses a pipeline form (`[[hook]]` blocks or inline array).
-    /// A single `[[hook]]` block counts as a pipeline even though it has one step.
-    pub fn is_pipeline(&self) -> bool {
-        self.pipeline
     }
 
     /// Returns the pipeline steps for execution.
@@ -142,10 +104,7 @@ impl CommandConfig {
     pub fn merge_append(&self, other: &Self) -> Self {
         let mut steps = self.steps.clone();
         steps.extend(other.steps.iter().cloned());
-        Self {
-            steps,
-            pipeline: self.pipeline || other.pipeline,
-        }
+        Self { steps }
     }
 }
 
@@ -272,7 +231,6 @@ impl<'de> Deserialize<'de> for CommandConfig {
             fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
                 Ok(CommandConfig {
                     steps: vec![HookStep::Single(Command::new(None, v.to_string()))],
-                    pipeline: false,
                 })
             }
 
@@ -295,10 +253,7 @@ impl<'de> Deserialize<'de> for CommandConfig {
                         }
                     }
                 }
-                Ok(CommandConfig {
-                    steps,
-                    pipeline: true,
-                })
+                Ok(CommandConfig { steps })
             }
 
             fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
@@ -311,19 +266,12 @@ impl<'de> Deserialize<'de> for CommandConfig {
                     entries.insert(key, value);
                 }
                 validate_no_colons(&entries)?;
-                let commands: Vec<Command> = entries
-                    .into_iter()
-                    .map(|(name, template)| Command::new(Some(name), template))
-                    .collect();
-                let steps = if commands.is_empty() {
+                let steps = if entries.is_empty() {
                     Vec::new()
                 } else {
-                    vec![HookStep::Concurrent(commands)]
+                    vec![map_to_step(entries)]
                 };
-                Ok(CommandConfig {
-                    steps,
-                    pipeline: false,
-                })
+                Ok(CommandConfig { steps })
             }
         }
 
@@ -368,19 +316,20 @@ impl Serialize for CommandConfig {
     where
         S: serde::Serializer,
     {
-        // Single unnamed command → string
-        if self.steps.len() == 1
-            && let HookStep::Single(cmd) = &self.steps[0]
-            && cmd.name.is_none()
-        {
-            return cmd.template.serialize(serializer);
-        }
-
-        // Single concurrent step (all named) → named table
-        if self.steps.len() == 1
-            && let HookStep::Concurrent(cmds) = &self.steps[0]
-        {
-            return serialize_commands_as_map(cmds, serializer);
+        // Single step → string (unnamed) or named table, mirroring the
+        // one-step deserialization forms.
+        if self.steps.len() == 1 {
+            match &self.steps[0] {
+                HookStep::Single(cmd) => match &cmd.name {
+                    None => return cmd.template.serialize(serializer),
+                    Some(_) => {
+                        return serialize_commands_as_map(std::slice::from_ref(cmd), serializer);
+                    }
+                },
+                HookStep::Concurrent(cmds) => {
+                    return serialize_commands_as_map(cmds, serializer);
+                }
+            }
         }
 
         // Pipeline → array of mixed strings and tables
@@ -492,6 +441,34 @@ test = "cargo test"
             &wrapper.command.steps()[0],
             HookStep::Concurrent(cmds) if cmds.len() == 2
         ));
+    }
+
+    #[test]
+    fn test_deserialize_named_table_single_entry() {
+        // A one-entry table is a single named command — the same parse as a
+        // one-entry map inside a pipeline list — and round-trips as a table.
+        let toml_str = r#"
+[command]
+build = "cargo build"
+"#;
+
+        #[derive(Serialize, Deserialize)]
+        struct Wrapper {
+            command: CommandConfig,
+        }
+
+        let wrapper: Wrapper = toml::from_str(toml_str).unwrap();
+        assert_eq!(wrapper.command.steps().len(), 1);
+        assert!(matches!(
+            &wrapper.command.steps()[0],
+            HookStep::Single(cmd)
+                if cmd.name.as_deref() == Some("build") && cmd.template == "cargo build"
+        ));
+
+        assert_snapshot!(toml::to_string(&wrapper).unwrap(), @r#"
+        [command]
+        build = "cargo build"
+        "#);
     }
 
     #[test]
@@ -768,7 +745,6 @@ broken = 42
                     None,
                     "npm install".to_string(),
                 ))],
-                pipeline: false,
             },
         };
 
@@ -788,7 +764,6 @@ broken = 42
                     Command::new(Some("build".to_string()), "cargo build".to_string()),
                     Command::new(Some("test".to_string()), "cargo test".to_string()),
                 ])],
-                pipeline: false,
             },
         };
 
@@ -815,7 +790,6 @@ broken = 42
                         Command::new(Some("lint".to_string()), "npm run lint".to_string()),
                     ]),
                 ],
-                pipeline: true,
             },
         };
 
@@ -829,7 +803,6 @@ broken = 42
                 None,
                 "echo hello".to_string(),
             ))],
-            pipeline: false,
         };
 
         #[derive(Serialize, Deserialize)]
@@ -855,7 +828,6 @@ broken = 42
                 Command::new(Some("a".to_string()), "echo a".to_string()),
                 Command::new(Some("b".to_string()), "echo b".to_string()),
             ])],
-            pipeline: false,
         };
 
         #[derive(Serialize, Deserialize)]
@@ -885,7 +857,6 @@ broken = 42
                 ]),
                 HookStep::Single(Command::new(None, "cmd4".to_string())),
             ],
-            pipeline: true,
         };
 
         let cmds: Vec<_> = config.commands().collect();
@@ -904,14 +875,12 @@ broken = 42
     fn test_merge_append_steps() {
         let base = CommandConfig {
             steps: vec![HookStep::Single(Command::new(None, "step1".to_string()))],
-            pipeline: false,
         };
         let overlay = CommandConfig {
             steps: vec![HookStep::Concurrent(vec![
                 Command::new(Some("a".to_string()), "step2a".to_string()),
                 Command::new(Some("b".to_string()), "step2b".to_string()),
             ])],
-            pipeline: false,
         };
 
         let merged = base.merge_append(&overlay);
@@ -937,14 +906,12 @@ broken = 42
                 None,
                 "npm install".to_string(),
             ))],
-            pipeline: false,
         };
         let per_project = CommandConfig {
-            steps: vec![HookStep::Concurrent(vec![Command::new(
+            steps: vec![HookStep::Single(Command::new(
                 Some("setup".to_string()),
                 "echo setup".to_string(),
-            )])],
-            pipeline: false,
+            ))],
         };
 
         let merged = global.merge_append(&per_project);

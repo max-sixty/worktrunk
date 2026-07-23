@@ -256,6 +256,8 @@ The `--help-page` generator in `src/help.rs` applies post-processing to transfor
 | `` `●` green `` | `<span style='color:#0a0'>●</span> green` |
 | `` `●` blue `` | `<span style='color:#00a'>●</span> blue` |
 | `` `●` red `` | `<span style='color:#a00'>●</span> red` |
+| `` `●` magenta `` | `<span style='color:#a0a'>●</span> magenta` |
+| `` `●` cyan `` | `<span style='color:#0aa'>●</span> cyan` |
 | `` `●` yellow `` | `<span style='color:#a60'>●</span> yellow` |
 | `` `●` gray `` | `<span style='color:#888'>●</span> gray` |
 | `[experimental]` | `<span class="badge-experimental"></span>` (text via CSS `::after`) |

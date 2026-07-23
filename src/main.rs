@@ -1,24 +1,16 @@
-use std::collections::HashSet;
-use std::path::Path;
-
-use anyhow::Context;
 use clap::FromArgMatches;
 use clap::error::ErrorKind as ClapErrorKind;
 use color_print::{ceprintln, cformat};
 use std::process;
-use worktrunk::config::{UserConfig, set_config_path};
+use worktrunk::config::{set_config_overrides, set_config_path};
 use worktrunk::git::{
-    ErrorExt, Repository, ResolvedWorktree, WorktrunkError, current_or_recover, cwd_removed_hint,
-    set_base_path,
+    ErrorExt, Repository, WorktrunkError, current_or_recover, cwd_removed_hint, set_base_path,
 };
 use worktrunk::styling::{
     eprintln, error_message, format_with_gutter, hint_message, info_message, warning_message,
 };
 
-use commands::hook_plan::{ApprovedHookPlan, HookPlanBuilder};
 use commands::hooks::HookAnnouncer;
-use commands::worktree::RemoveResult;
-use worktrunk::HookType;
 
 mod cli;
 mod commands;
@@ -41,37 +33,34 @@ pub(crate) use invocation::{
     binary_name, invocation_path, is_git_subcommand, was_invoked_with_explicit_path,
 };
 
-pub(crate) use crate::cli::OutputFormat;
+pub(crate) use crate::cli::{OutputFormat, StatuslineFormat};
 
 use commands::commit::HookGate;
-#[cfg(unix)]
 use commands::handle_picker;
-use commands::repository_ext::RepositoryCliExt;
 use commands::worktree::{PushKind, PushOutcome, PushResult, handle_no_ff_merge, handle_push};
 use commands::{
-    HookCliArgs, MergeFlagOverrides, MergeOptions, RebaseResult, RemoveTarget, SquashResult,
-    SwitchOptions, add_approvals, clear_approvals, handle_alias_dry_run, handle_alias_show,
-    handle_claude_install, handle_claude_install_statusline, handle_claude_uninstall,
-    handle_codex_install, handle_codex_uninstall, handle_completions, handle_config_create,
-    handle_config_show, handle_config_update, handle_configure_shell, handle_custom_command,
-    handle_hints_clear, handle_hints_get, handle_hook_show, handle_init, handle_list,
-    handle_logs_list, handle_merge, handle_opencode_install, handle_opencode_uninstall,
-    handle_promote, handle_rebase, handle_show_theme, handle_squash, handle_state_clear,
-    handle_state_clear_all, handle_state_get, handle_state_set, handle_state_show,
-    handle_unconfigure_shell, handle_vars_clear, handle_vars_get, handle_vars_list,
-    handle_vars_set, resolve_worktree_arg, run_hook, run_switch, step_commit, step_copy_ignored,
-    step_diff, step_eval, step_for_each, step_prune, step_relocate, step_tether,
+    HookCliArgs, MergeFlagOverrides, MergeOptions, RebaseResult, SquashResult, add_approvals,
+    clear_approvals, flag_pair, handle_alias_dry_run, handle_alias_show, handle_cache_clear,
+    handle_cache_get, handle_claude_install, handle_claude_install_statusline,
+    handle_claude_uninstall, handle_codex_install, handle_codex_uninstall, handle_completions,
+    handle_config_create, handle_config_show, handle_config_update, handle_configure_shell,
+    handle_custom_command, handle_hints_clear, handle_hints_get, handle_hook_show, handle_init,
+    handle_list, handle_logs_list, handle_logs_profile, handle_merge, handle_opencode_install,
+    handle_opencode_uninstall, handle_promote, handle_rebase, handle_remove_command,
+    handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get,
+    handle_state_set, handle_state_show, handle_switch_command, handle_unconfigure_shell,
+    handle_vars_clear, handle_vars_get, handle_vars_list, handle_vars_set, list_approvals,
+    run_hook, step_commit, step_copy_ignored, step_diff, step_eval, step_for_each, step_prune,
+    step_relocate, step_tether,
 };
-use output::{BackgroundFallbackMode, handle_remove_output};
-use worktrunk::git::BranchDeletionMode;
 
 use cli::{
-    ApprovalsCommand, CiStatusAction, Cli, Commands, ConfigAliasCommand, ConfigCommand,
-    ConfigPluginsClaudeCommand, ConfigPluginsCodexCommand, ConfigPluginsCommand,
-    ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction, HintsAction,
-    HookCommand, HookOptions, ListArgs, ListSubcommand, LogsAction, MarkerAction, MergeArgs,
-    PreviousBranchAction, RemoveArgs, StateCommand, StateWrite, StepCommand, SwitchArgs,
-    SwitchFormat, VarsAction,
+    ApprovalsCommand, CacheAction, CiStatusAction, Cli, Commands, ConfigAliasCommand,
+    ConfigCommand, ConfigPluginsClaudeCommand, ConfigPluginsCodexCommand, ConfigPluginsCommand,
+    ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction, GlobalFormatFlag,
+    HintsAction, HookCommand, HookOptions, ListArgs, ListSubcommand, LogsAction, MarkerAction,
+    MergeArgs, PreviousBranchAction, StateCommand, StateWrite, StepCommand, SwitchFormat,
+    VarsAction,
 };
 
 /// Render a clap error to stderr, appending a wt-specific nested-subcommand
@@ -117,30 +106,24 @@ pub(crate) fn enhance_clap_error(err: clap::Error) -> anyhow::Error {
     WorktrunkError::AlreadyDisplayed { exit_code }.into()
 }
 
-#[cfg(not(unix))]
-fn print_windows_picker_unavailable() {
-    eprintln!(
-        "{}",
-        error_message("Interactive picker is not available on Windows")
-    );
-    eprintln!(
-        "{}",
-        hint_message(cformat!("Specify a branch: <underline>wt switch BRANCH</>"))
-    );
-}
-
-pub(crate) fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
-    match (positive, negative) {
-        (true, _) => Some(true),
-        (_, true) => Some(false),
-        _ => None,
-    }
-}
-
 fn warn_select_deprecated() {
     eprintln!(
         "{}",
-        warning_message("wt select is deprecated; use wt switch instead")
+        warning_message(cformat!(
+            "wt select is deprecated; use <bold>wt switch</> instead"
+        ))
+    );
+}
+
+/// Emit the deprecation notice for a `wt config state` subcommand that has
+/// moved under `wt config state cache` (ci-status, hints, previous-branch).
+/// These still work — the warning nudges callers toward `cache`.
+fn warn_state_subcommand_deprecated(name: &str) {
+    eprintln!(
+        "{}",
+        warning_message(cformat!(
+            "wt config state {name} is deprecated; use <bold>wt config state cache</> instead"
+        ))
     );
 }
 
@@ -152,7 +135,9 @@ fn warn_select_deprecated() {
 pub(crate) fn warn_no_verify_deprecated() {
     eprintln!(
         "{}",
-        warning_message("--no-verify is deprecated; use --no-hooks instead")
+        warning_message(cformat!(
+            "--no-verify is deprecated; use <bold>--no-hooks</> instead"
+        ))
     );
 }
 
@@ -167,11 +152,14 @@ fn handle_hook_command(action: HookCommand, yes: bool) -> anyhow::Result<()> {
         HookCommand::Approvals { action } => {
             eprintln!(
                 "{}",
-                warning_message("wt hook approvals is deprecated; use wt config approvals instead")
+                warning_message(cformat!(
+                    "wt hook approvals is deprecated; use <bold>wt config approvals</> instead"
+                ))
             );
             match action {
+                ApprovalsCommand::List => list_approvals(),
                 ApprovalsCommand::Add { all } => add_approvals(all),
-                ApprovalsCommand::Clear { global } => clear_approvals(global),
+                ApprovalsCommand::Clear { global, stale } => clear_approvals(global, stale),
             }
         }
         HookCommand::Run(args) => {
@@ -196,7 +184,11 @@ fn handle_hook_command(action: HookCommand, yes: bool) -> anyhow::Result<()> {
     }
 }
 
-fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
+fn handle_step_command(
+    action: StepCommand,
+    working_dir: Option<std::path::PathBuf>,
+    yes: bool,
+) -> anyhow::Result<()> {
     match action {
         StepCommand::Commit(args) => {
             let verify = args.hooks.resolve();
@@ -242,13 +234,12 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
             } else {
                 // Approval is handled inside handle_squash (like step_commit).
                 let repo = Repository::current()?;
-                let config = UserConfig::load().context("Failed to load config")?;
                 let hooks = if verify {
                     HookGate::Run
                 } else {
                     HookGate::NoHooksFlag
                 };
-                let mut announcer = HookAnnouncer::new(&repo, &config, false);
+                let mut announcer = HookAnnouncer::new(&repo, false);
                 let format = args.format;
                 let result = handle_squash(
                     args.target.as_deref(),
@@ -365,28 +356,59 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
             }
             Ok(())
         }
-        StepCommand::Diff { target, extra_args } => step_diff(target.as_deref(), &extra_args),
+        StepCommand::Diff {
+            target,
+            branch,
+            extra_args,
+        } => step_diff(branch.as_deref(), target.as_deref(), &extra_args),
         StepCommand::CopyIgnored {
             from,
             to,
             dry_run,
             force,
+            require_include,
             format,
-        } => step_copy_ignored(from.as_deref(), to.as_deref(), dry_run, force, format),
-        StepCommand::Eval { template, dry_run } => step_eval(&template, dry_run),
+        } => step_copy_ignored(
+            from.as_deref(),
+            to.as_deref(),
+            dry_run,
+            force,
+            require_include,
+            format,
+        ),
+        StepCommand::Eval { template, format } => step_eval(&template, format),
         StepCommand::ForEach { format, args } => step_for_each(args, format),
-        StepCommand::Promote { branch } => {
-            handle_promote(branch.as_deref()).map(|result| match result {
-                commands::PromoteResult::Promoted => (),
-                commands::PromoteResult::AlreadyInMain(branch) => {
-                    eprintln!(
-                        "{}",
-                        info_message(cformat!(
-                            "Branch <bold>{branch}</> is already in main worktree"
-                        ))
-                    );
-                }
-            })
+        StepCommand::Promote { branch, format } => {
+            let result = handle_promote(branch.as_deref())?;
+            if format == SwitchFormat::Json {
+                let output = match &result {
+                    commands::PromoteResult::Promoted {
+                        target,
+                        main_branch,
+                        swapped,
+                        mismatch,
+                    } => serde_json::json!({
+                        "outcome": "promoted",
+                        "target": target,
+                        "main_branch": main_branch,
+                        "swapped": swapped,
+                        "mismatch": mismatch,
+                    }),
+                    commands::PromoteResult::AlreadyInMain(branch) => serde_json::json!({
+                        "outcome": "already_in_main",
+                        "branch": branch,
+                    }),
+                };
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else if let commands::PromoteResult::AlreadyInMain(branch) = &result {
+                eprintln!(
+                    "{}",
+                    info_message(cformat!(
+                        "Branch <bold>{branch}</> is already in main worktree"
+                    ))
+                );
+            }
+            Ok(())
         }
         StepCommand::Prune {
             dry_run,
@@ -401,7 +423,7 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
             clobber,
             format,
         } => step_relocate(branches, dry_run, commit, clobber, format),
-        StepCommand::Tether { command } => step_tether(&command),
+        StepCommand::Tether { command } => step_tether(&command, working_dir.as_deref()),
         StepCommand::External(args) => commands::step_alias(args, yes),
     }
 }
@@ -437,8 +459,20 @@ fn guard_format_on_write(action_name: &str, format: SwitchFormat) -> anyhow::Res
     Err(enhance_clap_error(err))
 }
 
-fn handle_state_command(action: StateCommand) -> anyhow::Result<()> {
+fn handle_state_command(action: StateCommand, yes: bool) -> anyhow::Result<()> {
     match action {
+        StateCommand::Cache {
+            action,
+            format: GlobalFormatFlag { format },
+        } => {
+            if let Some(verb) = action.as_ref().and_then(StateWrite::write_verb) {
+                guard_format_on_write(verb, format)?;
+            }
+            match action {
+                Some(CacheAction::Get) | None => handle_cache_get(format),
+                Some(CacheAction::Clear) => handle_cache_clear(),
+            }
+        }
         StateCommand::DefaultBranch { action } => match action {
             Some(DefaultBranchAction::Get) | None => {
                 handle_state_get("default-branch", None, SwitchFormat::Text)
@@ -448,16 +482,25 @@ fn handle_state_command(action: StateCommand) -> anyhow::Result<()> {
             }
             Some(DefaultBranchAction::Clear) => handle_state_clear("default-branch", None, false),
         },
-        StateCommand::PreviousBranch { action } => match action {
-            Some(PreviousBranchAction::Get) | None => {
-                handle_state_get("previous-branch", None, SwitchFormat::Text)
+        StateCommand::PreviousBranch { action } => {
+            warn_state_subcommand_deprecated("previous-branch");
+            match action {
+                Some(PreviousBranchAction::Get) | None => {
+                    handle_state_get("previous-branch", None, SwitchFormat::Text)
+                }
+                Some(PreviousBranchAction::Set { branch }) => {
+                    handle_state_set("previous-branch", branch, None)
+                }
+                Some(PreviousBranchAction::Clear) => {
+                    handle_state_clear("previous-branch", None, false)
+                }
             }
-            Some(PreviousBranchAction::Set { branch }) => {
-                handle_state_set("previous-branch", branch, None)
-            }
-            Some(PreviousBranchAction::Clear) => handle_state_clear("previous-branch", None, false),
-        },
-        StateCommand::CiStatus { action, format } => {
+        }
+        StateCommand::CiStatus {
+            action,
+            format: GlobalFormatFlag { format },
+        } => {
+            warn_state_subcommand_deprecated("ci-status");
             if let Some(verb) = action.as_ref().and_then(StateWrite::write_verb) {
                 guard_format_on_write(verb, format)?;
             }
@@ -471,7 +514,10 @@ fn handle_state_command(action: StateCommand) -> anyhow::Result<()> {
                 }
             }
         }
-        StateCommand::Marker { action, format } => {
+        StateCommand::Marker {
+            action,
+            format: GlobalFormatFlag { format },
+        } => {
             if let Some(verb) = action.as_ref().and_then(StateWrite::write_verb) {
                 guard_format_on_write(verb, format)?;
             }
@@ -486,16 +532,24 @@ fn handle_state_command(action: StateCommand) -> anyhow::Result<()> {
                 }
             }
         }
-        StateCommand::Logs { action, format } => {
+        StateCommand::Logs {
+            action,
+            format: GlobalFormatFlag { format },
+        } => {
             if let Some(verb) = action.as_ref().and_then(StateWrite::write_verb) {
                 guard_format_on_write(verb, format)?;
             }
             match action {
                 Some(LogsAction::Get) | None => handle_logs_list(format),
+                Some(LogsAction::Profile { file }) => handle_logs_profile(file, format),
                 Some(LogsAction::Clear) => handle_state_clear("logs", None, false),
             }
         }
-        StateCommand::Hints { action, format } => {
+        StateCommand::Hints {
+            action,
+            format: GlobalFormatFlag { format },
+        } => {
+            warn_state_subcommand_deprecated("hints");
             if let Some(verb) = action.as_ref().and_then(StateWrite::write_verb) {
                 guard_format_on_write(verb, format)?;
             }
@@ -516,7 +570,7 @@ fn handle_state_command(action: StateCommand) -> anyhow::Result<()> {
             }
         },
         StateCommand::Get { format } => handle_state_show(format),
-        StateCommand::Clear => handle_state_clear_all(),
+        StateCommand::Clear => handle_state_clear_all(yes),
     }
 }
 
@@ -579,15 +633,16 @@ fn handle_config_command(action: ConfigCommand, yes: bool) -> anyhow::Result<()>
         ConfigCommand::Show { full, format } => handle_config_show(full, format),
         ConfigCommand::Update { print } => handle_config_update(yes, print),
         ConfigCommand::Approvals { action } => match action {
+            ApprovalsCommand::List => list_approvals(),
             ApprovalsCommand::Add { all } => add_approvals(all),
-            ApprovalsCommand::Clear { global } => clear_approvals(global),
+            ApprovalsCommand::Clear { global, stale } => clear_approvals(global, stale),
         },
         ConfigCommand::Alias { action } => match action {
             ConfigAliasCommand::Show { name } => handle_alias_show(name),
             ConfigAliasCommand::DryRun { name, args } => handle_alias_dry_run(name, args),
         },
         ConfigCommand::Plugins { action } => handle_plugins_command(action, yes),
-        ConfigCommand::State { action } => handle_state_command(action),
+        ConfigCommand::State { action } => handle_state_command(action, yes),
     }
 }
 
@@ -625,8 +680,8 @@ fn handle_list_command(args: ListArgs) -> anyhow::Result<()> {
             }
             // Hidden --claude-code flag only applies when format is default (Table)
             // Explicit --format=json takes precedence over --claude-code
-            let effective_format = if claude_code && matches!(format, OutputFormat::Table) {
-                OutputFormat::ClaudeCode
+            let effective_format = if claude_code && matches!(format, StatuslineFormat::Table) {
+                StatuslineFormat::ClaudeCode
             } else {
                 format
             };
@@ -646,449 +701,19 @@ fn handle_list_command(args: ListArgs) -> anyhow::Result<()> {
     }
 }
 
-#[cfg(unix)]
 fn handle_select_command(branches: bool, remotes: bool) -> anyhow::Result<()> {
     // Deprecated: show warning and delegate to handle_picker
     warn_select_deprecated();
     worktrunk::config::suppress_warnings();
-    handle_picker(branches, remotes, None, SwitchFormat::Text)
-}
-
-#[cfg(not(unix))]
-fn handle_select_command(_branches: bool, _remotes: bool) -> anyhow::Result<()> {
-    use worktrunk::git::WorktrunkError;
-    warn_select_deprecated();
-    print_windows_picker_unavailable();
-    Err(WorktrunkError::AlreadyDisplayed { exit_code: 1 }.into())
-}
-
-fn handle_switch_command(args: SwitchArgs, yes: bool) -> anyhow::Result<()> {
-    let verify = args.hooks.resolve();
-
-    // With no branch argument, `wt switch` opens a TUI picker — config
-    // deprecation warnings would render above the picker and push it down.
-    // They're still shown by other commands (`wt list`, `wt merge`, …).
-    if args.branch.is_none() {
-        worktrunk::config::suppress_warnings();
-    }
-
-    UserConfig::load()
-        .context("Failed to load config")
-        .and_then(|mut config| {
-            // No branch argument: open interactive picker
-            let change_dir_flag = flag_pair(args.cd, args.no_cd);
-
-            let Some(branch) = args.branch else {
-                #[cfg(unix)]
-                {
-                    return handle_picker(
-                        args.branches,
-                        args.remotes,
-                        change_dir_flag,
-                        args.format,
-                    );
-                }
-
-                #[cfg(not(unix))]
-                {
-                    use worktrunk::git::WorktrunkError;
-                    // Suppress unused variable warnings on Windows
-                    let _ = (args.branches, args.remotes, change_dir_flag);
-
-                    print_windows_picker_unavailable();
-                    return Err(WorktrunkError::AlreadyDisplayed { exit_code: 2 }.into());
-                }
-            };
-
-            run_switch(
-                SwitchOptions {
-                    branch: &branch,
-                    create: args.create,
-                    base: args.base.as_deref(),
-                    execute: args.execute.as_deref(),
-                    execute_args: &args.execute_args,
-                    yes,
-                    clobber: args.clobber,
-                    change_dir: change_dir_flag,
-                    verify,
-                    format: args.format,
-                },
-                &mut config,
-                &binary_name(),
-            )
-        })
-}
-
-/// Validated removal plans, categorized for ordered execution.
-///
-/// Multi-worktree removal validates all targets upfront, then executes in order:
-/// other worktrees first, branch-only cases next, current worktree last.
-struct RemovePlans {
-    others: Vec<RemoveResult>,
-    branch_only: Vec<RemoveResult>,
-    current: Option<RemoveResult>,
-    errors: Vec<anyhow::Error>,
-}
-
-impl RemovePlans {
-    fn has_valid_plans(&self) -> bool {
-        !self.others.is_empty() || !self.branch_only.is_empty() || self.current.is_some()
-    }
-
-    fn record_error(&mut self, e: anyhow::Error) {
-        // The remove command collects per-target errors and surfaces each
-        // individually (partial-success path). Render the typed
-        // diagnostic block when present so locked/dirty/etc. errors
-        // carry their hint, falling back to the short label otherwise.
-        let rendered = e.render_diagnostic().unwrap_or_else(|| e.to_string());
-        if !rendered.is_empty() {
-            eprintln!("{rendered}");
-        }
-        self.errors.push(e);
-    }
-}
-
-/// Validate all removal targets, returning categorized plans.
-///
-/// Resolves each branch name, determines whether it's the current worktree,
-/// another worktree, or branch-only, and prepares the removal plan.
-/// Errors are collected (not fatal) to support partial success.
-fn validate_remove_targets(
-    repo: &Repository,
-    branches: Vec<String>,
-    config: &UserConfig,
-    keep_branch: bool,
-    force_delete: bool,
-    force: bool,
-) -> RemovePlans {
-    let current_worktree = repo
-        .current_worktree()
-        .root()
-        .ok()
-        .and_then(|p| dunce::canonicalize(&p).ok());
-
-    // Dedupe inputs to avoid redundant planning/execution
-    let branches: Vec<_> = {
-        let mut seen = HashSet::new();
-        branches
-            .into_iter()
-            .filter(|b| seen.insert(b.clone()))
-            .collect()
-    };
-
-    let deletion_mode = BranchDeletionMode::from_flags(keep_branch, force_delete);
-    let worktrees = repo.list_worktrees().ok();
-
-    // Capture once for the validation loop. Validation only reads — actual
-    // removals run later in `handle_remove_output`, so ref state is stable
-    // across candidates here. Errors propagate to per-candidate calls, which
-    // fall back to capturing internally when None.
-    let snapshot = repo.capture_refs().ok();
-
-    let mut plans = RemovePlans {
-        others: Vec::new(),
-        branch_only: Vec::new(),
-        current: None,
-        errors: Vec::new(),
-    };
-
-    for branch_name in &branches {
-        let resolved = match resolve_worktree_arg(repo, branch_name) {
-            Ok(r) => r,
-            Err(e) => {
-                plans.record_error(e);
-                continue;
-            }
-        };
-
-        match resolved {
-            ResolvedWorktree::Worktree { path, branch } => {
-                // Use canonical paths to avoid symlink/normalization mismatches
-                let path_canonical = dunce::canonicalize(&path).unwrap_or(path);
-                let is_current = current_worktree.as_ref() == Some(&path_canonical);
-
-                if is_current {
-                    match repo.prepare_worktree_removal(
-                        RemoveTarget::Current,
-                        deletion_mode,
-                        force,
-                        config,
-                        None,
-                        worktrees,
-                        snapshot.as_ref(),
-                    ) {
-                        Ok(result) => plans.current = Some(result),
-                        Err(e) => plans.record_error(e),
-                    }
-                    continue;
-                }
-
-                // Non-current worktree: remove by branch name, or by path for
-                // detached worktrees (which have no branch).
-                let target = if let Some(ref branch_name) = branch {
-                    RemoveTarget::Branch(branch_name)
-                } else {
-                    RemoveTarget::Path(&path_canonical)
-                };
-                match repo.prepare_worktree_removal(
-                    target,
-                    deletion_mode,
-                    force,
-                    config,
-                    None,
-                    worktrees,
-                    snapshot.as_ref(),
-                ) {
-                    Ok(result) => plans.others.push(result),
-                    Err(e) => plans.record_error(e),
-                }
-            }
-            ResolvedWorktree::BranchOnly { branch } => {
-                match repo.prepare_worktree_removal(
-                    RemoveTarget::Branch(&branch),
-                    deletion_mode,
-                    force,
-                    config,
-                    None,
-                    worktrees,
-                    snapshot.as_ref(),
-                ) {
-                    Ok(result) => plans.branch_only.push(result),
-                    Err(e) => plans.record_error(e),
-                }
-            }
-        }
-    }
-
-    plans
-}
-
-/// Entry point for the `wt remove` command.
-///
-/// # Command flow
-///
-/// 1. **Validate** all target worktrees up front via `prepare_worktree_removal`
-///    (clean check, branch-deletion-safety check, force-flag handling).
-/// 2. **Approve hooks** (`pre-remove`, `post-remove`, `post-switch`) if
-///    running interactively and any hooks are configured.
-/// 3. **Dispatch to `handle_remove_output`** per target. For each, the output
-///    handler runs `pre-remove` hooks in the worktree, then either:
-///    - **Foreground** (`--foreground`): stop fsmonitor → rename into
-///      `.git/wt/trash/<name>-<timestamp>/` → prune metadata → delete branch
-///      → synchronous `remove_dir_all` on the staged directory.
-///    - **Background** (default): stop fsmonitor → rename + prune +
-///      synchronous branch delete → spawn detached `rm -rf` on the staged
-///      directory. Cross-filesystem or locked worktrees fall back to
-///      `git worktree remove` in the detached process.
-/// 4. **Post-remove hooks** run in the background after dispatch.
-/// 5. **Internal sweep** (fire-and-forget, after primary output): stale
-///    `.git/wt/trash/` entries older than 24 hours are removed by a detached
-///    `rm -rf`, and orphaned `git fsmonitor--daemon` processes (worktree gone)
-///    are terminated. Runs last so it never delays the user-visible progress
-///    or success message. See [`commands::process::run_internal_sweep`].
-fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
-    let json_mode = args.format == SwitchFormat::Json;
-    let verify = args.hooks.resolve();
-    UserConfig::load()
-        .context("Failed to load config")
-        .and_then(|config| {
-            let repo = Repository::current().context("Failed to remove worktree")?;
-
-            // CLI flags override config; otherwise fall through to [remove] delete-branch
-            // (defaults to true).
-            let project = repo.project_identifier().ok();
-            let cli_override = flag_pair(args.delete_branch, args.no_delete_branch);
-            let delete_branch =
-                cli_override.unwrap_or_else(|| config.remove(project.as_deref()).delete_branch());
-
-            // Validate conflicting flags
-            if !delete_branch && args.force_delete {
-                return Err(worktrunk::git::GitError::Other {
-                    message: "Cannot use --force-delete with delete-branch=false (set via --no-delete-branch or [remove] delete-branch = false)".into(),
-                }
-                .into());
-            }
-
-            // Helper: build and approve, once, the frozen hook plan the
-            // removal will run. Every hook (`pre-remove` / `post-remove` per
-            // removed worktree, `post-switch` per post-removal destination) is
-            // selected from the invoking worktree's `.config/wt.toml` — the
-            // worktree `wt remove` ran in. `!verify` (`--no-hooks`) or a
-            // declined prompt yields an empty plan — every executor then runs
-            // no project hooks.
-            let approve_remove = |removed_worktree_paths: &[&Path],
-                                  destination_paths: &[&Path],
-                                  yes: bool|
-             -> anyhow::Result<ApprovedHookPlan> {
-                if !verify {
-                    return Ok(ApprovedHookPlan::empty());
-                }
-                // Non-fatal: a worktree with no project hooks must remove even
-                // when the project identifier can't be resolved (the plan ends
-                // up empty and `approve` never needs it). Matches the pre-plan
-                // behaviour where the empty-batch fast path ran first.
-                let project_id = repo.project_identifier().ok();
-                let pid = project_id.as_deref();
-                let project_config = repo.load_project_config()?;
-                let mut builder = HookPlanBuilder::new(project_config.as_ref(), &config, pid);
-                for &wt_path in removed_worktree_paths {
-                    builder.add(wt_path, &[HookType::PreRemove, HookType::PostRemove]);
-                }
-                let mut seen_dests = std::collections::HashSet::new();
-                for &dest in destination_paths {
-                    if !seen_dests.insert(dest) {
-                        continue;
-                    }
-                    builder.add(dest, &[HookType::PostSwitch]);
-                }
-                match builder.finish().approve(pid, yes)? {
-                    Some(plan) => Ok(plan),
-                    None => {
-                        eprintln!(
-                            "{}",
-                            info_message("Commands declined, continuing removal without hooks")
-                        );
-                        Ok(ApprovedHookPlan::empty())
-                    }
-                }
-            };
-
-            let branches = args.branches;
-
-            if branches.is_empty() {
-                // Single worktree removal: validate FIRST, then approve, then execute
-                let result = repo
-                    .prepare_worktree_removal(
-                        RemoveTarget::Current,
-                        BranchDeletionMode::from_flags(!delete_branch, args.force_delete),
-                        args.force,
-                        &config,
-                        None,
-                        None,
-                        None,
-                    )
-                    .context("Failed to remove worktree")?;
-
-                // Early exit for benchmarking time-to-first-output
-                if std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some() {
-                    return Ok(());
-                }
-
-                // "Approve at the Gate": approval happens AFTER validation passes
-                let plan = approve_remove(
-                    result.removed_worktree_path().as_slice(),
-                    result.destination_path().as_slice(),
-                    yes,
-                )?;
-
-                let mut announcer = HookAnnouncer::new(&repo, &config, false);
-                handle_remove_output(
-                    &result,
-                    args.foreground,
-                    &plan,
-                    false,
-                    false,
-                    &mut announcer,
-                    BackgroundFallbackMode::Detached,
-                )?;
-                announcer.flush()?;
-                if json_mode {
-                    let json = serde_json::json!([result.to_json()]);
-                    println!("{}", serde_json::to_string_pretty(&json)?);
-                }
-                // Fire-and-forget repo-wide internal cleanup (stale trash +
-                // orphaned fsmonitor daemons) — runs after primary output so
-                // it never delays the user-visible progress/success message.
-                commands::process::run_internal_sweep(&repo);
-                Ok(())
-            } else {
-                // Multi-worktree removal: validate ALL first, then approve, then execute
-                let plans = validate_remove_targets(
-                    &repo,
-                    branches,
-                    &config,
-                    !delete_branch,
-                    args.force_delete,
-                    args.force,
-                );
-
-                if !plans.has_valid_plans() {
-                    anyhow::bail!("");
-                }
-
-                // Early exit for benchmarking time-to-first-output
-                if std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some() {
-                    return Ok(());
-                }
-
-                // Approve hooks (only if we have valid plans). Each removed
-                // worktree's `pre-remove` / `post-remove` is approved against
-                // that worktree's config, and its `post-switch` against the
-                // worktree the user lands in — see `approve_remove` above.
-                // (`destination_targets` is mostly the primary worktree
-                // repeated; the helper dedups by template.)
-                let all_plans = || {
-                    plans
-                        .others
-                        .iter()
-                        .chain(&plans.branch_only)
-                        .chain(plans.current.iter())
-                };
-                let removed_targets: Vec<&Path> =
-                    all_plans().filter_map(|r| r.removed_worktree_path()).collect();
-                let destination_targets: Vec<&Path> =
-                    all_plans().filter_map(|r| r.destination_path()).collect();
-                let plan = approve_remove(&removed_targets, &destination_targets, yes)?;
-
-                // Execute all validated plans: others first, branch-only next, current last
-                let show_branch =
-                    plans.others.len() + plans.branch_only.len() + plans.current.iter().len() > 1;
-                let run = |result: &RemoveResult| -> anyhow::Result<()> {
-                    let mut announcer = HookAnnouncer::new(&repo, &config, show_branch);
-                    handle_remove_output(
-                        result,
-                        args.foreground,
-                        &plan,
-                        false,
-                        false,
-                        &mut announcer,
-                        BackgroundFallbackMode::Detached,
-                    )?;
-                    announcer.flush()
-                };
-                for result in &plans.others {
-                    run(result)?;
-                }
-                for result in &plans.branch_only {
-                    run(result)?;
-                }
-                if let Some(ref result) = plans.current {
-                    run(result)?;
-                }
-
-                if json_mode {
-                    let json_items: Vec<serde_json::Value> = plans
-                        .others
-                        .iter()
-                        .chain(&plans.branch_only)
-                        .chain(plans.current.as_ref())
-                        .map(RemoveResult::to_json)
-                        .collect();
-                    println!("{}", serde_json::to_string_pretty(&json_items)?);
-                }
-
-                // Fire-and-forget repo-wide internal cleanup (stale trash +
-                // orphaned fsmonitor daemons) — runs after primary output so
-                // it never delays the user-visible progress/success messages.
-                commands::process::run_internal_sweep(&repo);
-
-                if !plans.errors.is_empty() {
-                    anyhow::bail!("");
-                }
-
-                Ok(())
-            }
-        })
+    handle_picker(
+        branches,
+        remotes,
+        false,
+        None,
+        SwitchFormat::Text,
+        None,
+        &[],
+    )
 }
 
 /// Rayon thread count sized for mixed git+network I/O workloads.
@@ -1134,8 +759,8 @@ fn parse_cli() -> Option<Cli> {
     // The same early parse also tells us whether this is help for the top
     // level or `wt step`, so the splice path in `augment_help` has no
     // separate arg scanner.
-    let (directory, config, alias_help_context) = parse_early_globals();
-    apply_global_options(directory, config);
+    let (directory, config, config_overrides, alias_help_context) = parse_early_globals();
+    apply_global_options(directory, config, config_overrides);
 
     // Handle --help with pager before clap processes it.
     // Exits the process on a help/version/doc request; otherwise returns.
@@ -1155,7 +780,11 @@ fn parse_cli() -> Option<Cli> {
     Some(Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit()))
 }
 
-fn apply_global_options(directory: Option<std::path::PathBuf>, config: Option<std::path::PathBuf>) {
+fn apply_global_options(
+    directory: Option<std::path::PathBuf>,
+    config: Option<std::path::PathBuf>,
+    config_overrides: Vec<String>,
+) {
     // Initialize base path from -C flag if provided
     if let Some(path) = directory {
         set_base_path(path);
@@ -1165,11 +794,16 @@ fn apply_global_options(directory: Option<std::path::PathBuf>, config: Option<st
     if let Some(path) = config {
         set_config_path(path);
     }
+
+    // Record any --config-set overrides for the config loader.
+    if !config_overrides.is_empty() {
+        set_config_overrides(config_overrides);
+    }
 }
 
-/// Parse global options (`-C`, `--config`) and detect whether this invocation
-/// renders help that should include the configured aliases — in a single pass
-/// against the real `Cli` definition.
+/// Parse global options (`-C`, `--config`, `--config-set`) and detect whether this
+/// invocation renders help that should include the configured aliases — in a
+/// single pass against the real `Cli` definition.
 ///
 /// Uses `ignore_errors(true)` so unknown args, missing values, and `--help`
 /// don't abort parsing — we just read what matched. This lets `wt -C other
@@ -1182,16 +816,21 @@ fn apply_global_options(directory: Option<std::path::PathBuf>, config: Option<st
 fn parse_early_globals() -> (
     Option<std::path::PathBuf>,
     Option<std::path::PathBuf>,
+    Vec<String>,
     Option<commands::HelpContext>,
 ) {
     let cmd = cli::build_command()
         .ignore_errors(true)
         .disable_help_flag(true);
     let Ok(matches) = cmd.try_get_matches_from(std::env::args_os()) else {
-        return (None, None, None);
+        return (None, None, Vec::new(), None);
     };
     let directory = matches.get_one::<std::path::PathBuf>("directory").cloned();
     let config = matches.get_one::<std::path::PathBuf>("config").cloned();
+    let config_overrides = matches
+        .get_many::<String>("config_override")
+        .map(|values| values.cloned().collect())
+        .unwrap_or_default();
     // Top-level help: `wt --help` (or `-h`, or bare `wt` via `arg_required_else_help`)
     // lands here with no subcommand matched. Step help: `wt step --help` (or
     // `-h`, or bare `wt step`) matches `step` with nothing past it. Other
@@ -1201,7 +840,7 @@ fn parse_early_globals() -> (
         Some(("step", sub)) if sub.subcommand_name().is_none() => Some(commands::HelpContext::Step),
         _ => None,
     };
-    (directory, config, alias_help_context)
+    (directory, config, config_overrides, alias_help_context)
 }
 
 fn init_command_log(command_line: &str) {
@@ -1260,7 +899,7 @@ fn dispatch_command(
 ) -> anyhow::Result<()> {
     match command {
         Commands::Config { action } => handle_config_command(action, yes),
-        Commands::Step { action } => handle_step_command(action, yes),
+        Commands::Step { action } => handle_step_command(action, working_dir, yes),
         Commands::Hook { action } => handle_hook_command(action, yes),
         Commands::Select { branches, remotes } => handle_select_command(branches, remotes),
         Commands::List(args) => handle_list_command(args),
@@ -1374,7 +1013,7 @@ fn format_command_error(error: &anyhow::Error) -> String {
                         false,
                         "Multiline error without CommandError or context: {msg}"
                     );
-                    log::warn!("Multiline error without CommandError or context: {msg}");
+                    tracing::warn!("Multiline error without CommandError or context: {msg}");
                     let normalized = msg.replace("\r\n", "\n").replace('\r', "\n");
                     let _ = writeln!(out, "{}", error_message("Command failed"));
                     let _ = writeln!(out, "{}", format_with_gutter(&normalized, None));
@@ -1426,18 +1065,19 @@ fn print_help_to_stderr() {
 }
 
 fn main() {
-    // Capture the startup working directory before anything else. This is
-    // used by shell_exec to resolve relative `GIT_*` path variables inherited
-    // from a parent `git` (e.g. when invoked via `git wt ...` with
-    // `alias.wt = "!wt"`) against a stable reference, rather than against
-    // each child command's `current_dir`. See issue #1914.
+    // Capture startup state before anything else: the working directory
+    // (used by shell_exec to resolve relative `GIT_*` path variables
+    // inherited from a parent `git` — e.g. when invoked via `git wt ...`
+    // with `alias.wt = "!wt"` — against a stable reference, rather than
+    // against each child command's `current_dir`; see issue #1914) and the
+    // foreground thread (exempt from the command semaphore).
     //
     // `[wt-trace]` spans before the logger is registered would silently
-    // no-op, so the prelude up to `init_logging` — `init_startup_cwd`,
+    // no-op, so the prelude up to `init_logging` — `init_startup`,
     // `init_rayon_thread_pool`, `force_color_output`, `parse_cli` — isn't
     // attributed. If startup itself becomes the suspect, capture it as
     // wall-clock minus the sum of post-init spans.
-    worktrunk::shell_exec::init_startup_cwd();
+    worktrunk::shell_exec::init_startup();
 
     init_rayon_thread_pool();
 
@@ -1451,14 +1091,20 @@ fn main() {
     let Cli {
         directory,
         config,
+        config_override,
         verbose,
         yes,
         command,
     } = cli;
+    // `WORKTRUNK_VERBOSE` provides a baseline verbosity the `-v`/`-vv` flags
+    // raise but never lower (`max`). It also drives shell completion, which
+    // exits in `parse_cli` before reaching here — see
+    // `completion::maybe_handle_env_completion`.
+    let verbose = verbose.max(logging::env_verbose_level());
     // Globals were already applied in `parse_cli` before help rendering;
     // OnceLock makes this call a no-op, but keeping it avoids touching the
     // existing destructure pattern.
-    apply_global_options(directory.clone(), config);
+    apply_global_options(directory.clone(), config, config_override);
 
     // Latch warning suppression for commands whose UX is broken by stderr
     // noise — TUI pickers (`switch` without a branch, `select`) and
@@ -1517,6 +1163,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Context;
     use worktrunk::git::CommandError;
 
     fn permission_denied_command_error() -> CommandError {

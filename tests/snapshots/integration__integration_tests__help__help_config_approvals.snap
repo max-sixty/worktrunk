@@ -9,13 +9,9 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
-    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
-    NO_COLOR: ""
-    PSModulePath: ""
-    SHELL: ""
     TERM: alacritty
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -42,6 +38,7 @@ wt config approvals - Manage command approvals
 Usage: [1m[36mwt config approvals[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 
 [1m[32mCommands:[0m
+  [1m[36mlist[0m   List project commands and their approval status
   [1m[36madd[0m    Store approvals in approvals.toml
   [1m[36mclear[0m  Clear approved commands from approvals.toml
 
@@ -56,8 +53,11 @@ Usage: [1m[36mwt config approvals[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
       [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
+      [1m[36m--config-set[0m[36m [0m[36m<toml>[0m
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to apply the same level everywhere — including shell completion, which no flag can reach
 
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
@@ -66,14 +66,20 @@ Project hooks and project aliases prompt for approval on first run to prevent un
 
 [1m[32mExamples[0m
 
+List commands and their approval status for current project:
+[107m [0m [2m[0m[2m[34mwt[0m[2m config approvals list[0m
+
 Pre-approve all hook and alias commands for current project:
 [107m [0m [2m[0m[2m[34mwt[0m[2m config approvals add[0m
 
 Clear approvals for current project:
 [107m [0m [2m[0m[2m[34mwt[0m[2m config approvals clear[0m
 
+Clear only approvals for commands no longer in the project config:
+[107m [0m [2m[0m[2m[34mwt[0m[2m config approvals clear [0m[2m[36m--stale[0m
+
 Clear global approvals:
-[107m [0m [2m[0m[2m[34mwt[0m[2m config approvals clear [0m[2m[36m--global[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config approvals clear [0m[2m[36m--global[0m
 
 [1m[32mHow approvals work[0m
 

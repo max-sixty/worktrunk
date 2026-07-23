@@ -60,7 +60,7 @@ impl Repository {
             && let Some(url) = self.effective_remote_url(remote)
             && let Some(platform) = platform_from_url(&url)
         {
-            log::debug!("Detected CI platform {platform} from remote '{remote}' (hint)");
+            tracing::debug!(platform = %platform, remote = %remote, "Detected CI platform {platform} from remote '{remote}' (hint)");
             return Some(platform);
         }
 
@@ -68,7 +68,7 @@ impl Repository {
             && let Some(url) = self.effective_remote_url(&remote)
             && let Some(platform) = platform_from_url(&url)
         {
-            log::debug!("Detected CI platform {platform} from remote '{remote}'");
+            tracing::debug!(platform = %platform, remote = %remote, "Detected CI platform {platform} from remote '{remote}'");
             return Some(platform);
         }
 
@@ -90,11 +90,12 @@ impl Repository {
                 .map(str::to_string)?;
             match raw.parse::<CiPlatform>() {
                 Ok(platform) => {
-                    log::debug!("Using CI platform from config: {platform}");
+                    tracing::debug!(platform = %platform, "Using CI platform from config: {platform}");
                     Some(platform)
                 }
                 Err(_) => {
-                    log::warn!(
+                    tracing::warn!(
+                        value = %raw,
                         "Invalid CI platform in config: '{raw}'. Expected 'github', 'gitlab', 'gitea', or 'azure-devops'."
                     );
                     None

@@ -177,6 +177,51 @@ pub enum UnknownWarning {
     NestedUnknown { path: String },
 }
 
+/// Position within `C::Other`'s unknown tree while walking `C`'s nested
+/// unknowns. A nested key that's schema-unknown in `C` but *valid* in
+/// `C::Other` (e.g. `list.columns` — a user-config display setting — placed in
+/// project config) should redirect there rather than read "unknown field". We
+/// answer "is this leaf valid in the other config?" by walking the other
+/// config's unknown tree in lockstep: a key valid there never appears in that
+/// tree, so its absence is the signal.
+#[derive(Clone, Copy)]
+enum OtherStatus<'a> {
+    /// An ancestor section is absent or wholly unknown in `C::Other`, so
+    /// nothing at or below this point is valid there.
+    UnknownSection,
+    /// Within a section that exists in `C::Other`. Carries the corresponding
+    /// node in the other tree, or `None` once no further unknowns are recorded
+    /// — i.e. every key at or below here is valid in the other config.
+    Known(Option<&'a UnknownTree>),
+}
+
+impl<'a> OtherStatus<'a> {
+    /// Whether `key` at the current level is a valid key in `C::Other`.
+    fn key_is_valid_in_other(self, key: &str) -> bool {
+        match self {
+            OtherStatus::UnknownSection => false,
+            OtherStatus::Known(None) => true,
+            OtherStatus::Known(Some(node)) => !node.keys.contains(key),
+        }
+    }
+
+    /// Descend into `key`, returning the status for its children.
+    fn descend(self, key: &str) -> OtherStatus<'a> {
+        match self {
+            OtherStatus::UnknownSection => OtherStatus::UnknownSection,
+            OtherStatus::Known(None) => OtherStatus::Known(None),
+            OtherStatus::Known(Some(node)) => {
+                if node.keys.contains(key) {
+                    // Whole subtree is unknown in the other config too.
+                    OtherStatus::UnknownSection
+                } else {
+                    OtherStatus::Known(node.nested.get(key))
+                }
+            }
+        }
+    }
+}
+
 /// Collect structured warnings for `raw_contents` under config type `C`.
 ///
 /// Top-level classification reads the *raw* tree (so deprecated top-level
@@ -184,6 +229,14 @@ pub enum UnknownWarning {
 /// `[commit.generation]`"). Nested classification reads the *migrated* tree,
 /// so patterns the deprecation system already warns about (e.g.,
 /// `switch.no-cd`, `merge.no-ff`) don't double-warn here.
+///
+/// A misplaced *nested* key is redirected to `C::Other` when it's valid there
+/// — determined by walking `C::Other`'s own unknown tree for the same content
+/// (see the private `OtherStatus` helper). If that other-config analysis is
+/// unreliable, the walk falls back to treating nested keys as unknown, so only
+/// the hard-coded
+/// [`nested_key_belongs_in`](crate::config::nested_key_belongs_in) redirects
+/// still fire.
 ///
 /// Returns an empty vec if either analysis is unreliable — the load path
 /// surfaces parse/type errors elsewhere.
@@ -196,6 +249,13 @@ pub fn collect_unknown_warnings<C: WorktrunkConfig>(raw_contents: &str) -> Vec<U
     let migrated_tree = match compute_unknown_tree::<C>(&migrated) {
         UnknownAnalysis::Parsed(t) => t,
         UnknownAnalysis::Unreliable(_) => return Vec::new(),
+    };
+    // The same content viewed as the *other* config type: a nested key absent
+    // from this tree is valid there. Unreliable → no generalized redirect.
+    let other_analysis = compute_unknown_tree::<C::Other>(&migrated);
+    let other_root = match other_analysis.warn_tree() {
+        Some(t) => OtherStatus::Known(Some(t)),
+        None => OtherStatus::UnknownSection,
     };
 
     let mut out = Vec::new();
@@ -225,7 +285,7 @@ pub fn collect_unknown_warnings<C: WorktrunkConfig>(raw_contents: &str) -> Vec<U
         if !C::is_valid_key(key) {
             continue; // top-level unknowns were classified above against raw
         }
-        walk_nested::<C>(sub, key, &mut out);
+        walk_nested::<C>(sub, key, other_root.descend(key), &mut out);
     }
     out
 }
@@ -233,11 +293,17 @@ pub fn collect_unknown_warnings<C: WorktrunkConfig>(raw_contents: &str) -> Vec<U
 fn walk_nested<C: WorktrunkConfig>(
     tree: &UnknownTree,
     prefix: &str,
+    other: OtherStatus,
     out: &mut Vec<UnknownWarning>,
 ) {
     for key in &tree.keys {
         let path = format!("{prefix}.{key}");
-        out.push(match crate::config::nested_key_belongs_in::<C>(&path) {
+        // Hard-coded redirects (commit.generation leaves) take precedence and
+        // fire even when the other-config analysis is unreliable; otherwise
+        // fall back to the general "valid in the other config" check.
+        let belongs = crate::config::nested_key_belongs_in::<C>(&path)
+            .or_else(|| other.key_is_valid_in_other(key).then(C::Other::description));
+        out.push(match belongs {
             Some(other_description) => UnknownWarning::NestedWrongConfig {
                 path,
                 other_description,
@@ -250,7 +316,7 @@ fn walk_nested<C: WorktrunkConfig>(
             continue;
         }
         let path = format!("{prefix}.{key}");
-        walk_nested::<C>(sub, &path, out);
+        walk_nested::<C>(sub, &path, other.descend(key), out);
     }
 }
 

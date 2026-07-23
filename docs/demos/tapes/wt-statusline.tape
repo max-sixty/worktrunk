@@ -23,7 +23,7 @@ Sleep 1.5s
 
 # Launch Claude Code to show statusline integration
 # Tweet 12 is about seeing branch, diff stats, CI status at a glance in Claude's UI
-# Statusline will show: ~/w/acme.alpha  alpha  +N  ●  | Opus 4.5
+# Statusline will show: ~/w/acme.alpha  alpha  +N  #N  | Opus 4.5
 # Pre-enter pause for big UI takeover
 Sleep 1s
 Type "claude"

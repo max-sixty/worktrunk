@@ -9,13 +9,9 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
-    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
-    NO_COLOR: ""
-    PSModulePath: ""
-    SHELL: ""
     TERM: alacritty
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -29,6 +25,7 @@ info:
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -55,8 +52,11 @@ Usage: [1m[36mwt config create[0m [36m[OPTIONS][0m
       [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
+      [1m[36m--config-set[0m[36m [0m[36m<toml>[0m
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to apply the same level everywhere — including shell completion, which no flag can reach
 
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
@@ -87,6 +87,8 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)[0m
 [107m [0m [2m# - `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)[0m
 [107m [0m [2m# - `{{ branch | codename(2) }}` — deterministic friendly name from a ~1.26M-combo pool (e.g., `malleable-opah`)[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# This is a smaller set than the variables hooks and aliases get (https://worktrunk.dev/hook/#template-variables).[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# **Examples** for repo at `~/code/myproject`, branch `feature/auth`:[0m
 [107m [0m [2m#[0m
@@ -127,12 +129,12 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# ### Claude Code[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [commit.generation][0m
-[107m [0m [2m# command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
+[107m [0m [2m# command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --safe-mode --setting-sources='user' --system-prompt=''"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Codex[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [commit.generation][0m
-[107m [0m [2m# command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"[0m
+[107m [0m [2m# command = "codex exec -m gpt-5.6-luna -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### OpenCode[0m
 [107m [0m [2m#[0m
@@ -160,12 +162,92 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# [list][0m
 [107m [0m [2m# summary = false    # Enable LLM branch summaries (requires [commit.generation])[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# full = false       # Show CI, main…± diffstat, and LLM summaries (--full)[0m
+[107m [0m [2m# full = false       # Show CI status and LLM summaries (--full)[0m
 [107m [0m [2m# branches = false   # Include branches without worktrees (--branches)[0m
 [107m [0m [2m# remotes = false    # Include remote-only branches (--remotes)[0m
 [107m [0m [2m#[0m
+[107m [0m [2m# json-schema = 2    # JSON output schema: 2 (envelope) or 1 (bare array, the current default); unset emits 1 with a warning[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# columns = ["branch", "status", "ci", "path"]   # Columns to show, in order — built-ins or custom headers (omit for the default set)[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# task-timeout-ms = 0   # Kill individual git commands after N ms; 0 disables[0m
 [107m [0m [2m# timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disables[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# `columns` selects and orders the columns to render; omit it for the default set.[0m
+[107m [0m [2m# It is meant to drive a per-invocation alias (https://worktrunk.dev/extending/#aliases)[0m
+[107m [0m [2m# (`wt --config-set 'list.columns=[…]' list`), giving a named view without[0m
+[107m [0m [2m# disturbing the default `wt list`. A static setting works but pins one layout[0m
+[107m [0m [2m# over a table that otherwise adapts to `--full` and terminal width.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Valid built-in names:[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# - `branch` — The branch name[0m
+[107m [0m [2m# - `status` — Git status symbols, plus any user-defined status[0m
+[107m [0m [2m# - `working-diff` — Uncommitted line changes against `HEAD` (header `HEAD±`)[0m
+[107m [0m [2m# - `ahead-behind` — Commits ahead of and behind the default branch (header `main↕`)[0m
+[107m [0m [2m# - `branch-diff` — Line changes against the default branch (header `main…±`)[0m
+[107m [0m [2m# - `summary` — An LLM-generated summary of the branch[0m
+[107m [0m [2m# - `upstream` — Commits ahead of and behind the upstream tracking branch (header `Remote⇅`)[0m
+[107m [0m [2m# - `ci` — CI status of the head commit[0m
+[107m [0m [2m# - `path` — The worktree's path[0m
+[107m [0m [2m# - `url` — Dev-server URL from the `[list] url` template[0m
+[107m [0m [2m# - `commit` — The head commit's short hash[0m
+[107m [0m [2m# - `age` — Time since the last commit[0m
+[107m [0m [2m# - `message` — The head commit's subject[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# A selection mixes built-ins with custom columns (#custom-columns), each named[0m
+[107m [0m [2m# by its `[list.custom-columns]` header (`columns = ["branch", "Ticket", "ci"]`),[0m
+[107m [0m [2m# and is exhaustive: only the listed columns render. Omit `columns` to keep the[0m
+[107m [0m [2m# default set, where custom columns append automatically. A built-in name wins a[0m
+[107m [0m [2m# header collision; the gutter type indicator always shows.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Listing a column forces it on, space permitting: `ci` shows without `--full`,[0m
+[107m [0m [2m# since `--full` only bundles columns into the default table rather than gating a[0m
+[107m [0m [2m# named one. A column whose data source is missing still stays hidden — `summary`[0m
+[107m [0m [2m# needs an LLM command (`[commit.generation]`), `url` needs a `[list] url`[0m
+[107m [0m [2m# template — since listing can't supply the data.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# The selection drives the table and the `wt switch` picker. `wt list --format[0m
+[107m [0m [2m# json` always emits every field, but a listed gated column (`ci`, `summary`)[0m
+[107m [0m [2m# still forces its data collection on, so the JSON carries the same data the[0m
+[107m [0m [2m# table shows.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# #### Custom columns [experimental][0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Custom columns add per-branch context to the `wt list` table. Each[0m
+[107m [0m [2m# `[list.custom-columns]` entry is a column: the key is the header, the template[0m
+[107m [0m [2m# renders each row's cell.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# [list.custom-columns.Ticket][0m
+[107m [0m [2m# template = "{{ vars.ticket }}"   # Required; the result is the cell text[0m
+[107m [0m [2m# width = 20                       # Optional max display width (default: 40)[0m
+[107m [0m [2m# priority = 9                     # Optional drop order when the terminal narrows;[0m
+[107m [0m [2m#                                  # lower = kept longer (default: 9, the URL band)[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Templates may reference `{{ branch }}`, `{{ worktree_path }}`,[0m
+[107m [0m [2m# `{{ worktree_name }}` (empty for branch-only rows), and two per-branch[0m
+[107m [0m [2m# namespaces:[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# - `{{ vars.* }}` — values stored with[0m
+[107m [0m [2m#   `wt config state vars set` (https://worktrunk.dev/config/#wt-config-state-vars).[0m
+[107m [0m [2m# - `{{ git.branch.* }}` — the branch's own git config under `branch.<name>.*`,[0m
+[107m [0m [2m#   read straight from `git config` (e.g. `{{ git.branch.jira }}` for a key you[0m
+[107m [0m [2m#   set yourself, or the git-native `description`). Git lowercases config variable[0m
+[107m [0m [2m#   names, so `branch.<name>.nvciShelf` reads as `{{ git.branch.nvcishelf }}`.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# All standard filters work (`sanitize`, `hash_port`, `codename`, …). A row[0m
+[107m [0m [2m# where the template renders empty (e.g. a branch without the key) shows an[0m
+[107m [0m [2m# empty cell; a column that is empty for every row is dropped from the table.[0m
+[107m [0m [2m# `wt list --format json` includes the rendered values under `columns`.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# A `Jira` column reading a key kept in git config, and a `Summary` column[0m
+[107m [0m [2m# showing just the first line of the git-native branch description:[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# [list.custom-columns.Jira][0m
+[107m [0m [2m# template = "{{ git.branch.jira }}"[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# [list.custom-columns.Summary][0m
+[107m [0m [2m# template = "{{ git.branch.description | lines | first }}"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Commit[0m
 [107m [0m [2m#[0m
@@ -206,7 +288,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# [step.copy-ignored][0m
 [107m [0m [2m# exclude = []   # Additional excludes (e.g., [".cache/", ".turbo/"])[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.worktrees/`). User config and project config exclusions are combined.[0m
+[107m [0m [2m# Built-in excludes (VCS metadata and tool-state directories) always apply; the `wt step copy-ignored` docs (https://worktrunk.dev/step/#wt-step-copy-ignored) list them. User config and project config exclusions are combined.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Aliases[0m
 [107m [0m [2m#[0m
@@ -316,7 +398,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# Available variables (in addition to commit template variables):[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# - `{{ commits }}` — list of commits being squashed[0m
+[107m [0m [2m# - `{{ commit_details }}` — list of commits being squashed; each renders as its subject and exposes `.subject` / `.body`[0m
 [107m [0m [2m# - `{{ target_branch }}` — merge target branch[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Default template:[0m
@@ -347,7 +429,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# </project-guidance>[0m
 [107m [0m [2m# {% endif %}[0m
 [107m [0m [2m# <commits branch="{{ branch }}" target="{{ target_branch }}">[0m
-[107m [0m [2m# {% for commit in commits %}- {{ commit }}[0m
+[107m [0m [2m# {% for detail in commit_details %}- {{ detail.subject }}[0m
 [107m [0m [2m# {% endfor %}</commits>[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# <diffstat>[0m
@@ -363,14 +445,14 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# #### Appending to the prompt [experimental][0m
 [107m [0m [2m#[0m
-[107m [0m [2m# `template-append` adds to the prompt instead of replacing it. The value is rendered as its own minijinja template (same variables) and injected into the default templates' `{{ user_guidance }}` slot — a `<user-guidance>` block right after `<style>`. It applies to both commit and squash. Use it for personal preferences without restating the whole template:[0m
+[107m [0m [2m# `template-append` adds personal conventions to the commit and squash prompts without restating the whole template:[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [commit.generation][0m
 [107m [0m [2m# template-append = """[0m
 [107m [0m [2m# - Explain the rationale in the body, not just the change[0m
 [107m [0m [2m# """[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# The project config (https://worktrunk.dev/config/#project-configuration) has a `template-append` of its own; it renders into a separate `<project-guidance>` block right after `<user-guidance>`.[0m
+[107m [0m [2m# How the fragment renders, and the project-config counterpart: the LLM commits guide (https://worktrunk.dev/llm-commits/#appending-to-the-prompt).[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Hooks[0m
 [107m [0m [2m#[0m
@@ -411,8 +493,7 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Commit-message append [experimental][0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Project-wide commit-message conventions appended to the LLM commit and squash prompts inside a `<project-guidance>` block, after the main template's `<style>` section (and after any user `<user-guidance>`). Rendered as a minijinja (https://docs.rs/minijinja/) template with the same variables as the main commit template (`{{ branch }}`, `{{ git_diff }}`, etc.), so it can reference them directly. The first time the fragment changes, `wt` prompts the user to approve it — the same one-shot gate
-[107m [0m as project-defined hooks.[0m
+[107m [0m [2m# `template-append` adds project-wide conventions to the LLM commit and squash prompts, shared so every teammate's LLM sees the same style guide:[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [commit.generation][0m
 [107m [0m [2m# template-append = """[0m
@@ -420,7 +501,8 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m# - Reference the relevant issue ID in the body[0m
 [107m [0m [2m# """[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Only `template-append` is honored from the project file. The LLM command and the main prompt template stay in user config (https://worktrunk.dev/config/) — they describe per-developer environment (which CLI is installed, which agent the developer prefers). User config has a `[commit.generation] template-append` of its own; it renders into a separate `<user-guidance>` block immediately before this one.[0m
+[107m [0m [2m# The first time the fragment is used (and whenever it changes), `wt` prompts the user to approve it — the same one-shot gate as project-defined hooks. Only `template-append` is honored from the project file; the LLM command and the main prompt template stay in user config (https://worktrunk.dev/config/), since they describe per-developer environment (which CLI is installed, which agent the developer prefers). How the fragment renders: the LLM commits guide
+[107m [0m (https://worktrunk.dev/llm-commits/#appending-to-the-prompt).[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Copy-ignored excludes[0m
 [107m [0m [2m#[0m
@@ -429,7 +511,7 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m# [step.copy-ignored][0m
 [107m [0m [2m# exclude = [".cache/", ".turbo/"][0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.worktrees/`). User config and project config exclusions are combined.[0m
+[107m [0m [2m# Built-in excludes (VCS metadata and tool-state directories) always apply; the `wt step copy-ignored` docs (https://worktrunk.dev/step/#wt-step-copy-ignored) list them. User config and project config exclusions are combined.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Aliases[0m
 [107m [0m [2m#[0m

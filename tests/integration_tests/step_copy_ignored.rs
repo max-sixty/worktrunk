@@ -624,7 +624,7 @@ fn test_copy_ignored_no_default_branch_worktree(mut repo: TestRepo) {
 /// Test copy-ignored in a bare repository setup
 ///
 /// This test reproduces GitHub issue #598: `wt step copy-ignored` fails in bare repo
-/// with error "git ls-files failed: fatal: this operation must be run in a work tree"
+/// with git's "fatal: this operation must be run in a work tree"
 #[test]
 fn test_copy_ignored_bare_repo() {
     use crate::common::{BareRepoTest, TestRepoBase, setup_temp_snapshot_settings, wt_command};
@@ -1107,7 +1107,7 @@ fn test_copy_ignored_directory_with_symlinks(mut repo: TestRepo) {
 
 /// Test that copy errors include file paths in the message (GitHub issue #1084)
 ///
-/// Tests both the directory recursive copy error path (copy_dir_recursive_fallback)
+/// Tests both the directory recursive copy error path (copy_dir_recursive)
 /// and the top-level file copy error path (step_copy_ignored main loop).
 #[cfg(unix)]
 #[rstest]
@@ -1149,7 +1149,7 @@ fn test_copy_ignored_error_includes_path_directory(mut repo: TestRepo) {
 
 /// Test that top-level file copy errors include file paths (GitHub issue #1084)
 ///
-/// This exercises the error path in the main copy loop (not copy_dir_recursive_fallback).
+/// This exercises the error path in the main copy loop (not copy_dir_recursive).
 #[cfg(unix)]
 #[rstest]
 fn test_copy_ignored_error_includes_path_file(mut repo: TestRepo) {
@@ -1435,7 +1435,7 @@ fn test_copy_ignored_preserves_file_executable_permissions(mut repo: TestRepo) {
     );
 
     // Verify executable file inside directory was copied with permissions preserved
-    // (exercises copy.rs copy_dir_recursive_inner path)
+    // (exercises copy.rs copy_dir_recursive path)
     let dest_exec = feature_path.join("node_modules/.bin/playwright");
     assert!(dest_exec.exists(), "executable file should be copied");
     let dest_mode = fs::metadata(&dest_exec).unwrap().permissions().mode() & 0o777;
@@ -1742,5 +1742,127 @@ fn test_copy_ignored_no_matches_json(mut repo: TestRepo) {
     assert_eq!(
         parsed["entries"].as_array().expect("entries array").len(),
         0
+    );
+}
+
+// ============================================================================
+// --require-include flag
+// ============================================================================
+
+/// `--require-include` with no `.worktreeinclude` copies nothing and explains
+/// why (text mode). The recovery hint names the flag to drop, not a config key.
+#[rstest]
+fn test_copy_ignored_require_include_gates_and_hint(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+    fs::write(repo.root_path().join(".env"), "SECRET=value").unwrap();
+    fs::write(repo.root_path().join(".gitignore"), ".env\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored", "--require-include"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "copy-ignored should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--require-include"),
+        "stderr should explain the --require-include gate: {stderr}"
+    );
+    assert!(
+        !feature_path.join(".env").exists(),
+        "--require-include with no .worktreeinclude copies nothing"
+    );
+}
+
+/// The `--require-include` gate surfaces a machine-readable `reason` in JSON mode.
+#[rstest]
+fn test_copy_ignored_require_include_json_reason(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+    fs::write(repo.root_path().join(".env"), "SECRET=value").unwrap();
+    fs::write(repo.root_path().join(".gitignore"), ".env\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored", "--require-include", "--format=json"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let parsed: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).expect("valid JSON");
+    assert_eq!(parsed["reason"], "require-include-no-worktreeinclude");
+    assert_eq!(parsed["files"], 0);
+    assert!(!feature_path.join(".env").exists());
+}
+
+/// With `.worktreeinclude` present, `--require-include` does not gate — matching
+/// files copy as usual (the flag doesn't bypass the include filter).
+#[rstest]
+fn test_copy_ignored_require_include_with_worktreeinclude(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+    fs::write(repo.root_path().join(".env"), "SECRET=value").unwrap();
+    fs::write(repo.root_path().join(".gitignore"), ".env\n").unwrap();
+    fs::write(repo.root_path().join(".worktreeinclude"), ".env\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored", "--require-include"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(
+        feature_path.join(".env").exists(),
+        ".env should copy when --require-include is set and .worktreeinclude matches it"
+    );
+}
+
+/// The gate checks the SOURCE worktree for `.worktreeinclude`, not the
+/// destination. Here only the destination has the file.
+#[rstest]
+fn test_copy_ignored_require_include_checks_source(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+    fs::write(repo.root_path().join(".env"), "SECRET=value").unwrap();
+    fs::write(repo.root_path().join(".gitignore"), ".env\n").unwrap();
+    // `.worktreeinclude` in the DESTINATION only — source (main) lacks it.
+    fs::write(feature_path.join(".worktreeinclude"), ".env\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored", "--require-include"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(
+        !feature_path.join(".env").exists(),
+        "source has no .worktreeinclude — gate fires regardless of destination"
+    );
+}
+
+/// An empty `.worktreeinclude` is present (gate passes) but matches nothing,
+/// so nothing copies — distinct from the missing-file gate case.
+#[rstest]
+fn test_copy_ignored_require_include_empty_worktreeinclude(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+    fs::write(repo.root_path().join(".env"), "SECRET=value").unwrap();
+    fs::write(repo.root_path().join(".gitignore"), ".env\n").unwrap();
+    fs::write(repo.root_path().join(".worktreeinclude"), "").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored", "--require-include"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(
+        !feature_path.join(".env").exists(),
+        "empty .worktreeinclude matches nothing — nothing copied"
     );
 }

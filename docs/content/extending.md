@@ -27,17 +27,7 @@ Hooks and aliases live in the same TOML config and share the [template engine](@
 
 ## Hooks
 
-Ten hooks cover five lifecycle events:
-
-| Event | `pre-` (blocking) | `post-` (background) |
-|-------|-------------------|---------------------|
-| **switch** | `pre-switch` | `post-switch` |
-| **start** | `pre-start` | `post-start` |
-| **commit** | `pre-commit` | `post-commit` |
-| **merge** | `pre-merge` | `post-merge` |
-| **remove** | `pre-remove` | `post-remove` |
-
-`pre-*` hooks block: failure aborts the operation. `post-*` hooks run in the background.
+Ten hooks cover five lifecycle events — switch, start, commit, merge, remove — each with a blocking `pre-` variant (failure aborts the operation) and a background `post-` variant. [`wt hook`](@/hook.md#hook-types) maps each hook to its timing and typical uses.
 
 ```toml
 [pre-start]
@@ -88,6 +78,8 @@ For indexing (`{{ args[0] }}`), looping, and counting, see [Passing values](@/ho
 
 Tokens after `--` forward unconditionally, bypassing any binding. Writing `wt deploy -- --branch=foo` forwards the literal `--branch=foo` to `{{ args }}` even though the template references `{{ branch }}`.
 
+An alias that forwards `{{ args }}` to a `wt` command — like `co = "wt switch {{ args }}"` or `cm = "wt step commit {{ args }}"` — inherits that command's argument and flag completion, so `wt co <Tab>` completes branches the same way `wt switch <Tab>` does.
+
 ### Inspecting and previewing
 
 - `wt config alias show <name>` prints the template.
@@ -119,14 +111,25 @@ Every step sees the same `{{ args }}` and bound variables. `wt release -- --dry-
 
 ### Deferring expansion to a nested `wt` command
 
-Alias templates render once at dispatch, using the alias-invocation worktree's context. A nested `wt` command in the alias body (for example `wt switch --execute '…'`) therefore receives already-rendered text, so a variable like `{{ worktree_path }}` inside the inner command's template resolves to the *outer* worktree rather than the one `wt switch` is targeting. Wrap the inner template in `{% raw %}…{% endraw %}` so it passes through unrendered and the inner `wt` command expands it in its own context:
+A `wt step for-each` alias that prints the same branch in every worktree is rendering `{{ branch }}` too early. An alias body renders once at dispatch, in the invoking worktree, so a bare `{{ branch }}` is baked to that worktree's branch before for-each iterates. (`wt config alias dry-run <name>` shows the rendered body, with the value already baked in.)
+
+`{% raw %}…{% endraw %}` defers the variable: it survives the dispatch render as a literal `{{ branch }}`, and for-each expands it per worktree. One catch for `for-each`: the deferred `{{ branch }}` has spaces, so the alias body's `sh -c` splits it into `{{`, `branch`, `}}` before for-each sees it (`Failed to expand for-each argument: syntax error`). Give for-each its own `sh -c '…'` to keep the value one token:
+
+```toml
+[aliases]
+show-branches = "wt step for-each -- sh -c 'echo {% raw %}{{ branch }}{% endraw %}'"
+```
+
+`wt show-branches` prints each worktree's own branch.
+
+`wt switch --execute` defers the same way, without the extra wrapper: its `--execute '…'` argument is already a single quoted string, so only `{% raw %}` is needed. Here `{{ worktree_path }}` expands against the worktree being created, not the one the alias ran from:
 
 ```toml
 [aliases]
 echo-target = "wt switch {{ args }} --no-cd --execute 'echo {% raw %}{{ worktree_path }}{% endraw %}'"
 ```
 
-`wt echo-target other` now prints the path of the `other` worktree, not the worktree the alias was invoked from.
+A repo-level variable like `{{ default_branch }}` needs no deferral: it is identical in every worktree, so a bare `{{ default_branch }}` is already correct everywhere.
 
 ### Recipe: rebase every worktree onto its upstream
 
@@ -134,14 +137,15 @@ echo-target = "wt switch {{ args }} --no-cd --execute 'echo {% raw %}{{ worktree
 [aliases]
 up = '''
 git fetch --all --prune && wt step for-each -- sh -c '
-  git rev-parse --verify @{u} >/dev/null 2>&1 || exit 0
+  git rev-parse --verify -q @{u} >/dev/null || exit 0
   g=$(git rev-parse --git-dir)
   test -d "$g/rebase-merge" -o -d "$g/rebase-apply" && exit 0
+  git update-index --refresh -q >/dev/null || true
   git rebase @{u} --no-autostash || git rebase --abort
 ''''
 ```
 
-`wt up` fetches all remotes, then iterates every worktree: skip if no upstream, skip if mid-rebase, otherwise rebase and auto-abort on conflict.
+`wt up` fetches all remotes, then iterates every worktree: skip if no upstream, skip if mid-rebase, refresh the index to drop stale stat entries, then rebase and auto-abort on conflict. It rebases onto git-native `@{u}` rather than a `{{ … }}` template, so git resolves each worktree's own upstream and there is nothing to defer.
 
 ### Recipe: move or copy in-progress changes to a new worktree
 
@@ -194,6 +198,7 @@ Arguments pass through verbatim, stdio is inherited, and the child's exit code p
 ### Examples
 
 - [`worktrunk-sync`](https://github.com/pablospe/worktrunk-sync): rebases stacked worktree branches in the dependency order inferred from git history. Install with `cargo install worktrunk-sync`, then run as `wt sync`.
+- [`workz`](https://github.com/rohansx/workz): provisions the current worktree with a collision-free port range plus its own database and Docker Compose project, merged into `.env.local`, so parallel worktrees don't clash. Install with `cargo install workz`, drop its [`wt-workz`](https://github.com/rohansx/workz/blob/main/examples/wt-workz) adapter on `PATH`, then run as `wt workz`.
 
 ## Reference: hooks vs. aliases
 

@@ -16,7 +16,7 @@
 //!
 //! // Create a test repo with 8 worktrees
 //! let temp = create_repo(&RepoConfig::typical(8));
-//! let repo_path = temp.path().join("main");
+//! let repo_path = temp.path().join("repo");
 //!
 //! // Invalidate caches for cold benchmark
 //! invalidate_caches_auto(&repo_path);
@@ -99,13 +99,57 @@ impl RepoConfig {
         Self {
             commits_on_main: 3,
             files: 3,
-            branches: 2, // no-worktree-1, no-worktree-2
+            branches: 2, // feature-000, feature-001 (no worktree)
             commits_per_branch: 0,
             worktrees: 6,
             worktree_commits_ahead: 15, // feature worktree has many commits
             worktree_uncommitted_files: 1,
         }
     }
+}
+
+/// A parsed `wt-perf setup` config string.
+///
+/// Most configs map onto the flat [`RepoConfig`] (every worktree/branch
+/// identical); the composite fixtures build varied states instead:
+/// `mixed-W-B` via `create_mixed_repo_at`, `prune-M-U` via
+/// [`create_prune_repo_at`]. (`prune-real[-M-U]` is not a `SetupConfig`:
+/// it is managed under `target/wt-perf/bench-repos/` and takes no path — see
+/// [`ensure_prune_real_repo`].)
+pub enum SetupConfig {
+    Flat(RepoConfig),
+    Mixed { worktrees: usize, branches: usize },
+    Prune { merged: usize, unmerged: usize },
+}
+
+impl SetupConfig {
+    /// Create the repo at `base_path`; returns `(worktrees, branches)`.
+    pub fn create_at(&self, base_path: &Path) -> (usize, usize) {
+        match self {
+            SetupConfig::Flat(cfg) => {
+                create_repo_at(cfg, base_path);
+                (cfg.worktrees, cfg.branches)
+            }
+            SetupConfig::Mixed {
+                worktrees,
+                branches,
+            } => {
+                create_mixed_repo_at(*worktrees, *branches, base_path);
+                (*worktrees, *branches)
+            }
+            SetupConfig::Prune { merged, unmerged } => {
+                create_prune_repo_at(*merged, *unmerged, base_path);
+                (merged + unmerged + 1, merged + unmerged)
+            }
+        }
+    }
+}
+
+/// Parse a `<prefix>A-B` config string (e.g. `mixed-4-8`) into its two counts.
+pub fn parse_pair(config: &str, prefix: &str) -> Option<(usize, usize)> {
+    let rest = config.strip_prefix(prefix)?;
+    let (a, b) = rest.split_once('-')?;
+    Some((a.parse().ok()?, b.parse().ok()?))
 }
 
 /// Build a `git` command isolated from host context, with config
@@ -117,6 +161,74 @@ fn git_command() -> Command {
     let mut cmd = Command::new("git");
     configure_git_cmd(&mut cmd, Path::new(NULL_DEVICE));
     cmd
+}
+
+/// Cache state a [`bench_wt`] iteration starts from.
+#[derive(Clone, Copy)]
+pub enum CacheState {
+    /// Persistent caches stay hot across iterations (steady-state re-run).
+    Warm,
+    /// [`invalidate_caches_auto`] per iteration: git's own caches (indexes,
+    /// commit graph) plus worktrunk's — a first run against fresh state.
+    Cold,
+    /// [`invalidate_probe_caches`] per iteration: only `.git/wt/cache/` —
+    /// the first scan after new commits land, git's state staying warm.
+    ProbeCold,
+}
+
+/// Run a `wt` benchmark iteration function under criterion, warm or cold.
+///
+/// The one place the warm/cold iteration strategy lives: warm uses plain
+/// `Bencher::iter` (persistent caches stay hot across iterations); the cold
+/// states invalidate the repo's caches immediately before every measured
+/// iteration — see [`CacheState`] for what each clears.
+///
+/// Cold uses `iter_batched` with `BatchSize::PerIteration`, not `SmallInput`:
+/// under `SmallInput`, criterion calls the setup once for an entire batch up
+/// front and then times the routines back-to-back, so only the first run per
+/// batch is actually cold — the rest hit a `.git/wt/cache/` the previous run
+/// just repopulated, biasing the "cold" median warm. `PerIteration` runs
+/// setup → time(routine) per iteration, so every measured run is genuinely
+/// cold; the invalidation is far cheaper than a `wt` subprocess, so the
+/// per-iteration `Instant::now` overhead doesn't dominate. When this fix
+/// landed, cold variance tightened (e.g. `first_output/remove` spread
+/// 2.4ms → 0.65ms) and medians rose to their true cold cost.
+///
+/// `make_cmd` builds a fresh command per iteration; the child's exit status is
+/// asserted so a benchmark can't silently time a failing command. That status
+/// check is the only per-iteration validation — anything stronger (fixture
+/// shape, candidate counts) belongs in a one-time check outside the timed
+/// loop, not on the measured path.
+pub fn bench_wt(
+    b: &mut criterion::Bencher,
+    repo_path: &Path,
+    cache: CacheState,
+    mut make_cmd: impl FnMut() -> Command,
+) {
+    let mut run = move || run_and_check(&mut make_cmd());
+    let invalidate: fn(&Path) = match cache {
+        CacheState::Warm => {
+            b.iter(run);
+            return;
+        }
+        CacheState::Cold => invalidate_caches_auto,
+        CacheState::ProbeCold => invalidate_probe_caches,
+    };
+    b.iter_batched(
+        || invalidate(repo_path),
+        |_| run(),
+        criterion::BatchSize::PerIteration,
+    );
+}
+
+/// Spawn the command, wait, and panic with its stderr if it failed.
+pub fn run_and_check(cmd: &mut Command) {
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "benchmark command failed:\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 /// Run a git command in the given directory. Panics on failure.
@@ -132,6 +244,26 @@ pub fn run_git(path: &Path, args: &[&str]) {
     );
 }
 
+/// Run a prepared git command, panicking on failure and returning trimmed
+/// stdout. Shared body of [`capture_git`] and [`git_stdout`].
+fn run_capture(cmd: &mut Command, path: &Path) -> String {
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "Git command failed: {:?}\nstderr: {}\npath: {}",
+        cmd,
+        String::from_utf8_lossy(&output.stderr),
+        path.display()
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+/// Run a git command in the given directory, panicking on failure and
+/// returning trimmed stdout.
+fn capture_git(path: &Path, args: &[&str]) -> String {
+    run_capture(git_command().args(args).current_dir(path), path)
+}
+
 /// Run a git command, returning whether it succeeded. Does not panic.
 pub fn run_git_ok(path: &Path, args: &[&str]) -> bool {
     git_command()
@@ -139,6 +271,42 @@ pub fn run_git_ok(path: &Path, args: &[&str]) -> bool {
         .current_dir(path)
         .output()
         .is_ok_and(|o| o.status.success())
+}
+
+/// `git init` a fixture repo at `repo_path` (creating the directory) with the
+/// benchmark identity and all background auto-maintenance disabled.
+///
+/// Auto-maintenance must be off: rapid commits in a fixture build loop
+/// trigger detached `git gc` / `git maintenance` runs whose pack-and-prune
+/// steps race the foreground `git add` / `git commit`, producing intermittent
+/// "invalid object ..." / "unable to create temporary file" / "failed to
+/// insert into database" failures partway through a 500-commit fixture.
+/// Modern git enables both `gc.auto` (loose-object threshold) and
+/// `maintenance.auto` (the post-command hook scheduler) by default, so both
+/// are silenced. Fixture builders run an explicit `git gc` once at the end
+/// instead, for a mature-repo shape.
+fn init_bench_repo(repo_path: &Path) {
+    std::fs::create_dir_all(repo_path).unwrap();
+    run_git(repo_path, &["init", "-b", "main"]);
+    run_git(repo_path, &["config", "user.name", "Benchmark"]);
+    run_git(repo_path, &["config", "user.email", "bench@test.com"]);
+    run_git(repo_path, &["config", "gc.auto", "0"]);
+    run_git(repo_path, &["config", "gc.autoPackLimit", "0"]);
+    run_git(repo_path, &["config", "maintenance.auto", "false"]);
+}
+
+/// Run a git plumbing command against a scratch `GIT_INDEX_FILE`, panicking on
+/// failure and returning trimmed stdout. Used to build commits without
+/// touching the repo's working tree or real index (see
+/// `add_diverged_backdrop`).
+fn git_stdout(path: &Path, args: &[&str], index_file: &Path) -> String {
+    run_capture(
+        git_command()
+            .args(args)
+            .current_dir(path)
+            .env("GIT_INDEX_FILE", index_file),
+        path,
+    )
 }
 
 /// Create a test repository from config.
@@ -158,23 +326,7 @@ pub fn create_repo(config: &RepoConfig) -> TempDir {
 /// - Feature worktrees: `base_path.feature-wt-N` (siblings in parent directory)
 pub fn create_repo_at(config: &RepoConfig, base_path: &Path) {
     let repo_path = base_path.to_path_buf();
-    std::fs::create_dir_all(&repo_path).unwrap();
-
-    run_git(&repo_path, &["init", "-b", "main"]);
-    run_git(&repo_path, &["config", "user.name", "Benchmark"]);
-    run_git(&repo_path, &["config", "user.email", "bench@test.com"]);
-    // Disable all background auto-maintenance: rapid commits in the
-    // build loop trigger detached `git gc` / `git maintenance` runs
-    // whose pack-and-prune steps race the foreground `git add` /
-    // `git commit`, producing intermittent "invalid object ..." /
-    // "unable to create temporary file" / "failed to insert into
-    // database" failures partway through a 500-commit fixture. Modern
-    // git enables both `gc.auto` (loose-object threshold) and
-    // `maintenance.auto` (the post-command hook scheduler) by default,
-    // so we have to silence both.
-    run_git(&repo_path, &["config", "gc.auto", "0"]);
-    run_git(&repo_path, &["config", "gc.autoPackLimit", "0"]);
-    run_git(&repo_path, &["config", "maintenance.auto", "false"]);
+    init_bench_repo(&repo_path);
 
     // Create initial file structure
     let num_files = config.files.max(1);
@@ -365,7 +517,7 @@ pub fn invalidate_caches_auto(repo_path: &Path) {
     // simulate by deleting it.
 
     // All worktrunk persistent caches: every kind dir under wt/cache/.
-    let _ = std::fs::remove_dir_all(git_dir.join("wt/cache"));
+    invalidate_probe_caches(repo_path);
 
     // Worktrunk's default-branch cache lives in git config; we have no
     // safe way to edit that file ourselves (escaping rules), so shell
@@ -386,6 +538,53 @@ pub fn invalidate_caches_auto(repo_path: &Path) {
         ),
         Err(e) => eprintln!("wt-perf invalidate: failed to spawn git: {e}"),
     }
+}
+
+/// Invalidate only worktrunk's persistent probe caches (`.git/wt/cache/`).
+///
+/// Models the recurring cold scan: after new commits land on the default
+/// branch, every sha_cache entry keyed on the old tips misses, while git's
+/// own state stays warm — indexes keep their stat data, and the commit graph
+/// and `worktrunk.default-branch` config entry survive a fetch. This is the
+/// "first `wt step prune` after fetching main" shape, and it is safe against
+/// clean-worktree gates: deleting an *index* (as [`invalidate_caches_auto`]
+/// does) doesn't model a cold cache — git treats a missing index as empty, so
+/// `git status` reports every tracked file as a staged deletion, a different
+/// repo state that flips removability checks and silently drops worktree
+/// candidates from a prune scan.
+pub fn invalidate_probe_caches(repo_path: &Path) {
+    let Some(git_dir) = resolve_git_common_dir(repo_path) else {
+        return;
+    };
+    let _ = std::fs::remove_dir_all(git_dir.join("wt/cache"));
+}
+
+/// Rebuild every worktree's index via `git reset -q`.
+///
+/// Used by [`ensure_prune_real_repo`] to heal a fixture whose indexes were
+/// deleted by a stray `wt-perf invalidate` / `timeline --cold` (a missing
+/// index reads as all-tracked-files-deleted and flips prune's clean-worktree
+/// gate — see [`invalidate_probe_caches`]). `git reset --mixed` discards
+/// staged-but-uncommitted index state, so this is safe only on fixtures
+/// whose dirt is untracked files.
+fn restore_worktree_indexes(repo_path: &Path) {
+    let output = git_command()
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "git worktree list failed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Parallel: each reset rebuilds one worktree's index from its own HEAD,
+    // fully independent of the others. On the rust-scale fixture a rebuild
+    // is ~2.5 s per worktree — serially that would dominate the repair.
+    std::thread::scope(|s| {
+        for line in stdout.lines() {
+            if let Some(path) = line.strip_prefix("worktree ") {
+                s.spawn(move || run_git(Path::new(path), &["reset", "-q"]));
+            }
+        }
+    });
 }
 
 /// Resolve git's common directory for `repo_path` from the filesystem.
@@ -421,13 +620,76 @@ fn resolve_git_common_dir(repo_path: &Path) -> Option<PathBuf> {
     pointed.parent()?.parent().map(Path::to_path_buf)
 }
 
+/// Root of wt-perf's on-disk fixtures: `<cargo-target-dir>/wt-perf`.
+///
+/// The target dir is `cargo_target_dir`, derived from the running executable, so
+/// it tracks wherever cargo actually built — the default `<workspace>/target`, a
+/// `CARGO_TARGET_DIR` / `build.target-dir` override, or cargo-llvm-cov's
+/// relocated dir — keeping fixtures co-located with build output and reaped by
+/// `cargo clean`.
+///
+/// Living under `target/` means `cargo clean` reaps every fixture and each git
+/// worktree keeps its own copy (worktrees don't share `target/`). That is cheap
+/// for the synthetic `setup` fixtures — rebuilt in seconds — but a deliberate
+/// cost for the ~15 GiB rust clone under `bench-repos/`, which then re-clones
+/// per worktree and after every `cargo clean`. Relocate it with cargo's own
+/// `CARGO_TARGET_DIR` if that cost bites.
+pub fn wt_perf_fixture_dir() -> PathBuf {
+    cargo_target_dir().join("wt-perf")
+}
+
+/// The cargo target directory containing the current executable.
+///
+/// Both entry points live inside it — the `wt-perf` CLI at
+/// `<target>/debug/wt-perf`, the in-process benches at
+/// `<target>/release/deps/<bench>` — so the closest ancestor named `debug` or
+/// `release` (the profile dir) has the target dir as its parent. Reading the
+/// running binary's path rather than `CARGO_TARGET_DIR` alone also honors a
+/// config-file `build.target-dir` and cargo-llvm-cov's `--target-dir`: the
+/// binary is physically inside whichever dir cargo used. Falls back to
+/// `<workspace>/target` (from the compile-time manifest dir) if the executable
+/// isn't under a recognizable profile dir.
+fn cargo_target_dir() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| target_dir_from_exe(&exe))
+        .unwrap_or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .ancestors()
+                .nth(3)
+                .expect("wt-perf crate sits three levels below the workspace root")
+                .join("target")
+        })
+}
+
+/// The target dir containing `exe`: the closest ancestor named `debug` or
+/// `release` (the cargo profile dir) has the target dir as its parent. `None`
+/// if `exe` isn't under such a dir.
+fn target_dir_from_exe(exe: &Path) -> Option<PathBuf> {
+    exe.ancestors()
+        .find(|p| {
+            matches!(
+                p.file_name().and_then(|n| n.to_str()),
+                Some("debug" | "release")
+            )
+        })?
+        .parent()
+        .map(Path::to_path_buf)
+}
+
+/// The shared store for real, cloned upstream fixtures (rust-lang/rust and the
+/// prune fixtures derived from it): `<workspace>/target/wt-perf/bench-repos`.
+fn bench_repos_dir() -> PathBuf {
+    wt_perf_fixture_dir().join("bench-repos")
+}
+
 /// Get or clone the rust-lang/rust repository for real-world benchmarks.
 ///
-/// The repo is cached at `target/bench-repos/rust` and reused across runs.
-pub fn ensure_rust_repo() -> PathBuf {
+/// The repo is cached at `target/wt-perf/bench-repos/rust` and reused across runs.
+fn ensure_rust_repo() -> PathBuf {
     RUST_REPO
         .get_or_init(|| {
-            let cache_dir = std::env::current_dir().unwrap().join("target/bench-repos");
+            let cache_dir = bench_repos_dir();
             let rust_repo = cache_dir.join("rust");
 
             if rust_repo.exists() {
@@ -463,53 +725,659 @@ pub fn ensure_rust_repo() -> PathBuf {
         .clone()
 }
 
-/// Clone rust-lang/rust into `temp/repo` for benchmarking.
-///
-/// Returns the clone path. Configures git user for commits.
-/// The `temp` dir must outlive usage.
-pub fn clone_rust_repo(temp: &TempDir) -> PathBuf {
+/// Local-clone the cached rust repo (`ensure_rust_repo`) to `dest` and
+/// configure a git user for commits.
+fn clone_rust_repo_at(dest: &Path) {
     let rust_repo = ensure_rust_repo();
-    let workspace_main = temp.path().join("repo");
-
     let clone_output = git_command()
         .args([
             "clone",
             "--local",
             rust_repo.to_str().unwrap(),
-            workspace_main.to_str().unwrap(),
+            dest.to_str().unwrap(),
         ])
         .output()
         .unwrap();
     assert!(
         clone_output.status.success(),
-        "Failed to clone rust repo to workspace"
+        "Failed to local-clone rust repo: {}",
+        String::from_utf8_lossy(&clone_output.stderr)
     );
+    run_git(dest, &["config", "user.name", "Benchmark"]);
+    run_git(dest, &["config", "user.email", "bench@test.com"]);
+}
 
-    run_git(&workspace_main, &["config", "user.name", "Benchmark"]);
-    run_git(&workspace_main, &["config", "user.email", "bench@test.com"]);
-
+/// Clone rust-lang/rust into `temp/repo` for benchmarking.
+///
+/// Returns the clone path. The `temp` dir must outlive usage.
+pub fn clone_rust_repo(temp: &TempDir) -> PathBuf {
+    let workspace_main = temp.path().join("repo");
+    clone_rust_repo_at(&workspace_main);
     workspace_main
 }
 
-/// Create branches pointing at different depths in the repo's commit history.
+/// Sample up to `count` commit SHAs evenly spread across the last 5000
+/// commits of `repo_path`'s current branch, newest first.
 ///
-/// Samples `count` commits evenly spread across the last 5000 commits and
-/// creates `feature-NNN` branches pointing at them. This reproduces the
-/// GH #461 scenario where branch divergence depth (not count) drives cost.
-pub fn add_history_spread_branches(repo_path: &Path, count: usize) {
+/// The spread reproduces the GH #461 scenario where branch divergence *depth*
+/// (not count) drives cost: consumers fork branches at these points so
+/// merge-base walks and merge-tree three-ways span the whole history rather
+/// than a handful of tip-adjacent forks.
+fn history_spread_shas(repo_path: &Path, count: usize) -> Vec<String> {
     let log_output = git_command()
         .args(["log", "--oneline", "-n", "5000", "--format=%H"])
         .current_dir(repo_path)
         .output()
         .unwrap();
     let log_str = String::from_utf8_lossy(&log_output.stdout);
-    let step = 5000 / count;
-    let commits: Vec<&str> = log_str.lines().step_by(step).take(count).collect();
+    // Step over the log we actually got, not the 5000 cap: on a short history
+    // (the synthetic fixtures have a few hundred commits) dividing by the cap
+    // floors every sample onto the tip, collapsing the spread to one SHA.
+    // Guard the degenerate inputs: `count == 0` would divide by zero, and
+    // `count > len` would yield `step == 0`, which panics `step_by`. Both
+    // `max(1)`s preserve the spread for every in-range count.
+    let len = log_str.lines().count();
+    let step = (len / count.max(1)).max(1);
+    log_str
+        .lines()
+        .step_by(step)
+        .take(count)
+        .map(str::to_string)
+        .collect()
+}
 
-    for (i, commit) in commits.iter().enumerate() {
+/// Create branches pointing at different depths in the repo's commit history.
+///
+/// Samples `count` commits via `history_spread_shas` and creates
+/// `feature-NNN` branches pointing at them (behind-only — no own commits).
+pub fn add_history_spread_branches(repo_path: &Path, count: usize) {
+    for (i, commit) in history_spread_shas(repo_path, count).iter().enumerate() {
         let branch_name = format!("feature-{i:03}");
         run_git(repo_path, &["branch", &branch_name, commit]);
     }
+}
+
+/// Add `worktrees` two-sided-diverged linked worktrees (`feature-wt-N`) and
+/// `branches` two-sided-diverged orphan branches (`feature-NNN`) to an
+/// existing repo.
+///
+/// Each forks at a `history_spread_shas` point — so the default branch has
+/// advanced past every fork — and carries its own commits on top. That is the
+/// shape of real long-lived feature work: `git merge-base` must walk back to
+/// the fork, and the integration probes (`merge-tree --write-tree`, diff)
+/// three-way over genuinely diverged trees. None of them is integrated, so
+/// against `wt step prune` they are a pure scan backdrop: every probe runs and
+/// fails. Worktrees get 2 untracked files (dirty in the way real worktrees
+/// are — untracked scratch, no staged state, so index-restoring helpers stay
+/// safe to use).
+///
+/// The populations are sized independently because their costs differ wildly
+/// on large repos: an orphan branch is a few commits' worth of objects, while
+/// a linked worktree materializes a full working tree (~1 GiB on
+/// rust-lang/rust) and pays a checkout.
+fn add_diverged_backdrop(repo_path: &Path, worktrees: usize, branches: usize) {
+    let repo_name = repo_path.file_name().unwrap().to_str().unwrap();
+    let parent_dir = repo_path.parent().unwrap();
+    let forks = history_spread_shas(repo_path, worktrees.max(branches).max(1));
+
+    // Orphan branches are built with plumbing (temp index + `commit-tree`),
+    // never touching the working tree: on a large repo like rust-lang/rust,
+    // `git checkout <old-fork>` rewrites the whole tree and would cost
+    // minutes per branch. Each branch gets 3 commits on top of its fork,
+    // each adding one new file — real content divergence, so the
+    // integration probes can't short-circuit.
+    let scratch = tempfile::tempdir().unwrap();
+    for i in 0..branches {
+        let branch = format!("feature-{i:03}");
+        let fork = &forks[i % forks.len()];
+        let index = scratch.path().join(format!("index-{i}"));
+        let mut parent = fork.clone();
+        for j in 0..3 {
+            let blob_file = scratch.path().join("blob");
+            std::fs::write(&blob_file, format!("// {branch} {j}\n")).unwrap();
+            let blob = git_stdout(
+                repo_path,
+                &["hash-object", "-w", blob_file.to_str().unwrap()],
+                &index,
+            );
+            git_stdout(repo_path, &["read-tree", &parent], &index);
+            git_stdout(
+                repo_path,
+                &[
+                    "update-index",
+                    "--add",
+                    "--cacheinfo",
+                    &format!("100644,{blob},{}_{j}.rs", branch.replace('-', "_")),
+                ],
+                &index,
+            );
+            let tree = git_stdout(repo_path, &["write-tree"], &index);
+            parent = git_stdout(
+                repo_path,
+                &[
+                    "commit-tree",
+                    &tree,
+                    "-p",
+                    &parent,
+                    "-m",
+                    &format!("{branch} commit {j}"),
+                ],
+                &index,
+            );
+        }
+        run_git(repo_path, &["branch", &branch, &parent]);
+    }
+
+    for i in 0..worktrees {
+        let wt_branch = format!("feature-wt-{i}");
+        let wt_path = parent_dir.join(format!("{repo_name}.{wt_branch}"));
+        run_git(
+            repo_path,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                &wt_branch,
+                wt_path.to_str().unwrap(),
+                &forks[i % forks.len()],
+            ],
+        );
+        // Targeted add — a bare `git add .` would rescan the whole tree,
+        // which on rust-lang/rust costs seconds per commit.
+        for j in 0..5 {
+            let name = format!("{}_{j}.rs", wt_branch.replace('-', "_"));
+            std::fs::write(wt_path.join(&name), format!("// {wt_branch} {j}\n")).unwrap();
+            run_git(&wt_path, &["add", &name]);
+            run_git(
+                &wt_path,
+                &["commit", "-q", "-m", &format!("{wt_branch} commit {j}")],
+            );
+        }
+        for j in 0..2 {
+            std::fs::write(wt_path.join(format!("uncommitted_{j}.txt")), "scratch\n").unwrap();
+        }
+    }
+}
+
+/// `git rev-parse HEAD` in `path`, trimmed. Panics on failure.
+fn head_sha(path: &Path) -> String {
+    capture_git(path, &["rev-parse", "HEAD"])
+}
+
+/// Append a line to a tracked file (creating it if missing). Used to make
+/// working-tree edits in the mixed-state fixture.
+fn append_line(path: &Path, rel: &str, line: &str) {
+    let file = path.join(rel);
+    let mut content = std::fs::read_to_string(&file).unwrap_or_default();
+    content.push_str(line);
+    content.push('\n');
+    std::fs::write(&file, content).unwrap();
+}
+
+/// Create a repo with `worktrees` linked worktrees AND `branches` branchless
+/// branches, each in a deterministic rotation of states, for the combined
+/// full-surface `wt list` benchmark (`full` in `benches/list.rs`).
+///
+/// Unlike [`RepoConfig`] (every worktree/branch identical), this exercises the
+/// full spread of `wt list` gates and tasks at once — clean vs dirty working
+/// trees, merged vs ahead vs diverged branches, *and* divergence spread across
+/// history depth — the realistic shape of "a huge number of worktrees &
+/// branches, all in various states". Returns the `TempDir`; the main worktree
+/// is at `temp.path().join("repo")`, linked worktrees are siblings
+/// (`repo.wt-NNNN`). Either dimension may be `0` (e.g. `mixed-W-0` for a
+/// worktrees-only repo).
+///
+/// Worktree states cycle by index % 4:
+/// 0. clean, several commits ahead of base
+/// 1. unstaged modification (dirty working tree)
+/// 2. staged + unstaged + untracked (full dirty mix)
+/// 3. clean, sitting exactly at base
+///
+/// Branch states cycle by index % 4 (states 0 and 2 fork at a checkpoint that
+/// slides from the oldest base commit toward the tip as the index grows, so
+/// fork depth fans out across the whole history — the GH #461 deep-divergence
+/// shape that drives the O(commits) `git for-each-ref %(ahead-behind)` walk):
+/// 0. behind: at an older checkpoint (ancestor of base —
+///    integration-positive / merged shape)
+/// 1. ahead of base with its own commits (unmerged)
+/// 2. diverged: a short own-commit chain forked from an older checkpoint
+///    while base advanced (deep two-sided divergence)
+/// 3. identical to the base tip (trees match — squash-merge shape)
+pub fn create_mixed_repo(worktrees: usize, branches: usize) -> TempDir {
+    let temp = tempfile::tempdir().unwrap();
+    create_mixed_repo_at(worktrees, branches, &temp.path().join("repo"));
+    temp
+}
+
+/// [`create_mixed_repo`] at a caller-chosen path (used by `wt-perf setup
+/// mixed-W-B`). The main worktree is created at `repo`; linked worktrees are
+/// siblings.
+fn create_mixed_repo_at(worktrees: usize, branches: usize, repo: &Path) {
+    const FILES: usize = 50;
+    // Deep enough that fork points spread across history give the
+    // `%(ahead-behind)` walk real commits to traverse (GH #461 shape), while
+    // staying far cheaper to build than the dedicated `divergent` stress
+    // (`RepoConfig::many_divergent_branches`, 200 branches × 20 commits).
+    const BASE_COMMITS: usize = 200;
+    // Record a checkpoint every few commits so behind/diverged branches fork
+    // at many distinct depths rather than a handful of fixed points.
+    const CHECKPOINT_EVERY: usize = 5;
+
+    let repo = repo.to_path_buf();
+    init_bench_repo(&repo);
+
+    for i in 0..FILES {
+        let p = repo.join(format!("src/file_{i}.rs"));
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(
+            &p,
+            format!("// file {i}\npub fn f_{i}() -> i32 {{ {i} }}\n"),
+        )
+        .unwrap();
+    }
+    run_git(&repo, &["add", "."]);
+    run_git(&repo, &["commit", "-q", "-m", "Initial commit"]);
+
+    // Build base history, recording checkpoints for "behind"/"diverged" branches.
+    let mut checkpoints = vec![head_sha(&repo)];
+    for c in 1..BASE_COMMITS {
+        append_line(
+            &repo,
+            &format!("src/file_{}.rs", c % FILES),
+            &format!("pub fn f_{c}() {{}}"),
+        );
+        run_git(&repo, &["add", "."]);
+        run_git(&repo, &["commit", "-q", "-m", &format!("Commit {c}")]);
+        if c % CHECKPOINT_EVERY == 0 {
+            checkpoints.push(head_sha(&repo));
+        }
+    }
+    let base_tip = head_sha(&repo);
+    // `checkpoints[0]` is the oldest (initial commit); the last is near the
+    // tip. Index `i` of `branches` maps linearly across them, so behind/
+    // diverged branches fork at points fanned across history depth rather than
+    // a few repeated checkpoints.
+    let deepest = checkpoints.len() - 1;
+
+    // Branches without worktrees, in varied states. States 1 and 2 check out
+    // in the main worktree and return to main; the loop always ends on main.
+    for i in 0..branches {
+        let name = format!("br-{i:04}");
+        // `branches >= 1` inside this loop, so the divisor is never zero.
+        let fork = &checkpoints[i * deepest / branches];
+        match i % 4 {
+            0 => run_git(&repo, &["branch", &name, fork]),
+            1 => {
+                run_git(&repo, &["checkout", "-q", "-b", &name, &base_tip]);
+                for j in 0..=(i % 3) {
+                    std::fs::write(repo.join(format!("br_{i}_{j}.rs")), format!("// {i}/{j}\n"))
+                        .unwrap();
+                    run_git(&repo, &["add", "."]);
+                    run_git(
+                        &repo,
+                        &["commit", "-q", "-m", &format!("br {i} commit {j}")],
+                    );
+                }
+                run_git(&repo, &["checkout", "-q", "main"]);
+            }
+            2 => {
+                run_git(&repo, &["checkout", "-q", "-b", &name, fork]);
+                for j in 0..=(i % 3) {
+                    std::fs::write(
+                        repo.join(format!("br_{i}_{j}_d.rs")),
+                        format!("// diverge {i}/{j}\n"),
+                    )
+                    .unwrap();
+                    run_git(&repo, &["add", "."]);
+                    run_git(
+                        &repo,
+                        &["commit", "-q", "-m", &format!("br {i} diverge {j}")],
+                    );
+                }
+                run_git(&repo, &["checkout", "-q", "main"]);
+            }
+            _ => run_git(&repo, &["branch", &name, &base_tip]),
+        }
+    }
+
+    // Mature-repo shape: pack refs and write the commit-graph once, after every
+    // branch ref exists but before the worktrees (freshly added worktrees carry
+    // loose refs and uncommitted state — realistic, and keeps gc away from the
+    // dirty indexes below).
+    setup_fake_remote(&repo);
+    run_git(&repo, &["gc", "-q"]);
+
+    // Linked worktrees are siblings named `<repo-dir>.<branch>` (worktrunk
+    // convention), derived from the repo's own directory name so the path is
+    // correct whether the repo is the tempdir's `repo` or a custom `setup` path.
+    let parent = repo.parent().unwrap();
+    let repo_name = repo.file_name().unwrap().to_str().unwrap().to_string();
+    for j in 0..worktrees {
+        let branch = format!("wt-{j:04}");
+        let wt = parent.join(format!("{repo_name}.{branch}"));
+        run_git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                &branch,
+                wt.to_str().unwrap(),
+                &base_tip,
+            ],
+        );
+        match j % 4 {
+            0 => {
+                for k in 0..=(1 + j % 3) {
+                    std::fs::write(wt.join(format!("wt_{j}_{k}.txt")), format!("wt {j}/{k}\n"))
+                        .unwrap();
+                    run_git(&wt, &["add", "."]);
+                    run_git(&wt, &["commit", "-q", "-m", &format!("wt {j} commit {k}")]);
+                }
+            }
+            1 => append_line(&wt, "src/file_0.rs", &format!("// unstaged edit {j}")),
+            2 => {
+                append_line(&wt, "src/file_1.rs", &format!("// staged edit {j}"));
+                run_git(&wt, &["add", "src/file_1.rs"]);
+                append_line(&wt, "src/file_2.rs", &format!("// unstaged edit {j}"));
+                std::fs::write(wt.join(format!("untracked_{j}.txt")), "untracked\n").unwrap();
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Create a repo shaped like a `wt step prune` workload at `base_path`.
+///
+/// `wt step prune` integration-checks every linked worktree and local branch,
+/// then removes the integrated ones. Two populations drive its cost:
+///
+/// - **Candidates** (`merged` of each): squash-merged worktrees
+///   (`merged-wt-N`) and squash-merged orphan branches (`merged-br-N`). Each
+///   carries its own commits whose content also landed on main as a single
+///   squash commit, so it is integrated *by content* (the `merge-tree` probes),
+///   not by ancestry — the post-PR-squash shape prune typically removes.
+/// - **Backdrop** (`unmerged` of each): two-sided-diverged linked worktrees
+///   and orphan branches (`add_diverged_backdrop` — forked at points spread
+///   across history, with their own commits, while main advanced past them).
+///   Scanned on every run, never removed — the steady state that dominates
+///   scan cost, and the shape where merge-base walks and merge-tree
+///   three-ways do real work rather than short-circuiting at the tip.
+///
+/// The main history is mature (200 commits, 100 files) so `git status` and the
+/// integration probes pay realistic per-worktree costs.
+pub fn create_prune_repo_at(merged: usize, unmerged: usize, base_path: &Path) {
+    let config = RepoConfig {
+        commits_on_main: 200,
+        files: 100,
+        branches: 0,
+        commits_per_branch: 0,
+        worktrees: 1,
+        worktree_commits_ahead: 0,
+        worktree_uncommitted_files: 0,
+    };
+    create_repo_at(&config, base_path);
+    add_diverged_backdrop(base_path, unmerged, unmerged);
+    add_squash_merged(base_path, merged, 0);
+    // The squash commits advanced main past the fake remote ref written by
+    // `create_repo_at`; refresh so origin/main tracks the final tip.
+    setup_fake_remote(base_path);
+}
+
+/// Add `count` squash-merged worktrees (`merged-wt-N`) and `count`
+/// squash-merged orphan branches (`merged-br-N`) to an existing repo.
+///
+/// Each branch gets its own commits, then the default branch (whatever the
+/// primary worktree has checked out — `main` on the synthetic fixtures,
+/// `master` on rust-lang/rust) takes the same content as one
+/// `git merge --squash` commit — integrated by content, so `wt step prune`
+/// detects it via the merge-tree probes and removes it.
+///
+/// `round` uniquifies the committed file names. A live-prune benchmark removes
+/// these candidates every iteration and re-creates them with an incremented
+/// `round`; reusing a round's file names would make the squash merge empty
+/// (the content is already on main) and the `git commit` fail. Branch names
+/// intentionally do NOT carry the round: prune deletes them each iteration,
+/// and a name collision on re-creation fails loudly — surfacing a prune run
+/// that didn't remove what the benchmark expected.
+pub fn add_squash_merged(repo_path: &Path, count: usize, round: usize) {
+    let repo_name = repo_path.file_name().unwrap().to_str().unwrap();
+    let parent_dir = repo_path.parent().unwrap();
+    let default_branch = capture_git(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"]);
+
+    // Two commits in `dir`, each adding a round-uniquified file (the branch
+    // name already carries the candidate index). The add is targeted — a bare
+    // `git add .` would rescan the whole tree, which on rust-lang/rust costs
+    // seconds per commit.
+    let commit_branch_content = |dir: &Path, branch: &str| {
+        for j in 0..2 {
+            let name = format!("{}_{round}_{j}.rs", branch.replace('-', "_"));
+            std::fs::write(dir.join(&name), format!("// {branch} {round}/{j}\n")).unwrap();
+            run_git(dir, &["add", &name]);
+            run_git(
+                dir,
+                &[
+                    "commit",
+                    "-q",
+                    "-m",
+                    &format!("{branch} commit {j} (round {round})"),
+                ],
+            );
+        }
+    };
+    // Land the branch's content on the default branch as one squash commit.
+    let squash_into_default = |branch: &str| {
+        run_git(repo_path, &["merge", "--squash", "-q", branch]);
+        run_git(
+            repo_path,
+            &[
+                "commit",
+                "-q",
+                "-m",
+                &format!("Squash-merge {branch} (round {round})"),
+            ],
+        );
+    };
+
+    for i in 0..count {
+        let branch = format!("merged-wt-{i}");
+        let wt_path = parent_dir.join(format!("{repo_name}.{branch}"));
+        run_git(
+            repo_path,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                &branch,
+                wt_path.to_str().unwrap(),
+                "HEAD",
+            ],
+        );
+        commit_branch_content(&wt_path, &branch);
+        squash_into_default(&branch);
+    }
+
+    for i in 0..count {
+        let branch = format!("merged-br-{i}");
+        run_git(repo_path, &["checkout", "-q", "-b", &branch]);
+        commit_branch_content(repo_path, &branch);
+        run_git(repo_path, &["checkout", "-q", &default_branch]);
+        squash_into_default(&branch);
+    }
+}
+
+/// Default populations for the rust-scale prune fixture (`prune-real`):
+/// 12 squash-merged candidates of each kind + 24 unmerged worktrees and
+/// branches → 36 linked worktrees, and a live prune that removes 24
+/// candidates while keeping 72 unmerged items — the "dozens of worktrees,
+/// lots removed, lots kept" shape where prune takes multiple seconds.
+pub const PRUNE_REAL_MERGED: usize = 12;
+pub const PRUNE_REAL_UNMERGED: usize = 24;
+
+/// Create a rust-lang/rust-scale `wt step prune` workload at `base_path`.
+///
+/// Local-clones the cached rust repo (`ensure_rust_repo` — first call clones
+/// from the network, minutes) and adds the same two populations as
+/// [`create_prune_repo_at`]: `merged` squash-merged candidates of each kind
+/// ([`add_squash_merged`]) against a two-sided-diverged backdrop of `unmerged`
+/// worktrees and branches forked across the last 5000 commits
+/// (`add_diverged_backdrop`). This is the shape where prune's costs are
+/// real — merge-base walks over deep history, `merge-tree` three-ways over
+/// ~400 MiB trees, `git status` over ~60k files per worktree — and reproduces
+/// the "prune takes seconds" experience that small synthetic fixtures can't
+/// (their probes bottom out at subprocess-spawn cost).
+///
+/// Each linked worktree materializes a full working tree: ~400 MiB and ~3 s
+/// per worktree, so the default populations build in minutes and take ~15 GiB.
+/// Prefer [`ensure_prune_real_repo`], which builds once into
+/// `target/wt-perf/bench-repos` and repairs consumed candidates on later runs.
+fn create_prune_real_repo_at(merged: usize, unmerged: usize, base_path: &Path) {
+    clone_rust_repo_at(base_path);
+    add_diverged_backdrop(base_path, unmerged, unmerged);
+    add_squash_merged(base_path, merged, 0);
+}
+
+/// How a cached prune fixture compares to its expected populations.
+#[derive(Debug, PartialEq, Eq)]
+enum PruneFixtureState {
+    /// Backdrop and candidates all present.
+    Intact,
+    /// Backdrop intact, candidates fully consumed — a live prune ran.
+    /// Repairable by re-running [`add_squash_merged`] with a fresh round.
+    Consumed,
+    /// Anything else (partial removal, corruption) — rebuild from scratch.
+    Broken,
+}
+
+/// Classify a prune fixture ([`create_prune_repo_at`] /
+/// `create_prune_real_repo_at` layout) against its expected populations.
+///
+/// Counts are the fixture's invariants: `1 + unmerged + merged` worktrees,
+/// `2 * unmerged` `feature-*` branches (worktree + orphan), `2 * merged`
+/// `merged-*` branches. A live prune removes exactly the `merged-*` items,
+/// which is the [`PruneFixtureState::Consumed`] signature.
+fn prune_fixture_state(repo: &Path, merged: usize, unmerged: usize) -> PruneFixtureState {
+    if !run_git_ok(repo, &["rev-parse", "HEAD"]) {
+        return PruneFixtureState::Broken;
+    }
+    let worktrees = capture_git(repo, &["worktree", "list", "--porcelain"])
+        .lines()
+        .filter(|l| l.starts_with("worktree "))
+        .count();
+    let branches = capture_git(
+        repo,
+        &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+    );
+    let merged_branches = branches
+        .lines()
+        .filter(|b| b.starts_with("merged-"))
+        .count();
+    let feature_branches = branches
+        .lines()
+        .filter(|b| b.starts_with("feature-"))
+        .count();
+
+    if feature_branches != 2 * unmerged {
+        return PruneFixtureState::Broken;
+    }
+    if worktrees == 1 + unmerged + merged && merged_branches == 2 * merged {
+        PruneFixtureState::Intact
+    } else if worktrees == 1 + unmerged && merged_branches == 0 {
+        PruneFixtureState::Consumed
+    } else {
+        PruneFixtureState::Broken
+    }
+}
+
+/// The next [`add_squash_merged`] round for a fixture repo, derived from the
+/// repo itself: each completed round leaves `merged_br_0_<round>_*.rs` files
+/// on the default branch's tip tree (the squash commits survive candidate
+/// removal), so the number of distinct rounds already landed IS the next
+/// round index. Derived rather than stored — a sidecar counter can desync
+/// from the repo (interrupted repair, hand cleanup) and turn a ~1-minute
+/// repair into a name-collision panic.
+fn next_squash_round(repo: &Path) -> usize {
+    capture_git(repo, &["ls-tree", "--name-only", "HEAD"])
+        .lines()
+        .filter(|l| l.starts_with("merged_br_0_") && l.ends_with("_0.rs"))
+        .count()
+}
+
+/// Get or build the cached rust-scale prune fixture, returning the repo path.
+///
+/// The fixture lives at `target/wt-perf/bench-repos/rust-prune-<merged>-<unmerged>/repo`
+/// (worktrees as siblings) so its minutes-long build (`create_prune_real_repo_at`)
+/// is paid once, not per bench run. On reuse it is validated by
+/// `prune_fixture_state`:
+///
+/// - `Intact` → returned as-is (dry runs don't mutate it).
+/// - `Consumed` — a live `wt step prune` removed the candidates — → repaired
+///   in place by re-running [`add_squash_merged`] with the next round
+///   (`next_squash_round`), so a live-prune measurement costs a ~1-minute
+///   repair, not a full rebuild.
+/// - `Broken` (interrupted prune or build, corruption) → wiped and rebuilt.
+///
+/// Deleted worktree indexes (a stray `wt-perf invalidate` / `timeline --cold`
+/// against the fixture) are healed first with `restore_worktree_indexes` —
+/// without an index, `git status` reports every tracked file as a staged
+/// deletion and prune's clean-worktree gate silently drops the worktree
+/// candidates. Safe here because the fixture's only dirt is untracked files.
+///
+/// No cross-process locking: two concurrent callers (e.g. `cargo bench
+/// --bench prune` while `wt-perf setup prune-real` is mid-build) can classify
+/// each other's half-built tree as `Broken` and wipe it. Don't run two
+/// builders at once; the same limitation applies to `ensure_rust_repo`.
+pub fn ensure_prune_real_repo(merged: usize, unmerged: usize) -> PathBuf {
+    let cache_dir = bench_repos_dir().join(format!("rust-prune-{merged}-{unmerged}"));
+    let repo = cache_dir.join("repo");
+
+    if repo.exists() {
+        let worktrees_dir = repo.join(".git/worktrees");
+        let index_missing = !repo.join(".git/index").exists()
+            || std::fs::read_dir(&worktrees_dir).is_ok_and(|entries| {
+                entries
+                    .flatten()
+                    .any(|entry| !entry.path().join("index").exists())
+            });
+        if index_missing {
+            eprintln!("Restoring invalidated worktree indexes...");
+            restore_worktree_indexes(&repo);
+        }
+        match prune_fixture_state(&repo, merged, unmerged) {
+            PruneFixtureState::Intact => {
+                eprintln!("Using cached prune fixture at {}", repo.display());
+                return repo;
+            }
+            PruneFixtureState::Consumed => {
+                let round = next_squash_round(&repo);
+                eprintln!(
+                    "Re-creating {merged} consumed squash-merged candidate pairs (round {round})..."
+                );
+                add_squash_merged(&repo, merged, round);
+                return repo;
+            }
+            PruneFixtureState::Broken => {
+                eprintln!("Cached prune fixture unusable, rebuilding...");
+            }
+        }
+    }
+
+    eprintln!(
+        "Building prune fixture: {} rust worktrees at ~3s each (one-time, cached)...",
+        merged + unmerged
+    );
+    // Clear remnants unconditionally: an interrupted build or rebuild can
+    // leave sibling worktree dirs without `repo`, and `git worktree add`
+    // fails on an existing non-empty destination.
+    if cache_dir.exists() {
+        std::fs::remove_dir_all(&cache_dir).unwrap();
+    }
+    std::fs::create_dir_all(&cache_dir).unwrap();
+    create_prune_real_repo_at(merged, unmerged, &repo);
+    repo
 }
 
 /// Canonicalize path without Windows `\\?\` prefix.
@@ -517,39 +1385,45 @@ pub fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
     dunce::canonicalize(path)
 }
 
-/// Parse a config string into a RepoConfig.
+/// Parse a `wt-perf setup` config string.
 ///
 /// Supported formats:
 /// - `typical-N` - typical repo with N worktrees
 /// - `branches-N` - N branches with 1 commit each
 /// - `branches-N-M` - N branches with M commits each
 /// - `divergent` - many divergent branches (GH #461)
+/// - `mixed-W-B` - W worktrees + B branches in varied states
+/// - `prune-M-U` - M squash-merged candidates + U unmerged (prune workload)
 /// - `picker-test` - config for wt switch interactive picker testing
-pub fn parse_config(s: &str) -> Option<RepoConfig> {
+pub fn parse_config(s: &str) -> Option<SetupConfig> {
     if let Some(n) = s.strip_prefix("typical-") {
         let worktrees: usize = n.parse().ok()?;
-        return Some(RepoConfig::typical(worktrees));
+        return Some(SetupConfig::Flat(RepoConfig::typical(worktrees)));
     }
 
     if let Some(rest) = s.strip_prefix("branches-") {
-        let parts: Vec<&str> = rest.split('-').collect();
-        match parts.as_slice() {
-            [count] => {
-                let count: usize = count.parse().ok()?;
-                return Some(RepoConfig::branches(count, 1));
-            }
-            [count, commits] => {
-                let count: usize = count.parse().ok()?;
-                let commits: usize = commits.parse().ok()?;
-                return Some(RepoConfig::branches(count, commits));
-            }
+        let config = match rest.split('-').collect::<Vec<_>>().as_slice() {
+            [count] => RepoConfig::branches(count.parse().ok()?, 1),
+            [count, commits] => RepoConfig::branches(count.parse().ok()?, commits.parse().ok()?),
             _ => return None,
-        }
+        };
+        return Some(SetupConfig::Flat(config));
+    }
+
+    if let Some((worktrees, branches)) = parse_pair(s, "mixed-") {
+        return Some(SetupConfig::Mixed {
+            worktrees,
+            branches,
+        });
+    }
+
+    if let Some((merged, unmerged)) = parse_pair(s, "prune-") {
+        return Some(SetupConfig::Prune { merged, unmerged });
     }
 
     match s {
-        "divergent" => Some(RepoConfig::many_divergent_branches()),
-        "picker-test" => Some(RepoConfig::picker_test()),
+        "divergent" => Some(SetupConfig::Flat(RepoConfig::many_divergent_branches())),
+        "picker-test" => Some(SetupConfig::Flat(RepoConfig::picker_test())),
         _ => None,
     }
 }
@@ -557,6 +1431,42 @@ pub fn parse_config(s: &str) -> Option<RepoConfig> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `target_dir_from_exe` finds the cargo target dir as the parent of the
+    /// closest `debug`/`release` profile dir, so fixtures track wherever cargo
+    /// actually built: a relocated `CARGO_TARGET_DIR`, a bench binary under
+    /// `release/deps/`, or cargo-llvm-cov's nested target. A binary outside any
+    /// target dir yields `None`, so the caller uses the workspace fallback.
+    #[test]
+    fn target_dir_from_exe_finds_cargo_target() {
+        let cases = [
+            // CLI binary at <target>/debug/wt-perf
+            ("/w/target/debug/wt-perf", Some("/w/target")),
+            // Relocated via CARGO_TARGET_DIR / build.target-dir
+            ("/tmp/tgt/debug/wt-perf", Some("/tmp/tgt")),
+            // Bench binary at <target>/release/deps/<bench>
+            ("/w/target/release/deps/list-abc123", Some("/w/target")),
+            // cargo-llvm-cov's nested target dir
+            (
+                "/w/target/llvm-cov-target/debug/deps/x-1",
+                Some("/w/target/llvm-cov-target"),
+            ),
+            // Closest profile dir wins even if an ancestor is literally "release"
+            (
+                "/home/release/proj/target/debug/wt-perf",
+                Some("/home/release/proj/target"),
+            ),
+            // Installed outside any target dir → None (caller uses the fallback)
+            ("/usr/local/bin/wt-perf", None),
+        ];
+        for (exe, expected) in cases {
+            assert_eq!(
+                target_dir_from_exe(Path::new(exe)),
+                expected.map(PathBuf::from),
+                "{exe}"
+            );
+        }
+    }
 
     /// Regression: `create_repo_at` ends with `git gc`, which packs every loose
     /// ref into `.git/packed-refs` and prunes the loose copies. A prior version
@@ -599,5 +1509,138 @@ mod tests {
             String::from_utf8_lossy(&after.stderr)
         );
         assert_eq!(before.stdout, after.stdout);
+    }
+
+    /// The prune fixture's load-bearing property: a squash-merged branch is
+    /// integrated *by content* — `git merge-tree --write-tree main <branch>`
+    /// yields main's own tree (merging it adds nothing). That's exactly the
+    /// probe `wt step prune`'s integration check runs, so if this drifts, the
+    /// prune benchmark stops removing anything. Round 1 re-creation must keep
+    /// the property (unique file content per round).
+    #[test]
+    fn squash_merged_fixture_is_content_integrated() {
+        let temp = create_repo(&RepoConfig {
+            commits_on_main: 3,
+            files: 2,
+            branches: 0,
+            commits_per_branch: 0,
+            worktrees: 1,
+            worktree_commits_ahead: 0,
+            worktree_uncommitted_files: 0,
+        });
+        let repo_path = temp.path().join("repo");
+
+        for round in 0..2 {
+            add_squash_merged(&repo_path, 1, round);
+
+            let main_tree = git_command()
+                .args(["rev-parse", "main^{tree}"])
+                .current_dir(&repo_path)
+                .output()
+                .unwrap();
+            for branch in ["merged-wt-0", "merged-br-0"] {
+                let merged_tree = git_command()
+                    .args(["merge-tree", "--write-tree", "main", branch])
+                    .current_dir(&repo_path)
+                    .output()
+                    .unwrap();
+                assert!(
+                    merged_tree.status.success(),
+                    "merge-tree failed (round {round})"
+                );
+                assert_eq!(
+                    String::from_utf8_lossy(&merged_tree.stdout).trim(),
+                    String::from_utf8_lossy(&main_tree.stdout).trim(),
+                    "{branch} must merge into main without adding changes (round {round})"
+                );
+            }
+
+            // Simulate the live benchmark's per-iteration cleanup before the
+            // next round re-creates the candidates.
+            let wt_path = temp.path().join("repo.merged-wt-0");
+            run_git(
+                &repo_path,
+                &["worktree", "remove", "--force", wt_path.to_str().unwrap()],
+            );
+            run_git(&repo_path, &["branch", "-D", "merged-wt-0", "merged-br-0"]);
+        }
+    }
+
+    /// The classifier that decides whether the cached rust-scale fixture is
+    /// reusable, repairable, or must be rebuilt ([`ensure_prune_real_repo`]).
+    /// Exercised on the synthetic fixture, which shares the exact layout.
+    #[test]
+    fn prune_fixture_state_classifies_lifecycle() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo_path = temp.path().join("repo");
+        create_prune_repo_at(1, 2, &repo_path);
+
+        assert_eq!(
+            prune_fixture_state(&repo_path, 1, 2),
+            PruneFixtureState::Intact
+        );
+        // Wrong expected populations don't match this repo.
+        assert_eq!(
+            prune_fixture_state(&repo_path, 2, 2),
+            PruneFixtureState::Broken
+        );
+
+        // Partial consumption (worktree candidate gone, branches still there)
+        // is Broken — an interrupted live prune needs a rebuild.
+        let wt_path = temp.path().join("repo.merged-wt-0");
+        run_git(
+            &repo_path,
+            &["worktree", "remove", "--force", wt_path.to_str().unwrap()],
+        );
+        assert_eq!(
+            prune_fixture_state(&repo_path, 1, 2),
+            PruneFixtureState::Broken
+        );
+
+        // Full consumption — exactly what a live prune leaves behind.
+        run_git(&repo_path, &["branch", "-D", "merged-wt-0", "merged-br-0"]);
+        assert_eq!(
+            prune_fixture_state(&repo_path, 1, 2),
+            PruneFixtureState::Consumed
+        );
+
+        // Repair restores Intact, with the round derived from the repo
+        // itself (round 0's squash commits survive candidate removal).
+        assert_eq!(next_squash_round(&repo_path), 1);
+        add_squash_merged(&repo_path, 1, next_squash_round(&repo_path));
+        assert_eq!(next_squash_round(&repo_path), 2);
+        assert_eq!(
+            prune_fixture_state(&repo_path, 1, 2),
+            PruneFixtureState::Intact
+        );
+
+        // A missing backdrop branch is Broken.
+        run_git(&repo_path, &["branch", "-D", "feature-000"]);
+        assert_eq!(
+            prune_fixture_state(&repo_path, 1, 2),
+            PruneFixtureState::Broken
+        );
+    }
+
+    /// Regression: degenerate `count` values must not panic. `count == 0`
+    /// divided into `5000`, and `count > 5000` flooring `step` to 0 for
+    /// `step_by`, both panicked before the `max(1)` guards.
+    #[test]
+    fn history_spread_handles_degenerate_counts() {
+        let temp = create_repo(&RepoConfig {
+            commits_on_main: 3,
+            files: 1,
+            branches: 0,
+            commits_per_branch: 0,
+            worktrees: 1,
+            worktree_commits_ahead: 0,
+            worktree_uncommitted_files: 0,
+        });
+        let repo_path = temp.path().join("repo");
+
+        // count == 0: no branches created, no divide-by-zero.
+        add_history_spread_branches(&repo_path, 0);
+        // count far above the 5000 log cap: step floors to 0 without the guard.
+        add_history_spread_branches(&repo_path, 6000);
     }
 }

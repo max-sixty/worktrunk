@@ -218,6 +218,10 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
 /// program is exec'd directly without `sh -c` interposition. Directive env
 /// vars are scrubbed by `Cmd` for every spawn, so child commands run in
 /// other worktrees can't perturb the parent shell's CD/exec state.
+/// Git-discovery vars are scrubbed too: for-each relocates the user's
+/// command into each worktree, so its `git` calls must discover that
+/// worktree from the cwd, not resolve an inherited `GIT_DIR` pinned to
+/// wherever `wt` was invoked (see `scrub_git_discovery_env_vars`).
 ///
 /// Child stdout is merged onto stderr so it interleaves cleanly with
 /// for-each's decorated per-worktree headers and footers; the structured
@@ -240,6 +244,7 @@ fn run_argv(
     Cmd::new(program)
         .args(iter)
         .current_dir(working_dir)
+        .scrub_git_discovery_env()
         .stdout(Stdio::from(std::io::stderr()))
         .forward_signals()
         .stdin_bytes(stdin_json.as_bytes().to_vec())

@@ -10,11 +10,11 @@ cargo test --test integration                                      # integration
 cargo test --test integration --features shell-integration-tests   # + shell tests
 ```
 
-A filtered `--test integration` run on a fresh `target/` panics with "mock-stub binary not found" (a target filter skips the helper-bin build). Fix: `cargo build -p mock-stub`, or use `cargo nextest run` / `cargo llvm-cov nextest`.
+A target-filtered run (`--lib`, `--test integration`, …) on a fresh `target/` panics with "mock-stub binary not found" (a target filter skips the helper-bin build). Fix: `cargo build -p mock-stub`, or use `cargo nextest run` / `cargo llvm-cov nextest`.
 
 **Claude Code web:** `task setup-web` installs zsh/fish/nushell, `gh`, and dev tools. Install `task` first if needed: `sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b ~/bin` then `export PATH="$HOME/bin:$PATH"`. The permission tests (`test_permission_error_prevents_save`, `test_approval_prompt_permission_error`) skip automatically when running as root.
 
-**Shell/PTY tests** (`shell-integration-tests` feature: approval prompts, picker, progressive rendering, shell wrappers): tests that spawn interactive shells (`zsh -ic`, `bash -ic`) make nextest's InputHandler take SIGTTOU when restoring terminal settings, suspending the run mid-test (`zsh: suspended (tty output)`; see [nextest#2878](https://github.com/nextest-rs/nextest/issues/2878)). Use `cargo test` instead of `cargo nextest run`, or set `NEXTEST_NO_INPUT_HANDLER=1`. The pre-merge hook sets it automatically.
+**Shell/PTY tests** (`shell-integration-tests` feature): approval prompts, picker, progressive rendering, shell wrappers.
 
 ## Coverage Investigation
 
@@ -141,11 +141,13 @@ silently: it passes wherever `$HOME` is writable and fails only in a sandbox
 that forbids it. `config_path()` and `system_config_path()` have no guard at
 all.
 
-## Timing Tests: Long Timeouts with Fast Polling
+## Timing Tests: Polling and Absence Windows
 
-**Core principle:** Use long timeouts (5+ seconds) for reliability on slow CI, but poll frequently (10-50ms) so tests complete quickly when things work.
+**The assertion's polarity picks the tool.** A *presence* assertion waits for something that will happen (a file appears, a counter ticks): poll it, so the test returns the instant the event lands. An *absence* assertion proves something did NOT happen (a hook stays silent, a marker never appears): there's no event to wait for, so hold a fixed window with `SLEEP_FOR_ABSENCE_CHECK`, then assert. The most common timing flake is pairing a fixed sleep with a presence assertion: it guesses how long the work takes and fails when load overruns the guess.
 
-This achieves both goals:
+### Presence: long timeouts, fast polling
+
+Use long timeouts (5+ seconds) for reliability on slow CI, but poll frequently (10-50ms) so tests complete quickly when things work:
 - **No flaky failures** on slow machines - generous timeout accommodates worst-case
 - **Fast tests** on normal machines - frequent polling means no unnecessary waiting
 
@@ -159,7 +161,7 @@ while start.elapsed() < timeout {
     thread::sleep(poll_interval);
 }
 
-// ❌ BAD: Fixed sleep (always slow, might still fail)
+// ❌ BAD: fixed sleep before a presence assertion (always slow, races under load)
 thread::sleep(Duration::from_millis(500));
 assert!(condition_met());
 
@@ -227,12 +229,28 @@ let outcome = drain_results_with_timings(
 
 **Rule of thumb:** if your producer thread needs `thread::sleep` to line up with a deadline in the code under test, you're racing the scheduler. Reach for the callback, a channel, or a condvar instead. Fixed deadlines belong only in the safety-net role — "stop if something has truly hung" — not in the assertion path.
 
-**Exception - testing absence:** When verifying something did NOT happen, polling doesn't work. Use a fixed 500ms+ sleep:
+### Absence: hold a fixed window
+
+When the assertion proves a negative (`assert!(!marker.exists())`), polling can't help, because there's no event to wait for. Hold a window long enough that the thing would have happened if it were going to, then assert it didn't. Use the shared constant (defined in `src/testing/mod.rs`, re-exported via `tests/common`) so absence sleeps stay greppable and self-documenting:
 
 ```rust
-thread::sleep(Duration::from_millis(500));
+use crate::common::SLEEP_FOR_ABSENCE_CHECK;
+
+thread::sleep(SLEEP_FOR_ABSENCE_CHECK); // 500ms, the floor for an absence window
 assert!(!marker_file.exists(), "Command should NOT have run");
 ```
+
+Two traps:
+
+- **Give each half its own wait.** Sleeping once and then asserting both "X happened" and "Y didn't" makes the presence half flaky. Poll for X, then hold the window for Y.
+- **Structural absence needs no window at all.** When the event is gated on a condition the test never sets up, it can't fire regardless of timing. Drop the sleep: poll the positive precondition and the absence holds by construction. A watchdog whose escalation is gated on `command.is_some()` can't escalate with no command, so the test polls for the first render and asserts `!escalated` with no window.
+
+## No Retries
+
+Tests run once. Worktrunk configures no nextest `retries` and writes no retry loops: a test that passes only on a second attempt is a bug report, and retrying it discards the report while leaving the bug. A green suite has to mean the code is green, not that the run's flakes stayed under a retry budget. Fix the flake at its root:
+
+- A racy assertion is a timing bug. Make it deterministic, per Timing Tests above: poll for the event, or drive it causally through a callback.
+- Resource pressure is a concurrency bug. Windows process creation intermittently fails with STATUS_DLL_INIT_FAILED (exit `-1073741502`) when many tests spawn git/wt children at once. Bound how many heavy tests run together; that removes the pressure instead of retrying past it.
 
 ## Testing with --execute Commands
 
@@ -449,10 +467,9 @@ Setup-side path-redaction placeholders in the strip list (`add_placeholder_ansi_
 block. New or reordered env lines split into two cases — check the *value*
 before dismissing:
 
-- **Cosmetic (accept silently):** value is identical on every machine — `""`,
-  a deterministic literal (`"0"`, `C`), or an already-redacted placeholder
-  (`[TEST_HOME]`). A `NO_COLOR: ""` line appearing where it didn't before is
-  drift, not a bug.
+- **Cosmetic (accept silently):** value is identical on every machine — a
+  deterministic literal (`"0"`, `C`) or an already-redacted placeholder
+  (`[TEST_HOME]`).
 - **A leak (must fix):** value is host/platform/run-specific — a temp path
   (`/var/folders/…`, `/tmp/…`), `$HOME`/`$USER`, a PID, a timestamp. It will
   diff spuriously when the snapshot is regenerated elsewhere. Redact it with
@@ -460,6 +477,42 @@ before dismissing:
   `add_standard_env_redactions` (bound by the `repo` rstest fixture). Note
   `add_filter` does **not** work on the `env:` block — it only substitutes on
   captured snapshot content; use a redaction.
+
+Removed vars never appear: insta-cmd (≥0.7, hence the `insta-cmd = "0.7"` dep
+floor) drops every `Command::env_remove` from the recorded block. `get_envs()`
+yields `None` for a removal and `Some("")` for a deliberate set-to-empty, and
+insta-cmd keeps only the latter — so a removed var leaves no trace, while a var
+a test sets to `""` is recorded faithfully as `KEY: ""`. This matters because
+`isolate_subprocess_env` removes whichever `GIT_*` / `WORKTRUNK_*` keys exist
+in the *parent* environment (plus `NO_COLOR` / `SHELL` / `PSModulePath`), so
+which removals happen depends on the host (CI has `GIT_EDITOR`; a contributor's
+box might have `GIT_PAGER`, neither, or both). Dropping removals at the source
+means regenerating on any machine produces the same block — you don't have to
+match CI's `GIT_*` environment.
+
+A var a test affirmatively sets to `""` as its subject does show up:
+`test_list_config_env_override_validation_failure` sets
+`WORKTRUNK_WORKTREE_PATH=""` to trigger the validation warning, and the block
+records it as `WORKTRUNK_WORKTREE_PATH: ""`.
+
+The `args:` block has the same property: a repo path passed as a CLI argument
+(`wt -C <root>`) is covered by the `.args[]` redaction in
+`add_repo_and_worktree_path_filters`, which rewrites it to `_REPO_…` like the
+body filters; any other run-specific argument needs its own redaction.
+
+Path leaks fail `test_no_host_specific_paths_in_snapshots`
+(`snapshot_formatting_guard.rs`), which scans every committed `.snap` for
+host-specific path markers (other run-specific values — PIDs, timestamps —
+still need review-time vigilance). The test exists because insta never *compares* the
+`info:` block — a missing redaction passes on the machine that generated the
+snapshot and only churns when regenerated elsewhere.
+
+A runner caveat: the `repo` fixture leaks its settings binding (rstest has no
+teardown), so under libtest's reused threads a test that binds no settings of
+its own — or clones them via `Settings::clone_current()` without
+`add_standard_env_redactions` — can still appear redacted. nextest (process
+per test) is authoritative — regenerate snapshots with
+`cargo insta test --test-runner nextest` when in doubt.
 
 ### Inline snapshots over multi-assert
 
@@ -539,7 +592,7 @@ code. Delete these. Test the behavior that uses these types instead.
 
 ## Deterministic Time in Tests
 
-Tests use `TEST_EPOCH` (2025-01-01) for reproducible timestamps. The constant is defined in `src/testing/mod.rs`, re-exported via `tests/common/mod.rs`, and automatically set as `WORKTRUNK_TEST_EPOCH` in the test environment.
+Tests use `TEST_EPOCH` (2025-01-02) for reproducible timestamps. The constant is defined in `src/testing/mod.rs`, re-exported via `tests/common/mod.rs`, and automatically set as `WORKTRUNK_TEST_EPOCH` in the test environment.
 
 **For test data with timestamps** (cache entries, etc.), use the constant:
 

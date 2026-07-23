@@ -9,29 +9,50 @@ metadata:
 
 ## Steps
 
-1. **Run tests**: `cargo run -- hook pre-merge --yes`
-2. **Check current version**: Read `version` in `Cargo.toml`
-3. **Review commits**: Check commits since last release to understand scope of changes. Audit the cumulative diff for the data-loss surface (see [Data-Loss Surface Review](#data-loss-surface-review)) before proceeding.
-4. **Check library API compatibility**: Run `cargo semver-checks check-release -p worktrunk` (install with `cargo install cargo-semver-checks --locked` if missing). If it reports breaking changes, the bump must be minor (pre-1.0) or major (post-1.0). See "Library API Compatibility" below.
-5. **Credit contributors**: Check for external PR authors and issue reporters (see "Credit External Contributors" and "Credit Issue Reporters" below)
-6. **Determine release type**: Pick the bump from the changes (including semver-checks result). Ask the user only if the choice is genuinely ambiguous (see below).
-7. **Bump version** (must run on a clean tree — before editing CHANGELOG):
+1. **Sync the release branch with `main`**: The release worktree's branch lags `main` between releases — it's only reset to `main` after a release lands. Cutting from a stale branch silently drops everything merged since. Fast-forward to the tip of `main` before anything else:
+   ```bash
+   git fetch origin
+   git merge --ff-only origin/main
+   ```
+   `--ff-only` advances the branch when it's a strict ancestor of `origin/main` and **fails** (rather than creating a merge commit or discarding work) if it has diverged — reconcile manually before continuing. This is the release-branch equivalent of `wt up`, spelled out because the `up` alias rebases each branch onto its own upstream (`origin/release`), not `main`. Note the resulting commit SHA: this is the tip the changelog covers, and step 12 checks that nothing else reaches `main` before the tag.
+2. **Run tests**: Two gates — the local suite and the full cross-platform suite.
+   - Local: `cargo run -- hook pre-merge --yes`.
+   - Cross-platform: dispatch the `nightly` workflow on the cut-from tip and wait for it to go green. This is where a release gets its full linux/macos/windows validation: the PR path (`ci.yaml`) is moving to cargo-affected selection and will stop running the full `test` matrix, while `nightly` hosts `full-tests` (the full 3-OS suite) alongside feature-powerset, release-target, nix-flake, and minimal-versions. Benchmarks aren't part of `nightly` — they run in their own `benchmarks.yaml` and gate nothing.
+     ```bash
+     gh workflow run nightly.yaml --ref main
+     # Registration lags the dispatch, and a prior release may have left a
+     # stale completed workflow_dispatch run — filter to the in-flight one.
+     sleep 5
+     RUN=$(gh run list --workflow=nightly.yaml --event=workflow_dispatch --branch=main --limit 5 --json databaseId,status --jq 'map(select(.status != "completed")) | .[0].databaseId')
+     ```
+     Launch a ci-reporter to monitor `$RUN` to completion (avoid `gh run watch` — it can hang). Fix any failure before continuing.
+3. **Check current version**: Read `version` in `Cargo.toml`
+4. **Review commits**: Check commits since last release to understand scope of changes. Audit the cumulative diff for the data-loss surface (see [Data-Loss Surface Review](#data-loss-surface-review)) before proceeding.
+5. **Check library API compatibility (advisory)**: Run `cargo semver-checks check-release -p worktrunk` (install with `cargo install cargo-semver-checks --locked` if missing) as a bump-level input, not a compat gate — worktrunk ships breaking library changes freely. If it reports breaking changes, that's fine; under semver the bump must still be minor (pre-1.0) or major (post-1.0). See "Library API Compatibility" below.
+6. **Credit contributors**: Check for external PR authors and issue reporters (see "Credit External Contributors" and "Credit Issue Reporters" below)
+7. **Determine release type**: Pick the bump from the changes (including semver-checks result). Ask the user only if the choice is genuinely ambiguous (see below).
+8. **Bump version** (must run on a clean tree — before editing CHANGELOG):
    ```bash
    cargo release X.Y.Z -p worktrunk -x --no-publish --no-push --no-tag --no-verify --no-confirm && cargo check
    ```
-   This bumps `Cargo.toml` and `Cargo.lock`, then auto-commits. We'll reset this commit in step 9 to fold in the CHANGELOG.
-8. **Update CHANGELOG**: Add `## X.Y.Z` section at top with changes (see MANDATORY verification below)
-9. **Commit**: Reset the auto-commit from step 7, stage everything, and create the final release commit:
-   ```bash
-   git reset --soft HEAD~1 && git add -A && git commit -m "Release vX.Y.Z"
-   ```
-10. **Merge to main**: `/gpk` — opens a PR, waits for CI, merges via PR (preserves worktree)
-11. **Tag the merge commit and push**: After `/gpk` squash-merges, the local branch HEAD is not the commit on main. Tag the PR's merge commit explicitly so the tag is reachable from main:
+   This bumps `Cargo.toml` and `Cargo.lock`, then auto-commits. We'll reset this commit in step 10 to fold in the CHANGELOG.
+9. **Update CHANGELOG**: Add `## X.Y.Z` section at top with changes (see MANDATORY verification below)
+10. **Commit**: Reset the auto-commit from step 8, stage everything, and create the final release commit:
+    ```bash
+    git reset --soft HEAD~1 && git add -A && git commit -m "Release vX.Y.Z"
+    ```
+11. **Merge to main**: `/gpk` — opens a PR, waits for CI, merges via PR (preserves worktree). `main` can advance during the CI wait; step 12 catches anything that lands before the tag.
+12. **Verify nothing drifted in, then tag and push**: `/gpk` squash-merges onto whatever `main` tip exists at merge time, so a commit that lands during the PR's CI wait ships in the release but goes undocumented (the easy miss is a follow-up that reworks a feature this release already documents). Confirm the only commit added to `main` since the cut-from tip (step 1) is the release commit:
+    ```bash
+    git fetch origin
+    git log --oneline <cut-from-commit>..origin/main
+    ```
+    Expect a single line — the `Release vX.Y.Z (#NNNN)` squash commit. Any extra line drifted in during the window: review it, fold it into the changelog if user-facing (a quick follow-up squash PR), then re-run the check. Once clean, tag the squash commit (not the local branch HEAD, which `/gpk` reset) so the tag is reachable from `main`:
     ```bash
     MERGE_SHA=$(gh pr view --json mergeCommit --jq '.mergeCommit.oid')
     git tag vX.Y.Z "$MERGE_SHA" && git push origin vX.Y.Z
     ```
-12. **Wait for the release workflow**: The tag push triggers `release.yaml`. Launch a ci-reporter agent to monitor the run through to completion (avoid `gh run watch` — it can hang); the run ID comes from:
+13. **Wait for the release workflow**: The tag push triggers `release.yaml`. Launch a ci-reporter agent to monitor the run through to completion (avoid `gh run watch` — it can hang); the run ID comes from:
     ```bash
     gh run list --workflow=release.yaml --event=push --branch=vX.Y.Z --limit 1 --json databaseId --jq '.[0].databaseId'
     ```
@@ -156,7 +177,7 @@ Issues may have been filed months before the fix. Bug reports also appear as PR 
 
 1. **Extract every issue/PR reference from every commit** (PRIMARY):
    ```bash
-   git log v<last-version>..HEAD --format="%B" | grep -oE '#[0-9]+' | sort -un
+   git log v<last-version>..HEAD --format="%B" | grep -oE '#[0-9]+' | sort -t'#' -k2 -n -u
    ```
    For **each** referenced number: run `gh issue view N --json title,author,state`. This catches issues filed months ago — the most commonly missed credits.
 
@@ -268,11 +289,13 @@ Recommendation: Minor release (0.3.0) — new features, no breaking changes
 - **Second digit** (0.1.0 → 0.2.0): Backward incompatible changes
 - **Third digit** (0.1.0 → 0.1.1): Everything else
 
-Current project status: early release, breaking changes acceptable, optimize for best solution over compatibility.
+Current project status: maturing mode (see [CLAUDE.md › Project Status](../../../CLAUDE.md)). External interfaces — the config file format (`wt.toml`, user config) and CLI flags/arguments — carry compatibility weight, so breaks there need justification (a real improvement, not cleanup) and prefer deprecation warnings over silent breaks. Everything else, including the internal and library APIs, stays flexible: worktrunk ships breaking library changes freely and bumps the version each time, putting no weight on the existing internal APIs.
 
 ## Library API Compatibility
 
-Worktrunk is primarily a CLI, but it also publishes a library crate (`[lib]` in `Cargo.toml`) that downstream crates depend on. `cargo-semver-checks` compares the current public API against the last version published to crates.io and flags semver violations.
+Worktrunk is a CLI tool. The `[lib]` crate in `Cargo.toml` does expose a public API, but it is **not a compatibility surface** — per [CLAUDE.md › Project Status](../../../CLAUDE.md) there are no Rust library compatibility concerns, and the project ships breaking library changes freely, bumping the version each time (see the "Breaking library API" entries in `CHANGELOG.md`). Downstream crates are expected to pin.
+
+`cargo-semver-checks` is therefore an **advisory bump-level input**, not a gate that commits us to keeping the API stable for downstream crates. It compares the current public API against the last version published to crates.io and reports semver-relevant changes — a useful signal for choosing the bump:
 
 ```bash
 cargo semver-checks check-release -p worktrunk
@@ -280,8 +303,8 @@ cargo semver-checks check-release -p worktrunk
 
 Interpreting results:
 
-- **No issues reported**: any bump level is valid from the library's perspective. Choose based on CLI changes and new features.
-- **Breaking changes reported**: while pre-1.0, these require at minimum a minor bump (e.g., 0.37.0 → 0.38.0). A patch release is not allowed.
+- **No issues reported**: no library-level signal for the bump. Choose based on CLI changes and new features.
+- **Breaking changes reported**: expected and acceptable — breaking the library API is not something to avoid here. But under semver a breaking change still warrants at minimum a minor bump while pre-1.0 (e.g., 0.37.0 → 0.38.0) rather than a patch. Bump accordingly; this is version mechanics, not a signal to preserve the old API.
 - **Tool fails to run** (e.g., missing baseline): likely the crate hasn't been published yet or the registry cache is stale. Try `cargo semver-checks check-release -p worktrunk --baseline-version <last-published>`.
 
 This check validates the chosen bump — it doesn't distinguish patch vs. minor when no breakage exists. Continue using the commit review to decide between patch (fixes only) and minor (new features).

@@ -1,9 +1,12 @@
 //! Integration tests for `wt step relocate`
 
-use crate::common::{TestRepo, make_snapshot_cmd, repo};
+use crate::common::{
+    TestRepo, configure_directive_files, directive_files, make_snapshot_cmd, repo,
+};
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
+use std::path::Path;
 
 /// Get the parent directory of the repo (where worktrees are created)
 fn worktree_parent(repo: &TestRepo) -> std::path::PathBuf {
@@ -186,7 +189,11 @@ fn test_relocate_target_exists(repo: TestRepo) {
     );
 }
 
-/// Test that dirty worktrees are skipped without --commit
+/// Test that dirty linked worktrees relocate cleanly without --commit.
+///
+/// `git worktree move` carries modified-tracked and untracked files along
+/// with the worktree, so there's no reason to require a clean state. Issue
+/// #3103.
 #[rstest]
 fn test_relocate_dirty_without_commit(repo: TestRepo) {
     let parent = worktree_parent(&repo);
@@ -201,17 +208,83 @@ fn test_relocate_dirty_without_commit(repo: TestRepo) {
         wrong_path.to_str().unwrap(),
     ]);
 
-    // Make uncommitted changes
-    fs::write(wrong_path.join("dirty.txt"), "uncommitted changes").unwrap();
+    // Make uncommitted changes - both modified and untracked
+    fs::write(wrong_path.join("dirty.txt"), "untracked file").unwrap();
+    // Modify a tracked file too (initial test commit creates README.md or similar).
+    let tracked = wrong_path.join("modified-tracked.txt");
+    fs::write(&tracked, "first").unwrap();
+    repo.git_command()
+        .args([
+            "-C",
+            wrong_path.to_str().unwrap(),
+            "add",
+            "modified-tracked.txt",
+        ])
+        .run()
+        .unwrap();
+    repo.git_command()
+        .args([
+            "-C",
+            wrong_path.to_str().unwrap(),
+            "commit",
+            "-m",
+            "add tracked",
+        ])
+        .run()
+        .unwrap();
+    fs::write(&tracked, "second").unwrap();
 
-    // Relocate should skip dirty worktree
+    // Relocate should move the dirty worktree
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "step", &["relocate"], None));
 
-    // Verify the worktree was NOT moved
+    // Verify the worktree was moved to its expected location, carrying both
+    // the untracked and modified-tracked files with it.
+    let expected_path = parent.join("repo.feature");
     assert!(
-        wrong_path.exists(),
-        "Dirty worktree should not be moved: {}",
+        expected_path.exists(),
+        "Dirty worktree should be moved: {}",
+        expected_path.display()
+    );
+    assert!(
+        !wrong_path.exists(),
+        "Old worktree path should no longer exist: {}",
         wrong_path.display()
+    );
+    assert!(
+        expected_path.join("dirty.txt").exists(),
+        "Untracked file should travel with the worktree",
+    );
+    assert_eq!(
+        fs::read_to_string(expected_path.join("modified-tracked.txt")).unwrap(),
+        "second",
+        "Modified tracked file content should travel with the worktree",
+    );
+}
+
+/// Test that a dirty main worktree is still skipped — its relocation runs
+/// `git checkout <default-branch>` which refuses to switch over uncommitted
+/// changes.
+#[rstest]
+fn test_relocate_dirty_main_worktree_skipped(repo: TestRepo) {
+    let parent = worktree_parent(&repo);
+    let repo_path = repo.root_path().to_path_buf();
+
+    // Switch main worktree to a feature branch so it becomes a relocation
+    // candidate (expected path = repo.feature, not repo).
+    repo.run_git(&["checkout", "-b", "feature"]);
+
+    // Make uncommitted changes in main worktree
+    fs::write(repo_path.join("dirty.txt"), "uncommitted").unwrap();
+
+    // Relocate should skip the dirty main worktree
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "step", &["relocate"], None));
+
+    // Main worktree stays put
+    let expected_path = parent.join("repo.feature");
+    assert!(
+        !expected_path.exists(),
+        "Dirty main worktree should not be relocated: {}",
+        expected_path.display()
     );
 }
 
@@ -847,17 +920,12 @@ fn test_relocate_dry_run_json(repo: TestRepo) {
 /// distinguishes relocated vs skipped (with stable `reason` codes).
 #[rstest]
 fn test_relocate_json_with_skip(repo: TestRepo) {
-    let parent = worktree_parent(&repo);
-    let wrong_path = parent.join("wrong-location");
-    repo.run_git(&[
-        "worktree",
-        "add",
-        "-b",
-        "feature",
-        wrong_path.to_str().unwrap(),
-    ]);
-    // Make the worktree dirty so it's skipped during validation
-    fs::write(wrong_path.join("dirty.txt"), "uncommitted").unwrap();
+    let repo_path = repo.root_path().to_path_buf();
+    // Switch the main worktree to a feature branch so it becomes a relocation
+    // candidate, then dirty it. A dirty main worktree is skipped because its
+    // relocation runs `git checkout`, which won't switch over dirty state.
+    repo.run_git(&["checkout", "-b", "feature"]);
+    fs::write(repo_path.join("dirty.txt"), "uncommitted").unwrap();
 
     let output = repo
         .wt_command()
@@ -957,5 +1025,56 @@ worktree-path = "../{{ undefined_var }}.{{ branch }}"
     assert!(
         skipped.iter().any(|s| s["reason"] == "template_error"),
         "template_error skip missing from JSON: {parsed}"
+    );
+}
+
+/// Relocating a worktree the user is standing inside preserves their
+/// subdirectory position, routing the `cd` through the same
+/// `resolve_subdir_in_target` helper as `switch`/`remove` (issue #3343 unify).
+///
+/// Ignored on Windows: subdir preservation only fires when the cwd is inside the
+/// moving worktree — which is exactly when `git worktree move` (a directory
+/// rename) fails with a sharing violation, because a live process holds that cwd.
+/// Unlike `remove` (where shell integration cds to main before removing), a real
+/// Windows user hits this too: their shell holds the cwd across the move. So the
+/// preservation path is reachable, and testable, only on Unix.
+#[rstest]
+#[cfg_attr(windows, ignore)]
+fn test_relocate_preserves_subdir(repo: TestRepo) {
+    let parent = worktree_parent(&repo);
+    let (cd_path, exec_path, _guard) = directive_files();
+
+    // Create a worktree at a non-standard location, with a subdirectory the
+    // user is working in.
+    let wrong_path = parent.join("wrong-location");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "feature",
+        wrong_path.to_str().unwrap(),
+    ]);
+    let subdir = Path::new("apps").join("gateway");
+    fs::create_dir_all(wrong_path.join(&subdir)).unwrap();
+
+    let mut cmd = repo.wt_command();
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    cmd.args(["step", "relocate"])
+        .current_dir(wrong_path.join(&subdir));
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt step relocate failed: {output:?}"
+    );
+
+    // The cd directive should land in the equivalent subdirectory of the
+    // worktree's new location, not at its root.
+    let cd_content = fs::read_to_string(&cd_path).unwrap_or_default();
+    let expected_subdir = parent.join("repo.feature").join(&subdir);
+    let expected_str = expected_subdir.to_string_lossy();
+    assert!(
+        cd_content.contains(&*expected_str),
+        "CD file should contain relocated subdirectory path {expected_str}, got: {cd_content}"
     );
 }

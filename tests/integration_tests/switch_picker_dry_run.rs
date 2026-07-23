@@ -2,17 +2,14 @@
 //!
 //! Setting the env var bypasses skim entirely: the picker runs the full
 //! pre-compute pipeline (speculative first-item spawn, collect, full spawn
-//! loop, summaries), waits for all tasks, prints the cache inventory as JSON,
-//! and exits. This exercises the non-TUI wiring inside `handle_picker`
-//! without needing a PTY.
+//! loop, summaries), waits for all tasks, prints the rendered rows and the
+//! preview-cache inventory as JSON, and exits. This exercises the non-TUI
+//! wiring inside `handle_picker` without needing a PTY.
 //!
-//! Unix-only: `wt switch` rejects the interactive picker on Windows
-//! ("Interactive picker is not available on Windows") before the dry-run
-//! bypass is consulted.
+//! Runs on every platform: the dry-run bypass is consulted before the
+//! interactive TTY path, so these exercise the picker pipeline on Windows too.
 
-#![cfg(unix)]
-
-use crate::common::{TestRepo, repo};
+use crate::common::{TEST_EPOCH, TestRepo, repo};
 use rstest::rstest;
 
 /// Runs the dry-run picker with summaries disabled (default). Covers the
@@ -57,6 +54,97 @@ fn test_picker_dry_run_dumps_cache_json(mut repo: TestRepo) {
     }
 }
 
+/// A fresh cached CI status surfaces a PR number in picker rows without any
+/// network access: the picker primes rows from `.git/wt/cache/ci-status/`, and
+/// the live `CiStatus` task's `detect` reads the same fresh entry through its
+/// own cache rather than calling the forge. A branch without an entry renders
+/// an empty CI cell.
+#[rstest]
+fn test_picker_dry_run_shows_cached_pr_numbers(mut repo: TestRepo) {
+    repo.add_worktree("feature-a");
+    repo.add_worktree("feature-b");
+
+    // Seed the cache the way a previous `wt list --full` fetch would have:
+    // a fresh entry (TEST_EPOCH is the subprocess's `epoch_now()`) for
+    // feature-a's current HEAD.
+    let head = repo.git_output(&["rev-parse", "feature-a"]);
+    let cache_dir = repo.path().join(".git/wt/cache/ci-status");
+    std::fs::create_dir_all(&cache_dir).unwrap();
+    let entry = serde_json::json!({
+        "status": {
+            "ci_status": "passed",
+            "source": "pr",
+            "is_stale": false,
+            "number": { "number": 123, "sigil": "#" },
+        },
+        "checked_at": TEST_EPOCH,
+        "head": head.trim(),
+        "branch": "feature-a",
+    });
+    std::fs::write(cache_dir.join("feature-a.json"), entry.to_string()).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["switch"])
+        .env("WORKTRUNK_PICKER_DRY_RUN", "1")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "dry-run should exit 0; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
+    let rows: Vec<&str> = parsed["rows"]
+        .as_array()
+        .expect("top-level `rows` array")
+        .iter()
+        .map(|r| r.as_str().expect("row is a string"))
+        .collect();
+
+    let feature_row = rows
+        .iter()
+        .find(|r| r.contains("feature-a"))
+        .expect("feature-a row present");
+    assert!(
+        feature_row.contains("#123"),
+        "cached PR number should render in the picker row, got: {feature_row}"
+    );
+    let other_row = rows
+        .iter()
+        .find(|r| r.contains("feature-b"))
+        .expect("feature-b row present");
+    assert!(
+        !other_row.contains('#'),
+        "uncached branch renders an empty CI cell, got: {other_row}"
+    );
+
+    // The worktree row with a PR spawns a `comments` background fetch keyed by
+    // its branch name (PreviewMode::Comments == 7) — the same fetch a `--prs`
+    // row makes, so the comments tab is no longer `--prs`-only. In this no-network
+    // test the entry holds a terminal pane (a "couldn't load" on a GitHub remote,
+    // or a "forge unsupported" note otherwise), but its presence proves the fetch
+    // fired and keyed by branch. The PR-less row spawns no such fetch.
+    let comments_branches: Vec<&str> = parsed["entries"]
+        .as_array()
+        .expect("top-level `entries` array")
+        .iter()
+        .filter(|e| e["mode"] == 7)
+        .map(|e| e["branch"].as_str().expect("branch is a string"))
+        .collect();
+    assert!(
+        comments_branches.contains(&"feature-a"),
+        "the PR-bearing worktree row spawns a branch-keyed comments fetch, got: {comments_branches:?}"
+    );
+    assert!(
+        !comments_branches.contains(&"feature-b"),
+        "the PR-less worktree row spawns no comments fetch, got: {comments_branches:?}"
+    );
+}
+
 /// Verifies that warnings collect emits while running on the picker's bg
 /// thread (here, the stale-default-branch warning) reach stderr — they're
 /// stashed during the run and drained after the dry-run path joins the bg
@@ -95,8 +183,10 @@ fn test_picker_dry_run_drains_stashed_warnings(mut repo: TestRepo) {
 
 /// Same as above but with `list.summary=true` and a fake LLM command
 /// configured, to exercise the `spawn_summary` branch in `handle_picker`.
-/// Uses `/bin/cat` as the LLM: it reads stdin and writes it back, so the
-/// summary pipeline runs end-to-end without a real model.
+/// Uses `cat` as the LLM: it reads stdin and writes it back, so the
+/// summary pipeline runs end-to-end without a real model. The command runs
+/// via the platform shell (`sh` on Unix, Git Bash on Windows), so the bare
+/// name resolves on PATH on both.
 #[rstest]
 fn test_picker_dry_run_with_summary(mut repo: TestRepo) {
     repo.add_worktree("feature-a");
@@ -106,7 +196,7 @@ fn test_picker_dry_run_with_summary(mut repo: TestRepo) {
         .args(["switch"])
         .env("WORKTRUNK_PICKER_DRY_RUN", "1")
         .env("WORKTRUNK_LIST__SUMMARY", "true")
-        .env("WORKTRUNK_COMMIT__GENERATION__COMMAND", "/bin/cat")
+        .env("WORKTRUNK_COMMIT__GENERATION__COMMAND", "cat")
         .output()
         .unwrap();
 
@@ -168,5 +258,102 @@ fn test_picker_preview_bench_produces_no_output(mut repo: TestRepo) {
         output.stderr.is_empty(),
         "preview-bench must not write to stderr; got: {}",
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// The picker renders custom `[list.custom-columns]` cells in its skeleton
+/// rows — the `ColumnKind::Custom` arm of `render_skeleton_row`, which the
+/// piped `wt list` snapshot tests never reach because they skip the skeleton.
+#[rstest]
+fn test_picker_dry_run_renders_custom_columns(mut repo: TestRepo) {
+    repo.add_worktree("feature-a");
+    std::fs::write(
+        repo.test_config_path(),
+        r#"[list.custom-columns.Ticket]
+template = "{{ vars.ticket }}"
+"#,
+    )
+    .unwrap();
+    repo.run_git(&[
+        "config",
+        "worktrunk.state.feature-a.vars.ticket",
+        "JIRA-1234",
+    ]);
+
+    let output = repo
+        .wt_command()
+        .args(["switch"])
+        .env("WORKTRUNK_PICKER_DRY_RUN", "1")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "dry-run should exit 0; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
+    let rows: Vec<&str> = parsed["rows"]
+        .as_array()
+        .expect("top-level `rows` array")
+        .iter()
+        .map(|r| r.as_str().expect("row is a string"))
+        .collect();
+
+    let feature_row = rows
+        .iter()
+        .find(|r| r.contains("feature-a"))
+        .expect("feature-a row present");
+    assert!(
+        feature_row.contains("JIRA-1234"),
+        "custom column value renders in the picker skeleton row, got: {feature_row}"
+    );
+}
+
+/// A broken custom-column template aborts `wt list`, but the picker shares the
+/// collect path while skim owns the terminal and can't surface an abort: it
+/// stashes a warning (drained after close) and renders without the column.
+/// Covers the `progressive_handler` degradation arm in `collect`.
+#[rstest]
+fn test_picker_dry_run_invalid_custom_column_degrades(mut repo: TestRepo) {
+    repo.add_worktree("feature-a");
+    std::fs::write(
+        repo.test_config_path(),
+        r#"[list.custom-columns.Ticket]
+template = "{{ branhc }}"
+"#,
+    )
+    .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["switch"])
+        .env("WORKTRUNK_PICKER_DRY_RUN", "1")
+        .output()
+        .unwrap();
+
+    // The picker degrades rather than aborting: it still exits 0 and renders
+    // its rows, with the broken column dropped.
+    assert!(
+        output.status.success(),
+        "picker degrades on a broken column instead of aborting; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr is utf-8");
+    assert!(
+        stderr.contains("Custom columns disabled"),
+        "expected a stashed degradation warning on stderr, got: {stderr}"
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
+    let rows = parsed["rows"].as_array().expect("top-level `rows` array");
+    assert!(
+        rows.iter()
+            .any(|r| r.as_str().unwrap_or("").contains("feature-a")),
+        "rows still render without the broken column, got: {stdout}"
     );
 }

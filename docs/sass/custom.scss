@@ -574,6 +574,14 @@ main {
     }
 }
 
+// Command-only terminals (recipe lists with no fixed-width output) wrap long
+// pipelines at spaces instead of scrolling them out of view; a single
+// unbreakable token still falls back to the inherited horizontal scroll.
+// Fixed-width output (tables, ASCII art) keeps the default no-wrap.
+.terminal--commands code {
+    white-space: pre-wrap;
+}
+
 // ============================================================================
 // Blockquotes / Callouts
 // ============================================================================

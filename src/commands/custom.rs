@@ -30,6 +30,7 @@ use std::process::Command;
 
 use anyhow::{Context, Result};
 use worktrunk::git::WorktrunkError;
+use worktrunk::trace::CommandTrace;
 
 use crate::cli::build_command;
 use crate::commands::{
@@ -133,9 +134,17 @@ fn run_custom(path: &Path, args: &[OsString], working_dir: Option<&Path>) -> Res
         cmd.current_dir(dir);
     }
 
-    let status = cmd
-        .status()
-        .with_context(|| format!("failed to execute {}", path.display()))?;
+    let mut trace = CommandTrace::new(None, &path.display().to_string());
+    let status = match cmd.status() {
+        Ok(status) => {
+            trace.complete(status.success());
+            status
+        }
+        Err(e) => {
+            trace.fail(&e);
+            return Err(e).with_context(|| format!("failed to execute {}", path.display()));
+        }
+    };
 
     if status.success() {
         return Ok(());
@@ -232,18 +241,18 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn run_custom_propagates_signal_exit_code() {
-        use std::os::unix::fs::PermissionsExt;
+        // Exec a stable system binary (`/bin/sh -c 'kill -TERM $$'`) rather than
+        // writing a script to a tempdir and exec'ing it. Writing an executable
+        // and immediately exec'ing it races with other test threads: a
+        // concurrent fork+exec elsewhere in the suite can inherit a writable fd
+        // to the just-written file, so this exec sporadically fails with
+        // ETXTBSY, surfacing as a spawn error instead of the signal error we
+        // assert on. `/bin/sh` is never written by the test, so it can't race.
+        // The production code path (spawn, wait, signal handling) is identical.
+        let sh = Path::new("/bin/sh");
+        let args = [OsString::from("-c"), OsString::from("kill -TERM $$")];
 
-        let dir = tempfile::tempdir().expect("create tempdir");
-        let script = dir.path().join("wt-signal-test");
-        std::fs::write(&script, "#!/bin/sh\nkill -TERM $$\n").expect("write script");
-        let mut perms = std::fs::metadata(&script)
-            .expect("stat script")
-            .permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&script, perms).expect("chmod script");
-
-        let err = run_custom(&script, &[], None).expect_err("child killed by SIGTERM");
+        let err = run_custom(sh, &args, None).expect_err("child killed by SIGTERM");
         let wt_err = err
             .downcast_ref::<WorktrunkError>()
             .expect("signal should surface as WorktrunkError::AlreadyDisplayed");
@@ -254,5 +263,17 @@ mod tests {
             }
             other => panic!("unexpected WorktrunkError variant: {other:?}"),
         }
+    }
+
+    #[test]
+    fn run_custom_spawn_failure_resolves_trace() {
+        // A non-existent binary fails at spawn, exercising the `trace.fail` arm
+        // (the success path is covered by the signal test above).
+        let err = run_custom(Path::new("/no/such/wt-custom-7f3a9b2c"), &[], None)
+            .expect_err("spawning a missing binary should fail");
+        assert!(
+            err.to_string().contains("failed to execute"),
+            "expected spawn-failure context, got: {err}"
+        );
     }
 }

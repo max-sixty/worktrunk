@@ -121,7 +121,9 @@
 pub mod ci_status;
 pub(crate) mod collect;
 pub(crate) mod columns;
+pub(crate) mod custom_columns;
 pub mod json_output;
+pub mod json_v2;
 pub(crate) mod layout;
 pub mod model;
 pub mod progressive;
@@ -150,6 +152,11 @@ pub fn handle_list(
 ) -> anyhow::Result<()> {
     let render_target = RenderTarget::detect(format, progressive_flag);
 
+    // Resolve the JSON schema before collecting, so the unset-nag lands
+    // above the output rather than after a long collection.
+    let json_schema =
+        matches!(render_target, RenderTarget::Json).then(|| resolve_json_schema(&repo));
+
     let list_data = collect::collect(
         &repo,
         collect::ShowConfig::DeferredToParallel {
@@ -160,19 +167,114 @@ pub fn handle_list(
         render_target,
     )?;
 
-    let Some(ListData { items, .. }) = list_data else {
+    let Some(ListData {
+        items,
+        custom_columns,
+        collected,
+    }) = list_data
+    else {
         return Ok(());
     };
 
-    if matches!(render_target, RenderTarget::Json) {
-        let json_items = json_output::to_json_items(&items, &repo);
-        let json =
-            serde_json::to_string_pretty(&json_items).context("Failed to serialize to JSON")?;
-        println!("{}", json);
+    match json_schema {
+        // Table modes already rendered inside `collect()`.
+        None => {}
+        Some(2) => print_json(&json_v2::to_json_envelope(
+            &items,
+            &custom_columns,
+            &repo,
+            collected,
+        ))?,
+        Some(_) => print_json(&json_output::to_json_items(&items, &custom_columns, &repo))?,
     }
-    // Table modes already rendered inside `collect()`.
 
     Ok(())
+}
+
+/// Serialize a JSON answer to stdout (pretty, one trailing newline).
+pub(crate) fn print_json<T: serde::Serialize>(value: &T) -> anyhow::Result<()> {
+    let json = serde_json::to_string_pretty(value).context("Failed to serialize to JSON")?;
+    println!("{}", json);
+    Ok(())
+}
+
+/// Resolve `[list] json-schema` (per-project resolved config) to 1 or 2.
+///
+/// Unset defaults to schema 1 and nags once per process; an out-of-range
+/// value warns and defaults to schema 1, matching how config load treats a
+/// type error in the same key (warn and degrade, never brick a command).
+/// Both messages honor warning suppression — on the statusline, stderr
+/// would corrupt the consumer's prompt, and the same user sees the nag on
+/// their next interactive run.
+///
+/// The unset state is the `PendingDefault` row in `DEPRECATION_RULES`, but
+/// its warning fires here rather than at config load: the setting only
+/// matters to JSON consumers, so a load-time warning would nag every command
+/// for every user without the key. `wt config update` writes the upcoming
+/// `json-schema = 2` (adopting the new schema is the migration; staying on
+/// schema 1 is the deliberate manual edit), so the nag's hint offers that
+/// command exactly when running it would write the key — decided by the same
+/// detection update runs, so a missing, unreadable, or malformed user config
+/// falls back to naming the manual setting instead.
+pub(crate) fn resolve_json_schema(repo: &Repository) -> u8 {
+    use std::sync::Once;
+
+    use color_print::cformat;
+    use worktrunk::styling::{eprintln, hint_message, warning_message};
+
+    static WARNED: Once = Once::new();
+    match repo.config().list.json_schema {
+        Some(v @ (1 | 2)) => v,
+        Some(other) => {
+            WARNED.call_once(|| {
+                if worktrunk::config::warnings_suppressed() {
+                    return;
+                }
+                eprintln!(
+                    "{}",
+                    warning_message(cformat!(
+                        "[list] json-schema is <bold>{other}</>, expected 1 or 2; using schema 1"
+                    ))
+                );
+            });
+            1
+        }
+        None => {
+            WARNED.call_once(|| {
+                if worktrunk::config::warnings_suppressed() {
+                    return;
+                }
+                eprintln!(
+                    "{}",
+                    warning_message(
+                        "JSON output is schema 1; a future release switches the default to schema 2"
+                    )
+                );
+                let update_would_adopt = worktrunk::config::config_path()
+                    .and_then(|p| std::fs::read_to_string(p).ok())
+                    .is_some_and(|content| {
+                        worktrunk::config::detect_deprecations(
+                            &content,
+                            worktrunk::config::ConfigFileKind::User,
+                        )
+                        .iter()
+                        .any(|k| matches!(k, worktrunk::config::DeprecationKind::JsonSchemaUnset))
+                    });
+                let adopt = if update_would_adopt {
+                    cformat!("run <underline>wt config update</>")
+                } else {
+                    cformat!("set <underline>json-schema = 2</>")
+                };
+                eprintln!(
+                    "{}",
+                    hint_message(cformat!(
+                        "To keep this format set <underline>[list] json-schema = 1</>; to adopt the new schema, {adopt}"
+                    ))
+                );
+            });
+            1
+        }
+    }
 }
 
 #[derive(Default)]
@@ -228,17 +330,18 @@ impl SummaryMetrics {
     ) -> Vec<String> {
         let mut parts = Vec::new();
 
+        let plural = if self.worktrees == 1 { "" } else { "s" };
+        parts.push(format!("{} worktree{}", self.worktrees, plural));
+
         if include_branches {
-            parts.push(format!("{} worktrees", self.worktrees));
             if self.local_branches > 0 {
-                parts.push(format!("{} branches", self.local_branches));
+                let plural = if self.local_branches == 1 { "" } else { "es" };
+                parts.push(format!("{} branch{}", self.local_branches, plural));
             }
             if self.remote_branches > 0 {
-                parts.push(format!("{} remote branches", self.remote_branches));
+                let plural = if self.remote_branches == 1 { "" } else { "es" };
+                parts.push(format!("{} remote branch{}", self.remote_branches, plural));
             }
-        } else {
-            let plural = if self.worktrees == 1 { "" } else { "s" };
-            parts.push(format!("{} worktree{}", self.worktrees, plural));
         }
 
         if self.dirty_worktrees > 0 {
@@ -262,12 +365,17 @@ impl SummaryMetrics {
     }
 }
 
-/// Format a summary message for the given items (used by both collect/mod.rs and mod.rs)
+/// Format the summary line that closes the table.
+///
+/// The footer is the only home a timed-out task has: it leaves an empty cell
+/// and no message to print, so the count here is all that reports it. Tasks
+/// that failed instead get a named entry in the warning that follows the
+/// table, and that warning carries its own count — repeating it here would
+/// print the same number twice on adjacent lines.
 pub(crate) fn format_summary_message(
     items: &[ListItem],
     show_branches: bool,
     hidden_column_count: usize,
-    error_count: usize,
     timed_out_count: usize,
 ) -> String {
     let metrics = SummaryMetrics::from_items(items);
@@ -276,21 +384,11 @@ pub(crate) fn format_summary_message(
         .summary_parts(show_branches, hidden_column_count)
         .join(", ");
 
-    if error_count > 0 {
-        let failure_msg = if error_count == timed_out_count {
-            // All failures are timeouts
-            let plural = if timed_out_count == 1 { "" } else { "s" };
-            format!("{timed_out_count} task{plural} timed out")
-        } else if timed_out_count > 0 {
-            // Mix of timeouts and other errors
-            let plural = if error_count == 1 { "" } else { "s" };
-            format!("{error_count} task{plural} failed ({timed_out_count} timed out)")
-        } else {
-            // No timeouts, just other errors
-            let plural = if error_count == 1 { "" } else { "s" };
-            format!("{error_count} task{plural} failed")
-        };
-        format!("{INFO_SYMBOL} {dim}Showing {summary}. {failure_msg}{dim:#}")
+    if timed_out_count > 0 {
+        let plural = if timed_out_count == 1 { "" } else { "s" };
+        format!(
+            "{INFO_SYMBOL} {dim}Showing {summary}; {timed_out_count} task{plural} timed out{dim:#}"
+        )
     } else {
         format!("{INFO_SYMBOL} {dim}Showing {summary}{dim:#}")
     }
@@ -431,20 +529,15 @@ mod tests {
     }
 
     #[test]
-    fn test_format_summary_message_error_variants() {
+    fn test_format_summary_message_timeout_variants() {
         use insta::assert_snapshot;
 
-        // No errors
-        assert_snapshot!(format_summary_message(&[], false, 0, 0, 0), @"[2m○[22m [2mShowing 0 worktrees[0m");
-        // All timeouts
-        assert_snapshot!(format_summary_message(&[], false, 0, 3, 3), @"[2m○[22m [2mShowing 0 worktrees. 3 tasks timed out[0m");
-        // Mixed errors and timeouts
-        assert_snapshot!(format_summary_message(&[], false, 0, 5, 3), @"[2m○[22m [2mShowing 0 worktrees. 5 tasks failed (3 timed out)[0m");
-        // Only failures, no timeouts
-        assert_snapshot!(format_summary_message(&[], false, 0, 2, 0), @"[2m○[22m [2mShowing 0 worktrees. 2 tasks failed[0m");
-        // Single error
-        assert_snapshot!(format_summary_message(&[], false, 0, 1, 0), @"[2m○[22m [2mShowing 0 worktrees. 1 task failed[0m");
+        // Nothing timed out. Failures alone leave the footer untouched — the
+        // warning after the table names them and carries their count.
+        assert_snapshot!(format_summary_message(&[], false, 0, 0), @"[2m○[22m [2mShowing 0 worktrees[0m");
         // Single timeout
-        assert_snapshot!(format_summary_message(&[], false, 0, 1, 1), @"[2m○[22m [2mShowing 0 worktrees. 1 task timed out[0m");
+        assert_snapshot!(format_summary_message(&[], false, 0, 1), @"[2m○[22m [2mShowing 0 worktrees; 1 task timed out[0m");
+        // Several timeouts
+        assert_snapshot!(format_summary_message(&[], false, 0, 3), @"[2m○[22m [2mShowing 0 worktrees; 3 tasks timed out[0m");
     }
 }

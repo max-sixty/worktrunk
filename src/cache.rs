@@ -1,7 +1,8 @@
 //! Shared primitives for the on-disk caches under `.git/wt/cache/`.
 //!
 //! Three callers use these primitives: `sha_cache` (content-addressed SHA-pair
-//! results), `ci_status::cache` (branch → CI status with TTL), and `summary`
+//! results), `ci_status::cache` (branch → CI status with TTL, plus the repo-wide
+//! max-PR-number ratchet), and `summary`
 //! (branch → LLM summary with content-addressed filenames). Each owns its
 //! layout, struct shape, and freshness rules — this module only owns the
 //! filesystem mechanics so those rules have one implementation instead of
@@ -55,7 +56,7 @@ pub fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {
     match serde_json::from_str::<T>(&json) {
         Ok(value) => Some(value),
         Err(e) => {
-            log::debug!("cache: corrupt entry at {}: {}", path.display(), e);
+            tracing::debug!(path = %path.display(), error = %e, "cache: corrupt entry at {}: {}", path.display(), e);
             None
         }
     }
@@ -71,17 +72,17 @@ pub fn write_json<T: Serialize>(path: &Path, value: &T) {
     if let Some(parent) = path.parent()
         && let Err(e) = fs::create_dir_all(parent)
     {
-        log::debug!("cache: failed to create dir {}: {}", parent.display(), e);
+        tracing::debug!(path = %parent.display(), error = %e, "cache: failed to create dir {}: {}", parent.display(), e);
         return;
     }
 
     let Ok(json) = serde_json::to_string(value) else {
-        log::debug!("cache: failed to serialize entry for {}", path.display());
+        tracing::debug!(path = %path.display(), "cache: failed to serialize entry for {}", path.display());
         return;
     };
 
     if let Err(e) = fs::write(path, &json) {
-        log::debug!("cache: failed to write {}: {}", path.display(), e);
+        tracing::debug!(path = %path.display(), error = %e, "cache: failed to write {}: {}", path.display(), e);
     }
 }
 
@@ -152,7 +153,7 @@ pub fn sweep_lru(dir: &Path, max: usize) {
     for (path, _) in with_mtime.iter().take(excess) {
         let _ = fs::remove_file(path);
     }
-    log::debug!("cache: swept {} entries from {}", excess, dir.display());
+    tracing::debug!(count = excess, dir = %dir.display(), "cache: swept {} entries from {}", excess, dir.display());
 }
 
 /// Remove a single cache entry.

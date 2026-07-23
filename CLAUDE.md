@@ -3,7 +3,7 @@
 ## Quick Start
 
 ```bash
-cargo run -- hook pre-merge --yes   # all tests + lints; run before committing
+cargo run -- hook pre-merge --yes   # all tests + lints (runs automatically in wt merge)
 ```
 
 Claude Code web: run `task setup-web` first. Test commands, isolation, and coverage investigation: `tests/CLAUDE.md`.
@@ -43,11 +43,11 @@ Load relevant skills before starting; reload when scope changes mid-session. Pro
 
 ## Documentation
 
-Behavior changes require doc updates. `src/cli/mod.rs` (`after_long_help` plus clap attributes) is the PRIMARY SOURCE for command pages; never hand-edit the generated mirrors under `docs/content/` or `skills/worktrunk/reference/`. Ask: "does `--help` still describe what the code does?" After any doc change run `cargo test --test integration test_docs_are_in_sync`. Sync taxonomy, help-text authoring (three render contexts, link text, config-TOML blocks): `docs/CLAUDE.md`.
+Behavior changes require doc updates. `src/cli/mod.rs` (`after_long_help` plus clap attributes) is the PRIMARY SOURCE for command pages; their rendered mirrors in `docs/content/` and `skills/worktrunk/reference/` are generated, as is all of `plugins/worktrunk/skills/` — but both directories also hold hand-edited primaries (non-command docs in `docs/content/`, skill-only pages like `shell-integration.md` in the reference dir), so check which file is primary in the sync taxonomy before editing. Ask: "does `--help` still describe what the code does?" `cargo test --test integration test_docs_are_in_sync` checks doc sync; editing help text (`after_long_help`, `about`, arg docs) also changes the rendered `--help` snapshots, which that test leaves untouched — `cargo insta test --accept -- --test integration "test_help"` regenerates them (the pre-merge hook runs both). Sync taxonomy, help-text authoring (three render contexts, link text, config-TOML blocks): `docs/CLAUDE.md`.
 
 ## Plugin Layout
 
-Per-tool layout and path resolution (Claude/Codex/Gemini), the Codex no-hooks re-enablement conditions, the accepted `wt-switch-create` tradeoff, and `test_plugin_layout_is_consolidated`: `plugins/worktrunk/CLAUDE.md`.
+Per-tool layout and path resolution (Claude/Codex/Gemini), the convention-only Claude manifest, the Codex inline-hooks rationale, the generated plugin-skills mirror, the accepted `wt-switch-create` tradeoff, and `test_plugin_layout_is_consolidated`: `plugins/worktrunk/CLAUDE.md`.
 
 ## Data Safety
 
@@ -65,12 +65,18 @@ Full inventory: FAQ [What files does Worktrunk create?](docs/content/faq.md#what
 
 ### All Commands Through `shell_exec::Cmd`
 
-Every external command goes through `shell_exec::Cmd` for consistent debug logging (`$ git status [worktree-name]`) and `[wt-trace]` timing. Never call `cmd.output()` directly. For git, prefer `Repository::run_command()` (wraps `Cmd` with worktree context). Pipe stdin via `.stdin_bytes(...)`. The `[wt-trace]` grammar is owned by `src/trace/emit.rs` — emit new trace records through that module, not ad-hoc `log::debug!("[wt-trace] …")` strings.
+Every external command goes through `shell_exec::Cmd` for consistent debug logging (`$ git status [worktree-name]`) and `[wt-trace]` timing. Never call `cmd.output()` directly. For git, prefer `Repository::run_command()` (wraps `Cmd` with worktree context). `Cmd` has four execution modes — `run` (capture), `stream` (inherit stdio), `delayed_stream` (buffer then stream to stderr, for slow ops like `git worktree add`), and `pipe_into` (two-stage pipe). Pipe stdin via `.stdin_bytes(...)`.
 
 ```rust
 Cmd::new("git").args(["status", "--porcelain"]).current_dir(&wt).context("worktree-name").run()?;
 Cmd::new("gh").args(["pr", "list"]).run()?;  // no context for standalone tools
 ```
+
+**The `[wt-trace]` command record has one emitter: `CommandTrace` in `src/trace/emit.rs`.** The grammar lives there too (don't hand-write `log::debug!("[wt-trace] …")`). `CommandTrace::{complete,fail}` are the only callers of the private `command_completed`/`command_errored` writers, so a subprocess is either traced through the guard or produces no command record. Most spawns get this for free via `Cmd`. A few spawn sites have I/O shapes `Cmd` can't model and construct a `CommandTrace` directly: the concurrent-command runner (`output/concurrent.rs`), pipeline steps (`commands/run_pipeline.rs`), `wt step tether`, and the fsmonitor daemon launch. **Any new spawn site that runs an in-process command must construct a `CommandTrace` (start it just before spawn; `complete(success)` after wait, `fail(err)` on spawn/wait error)** — otherwise the command shows up as an unattributed gap in `wt-perf timeline`. The guard is `#[must_use]` and trips a debug-build assertion if dropped unresolved, so a forgotten `complete`/`fail` fails tests rather than silently going untraced. Detached background children (`commands/process.rs`) and interactive helpers (pagers, shell probes) are intentionally untraced — they outlive the invocation or aren't part of its timeline.
+
+### Git-Discovery Env Vars Follow Who Chose the Cwd
+
+Git resolves `GIT_DIR`/`GIT_WORK_TREE` (and the rest of `INHERITED_GIT_PATH_VARS`) before walking up from the cwd, so an inherited value silently overrides a child's working directory. **Any spawn site that relocates a user command into a `wt`-chosen worktree — hooks, `wt step for-each`, the `--execute` no-integration fallback — must scrub these vars** (`Cmd::scrub_git_discovery_env` or `scrub_git_discovery_env_vars`); children running in the user's own context (aliases, `commit.generation`) and `wt`'s internal git plumbing keep the inherited context (absolutized). Full site classification and rationale: `scrub_git_discovery_env_vars` in `src/shell_exec.rs`.
 
 ### Real-time Output Streaming
 
@@ -91,18 +97,22 @@ When no structured alternative exists, document the fragility inline.
 
 ### Network Access
 
-worktrunk is local-first: the network is touched only when the user asked for it. **One detection helper is exempt:** the *first* `Repository::default_branch()` per repo may fall through to `git ls-remote`; the result caches in `worktrunk.default-branch` and every later call is local. No other detection helper may add a similar fallback.
+worktrunk is local-first: the network is touched only when the user asked for it, and only where reaching the wire directly serves that request. **One detection helper is exempt:** the *first* `Repository::default_branch()` per repo may fall through to `git ls-remote`; the result caches in `worktrunk.default-branch` and every later call is local. No other detection helper may add a similar fallback.
 
 Why: silent "lookup" paths that walk to the wire (alias dispatch, hook context build, recovery) stall commands the user wouldn't expect to do network work, worst on a fresh clone. The `default_branch()` bootstrap keeps a fresh clone usable while bounding the exception to one helper firing at most once per repo.
 
-Before adding an accessor that could reach the wire (`gh`, `glab`, `git fetch`, `git ls-remote`, HTTP), confirm the command that calls it is not intended to be fast. A foreground command the user runs and waits on absorbs the latency; a command in a synchronous hot path like a shell prompt cannot, and must not reach the wire. `wt list statusline` is not a fast command despite running on every prompt: Claude Code consumes its output asynchronously.
+**Network never blocks the first write.** Fast output to the terminal is the priority (Real-time Output Streaming, above): every command paints from local data first, then network-derived detail streams in progressively behind it. A command that can't render its first frame until `gh` or `git fetch` returns is the failure mode, worst on a fresh clone or a slow link. Before adding an accessor that could reach the wire (`gh`, `glab`, `git fetch`, `git ls-remote`, HTTP), confirm it renders progressively and never gates the first paint. A synchronous hot path like a shell prompt is stricter: it must not reach the wire at all, even progressively. `wt list statusline` is not such a path despite running on every prompt, because Claude Code consumes its output asynchronously.
+
+**The picker is the most forgiving home for network work, because its lifetime is bounded by the user, not the job.** It paints immediately, the user browses, and a slow forge call streams into the rows whenever it arrives; if the user picks first, the unfinished request is simply abandoned, so its latency never costs anything. A run-to-completion command is less forgiving: `wt list` renders progressively but still cannot *finish* until every task returns, so a slow `gh` call extends the command the user is waiting on. Prefer the picker for live forge data, and fetch it there progressively.
 
 What currently reaches the wire:
 
-- `wt list --full`, `wt list statusline` — CI status
+- `wt list --full`, `wt list statusline` — CI status; also plain `wt list` (any format) when `[list] columns` names `ci`, which forces the column (and its fetch) on without `--full`
+- `wt switch` (interactive picker, no target) — per-row CI status, primed from the local cache then fetched live and streamed into the rows; once a row's CI fetch surfaces an open PR/MR, a per-row background `gh pr view <n> --json comments` (`glab api …/notes` on GitLab) fills that row's `comments` preview tab — the same fetch a `--prs` row makes, spawned once per row from `progressive_handler` (see `picker::prs::spawn_comments_fetch`). The `comments` tab is the only PR data fetched lazily here; `pr` rides the CI call and `log` is the local `git log`
 - generating a branch summary with a `commit.generation` command
 - generating a commit message with a `commit.generation` command
 - `wt switch pr:<n>`, `wt switch mr:<n>` — host API to resolve the PR/MR, then `git fetch` of its branch
+- `wt switch --prs` — one `gh pr list` / `glab mr list` to populate the interactive picker (streamed in after the frame paints), then a per-row background `gh pr view <n> --json comments` (`glab api …/notes` on GitLab) to fill each row's `comments` preview tab, plus a `gh pr view <n> --json commits` / `glab api …/commits` for the `log` tab **only when the head commit isn't already local** — a `--prs` row whose `headRefOid`/`sha` resolves in the object store renders the `log` tab from a local `git log` with no network (off the pool, once per row when the rows land — see `picker::prs::spawn_pr_previews`)
 - `wt config show --full` — version check against GitHub
 - the first `Repository::default_branch()` per repo — `git ls-remote` (above)
 
@@ -131,11 +141,11 @@ Why: wt installs a `signal_hook` SIGINT/SIGTERM handler so it can forward signal
 
 ## Coverage
 
-**NEVER merge a PR with failing `codecov/patch` without explicit user approval.** It is marked "not required" in GitHub but still gates merge. On failure, investigate and fix the gap — write tests, or remove unused code (including specialized error handlers for rare cases where falling through to a general handler suffices). If you believe it's a false positive, ask the user before merging. Coverage runs include `--features shell-integration-tests` (CI `code-coverage` and local `task coverage`) — don't dismiss failures by claiming the feature is off. Investigation commands, rename false-positives, and the "N functions mismatched" warning: `tests/CLAUDE.md`.
+**NEVER merge a PR with failing `codecov/patch` without explicit user approval.** It is marked "not required" in GitHub but still gates merge. On PR heads codecov posts **check runs** (codecov GitHub App), not commit statuses: poll with `gh pr checks <number>` or the check-runs API; the combined-status API (`/commits/<sha>/status`) never shows them, and the check run lands a few minutes after the `code-coverage` job finishes. On failure, investigate and fix the gap — write tests, or remove unused code (including specialized error handlers for rare cases where falling through to a general handler suffices). If you believe it's a false positive, ask the user before merging. Coverage runs include `--features shell-integration-tests` (CI `code-coverage` and local `task coverage`) — don't dismiss failures by claiming the feature is off. Investigation commands, rename false-positives, and the "N functions mismatched" warning: `tests/CLAUDE.md`.
 
 ## Benchmarks & Traces
 
-`cargo bench --bench list <filter>` (Criterion takes a positional substring filter; there's no `--skip`). `cargo run -p wt-perf -- timeline -- <args>` traces one `wt` invocation. Real-repo benchmarks clone rust-lang/rust on first run. The `benchmarks` CI job is non-required — only `test (linux|macos|windows)` block merge; `mergeStateStatus: UNSTABLE` from a still-pending bench run is mergeable. Filter map, expected numbers, and trace queries: `benches/CLAUDE.md`.
+`cargo bench --bench list <filter>` (Criterion takes a positional substring filter; there's no `--skip`). `cargo run -p wt-perf -- timeline -- <args>` traces one `wt` invocation. Real-repo benchmarks clone rust-lang/rust on first run. Benchmarks run as a standalone scheduled workflow (`.github/workflows/benchmarks.yaml`, daily cron plus `workflow_dispatch`), not on PRs, so they never gate a merge; only `test (linux|macos|windows)` block it. Filter map, expected numbers, and trace queries: `benches/CLAUDE.md`.
 
 ## Code Quality
 
@@ -163,9 +173,9 @@ Check `Cargo.toml` before hand-rolling a utility:
 
 ## Config Deprecation
 
-All config deprecation lives in one layer: pre-deserialization TOML migration in `src/config/deprecation.rs`. `migrate_content()` rewrites deprecated patterns into canonical form before serde parses; `check_and_migrate()` reuses it, and additionally detects patterns, emits per-process-deduped warnings, and generates a `.new` migration file. **Never silently drop an old config key** — that's a silent behavior change for users; migrate it.
+All config deprecation lives in one layer: pre-deserialization TOML migration in `src/config/deprecation.rs`. `migrate_content()` rewrites deprecated patterns into canonical form before serde parses; `check_and_migrate()` reuses it, and additionally detects patterns and emits per-process-deduped warnings (the user materializes migrations via `wt config update`). **Never silently drop an old config key** — that's a silent behavior change for users; migrate it.
 
-Detection produces a `Vec<DeprecationKind>` (`Deprecations`): each variant carries its own display payload, so `format_deprecation_warnings()` is one match over the kinds and `is_empty` is just `Vec::is_empty()`. Adding a deprecation: (1) a detection function, plus a `DeprecationKind` variant that `detect_deprecations_from_doc()` pushes in warning-emission order; (2) an idempotent migration function; (3) call it from `migrate_content()`; (4) a match arm in `format_deprecation_warnings()`; (5) for a removed top-level section, add a `DeprecatedSection` to `DEPRECATED_SECTION_KEYS` (canonical key plus display form) so `warn_unknown_fields` defers to the deprecation messaging and suggests the correct config file. A silently-migrated rename (e.g. `pre-create` → `pre-start`) gets no variant — it emits no warning by construction. Renaming a field within a section follows the same shape via a TOML-level rename function (see `migrate_negated_bool`); the struct never needs the old field since migration precedes serde.
+Every deprecation is one row in the `DEPRECATION_RULES` table: a single idempotent function that rewrites the pattern AND returns the `DeprecationKind`s for what it changed — there is no separate detection function, so detection and migration share one predicate and cannot drift. Detection runs the same functions against a scratch copy of the document (progressively, so a rule sees earlier rules' rewrites); the invariant for warning rules is **a warning fires exactly when `wt config update` would change the file**, pinned by `test_warning_fires_iff_update_changes` — add new edge cases to its battery. The row variant decides when the rewrite applies: `Structural` rewrites on every load; `UpdateOnly` only via `wt config update`, for deprecated forms that still work at runtime; `Silent` rewrites on every load with no warning — its function signature has no channel for a kind, which is what scopes the invariant to `Structural` and `UpdateOnly`; `PendingDefault` adopts a default a future release switches — `wt config update` writes the upcoming value (currently `[list] json-schema = 2`), inert while the system config layer defines the key — update-pass only, scoped to the config kind that owns the key, and excluded from load warnings by `is_pending_default`: it satisfies the same iff at the surface that reads the setting, where the `wt list` JSON nag fires exactly when update would write. Table order is both the warning-emission order and the migration order. Each `DeprecationKind` carries its own display payload, so `format_deprecation_warnings()` is one match over the kinds. A config that can't be rewritten safely (a malformed value, an occupied destination key) is left untouched and unwarned — serde's type or unknown-field error is the messaging; an empty deprecated section is also left alone, with no message at all (it contributes no config). Adding a deprecation: (1) one idempotent migrate-and-report function; (2) a `DeprecationKind` variant plus its match arm in `format_deprecation_warnings()`; (3) a `DEPRECATION_RULES` row; (4) for a removed top-level section, add a `DeprecatedSection` to `DEPRECATED_SECTION_KEYS` (canonical key plus display form) so `warn_unknown_fields` defers to the deprecation messaging and suggests the correct config file. A silently-migrated rename (e.g. `pre-create` → `pre-start`) is a `Silent` row with no variant. Renaming a field within a section follows the same shape via a TOML-level rename function (see `migrate_negated_bool`); the struct never needs the old field since migration precedes serde.
 
 ## Adding CLI Commands
 
@@ -185,7 +195,7 @@ No `get_*` — bare nouns follow Rust stdlib convention.
 
 ## Repository Caching
 
-`Repository` caches read-only values via `Arc<RepoCache>` (cloning shares it). What is and isn't cached, the `list_worktrees()` post-mutation invariant, and the two storage patterns: the `# Caching` section in `src/git/repository/mod.rs`.
+`Repository` caches read-only values via `Arc<RepoCache>` (cloning shares it). What is and isn't cached, the `list_worktrees()` post-mutation invariant, the two storage patterns, and the in-memory-`RepoCache`-vs-persistent-`sha_cache` decision (cheap-and-hot → in-memory get-or-create; expensive → disk; both → in-memory front over disk back): the `# Caching` section in `src/git/repository/mod.rs`.
 
 ## Releases
 

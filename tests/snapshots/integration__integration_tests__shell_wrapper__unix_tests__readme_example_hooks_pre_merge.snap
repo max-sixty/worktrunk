@@ -11,8 +11,8 @@ expression: "&output.combined"
 [107m [0m Includes comprehensive test coverage and input validation.
 [32m✓[39m [32mSquashed @ [HASH][39m
 [36m◎[39m [36mRunning pre-merge [1mproject:test[22m[39m
-[107m [0m [2m[0m[2m[34muv[0m[2m run pytest
-
+[107m [0m [2m[0m[2m[34muv[0m[2m run pytest[0m
+[0m
 ============================= test session starts ==============================
 collected 3 items
 
@@ -23,8 +23,8 @@ tests/test_auth.py::test_token_validation PASSED                         [100%]
 ============================== 3 passed in 0.8s ===============================
 
 [36m◎[39m [36mRunning pre-merge [1mproject:lint[22m[39m
-[107m [0m [2m[0m[2m[34muv[0m[2m run ruff check
-
+[107m [0m [2m[0m[2m[34muv[0m[2m run ruff check[0m
+[0m
 All checks passed!
 
 [36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2m[HASH][22m (no rebase needed)[39m
@@ -35,3 +35,4 @@ All checks passed!
 [32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 2 files, [32m+45[39m[39m[90m)[39m[39m
 [36m◎[39m [36mRemoving [1mfeature-auth[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
 [2m○[22m Switched to worktree for [1mmain[22m @ [1m_REPO_[22m
+[0m

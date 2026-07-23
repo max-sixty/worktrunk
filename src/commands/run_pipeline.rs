@@ -23,11 +23,13 @@
 //! **Serial steps** run one at a time. If a step exits non-zero, the
 //! pipeline aborts — later steps don't run.
 //!
-//! **Concurrent groups** spawn all children at once, then wait for every
-//! child before proceeding. If any child fails, the group is reported as
-//! failed, but all children are allowed to finish. Template expansion for
-//! concurrent commands happens sequentially before any child is spawned
-//! (expansion may read git config, so order matters for `vars.*`).
+//! **Concurrent groups** spawn each child as soon as its own template is
+//! expanded, then wait for every child before proceeding. If any child fails,
+//! the group is reported as failed, but all children are allowed to finish.
+//! Expansion runs in a single sequential loop in command order — each command
+//! is expanded immediately before its own child is spawned (expansion may read
+//! git config, so order matters for `vars.*`), so a later command's expansion
+//! can run after an earlier command's child has already started.
 //!
 //! **Stdin**: every child receives the spec's context as JSON on stdin,
 //! matching the foreground hook convention. Commands that don't read stdin
@@ -62,7 +64,8 @@ use std::process::{Child, ExitStatus, Stdio};
 use anyhow::Context;
 
 use worktrunk::git::{Repository, WorktrunkError};
-use worktrunk::shell_exec::ShellConfig;
+use worktrunk::shell_exec::{ShellConfig, scrub_git_discovery_env_vars};
+use worktrunk::trace::CommandTrace;
 
 use super::command_executor::{expand_shell_template, wait_first_error};
 use super::pipeline_spec::{PipelineSpec, PipelineStepSpec};
@@ -96,19 +99,22 @@ pub fn run_pipeline() -> anyhow::Result<()> {
 
     for step in &spec.steps {
         match step {
-            PipelineStepSpec::Single { template, name } => {
+            PipelineStepSpec::Single {
+                template,
+                template_name,
+                name,
+            } => {
                 let log_name = command_log_name(name.as_deref(), cmd_index);
                 let log_file = create_command_log(&spec, &log_name)?;
                 let step_ctx = step_context(&spec.context, name.as_deref());
-                let label = name.as_deref().unwrap_or("pipeline step");
-                let expanded = expand_shell_template(template, &step_ctx, &repo, label)?;
+                let expanded = expand_shell_template(template, &step_ctx, &repo, template_name)?;
                 let step_json = serde_json::to_string(&*step_ctx)
                     .context("failed to serialize step context")?;
-                let mut child =
+                let (mut child, mut trace) =
                     spawn_shell_command(&expanded, &spec.worktree_path, &step_json, log_file)?;
-                let status = child.wait().context("failed to wait for child process")?;
+                let status = wait_resolving(&mut child, &mut trace, &expanded)?;
                 if !status.success() {
-                    return Err(failure_error(&status, &expanded));
+                    return Err(failure_error(&status, name.as_deref().unwrap_or(&expanded)));
                 }
                 cmd_index += 1;
             }
@@ -150,19 +156,33 @@ fn spawn_shell_command(
     worktree_path: &Path,
     context_json: &str,
     log_file: fs::File,
-) -> anyhow::Result<Child> {
+) -> anyhow::Result<(Child, CommandTrace)> {
     let shell = ShellConfig::get()?;
     let log_err = log_file
         .try_clone()
         .context("failed to clone log file handle")?;
-    let mut child = shell
-        .command(expanded)
+    // Start the trace just before spawning; the caller resolves it once the
+    // child is waited on (see `wait_resolving`). The step is fed its own
+    // `context_json` on stdin, so mark it stdin-reading — the same command
+    // across worktrees isn't a duplicate (different per-worktree input).
+    let mut trace = CommandTrace::new(None, expanded).reads_stdin(true);
+    let mut command = shell.command(expanded);
+    command
         .current_dir(worktree_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::from(log_file))
-        .stderr(Stdio::from(log_err))
-        .spawn()
-        .with_context(|| format!("failed to spawn: {expanded}"))?;
+        .stderr(Stdio::from(log_err));
+    // Background hooks, like foreground ones, discover their repo from the
+    // worktree cwd, not an inherited GIT_DIR/GIT_WORK_TREE (issue #3373). This
+    // runner only ever executes hook pipelines, so the scrub is unconditional.
+    scrub_git_discovery_env_vars(&mut command);
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            trace.fail(&e);
+            return Err(e).with_context(|| format!("failed to spawn: {expanded}"));
+        }
+    };
 
     // Write context JSON to stdin, then drop to close the pipe.
     if let Some(mut stdin) = child.stdin.take() {
@@ -171,7 +191,27 @@ fn spawn_shell_command(
         let _ = stdin.write_all(context_json.as_bytes());
     }
 
-    Ok(child)
+    Ok((child, trace))
+}
+
+/// Wait for a pipeline child, resolving its [`CommandTrace`], and surface a
+/// wait-IO failure with context. Returns the child's exit status; the caller
+/// decides whether a non-zero status is a pipeline failure.
+fn wait_resolving(
+    child: &mut Child,
+    trace: &mut CommandTrace,
+    expanded: &str,
+) -> anyhow::Result<ExitStatus> {
+    match child.wait() {
+        Ok(status) => {
+            trace.complete(status.success());
+            Ok(status)
+        }
+        Err(e) => {
+            trace.fail(&e);
+            Err(e).with_context(|| format!("failed to wait for: {expanded}"))
+        }
+    }
 }
 
 /// Spawn all commands in a concurrent group, then wait for all.
@@ -192,39 +232,53 @@ fn run_concurrent_group(
     cmd_index: &mut usize,
 ) -> anyhow::Result<()> {
     let serial = super::force_serial_concurrent();
-    let mut children = Vec::with_capacity(if serial { 0 } else { commands.len() });
+    let mut children: Vec<(Option<String>, String, Child, CommandTrace)> =
+        Vec::with_capacity(if serial { 0 } else { commands.len() });
 
-    for cmd in commands {
-        let log_name = command_log_name(cmd.name.as_deref(), *cmd_index);
-        let log_file = create_command_log(spec, &log_name)?;
-        let cmd_ctx = step_context(&spec.context, cmd.name.as_deref());
-        let label = cmd.name.as_deref().unwrap_or("pipeline step");
-        let expanded = expand_shell_template(&cmd.template, &cmd_ctx, repo, label)?;
-        let cmd_json =
-            serde_json::to_string(&*cmd_ctx).context("failed to serialize step context")?;
-        let mut child = spawn_shell_command(&expanded, &spec.worktree_path, &cmd_json, log_file)?;
-        *cmd_index += 1;
+    // Spawn (and, in serial mode, run) each command. Wrapped so that a mid-loop
+    // error — a setup `?` or a spawn failure for a later command — tears down
+    // the children already spawned this group rather than dropping them with
+    // unresolved trace guards (and as unreaped orphans).
+    let spawn_result = (|| -> anyhow::Result<()> {
+        for cmd in commands {
+            let log_name = command_log_name(cmd.name.as_deref(), *cmd_index);
+            let log_file = create_command_log(spec, &log_name)?;
+            let cmd_ctx = step_context(&spec.context, cmd.name.as_deref());
+            let expanded =
+                expand_shell_template(&cmd.template, &cmd_ctx, repo, &cmd.template_name)?;
+            let cmd_json =
+                serde_json::to_string(&*cmd_ctx).context("failed to serialize step context")?;
+            let (mut child, mut trace) =
+                spawn_shell_command(&expanded, &spec.worktree_path, &cmd_json, log_file)?;
+            *cmd_index += 1;
 
-        if serial {
-            let status = child
-                .wait()
-                .with_context(|| format!("failed to wait for: {expanded}"))?;
-            if !status.success() {
-                return Err(failure_error(
-                    &status,
-                    cmd.name.as_deref().unwrap_or(&expanded),
-                ));
+            if serial {
+                let status = wait_resolving(&mut child, &mut trace, &expanded)?;
+                if !status.success() {
+                    return Err(failure_error(
+                        &status,
+                        cmd.name.as_deref().unwrap_or(&expanded),
+                    ));
+                }
+            } else {
+                children.push((cmd.name.clone(), expanded, child, trace));
             }
-        } else {
-            children.push((cmd.name.clone(), expanded, child));
         }
+        Ok(())
+    })();
+
+    if let Err(e) = spawn_result {
+        for (_, _, mut child, mut trace) in children {
+            let _ = child.kill();
+            let _ = child.wait();
+            trace.complete(false);
+        }
+        return Err(e);
     }
 
     wait_first_error(children.into_iter().map(
-        |(name, expanded, mut child)| -> anyhow::Result<()> {
-            let status = child
-                .wait()
-                .with_context(|| format!("failed to wait for: {expanded}"))?;
+        |(name, expanded, mut child, mut trace)| -> anyhow::Result<()> {
+            let status = wait_resolving(&mut child, &mut trace, &expanded)?;
             if !status.success() {
                 return Err(failure_error(&status, name.as_deref().unwrap_or(&expanded)));
             }

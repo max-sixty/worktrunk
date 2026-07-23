@@ -35,13 +35,13 @@ use minijinja::Environment;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use worktrunk::cache;
-use worktrunk::git::Repository;
+use worktrunk::git::{CommandError, ErrorExt, Repository};
 use worktrunk::path::sanitize_for_filename;
 use worktrunk::styling::INFO_SYMBOL;
 use worktrunk::sync::Semaphore;
 use worktrunk::utils::epoch_now;
 
-use crate::llm::{execute_llm_command, prepare_diff};
+use crate::llm::{DIFF_PREFIX_OVERRIDES, execute_llm_command, prepare_diff};
 
 /// Limits concurrent LLM calls to avoid overwhelming the network / LLM
 /// provider. 8 permits balances parallelism with resource usage — LLM calls
@@ -218,33 +218,42 @@ pub(crate) fn hash_diff(diff: &str) -> String {
 
 /// Compute the combined diff for a branch (branch diff + working tree diff).
 ///
-/// Returns None if there's nothing to summarize (default branch with no changes,
-/// or no default branch known and no working tree diff available).
+/// The branch diff measures against the upstream-aware comparison base (see
+/// [`Repository::branch_diff_spec`]) — the same ref the `wt list` columns use,
+/// not the raw local default — so a stale fork default can't describe upstream
+/// commits as the branch's own changes; orphan branches contribute their full
+/// content rather than nothing. Returns `None` if there's nothing to summarize
+/// (default branch with no changes, or no comparison base and no working tree
+/// diff).
 pub(crate) fn compute_combined_diff(
     branch: &str,
     head: &str,
     worktree_path: Option<&Path>,
     repo: &Repository,
 ) -> Option<CombinedDiff> {
-    let default_branch = repo.default_branch();
-
     let mut diff = String::new();
     let mut stat = String::new();
 
-    // Branch diff: what's ahead of default branch (skipped if default branch unknown)
-    if let Some(ref default_branch) = default_branch {
-        let is_default_branch = branch == *default_branch;
-        if !is_default_branch {
-            let merge_base = format!("{}...{}", default_branch, head);
-            if let Ok(branch_stat) =
-                repo.run_command(&["diff", "--stat", "--end-of-options", &merge_base])
-            {
-                stat.push_str(&branch_stat);
+    // Branch diff vs the comparison base — skipped for the default-branch row
+    // itself (the baseline) and when no comparison base resolves.
+    let is_default_branch = repo.default_branch().as_deref() == Some(branch);
+    if !is_default_branch && let Some(spec) = repo.branch_diff_spec(head) {
+        // `--end-of-options` guards a base name that could begin with `-`; the
+        // stat and full-diff invocations differ only by the `--stat` flag.
+        // The prefix overrides keep the diff parseable into per-file sections
+        // by `prepare_diff` (same guard as `build_commit_prompt`).
+        let run_branch_diff = |opts: &[&str], out: &mut String| {
+            let mut args = DIFF_PREFIX_OVERRIDES.to_vec();
+            args.push("diff");
+            args.extend_from_slice(opts);
+            args.push("--end-of-options");
+            args.extend(spec.revs.iter().map(String::as_str));
+            if let Ok(text) = repo.run_command(&args) {
+                out.push_str(&text);
             }
-            if let Ok(branch_diff) = repo.run_command(&["diff", "--end-of-options", &merge_base]) {
-                diff.push_str(&branch_diff);
-            }
-        }
+        };
+        run_branch_diff(&["--stat"], &mut stat);
+        run_branch_diff(&[], &mut diff);
     }
 
     // Working tree diff: uncommitted changes
@@ -255,7 +264,10 @@ pub(crate) fn compute_combined_diff(
         {
             stat.push_str(&wt_stat);
         }
-        if let Ok(wt_diff) = repo.run_command(&["-C", &path, "diff", "HEAD"])
+        let mut wt_diff_args = vec!["-C", &path];
+        wt_diff_args.extend(DIFF_PREFIX_OVERRIDES);
+        wt_diff_args.extend(["diff", "HEAD"]);
+        if let Ok(wt_diff) = repo.run_command(&wt_diff_args)
             && !wt_diff.trim().is_empty()
         {
             diff.push_str(&wt_diff);
@@ -332,7 +344,6 @@ pub(crate) fn generate_summary_core(
 ///
 /// This is the TUI-friendly wrapper that returns a formatted string for all cases,
 /// including errors and "no changes" — suitable for `wt switch` preview pane.
-#[cfg_attr(windows, allow(dead_code))] // Called from picker module (unix-only)
 pub(crate) fn generate_summary(
     branch: &str,
     head: &str,
@@ -346,13 +357,44 @@ pub(crate) fn generate_summary(
             let reset = Reset;
             cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no changes to summarize\n")
         }
-        Err(e) => format!("Error: {e:#}"),
+        Err(e) => format_summary_error(&e),
+    }
+}
+
+/// Format a summary-generation error for the preview pane.
+///
+/// A typed command failure carries the LLM command's captured output —
+/// `display_message` surfaces that rather than the single-line chain
+/// summary. For anything else (shell spawn failure, template bug) keep
+/// the full anyhow chain, which `display_message` would collapse to its
+/// outermost line.
+fn format_summary_error(e: &anyhow::Error) -> String {
+    if CommandError::find_in(e).is_some() {
+        format!("Error: {}", e.display_message())
+    } else {
+        format!("Error: {e:#}")
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A non-command error (spawn failure, template bug) keeps its full
+    /// anyhow chain in the preview pane; command failures are covered by
+    /// `test_generate_summary_llm_error`.
+    #[test]
+    fn format_summary_error_keeps_chain_for_non_command_errors() {
+        use anyhow::Context;
+        let err = std::io::Error::new(std::io::ErrorKind::NotFound, "No such file or directory");
+        let err = anyhow::Result::<()>::Err(err.into())
+            .context("Failed to spawn LLM command")
+            .unwrap_err();
+        assert_eq!(
+            format_summary_error(&err),
+            "Error: Failed to spawn LLM command: No such file or directory"
+        );
+    }
 
     #[test]
     fn test_render_prompt_includes_diff_and_stat() {

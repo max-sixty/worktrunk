@@ -4,6 +4,10 @@ use crate::common::{
     TestRepo, configure_directive_files, directive_files, make_snapshot_cmd,
     make_snapshot_cmd_with_global_flags, repo, setup_snapshot_settings, wt_bin,
 };
+// Used only by the `#[cfg(unix)]` signal tests below; gate the import to match,
+// or it reads as unused on Windows under `-D warnings`.
+#[cfg(unix)]
+use crate::common::SLEEP_FOR_ABSENCE_CHECK;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::io::Write;
@@ -305,6 +309,46 @@ emit = "echo hello"
     assert!(
         stdout.lines().any(|line| line.trim() == "hello"),
         "expected `hello` on stdout (so `wt <alias> | …` is usable in scripts), \
+         got stdout={stdout:?} stderr={stderr:?}"
+    );
+}
+
+/// A one-entry alias table is a single named command, not a concurrent group
+/// of one: its output passes through on stdout without a `name │` prefix,
+/// identical to the string and `[[aliases.x]]` spellings.
+#[rstest]
+fn test_alias_single_entry_table_writes_to_stdout(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases.emit]
+say = "echo hello"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let output = repo
+        .wt_command()
+        .args(["-y", "emit"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "alias failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stdout.lines().any(|line| line.trim() == "hello"),
+        "expected unprefixed `hello` on stdout, got stdout={stdout:?} stderr={stderr:?}"
+    );
+    assert!(
+        !stdout.contains('│') && !stderr.contains("say │"),
+        "single named command must not use the concurrent `name │` prefix, \
          got stdout={stdout:?} stderr={stderr:?}"
     );
 }
@@ -1248,6 +1292,13 @@ trapped = "trap 'echo got-term >> trap.log; exit 143' TERM; echo started >> star
 
     let status = child.wait().expect("failed to wait for wt");
 
+    // wt forwarded SIGTERM to the wrapper sh by PID (the contract this test
+    // pins), so the trap's `exit` orphaned the backgrounded `sleep 30` in wt's
+    // process group. wt led that group (`process_group(0)` above) and is now
+    // reaped, so SIGKILL the whole group (negative pgid) to reap the sleep
+    // before returning — otherwise it lingers ~30s as a stray process.
+    let _ = kill(Pid::from_raw(-wt_pid.as_raw()), Signal::SIGKILL);
+
     // The trap marker proves the alias shell received SIGTERM. Without the
     // PID-targeted forwarding, this file would never appear and wt would
     // block on the 30s sleep.
@@ -1311,6 +1362,13 @@ trapped = "trap 'echo got-int >> trap.log; exit 130' INT; echo started >> start.
     kill(wt_pid, Signal::SIGINT).expect("failed to send SIGINT to wt");
 
     let status = child.wait().expect("failed to wait for wt");
+
+    // wt forwarded SIGINT to the wrapper sh by PID (the contract this test
+    // pins), so the trap's `exit` orphaned the backgrounded `sleep 30` in wt's
+    // process group. wt led that group (`process_group(0)` above) and is now
+    // reaped, so SIGKILL the whole group (negative pgid) to reap the sleep
+    // before returning — otherwise it lingers ~30s as a stray process.
+    let _ = kill(Pid::from_raw(-wt_pid.as_raw()), Signal::SIGKILL);
 
     let trap_marker = repo.root_path().join("trap.log");
     let recorded = std::fs::read_to_string(&trap_marker).unwrap_or_else(|e| {
@@ -1387,7 +1445,7 @@ two = "sh -c 'echo start-two >> slow_two.log; sleep 30; echo done-two >> slow_tw
     );
 
     // Grace period — the killed children must NOT reach their "done" write.
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     for log in [&one_log, &two_log] {
         let contents = std::fs::read_to_string(log).unwrap_or_default();
         assert!(
@@ -1397,23 +1455,28 @@ two = "sh -c 'echo start-two >> slow_two.log; sleep 30; echo done-two >> slow_tw
     }
 }
 
-/// When children trap SIGINT, wt's forwarder escalates SIGINT → SIGTERM,
-/// and the children actually die from SIGTERM. But the user only sent SIGINT
-/// — wt's exit code must reflect that (130), not the escalated signal (143).
-/// Otherwise users who Ctrl-C a `wt step <concurrent-alias>` whose children
-/// happen to swallow SIGINT (or are slow under load) see "terminated by
-/// SIGTERM" / exit 143 even though they pressed Ctrl-C.
+/// Children that trap SIGINT survive a single Ctrl-C — wt forwards the
+/// user's signal once and waits. Matches `make` / `cargo` behavior:
+/// stubborn children need a second Ctrl-C (see
+/// `test_alias_concurrent_second_sigint_kills`) to escalate to SIGKILL.
+///
+/// Counterpart to `test_alias_concurrent_receives_sigint` (cooperative
+/// children, single press is sufficient). Together they pin the
+/// no-per-child-escalation contract: the previous design escalated
+/// SIGINT → SIGTERM → SIGKILL inside one press, which under CI scheduling
+/// latency could land SIGTERM on a cooperative-but-slow child and make
+/// `wt step <alias>` exit 143 instead of 130 on Ctrl-C.
 #[rstest]
 #[cfg(unix)]
-fn test_alias_concurrent_sigint_reports_origin_after_escalation(repo: TestRepo) {
+fn test_alias_concurrent_sigint_trapped_survives_first_press(repo: TestRepo) {
     use crate::common::wait_for_file_content;
     use nix::sys::signal::{Signal, kill};
     use nix::unistd::Pid;
     use std::os::unix::process::CommandExt;
     use std::process::Stdio;
 
-    // Children trap SIGINT (ignore it) but NOT SIGTERM — so wt's
-    // SIGINT → SIGTERM escalation is what actually kills them.
+    // Children trap SIGINT (ignore it). With the new no-escalation
+    // contract, a single SIGINT should NOT kill them.
     repo.write_test_config(
         r#"
 [aliases.intignored]
@@ -1438,14 +1501,26 @@ two = "sh -c 'trap \"\" INT; echo start-two >> ignored_two.log; sleep 30'"
     kill(Pid::from_raw(-wt_pgid.as_raw()), Signal::SIGINT)
         .expect("failed to send SIGINT to wt's process group");
 
-    let status = child.wait().expect("failed to wait for wt");
+    // Give the signal a moment to traverse the forwarder. With escalation
+    // (the old design), within ~400 ms SIGTERM would have killed both
+    // children and wt would be in the process of exiting. With the new
+    // contract, both children keep sleeping and wt is still running.
+    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
 
-    use std::os::unix::process::ExitStatusExt;
-    assert!(
-        status.signal() == Some(2) || status.code() == Some(130),
-        "wt should report the originating SIGINT (signal 2 / code 130) even \
-         when escalation killed children with SIGTERM, got: {status:?}"
-    );
+    match child.try_wait().expect("try_wait failed") {
+        None => {
+            // Expected: wt is still running, blocked on its sleeping
+            // children. Clean up with a second SIGINT (impatient
+            // SIGKILL path).
+            kill(Pid::from_raw(-wt_pgid.as_raw()), Signal::SIGINT)
+                .expect("failed to send second SIGINT");
+            let _ = child.wait();
+        }
+        Some(status) => panic!(
+            "wt exited after a single SIGINT against SIGINT-trapping children — \
+             per-child escalation appears to have crept back in. status: {status:?}"
+        ),
+    }
 }
 
 /// A second SIGINT (user mashing Ctrl-C) must escalate to SIGKILL on every
@@ -1519,11 +1594,14 @@ fn test_alias_concurrent_handles_non_utf8(repo: TestRepo) {
     // `printf` emits a raw 0xff byte (invalid as a lone UTF-8 sequence), a
     // CRLF-terminated line, then `yes` floods 50_000 more valid UTF-8 lines.
     // If the reader stopped at the bad byte, the pipe would fill and the
-    // child would block — we'd time out.
+    // child would block — we'd time out. The trivial `other` command keeps
+    // the step a multi-command group so it routes through the concurrent
+    // executor (a one-command map parses as a plain `Single` step).
     repo.write_test_config(
         r#"
 [aliases.noisy]
 mixed = "sh -c 'printf \"BEFORE\\n\\xff\\nCRLF-LINE\\r\\nAFTER\\n\"; yes PAYLOAD | head -n 50000'"
+other = "true"
 "#,
     );
     repo.commit("initial");
@@ -2447,4 +2525,44 @@ greet = "echo hello {{ args }}"
         );
         assert_cmd_snapshot!("alias_verbose_args_shell_escaped", cmd);
     });
+}
+
+/// Aliases keep `wt`'s inherited git-discovery context: `wt <alias>` is the
+/// user's own top-level command, run where they invoked it, so the inherited
+/// `GIT_DIR`/`GIT_WORK_TREE` pass through — unlike hooks and `wt step
+/// for-each`, which `wt` relocates into worktrees it selects and therefore
+/// scrubs (the keep side of the classification in
+/// `scrub_git_discovery_env_vars`; issue #3373).
+#[rstest]
+#[cfg(unix)]
+fn test_alias_keeps_inherited_git_discovery_vars(repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+record-git-env = "printf '[%s][%s]' \"$GIT_DIR\" \"$GIT_WORK_TREE\" > env_seen.txt"
+"#,
+    );
+    repo.commit("Add alias config");
+
+    let git_dir = repo.root_path().join(".git");
+    let output = repo
+        .wt_command()
+        .args(["-y", "record-git-env"])
+        .env("GIT_DIR", &git_dir)
+        .env("GIT_WORK_TREE", repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "alias failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let seen = std::fs::read_to_string(repo.root_path().join("env_seen.txt")).unwrap();
+    let expected = format!("[{}][{}]", git_dir.display(), repo.root_path().display());
+    assert_eq!(
+        seen, expected,
+        "alias should see wt's inherited git-discovery vars unchanged"
+    );
 }

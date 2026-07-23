@@ -8,3 +8,6 @@ expression: "migration_diff(content, &migrated)"
 -[post-create]
 +[post-start]
  server = "npm run dev"
+ 
+ [list]
+ json-schema = 1

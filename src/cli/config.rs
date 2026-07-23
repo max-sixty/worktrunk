@@ -1,7 +1,24 @@
-use clap::Subcommand;
+use clap::{Args, Subcommand};
 
 use super::SwitchFormat;
 use crate::commands::Shell;
+
+/// Shared global `--format` flag for the `wt config state` subcommands whose
+/// action subcommands inherit it (`cache`, `logs`, `hints`, `ci-status`,
+/// `marker`).
+#[derive(Args)]
+pub struct GlobalFormatFlag {
+    /// Output format (text, json) [default: text]
+    #[arg(
+        long,
+        default_value = "text",
+        global = true,
+        hide_possible_values = true,
+        hide_default_value = true,
+        help_heading = "Output"
+    )]
+    pub format: SwitchFormat,
+}
 
 // Ordering: primitive (init prints the code) → convenience (install writes
 // it) → inverse (uninstall removes it), then unrelated utilities. Hidden
@@ -33,7 +50,7 @@ eval "$(wt config shell init zsh)"
 
 Nushell [experimental] — save to vendor autoload directory:
 ```console
-$ wt config shell init nu | save -f ($nu.default-config-dir | path join vendor/autoload/wt.nu)
+$ wt config shell init nu | save -f ($nu.vendor-autoload-dirs | last | path join wt.nu)
 ```"#
     )]
     Init {
@@ -137,12 +154,11 @@ Uninstall removes every worktrunk-managed integration it finds, regardless of:
     )]
     ShowTheme,
 
-    /// Generate static shell completions for package managers
+    /// Generate shell completions for package managers
     ///
-    /// Outputs static completion scripts for Homebrew and other package managers.
-    /// Only completes commands and flags, not branch names.
-    /// This is predominantly for package managers. Users should run
-    /// `wt config shell install` instead.
+    /// Outputs a completion registration that calls the binary at TAB time, so branch and
+    /// worktree names complete from a plain package install. For interactive setup, run
+    /// `wt config shell install` instead. It also enables directory changing on switch.
     #[command(hide = true)]
     Completions {
         /// Shell to generate completions for
@@ -214,9 +230,21 @@ This leaves any already-installed Worktrunk plugin unchanged."#
     Uninstall,
 }
 
-// Ordering: action + inverse adjacent (add, clear).
+// Ordering: read first (list), then action + inverse adjacent (add, clear).
 #[derive(Subcommand)]
 pub enum ApprovalsCommand {
+    /// List project commands and their approval status
+    #[command(
+        after_long_help = r#"Shows every command the project config declares — hooks, aliases, and commit-message guidance — grouped into APPROVED and UNAPPROVED sections. Approvals recorded for commands no longer in the project config (edited or removed since approval) are listed separately.
+
+## Examples
+
+```console
+$ wt config approvals list
+```"#
+    )]
+    List,
+
     /// Store approvals in approvals.toml
     #[command(
         after_long_help = r#"Prompts for approval of all project commands and saves them to approvals.toml.
@@ -235,12 +263,17 @@ including previously approved ones."#
         after_long_help = r#"Removes saved approvals, requiring re-approval on next command run.
 
 By default, clears approvals for the current project. Use `--global` to clear
-all approvals across all projects."#
+all approvals across all projects, or `--stale` to clear only approvals for
+commands no longer in the project config (edited or removed since approval)."#
     )]
     Clear {
         /// Clear global approvals
         #[arg(short, long)]
         global: bool,
+
+        /// Clear only stale approvals
+        #[arg(long, conflicts_with = "global")]
+        stale: bool,
     },
 }
 
@@ -272,7 +305,7 @@ $ wt config plugins claude install-statusline
 
     /// Codex plugin
     #[command(
-        after_long_help = r#"Bundles a configuration skill — documentation Codex can read to help set up LLM commits, project hooks, and worktree paths. Activity markers in `wt list` are Claude Code only: Codex exposes no turn-end hook event, so the Codex plugin omits them until it does.
+        after_long_help = r#"Bundles a configuration skill — documentation Codex can read to help set up LLM commits, project hooks, and worktree paths — plus activity-marker hooks that show 🤖/💬 in `wt list` while a Codex session runs. Codex has no session-exit event, so a marker persists after a session ends.
 
 ## Examples
 
@@ -341,13 +374,13 @@ $ claude plugin uninstall worktrunk@worktrunk
     /// Configure the Claude Code statusline
     #[command(
         name = "install-statusline",
-        after_long_help = r#"Writes the statusline configuration to `~/.claude/settings.json`, setting:
+        after_long_help = r#"Writes the statusline configuration to `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json` when set), setting:
 
 ```json
 {"statusLine":{"type":"command","command":"wt list statusline --format=claude-code"}}
 ```
 
-Preserves existing settings. Creates the `.claude/` directory and `settings.json` if needed.
+Preserves existing settings. Creates the config directory and `settings.json` if needed.
 
 Skips gracefully if the statusline is already configured."#
     )]
@@ -472,7 +505,7 @@ This tests:
         #[arg(long)]
         full: bool,
 
-        /// Output format (text, json)
+        /// Output format
         #[arg(long, default_value = "text", help_heading = "Output")]
         format: SwitchFormat,
     },
@@ -480,11 +513,13 @@ This tests:
     /// Update deprecated config settings
     #[command(
         after_long_help = r#"Updates deprecated settings in user and project config files
-to their current equivalents. Shows a diff and asks for confirmation.
+to their current equivalents, and adopts defaults that a future release
+switches — currently `[list] json-schema = 2` — so the switch happens as a
+reviewed config edit rather than at upgrade. Shows a diff and asks for
+confirmation.
 
-Migrations are computed in memory on demand — worktrunk no longer writes
-`.new` files as a side effect of loading config. Use `--print` to see the
-migrated TOML without touching any file.
+Migrations are computed in memory on demand; nothing is written outside this
+command. Use `--print` to see the migrated TOML without touching any file.
 
 ## Examples
 
@@ -515,6 +550,11 @@ $ wt config update --print
 
 ## Examples
 
+List commands and their approval status for current project:
+```console
+$ wt config approvals list
+```
+
 Pre-approve all hook and alias commands for current project:
 ```console
 $ wt config approvals add
@@ -523,6 +563,11 @@ $ wt config approvals add
 Clear approvals for current project:
 ```console
 $ wt config approvals clear
+```
+
+Clear only approvals for commands no longer in the project config:
+```console
+$ wt config approvals clear --stale
 ```
 
 Clear global approvals:
@@ -595,12 +640,11 @@ $ wt config plugins opencode install
 
 ## Keys
 
+- **cache**: [Regenerable caches — CI status, summaries, git commands, hints, and the `wt switch -` target](@/config.md#wt-config-state-cache)
 - **default-branch**: [The repository's default branch (`main`, `master`, etc.)](@/config.md#wt-config-state-default-branch)
-- **previous-branch**: Previous branch for `wt switch -`
-- **logs**: [Operation and debug logs](@/config.md#wt-config-state-logs)
-- **ci-status**: [CI/PR status for a branch (passed, running, failed, conflicts, no-ci, error)](@/config.md#wt-config-state-ci-status)
 - **marker**: [Custom status marker for a branch (shown in `wt list`)](@/config.md#wt-config-state-marker)
 - **vars**: [experimental] [Custom variables per branch](@/config.md#wt-config-state-vars)
+- **logs**: [Operation and debug logs](@/config.md#wt-config-state-logs)
 
 ## Examples
 
@@ -624,9 +668,9 @@ Store arbitrary data:
 $ wt config state vars set env=staging
 ```
 
-Clear all CI status cache:
+Drop the regenerable caches:
 ```console
-$ wt config state ci-status clear --all
+$ wt config state cache clear
 ```
 
 Show all stored state:
@@ -638,6 +682,7 @@ Clear all stored state:
 ```console
 $ wt config state clear
 ```
+<!-- subdoc: cache -->
 <!-- subdoc: default-branch -->
 <!-- subdoc: logs -->
 <!-- subdoc: ci-status -->
@@ -650,11 +695,15 @@ $ wt config state clear
     },
 }
 
-// Ordering: aggregate operations first (get, clear) — entry points for
-// exploring or wiping all state. Then primary state managed by wt
-// (default-branch, previous-branch, logs, hints), then per-branch display
-// annotations shown in `wt list` (ci-status, marker), then experimental keys
-// (vars).
+// Ordering: aggregate operations first (get, clear, cache) — entry points for
+// exploring, wiping, or refreshing state. Then authoritative state managed by
+// the user (default-branch override, marker, vars) and the operation logs.
+//
+// `cache` is the home for every regenerable cache (ci-status, summaries, git
+// commands, hints, previous branch). The per-category subcommands those caches
+// used to have (ci-status, hints, previous-branch) are `hide`-deprecated: they
+// still work and still appear in the match below, but print a deprecation
+// notice and are absent from `--help`.
 #[derive(Subcommand)]
 pub enum StateCommand {
     /// Get all stored state
@@ -664,7 +713,7 @@ pub enum StateCommand {
 - **Previous branch**: Previous branch for `wt switch -`
 - **Branch markers**: User-defined branch notes
 - **Vars**: Custom variables per branch
-- **CI status**: Cached GitHub/GitLab CI status per branch (30s TTL)
+- **CI status**: Cached GitHub/GitLab CI status per branch (30-60s TTL), plus the largest PR/MR number seen (sizes the `wt list` CI column)
 - **Summaries**: Cached LLM-generated branch summaries (shown in `wt list --full` and `wt switch` preview)
 - **Git commands cache**: SHA-keyed disk caches — merge-tree, ancestry, diff-stats, and `wt switch` preview renders
 - **Hints**: One-time hints that have been shown
@@ -675,8 +724,8 @@ Every category that `wt config state clear` sweeps is shown here.
 
 CI cache entries show status, age, and the commit SHA they were fetched for."#)]
     Get {
-        /// Output format (table, json)
-        #[arg(long, value_enum, default_value = "table", hide_possible_values = true)]
+        /// Output format
+        #[arg(long, value_enum, default_value = "table")]
         format: super::OutputFormat,
     },
 
@@ -692,9 +741,50 @@ CI cache entries show status, age, and the commit SHA they were fetched for."#)]
 - All log files
 - Stale trash from worktree removal (`.git/wt/trash/`)
 
-Use individual subcommands (`default-branch clear`, `ci-status clear --all`, etc.)
-to clear specific state."#)]
+Prompts for confirmation before clearing, since this removes hand-authored
+markers and vars. Pass `--yes` to skip the prompt.
+
+To drop only the regenerable caches (CI status, summaries, git commands,
+hints, previous branch), run `wt config state cache clear` — it needs no
+confirmation and leaves markers, vars, and the default-branch override
+untouched."#)]
     Clear,
+
+    /// Regenerable caches
+    #[command(
+        after_long_help = r#"View or drop worktrunk's regenerable caches in one place. Everything here is rebuilt on demand — clearing only forces recomputation, never data loss.
+
+## What's cached
+
+- **CI status** — GitHub/GitLab CI per branch (30–60s TTL), shown in [`wt list`](@/list.md#ci-status), plus the largest PR/MR number seen (sizes the CI column)
+- **Summaries** — LLM-generated branch summaries (`wt list --full`, `wt switch` preview)
+- **Git commands** — SHA-keyed disk caches: merge-tree, ancestry, diff-stats, and `wt switch` preview renders
+- **Hints** — one-time hints already shown in this repo
+- **Previous branch** — the `wt switch -` target, re-recorded on the next switch
+
+`cache clear` drops all of the above with no prompt. It re-shows one-time hints and forgets the `wt switch -` target until the next switch — both repopulate on their own.
+
+Without a subcommand, runs `get`.
+
+## Examples
+
+Show cache contents:
+```console
+$ wt config state cache
+```
+
+Drop all caches:
+```console
+$ wt config state cache clear
+```"#
+    )]
+    Cache {
+        #[command(subcommand)]
+        action: Option<CacheAction>,
+
+        #[command(flatten)]
+        format: GlobalFormatFlag,
+    },
 
     /// Default branch detection and override
     #[command(
@@ -705,7 +795,11 @@ to clear specific state."#)]
 $ git rebase $(wt config state default-branch)
 ```
 
+In a hook or alias template, prefer the `{{ default_branch }}` [template variable](@/hook.md#template-variables); `$(wt config state default-branch)` is for plain shell scripts.
+
 Without a subcommand, runs `get`. Use `set` to override, or `clear` then `get` to re-detect.
+
+`default-branch get` resolves the value and caches it on a miss; the aggregate `wt config state get` only reports the cache (read-only), so it can show `(none)` until something populates it.
 
 ## Detection
 
@@ -716,13 +810,15 @@ Worktrunk detects the default branch automatically:
 3. **Remote query** — If not cached, queries `git ls-remote` — typically 100ms–2s
 4. **Local inference** — If no remote, infers from local branches
 
-Once detected, the result is cached in `worktrunk.default-branch` for fast access.
+Once detected, the result is cached in `worktrunk.default-branch` for fast access. The cache isn't re-validated on every command, so a later change to `origin/HEAD` — a renamed default branch followed by `git remote set-head origin -a` — isn't picked up automatically. `wt config state` flags the drift when the cached value differs from the remote's local HEAD; `set` adopts the new branch and `clear` re-detects.
 
 The local inference fallback uses these heuristics in order:
 - If only one local branch exists, uses it
 - For bare repos or empty repos, checks `symbolic-ref HEAD`
 - Checks `git config init.defaultBranch`
-- Looks for common names: `main`, `master`, `develop`, `trunk`"#
+- Looks for common names: `main`, `master`, `develop`, `trunk`
+
+If none of these match, detection fails; set it explicitly with `wt config state default-branch set BRANCH`."#
     )]
     DefaultBranch {
         #[command(subcommand)]
@@ -732,7 +828,10 @@ The local inference fallback uses these heuristics in order:
     /// Previous branch (for `wt switch -`)
     #[command(
         name = "previous-branch",
-        after_long_help = r#"Enables `wt switch -` to return to the previous worktree, similar to `cd -` or `git checkout -`.
+        hide = true,
+        after_long_help = r#"**Deprecated** — the previous branch is now part of [`wt config state cache`](@/config.md#wt-config-state-cache). This subcommand still works but prints a deprecation notice.
+
+Enables `wt switch -` to return to the previous worktree, similar to `cd -` or `git checkout -`.
 
 ## How it works
 
@@ -784,10 +883,11 @@ All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the
 | File | Created when |
 |------|-------------|
 | `trace.log` | Running with `-vv` |
+| `trace.jsonl` | Running with `-vv` |
 | `subprocess.log` | Running with `-vv` |
 | `diagnostic.md` | Running with `-vv` |
 
-`trace.log` captures debug-level records at `-vv` — commands, `[wt-trace]` records, bounded subprocess previews. `subprocess.log` holds the raw uncapped subprocess stdout/stderr bodies. `diagnostic.md` is a markdown bug-report bundle that inlines `trace.log`; `wt` prints a `gh gist create` command pointing at it. All three are overwritten on each `-vv` run.
+`trace.log` is the human-readable trace at `-vv` — each command's start (`$ …`) and completion (`✓`/`✗ … 12.3ms`), in-process spans, milestones, and bounded subprocess previews. `trace.jsonl` is the same event stream as one JSON object per line, for machines (`jq`, chrome://tracing); `wt config state logs profile` reads it to summarize a performance report (where time went, parallelism, redundant commands). `subprocess.log` holds the raw uncapped subprocess stdout/stderr bodies. `diagnostic.md` is a markdown bug-report bundle that leads with that same performance profile and inlines `trace.log`; `wt` prints a `gh gist create` command pointing at it. All four are overwritten on each `-vv` run.
 
 ## Location
 
@@ -828,21 +928,16 @@ $ wt config state logs clear
         #[command(subcommand)]
         action: Option<LogsAction>,
 
-        /// Output format (text, json) [default: text]
-        #[arg(
-            long,
-            default_value = "text",
-            global = true,
-            hide_possible_values = true,
-            hide_default_value = true,
-            help_heading = "Output"
-        )]
-        format: SwitchFormat,
+        #[command(flatten)]
+        format: GlobalFormatFlag,
     },
 
     /// One-time hints shown in this repo
     #[command(
-        after_long_help = r#"Some hints show once per repo on first use, then are recorded in git config
+        hide = true,
+        after_long_help = r#"**Deprecated** — hints are now part of [`wt config state cache`](@/config.md#wt-config-state-cache). This subcommand still works but prints a deprecation notice.
+
+Some hints show once per repo on first use, then are recorded in git config
 as `worktrunk.hints.<name>`, a count of times the hint has been shown.
 
 ## Current hints
@@ -850,6 +945,7 @@ as `worktrunk.hints.<name>`, a count of times the hint has been shown.
 | Name | Trigger | Message |
 |------|---------|---------|
 | `worktree-path` | First `wt switch --create` | Customize worktree locations: wt config create |
+| `skip-bare-repo-prompt` | Declining the bare-repo worktree-path prompt | Records the opt-out (no message shown) |
 
 ## Examples
 
@@ -863,41 +959,17 @@ $ wt config state hints clear NAME   # re-show specific hint
         #[command(subcommand)]
         action: Option<HintsAction>,
 
-        /// Output format (text, json) [default: text]
-        #[arg(
-            long,
-            default_value = "text",
-            global = true,
-            hide_possible_values = true,
-            hide_default_value = true,
-            help_heading = "Output"
-        )]
-        format: SwitchFormat,
+        #[command(flatten)]
+        format: GlobalFormatFlag,
     },
 
     /// CI status cache
     #[command(
         name = "ci-status",
-        after_long_help = r#"Caches GitHub/GitLab CI status for display in [`wt list`](@/list.md#ci-status).
+        hide = true,
+        after_long_help = r#"**Deprecated** — the CI status cache is now part of [`wt config state cache`](@/config.md#wt-config-state-cache). This subcommand still works but prints a deprecation notice.
 
-Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated. Platform auto-detects from the remote URL; set `forge.platform = "github"` (or `"gitlab"`) in `.config/wt.toml` for SSH host aliases or self-hosted instances. For GitHub Enterprise or self-hosted GitLab, also set `forge.hostname`.
-
-Checks open PRs/MRs first, then branch pipelines for branches with upstream. Local-only branches (no remote tracking) show blank.
-
-Results cache for 30-60 seconds. Indicators dim when local changes haven't been pushed.
-
-## Status values
-
-| Status | Meaning |
-|--------|---------|
-| `passed` | All checks passed |
-| `running` | Checks in progress |
-| `failed` | Checks failed |
-| `conflicts` | PR has merge conflicts |
-| `no-ci` | No checks configured |
-| `error` | Fetch error (rate limit, network, auth) |
-
-See [`wt list` CI status](@/list.md#ci-status) for display symbols and colors.
+Status values, display symbols, and fetch behavior: [`wt list` CI status](@/list.md#ci-status).
 
 Without a subcommand, runs `get` for the current branch. Use `clear` to reset cache for a branch or `clear --all` to reset all."#
     )]
@@ -905,16 +977,8 @@ Without a subcommand, runs `get` for the current branch. Use `clear` to reset ca
         #[command(subcommand)]
         action: Option<CiStatusAction>,
 
-        /// Output format (text, json) [default: text]
-        #[arg(
-            long,
-            default_value = "text",
-            global = true,
-            hide_possible_values = true,
-            hide_default_value = true,
-            help_heading = "Output"
-        )]
-        format: SwitchFormat,
+        #[command(flatten)]
+        format: GlobalFormatFlag,
     },
 
     /// Branch markers
@@ -950,16 +1014,8 @@ Without a subcommand, runs `get` for the current branch. For `--branch`, use `ge
         #[command(subcommand)]
         action: Option<MarkerAction>,
 
-        /// Output format (text, json) [default: text]
-        #[arg(
-            long,
-            default_value = "text",
-            global = true,
-            hide_possible_values = true,
-            hide_default_value = true,
-            help_heading = "Output"
-        )]
-        format: SwitchFormat,
+        #[command(flatten)]
+        format: GlobalFormatFlag,
     },
 
     /// \[experimental\] Custom variables per branch
@@ -1045,7 +1101,7 @@ $ wt config state default-branch set main
 ```"#)]
     Set {
         /// Branch name to set as default
-        #[arg(add = crate::completion::branch_value_completer())]
+        #[arg(add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: String,
     },
 
@@ -1074,11 +1130,21 @@ $ wt config state previous-branch set feature
 ```"#)]
     Set {
         /// Branch name to set as previous
-        #[arg(add = crate::completion::branch_value_completer())]
+        #[arg(add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: String,
     },
 
     /// Clear the previous branch
+    Clear,
+}
+
+// Ordering: CRUD — get, clear.
+#[derive(Subcommand)]
+pub enum CacheAction {
+    /// Show cache contents
+    Get,
+
+    /// Drop all caches
     Clear,
 }
 
@@ -1108,7 +1174,7 @@ $ wt config state ci-status clear && wt config state ci-status get
     )]
     Get {
         /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer())]
+        #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
     },
 
@@ -1131,7 +1197,7 @@ $ wt config state ci-status clear --all
 ```"#)]
     Clear {
         /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer(), conflicts_with = "all")]
+        #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch, conflicts_with = "all")]
         branch: Option<String>,
 
         /// Clear all CI status cache
@@ -1157,7 +1223,7 @@ $ wt config state marker get --branch=feature
 ```"#)]
     Get {
         /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer())]
+        #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
     },
 
@@ -1178,7 +1244,7 @@ $ wt config state marker set "✅ ready" --branch=feature
         value: String,
 
         /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer())]
+        #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
     },
 
@@ -1201,7 +1267,7 @@ $ wt config state marker clear --all
 ```"#)]
     Clear {
         /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer(), conflicts_with = "all")]
+        #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch, conflicts_with = "all")]
         branch: Option<String>,
 
         /// Clear all markers
@@ -1245,6 +1311,36 @@ $ wt config state logs --format=json | jq '.hook_output[] | select(.branch | sta
 ```"#
     )]
     Get,
+
+    /// Performance profile from a trace
+    #[command(
+        after_long_help = r#"Summarize where a single `wt` invocation spent its time, reading the records captured to `trace.jsonl` by a `-vv` run.
+
+Reads `.git/wt/logs/trace.jsonl` by default, or a trace given as an argument (e.g. a CI artifact, or `-` for stdin). The report answers three questions: where time goes (subprocess time by command type and by worktree, plus the slowest individual jobs), how parallel the run was (concurrency factor and peak concurrency), and where work was wasted (commands re-run with the same context). For a `wt list` capture it also shows derived latencies (time to skeleton, time to first result) and a timeline of collect milestones; the skeleton/first-result markers need a terminal (TTY) capture. `--format=json` emits the same data for scripting.
+
+## Examples
+
+Profile the last `-vv` run in this repo:
+```console
+$ wt -vv list
+$ wt config state logs profile
+```
+
+Profile a trace from elsewhere (e.g. a CI artifact), by path or on stdin:
+```console
+$ wt config state logs profile ci-run.jsonl
+$ wt config state logs profile - < ci-run.jsonl
+```
+
+JSON for scripting:
+```console
+$ wt config state logs profile --format=json | jq '.by_type[0]'
+```"#
+    )]
+    Profile {
+        /// Trace to read (defaults to `.git/wt/logs/trace.jsonl`; `-` for stdin)
+        file: Option<std::path::PathBuf>,
+    },
 
     /// Clear all log files
     Clear,
@@ -1304,6 +1400,15 @@ pub(crate) trait StateWrite {
     fn write_verb(&self) -> Option<&'static str>;
 }
 
+impl StateWrite for CacheAction {
+    fn write_verb(&self) -> Option<&'static str> {
+        match self {
+            Self::Get => None,
+            Self::Clear => Some("clear"),
+        }
+    }
+}
+
 impl StateWrite for CiStatusAction {
     fn write_verb(&self) -> Option<&'static str> {
         match self {
@@ -1326,7 +1431,7 @@ impl StateWrite for MarkerAction {
 impl StateWrite for LogsAction {
     fn write_verb(&self) -> Option<&'static str> {
         match self {
-            Self::Get => None,
+            Self::Get | Self::Profile { .. } => None,
             Self::Clear => Some("clear"),
         }
     }
@@ -1361,7 +1466,7 @@ $ wt config state vars get env --branch=feature
         key: String,
 
         /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer())]
+        #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
     },
 
@@ -1379,10 +1484,10 @@ $ wt config state vars list --branch=feature
 ```"#)]
     List {
         /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer())]
+        #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
 
-        /// Output format (text, json)
+        /// Output format
         #[arg(long, default_value = "text", help_heading = "Output")]
         format: SwitchFormat,
     },
@@ -1410,7 +1515,7 @@ $ wt config state vars set env=production --branch=main
         assignment: (String, String),
 
         /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer())]
+        #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
     },
 
@@ -1441,7 +1546,7 @@ $ wt config state vars clear env --branch=feature
         all: bool,
 
         /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer())]
+        #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
     },
 }

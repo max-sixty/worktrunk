@@ -10,13 +10,9 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
-    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
-    NO_COLOR: ""
-    PSModulePath: ""
-    SHELL: ""
     TERM: alacritty
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -44,9 +40,10 @@ Usage: [1m[36mwt config state get[0m [36m[OPTIONS][0m
 
 [1m[32mOptions:[0m
       [1m[36m--format[0m[36m [0m[36m<FORMAT>[0m
-          Output format (table, json)
+          Output format
           
           [default: table]
+          [possible values: table, json]
 
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
@@ -58,8 +55,11 @@ Usage: [1m[36mwt config state get[0m [36m[OPTIONS][0m
       [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
+      [1m[36m--config-set[0m[36m [0m[36m<toml>[0m
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to apply the same level everywhere — including shell completion, which no flag can reach
 
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
@@ -70,7 +70,7 @@ Shows all stored state including:
 - [1mPrevious branch[0m: Previous branch for [2mwt switch -[0m
 - [1mBranch markers[0m: User-defined branch notes
 - [1mVars[0m: Custom variables per branch
-- [1mCI status[0m: Cached GitHub/GitLab CI status per branch (30s TTL)
+- [1mCI status[0m: Cached GitHub/GitLab CI status per branch (30-60s TTL), plus the largest PR/MR number seen (sizes the [2mwt list[0m CI column)
 - [1mSummaries[0m: Cached LLM-generated branch summaries (shown in [2mwt list --full[0m and [2mwt switch[0m preview)
 - [1mGit commands cache[0m: SHA-keyed disk caches — merge-tree, ancestry, diff-stats, and [2mwt switch[0m preview renders
 - [1mHints[0m: One-time hints that have been shown

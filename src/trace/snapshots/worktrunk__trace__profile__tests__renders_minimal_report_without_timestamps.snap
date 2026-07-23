@@ -1,0 +1,18 @@
+---
+source: src/trace/profile.rs
+expression: "plain(profile.render_text(\"trace.log\"))"
+---
+PERFORMANCE PROFILE @ trace.log
+  2 subprocesses · 8.00ms subprocess time · parallelism n/a · peak n/a
+
+BY COMMAND TYPE
+  command       count   total     max     avg
+  git status        1  5.00ms  5.00ms  5.00ms
+  git rev-list      1  3.00ms  3.00ms  3.00ms
+
+SLOWEST CALLS
+  5.00ms  git status
+  3.00ms  git rev-list (err: bad revision)
+
+CACHE
+  no commands re-run with the same context

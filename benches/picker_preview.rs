@@ -1,10 +1,10 @@
 // Benchmarks for the `wt switch` picker's preview pre-compute workload
 //
-// Unix-only: `wt switch` (no branch arg) only routes to the interactive
-// picker on Unix; on Windows it prints "interactive picker unavailable"
-// and exits with code 2 before `WORKTRUNK_PREVIEW_BENCH` is consulted.
-// Gating with `cfg(unix)` keeps `cargo bench` runnable on Windows by
-// emitting an empty `main` there.
+// Unix-gated by choice, not capability: the picker now runs on Windows too
+// (the `WORKTRUNK_PREVIEW_BENCH` path bypasses skim's TTY check on every
+// platform), but standing up the `wt_perf` fixtures and subprocess harness
+// below on Windows isn't worth it for a non-required bench. `cfg(unix)` emits
+// an empty `main` there so `cargo bench` still builds.
 //
 // What this measures
 // ------------------
@@ -51,7 +51,7 @@ use std::process::Command;
 #[cfg(unix)]
 use worktrunk::testing::isolate_subprocess_env;
 #[cfg(unix)]
-use wt_perf::{RepoConfig, create_repo, invalidate_caches_auto, setup_fake_remote};
+use wt_perf::{CacheState, RepoConfig, bench_wt, create_repo, setup_fake_remote};
 
 #[cfg(unix)]
 fn bench_picker_preview(c: &mut Criterion) {
@@ -88,45 +88,16 @@ fn bench_picker_preview(c: &mut Criterion) {
                         cmd
                     };
 
-                    if *cold {
-                        // The picker writes to `.git/wt/cache/picker-preview/`
-                        // (Log / BranchDiff / UpstreamDiff entries). Without
-                        // invalidation, iter 1 measures real cost and iter 2+
-                        // measure cache hits.
-                        //
-                        // `BatchSize::PerIteration` (not `SmallInput`):
-                        // under `SmallInput`, criterion calls `setup` for an
-                        // entire batch up front and then runs the timed
-                        // routines back-to-back — so the first `wt switch`
-                        // in a batch is cold but the rest hit a freshly
-                        // populated `.git/wt/cache/`, biasing the "cold"
-                        // measurement warm. `PerIteration` invalidates
-                        // immediately before every measured iteration; the
-                        // setup itself is far cheaper than a `wt switch`
-                        // invocation, so per-iteration `Instant::now`
-                        // overhead doesn't dominate.
-                        b.iter_batched(
-                            || invalidate_caches_auto(&repo_path),
-                            |_| {
-                                let output = make_cmd().output().unwrap();
-                                assert!(
-                                    output.status.success(),
-                                    "Benchmark command failed:\nstderr: {}",
-                                    String::from_utf8_lossy(&output.stderr)
-                                );
-                            },
-                            criterion::BatchSize::PerIteration,
-                        );
+                    // Cold matters here: the picker writes to
+                    // `.git/wt/cache/picker-preview/` (Log / BranchDiff /
+                    // UpstreamDiff entries), so without invalidation iter 1
+                    // measures real cost and iter 2+ measure cache hits.
+                    let cache = if *cold {
+                        CacheState::Cold
                     } else {
-                        b.iter(|| {
-                            let output = make_cmd().output().unwrap();
-                            assert!(
-                                output.status.success(),
-                                "Benchmark command failed:\nstderr: {}",
-                                String::from_utf8_lossy(&output.stderr)
-                            );
-                        });
-                    }
+                        CacheState::Warm
+                    };
+                    bench_wt(b, &repo_path, cache, make_cmd);
                 },
             );
         }

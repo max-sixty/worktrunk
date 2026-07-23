@@ -3,12 +3,9 @@
 //! Thin adapter over `crate::summary` that adds TUI-specific rendering
 //! and integrates with the selector's preview cache.
 
-use dashmap::DashMap;
 use worktrunk::git::Repository;
 
 use super::super::list::model::ListItem;
-use super::items::PreviewCacheKey;
-use super::preview::PreviewMode;
 
 /// Render LLM summary for terminal display using the project's markdown theme.
 ///
@@ -34,21 +31,23 @@ pub(super) fn render_summary(text: &str, width: usize) -> String {
     crate::md_help::render_markdown_in_help_with_width(&markdown, Some(width))
 }
 
-/// Generate a summary for one item and insert it into the preview cache.
+/// Generate the Summary-tab pane for one item.
+///
+/// The caller (`PreviewOrchestrator::spawn_summary`) inserts the result into the
+/// shared preview cache through the orchestrator's one fill path, so a finished
+/// summary surfaces in the picker without a keystroke like any other background
+/// preview.
 ///
 /// `generate_summary_core` acquires `LLM_SEMAPHORE` internally, so the
 /// no-changes and cache-hit fast paths return without contending.
-pub(super) fn generate_and_cache_summary(
+pub(super) fn generate_summary_for_item(
     item: &ListItem,
     llm_command: &str,
-    preview_cache: &DashMap<PreviewCacheKey, String>,
     repo: &Repository,
-) {
+) -> String {
     let branch = item.branch_name();
     let worktree_path = item.worktree_data().map(|d| d.path.as_path());
-    let summary =
-        crate::summary::generate_summary(branch, item.head(), worktree_path, llm_command, repo);
-    preview_cache.insert((branch.to_string(), PreviewMode::Summary), summary);
+    crate::summary::generate_summary(branch, item.head(), worktree_path, llm_command, repo)
 }
 
 #[cfg(test)]
@@ -545,6 +544,91 @@ mod tests {
     }
 
     #[test]
+    fn test_compute_combined_diff_orphan_branch_shows_full_content() {
+        use crate::summary::compute_combined_diff;
+        // An orphan branch shares no history with the default, so a three-dot
+        // diff has no merge base — the branch diff must fall back to the
+        // orphan's full content (vs the empty tree) instead of summarizing
+        // nothing.
+        let (t, _repo, _) = temp_repo_configured();
+        t.run_git(&["checkout", "--orphan", "orphan-feature"]);
+        t.run_git(&["rm", "-rf", "."]);
+        fs::write(t.path().join("orphan.txt"), "orphan content\n").unwrap();
+        t.repo.run_command(&["add", "orphan.txt"]).unwrap();
+        t.repo
+            .run_command(&["commit", "-m", "orphan root"])
+            .unwrap();
+        let head = t
+            .repo
+            .run_command(&["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+        let repo = Repository::at(t.path()).unwrap();
+
+        let result = compute_combined_diff("orphan-feature", &head, Some(t.path()), &repo);
+        let combined = result.expect("orphan branch with content must summarize");
+        assert!(
+            combined.diff.contains("orphan.txt"),
+            "diff: {}",
+            combined.diff
+        );
+        assert!(
+            combined.stat.contains("orphan.txt"),
+            "stat: {}",
+            combined.stat
+        );
+    }
+
+    #[test]
+    fn test_compute_combined_diff_uses_upstream_aware_base() {
+        use crate::summary::compute_combined_diff;
+        // When the local default branch lags its upstream, the summary must
+        // diff against the upstream tip (the comparison base), not the stale
+        // local default — otherwise it describes upstream commits as this
+        // branch's own changes.
+        let (t, _repo, _) = temp_repo_configured(); // main at C1
+        // A local "upstream" branch one commit ahead of main, with main's
+        // tracking ref pointed at it so local main lags by that commit.
+        t.run_git(&["branch", "origin-main"]);
+        t.run_git(&["checkout", "origin-main"]);
+        fs::write(t.path().join("upstream.txt"), "from upstream\n").unwrap();
+        t.repo.run_command(&["add", "upstream.txt"]).unwrap();
+        t.repo
+            .run_command(&["commit", "-m", "upstream commit"])
+            .unwrap(); // C2
+        // feature branches off the upstream tip (C2) and adds its own commit.
+        t.run_git(&["checkout", "-b", "feature"]);
+        fs::write(t.path().join("feature.txt"), "feature work\n").unwrap();
+        t.repo.run_command(&["add", "feature.txt"]).unwrap();
+        t.repo
+            .run_command(&["commit", "-m", "feature commit"])
+            .unwrap();
+        // main stays at C1 but tracks origin-main (now C2) → main lags upstream.
+        t.run_git(&["branch", "--set-upstream-to=origin-main", "main"]);
+        let head = t
+            .repo
+            .run_command(&["rev-parse", "feature"])
+            .unwrap()
+            .trim()
+            .to_string();
+        let repo = Repository::at(t.path()).unwrap();
+
+        let combined = compute_combined_diff("feature", &head, Some(t.path()), &repo)
+            .expect("feature has changes to summarize");
+        assert!(
+            combined.diff.contains("feature.txt"),
+            "diff: {}",
+            combined.diff
+        );
+        assert!(
+            !combined.diff.contains("upstream.txt"),
+            "must diff vs the upstream-aware base, not the stale local default; diff: {}",
+            combined.diff
+        );
+    }
+
+    #[test]
     fn test_generate_summary_calls_llm() {
         let (t, repo, head) = temp_repo_with_feature();
 
@@ -611,20 +695,13 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_and_cache_summary_populates_cache() {
+    fn test_generate_summary_for_item_renders_llm_output() {
         let (t, repo, head) = temp_repo_with_feature();
         let item = feature_item(&head, t.path());
-        let cache: DashMap<PreviewCacheKey, String> = DashMap::new();
 
-        generate_and_cache_summary(
-            &item,
-            "cat >/dev/null && echo 'Add new file'",
-            &cache,
-            &repo,
-        );
+        let summary =
+            generate_summary_for_item(&item, "cat >/dev/null && echo 'Add new file'", &repo);
 
-        let key = ("feature".to_string(), PreviewMode::Summary);
-        assert!(cache.contains_key(&key));
-        assert_eq!(cache.get(&key).unwrap().value(), "Add new file");
+        assert_eq!(summary, "Add new file");
     }
 }

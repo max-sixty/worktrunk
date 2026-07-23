@@ -5,3 +5,4 @@ expression: "&output.combined"
 
 [31m✗[39m [31mBranch [1mexisting[22m already exists[39m
 [2m↳[22m [2mTo switch to the existing branch, run without [4m--create[24m: [4mwt switch existing[24m[22m
+[0m

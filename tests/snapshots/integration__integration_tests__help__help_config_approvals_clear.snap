@@ -10,13 +10,9 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
-    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
-    NO_COLOR: ""
-    PSModulePath: ""
-    SHELL: ""
     TERM: alacritty
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -46,6 +42,9 @@ Usage: [1m[36mwt config approvals clear[0m [36m[OPTIONS][0m
   [1m[36m-g[0m, [1m[36m--global[0m
           Clear global approvals
 
+      [1m[36m--stale[0m
+          Clear only stale approvals
+
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
 
@@ -56,8 +55,11 @@ Usage: [1m[36mwt config approvals clear[0m [36m[OPTIONS][0m
       [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
+      [1m[36m--config-set[0m[36m [0m[36m<toml>[0m
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to apply the same level everywhere — including shell completion, which no flag can reach
 
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
@@ -65,6 +67,7 @@ Usage: [1m[36mwt config approvals clear[0m [36m[OPTIONS][0m
 Removes saved approvals, requiring re-approval on next command run.
 
 By default, clears approvals for the current project. Use [2m--global[0m to clear
-all approvals across all projects.
+all approvals across all projects, or [2m--stale[0m to clear only approvals for
+commands no longer in the project config (edited or removed since approval).
 
 ----- stderr -----

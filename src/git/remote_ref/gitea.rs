@@ -319,7 +319,7 @@ fn content_has_any_login(content: &str) -> bool {
 /// `~/.tea/tea.yml` fallback. Returns None if neither file is readable.
 fn read_tea_config() -> Option<String> {
     let xdg = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from);
-    let home = dirs::home_dir();
+    let home = crate::path::home_dir();
 
     let primary = xdg
         .clone()

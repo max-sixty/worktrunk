@@ -21,9 +21,12 @@ pub use detection::{
 };
 pub use paths::{
     completion_path, config_paths, home_dir_required, legacy_fish_conf_d_path,
-    nushell_config_candidates, powershell_profile_paths,
+    nushell_autoload_candidates, powershell_profile_paths,
 };
-pub use utils::{current_shell, detect_zsh_compinit, extract_filename_from_path};
+pub use utils::{
+    AncestorShell, ancestor_shell, current_shell, current_shell_name, detect_zsh_compinit,
+    extract_filename_from_path,
+};
 
 /// Validate a command name before embedding it in shell syntax or shell-owned paths.
 pub fn validate_shell_command_name(cmd: &str) -> Result<(), String> {
@@ -192,7 +195,7 @@ impl Shell {
             }
             Self::Nushell => {
                 format!(
-                    "if (which {cmd} | is-not-empty) {{ {cmd} config shell init nu | save --force ($nu.default-config-dir | path join vendor/autoload/{cmd}.nu) }}",
+                    "if (which {cmd} | is-not-empty) {{ {cmd} config shell init nu | save --force ($nu.vendor-autoload-dirs | last | path join {cmd}.nu) }}",
                 )
             }
             Self::PowerShell => {
@@ -209,7 +212,8 @@ impl Shell {
     /// Check if this shell has integration configured.
     ///
     /// Used for accurate warning messages that need to know about the user's
-    /// current shell specifically (e.g., "shell requires restart" vs "not installed").
+    /// current shell specifically (e.g., "installed but not active" vs "not
+    /// installed").
     pub fn is_shell_configured(&self, cmd: &str) -> Result<bool, std::io::Error> {
         let config_paths = self.config_paths(cmd)?;
 
@@ -417,6 +421,57 @@ mod tests {
             let output = init.generate().expect("Failed to generate");
             insta::assert_snapshot!(format!("init_{shell}"), output);
         }
+    }
+
+    #[test]
+    fn test_fish_init_uses_builtin_cd() {
+        // Regression test for #3159: the fish integration must change directory
+        // with `builtin cd`, not a bare `cd`. A bare `cd` is interceptable by
+        // shell `cd` overrides (e.g. the zoxide.fish plugin replaces `cd` with
+        // a zoxide query function). When wt called `cd -- "$target"`, zoxide
+        // saw `--` as a query argument and failed with "no match found". Using
+        // `builtin cd` bypasses any user `cd` function, matching bash and zsh.
+        let output = ShellInit::with_prefix(Shell::Fish, "wt".to_string())
+            .generate()
+            .expect("Failed to generate fish init");
+        assert!(
+            output.contains("builtin cd"),
+            "fish init must use `builtin cd` to bypass shell `cd` overrides; got:\n{output}"
+        );
+        assert!(
+            !output.contains("\n        cd -- "),
+            "fish init must not use a bare `cd` that shell overrides can intercept; got:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_fish_wrapper_guards_completion_mode() {
+        // Regression for #3240: the lazy-load wrapper stub must short-circuit
+        // when COMPLETE is set, calling the binary directly rather than falling
+        // through to `wt config shell init fish | source` and the trailing
+        // `wt $argv` self-call. Without the guard, a stale third-party
+        // completion that invokes the bare `wt` command (e.g. an old Homebrew
+        // vendor_completions.d/wt.fish) re-enters the stub and recurses to
+        // fish's call-stack limit. Mirrors the bash/zsh COMPLETE guard.
+        let wrapper = ShellInit::with_prefix(Shell::Fish, "wt".to_string())
+            .generate_fish_wrapper()
+            .expect("Failed to generate fish wrapper");
+        assert!(
+            wrapper.contains("set -q COMPLETE"),
+            "fish wrapper must guard completion mode to avoid recursion (#3240); got:\n{wrapper}"
+        );
+        // The guard must precede the re-sourcing self-call so completion never
+        // reaches it.
+        let guard = wrapper
+            .find("set -q COMPLETE")
+            .expect("guard present per assertion above");
+        let resource = wrapper
+            .find("config shell init fish | source")
+            .expect("wrapper sources the full integration");
+        assert!(
+            guard < resource,
+            "the COMPLETE guard must come before the re-sourcing self-call; got:\n{wrapper}"
+        );
     }
 
     #[test]

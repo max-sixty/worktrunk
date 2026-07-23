@@ -1,10 +1,8 @@
 use crate::common::{
-    DAY, HOUR, MINUTE, TestRepo, list_snapshots, make_snapshot_cmd,
-    mock_commands::create_mock_llm_quickstart, repo, repo_with_remote,
+    DAY, HOUR, MINUTE, TestRepo, list_snapshots, make_snapshot_cmd, repo, repo_with_remote,
     setup_snapshot_settings_for_paths, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
-use path_slash::PathExt as _;
 use rstest::rstest;
 
 /// Creates worktrees with specific timestamps for ordering tests.
@@ -225,6 +223,193 @@ fn test_list_json_with_metadata(mut repo: TestRepo) {
         cmd.arg("--format=json");
         cmd
     });
+}
+
+/// Schema 2 (`[list] json-schema = 2`): envelope with repo facts and
+/// per-item orthogonal facts. Pins the full shape, including the absence
+/// rule (locked reason present, integration null vs absent).
+#[rstest]
+fn test_list_json_schema_2_envelope(mut repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 2\n");
+
+    repo.add_worktree("feature-detached");
+    repo.add_worktree("locked-feature");
+    repo.lock_worktree("locked-feature", Some("Testing"));
+
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--format=json");
+        cmd
+    });
+}
+
+/// `[list] json-schema` selects the output schema: unset emits schema 1
+/// plus a one-time nag, an explicit value is silent, and anything except
+/// 1 or 2 is an error.
+#[rstest]
+fn test_list_json_schema_selection(repo: TestRepo) {
+    // Unset with no user config file → nag names both settings to write by
+    // hand; there is no file for `wt config update` to rewrite.
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(!json.is_empty(), "schema 1 root is a bare array");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("json-schema = 1") && stderr.contains("json-schema = 2"),
+        "unset key should nag with the manual settings: {stderr}"
+    );
+    assert!(
+        !stderr.contains("config update"),
+        "no update hint without a config file to update: {stderr}"
+    );
+
+    // Unset with a user config file present → the hint offers wt config
+    // update, which writes json-schema = 2.
+    repo.write_test_config("");
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("wt config update"),
+        "unset key with a config file should offer the update command: {stderr}"
+    );
+
+    // Explicit 1 → schema 1, no nag.
+    repo.write_test_config("[list]\njson-schema = 1\n");
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(!json.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("json-schema"),
+        "explicit value should not nag: {stderr}"
+    );
+
+    // Explicit 2 → envelope, no nag.
+    repo.write_test_config("[list]\njson-schema = 2\n");
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["schema"], 2);
+    assert_eq!(json["repo"]["default_branch"], "main");
+    assert!(json["items"].as_array().is_some_and(|i| !i.is_empty()));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("json-schema"), "no nag with a value set");
+
+    // Invalid value → warn and degrade to schema 1, like a config type
+    // error (config problems never brick a command).
+    repo.write_test_config("[list]\njson-schema = 3\n");
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "invalid value must not fail");
+    let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(!json.is_empty(), "degrades to schema 1");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("expected 1 or 2"),
+        "invalid value should warn: {stderr}"
+    );
+}
+
+/// `repo_url` is derived locally from the primary remote, converting an SSH
+/// remote to its HTTPS web URL without shelling out to a forge.
+#[rstest]
+fn test_list_json_repo_url_from_ssh_remote(repo: TestRepo) {
+    // A real forge SSH remote. The local-path remote the fixture configures
+    // doesn't parse as a remote URL, so `repo_url` would be absent for it.
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "git@github.com:owner/repo.git",
+    ]);
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "wt list should succeed");
+
+    let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let row = json.first().expect("at least one row");
+    assert_eq!(
+        row["repo_url"].as_str(),
+        Some("https://github.com/owner/repo"),
+        "SSH remote should derive the HTTPS web URL"
+    );
+    assert_eq!(
+        row["repo"]["url"].as_str(),
+        Some("https://github.com/owner/repo")
+    );
+    assert_eq!(row["repo"]["provider"].as_str(), Some("github"));
+    assert_eq!(row["repo"]["host"].as_str(), Some("github.com"));
+    assert_eq!(row["repo"]["owner"].as_str(), Some("owner"));
+    assert_eq!(row["repo"]["name"].as_str(), Some("repo"));
+    assert_eq!(row["repo"]["remote"].as_str(), Some("origin"));
+    assert!(
+        row["repo"].get("project").is_none(),
+        "GitHub repo metadata should not include project"
+    );
+}
+
+#[rstest]
+fn test_list_json_configured_azure_generic_remote_is_unknown(repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://git.example.com/owner/repo.git",
+    ]);
+    repo.write_project_config("[forge]\nplatform = \"azure-devops\"\n");
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "wt list should succeed");
+
+    let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let row = json.first().expect("at least one row");
+    assert_eq!(
+        row["repo_url"].as_str(),
+        Some("https://git.example.com/owner/repo")
+    );
+    assert_eq!(
+        row["repo"]["url"].as_str(),
+        Some("https://git.example.com/owner/repo")
+    );
+    assert_eq!(row["repo"]["provider"].as_str(), Some("unknown"));
+    assert_eq!(row["repo"]["host"].as_str(), Some("git.example.com"));
+    assert_eq!(row["repo"]["owner"].as_str(), Some("owner"));
+    assert_eq!(row["repo"]["name"].as_str(), Some("repo"));
+    assert_eq!(row["repo"]["remote"].as_str(), Some("origin"));
+    assert!(
+        row["repo"].get("project").is_none(),
+        "generic repo metadata should not include an Azure project"
+    );
 }
 
 /// This tests the merge commit scenario where content matches main even with different commit history.
@@ -635,6 +820,117 @@ fn test_list_with_upstream_tracking(mut repo: TestRepo) {
             .current_dir(repo.root_path());
         cmd
     });
+}
+
+/// When the local default branch lags its upstream (a fork whose `main` sits
+/// behind `origin/main`), the `main↕`/`main…±` columns must measure each
+/// branch against the upstream tip, not the stale local tip. Otherwise every
+/// branch reads as ahead by every commit the local default is missing.
+#[rstest]
+fn test_list_branch_stats_use_upstream_when_local_default_lags(mut repo: TestRepo) {
+    repo.commit("c0");
+    repo.setup_remote("main");
+    // Persist the default branch so detection is deterministic.
+    repo.run_git(&["config", "worktrunk.default-branch", "main"]);
+
+    // Advance origin/main three commits ahead, then pin local main back so it
+    // lags its upstream by three commits (the stale-fork shape).
+    repo.commit("upstream 1");
+    repo.commit("upstream 2");
+    repo.commit("upstream 3");
+    repo.run_git(&["push", "origin", "main"]);
+    repo.run_git(&["reset", "--hard", "HEAD~3"]);
+    repo.run_git(&["fetch", "origin"]);
+
+    // Feature branch off the real upstream tip, two commits ahead.
+    let feature_wt = repo.add_worktree("feature");
+    repo.run_git_in(&feature_wt, &["reset", "--hard", "origin/main"]);
+    std::fs::write(feature_wt.join("feat.txt"), "a\n").unwrap();
+    repo.run_git_in(&feature_wt, &["add", "."]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "feature commit 1"]);
+    std::fs::write(feature_wt.join("feat.txt"), "a\nb\n").unwrap();
+    repo.run_git_in(&feature_wt, &["add", "."]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "feature commit 2"]);
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--branches", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "wt list should succeed");
+
+    let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let feature = json
+        .iter()
+        .find(|w| w["branch"] == "feature")
+        .expect("feature row should be present");
+
+    // Two commits ahead of the upstream tip — not five (3 stale + 2 feature).
+    assert_eq!(
+        feature["main"]["ahead"].as_u64(),
+        Some(2),
+        "ahead must be measured against origin/main, not the stale local main: {feature:#?}"
+    );
+    assert_eq!(feature["main"]["behind"].as_u64(), Some(0));
+    // The diff reflects only the feature's own additions, not the three
+    // upstream commits the local default is missing.
+    assert_eq!(
+        feature["main"]["diff"]["added"].as_u64(),
+        Some(2),
+        "branch diff must be measured against origin/main: {feature:#?}"
+    );
+}
+
+/// The mirror of the lagging-fork case: when the local default branch is
+/// *ahead* of its upstream (local commits not yet pushed, e.g. just after a
+/// local `wt merge`), the base must stay local. Otherwise a sibling branch
+/// would show those unpushed default-branch commits in its own counts. This
+/// pins the contract that `comparison_base` reuses `integration_targets`'
+/// superset selection rather than naively preferring the upstream ref.
+#[rstest]
+fn test_list_branch_stats_stay_local_when_default_ahead_of_upstream(mut repo: TestRepo) {
+    repo.commit("c0");
+    repo.setup_remote("main");
+    repo.run_git(&["config", "worktrunk.default-branch", "main"]);
+
+    // Advance local main three commits past origin/main, leaving them unpushed
+    // so the local default is ahead of its upstream.
+    repo.commit("local main 1");
+    repo.commit("local main 2");
+    repo.commit("local main 3");
+    repo.run_git(&["fetch", "origin"]);
+
+    // Feature off the local default tip, two commits ahead.
+    let feature_wt = repo.add_worktree("feature");
+    std::fs::write(feature_wt.join("feat.txt"), "a\n").unwrap();
+    repo.run_git_in(&feature_wt, &["add", "."]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "feature commit 1"]);
+    std::fs::write(feature_wt.join("feat.txt"), "a\nb\n").unwrap();
+    repo.run_git_in(&feature_wt, &["add", "."]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "feature commit 2"]);
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--branches", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "wt list should succeed");
+
+    let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let feature = json
+        .iter()
+        .find(|w| w["branch"] == "feature")
+        .expect("feature row should be present");
+
+    // Two commits ahead of the LOCAL default tip — not five (which would
+    // wrongly fold in the three unpushed local-main commits by measuring
+    // against origin/main).
+    assert_eq!(
+        feature["main"]["ahead"].as_u64(),
+        Some(2),
+        "ahead must stay measured against local main when it leads origin/main: {feature:#?}"
+    );
+    assert_eq!(feature["main"]["behind"].as_u64(), Some(0));
 }
 
 #[rstest]
@@ -1832,15 +2128,16 @@ TODO: Add request/response examples for each endpoint
     // The worktree is still around and can be removed. Shows dimmed in list output.
     let fix_typos = repo.add_worktree("fix-typos");
     repo.run_git_in(&fix_typos, &["push", "-u", "origin", "fix-typos"]);
-    mock_ci_status(repo, "fix-typos", "passed", "pr", false);
+    mock_ci_status(repo, "fix-typos", "passed", "pr", false, Some(410));
 
     // === Mock CI status ===
     // CI requires --full flag, but we mock it so examples show realistic output
     // Note: main's CI is mocked AFTER the merge commit so the hash matches
-    mock_ci_status(repo, "main", "passed", "pr", false);
-    mock_ci_status(repo, "fix-auth", "passed", "pr", false);
+    // main runs branch CI (no PR) — renders the bare `#`
+    mock_ci_status(repo, "main", "passed", "branch", false, None);
+    mock_ci_status(repo, "fix-auth", "passed", "pr", false, Some(408));
     // feature-api has unpushed commits, so CI is stale (shows dimmed)
-    mock_ci_status(repo, "feature-api", "running", "pr", true);
+    mock_ci_status(repo, "feature-api", "running", "pr", true, Some(412));
 
     // === Mock LLM summaries ===
     // Summary requires --full + [list] summary = true + [commit.generation] command
@@ -1872,8 +2169,19 @@ command = "echo unused"
     feature_api
 }
 
-/// Mock CI status by writing to file-based cache
-fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_stale: bool) {
+/// Mock CI status by writing to file-based cache.
+///
+/// `pr_number` also ratchets the `pr-number/max.json` width hint, so the CI
+/// column renders at its steady-state width (as if a previous run had
+/// already cached the number).
+pub(crate) fn mock_ci_status(
+    repo: &TestRepo,
+    branch: &str,
+    status: &str,
+    source: &str,
+    is_stale: bool,
+    pr_number: Option<u64>,
+) {
     // Get HEAD commit for the branch
     let output = repo
         .git_command()
@@ -1883,11 +2191,15 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
     let head = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
     // Build the cache JSON (matches CachedCiStatus struct)
+    let number_json = pr_number
+        .map(|n| format!(r##","number":{{"number":{n},"sigil":"#"}}"##))
+        .unwrap_or_default();
     let cache_json = format!(
-        r#"{{"status":{{"ci_status":"{}","source":"{}","is_stale":{}}},"checked_at":{},"head":"{}","branch":"{}"}}"#,
+        r#"{{"status":{{"ci_status":"{}","source":"{}","is_stale":{}{}}},"checked_at":{},"head":"{}","branch":"{}"}}"#,
         status,
         source,
         is_stale,
+        number_json,
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -1919,6 +2231,21 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
     let safe_branch = worktrunk::path::sanitize_for_filename(branch);
     let cache_file = cache_dir.join(format!("{safe_branch}.json"));
     std::fs::write(&cache_file, &cache_json).unwrap();
+
+    // Ratchet the width hint like a real fetch would
+    if let Some(n) = pr_number {
+        let max_file_dir = git_path.join("wt").join("cache").join("pr-number");
+        std::fs::create_dir_all(&max_file_dir).unwrap();
+        let max_file = max_file_dir.join("max.json");
+        let existing = std::fs::read_to_string(&max_file)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|v| v["number"].as_u64())
+            .unwrap_or(0);
+        if n > existing {
+            std::fs::write(&max_file, format!(r#"{{"number":{n}}}"#)).unwrap();
+        }
+    }
 }
 
 /// Mock summary cache by computing the real diff hash and writing a cache entry.
@@ -2141,25 +2468,16 @@ mod tests {
         .join(".wt-directive-temp");
     std::fs::write(&directive_file, "").unwrap();
 
-    // Create a cross-platform mock LLM command (uses mock-stub binary system)
-    // The mock-bin directory is already created by setup_mock_gh() via the repo fixture
-    let mock_bin_dir = repo.root_path().parent().unwrap().join("mock-bin");
-    create_mock_llm_quickstart(&mock_bin_dir);
-
-    // Configure the LLM path (Windows needs .exe extension)
-    let llm_name = if cfg!(windows) { "llm.exe" } else { "llm" };
-    let llm_path = mock_bin_dir.join(llm_name);
-
     // Merge feature-auth into main
     assert_cmd_snapshot!("quickstart_merge", {
         let mut cmd = make_snapshot_cmd(&repo, "merge", &["main"], Some(&feature_auth));
         cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", &directive_file);
-        // Set MOCK_CONFIG_DIR so mock-stub can find llm.json
-        cmd.env("MOCK_CONFIG_DIR", &mock_bin_dir);
-        // Use to_slash_lossy() for Windows compatibility - bash can't handle backslash paths
+        // Inline generation command (the suite's standard mock): a binary
+        // path here would bake the per-test temp dir into the snapshot's
+        // env block, which redactions don't cover for this key.
         cmd.env(
             "WORKTRUNK_COMMIT__GENERATION__COMMAND",
-            llm_path.to_slash_lossy().as_ref(),
+            "cat >/dev/null && echo 'Add authentication module'",
         );
         cmd
     });
@@ -2186,7 +2504,7 @@ fn test_readme_example_list(mut repo: TestRepo) {
 /// Generate README example: `wt list --full` output
 ///
 /// Shows additional columns: main…± (line diffs), CI status, and LLM summaries.
-/// Uses wider terminal (130 cols) than the base example to fit the Summary column.
+/// Uses wider terminal (134 cols) than the base example to fit the Summary column.
 /// Output: tests/snapshots/integration__integration_tests__list__readme_example_list_full.snap
 #[rstest]
 fn test_readme_example_list_full(mut repo: TestRepo) {
@@ -2194,7 +2512,7 @@ fn test_readme_example_list_full(mut repo: TestRepo) {
     assert_cmd_snapshot!("readme_example_list_full", {
         let mut cmd = list_snapshots::command_readme(&repo, &feature_api);
         cmd.arg("--full");
-        cmd.env("COLUMNS", "130");
+        cmd.env("COLUMNS", "134");
         cmd
     });
 }
@@ -2202,7 +2520,7 @@ fn test_readme_example_list_full(mut repo: TestRepo) {
 /// Generate README example: `wt list --branches --full` output
 ///
 /// Shows branches without worktrees (⎇ symbol) alongside worktrees, plus CI status.
-/// Uses wider terminal (130 cols) than the base example to fit the Summary column.
+/// Uses wider terminal (134 cols) than the base example to fit the Summary column.
 /// Output: tests/snapshots/integration__integration_tests__list__readme_example_list_branches.snap
 #[rstest]
 fn test_readme_example_list_branches(mut repo: TestRepo) {
@@ -2210,7 +2528,7 @@ fn test_readme_example_list_branches(mut repo: TestRepo) {
     assert_cmd_snapshot!("readme_example_list_branches", {
         let mut cmd = list_snapshots::command_readme(&repo, &feature_api);
         cmd.args(["--branches", "--full"]);
-        cmd.env("COLUMNS", "130");
+        cmd.env("COLUMNS", "134");
         cmd
     });
 }
@@ -3228,9 +3546,8 @@ fn test_list_nested_worktree_json_is_current(mut repo: TestRepo) {
 #[test]
 fn test_list_empty_repo() {
     let repo = TestRepo::empty();
-    let guard =
+    let _settings_guard =
         setup_snapshot_settings_for_paths(repo.root_path(), &repo.worktrees).bind_to_scope();
-    std::mem::forget(guard);
     // Pre-set default branch so the unborn-HEAD case has something to resolve to
     repo.run_git(&["config", "worktrunk.default-branch", "main"]);
     // Should show the branch with empty commit columns and no errors
@@ -3303,8 +3620,8 @@ fn test_list_unborn_worktree_no_task_failures(repo: TestRepo) {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !stderr.contains("working-tree-diff") && !stderr.contains("working-tree-conflicts"),
-        "wt list should not surface working-tree-* task failures for unborn worktrees, got stderr:\n{stderr}"
+        !stderr.contains("working-tree diff") && !stderr.contains("working-tree conflict check"),
+        "wt list should not surface working-tree task failures for unborn worktrees, got stderr:\n{stderr}"
     );
     assert!(
         !stderr.contains("ambiguous argument 'HEAD'")
@@ -3493,4 +3810,229 @@ fn test_list_integrated_when_squash_merged_on_remote_with_local_diverged(
         feature["main_state"], "integrated",
         "main_state must be \"integrated\" — instead got entry: {feature}"
     );
+}
+
+/// Regression: `wt list` against a worktree whose `<gitdir>/index` file is
+/// absent must not surface `working-tree-conflicts (Failed to copy index
+/// file)`. A missing index is semantically empty (nothing staged), so the
+/// conflict probe should compute against the working tree as if the real
+/// index were empty.
+#[rstest]
+fn test_list_tolerates_missing_index(mut repo: TestRepo) {
+    std::fs::write(repo.root_path().join("shared.txt"), "original").unwrap();
+    repo.commit("Initial commit");
+
+    let feature = repo.add_worktree("feature");
+
+    // Dirty the worktree so WorkingTreeConflictsTask exercises the temp-index path.
+    std::fs::write(feature.join("shared.txt"), "feature changes").unwrap();
+    std::fs::write(feature.join("untracked.txt"), "extra\n").unwrap();
+
+    // Delete the worktree's index file — the state the dispatching session
+    // observed across 37 of 38 user worktrees. The linked worktree's gitdir
+    // is recorded in its `.git` pointer file (`gitdir: <abs path>`).
+    let dot_git = std::fs::read_to_string(feature.join(".git")).unwrap();
+    let feature_gitdir = std::path::PathBuf::from(
+        dot_git
+            .trim()
+            .strip_prefix("gitdir: ")
+            .expect("worktree .git points at a gitdir")
+            .trim(),
+    );
+    let feature_index = feature_gitdir.join("index");
+    std::fs::remove_file(&feature_index).unwrap();
+    assert!(
+        !feature_index.exists(),
+        "precondition: feature index removed"
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--full"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}{stderr}");
+
+    assert!(
+        !combined.contains("Failed to copy index file"),
+        "missing index must not surface as a copy error.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        !combined.contains("working-tree conflict check ("),
+        "missing index must not produce a working-tree conflict task error.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        !feature_index.exists(),
+        "wt list must not resurrect the real index"
+    );
+}
+
+/// Recursively strips write permission from a repository's object database and
+/// restores the original modes on drop, so a test can exercise the read-only
+/// sandbox path without leaving an unremovable directory behind.
+#[cfg(unix)]
+struct ReadOnlyObjectDirectory {
+    modes: Vec<(std::path::PathBuf, u32)>,
+}
+
+#[cfg(unix)]
+impl ReadOnlyObjectDirectory {
+    fn new(repo: &TestRepo) -> Self {
+        use std::os::unix::fs::PermissionsExt;
+
+        fn collect_dirs(path: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            out.push(path.to_path_buf());
+            for entry in std::fs::read_dir(path).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    collect_dirs(&path, out);
+                }
+            }
+        }
+
+        let mut dirs = Vec::new();
+        collect_dirs(&repo.root_path().join(".git/objects"), &mut dirs);
+        let modes = dirs
+            .into_iter()
+            .map(|path| {
+                let original = std::fs::metadata(&path).unwrap().permissions().mode();
+                // Keep read + execute (traversal), drop every write bit.
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(original & !0o222))
+                    .unwrap();
+                (path, original)
+            })
+            .collect();
+        Self { modes }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ReadOnlyObjectDirectory {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        // Restore deepest-first so a parent is never re-locked before its
+        // children are restored.
+        for (path, mode) in self.modes.iter().rev() {
+            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(*mode));
+        }
+    }
+}
+
+/// `wt list --full` must keep working when the Git object database is
+/// read-only (a managed sandbox). Its merge and conflict probes write
+/// ephemeral objects — `merge-tree --write-tree` for the integration diff and
+/// `write-tree` against a temp index for the dirty-worktree conflict check —
+/// which `Repository::redirect_objects_if_read_only` reroutes into a temporary
+/// object database. The analysis stays complete instead of erroring with
+/// "insufficient permission for adding an object".
+#[cfg(unix)]
+#[rstest]
+fn test_list_full_survives_read_only_object_database(mut repo: TestRepo) {
+    // Explicit schema keeps stderr free of the unset-schema nag.
+    repo.write_test_config("[list]\njson-schema = 1\n");
+
+    // Diverged, cleanly-mergeable topology: `feature` adds one file, `main`
+    // adds another. Merging them yields a genuinely new tree, so the
+    // integration probe must write an object (unlike a fast-forward).
+    let feature =
+        repo.add_worktree_with_commit("feature", "feature.txt", "feature\n", "Add feature");
+    repo.commit("main diverges");
+
+    // Dirty the feature worktree so the conflict probe takes the temp-index
+    // `write-tree` path — the exact command the original report saw fail.
+    std::fs::write(feature.join("feature.txt"), "feature edited\n").unwrap();
+
+    // All object-writing setup is done; freeze the object database.
+    let _read_only = ReadOnlyObjectDirectory::new(&repo);
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--full", "--format=json"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "wt list --full must succeed with a read-only object database.\nstderr:\n{stderr}"
+    );
+    for marker in [
+        "insufficient permission",
+        "unable to create",
+        "Operation not permitted",
+        "failed to write",
+    ] {
+        assert!(
+            !stdout.contains(marker) && !stderr.contains(marker),
+            "a read-only object database leaked a write error ({marker}).\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+
+    // The merge analysis actually ran (not silently degraded): the integration
+    // probe wrote to the temporary store and produced a concrete diverged
+    // classification with the would-merge diff.
+    let items: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
+    let feature = items
+        .iter()
+        .find(|w| w["branch"] == "feature")
+        .expect("feature worktree present in list output");
+    assert_eq!(feature["main_state"], "diverged", "entry: {feature}");
+    assert_eq!(feature["main"]["ahead"], 1, "entry: {feature}");
+    assert_eq!(feature["main"]["behind"], 1, "entry: {feature}");
+    assert_eq!(feature["main"]["diff"]["added"], 1, "entry: {feature}");
+}
+
+/// `wt list statusline` is a separate entry point from `wt list` (it calls
+/// `populate_item` directly, not `collect()`) and renders on every Claude Code
+/// prompt inside the managed read-only sandbox this targets. Its merge/conflict
+/// probes must redirect too, or the statusline silently drops `main_state` and
+/// the integration symbols in a read-only object database.
+#[cfg(unix)]
+#[rstest]
+fn test_list_statusline_survives_read_only_object_database(mut repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
+
+    let feature =
+        repo.add_worktree_with_commit("feature", "feature.txt", "feature\n", "Add feature");
+    repo.commit("main diverges");
+
+    // All object-writing setup is done; freeze the object database.
+    let _read_only = ReadOnlyObjectDirectory::new(&repo);
+
+    // Statusline reports the current worktree, so run it from the feature tree.
+    let output = repo
+        .wt_command()
+        .current_dir(&feature)
+        .args(["list", "statusline", "--format", "json"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "wt list statusline must succeed with a read-only object database.\nstderr:\n{stderr}"
+    );
+    for marker in [
+        "insufficient permission",
+        "unable to create",
+        "Operation not permitted",
+        "failed to write",
+    ] {
+        assert!(
+            !stdout.contains(marker) && !stderr.contains(marker),
+            "a read-only object database leaked a write error ({marker}).\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+
+    // The integration classification comes from the object-writing probe; it
+    // must be present, not silently dropped to null.
+    let items: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
+    let feature = &items[0];
+    assert_eq!(feature["branch"], "feature", "entry: {feature}");
+    assert_eq!(feature["main_state"], "diverged", "entry: {feature}");
 }

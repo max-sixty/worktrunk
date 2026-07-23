@@ -190,15 +190,18 @@ pub fn prompt_commit_generation(config: &mut UserConfig) -> anyhow::Result<bool>
     let formatted_command = format_command_for_display(command);
     let config_preview = format!("[commit.generation]\ncommand = {formatted_command}");
 
+    // Point at the config file wt actually writes to — respecting --config,
+    // WORKTRUNK_CONFIG_PATH, and $XDG_CONFIG_HOME — rather than a hardcoded
+    // default. The save below resolves the same path via require_config_path.
+    let config_path = worktrunk::config::config_path_for_display();
+
     // Show prompt with preview on ?
     let response = prompt_yes_no_preview(
         &cformat!("Configure <bold>{tool}</> for commit messages?"),
         || {
             eprintln!(
                 "{}",
-                info_message(cformat!(
-                    "Would add to <bold>~/.config/worktrunk/config.toml</>:"
-                ))
+                info_message(cformat!("Would add to <bold>{config_path}</>:"))
             );
             eprintln!("{}", format_toml(&config_preview));
             eprintln!();
@@ -212,11 +215,11 @@ pub fn prompt_commit_generation(config: &mut UserConfig) -> anyhow::Result<bool>
             let save_result = require_config_path()
                 .and_then(|path| config.set_commit_generation_command(command.clone(), &path));
             if let Err(e) = save_result {
-                log::error!("Failed to save config: {}", e);
+                tracing::error!(error = %e, "Failed to save config: {}", e);
                 eprintln!(
                     "{}",
                     hint_message(cformat!(
-                        "Config save failed; add manually to <underline>~/.config/worktrunk/config.toml</>"
+                        "Config save failed; add manually to <underline>{config_path}</>"
                     ))
                 );
                 return Ok(false);
@@ -258,8 +261,8 @@ mod tests {
 
     #[test]
     fn test_llm_tool_recommended_config() {
-        assert_snapshot!(LlmTool::Claude.recommended_config(), @"CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''");
-        assert_snapshot!(LlmTool::Codex.recommended_config(), @r#"codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == "agent_message")] | last.item.text'"#);
+        assert_snapshot!(LlmTool::Claude.recommended_config(), @"MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --safe-mode --setting-sources='user' --system-prompt=''");
+        assert_snapshot!(LlmTool::Codex.recommended_config(), @r#"codex exec -m gpt-5.6-luna -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == "agent_message")] | last.item.text'"#);
         assert_snapshot!(LlmTool::OpenCode.recommended_config(), @"opencode run -m anthropic/claude-haiku-4.5 --variant fast");
     }
 
@@ -317,7 +320,7 @@ mod tests {
         // Long commands stay as single-line TOML
         let cmd = LlmTool::Claude.recommended_config();
         let result = format_command_for_display(cmd);
-        assert_snapshot!(result, @r#""CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''""#);
+        assert_snapshot!(result, @r#""MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --safe-mode --setting-sources='user' --system-prompt=''""#);
     }
 
     #[test]

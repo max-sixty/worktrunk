@@ -6,7 +6,8 @@ use termimad::{CompoundStyle, MadSkin, TableBorderChars};
 use unicode_width::UnicodeWidthStr;
 
 use worktrunk::styling::{
-    DEFAULT_HELP_WIDTH, format_bash_with_gutter, format_toml, format_with_gutter, wrap_styled_text,
+    DEFAULT_HELP_WIDTH, format_bash_with_gutter, format_bash_with_gutter_chopped, format_toml,
+    format_with_gutter, wrap_styled_text,
 };
 
 /// Table border style matching our help text format:
@@ -32,9 +33,18 @@ fn help_table_skin() -> MadSkin {
     skin.table_border_chars = &HELP_TABLE_BORDERS;
     // Render backtick-enclosed text as dimmed, matching render_inline_formatting().
     // This is needed for colorize_status_symbols() to find and recolor symbols
-    // like `●` that appear in table cells.
+    // like `#` that appear in table cells.
     skin.inline_code = CompoundStyle::with_attr(Attribute::Dim);
     skin
+}
+
+/// How fenced code blocks render: quoted in the house gutter (the default, for
+/// help pages and the summary tab) or flush and dim with no gutter. The picker's
+/// `pr` description pane renders the whole body gutter-free, so it picks `Flush`.
+#[derive(Clone, Copy, PartialEq)]
+enum CodeBlocks {
+    Gutter,
+    Flush,
 }
 
 /// Render markdown in help text to ANSI with minimal styling (green headers only)
@@ -42,6 +52,17 @@ fn help_table_skin() -> MadSkin {
 /// If `width` is provided, prose text is wrapped to that width. Tables, code blocks,
 /// and headers are never wrapped (tables need full-width rows for alignment).
 pub(crate) fn render_markdown_in_help_with_width(help: &str, width: Option<usize>) -> String {
+    render_markdown(help, width, CodeBlocks::Gutter)
+}
+
+/// Like [`render_markdown_in_help_with_width`], but renders fenced code blocks
+/// flush and dim rather than quoted in the house gutter — for the picker's `pr`
+/// description pane, which renders the whole body gutter-free and flush-left.
+pub(crate) fn render_markdown_flush(help: &str, width: Option<usize>) -> String {
+    render_markdown(help, width, CodeBlocks::Flush)
+}
+
+fn render_markdown(help: &str, width: Option<usize>, code_blocks: CodeBlocks) -> String {
     let green = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green)));
 
     let mut result = String::new();
@@ -49,6 +70,10 @@ pub(crate) fn render_markdown_in_help_with_width(help: &str, width: Option<usize
     let mut code_block_lang = String::new();
     let mut code_block_lines: Vec<&str> = Vec::new();
     let mut table_lines: Vec<&str> = Vec::new();
+    // Set by a `<!-- wt list … -->` marker; consumed by the next code block.
+    // Tags captured `wt list` output (pre-formatted tables) so it is chopped to
+    // terminal width like real `wt list`, not word-wrapped (which shears columns).
+    let mut chop_next_block = false;
 
     let lines: Vec<&str> = help.lines().collect();
     let mut i = 0;
@@ -57,8 +82,17 @@ pub(crate) fn render_markdown_in_help_with_width(help: &str, width: Option<usize
         let line = lines[i];
         let trimmed = line.trim_start();
 
-        // Skip HTML comments (expansion markers for web docs, see readme_sync.rs)
+        // HTML comments are expansion markers for web docs (see readme_sync.rs) and
+        // don't render. A `<!-- wt list … -->` marker tags the captured `wt list`
+        // output that immediately follows, so the next code block is chopped (below).
         if trimmed.starts_with("<!--") && trimmed.ends_with("-->") {
+            let inner = trimmed
+                .trim_start_matches("<!--")
+                .trim_end_matches("-->")
+                .trim();
+            if inner.starts_with("wt list") {
+                chop_next_block = true;
+            }
             i += 1;
             continue;
         }
@@ -71,36 +105,65 @@ pub(crate) fn render_markdown_in_help_with_width(help: &str, width: Option<usize
                 code_block_lines.clear();
                 in_code_block = true;
             } else {
-                // Closing fence — render collected code block with gutter
+                // Closing fence — render the collected code block. Flush mode
+                // dims each line with no gutter and no language-specific
+                // highlighting, so the description pane stays gutter-free and
+                // flush-left; the gutter mode quotes it in the house bar.
                 let content = code_block_lines.join("\n");
-                let formatted = match code_block_lang.as_str() {
-                    "toml" => format_toml(&content),
-                    "console" => {
-                        // Strip `$ ` prompt from console blocks for copy-paste.
-                        // The prefix is preserved in source for web docs.
-                        let stripped = content
-                            .lines()
-                            .map(|l| l.strip_prefix("$ ").unwrap_or(l))
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        format_bash_with_gutter(&stripped)
-                    }
-                    "bash" | "sh" => format_bash_with_gutter(&content),
-                    _ => {
-                        // Dim the content before adding gutter (format_with_gutter
-                        // doesn't style text; bash/toml formatters handle their own)
-                        let dim = Style::new().dimmed();
-                        let dimmed = code_block_lines
-                            .iter()
-                            .map(|l| format!("{dim}{l}{dim:#}"))
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        format_with_gutter(&dimmed, None)
+                let formatted = if code_blocks == CodeBlocks::Flush {
+                    // Flush code feeds the gutter-free `pr`/comments panes. Wrap each
+                    // line to width (word-wrap, preserving indent) and dim every
+                    // resulting piece, so a long line doesn't overflow the pane — and,
+                    // when the comments pane re-quotes this in the house gutter, every
+                    // wrapped piece already fits, keeping the gutter's own wrap a no-op
+                    // and the dim consistent rather than landing only on the first line.
+                    let dim = Style::new().dimmed();
+                    code_block_lines
+                        .iter()
+                        .flat_map(|l| {
+                            width.map_or_else(|| vec![l.to_string()], |w| wrap_styled_text(l, w))
+                        })
+                        .map(|piece| format!("{dim}{piece}{dim:#}"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                } else {
+                    match code_block_lang.as_str() {
+                        "toml" => format_toml(&content),
+                        "console" => {
+                            // Strip `$ ` prompt from console blocks for copy-paste.
+                            // The prefix is preserved in source for web docs.
+                            let stripped = content
+                                .lines()
+                                .map(|l| l.strip_prefix("$ ").unwrap_or(l))
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            // Captured `wt list` tables (chop_next_block) are chopped to
+                            // width; hand-authored command sessions still word-wrap.
+                            if chop_next_block {
+                                format_bash_with_gutter_chopped(&stripped)
+                            } else {
+                                format_bash_with_gutter(&stripped)
+                            }
+                        }
+                        "bash" | "sh" => format_bash_with_gutter(&content),
+                        _ => {
+                            // Dim the content before adding gutter (format_with_gutter
+                            // doesn't style text; bash/toml formatters handle their own)
+                            let dim = Style::new().dimmed();
+                            let dimmed = code_block_lines
+                                .iter()
+                                .map(|l| format!("{dim}{l}{dim:#}"))
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            format_with_gutter(&dimmed, None)
+                        }
                     }
                 };
                 result.push_str(&formatted);
                 result.push('\n');
                 in_code_block = false;
+                // A marker applies only to the block right after it.
+                chop_next_block = false;
             }
             i += 1;
             continue;
@@ -158,16 +221,20 @@ pub(crate) fn render_markdown_in_help_with_width(help: &str, width: Option<usize
         // - H4: Bold (nested subsections like "Commit template")
         if let Some(header_text) = trimmed.strip_prefix("#### ") {
             let bold = Style::new().bold();
+            let header_text = render_header_text(header_text);
             result.push_str(&format!("{bold}{header_text}{bold:#}\n"));
         } else if let Some(header_text) = trimmed.strip_prefix("### ") {
+            let header_text = render_header_text(header_text);
             result.push_str(&format!("{green}{header_text}{green:#}\n"));
         } else if let Some(header_text) = trimmed.strip_prefix("## ") {
             let bold_green = Style::new()
                 .bold()
                 .fg_color(Some(Color::Ansi(AnsiColor::Green)));
+            let header_text = render_header_text(header_text);
             result.push_str(&format!("{bold_green}{header_text}{bold_green:#}\n"));
         } else if let Some(header_text) = trimmed.strip_prefix("# ") {
-            result.push_str(&format!("{green}{}{green:#}\n", header_text.to_uppercase()));
+            let header_text = render_header_text(header_text).to_uppercase();
+            result.push_str(&format!("{green}{header_text}{green:#}\n"));
         } else {
             // Prose text - wrap if width is specified
             let formatted = render_inline_formatting(line);
@@ -326,6 +393,17 @@ fn strip_markdown_links(line: &str) -> String {
     result
 }
 
+/// Strip inline markdown markers from header text.
+///
+/// Headers render with a single uniform style (color and/or weight), so inline
+/// `code` can't carry its own styling — the dim style's ANSI reset would
+/// terminate the header's color partway through the line. We drop the backticks
+/// and let the header style cover the whole heading; links are reduced to their
+/// text, matching prose rendering.
+fn render_header_text(text: &str) -> String {
+    strip_markdown_links(text).replace('`', "")
+}
+
 /// Render inline markdown formatting (bold, inline code, links)
 fn render_inline_formatting(line: &str) -> String {
     // First strip links, preserving link text (which may contain bold/code)
@@ -379,6 +457,8 @@ fn colorize_status_symbols(text: &str) -> String {
     let progress = Style::new().fg_color(Some(AnsiStyleColor::Ansi(AnsiColor::Blue)));
     let disabled = Style::new().fg_color(Some(AnsiStyleColor::Ansi(AnsiColor::BrightBlack)));
     let working_tree = Style::new().fg_color(Some(AnsiStyleColor::Ansi(AnsiColor::Cyan)));
+    let changes_requested = Style::new().fg_color(Some(AnsiStyleColor::Ansi(AnsiColor::Magenta)));
+    let pending_review = Style::new().fg_color(Some(AnsiStyleColor::Ansi(AnsiColor::Cyan)));
 
     // Pattern for dimmed text (from inline `code` rendering)
     // render_inline_formatting wraps backticked text in dimmed style
@@ -406,47 +486,47 @@ fn colorize_status_symbols(text: &str) -> String {
     result = replace_dim(result, "⤵", warning);
     result = replace_dim(result, "✗", warning);
 
-    // Worktree state: BranchWorktreeMismatch (red), Prunable/Locked (yellow)
-    result = replace_dim(result, "⚑", error);
+    // Worktree state: Prunable/Locked (yellow), BranchWorktreeMismatch (dim yellow)
     result = replace_dim(result, "⊟", warning);
     result = replace_dim(result, "⊞", warning);
+    result = replace_dim(result, "⚑", warning.dimmed());
 
-    // CI status circles: replace dimmed ● followed by color name
-    let dimmed_bullet = format!("{dim}●{dim:#}");
+    // CI legend samples: replace dimmed `#` followed by a color name
+    let dimmed_hash = format!("{dim}#{dim:#}");
     result = result
         .replace(
-            &format!("{dimmed_bullet} green"),
-            &format!("{success}●{success:#} green"),
+            &format!("{dimmed_hash} green"),
+            &format!("{success}#{success:#} green"),
         )
         .replace(
-            &format!("{dimmed_bullet} blue"),
-            &format!("{progress}●{progress:#} blue"),
+            &format!("{dimmed_hash} blue"),
+            &format!("{progress}#{progress:#} blue"),
         )
         .replace(
-            &format!("{dimmed_bullet} red"),
-            &format!("{error}●{error:#} red"),
+            &format!("{dimmed_hash} red"),
+            &format!("{error}#{error:#} red"),
         )
         .replace(
-            &format!("{dimmed_bullet} yellow"),
-            &format!("{warning}●{warning:#} yellow"),
+            &format!("{dimmed_hash} magenta"),
+            &format!("{changes_requested}#{changes_requested:#} magenta"),
         )
         .replace(
-            &format!("{dimmed_bullet} gray"),
-            &format!("{disabled}●{disabled:#} gray"),
+            &format!("{dimmed_hash} cyan"),
+            &format!("{pending_review}#{pending_review:#} cyan"),
+        )
+        .replace(
+            &format!("{dimmed_hash} yellow"),
+            &format!("{warning}#{warning:#} yellow"),
+        )
+        .replace(
+            &format!("{dimmed_hash} gray"),
+            &format!("{disabled}#{disabled:#} gray"),
         )
         // CI error indicator: ⚠ symbol (also rendered dimmed initially)
         .replace(
             &format!("{dim}⚠{dim:#} yellow"),
             &format!("{warning}⚠{warning:#} yellow"),
         );
-
-    // Legacy CI status circles (for statusline format)
-    result = result
-        .replace("● passed", &format!("{success}●{success:#} passed"))
-        .replace("● running", &format!("{progress}●{progress:#} running"))
-        .replace("● failed", &format!("{error}●{error:#} failed"))
-        .replace("● conflicts", &format!("{warning}●{warning:#} conflicts"))
-        .replace("● no-ci", &format!("{disabled}●{disabled:#} no-ci"));
 
     // Symbols that should remain dimmed are already dimmed from backtick rendering:
     // - Main state: _ (same commit), ⊂ (content integrated), ^, ↑, ↓, ↕
@@ -575,6 +655,21 @@ mod tests {
     }
 
     #[test]
+    fn test_render_markdown_in_help_header_inline_code() {
+        // Inline `code` and links in headers are reduced to plain text so the
+        // header's own style covers the whole line (no literal backticks, no
+        // mid-line ANSI reset). Real case: `### Command log (`commands.jsonl`)`
+        // on the `wt config state logs` page.
+        let md = "### `--stage`\n#### Run `wt merge`\n## See [the docs](@/x.md)";
+        let result = render_markdown_in_help(md);
+        assert_snapshot!(result, @"
+        [32m--stage[0m
+        [1mRun wt merge[0m
+        [1m[32mSee the docs[0m
+        ");
+    }
+
+    #[test]
     fn test_render_markdown_in_help_horizontal_rule() {
         let result = render_markdown_in_help("before\n\n---\n\n## Section");
         assert_snapshot!(result, @"
@@ -632,7 +727,7 @@ mod tests {
 
     #[test]
     fn test_render_markdown_in_help_table() {
-        let result = render_markdown_in_help("| A | B |\n| - | - |\n| 1 | 2 |");
+        let result = render_markdown_in_help("| A | B |\n| --- | --- |\n| 1 | 2 |");
         assert_snapshot!(result, @"
          A   B  
         ─── ─── 
@@ -688,15 +783,15 @@ mod tests {
         let git_ops = colorize_status_symbols(&format!("{dim}⤴{dim:#} rebase"));
         assert_snapshot!(git_ops, @"[33m⤴[0m rebase");
 
-        // CI status: passed → green, failed → red, running → blue
-        let ci_passed = colorize_status_symbols("● passed");
-        assert_snapshot!(ci_passed, @"[32m●[0m passed");
+        // CI legend samples: dimmed `#` + color name recolors the sample
+        let ci_passed = colorize_status_symbols(&format!("{dim}#{dim:#} green"));
+        assert_snapshot!(ci_passed, @"[32m#[0m green");
 
-        let ci_failed = colorize_status_symbols("● failed");
-        assert_snapshot!(ci_failed, @"[31m●[0m failed");
+        let ci_failed = colorize_status_symbols(&format!("{dim}#{dim:#} red"));
+        assert_snapshot!(ci_failed, @"[31m#[0m red");
 
-        let ci_running = colorize_status_symbols("● running");
-        assert_snapshot!(ci_running, @"[34m●[0m running");
+        let ci_review = colorize_status_symbols(&format!("{dim}#{dim:#} magenta"));
+        assert_snapshot!(ci_review, @"[35m#[0m magenta");
     }
 
     #[test]
@@ -759,6 +854,33 @@ mod tests {
         A   B  
         1   2
         ");
+    }
+
+    #[test]
+    fn test_render_table_ragged_narrow_does_not_panic() {
+        // Regression for #3407. termimad <= 0.34.1 panicked with an out-of-bounds
+        // index when a *ragged* table — a row with more cells than the header —
+        // was rendered at a narrow width: its column fitter (`Table::fix_columns`
+        // in termimad's src/tbl.rs) took an error path that skipped cell padding,
+        // then indexed past the shorter row. PR-comment markdown is untrusted and
+        // can contain such a table, and the picker renders comment bodies through
+        // here, so this used to abort `wt switch`. Fixed upstream in termimad
+        // 0.35.1 (Canop/termimad#77); this guards against a regression or an
+        // accidental downgrade — the render must complete rather than panicking.
+        let lines = vec![
+            "| Key | Value |",
+            "| --- | --- |",
+            "| alpha | beta | gamma | delta | epsilon | zeta |",
+        ];
+        // The bug manifested as an out-of-bounds panic *during* rendering in the
+        // narrow-width band (16/20/24). termimad wraps cells hard and drops
+        // columns to fit width 20, so we don't assert on specific cell text —
+        // reaching this line at all is the proof the panic is gone.
+        let result = render_table(&lines, Some(20));
+        assert!(
+            !result.is_empty(),
+            "render should complete and produce output"
+        );
     }
 
     #[test]

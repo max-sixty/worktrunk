@@ -1,0 +1,14 @@
+---
+source: tests/integration_tests/switch_picker.rs
+expression: preview
+---
+1 2 3 4 5: summary 6 7
+Enter: switch | ctrl-u/d: scroll | Tab/alt-1…7: preview | a
+
+Summaries off
+
+Enable summaries in:
+[TEST_CONFIG]
+
+  [list]
+  summary = true

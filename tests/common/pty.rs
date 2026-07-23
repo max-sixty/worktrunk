@@ -16,6 +16,57 @@
 use portable_pty::{CommandBuilder, MasterPty};
 use std::io::{Read, Write};
 use std::path::Path;
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
+
+/// Read a PTY master to end-of-stream, returning its output lossily as UTF-8.
+///
+/// On Linux a `read` on the master returns `EIO` once the child has exited and
+/// closed the slave side, instead of the clean 0-byte EOF macOS returns. Both
+/// mean "the child is gone, nothing more to read", so `EIO` is treated as
+/// end-of-stream here. `read_to_string().unwrap()` instead panicked
+/// intermittently depending on whether the read raced ahead of or behind the
+/// child's exit — #3144 was the same fragile read timing out on macOS, this is
+/// its Linux face. Lossy UTF-8 (like the Windows branch of `read_pty_output`)
+/// so a multibyte sequence truncated at `EIO` doesn't panic the test.
+#[cfg(unix)]
+pub fn read_pty_master_to_string<R: Read + ?Sized>(reader: &mut R) -> String {
+    use std::io::ErrorKind;
+    // POSIX `EIO` is 5 on every platform these tests run on (Linux, macOS);
+    // avoids a `libc` dev-dependency just for the constant.
+    const EIO: i32 = 5;
+    let mut bytes = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        match reader.read(&mut chunk) {
+            Ok(0) => break, // clean EOF (the macOS behavior)
+            Ok(n) => bytes.extend_from_slice(&chunk[..n]),
+            Err(e) if e.raw_os_error() == Some(EIO) => break,
+            // A transient `WouldBlock` (EAGAIN) means "no data yet", not EOF —
+            // retry after a short pause, mirroring the Windows branch of
+            // `read_pty_output`. The child will eventually produce data, close
+            // (EOF), or exit (EIO), so this can't spin forever. `read_to_string`
+            // didn't retry EAGAIN either, so it panicked here just the same;
+            // this is the more robust replacement.
+            Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                continue;
+            }
+            Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+            Err(e) => panic!("PTY master read failed: {e}"),
+        }
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// Read a PTY master to end-of-stream on Windows (ConPTY), where a blocking
+/// `read_to_string` reaches EOF cleanly.
+#[cfg(not(unix))]
+pub fn read_pty_master_to_string<R: Read + ?Sized>(reader: &mut R) -> String {
+    let mut buf = String::new();
+    reader.read_to_string(&mut buf).unwrap();
+    buf
+}
 
 /// Read output from PTY and wait for child exit.
 ///
@@ -38,8 +89,7 @@ pub fn read_pty_output(
         // Drop writer to signal EOF to child's stdin (important for Unix PTYs)
         drop(writer);
         let mut reader = reader;
-        let mut buf = String::new();
-        reader.read_to_string(&mut buf).unwrap();
+        let buf = read_pty_master_to_string(&mut reader);
         let exit_status = child.wait().unwrap();
         (buf, exit_status.exit_code() as i32)
     }
@@ -166,12 +216,60 @@ pub fn read_pty_output(
 
 /// Find cursor position request (ESC[6n) in a byte slice.
 /// Returns the position if found.
-#[cfg(windows)]
 fn find_cursor_request(data: &[u8]) -> Option<usize> {
     // Look for ESC [ 6 n sequence (0x1b 0x5b 0x36 0x6e)
     let pattern = b"\x1b[6n";
     data.windows(pattern.len())
         .position(|window| window == pattern)
+}
+
+/// A PTY master writer shared between the reader thread (which answers terminal
+/// queries) and the caller (which sends keystrokes). Both need to write to the
+/// single master, and `portable_pty` hands out only one writer.
+pub type SharedPtyWriter = Arc<Mutex<Box<dyn Write + Send>>>;
+
+/// Spawn a thread that drains the PTY master `reader` into the returned channel
+/// and answers the cursor-position report query (`ESC[6n`) skim emits while
+/// initializing the picker.
+///
+/// skim 4.x runs the picker in partial-height mode, whose setup calls skim's
+/// `cursor_pos_from_tty()`: it writes `ESC[6n` to `/dev/tty` and blocks in
+/// `select()` for up to 3s waiting for the `ESC[row;colR` reply. A real terminal
+/// answers automatically; `portable_pty` is a bare PTY with no emulation, so
+/// without this reply skim fails init with "Cursor position detection timed out"
+/// and the picker never renders. The reply (`1;1`) is a safe constant — skim only
+/// uses it to place its inline viewport, which the TUI snapshot tests don't assert
+/// on. Sharing `writer` with the caller lets keystrokes and query replies both
+/// reach the master. The query is matched within a single read chunk; skim emits
+/// the 4-byte DSR as one small write, so it never spans chunks.
+pub fn spawn_pty_reader_answering_queries(
+    reader: Box<dyn Read + Send>,
+    writer: SharedPtyWriter,
+) -> mpsc::Receiver<Vec<u8>> {
+    let (tx, rx) = mpsc::channel::<Vec<u8>>();
+    std::thread::spawn(move || {
+        let mut reader = reader;
+        let mut temp_buf = [0u8; 4096];
+        loop {
+            match reader.read(&mut temp_buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    let chunk = &temp_buf[..n];
+                    if find_cursor_request(chunk).is_some()
+                        && let Ok(mut w) = writer.lock()
+                    {
+                        let _ = w.write_all(b"\x1b[1;1R");
+                        let _ = w.flush();
+                    }
+                    if tx.send(chunk.to_vec()).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    rx
 }
 
 /// Build a CommandBuilder with standard PTY isolation and env vars.

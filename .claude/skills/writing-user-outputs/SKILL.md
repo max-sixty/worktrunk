@@ -93,14 +93,19 @@ format_heading("USER CONFIG", Some("@ ~/.config/wt.toml"))
 
 ## stdout vs stderr
 
-**Decision principle:** If this command is piped, what should the receiving program get?
+**Decision principle:** stdout carries the command's *answer*; stderr carries *narration* about producing it. The discriminating question is answer-vs-narration, not audience — `wt list` is "for the user" yet belongs on stdout because it *is* the answer. "Is this a message to the user?" doesn't discriminate, because nearly all output is.
 
-- **stdout** → Data for pipes, scripts, `eval` (tables, JSON, shell code)
-- **stderr** → Status for the human watching (progress, success, errors, hints)
-- **directive file** → Shell commands executed after wt exits (cd, exec)
+- **stdout** → the answer, in whatever format the user selected. Data (tables, JSON, shell code, an expanded template) and `--dry-run` previews both qualify: a preview is the whole answer when nothing mutates. Human-formatted output belongs here too. Color strips automatically on a pipe (anstream), so `wt list | grep` stays safe.
+- **stderr** → narration about doing it: progress, success/warning/error messages, hints, interactive prompts, and `-v`/`-vv` diagnostics.
+- **directive file** → shell commands executed after wt exits (cd, exec).
+
+The same line can flip streams between modes. `wt config shell uninstall` deletes the file, so `✓ Removed … @ ~/.zshrc` only narrates a side effect that already happened → stderr (the edited file is the answer; stdout is empty). `wt config shell uninstall --dry-run` mutates nothing, so `○ Will remove … @ ~/.zshrc` is the only answer there is → stdout. What flips isn't the wording, it's whether a side effect exists to be the answer.
+
+For a split preview, the `--format=json` payload is the arbiter: a line json would carry goes to stdout, narration json omits stays on stderr. `wt step prune --dry-run` puts the removal plan on stdout (the same plan json emits) but keeps "Skipped young-branch (younger than 1d)" and "nothing to remove" on stderr. One case ignores all this: a preview shown *inside* an interactive prompt, such as the `?` re-preview during `wt config shell install`, is mid-prompt narration → stderr.
 
 Examples:
-- `wt list` → table/JSON to stdout (for grep, jq, scripts)
+- `wt list`, `wt config show` → human table/dump or `--format=json`, both to stdout
+- `wt step prune --dry-run` → the removal plan to stdout (human or json); "nothing to remove" and skipped-young caveats to stderr
 - `wt config shell init` → shell code to stdout (for `eval`)
 - `wt switch` → status messages only (nothing to pipe)
 
@@ -115,11 +120,12 @@ Examples that page: `--help`, `wt config show`, `wt hook show`, `wt step {commit
 Build the whole output into a `String` first (don't stream), then:
 
 ```rust
-if let Err(e) = crate::help_pager::show_help_in_pager(&out, true) {
-    log::debug!("Pager failed, falling back to stdout: {}", e);
-    println!("{}", out);
-}
+crate::help_pager::show_help_in_pager(&out, true);
 ```
+
+The helper is infallible from the caller's perspective — it falls back to
+plain stdout itself when no pager is configured, stdout isn't a TTY, or the
+pager fails.
 
 ## Security
 
@@ -307,7 +313,7 @@ the message color before the symbol so it renders in its native styling. This
 requires breaking out of the message color and reopening it after the symbol.
 See `FlagNote` in `src/output/handlers.rs` for an example — it handles flag
 acknowledgment notes (like integration reasons) with proper color transitions
-via `after_cyan()` and `after_green()` methods.
+via its `after(color)` method, which reopens the message color after the symbol.
 
 **Comma + "but" + em-dash for limitations:** When stating an outcome with a
 limitation and its reason:
@@ -343,22 +349,25 @@ spawn_background(build_command_that_checks_merge_again());  // Duplicate check!
 
 ## Warning Ordering
 
-**Core principle:** Warnings about state discovered during evaluation appear
-**before** the action message that follows from that evaluation.
+**Core principle:** Messages about state discovered during evaluation
+(warnings, info notices) appear **before** the action message that follows
+from that evaluation.
 
 When a command evaluates state, discovers something unexpected, and proceeds
-anyway, the warning should come first:
+anyway, that message comes first:
 
 ```
-▲ Branch-worktree mismatch: feature @ ~/workspace/project.alias, expected @ ~/workspace/project.feature ⚑
-◎ Removing feature worktree & branch in background (same commit as main, _)
+▲ Auto-staging 1 untracked path:
+   ┃ notes.md
+◎ Generating commit message...
 ```
 
 Not:
 
 ```
-◎ Removing feature worktree & branch in background (same commit as main, _)
-▲ Branch-worktree mismatch: feature @ ~/workspace/project.alias, expected @ ~/workspace/project.feature ⚑
+◎ Generating commit message...
+▲ Auto-staging 1 untracked path:
+   ┃ notes.md
 ```
 
 Warnings that result from the action itself (something failed during execution)
@@ -374,6 +383,13 @@ naturally come after the action.
 | "Created worktree for feature"          | "Switched to worktree for feature"    |
 | "Created new worktree for feature"      | "Already on worktree for feature"     |
 | "Commands approved & saved"             | "All commands already approved"       |
+
+The same rule governs standalone symbols used as per-row markers in listings:
+✓ marks a completed action, never a state. A listing that reports per-item
+status marks it with ○ (state acknowledged) or ❯ (awaiting approval/user
+input) — the shared vocabulary of `wt hook show` and `wt config approvals
+list`. Reserve a per-row ✓ for outcomes of work the command just performed
+(shell-install action lines, `-v` subprocess trace glyphs).
 
 **Hint vs Info:** Hints suggest user action or provide additional non-essential
 context (supplementary details the user doesn't need but may find useful). Info
@@ -925,20 +941,26 @@ See `src/git/error.rs` for examples of this pattern in `GitError` Display impls.
 **`-v` (verbose):** User-facing diagnostic output. Must follow these guidelines.
 Shows template expansions and other details users might need for debugging config.
 
-Format for template expansion:
+Template expansion shows the source template and the rendered result as two
+labeled blocks. Each block is a bash gutter (dim + syntax highlighting via
+`format_bash_with_gutter`) under its own info header (`○` symbol, bold name,
+then `source` or `result`):
 ```
-○ Expanding name
- ┃ template (bash-highlighted)
- ┃ → (dim)
- ┃ result (bash-highlighted)
+○ name source
+ ┃ template
+○ name result
+ ┃ result
 ```
 
-- **Info message** for header (`○` symbol, "Expanding" + bold name)
-- **Bash gutter** for template and result (dim + syntax highlighting via
-  `format_bash_with_gutter`)
-- **Plain gutter** for dim `→` separator (bypasses syntax highlighter)
-- Template and result are always on separate gutter blocks from the arrow,
-  because the `→` can't go through the bash syntax highlighter
+The two headers carry the input/output distinction, so both blocks share the
+same gutter and the content always starts at the gutter's column 2 (no marker
+glyph or extra indent inside the gutter). Multi-line templates and results
+follow the same shape, one gutter line per source line.
+
+`expand_template` emits no trailing blank, so a standalone caller adds one to
+separate the block from what follows (`wt step eval` does this after the view).
+In a command pipeline the executor already separates the block from the next
+output, so the expansion adds nothing.
 
 **`-vv` (debug):** Developer-facing logging output. MAY violate these guidelines.
 Uses `log::debug!()` with structured format for deep debugging. Not intended for

@@ -12,15 +12,16 @@
 //! Callers that want low-priority I/O (e.g. `step_copy_ignored`) should call
 //! [`crate::priority::lower_current_process`] before starting work.
 //!
-//! Callers that want a TTY progress spinner pass a [`Progress`] — every
-//! successful leaf copy calls `progress.record(bytes)`. Non-interactive
-//! callers pass [`Progress::disabled`] for a zero-overhead no-op.
+//! Every successful leaf copy calls `progress.record(bytes)` on the caller's
+//! [`Progress`], which both feeds the TTY spinner (when enabled) and
+//! accumulates the `(files, bytes)` totals the caller reads back via
+//! [`Progress::totals`]. Non-interactive callers pass [`Progress::disabled`]
+//! to skip the spinner; counting still happens.
 
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use anyhow::Context;
 use rayon::prelude::*;
@@ -79,15 +80,20 @@ pub fn copy_leaf(
     } else {
         match reflink_copy::reflink_or_copy(src, dest) {
             Ok(_) => {
-                // Preserve file permissions (especially the execute bit).
+                // Preserve file permissions (especially the execute bit) —
+                // needed on Linux, skipped on macOS.
                 //
                 // On btrfs/XFS, reflink (FICLONE ioctl) clones data extents
                 // only — the destination gets umask-based permissions, losing
                 // execute bits. std::fs::copy's fallback preserves permissions
                 // via fchmod, creating an asymmetry in reflink_or_copy.
                 //
+                // On macOS/APFS, clonefile() already preserves the source's
+                // mode bits, so this chmod is redundant — skip it to save a
+                // syscall per file.
+                //
                 // Refs: ioctl_ficlonerange(2), LWN Articles/331808
-                #[cfg(unix)]
+                #[cfg(all(unix, not(target_os = "macos")))]
                 {
                     fs::set_permissions(dest, src_meta.permissions())
                         .context("setting destination file permissions")?;
@@ -130,21 +136,21 @@ struct CopyLeaf {
 /// are skipped for idempotent usage.
 ///
 /// When `force` is true, existing files and symlinks at the destination are
-/// removed before copying. `progress` receives per-file callbacks; pass
-/// [`Progress::disabled`] for a zero-overhead no-op.
+/// removed before copying. Each copied leaf is recorded on `progress` —
+/// skipped entries are not counted — so a `progress` dedicated to this call
+/// reports `(files_copied, bytes_copied)` in `totals()` afterwards; a shared
+/// one accumulates across calls.
 ///
 /// When `root` is `Some`, refuses destination directory ancestry that resolves
 /// outside `root`. Leaves inherit the guarantee because `entry.file_name()` is
 /// a single basename and cannot escape the validated parent directory.
-///
-/// Returns `(files_copied, bytes_copied)` — counts exclude skipped entries.
 pub fn copy_dir_recursive(
     src: &Path,
     dest: &Path,
     root: Option<&Path>,
     force: bool,
     progress: &Progress,
-) -> anyhow::Result<(usize, u64)> {
+) -> anyhow::Result<()> {
     // Phase 1: Walk directories iteratively, creating dest dirs and collecting leaves.
     let mut leaves = Vec::new();
     let mut dir_stack = vec![(src.to_path_buf(), dest.to_path_buf())];
@@ -174,21 +180,17 @@ pub fn copy_dir_recursive(
                     dest: dest_path,
                 });
             } else {
-                log::debug!("skipping non-regular file: {}", src_path.display());
+                tracing::debug!(path = %src_path.display(), "skipping non-regular file: {}", src_path.display());
             }
         }
     }
 
     // Phase 2: Copy all leaves in parallel.
-    let copied_files = AtomicUsize::new(0);
-    let copied_bytes = AtomicU64::new(0);
     COPY_POOL.install(|| {
         leaves
             .par_iter()
             .try_for_each(|leaf| -> anyhow::Result<()> {
                 if let Some(bytes) = copy_leaf(&leaf.src, &leaf.dest, None, force)? {
-                    copied_files.fetch_add(1, Ordering::Relaxed);
-                    copied_bytes.fetch_add(bytes, Ordering::Relaxed);
                     progress.record(bytes);
                 }
                 Ok(())
@@ -207,7 +209,7 @@ pub fn copy_dir_recursive(
             .with_context(|| format!("setting permissions on {}", dest_dir.display()))?;
     }
 
-    Ok((copied_files.into_inner(), copied_bytes.into_inner()))
+    Ok(())
 }
 
 /// Remove a file, ignoring "not found" errors.

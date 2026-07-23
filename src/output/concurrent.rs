@@ -26,7 +26,8 @@
 //!
 //! The main thread drains the channel. A signal-listener thread blocks
 //! on `signal_hook::Signals::forever()` for SIGINT/SIGTERM and forwards
-//! with escalation to every live child's process group; closing the
+//! the user's signal to every live child's process group; a second user
+//! signal escalates every still-live pgroup to SIGKILL. Closing the
 //! signal-hook handle on shutdown unblocks the listener.
 //!
 //! All children always run to completion. Per-child exit status is returned
@@ -46,11 +47,12 @@ use worktrunk::command_log::log_command;
 use worktrunk::git::WorktrunkError;
 use worktrunk::shell_exec::{
     DIRECTIVE_CD_FILE_ENV_VAR, DIRECTIVE_EXEC_FILE_ENV_VAR, DIRECTIVE_FILE_ENV_VAR, ShellConfig,
-    scrub_directive_env_vars,
+    scrub_directive_env_vars, scrub_git_discovery_env_vars,
 };
 #[cfg(unix)]
 use worktrunk::signal_forwarder::ForegroundSignals;
 use worktrunk::styling::stderr;
+use worktrunk::trace::CommandTrace;
 
 use super::handlers::DirectivePassthrough;
 
@@ -70,6 +72,10 @@ pub struct ConcurrentCommand<'a> {
     /// Directive file env vars to pass through to the child. See
     /// `DirectivePassthrough` for the trust model (CD passthrough, EXEC scrub).
     pub directives: &'a DirectivePassthrough,
+    /// Scrub inherited git-discovery vars (`GIT_DIR`/`GIT_WORK_TREE`/…) from the
+    /// child. `true` for hooks (they operate on the worktree wt targets), `false`
+    /// for aliases (they keep wt's inherited context). See issue #3373.
+    pub scrub_git_discovery: bool,
 }
 
 /// Run every command concurrently and return each per-child result in input
@@ -108,6 +114,9 @@ pub fn run_concurrent_commands(
                 for mut prior in children {
                     let _ = prior.child.kill();
                     let _ = prior.child.wait();
+                    // Spawned but torn down because a sibling failed to spawn —
+                    // record it rather than leaving the trace guard unresolved.
+                    prior.trace.complete(false);
                 }
                 return Err(e);
             }
@@ -171,13 +180,12 @@ pub fn run_concurrent_commands(
     #[cfg(not(unix))]
     let originating_signal: Option<i32> = None;
 
-    // If wt's forwarder escalated SIGINT → SIGTERM → SIGKILL, a child may have
-    // died from SIGTERM (or SIGKILL) even though the user only sent SIGINT.
-    // From the user's outside view, the originating signal is what they sent;
-    // wt's internal escalation is an implementation detail that shouldn't
-    // surface as a different exit code (e.g., 143 instead of 130). Override
-    // each child's reported signal with the originating signal so wt's
-    // `exit_code()` and `interrupt_exit_code()` reflect the user's intent.
+    // If a child died from SIGKILL because the user pressed Ctrl-C twice, the
+    // user-visible exit code shouldn't be 137 — they only ever sent SIGINT, and
+    // wt's escalation to SIGKILL on the second press is an implementation
+    // detail. Override each child's reported signal with the originating signal
+    // so wt's `exit_code()` and `interrupt_exit_code()` reflect the user's
+    // intent (130 from SIGINT, not 137 from SIGKILL).
     if let Some(orig) = originating_signal {
         for outcome in &mut outcomes {
             override_with_originating_signal(outcome, orig);
@@ -189,8 +197,8 @@ pub fn run_concurrent_commands(
 
 /// Replace a child's signal-derived `ChildProcessExited` error with one whose
 /// `signal` / `code` / `message` reflect the originating signal wt received
-/// (rather than whichever signal the forwarder's escalation chain ultimately
-/// killed the child with). No-op if the outcome isn't a signal-derived error.
+/// (rather than the SIGKILL the forwarder may have escalated to on a second
+/// user press). No-op if the outcome isn't a signal-derived error.
 fn override_with_originating_signal(outcome: &mut anyhow::Result<()>, originating: i32) {
     let Err(err) = outcome else { return };
     let Some(WorktrunkError::ChildProcessExited {
@@ -270,6 +278,10 @@ struct SpawnedChild {
     cmd_str: String,
     log_label: Option<String>,
     started_at: Instant,
+    /// `[wt-trace]` record for this child, captured at spawn time and resolved
+    /// in `collect_outcome`. Held across the output-draining window so the
+    /// recorded duration is the full spawn → wait span, not just the wait.
+    trace: CommandTrace,
 }
 
 fn spawn_child(
@@ -283,6 +295,12 @@ fn spawn_child(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+
+    // User hooks discover their repo from the cwd wt sets, not an inherited
+    // GIT_DIR/GIT_WORK_TREE (issue #3373). Aliases keep the inherited context.
+    if cmd.scrub_git_discovery {
+        scrub_git_discovery_env_vars(&mut command);
+    }
 
     // Scrub all directive env vars, then re-add the passthroughs.
     scrub_directive_env_vars(&mut command);
@@ -302,15 +320,27 @@ fn spawn_child(
         command.process_group(0);
     }
 
-    log::debug!(
+    tracing::debug!(
+        command = %cmd.expanded,
+        shell = %shell.name,
         "$ {} (concurrent #{index}, shell: {})",
         cmd.expanded,
         shell.name
     );
 
-    let mut child = command
-        .spawn()
-        .with_context(|| format!("failed to spawn concurrent command '{}'", cmd.label))?;
+    // Start the trace just before spawning so its duration brackets the real
+    // spawn → wait span (the child keeps running while we drain its output).
+    // Each child is fed its own `context_json` on stdin, so mark it stdin-reading
+    // — the same command across worktrees isn't a duplicate (different input).
+    let mut trace = CommandTrace::new(None, cmd.expanded).reads_stdin(true);
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            trace.fail(&e);
+            return Err(e)
+                .with_context(|| format!("failed to spawn concurrent command '{}'", cmd.label));
+        }
+    };
 
     if let Some(mut stdin) = child.stdin.take() {
         // Ignore BrokenPipe — child may exit or close stdin early.
@@ -322,6 +352,7 @@ fn spawn_child(
         cmd_str: cmd.expanded.to_string(),
         log_label: cmd.log_label.map(str::to_string),
         started_at: Instant::now(),
+        trace,
     })
 }
 
@@ -378,11 +409,18 @@ fn collect_outcome(spawned: SpawnedChild, cmd: &ConcurrentCommand<'_>) -> anyhow
         cmd_str,
         log_label,
         started_at,
+        mut trace,
     } = spawned;
 
-    let status = child
-        .wait()
-        .with_context(|| format!("failed to wait for concurrent command '{}'", cmd.label))?;
+    let status = match child.wait() {
+        Ok(status) => status,
+        Err(e) => {
+            trace.fail(&e);
+            return Err(e)
+                .with_context(|| format!("failed to wait for concurrent command '{}'", cmd.label));
+        }
+    };
+    trace.complete(status.success());
 
     let duration = started_at.elapsed();
     let exit_code = status.code();
@@ -466,6 +504,7 @@ mod tests {
             context_json: "{}",
             log_label,
             directives,
+            scrub_git_discovery: false,
         }];
         run_concurrent_commands(&specs).expect("spawn failed")
     }
