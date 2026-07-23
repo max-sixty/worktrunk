@@ -402,7 +402,7 @@ url = "http://{{ branch }}.localhost:3000"
 
     let output = run_statusline(&repo, &[], None);
     // Shows `?` because writing project config creates uncommitted file
-    assert_snapshot!(output, @"[0m main  [36m?[0m[2m^[22m[2m|[22m  @[32m+2[0m  http://main.localhost:3000");
+    assert_snapshot!(output, @r"[0m main  [36m?[0m[2m^[22m[2m|[22m  @[32m+2[0m  ]8;;http://main.localhost:3000\:3000]8;;\");
 }
 
 #[rstest]
@@ -423,7 +423,7 @@ url = "http://{{ branch }}.localhost:3000"
 
     // Run statusline from feature worktree
     let output = run_statusline_from_dir(&repo, &[], None, &feature_path);
-    assert_snapshot!(output, @"[0m feature  [2m_[22m  http://feature.localhost:3000");
+    assert_snapshot!(output, @r"[0m feature  [2m_[22m  ]8;;http://feature.localhost:3000\:3000]8;;\");
 }
 
 // --- JSON Format Tests ---

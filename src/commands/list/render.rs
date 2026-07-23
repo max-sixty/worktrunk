@@ -2,7 +2,7 @@ use crate::display::{format_relative_time_short, shorten_path, truncate_to_width
 use anstyle::{Effects, Style};
 use std::path::Path;
 use unicode_width::UnicodeWidthStr;
-use worktrunk::styling::{Stream, StyledLine, hyperlink_stdout, supports_hyperlinks};
+use worktrunk::styling::{Stream, StyledLine, supports_hyperlinks};
 
 use super::collect::parse_port_from_url;
 use super::columns::{ColumnKind, DiffVariant};
@@ -568,7 +568,7 @@ impl ColumnLayout {
                     return StyledLine::new();
                 };
                 let mut cell = StyledLine::new();
-                let formatted = format_url_cell(url);
+                let formatted = format_url_cell(url, supports_hyperlinks(Stream::Stdout));
                 if item.url_active == Some(true) {
                     cell.push_raw(formatted);
                 } else {
@@ -632,18 +632,24 @@ impl ColumnLayout {
     }
 }
 
-/// Format URL cell with optional hyperlink.
+/// Format the dev-server URL, optionally as an OSC 8 hyperlink.
 ///
-/// When the terminal supports OSC 8 hyperlinks, shows just the port (e.g., `:3000`)
-/// as a clickable link. Otherwise, shows the full URL.
-fn format_url_cell(url: &str) -> String {
-    if supports_hyperlinks(Stream::Stdout) {
-        // Extract port from URL for compact display
-        if let Some(port) = parse_port_from_url(url) {
-            return hyperlink_stdout(url, &format!(":{port}"));
-        }
+/// A linked cell shows just the port (e.g. `:3000`) — the URL rides inside the
+/// escape sequence, so the cell costs the port's width rather than the whole
+/// URL's. Without links there is nowhere to hide the URL, so it renders in
+/// full and stays copyable.
+///
+/// Callers pass the decision rather than probing the terminal here: the
+/// statusline's stdout is a pipe to its editor, so `supports_hyperlinks` reports
+/// false there even though the consumer renders OSC 8.
+pub(crate) fn format_url_cell(url: &str, include_link: bool) -> String {
+    if include_link && let Some(port) = parse_port_from_url(url) {
+        return format!(
+            "{}:{port}{}",
+            osc8::Hyperlink::new(url),
+            osc8::Hyperlink::END
+        );
     }
-    // Fallback: show full URL
     url.to_string()
 }
 

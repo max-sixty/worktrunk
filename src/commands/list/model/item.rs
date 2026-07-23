@@ -551,9 +551,12 @@ impl ListItem {
             ));
         }
 
-        // 8. URL (priority 8)
+        // 8. URL (priority 8) — the port as a link to the dev server, as in `wt list`
         if let Some(ref url) = self.url {
-            segments.push(StatuslineSegment::from_column(url.clone(), ColumnKind::Url));
+            segments.push(StatuslineSegment::from_column(
+                crate::commands::list::render::format_url_cell(url, true),
+                ColumnKind::Url,
+            ));
         }
 
         segments
