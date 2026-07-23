@@ -131,6 +131,29 @@ impl Repository {
         Ok(existed)
     }
 
+    /// The `worktrunk.config.*` entries from the merged effective git config,
+    /// with the prefix stripped (experimental project-config source, #3454).
+    ///
+    /// An in-memory prefix scan over the bulk config map — no subprocess.
+    /// Git has already merged the scopes (system → global → local, plus any
+    /// includes) before `--list` emits, and for a repeated key the last
+    /// value wins, so the returned pairs carry git's own precedence.
+    /// Per git's key model the middle path segments are case-sensitive;
+    /// only exact-lowercase keys (the schema's own spelling) match.
+    ///
+    /// Any non-empty result means the git-config source supersedes
+    /// `.config/wt.toml` — the selection lives in `ProjectConfig::load`.
+    pub fn worktrunk_config_git_pairs(&self) -> anyhow::Result<Vec<(String, String)>> {
+        let guard = self.all_config()?.read().unwrap();
+        Ok(guard
+            .iter()
+            .filter_map(|(key, values)| {
+                let rest = key.strip_prefix(crate::config::GIT_CONFIG_PREFIX)?;
+                Some((rest.to_string(), values.last()?.clone()))
+            })
+            .collect())
+    }
+
     /// Run `git config --get-regexp <pattern>` and return stdout.
     ///
     /// Distinguishes exit 1 (no matching keys — expected, returns empty
