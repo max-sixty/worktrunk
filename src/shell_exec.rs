@@ -32,7 +32,7 @@
 //! exit surfaces as `WorktrunkError::ChildProcessExited { signal: Some(_) }` —
 //! the structured channel that loop callers (`for-each`, hook/alias pipelines)
 //! use to abort their loops on Ctrl-C rather than continuing to the next
-//! iteration. See `git/interrupt_exit_code` for the consumer side.
+//! iteration. See `git/interrupt_signal` for the consumer side.
 //!
 //! Concurrent foreground children (`output/concurrent.rs`) and detached
 //! background children (`commands/process.rs::spawn_detached_*`) have separate
@@ -1745,7 +1745,7 @@ impl Cmd {
         // success and a signal then landed before `handle.close()` ran, the
         // signal arrived too late to have killed anything — the contract on
         // `signal: Some(_)` is "this child was killed by the signal" and
-        // `interrupt_exit_code` callers in pipeline loops break on it.
+        // `interrupt_signal` callers in pipeline loops break on it.
         #[cfg(unix)]
         if let Some(sig) = seen_signal
             && !status.success()

@@ -36,7 +36,7 @@ pub use format::{
     wrap_styled_text,
 };
 pub use highlighting::format_toml;
-pub use hyperlink::{Stream, hyperlink_stdout, strip_osc8_hyperlinks, supports_hyperlinks};
+pub use hyperlink::{Stream, strip_osc8_hyperlinks, supports_hyperlinks};
 pub use line::{StyledLine, StyledString, truncate_visible};
 pub use suggest::{suggest_command, suggest_command_in_dir};
 

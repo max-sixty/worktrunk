@@ -24,6 +24,7 @@ info:
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -335,7 +336,7 @@ Item fields:
  [2mdev_server[0m     [2m{url, listening}[0m from the project's [2mlist.url[0m template                                                                                                                                                                                                                                                            
  [2msummary[0m        LLM branch summary (requires [2m[list] summary = true[0m)                                                                                                                                                                                                                                                              
  [2mvars[0m           Per-branch variables from [2mwt config state vars[0m                                                                                                                                                                                                                                                                   
- [2mdisplay[0m        Rendered strings: [2mstate[0m (schema 1's [2mmain_state[0m vocabulary), [2msymbols[0m, [2mstatusline[0m (with ANSI colors), [2mcolumns[0m (custom-column cells keyed by header)                                                                                                                                                                
+ [2mdisplay[0m        Rendered strings: [2mstate[0m (schema 1's [2mmain_state[0m vocabulary), [2msymbols[0m, [2mstatusline[0m (with ANSI colors and OSC 8 hyperlinks), [2mcolumns[0m (custom-column cells keyed by header)                                                                                                                                           
 
 Schema 1 names map directly: [2mcommit[0m → [2mhead[0m, [2mworking_tree[0m →
 [2mworktree.changes[0m, [2mmain[0m + [2mmain_state[0m → [2mdefault_branch[0m +
@@ -407,7 +408,7 @@ The original bare-array format, and the default while unset:
  [2murl[0m                string      Dev server URL from project config; absent when not configured                                   
  [2murl_active[0m         boolean     Whether the URL's port is listening; absent when not configured                                  
  [2msummary[0m            string      LLM-generated branch summary; [2m--full[0m only, then absent when not configured or no summary         
- [2mstatusline[0m         string      Pre-formatted status with ANSI colors                                                            
+ [2mstatusline[0m         string      Pre-formatted status with colors and links                                                       
  [2msymbols[0m            string      Raw status symbols without colors (e.g., [2m"!?↓"[0m)                                                  
  [2mvars[0m               object      Per-branch variables from [2mwt config state vars[0m (absent when empty)                               
  [2mcolumns[0m            object      Rendered custom column values keyed by header; empty cells omitted (absent when none configured) 

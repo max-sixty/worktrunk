@@ -1024,7 +1024,7 @@ Item fields:
 | `dev_server` | `{url, listening}` from the project's `list.url` template |
 | `summary` | LLM branch summary (requires `[list] summary = true`) |
 | `vars` | Per-branch variables from [`wt config state vars`](@/config.md#wt-config-state-vars) |
-| `display` | Rendered strings: `state` (schema 1's `main_state` vocabulary), `symbols`, `statusline` (with ANSI colors), `columns` (custom-column cells keyed by header) |
+| `display` | Rendered strings: `state` (schema 1's `main_state` vocabulary), `symbols`, `statusline` (with ANSI colors and OSC 8 hyperlinks), `columns` (custom-column cells keyed by header) |
 
 Schema 1 names map directly: `commit` → `head`, `working_tree` →
 `worktree.changes`, `main` + `main_state` → `default_branch` +
@@ -1100,7 +1100,7 @@ $ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 | `url` | string | Dev server URL from project config; absent when not configured |
 | `url_active` | boolean | Whether the URL's port is listening; absent when not configured |
 | `summary` | string | LLM-generated branch summary; `--full` only, then absent when not configured or no summary |
-| `statusline` | string | Pre-formatted status with ANSI colors |
+| `statusline` | string | Pre-formatted status with colors and links |
 | `symbols` | string | Raw status symbols without colors (e.g., `"!?↓"`) |
 | `vars` | object | Per-branch variables from [`wt config state vars`](@/config.md#wt-config-state-vars) (absent when empty) |
 | `columns` | object | Rendered [custom column](#custom-columns) values keyed by header; empty cells omitted (absent when none configured) |
@@ -1407,6 +1407,8 @@ $ wt merge --no-commit --no-rebase
 8. **Post-remove + post-merge hooks** — Run in background after cleanup.
 
 Use `--no-commit` to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless `--no-rebase` is passed. Combining both flags preserves the exact source graph and requires the target to be its ancestor. Useful after preparing commits manually with `wt step commit`. Requires a clean working tree.
+
+`wt merge` targets the *local* default-branch ref and never fetches. When that ref lags its upstream — e.g. a primary checkout's `main` left behind `origin/main` — a branch based on the newer upstream tip is measured, squashed, and rebased against the upstream (so already-upstream commits are never folded into the squash), and the final fast-forward carries the local ref through the already-fetched upstream commits by their real SHAs. `wt step squash` and `wt step rebase` measure the same way. A local target that has *diverged* from its upstream — its own commits and behind — cannot fast-forward, so the merge is refused until the target is reconciled.
 
 ## Local CI
 

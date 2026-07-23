@@ -283,7 +283,7 @@ Item fields:
 | `dev_server` | `{url, listening}` from the project's `list.url` template |
 | `summary` | LLM branch summary (requires `[list] summary = true`) |
 | `vars` | Per-branch variables from [`wt config state vars`](@/config.md#wt-config-state-vars) |
-| `display` | Rendered strings: `state` (schema 1's `main_state` vocabulary), `symbols`, `statusline` (with ANSI colors), `columns` (custom-column cells keyed by header) |
+| `display` | Rendered strings: `state` (schema 1's `main_state` vocabulary), `symbols`, `statusline` (with ANSI colors and OSC 8 hyperlinks), `columns` (custom-column cells keyed by header) |
 
 Schema 1 names map directly: `commit` → `head`, `working_tree` →
 `worktree.changes`, `main` + `main_state` → `default_branch` +
@@ -323,7 +323,7 @@ The original bare-array format, and the default while unset:
 | `url` | string | Dev server URL from project config; absent when not configured |
 | `url_active` | boolean | Whether the URL's port is listening; absent when not configured |
 | `summary` | string | LLM-generated branch summary; `--full` only, then absent when not configured or no summary |
-| `statusline` | string | Pre-formatted status with ANSI colors |
+| `statusline` | string | Pre-formatted status with colors and links |
 | `symbols` | string | Raw status symbols without colors (e.g., `"!?↓"`) |
 | `vars` | object | Per-branch variables from [`wt config state vars`](@/config.md#wt-config-state-vars) (absent when empty) |
 | `columns` | object | Rendered [custom column](#custom-columns) values keyed by header; empty cells omitted (absent when none configured) |

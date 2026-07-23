@@ -528,8 +528,9 @@ impl PrStatus {
     /// known: Error and Conflicts share the warning color, so a yellow
     /// `#3035` would be indistinguishable from a conflicted PR.
     ///
-    /// When `include_link` is false, the cell is colored but not clickable
-    /// (for environments without OSC 8 hyperlinks, e.g. Claude Code).
+    /// When `include_link` is false, the cell is colored but not clickable —
+    /// for the `wt list` table on a terminal without OSC 8, and for the picker,
+    /// which strips the sequences.
     pub fn format_cell(&self, max_width: usize, include_link: bool) -> String {
         match self.number {
             Some(r) if !matches!(self.ci_status, CiStatus::Error) && r.width() <= max_width => {

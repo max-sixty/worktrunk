@@ -623,6 +623,7 @@ fn extract_failed_command_from_command_error() {
         stderr: "fatal: invalid reference: foo".into(),
         stdout: String::new(),
         exit_code: Some(128),
+        signal: None,
     };
     let err: anyhow::Error = Err::<(), _>(inner)
         .context("creating worktree")

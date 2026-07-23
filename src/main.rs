@@ -1175,6 +1175,7 @@ mod tests {
             stderr: "warning: unable to access '.git/config': Permission denied\nfatal: unknown error occurred while reading the configuration files".into(),
             stdout: String::new(),
             exit_code: Some(128),
+            signal: None,
         }
     }
 
@@ -1247,6 +1248,7 @@ mod tests {
             stderr: String::new(),
             stdout: String::new(),
             exit_code: None,
+            signal: None,
         };
         let err: anyhow::Error = Err::<(), _>(empty).context("syncing remotes").unwrap_err();
         let out = format_command_error(&err);
@@ -1283,6 +1285,7 @@ mod tests {
             stderr: String::new(),
             stdout: String::new(),
             exit_code: None,
+            signal: None,
         };
         let err: anyhow::Error = empty.into();
         assert_eq!(err.display_message(), "git fetch failed");

@@ -727,6 +727,47 @@ impl Repository {
         self.rev_parse_commit(r)
     }
 
+    /// The target's upstream, when the current branch's history extends past
+    /// the local `target_branch` ref into it — the #3519 stale-local-target
+    /// topology.
+    ///
+    /// The rewrite steps (`wt step squash`, `wt step rebase`, and `wt merge`
+    /// through them) measure "the branch's own commits" as
+    /// `merge-base(target, HEAD)..HEAD`. When the local target ref lags its
+    /// upstream (e.g. the primary checkout's `main` left behind `origin/main`)
+    /// and the branch was built on the newer upstream tip, that span sweeps in
+    /// commits the upstream already contains — folding (squash) or replaying
+    /// (rebase) them would duplicate published history under new SHAs. Callers
+    /// measure against the returned upstream instead, which keeps the span to
+    /// the branch's own commits; `wt merge`'s final fast-forward then carries
+    /// the local target through the upstream commits by their real SHAs.
+    ///
+    /// Detected locally, with no fetch (worktrunk is local-first): returns
+    /// `Some(upstream)` (short name, e.g. `origin/main`) when the target branch
+    /// has a configured upstream and `merge-base(HEAD, upstream)` is not an
+    /// ancestor of the local `target` ref — i.e. the local-target span would
+    /// reach commits the upstream already has. `None` — measure against the
+    /// local target as usual — for a legitimately-diverged local target whose
+    /// span holds only the branch's own commits (the fork point is still an
+    /// ancestor of the local target), an orphan branch with no shared history,
+    /// a non-branch target (an explicit `origin/main` has no upstream of its
+    /// own), or a target with no upstream at all.
+    pub fn span_upstream(&self, target_branch: &str) -> anyhow::Result<Option<String>> {
+        // `upstream()` already excludes a `[gone]` upstream, so a `Some` value
+        // is a live remote-tracking ref that `merge_base` resolves locally — no
+        // fetch, and no separate existence check.
+        let Some(upstream) = self.branch(target_branch).upstream()? else {
+            return Ok(None);
+        };
+        let target_sha = self.resolve_to_commit_sha(target_branch)?;
+        match self.merge_base("HEAD", &upstream)? {
+            Some(fork_point) if !self.is_ancestor_by_sha(&fork_point, &target_sha)? => {
+                Ok(Some(upstream))
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// Check if a branch is integrated into a target.
     ///
     /// Combines [`compute_integration_lazy()`] and [`check_integration()`], and

@@ -49,7 +49,7 @@ pub use error::{
     // distinct from their short single-line `Display`
     Diagnostic,
     // Extension methods on `anyhow::Error` (render_diagnostic,
-    // display_message, exit_code, interrupt_exit_code). Bring into scope
+    // display_message, exit_code, interrupt_signal). Bring into scope
     // to call them via method syntax.
     ErrorExt,
     // Structured command failure info

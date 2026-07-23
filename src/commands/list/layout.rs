@@ -599,6 +599,30 @@ struct PendingColumn<'a> {
     format: ColumnFormat,
 }
 
+/// Format the dev-server URL, optionally as an OSC 8 hyperlink.
+///
+/// A linked cell shows just the port (e.g. `:3000`) — the URL rides inside the
+/// escape sequence, so the cell costs the port's width rather than the whole
+/// URL's. Without links, or when the URL carries no parseable port, there is
+/// nowhere to hide the URL, so it renders in full and stays copyable.
+///
+/// Callers pass the decision rather than probing the terminal here: the
+/// statusline's stdout is a pipe to its editor, so `supports_hyperlinks` reports
+/// false there even though the consumer renders OSC 8.
+///
+/// [`estimate_url_width`] budgets the column against this, so the two have to
+/// agree on when a cell collapses to `:port` — hence the adjacency.
+pub(crate) fn format_url_cell(url: &str, include_link: bool) -> String {
+    if include_link && let Some(port) = parse_port_from_url(url) {
+        return format!(
+            "{}:{port}{}",
+            osc8::Hyperlink::new(url),
+            osc8::Hyperlink::END
+        );
+    }
+    url.to_string()
+}
+
 /// Estimate URL column width using heuristics.
 ///
 /// When hyperlinks are supported, URLs display as `:PORT` (6 chars for 5-digit ports).
