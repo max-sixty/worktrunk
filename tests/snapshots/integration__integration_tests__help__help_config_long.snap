@@ -24,6 +24,7 @@ info:
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -181,7 +182,7 @@ Generate commit messages automatically during merge. Requires an external CLI to
 [32mCodex[0m
 
 [107m [0m [2m[36m[commit.generation][0m
-[107m [0m [2mcommand = [0m[2m[32m"codex exec -m gpt-5.4-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"[0m
+[107m [0m [2mcommand = [0m[2m[32m"codex exec -m gpt-5.6-luna -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"[0m
 
 [32mOpenCode[0m
 
@@ -212,6 +213,8 @@ Persistent flag values for [2mwt list[0m. Override on command line as needed.
 [107m [0m [2mfull = [0m[2m[33mfalse[0m[2m       [0m[2m# Show CI status and LLM summaries (--full)[0m
 [107m [0m [2mbranches = [0m[2m[33mfalse[0m[2m   [0m[2m# Include branches without worktrees (--branches)[0m
 [107m [0m [2mremotes = [0m[2m[33mfalse[0m[2m    [0m[2m# Include remote-only branches (--remotes)[0m
+[107m [0m 
+[107m [0m [2mjson-schema = [0m[2m[33m2[0m[2m    [0m[2m# JSON output schema: 2 (envelope) or 1 (bare array, the current default); unset emits 1 with a warning[0m
 [107m [0m 
 [107m [0m [2mcolumns = [[0m[2m[32m"branch"[0m[2m, [0m[2m[32m"status"[0m[2m, [0m[2m[32m"ci"[0m[2m, [0m[2m[32m"path"[0m[2m]   [0m[2m# Columns to show, in order — built-ins or custom headers (omit for the default set)[0m
 [107m [0m 
@@ -252,8 +255,10 @@ named one. A column whose data source is missing still stays hidden — [2msumm
 needs an LLM command ([2m[commit.generation][0m), [2murl[0m needs a [2m[list] url[0m
 template — since listing can't supply the data.
 
-The selection drives the table and the [2mwt switch[0m picker; [2mwt list --format[0m
-json[2m ignores it and emits every field.[0m
+The selection drives the table and the [2mwt switch[0m picker. [2mwt list --format[0m
+json[2m always emits every field, but a listed gated column ([0mci[2m, [0msummary[2m)[0m
+still forces its data collection on, so the JSON carries the same data the
+table shows.
 
 [1mCustom columns [experimental][0m
 
@@ -268,19 +273,29 @@ renders each row's cell.
 [107m [0m [2m                                 [0m[2m# lower = kept longer (default: 9, the URL band)[0m
 
 Templates may reference [2m{{ branch }}[0m, [2m{{ worktree_path }}[0m,
-[2m{{ worktree_name }}[0m (empty for branch-only rows), and [2m{{ vars.* }}[0m —
-per-branch values stored with
-[2mwt config state vars set[0m.
+[2m{{ worktree_name }}[0m (empty for branch-only rows), and two per-branch
+namespaces:
+
+- [2m{{ vars.* }}[0m — values stored with
+  [2mwt config state vars set[0m.
+- [2m{{ git.branch.* }}[0m — the branch's own git config under [2mbranch.<name>.*[0m,
+  read straight from [2mgit config[0m (e.g. [2m{{ git.branch.jira }}[0m for a key you
+  set yourself, or the git-native [2mdescription[0m). Git lowercases config variable
+  names, so [2mbranch.<name>.nvciShelf[0m reads as [2m{{ git.branch.nvcishelf }}[0m.
+
 All standard filters work ([2msanitize[0m, [2mhash_port[0m, [2mcodename[0m, …). A row
-where the template renders empty (e.g. a branch without the vars key) shows an
+where the template renders empty (e.g. a branch without the key) shows an
 empty cell; a column that is empty for every row is dropped from the table.
 [2mwt list --format json[0m includes the rendered values under [2mcolumns[0m.
 
-A [2mNote[0m column showing free-form descriptions, set per branch with
-[2mwt config state vars set note "Bug fix for production fire"[0m:
+A [2mJira[0m column reading a key kept in git config, and a [2mSummary[0m column
+showing just the first line of the git-native branch description:
 
-[107m [0m [2m[36m[list.custom-columns.Note][0m
-[107m [0m [2mtemplate = [0m[2m[32m"{{ vars.note }}"[0m
+[107m [0m [2m[36m[list.custom-columns.Jira][0m
+[107m [0m [2mtemplate = [0m[2m[32m"{{ git.branch.jira }}"[0m
+[107m [0m 
+[107m [0m [2m[36m[list.custom-columns.Summary][0m
+[107m [0m [2mtemplate = [0m[2m[32m"{{ git.branch.description | lines | first }}"[0m
 
 [32mCommit[0m
 
@@ -321,7 +336,7 @@ Persistent flag values for [2mwt remove[0m. Override on command line as needed
 [107m [0m [2m[36m[step.copy-ignored][0m
 [107m [0m [2mexclude = []   [0m[2m# Additional excludes (e.g., [".cache/", ".turbo/"])[0m
 
-Built-in excludes always apply: VCS metadata directories ([2m.bzr/[0m, [2m.hg/[0m, [2m.jj/[0m, [2m.pijul/[0m, [2m.sl/[0m, [2m.svn/[0m) and tool-state directories ([2m.conductor/[0m, [2m.entire/[0m, [2m.worktrees/[0m). User config and project config exclusions are combined.
+Built-in excludes (VCS metadata and tool-state directories) always apply; the [2mwt step copy-ignored[0m docs list them. User config and project config exclusions are combined.
 
 [32mAliases[0m
 
@@ -474,14 +489,14 @@ Default template:
 
 [1mAppending to the prompt [experimental][0m
 
-[2mtemplate-append[0m adds to the prompt instead of replacing it. The value is rendered as its own minijinja template (same variables) and injected into the default templates' [2m{{ user_guidance }}[0m slot — a [2m<user-guidance>[0m block right after [2m<style>[0m. It applies to both commit and squash. Use it for personal preferences without restating the whole template:
+[2mtemplate-append[0m adds personal conventions to the commit and squash prompts without restating the whole template:
 
 [107m [0m [2m[36m[commit.generation][0m
 [107m [0m [2mtemplate-append = [0m[2m[32m""[0m[2m[32m"[0m
 [107m [0m [2m[32m- Explain the rationale in the body, not just the change[0m
 [107m [0m [2m[32m"[0m[2m[32m""[0m
 
-The project config has a [2mtemplate-append[0m of its own; it renders into a separate [2m<project-guidance>[0m block right after [2m<user-guidance>[0m.
+How the fragment renders, and the project-config counterpart: the LLM commits guide.
 
 [1m[32mHooks[0m
 
@@ -517,7 +532,7 @@ Name the forge explicitly for SSH aliases or self-hosted instances, where it can
 
 [1m[32mCommit-message append [experimental][0m
 
-Project-wide commit-message conventions appended to the LLM commit and squash prompts inside a [2m<project-guidance>[0m block, after the main template's [2m<style>[0m section (and after any user [2m<user-guidance>[0m). Rendered as a minijinja template with the same variables as the main commit template ([2m{{ branch }}[0m, [2m{{ git_diff }}[0m, etc.), so it can reference them directly. The first time the fragment changes, [2mwt[0m prompts the user to approve it — the same one-shot gate as project-defined hooks.
+[2mtemplate-append[0m adds project-wide conventions to the LLM commit and squash prompts, shared so every teammate's LLM sees the same style guide:
 
 [107m [0m [2m[36m[commit.generation][0m
 [107m [0m [2mtemplate-append = [0m[2m[32m""[0m[2m[32m"[0m
@@ -525,7 +540,7 @@ Project-wide commit-message conventions appended to the LLM commit and squash pr
 [107m [0m [2m[32m- Reference the relevant issue ID in the body[0m
 [107m [0m [2m[32m"[0m[2m[32m""[0m
 
-Only [2mtemplate-append[0m is honored from the project file. The LLM command and the main prompt template stay in user config — they describe per-developer environment (which CLI is installed, which agent the developer prefers). User config has a [2m[commit.generation] template-append[0m of its own; it renders into a separate [2m<user-guidance>[0m block immediately before this one.
+The first time the fragment is used (and whenever it changes), [2mwt[0m prompts the user to approve it — the same one-shot gate as project-defined hooks. Only [2mtemplate-append[0m is honored from the project file; the LLM command and the main prompt template stay in user config, since they describe per-developer environment (which CLI is installed, which agent the developer prefers). How the fragment renders: the LLM commits guide.
 
 [1m[32mCopy-ignored excludes[0m
 
@@ -534,7 +549,7 @@ Additional excludes for [2mwt step copy-ignored[0m:
 [107m [0m [2m[36m[step.copy-ignored][0m
 [107m [0m [2mexclude = [[0m[2m[32m".cache/"[0m[2m, [0m[2m[32m".turbo/"[0m[2m][0m
 
-Built-in excludes always apply: VCS metadata directories ([2m.bzr/[0m, [2m.hg/[0m, [2m.jj/[0m, [2m.pijul/[0m, [2m.sl/[0m, [2m.svn/[0m) and tool-state directories ([2m.conductor/[0m, [2m.entire/[0m, [2m.worktrees/[0m). User config and project config exclusions are combined.
+Built-in excludes (VCS metadata and tool-state directories) always apply; the [2mwt step copy-ignored[0m docs list them. User config and project config exclusions are combined.
 
 [1m[32mAliases[0m
 
@@ -586,21 +601,21 @@ Override the LLM command in CI to use a mock:
 
 [32mOther environment variables[0m
 
-             Variable                                                                   Purpose                                                      
- ───────────────────────────────── ───────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
- [2mWORKTRUNK_BIN[0m                     Override binary path for shell wrappers; useful for testing dev builds                                            
- [2mWORKTRUNK_CONFIG_PATH[0m             Override user config file location                                                                                
- [2mWORKTRUNK_SYSTEM_CONFIG_PATH[0m      Override system config file location                                                                              
- [2mWORKTRUNK_PROJECT_CONFIG_PATH[0m     Override project config file location (defaults to [2m.config/wt.toml[0m)                                               
- [2mXDG_CONFIG_DIRS[0m                   Colon-separated system config directories (default: [2m/etc/xdg[0m)                                                     
- [2mWORKTRUNK_DIRECTIVE_CD_FILE[0m       Internal: set by shell wrappers. wt writes a raw path; the wrapper [2mcd[0ms to it                                      
- [2mWORKTRUNK_DIRECTIVE_EXEC_FILE[0m     Internal: set by shell wrappers. wt writes shell commands; the wrapper sources the file                           
- [2mWORKTRUNK_SHELL[0m                   Internal: set by shell wrappers to indicate shell type (e.g., [2mpowershell[0m)                                         
- [2mWORKTRUNK_MAX_CONCURRENT_COMMANDS[0m Max parallel git commands (default: 32). Lower if hitting file descriptor limits.                                 
- [2mWORKTRUNK_VERBOSE[0m                 Verbosity level ([2m0[0m/[2m1[0m/[2m2[0m), like [2m-v[0m/[2m-vv[0m but applied everywhere — including shell completion, which no flag can reach 
- [2mRUST_LOG[0m                          Logging directive (e.g. [2mworktrunk=debug[0m); overrides the verbosity baseline for what reaches stderr                
- [2mNO_COLOR[0m                          Disable colored output (standard)                                                                                 
- [2mCLICOLOR_FORCE[0m                    Force colored output even when not a TTY                                                                          
+             Variable                                                                   Purpose                                                       
+ ───────────────────────────────── ────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
+ [2mWORKTRUNK_BIN[0m                     Override binary path for shell wrappers; useful for testing dev builds                                             
+ [2mWORKTRUNK_CONFIG_PATH[0m             Override user config file location                                                                                 
+ [2mWORKTRUNK_SYSTEM_CONFIG_PATH[0m      Override system config file location                                                                               
+ [2mWORKTRUNK_PROJECT_CONFIG_PATH[0m     Override project config file location (defaults to [2m.config/wt.toml[0m); relative paths resolve from the worktree root 
+ [2mXDG_CONFIG_DIRS[0m                   Colon-separated system config directories (default: [2m/etc/xdg[0m)                                                      
+ [2mWORKTRUNK_DIRECTIVE_CD_FILE[0m       Internal: set by shell wrappers. wt writes a raw path; the wrapper [2mcd[0ms to it                                       
+ [2mWORKTRUNK_DIRECTIVE_EXEC_FILE[0m     Internal: set by shell wrappers. wt writes shell commands; the wrapper sources the file                            
+ [2mWORKTRUNK_SHELL[0m                   Internal: set by shell wrappers to indicate shell type (e.g., [2mpowershell[0m)                                          
+ [2mWORKTRUNK_MAX_CONCURRENT_COMMANDS[0m Max parallel git commands (default: 32). Lower if hitting file descriptor limits.                                  
+ [2mWORKTRUNK_VERBOSE[0m                 Verbosity level ([2m0[0m/[2m1[0m/[2m2[0m), like [2m-v[0m/[2m-vv[0m but applied everywhere — including shell completion, which no flag can reach  
+ [2mRUST_LOG[0m                          Logging directive (e.g. [2mworktrunk=debug[0m); overrides the verbosity baseline for what reaches stderr                 
+ [2mNO_COLOR[0m                          Disable colored output (standard)                                                                                  
+ [2mCLICOLOR_FORCE[0m                    Force colored output even when not a TTY                                                                           
 
 [1m[32mInline config overrides (--config-set)[0m
 

@@ -64,6 +64,10 @@ use worktrunk::git::WorktrunkError;
 use worktrunk::shell_exec::Cmd;
 #[cfg(unix)]
 use worktrunk::shell_exec::ShellConfig;
+// The std-`Command` scrub helper is only needed by the unix `exec` variant of
+// `execute_command`; the non-unix variant scrubs via `Cmd`'s builder method.
+#[cfg(unix)]
+use worktrunk::shell_exec::scrub_git_discovery_env_vars;
 use worktrunk::shell_exec::{
     DIRECTIVE_CD_FILE_ENV_VAR, DIRECTIVE_EXEC_FILE_ENV_VAR, DIRECTIVE_FILE_ENV_VAR,
     ShellEscapeMode, directive_shell_escape_mode,
@@ -488,12 +492,19 @@ fn execute_command(command: String, target_dir: Option<&Path>) -> anyhow::Result
     // This gives the command full TTY access (stdin, stdout, stderr all inherited),
     // enabling interactive programs like `claude` to work properly.
     let mut cmd = shell.command(&command);
-    let err = cmd
-        .current_dir(exec_dir)
+    cmd.current_dir(exec_dir)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .exec();
+        .stderr(Stdio::inherit());
+    // A buffered target means wt relocated the payload into a worktree it
+    // selected, so the payload's `git` calls must discover that worktree from
+    // the cwd, not an inherited `GIT_DIR` (issue #3373; see
+    // `scrub_git_discovery_env_vars`). With no target the payload runs where
+    // the user invoked wt, and keeps their context.
+    if target_dir.is_some() {
+        scrub_git_discovery_env_vars(&mut cmd);
+    }
+    let err = cmd.exec();
 
     // exec() only returns on error
     Err(anyhow::anyhow!(cformat!(
@@ -509,7 +520,10 @@ fn execute_command(command: String, target_dir: Option<&Path>) -> anyhow::Result
 fn execute_command(command: String, target_dir: Option<&Path>) -> anyhow::Result<()> {
     let mut cmd = Cmd::shell(&command).stdin(Stdio::inherit());
     if let Some(dir) = target_dir {
-        cmd = cmd.current_dir(dir);
+        // wt relocated the payload into a worktree it selected; its `git`
+        // calls must discover that worktree from the cwd, not an inherited
+        // `GIT_DIR` (issue #3373; see `scrub_git_discovery_env_vars`).
+        cmd = cmd.current_dir(dir).scrub_git_discovery_env();
     }
 
     if let Err(err) = cmd.stream() {

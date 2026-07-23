@@ -291,15 +291,17 @@ impl Repository {
     /// than success is an error; exit 0 → [`MergeTreeOutcome::Clean`] with the
     /// resulting tree SHA (first line of stdout).
     fn compute_merge_tree_outcome(&self, a: &str, b: &str) -> anyhow::Result<MergeTreeOutcome> {
-        // Exit codes: 0 = clean merge, 1 = conflicts, 128+ = error (invalid ref, corrupt repo)
-        let output = self.run_command_output(&["merge-tree", "--write-tree", a, b])?;
+        // Exit codes: 0 = clean merge, 1 = conflicts (git also uses 1 for
+        // unresolvable args — callers pass pre-resolved commit SHAs, see
+        // `run_merge_tree`), anything else = error (corrupt repo, bad usage)
+        let args = ["merge-tree", "--write-tree", a, b];
+        let output = self.run_command_output(&args)?;
 
         if output.status.code() == Some(1) {
             return Ok(MergeTreeOutcome::Conflict);
         }
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("git merge-tree failed for {a} {b}: {}", stderr.trim());
+            return Err(crate::git::CommandError::from_failed_output("git", &args, &output).into());
         }
 
         // Clean merge — first line of stdout is the resulting tree SHA.
@@ -684,12 +686,17 @@ impl Repository {
     /// [`Self::would_merge_add_to_target`]; without the cache that is one
     /// identical `rev-parse` subprocess per row.
     ///
-    /// In-memory rather than the persistent `sha_cache`: the resolution is
-    /// ~1 ms, so cross-run persistence saves almost nothing, while the `Entry`
-    /// match holds the shard lock across check-and-insert so the first miss
-    /// computes once and every concurrent row reads it — no cold-start race.
-    /// The disk cache is reserved for results expensive enough that persisting
-    /// them across invocations outweighs a one-off recompute.
+    /// On the `wt list` path this cache is **primed in bulk** by
+    /// [`Self::commit_details_many`] (the pre-skeleton `git log` batch reads
+    /// `%T` for every item head + the default-branch tip), so the per-row
+    /// lookups here are memory hits and fire no subprocess at all. This method
+    /// remains the fallback for any SHA the batch didn't cover.
+    ///
+    /// In-memory rather than the persistent `sha_cache`: on the hot path the
+    /// batch above already resolves it fork-free, so disk persistence would
+    /// save only the rare off-batch miss. The `Entry` match holds the shard
+    /// lock across check-and-insert so the first miss computes once and every
+    /// concurrent row reads it — no cold-start race.
     fn commit_to_tree_sha(&self, commit_sha: &str) -> anyhow::Result<String> {
         use dashmap::mapref::entry::Entry;
         match self.cache.commit_tree.entry(commit_sha.to_string()) {
@@ -1125,6 +1132,30 @@ mod patch_id_tests {
 }
 
 #[cfg(test)]
+mod merge_tree_error_tests {
+    use super::*;
+    use crate::testing::TestRepo;
+
+    /// A hard `git merge-tree` failure (here: a fatal config error, exit
+    /// 128) must surface as a typed `CommandError`, distinct from exit 1,
+    /// which means "merged with conflicts".
+    #[test]
+    fn hard_failure_is_command_error() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        std::fs::write(test.root_path().join(".git/config"), "[bad\n").unwrap();
+
+        let err = repo.compute_merge_tree_outcome("HEAD", "HEAD").unwrap_err();
+        let cmd_err =
+            crate::git::CommandError::find_in(&err).expect("error should carry a CommandError");
+        assert_eq!(
+            cmd_err.command_string(),
+            "git merge-tree --write-tree HEAD HEAD"
+        );
+    }
+}
+
+#[cfg(test)]
 mod merge_tree_cache_tests {
     use super::*;
     use crate::testing::TestRepo;
@@ -1179,6 +1210,90 @@ mod merge_tree_cache_tests {
         assert!(
             repo.cache.merge_tree.contains_key(&(main_sha, feature_sha)),
             "the shared entry must be keyed (target, branch)"
+        );
+    }
+}
+
+#[cfg(test)]
+mod read_only_object_store_tests {
+    use super::*;
+    use crate::testing::TestRepo;
+
+    /// A cleanly-mergeable but diverged topology: `main` and `feature` touch
+    /// different files off a shared base, so `merge-tree --write-tree` must
+    /// write a genuinely new tree (not a fast-forward that reuses an existing
+    /// one). Returns `(main_sha, feature_sha)`.
+    fn diverged_repo() -> (TestRepo, String, String) {
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&["checkout", "-b", "feature"]);
+        std::fs::write(test.root_path().join("feature.txt"), "feature\n").unwrap();
+        test.run_git(&["add", "feature.txt"]);
+        test.run_git(&["commit", "-m", "feature"]);
+        test.run_git(&["checkout", "main"]);
+        std::fs::write(test.root_path().join("main.txt"), "main\n").unwrap();
+        test.run_git(&["add", "main.txt"]);
+        test.run_git(&["commit", "-m", "main"]);
+        let main_sha = test.git_output(&["rev-parse", "main"]);
+        let feature_sha = test.git_output(&["rev-parse", "feature"]);
+        (test, main_sha, feature_sha)
+    }
+
+    /// A writable object database must never redirect — the normal path is
+    /// left byte-for-byte unchanged.
+    #[test]
+    fn writable_object_database_is_not_redirected() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        assert!(
+            repo.redirect_objects_if_read_only().is_none(),
+            "a writable object database must not trigger a redirect"
+        );
+    }
+
+    /// The safety property behind scoping the redirect to observational
+    /// commands: a redirected merge tree is computed correctly but written only
+    /// to the throwaway store, so it is *not* in the real object database. A
+    /// mutating command that redirected would therefore lose its commit — which
+    /// is why mutating commands keep the persistent path and fail loudly on a
+    /// read-only store instead.
+    #[test]
+    fn redirected_object_writes_stay_out_of_the_real_database() {
+        let (test, main_sha, feature_sha) = diverged_repo();
+        let merge_tree = |repo: &Repository| {
+            repo.run_command(&["merge-tree", "--write-tree", &main_sha, &feature_sha])
+                .unwrap()
+                .lines()
+                .next()
+                .unwrap()
+                .trim()
+                .to_string()
+        };
+
+        // Redirected clone: the merge tree lands in the temporary store only.
+        let redirected = Repository::at(test.root_path())
+            .unwrap()
+            .with_temporary_object_directory()
+            .unwrap();
+        let ephemeral_tree = merge_tree(&redirected);
+
+        // A separate, non-redirected repository reads the real database
+        // directly; the redirected tree is absent there.
+        let real = Repository::at(test.root_path()).unwrap();
+        assert!(
+            !real
+                .run_command_check(&["cat-file", "-e", &ephemeral_tree])
+                .unwrap(),
+            "a redirected merge tree must not be written to the real object database"
+        );
+
+        // The persistent path yields the same content-addressed tree, this time
+        // materialized in the real database.
+        let persistent_tree = merge_tree(&real);
+        assert_eq!(persistent_tree, ephemeral_tree);
+        assert!(
+            real.run_command_check(&["cat-file", "-e", &persistent_tree])
+                .unwrap(),
+            "the persistent path must materialize its merge tree in the real database"
         );
     }
 }

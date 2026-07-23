@@ -53,6 +53,6 @@ exit_code: 0
 + feature-medium    [36m?[39m [2m–[22m                                             ../repo.feature-medium  [2m05a4a45d[0m  [2m16h[0m   [2mInitial commit[0m
 + feature-small     [36m?[39m [2m–[22m                                             ../repo.feature-small   [2m05a4a45d[0m  [2m16h[0m   [2mInitial commit[0m
 
-[2m○[22m [2mShowing 7 worktrees, 3 with changes, 3 ahead[0m
-
 ----- stderr -----
+
+[2m○[22m [2mShowing 7 worktrees, 3 with changes, 3 ahead[0m

@@ -14,7 +14,7 @@ A target-filtered run (`--lib`, `--test integration`, …) on a fresh `target/` 
 
 **Claude Code web:** `task setup-web` installs zsh/fish/nushell, `gh`, and dev tools. Install `task` first if needed: `sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b ~/bin` then `export PATH="$HOME/bin:$PATH"`. The permission tests (`test_permission_error_prevents_save`, `test_approval_prompt_permission_error`) skip automatically when running as root.
 
-**Shell/PTY tests** (`shell-integration-tests` feature: approval prompts, picker, progressive rendering, shell wrappers): tests that spawn interactive shells (`zsh -ic`, `bash -ic`) make nextest's InputHandler take SIGTTOU when restoring terminal settings, suspending the run mid-test (`zsh: suspended (tty output)`; see [nextest#2878](https://github.com/nextest-rs/nextest/issues/2878)). Use `cargo test` instead of `cargo nextest run`, or set `NEXTEST_NO_INPUT_HANDLER=1`. The pre-merge hook sets it automatically.
+**Shell/PTY tests** (`shell-integration-tests` feature): approval prompts, picker, progressive rendering, shell wrappers.
 
 ## Coverage Investigation
 
@@ -244,6 +244,13 @@ Two traps:
 
 - **Give each half its own wait.** Sleeping once and then asserting both "X happened" and "Y didn't" makes the presence half flaky. Poll for X, then hold the window for Y.
 - **Structural absence needs no window at all.** When the event is gated on a condition the test never sets up, it can't fire regardless of timing. Drop the sleep: poll the positive precondition and the absence holds by construction. A watchdog whose escalation is gated on `command.is_some()` can't escalate with no command, so the test polls for the first render and asserts `!escalated` with no window.
+
+## No Retries
+
+Tests run once. Worktrunk configures no nextest `retries` and writes no retry loops: a test that passes only on a second attempt is a bug report, and retrying it discards the report while leaving the bug. A green suite has to mean the code is green, not that the run's flakes stayed under a retry budget. Fix the flake at its root:
+
+- A racy assertion is a timing bug. Make it deterministic, per Timing Tests above: poll for the event, or drive it causally through a callback.
+- Resource pressure is a concurrency bug. Windows process creation intermittently fails with STATUS_DLL_INIT_FAILED (exit `-1073741502`) when many tests spawn git/wt children at once. Bound how many heavy tests run together; that removes the pressure instead of retrying past it.
 
 ## Testing with --execute Commands
 
@@ -585,7 +592,7 @@ code. Delete these. Test the behavior that uses these types instead.
 
 ## Deterministic Time in Tests
 
-Tests use `TEST_EPOCH` (2025-01-01) for reproducible timestamps. The constant is defined in `src/testing/mod.rs`, re-exported via `tests/common/mod.rs`, and automatically set as `WORKTRUNK_TEST_EPOCH` in the test environment.
+Tests use `TEST_EPOCH` (2025-01-02) for reproducible timestamps. The constant is defined in `src/testing/mod.rs`, re-exported via `tests/common/mod.rs`, and automatically set as `WORKTRUNK_TEST_EPOCH` in the test environment.
 
 **For test data with timestamps** (cache entries, etc.), use the constant:
 

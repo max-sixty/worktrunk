@@ -123,7 +123,7 @@ use worktrunk::config::Approvals;
 use worktrunk::git::{ErrorExt, Repository, current_or_recover};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
-    eprintln, hint_message, info_message, strip_osc8_hyperlinks, warning_message,
+    eprintln, error_message, hint_message, info_message, strip_osc8_hyperlinks, warning_message,
 };
 
 use super::hook_plan::{ApprovedHookPlan, HookPlanBuilder};
@@ -305,7 +305,18 @@ struct AltXRemover {
     /// renders the `/ branch` row on this grid so it lines up with the worktree
     /// rows. Shared with the handler (which fills it).
     layout_slot: Arc<Mutex<Option<crate::commands::list::layout::LayoutConfig>>>,
+    /// The header's transient-message slot, shared with the header item. A
+    /// declined `alt-x` (current worktree, or an unmerged branch-only row) keeps
+    /// its row in place, so [`flash_header`](Self::flash_header) drops a short
+    /// "couldn't remove" line into the header for a beat — the *why* lands
+    /// immediately, not only when the stash drains on exit. See
+    /// [`items::HeaderFlash`].
+    header_flash: Arc<items::HeaderFlash>,
 }
+
+/// How long a declined-`alt-x` header flash stays up before it self-clears and
+/// the column labels return — long enough to read, short enough not to linger.
+const HEADER_FLASH_DURATION: std::time::Duration = std::time::Duration::from_millis(2500);
 
 impl AltXRemover {
     /// Build removal state from a fresh `Repository` so picker reloads after a
@@ -326,7 +337,6 @@ impl AltXRemover {
         let caller_path = repo.current_worktree().root().ok();
 
         let result = {
-            let config = repo.user_config();
             let remove_target = match target {
                 PickerRemovalTarget::WorktreePath(path) => RemoveTarget::Path(path),
                 PickerRemovalTarget::Branch(branch) => RemoveTarget::Branch(branch),
@@ -335,7 +345,6 @@ impl AltXRemover {
                 remove_target,
                 BranchDeletionMode::SafeDelete,
                 false,
-                config,
                 caller_path,
                 None,
                 None,
@@ -483,6 +492,7 @@ impl AltXRemover {
         let items = Arc::clone(&self.items);
         let render_tx = Arc::clone(&self.render_tx);
         let stashed_warnings = Arc::clone(&self.stashed_warnings);
+        let header_flash = Arc::clone(&self.header_flash);
         let _ = std::thread::Builder::new()
             .name(format!("picker-remove-{selected_output}"))
             .spawn(move || {
@@ -497,15 +507,27 @@ impl AltXRemover {
                 {
                     restore_failed_removal(
                         &items,
+                        &header_flash,
                         &render_tx,
                         &stashed_warnings,
-                        item,
-                        pos,
-                        &removal_label,
-                        removal_noun,
+                        DroppedRow {
+                            item,
+                            pos,
+                            label: removal_label,
+                            noun: removal_noun,
+                        },
                     );
                 }
             });
+    }
+
+    /// Flash a one-line message in the header for a beat (see the free
+    /// [`flash_header`] for the mechanism and generation guard). The synchronous
+    /// keep/reject paths (on skim's event loop) reach it through this method; the
+    /// background failure paths ([`restore_failed_removal`], [`revert_morph`]) call
+    /// the free function directly, off the event loop.
+    fn flash_header(&self, message: String) {
+        flash_header(&self.header_flash, &self.render_tx, message);
     }
 
     /// Keep the selected row in place and explain why its target wasn't removed.
@@ -515,12 +537,13 @@ impl AltXRemover {
     /// is unmerged, which `SafeDelete` declines to delete (data safety). Deciding
     /// this up front from `prepare_removal`'s already-computed integration check
     /// means the row never drops (no flicker) and no background `do_removal` runs
-    /// for a no-op. The row stays in its slot under the (un-reset) cursor; this just
-    /// stashes the canonical "retained; unmerged" info + hint pair `wt remove`
-    /// itself prints (see `print_retained_unmerged_branch`), deduped and drained to
-    /// stderr when the picker exits. (This is a by-design retain, not a failure —
-    /// distinct from [`restore_failed_removal`]'s `kept … could not remove it`
-    /// warning.)
+    /// for a no-op. The row stays in its slot under the (un-reset) cursor, so this
+    /// flashes a terse "branch is unmerged" line in the header (the *why*, where the
+    /// user is looking) and stashes the canonical "retained; unmerged" info + hint
+    /// pair `wt remove` itself prints (see `print_retained_unmerged_branch`), deduped
+    /// and drained to stderr when the picker exits. (This is a by-design retain, not
+    /// a failure — distinct from [`restore_failed_removal`]'s `kept … could not
+    /// remove it` warning.)
     fn keep_unremovable_row(&self, branch_name: &str) {
         // The canonical "retained; unmerged" info + hint `wt remove` prints,
         // shared so the picker copy can't drift (see
@@ -528,6 +551,11 @@ impl AltXRemover {
         // `RemoveResult`) makes it unrepresentable for this keep path to be handed
         // a `RemovedWorktree`, which always removes — see the dispatch in
         // [`apply`](Self::apply) and [`removal_will_remove_target`].
+        // A by-design retain, not a failure — info (○), matching the canonical
+        // `info_message` this path stashes (see `stash_retained_unmerged_branch`).
+        self.flash_header(
+            info_message(cformat!("Kept <bold>{branch_name}</> — branch is unmerged")).to_string(),
+        );
         stash_retained_unmerged_branch(&self.stashed_warnings, branch_name);
     }
 
@@ -538,10 +566,14 @@ impl AltXRemover {
     /// is true — alt-x on the worktree the picker was launched from. Removing it
     /// would have to switch the shell elsewhere first (see
     /// `removal_targets_current_worktree` for why that's disruptive mid-picker), so
-    /// the row stays put and a hint to switch away first is stashed, drained to
-    /// stderr when the picker exits. The row never drops and no `do_removal` runs,
-    /// so this is the only removal path that never reaches a background thread.
+    /// the row stays put: this flashes a terse "current worktree" line in the header
+    /// and stashes the fuller hint to switch away first, drained to stderr when the
+    /// picker exits. The row never drops and no `do_removal` runs, so this is the
+    /// only removal path that never reaches a background thread.
     fn keep_current_worktree_row(&self) {
+        // A by-design decline, not a failure — info (○), matching the canonical
+        // `info_message` this path stashes (see `stash_current_worktree_hint`).
+        self.flash_header(info_message("Can't remove the current worktree").to_string());
         stash_current_worktree_hint(&self.stashed_warnings);
     }
 
@@ -629,6 +661,7 @@ impl AltXRemover {
         let render_tx = Arc::clone(&self.render_tx);
         let stashed_warnings = Arc::clone(&self.stashed_warnings);
         let shortcut_table = Arc::clone(&self.shortcut_table);
+        let header_flash = Arc::clone(&self.header_flash);
         let revert = MorphRevert {
             rendered: slots.rendered,
             original_rendered,
@@ -648,7 +681,7 @@ impl AltXRemover {
                 // Only the worktree removal can realistically fail here; if it did,
                 // the worktree dir survives — undo the morph and say so.
                 if removal_target_still_present(&repo, &result) {
-                    revert_morph(revert, &stashed_warnings, &render_tx);
+                    revert_morph(revert, &header_flash, &stashed_warnings, &render_tx);
                 }
             });
 
@@ -718,10 +751,58 @@ impl AltXRemover {
                         stashed.push(diagnostic);
                     }
                 }
+                // Flash the terse headline in the header too, so the *why* lands
+                // at alt-x time and not only when the stash drains on exit. Unlike
+                // the keep paths (by-design retains → info ○), this arm is a genuine
+                // rejection — error (✗), matching the `render_diagnostic` error this
+                // path stashes. `to_string()` is the typed error's short single-line
+                // label (ANSI-stripped); take its first line so a multi-line chain
+                // can't smear the header.
+                let headline = e.to_string();
+                let headline = headline.lines().next().unwrap_or(&headline);
+                self.flash_header(error_message(headline).to_string());
                 RemovalEffect::Kept
             }
         }
     }
+}
+
+/// Flash a one-line message in the header for a beat, then clear it so the column
+/// labels return. The slot is shared with the header item (see [`items::HeaderFlash`]),
+/// so this sets it, repaints, and spawns a short-lived timer that clears it and
+/// repaints again. The timer's `clear_if_current` is generation-guarded, so a second
+/// flash arriving mid-beat replaces this one and isn't wiped early by this timer.
+///
+/// A no-op until skim's `render_tx` is published — but `alt-x` can only fire once the
+/// TUI is showing rows, so it's always live by the time a flash path calls this.
+///
+/// Every alt-x "couldn't remove" reason reaches the header through here, so the
+/// message surfaces immediately rather than only when the stash drains on exit:
+/// [`AltXRemover::flash_header`] (the synchronous keep/reject paths, on skim's event
+/// loop) and the background failure paths ([`restore_failed_removal`],
+/// [`revert_morph`], off the event loop) share this one mechanism.
+fn flash_header(
+    header_flash: &Arc<items::HeaderFlash>,
+    render_tx: &Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
+    message: String,
+) {
+    let Some(tx) = render_tx.get() else {
+        return;
+    };
+    let generation = header_flash.set(message);
+    let _ = tx.try_send(Event::Render);
+
+    let header_flash = Arc::clone(header_flash);
+    let render_tx = Arc::clone(render_tx);
+    let _ = std::thread::Builder::new()
+        .name("picker-header-flash".into())
+        .spawn(move || {
+            std::thread::sleep(HEADER_FLASH_DURATION);
+            header_flash.clear_if_current(generation);
+            if let Some(tx) = render_tx.get() {
+                let _ = tx.try_send(Event::Render);
+            }
+        });
 }
 
 /// The row's shared display slots plus the pre-rendered branch line a morph
@@ -787,13 +868,15 @@ fn build_morph_branch_row(
 /// [`morphed`](items::LocalCheckout::morphed) flag (so `output()` is the
 /// worktree token again), restore the diff-content slot, and move the
 /// `alt-y`/`alt-o` shortcut entry back to the worktree token. The row never left
-/// its slot, so a plain `Event::Render` repaints it — no reload, no cursor move
+/// its slot, so [`flash_header`]'s repaint re-shows it — no reload, no cursor move
 /// (unlike [`restore_failed_removal`], which re-inserts a dropped row). The
-/// `kept … could not remove it` warning drains to stderr when the picker exits.
+/// `kept … could not remove it` reason lands twice: flashed in the header now, and
+/// drained to stderr when the picker exits.
 fn revert_morph(
     revert: MorphRevert,
+    header_flash: &Arc<items::HeaderFlash>,
     stashed_warnings: &Mutex<Vec<String>>,
-    render_tx: &OnceLock<tokio::sync::mpsc::Sender<Event>>,
+    render_tx: &Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
 ) {
     let MorphRevert {
         rendered,
@@ -816,16 +899,19 @@ fn revert_morph(
         }
     }
 
-    stashed_warnings.lock().unwrap().push(
-        warning_message(cformat!(
-            "Kept <bold>{branch_token}</> worktree — could not remove it"
-        ))
-        .to_string(),
-    );
-
-    if let Some(tx) = render_tx.get() {
-        let _ = tx.try_send(Event::Render);
-    }
+    // Surface the "couldn't remove" reason two ways, like the drop path
+    // ([`restore_failed_removal`]): flash it in the header now (the row un-morphed
+    // under the cursor, so the *why* lands where the user is looking) and stash the
+    // same line to drain to stderr on exit. A genuine failure — the removal was
+    // attempted and the worktree survived — so warning (▲), not the keep paths'
+    // by-design info (○). `flash_header`'s repaint also re-shows the reverted row,
+    // so no separate `Event::Render` is needed.
+    let warning = warning_message(cformat!(
+        "Kept <bold>{branch_token}</> worktree — could not remove it"
+    ))
+    .to_string();
+    flash_header(header_flash, render_tx, warning.clone());
+    stashed_warnings.lock().unwrap().push(warning);
 }
 
 /// Number of leading non-selectable header rows the picker streams (the single
@@ -1102,6 +1188,18 @@ fn stash_current_worktree_hint(stashed: &Mutex<Vec<String>>) {
     }
 }
 
+/// The optimistically-dropped row [`restore_failed_removal`] puts back, plus the
+/// display subject (`label` + `noun`, from [`removal_failure_subject`]) for its
+/// `kept … could not remove it` message.
+struct DroppedRow {
+    item: Arc<dyn SkimItem>,
+    /// The row's slot before it was dropped (clamped on re-insert if the list
+    /// shrank in the meantime).
+    pos: usize,
+    label: String,
+    noun: &'static str,
+}
+
 /// Put a row back after its background removal didn't happen, closing the alt-x
 /// loop so the list never shows a removal that didn't occur.
 ///
@@ -1112,10 +1210,10 @@ fn stash_current_worktree_hint(stashed: &Mutex<Vec<String>>) {
 /// from integrated to unmerged — see [`removal_target_still_present`]; the
 /// predictably-kept unmerged branch is filtered earlier by
 /// [`removal_will_remove_target`]), the row must reappear. This re-inserts it into
-/// `shared_items` at its original slot, stashes a `kept` warning (drained to
-/// stderr once skim releases the terminal; the full error, if any, is in the
-/// `tracing::warn!` the caller emits), then queues a [`resync_pool_action`] to
-/// re-show it.
+/// `shared_items` at its original slot, flashes the `kept` reason in the header and
+/// stashes the same line (drained to stderr once skim releases the terminal; the
+/// full error, if any, is in the `tracing::warn!` the caller emits), then queues a
+/// [`resync_pool_action`] to re-show it.
 ///
 /// Re-inserting at the removed row's old slot lands the cursor back on the row for
 /// free: the drop slid the successor up into that slot under the cursor, so the
@@ -1124,32 +1222,41 @@ fn stash_current_worktree_hint(stashed: &Mutex<Vec<String>>) {
 /// touch `App` directly — the queued action does the [`resync_pool`] on the loop.
 fn restore_failed_removal(
     items: &Arc<Mutex<Vec<Arc<dyn SkimItem>>>>,
+    header_flash: &Arc<items::HeaderFlash>,
     render_tx: &Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
     stashed_warnings: &Arc<Mutex<Vec<String>>>,
-    removed_item: Arc<dyn SkimItem>,
-    removed_pos: usize,
-    label: &str,
-    noun: &str,
+    dropped: DroppedRow,
 ) {
+    let DroppedRow {
+        item,
+        pos,
+        label,
+        noun,
+    } = dropped;
     {
         let mut items = items.lock().unwrap();
-        let token = removed_item.output().into_owned();
+        let token = item.output().into_owned();
         // A concurrent restore (rapid alt-x on the same row) may have already
         // put it back; don't duplicate it.
-        if items.iter().any(|item| item.output().as_ref() == token) {
+        if items.iter().any(|it| it.output().as_ref() == token) {
             return;
         }
         // Another removal may have shrunk the list since the drop; clamp.
-        let insert_at = removed_pos.min(items.len());
-        items.insert(insert_at, removed_item);
+        let insert_at = pos.min(items.len());
+        items.insert(insert_at, item);
     }
 
-    stashed_warnings.lock().unwrap().push(
-        warning_message(cformat!(
-            "Kept <bold>{label}</> {noun} — could not remove it"
-        ))
-        .to_string(),
-    );
+    // Surface the "couldn't remove" reason two ways, like the morph revert
+    // ([`revert_morph`]): flash it in the header now (the row is back under the
+    // cursor, so the *why* lands where the user is looking) and stash the same line
+    // to drain to stderr on exit. A genuine failure — the removal was attempted and
+    // the target survived — so warning (▲), not the keep paths' by-design info (○).
+    let warning = warning_message(cformat!(
+        "Kept <bold>{label}</> {noun} — could not remove it"
+    ))
+    .to_string();
+    flash_header(header_flash, render_tx, warning.clone());
+    stashed_warnings.lock().unwrap().push(warning);
 
     let Some(event_tx) = render_tx.get() else {
         return;
@@ -1171,6 +1278,13 @@ impl CommandCollector for PickerCollector {
         // drop and skim's reload sees EOF. The returned handler and join handles
         // are kept alive by those threads, so let them drop here. On a spawn
         // failure we fall through and re-stream the current items unchanged.
+        // If the failure hit after `PreviewOrchestrator::refresh` ran (a
+        // thread-spawn error — resource-exhaustion territory), those rows'
+        // tokens are already superseded against a cleared cache, so their
+        // previews sit on placeholders until the next successful refresh.
+        // Accepted: un-bumping the generation would instead break a
+        // partially-started spawn's live producers (the collect thread can
+        // already be running when the `--prs` thread spawn is what failed).
         //
         // `alt-x` removal does NOT route here — it runs synchronously through
         // [`AltXRemover`] / [`resync_pool`] instead of a `reload`, so `refresh` is
@@ -1252,12 +1366,6 @@ struct PipelineFactory {
     repo: Repository,
     render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
     shared_items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>>,
-    /// Monotonic spawn counter. Each [`spawn`](Self::spawn) bumps it and hands
-    /// the value to that spawn's `--prs` thread, which appends its PR/MR rows to
-    /// `shared_items` only while the counter still matches — so a stale forge call
-    /// from a pre-refresh spawn can't pollute the list a later spawn rebuilt. See
-    /// [`prs::PrsShared`].
-    prs_epoch: Arc<AtomicUsize>,
     shortcut_table: ShortcutTable,
     preview_cache: PreviewCache,
     orchestrator: Arc<PreviewOrchestrator>,
@@ -1266,6 +1374,11 @@ struct PipelineFactory {
     /// `/ branch` row on the same grid at `alt-x` time. Filled by the handler's
     /// `provide_layout`, read by [`PickerCollector`]. See [`items::LayoutSlot`].
     layout_slot: items::LayoutSlot,
+    /// Shared picker-lifetime with the header item and [`AltXRemover`]: a declined
+    /// `alt-x` flashes a transient "couldn't remove this row" line in the header
+    /// (see [`items::HeaderFlash`]). One slot for the picker's life, re-shared into
+    /// each spawn's header item, so a reload reads the same (cleared) flash.
+    header_flash: Arc<items::HeaderFlash>,
     preview_dims: (usize, usize),
     skim_list_width: usize,
     command_timeout: Option<std::time::Duration>,
@@ -1290,13 +1403,17 @@ struct SpawnedPipeline {
 impl PipelineFactory {
     /// Build a fresh handler + item channel, start the `picker-collect` thread
     /// (and the `picker-prs` thread when `--prs` is active), and hand back the
-    /// receiver skim reads. The handler holds the only non-thread `tx` clone, so
-    /// once the spawned threads finish the channel closes and skim's reader sees
-    /// EOF — the "background work done → picker idle" contract, which a refresh
-    /// relies on to end its `reload`.
+    /// receiver skim reads. Every sender drops as soon as its batch is sent —
+    /// the handler's at the skeleton send, the `--prs` thread's when its rows
+    /// land — so skim's reader sees EOF once the last batch is in, which is
+    /// what ends a refresh's `reload`. Collect keeps grinding past that point
+    /// (CI fetches, summaries) through in-place row updates that never touch
+    /// the channel.
     /// `rebuild_repo` controls the worktree/branch inventory source. A refresh
     /// (`alt-r`) passes `true` to rebuild a fresh `Repository`, re-enumerating
-    /// after an in-picker removal, and to clear the in-memory preview cache so
+    /// after an in-picker removal, and to run `PreviewOrchestrator::refresh` —
+    /// which supersedes the prior spawn's preview producers, rebinds preview
+    /// compute to the fresh repo, and clears the in-memory preview cache so
     /// previews recompute (see the `spawn_repo` binding, and the
     /// `preview_orchestrator` spec for what a refresh does and doesn't refresh).
     /// The initial spawn passes `false` to reuse the startup repo, whose cache
@@ -1334,22 +1451,26 @@ impl PipelineFactory {
             // The in-memory preview cache is keyed by `(branch, mode)` with no
             // SHA — the working-tree diff has no stable hash to key on — so a
             // warm entry outlives the branch's commits or working tree moving
-            // and would re-serve a stale diff / log / summary. Dropping it lets
-            // each rebuilt row recompute against its current `item.head()` from
-            // the rebuilt inventory; the on-disk caches (SHA-keyed for log /
-            // branch-diff / upstream, diff-hash-keyed for the summary) make an
-            // unchanged branch a cheap re-read, so only genuinely changed content
-            // pays a recompute. The `pr` / `comments` tabs already self-invalidate
-            // on the CI path; clearing them here too just means a refresh also
-            // re-fetches their forge data. Precompute still runs against the
-            // orchestrator's startup repo, so a moved default-branch base isn't
-            // picked up and a narrow stale-fill race remains — see the
-            // `preview_orchestrator` module spec ("Refresh") for both.
-            self.preview_cache.clear();
-            Repository::at(self.repo.discovery_path())?
+            // and would re-serve a stale diff / log / summary. `refresh`
+            // supersedes the prior spawn's still-in-flight producers, rebinds
+            // preview compute to this fresh repo, and clears the cache, so
+            // each rebuilt row recomputes against its current `item.head()`
+            // from the rebuilt inventory; the on-disk caches (SHA-keyed for
+            // log / branch-diff / upstream, diff-hash-keyed for the summary)
+            // make an unchanged branch a cheap re-read, so only genuinely
+            // changed content pays a recompute. The `pr` / `comments` tabs
+            // already self-invalidate on the CI path; clearing them here too
+            // just means a refresh also re-fetches their forge data. See the
+            // `preview_orchestrator` module spec ("Spawn generations").
+            let repo = Repository::at(self.repo.discovery_path())?;
+            self.orchestrator.refresh(repo.clone());
+            repo
         } else {
             self.repo.clone()
         };
+        // This spawn's identity token, carried by everything the spawn
+        // starts and superseded by the next refresh (see `SpawnGeneration`).
+        let spawn_gen = self.orchestrator.generation();
 
         // The skeleton→`--prs` handoff (column geometry + the branches already
         // shown for dedup). Fresh per spawn so an alt-r reload's `--prs` thread
@@ -1362,7 +1483,7 @@ impl PipelineFactory {
 
         let handler: Arc<progressive_handler::PickerHandler> =
             Arc::new(progressive_handler::PickerHandler {
-                tx: tx.clone(),
+                tx: Mutex::new(Some(tx.clone())),
                 render_tx: Arc::clone(&self.render_tx),
                 last_render_poke: Mutex::new(Instant::now()),
                 shared_items: Arc::clone(&self.shared_items),
@@ -1374,6 +1495,7 @@ impl PipelineFactory {
                 preview_cache: Arc::clone(&self.preview_cache),
                 repo: spawn_repo.clone(),
                 orchestrator: Arc::clone(&self.orchestrator),
+                spawn_gen: spawn_gen.clone(),
                 preview_dims: self.preview_dims,
                 llm_command: self.llm_command.clone(),
                 summary_hint: self.summary_hint.clone(),
@@ -1382,6 +1504,7 @@ impl PipelineFactory {
                 grid_slot: Arc::clone(&grid_slot),
                 layout_slot: Arc::clone(&self.layout_slot),
                 prs_loading: prs_loading.clone(),
+                header_flash: Arc::clone(&self.header_flash),
             });
 
         let bg_handler: Arc<dyn collect::PickerProgressHandler> = handler.clone();
@@ -1419,18 +1542,15 @@ impl PipelineFactory {
             let prs_warnings = Arc::clone(&self.stashed_warnings);
             let prs_orchestrator = Arc::clone(&self.orchestrator);
             let prs_render_tx = Arc::clone(&self.render_tx);
-            // Bump the spawn counter and capture this spawn's value: the `--prs`
-            // thread appends its rows to `shared_items` only while the counter
-            // still matches, so an earlier spawn's still-in-flight forge call
-            // can't add rows to this (or a later) spawn's list. See
-            // `PipelineFactory::prs_epoch` and `prs::PrsShared`.
-            let current_epoch = self.prs_epoch.fetch_add(1, Ordering::SeqCst) + 1;
             let prs_shared = prs::PrsShared {
                 grid_slot: Arc::clone(&grid_slot),
                 shortcut_table: Arc::clone(&self.shortcut_table),
                 shared_items: Arc::clone(&self.shared_items),
-                epoch: Arc::clone(&self.prs_epoch),
-                current_epoch,
+                // This spawn's token: the thread appends its rows (and fans
+                // out per-row fetches) only while it is still current, so an
+                // earlier spawn's still-in-flight forge call can't add rows
+                // to this (or a later) spawn's list. See `prs::PrsShared`.
+                spawn_gen: spawn_gen.clone(),
             };
             let prs_layout = prs::PrsLayout {
                 list_width: self.skim_list_width,
@@ -1459,8 +1579,9 @@ impl PipelineFactory {
             None
         };
 
-        // Drop the local `tx` so the handler's clone (and the threads' clones)
-        // are the only senders left — their drop is what signals EOF to skim.
+        // Drop the local `tx` so the handler's clone (consumed at the skeleton
+        // send) and the `--prs` thread's clone are the only senders left —
+        // their release is what signals EOF to skim.
         drop(tx);
 
         Ok(SpawnedPipeline {
@@ -1478,6 +1599,8 @@ pub fn handle_picker(
     cli_prs: bool,
     change_dir_flag: Option<bool>,
     format: SwitchFormat,
+    execute: Option<&str>,
+    execute_args: &[String],
 ) -> anyhow::Result<()> {
     // Interactive picker requires a terminal for the TUI. The dry-run and
     // preview-bench paths bypass skim entirely, so no TTY is required —
@@ -1585,7 +1708,12 @@ pub fn handle_picker(
         let dims = state
             .initial_layout
             .dimensions_for(term_width, term_height, 0);
-        orchestrator.spawn_preview(Arc::new(item), PreviewMode::WorkingTree, dims);
+        orchestrator.spawn_preview(
+            &orchestrator.generation(),
+            Arc::new(item),
+            PreviewMode::WorkingTree,
+            dims,
+        );
     }
 
     // The picker runs every task — it is `wt list --full` (`ShowConfig::Resolved`
@@ -1738,7 +1866,6 @@ summary = true
         repo: repo.clone(),
         render_tx: Arc::clone(&render_tx),
         shared_items: Arc::clone(&shared_items),
-        prs_epoch: Arc::new(AtomicUsize::new(0)),
         shortcut_table: Arc::clone(&shortcut_table),
         preview_cache: Arc::clone(&preview_cache),
         orchestrator: Arc::clone(&orchestrator),
@@ -1746,6 +1873,7 @@ summary = true
         // Full-layout handoff: the handler fills it in `provide_layout`, the
         // collector reads it to render the `alt-x` `/ branch` row on this grid.
         layout_slot: Arc::new(Mutex::new(None)),
+        header_flash: Arc::new(items::HeaderFlash::default()),
         preview_dims,
         skim_list_width,
         command_timeout,
@@ -1777,6 +1905,7 @@ summary = true
         stashed_warnings: Arc::clone(&stashed_warnings),
         shortcut_table: Arc::clone(&shortcut_table),
         layout_slot: Arc::clone(&factory.layout_slot),
+        header_flash: Arc::clone(&factory.header_flash),
     };
 
     // Half-page preview scroll: half of skim's usable height.
@@ -1926,11 +2055,12 @@ summary = true
     install_remove_keybinding(&mut options.keymap, alt_x_remover);
     worktrunk::trace::instant("Picker skim options built");
 
-    // Spawn the collect pipeline (and the `--prs` thread when active). The
-    // handler holds the only non-thread `tx` clone; when the bg threads exit,
-    // `tx` drops, skim's reader sees EOF, and the picker goes idle. The initial
-    // spawn reuses the startup-primed inventory (`false`); every alt-r refresh
-    // re-runs `factory.spawn(true)` to re-enumerate — see `PipelineFactory`.
+    // Spawn the collect pipeline (and the `--prs` thread when active). Each
+    // sender drops with its one batch sent (skeleton, PR rows), so skim's
+    // reader sees EOF as soon as the last batch lands — see
+    // `PipelineFactory::spawn`. The initial spawn reuses the startup-primed
+    // inventory (`false`); every alt-r refresh re-runs `factory.spawn(true)`
+    // to re-enumerate.
     let SpawnedPipeline {
         rx,
         handler,
@@ -2045,10 +2175,12 @@ summary = true
 
         // Run the switch — the same `SwitchPipeline` as `wt switch <branch>`,
         // so hooks, approval, and output cannot drift from the argument path.
-        // The picker has no `--execute`, offers no shell integration, and does
-        // not capture pre-switch source identity (`capture_source: false` — an
-        // existing switch's `{{ base }}` / `{{ base_worktree_path }}` stay
-        // unset; result-derived `base` for creates and `target` still flow).
+        // The picker offers no shell integration, but (like the argument path)
+        // the pipeline captures the pre-switch source worktree, so an existing
+        // switch's `{{ base }}` / `{{ base_worktree_path }}` resolve to the
+        // worktree the user came from. An `--execute` command (`wt switch -x
+        // <cmd>`) runs against the picked worktree, and its `{{ base }}` matches
+        // what `wt switch <branch> -x <cmd>` would produce.
         SwitchPipeline {
             repo: &repo,
             config: &mut config,
@@ -2062,9 +2194,8 @@ summary = true
             format,
             is_recovered,
             suggestion_ctx: None,
-            capture_source: false,
-            execute: None,
-            execute_args: &[],
+            execute,
+            execute_args,
             shell_integration_binary: None,
         }
         .run()?;
@@ -2593,7 +2724,6 @@ pub mod tests {
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
             force_worktree: false,
-            expected_path: None,
             removed_commit: None,
         };
 
@@ -2688,7 +2818,6 @@ pub mod tests {
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
             force_worktree: false,
-            expected_path: None,
             removed_commit: None,
         };
 
@@ -2779,7 +2908,6 @@ pub mod tests {
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
             force_worktree: false,
-            expected_path: None,
             removed_commit: None,
         };
 
@@ -2793,6 +2921,7 @@ pub mod tests {
 
     /// Build a `PickerRow` from a snapshot `ListItem`.
     fn picker_item(branch_name: &str, item: ListItem) -> Arc<dyn SkimItem> {
+        let item = Arc::new(item);
         let pr_status = Arc::new(Mutex::new(item.pr_status.clone()));
         let output_token = worktree_output_token(&item, branch_name);
         Arc::new(PickerRow {
@@ -2805,6 +2934,9 @@ pub mod tests {
             pr_status,
             notifier: super::preview_notify::PreviewNotifier::detached(),
             local: Some(LocalCheckout {
+                item,
+                demand: super::preview_orchestrator::PreviewDemand::new(),
+                spawn_gen: super::preview_orchestrator::SpawnGeneration::default(),
                 has_upstream: false,
                 summaries_enabled: false,
                 local_content: Arc::new(Mutex::new(LocalContent::default())),
@@ -2878,6 +3010,9 @@ pub mod tests {
             pr_status: Arc::new(Mutex::new(None)),
             notifier: super::preview_notify::PreviewNotifier::detached(),
             local: Some(LocalCheckout {
+                item: Arc::clone(&item_arc),
+                demand: super::preview_orchestrator::PreviewDemand::new(),
+                spawn_gen: super::preview_orchestrator::SpawnGeneration::default(),
                 has_upstream: false,
                 summaries_enabled: false,
                 local_content: Arc::clone(&local_content),
@@ -2930,12 +3065,12 @@ pub mod tests {
             repo,
             render_tx,
             shared_items: Arc::new(Mutex::new(Vec::new())),
-            prs_epoch: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             shortcut_table: Arc::new(Mutex::new(std::collections::HashMap::new())),
             preview_cache,
             orchestrator,
             stashed_warnings: Arc::new(Mutex::new(Vec::new())),
             layout_slot: Arc::new(Mutex::new(None)),
+            header_flash: Arc::new(super::items::HeaderFlash::default()),
             preview_dims: (80, 24),
             skim_list_width: 80,
             command_timeout: None,
@@ -2965,7 +3100,43 @@ pub mod tests {
             stashed_warnings: Arc::clone(&factory.stashed_warnings),
             shortcut_table: Arc::clone(&factory.shortcut_table),
             layout_slot: Arc::clone(&factory.layout_slot),
+            header_flash: Arc::clone(&factory.header_flash),
         }
+    }
+
+    /// Poll `git branch --list <branch>` until it succeeds and the branch
+    /// reaches the expected presence, tolerating the transient `exit 128` a
+    /// concurrent background removal can trigger.
+    ///
+    /// `apply` renames the worktree into the trash (so its path vanishes) and
+    /// then runs `git worktree prune`, which deletes the `.git/worktrees/<id>`
+    /// admin dir — all on a background thread. `git branch --list` enumerates
+    /// worktrees to mark checked-out branches, so a query that races the
+    /// in-flight prune can read a half-deleted admin dir and fail with
+    /// `exit 128`. A test that `.unwrap()`s such a query flakes; retry until the
+    /// prune settles and the branch has reached its steady state.
+    fn await_branch_presence(
+        repo: &worktrunk::git::Repository,
+        branch: &str,
+        expect_present: bool,
+    ) {
+        worktrunk::testing::wait_for(
+            &format!(
+                "branch `{branch}` to become {}",
+                if expect_present {
+                    "retained"
+                } else {
+                    "deleted"
+                }
+            ),
+            || {
+                // A transient prune race surfaces as `Err`, not a successful
+                // empty read, so only a successful query is authoritative.
+                repo.run_command(&["branch", "--list", branch])
+                    .map(|list| list.is_empty() != expect_present)
+                    .unwrap_or(false)
+            },
+        );
     }
 
     /// Two detached worktrees both render the branch label `(detached)`, but
@@ -3233,15 +3404,19 @@ pub mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::channel(8);
         render_tx.set(tx).unwrap();
         let stashed = Arc::new(Mutex::new(Vec::new()));
+        let header_flash = Arc::new(super::items::HeaderFlash::default());
 
         super::restore_failed_removal(
             &items,
+            &header_flash,
             &render_tx,
             &stashed,
-            branch_only_picker_item("dropped-b"),
-            2,
-            "dropped-b",
-            "worktree",
+            super::DroppedRow {
+                item: branch_only_picker_item("dropped-b"),
+                pos: 2,
+                label: "dropped-b".to_string(),
+                noun: "worktree",
+            },
         );
 
         let outputs: Vec<String> = items
@@ -3262,7 +3437,21 @@ pub mod tests {
             "warning names the kept worktree: {}",
             warnings[0]
         );
-        // The restore re-shows the row by queuing a pool-resync Custom action.
+        // The same `could not remove` reason flashes in the header, styled as a
+        // warning (▲) — a genuine failure, not the keep paths' by-design info (○).
+        let flash = header_flash.current();
+        assert!(
+            flash.as_deref().is_some_and(|f| {
+                f.contains('▲') && f.contains("dropped-b") && f.contains("could not remove")
+            }),
+            "the failed removal flashes the reason in the header: {flash:?}"
+        );
+        // The flash queues a repaint first, then the restore re-shows the row by
+        // queuing a pool-resync Custom action.
+        assert!(
+            matches!(rx.try_recv(), Ok(skim::prelude::Event::Render)),
+            "the flash queues a repaint"
+        );
         assert!(
             matches!(rx.try_recv(), Ok(skim::prelude::Event::Action(_))),
             "restore queues a resync action when the sender is live"
@@ -3277,13 +3466,119 @@ pub mod tests {
         let items = Arc::new(Mutex::new(vec![Arc::clone(&row)]));
         let render_tx = Arc::new(OnceLock::new());
         let stashed = Arc::new(Mutex::new(Vec::new()));
+        let header_flash = Arc::new(super::items::HeaderFlash::default());
 
-        super::restore_failed_removal(&items, &render_tx, &stashed, row, 0, "present", "worktree");
+        super::restore_failed_removal(
+            &items,
+            &header_flash,
+            &render_tx,
+            &stashed,
+            super::DroppedRow {
+                item: row,
+                pos: 0,
+                label: "present".to_string(),
+                noun: "worktree",
+            },
+        );
 
         assert_eq!(items.lock().unwrap().len(), 1, "no duplicate inserted");
         assert!(
             stashed.lock().unwrap().is_empty(),
             "no warning when there's nothing to restore"
+        );
+        assert!(
+            header_flash.current().is_none(),
+            "the already-present early return skips the flash too"
+        );
+    }
+
+    /// `revert_morph` undoes an optimistic morph after the worktree removal failed:
+    /// it restores the row's pre-morph display, clears the `morphed` flag, moves the
+    /// shortcut entry back to the worktree token, stashes a `kept … could not remove`
+    /// warning, and flashes the same reason in the header. The in-place-morph mirror
+    /// of `restore_failed_removal`.
+    #[test]
+    fn test_revert_morph_restores_row_and_flashes() {
+        let rendered = Arc::new(Mutex::new("/ feature".to_string()));
+        let morphed = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let local_content = Arc::new(Mutex::new(LocalContent::default()));
+
+        // A shortcut entry keyed under the branch token, as the morph left it, so the
+        // revert can move it back to the worktree token.
+        let mut table_map = std::collections::HashMap::new();
+        table_map.insert(
+            "feature".to_string(),
+            super::items::RowShortcutData {
+                branch: Some("feature".to_string()),
+                url: super::items::RowUrl::Static(None),
+                morph: None,
+            },
+        );
+        let shortcut_table = Arc::new(Mutex::new(table_map));
+
+        let revert = super::MorphRevert {
+            rendered: Arc::clone(&rendered),
+            original_rendered: "+ feature".to_string(),
+            morphed: Arc::clone(&morphed),
+            local_content: Arc::clone(&local_content),
+            original_local: LocalContent::default(),
+            shortcut_table: Arc::clone(&shortcut_table),
+            branch_token: "feature".to_string(),
+            worktree_token: "worktree-path:/tmp/wt-feature".to_string(),
+        };
+
+        // A live sender so `flash_header` sets the flash rather than early-returning.
+        let render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<skim::prelude::Event>>> =
+            Arc::new(OnceLock::new());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        render_tx.set(tx).unwrap();
+        let header_flash = Arc::new(super::items::HeaderFlash::default());
+        let stashed = Arc::new(Mutex::new(Vec::new()));
+
+        super::revert_morph(revert, &header_flash, &stashed, &render_tx);
+
+        // The row un-morphs in place: pre-morph line restored, flag cleared.
+        assert_eq!(
+            *rendered.lock().unwrap(),
+            "+ feature",
+            "the pre-morph display line is restored"
+        );
+        assert!(
+            !morphed.load(std::sync::atomic::Ordering::Relaxed),
+            "the morphed flag is cleared"
+        );
+        // The shortcut entry moves back from the branch token to the worktree token.
+        {
+            let table = shortcut_table.lock().unwrap();
+            assert!(
+                table.contains_key("worktree-path:/tmp/wt-feature")
+                    && !table.contains_key("feature"),
+                "the shortcut entry is re-keyed to the worktree token"
+            );
+        }
+        // The `could not remove` reason is stashed (drains to stderr on exit)...
+        {
+            let warnings = stashed.lock().unwrap();
+            assert_eq!(warnings.len(), 1, "one warning stashed");
+            assert!(
+                warnings[0].contains("feature") && warnings[0].contains("could not remove"),
+                "warning names the kept worktree: {}",
+                warnings[0]
+            );
+        }
+        // ...and flashes in the header now, styled as a warning (▲), not the keep
+        // paths' by-design info (○).
+        let flash = header_flash.current();
+        assert!(
+            flash.as_deref().is_some_and(|f| {
+                f.contains('▲') && f.contains("feature") && f.contains("could not remove")
+            }),
+            "the revert flashes the reason in the header: {flash:?}"
+        );
+        // `flash_header`'s repaint (which also re-shows the reverted row) is queued.
+        assert!(
+            matches!(rx.try_recv(), Ok(skim::prelude::Event::Render)),
+            "the revert queues a repaint"
         );
     }
 
@@ -3300,7 +3595,6 @@ pub mod tests {
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
             force_worktree: false,
-            expected_path: None,
             removed_commit: None,
         };
         assert_eq!(
@@ -3316,7 +3610,6 @@ pub mod tests {
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
             force_worktree: false,
-            expected_path: None,
             removed_commit: None,
         };
         assert_eq!(
@@ -3399,6 +3692,7 @@ pub mod tests {
             stashed_warnings: Arc::clone(&stashed),
             shortcut_table: Arc::new(Mutex::new(std::collections::HashMap::new())),
             layout_slot: Arc::new(Mutex::new(None)),
+            header_flash: Arc::new(super::items::HeaderFlash::default()),
         };
 
         remover.apply(token.clone());
@@ -3513,11 +3807,8 @@ pub mod tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         assert!(!reported_path.exists(), "the worktree is removed");
-        let branch_list = repo.run_command(&["branch", "--list", "feature"]).unwrap();
-        assert!(
-            !branch_list.is_empty(),
-            "the unmerged branch is retained after its worktree is removed"
-        );
+        // The unmerged branch is retained after its worktree is removed.
+        await_branch_presence(&repo, "feature", true);
         // The removal succeeded, so the morph stands (no revert).
         assert!(
             morphed.load(Ordering::Relaxed),
@@ -3587,13 +3878,8 @@ pub mod tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         assert!(!reported_path.exists(), "the worktree is removed");
-        assert!(
-            !repo
-                .run_command(&["branch", "--list", "feature"])
-                .unwrap()
-                .is_empty(),
-            "the unmerged branch is retained"
-        );
+        // The unmerged branch is retained.
+        await_branch_presence(&repo, "feature", true);
     }
 
     /// The negative of the above, end-to-end through `apply`: alt-x on a worktree
@@ -3640,23 +3926,10 @@ pub mod tests {
             "the integrated worktree row drops instead of morphing"
         );
 
-        // The background removal deletes both the worktree and the branch.
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !repo
-            .run_command(&["branch", "--list", "feature"])
-            .unwrap()
-            .is_empty()
-            && Instant::now() < deadline
-        {
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        // The background removal deletes both the worktree and the branch
+        // (nothing to keep).
+        await_branch_presence(&repo, "feature", false);
         assert!(!reported_path.exists(), "the worktree is removed");
-        assert!(
-            repo.run_command(&["branch", "--list", "feature"])
-                .unwrap()
-                .is_empty(),
-            "the integrated branch is deleted (nothing to keep)"
-        );
     }
 
     /// `worktree_removal_keeps_branch` predicts the morph: a `RemovedWorktree`
@@ -3684,7 +3957,6 @@ pub mod tests {
             deletion_mode: mode,
             target_branch: Some("main".to_string()),
             force_worktree: false,
-            expected_path: None,
             removed_commit: None,
         };
 
@@ -3782,7 +4054,6 @@ pub mod tests {
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
             force_worktree: false,
-            expected_path: None,
             removed_commit: None,
         };
         assert!(super::removal_target_still_present(
@@ -3841,7 +4112,6 @@ pub mod tests {
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
             force_worktree: false,
-            expected_path: None,
             removed_commit: None,
         };
         assert!(
@@ -3887,7 +4157,6 @@ pub mod tests {
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
             force_worktree: false,
-            expected_path: None,
             removed_commit: None,
         };
         assert!(
@@ -3956,6 +4225,71 @@ pub mod tests {
         );
     }
 
+    /// The header flash a declined alt-x sets self-clears after the beat: the timer
+    /// thread `flash_header` spawns runs `clear_if_current` + repaints once
+    /// `HEADER_FLASH_DURATION` elapses. Also pins the keep-path symbol — a by-design
+    /// decline flashes as info (○), not a warning. Polls for the clear (driving the
+    /// detached timer to completion) rather than racing a fixed sleep.
+    #[test]
+    fn test_header_flash_set_then_self_clears() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+
+        let item = branched_picker_item("current", &test.path().join("current"));
+        let items = Arc::new(Mutex::new(vec![Arc::clone(&item)]));
+        // A live sender so `flash_header` sets the flash and its timer can repaint.
+        let render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<skim::prelude::Event>>> =
+            Arc::new(OnceLock::new());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        render_tx.set(tx).unwrap();
+        let header_flash = Arc::new(super::items::HeaderFlash::default());
+        let remover = AltXRemover {
+            items,
+            repo,
+            approvals: Arc::new(Approvals::default()),
+            render_tx: Arc::clone(&render_tx),
+            stashed_warnings: Arc::new(Mutex::new(Vec::new())),
+            shortcut_table: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            layout_slot: Arc::new(Mutex::new(None)),
+            header_flash: Arc::clone(&header_flash),
+        };
+
+        remover.keep_current_worktree_row();
+
+        // The flash is up, styled as info (○ — a by-design decline, not a warning),
+        // and `flash_header` queued a repaint.
+        let flash = header_flash.current();
+        assert!(
+            flash
+                .as_deref()
+                .is_some_and(|f| f.contains('○') && f.contains("current worktree")),
+            "the decline flashes as info in the header: {flash:?}"
+        );
+        assert!(rx.try_recv().is_ok(), "flash_header queues a repaint");
+
+        // The timer clears it after the beat. Poll (don't fixed-sleep) so the test
+        // tracks the detached thread's completion causally; the deadline is a safety
+        // net well above `HEADER_FLASH_DURATION`.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while header_flash.current().is_some() {
+            assert!(Instant::now() < deadline, "flash never auto-cleared");
+            std::thread::sleep(Duration::from_millis(25));
+        }
+
+        // The auto-clear queues its own repaint (sent right after the clear); poll
+        // briefly so the assertion doesn't race the timer thread's final send.
+        let repaint_deadline = Instant::now() + Duration::from_secs(2);
+        let mut saw_repaint = false;
+        while Instant::now() < repaint_deadline {
+            if rx.try_recv().is_ok() {
+                saw_repaint = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(saw_repaint, "the auto-clear queues a repaint");
+    }
+
     /// alt-x on an unremovable target surfaces the same diagnostic `wt remove`
     /// prints rather than swallowing it: `prepare_removal` errors (here the main
     /// worktree can't be removed), so the dispatch's `Err` arm stashes the rendered
@@ -3969,7 +4303,22 @@ pub mod tests {
         let item = branched_picker_item("main", test.path());
         let token = item.output().to_string();
         let items = Arc::new(Mutex::new(vec![Arc::clone(&item)]));
-        let remover = test_remover(Arc::clone(&items), repo.clone());
+        // A live sender so the Err arm's `flash_header` sets the header flash.
+        let render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<skim::prelude::Event>>> =
+            Arc::new(OnceLock::new());
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        render_tx.set(tx).unwrap();
+        let header_flash = Arc::new(super::items::HeaderFlash::default());
+        let remover = AltXRemover {
+            items: Arc::clone(&items),
+            repo: repo.clone(),
+            approvals: Arc::new(Approvals::default()),
+            render_tx: Arc::clone(&render_tx),
+            stashed_warnings: Arc::new(Mutex::new(Vec::new())),
+            shortcut_table: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            layout_slot: Arc::new(Mutex::new(None)),
+            header_flash: Arc::clone(&header_flash),
+        };
 
         remover.apply(token.clone());
 
@@ -3991,6 +4340,14 @@ pub mod tests {
                 .iter()
                 .any(|w| w.contains("main worktree cannot be removed")),
             "the unremovable diagnostic is stashed for the user: {warnings:?}"
+        );
+        // The terse headline also flashes in the header at alt-x time.
+        let flash = header_flash.current();
+        assert!(
+            flash
+                .as_deref()
+                .is_some_and(|f| f.contains("main worktree")),
+            "the unremovable reason flashes in the header: {flash:?}"
         );
     }
 
@@ -4017,14 +4374,22 @@ pub mod tests {
         let token = item.output().to_string();
         let items = Arc::new(Mutex::new(vec![Arc::clone(&item)]));
         let stashed: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        // A live sender so `flash_header` sets the header flash rather than
+        // taking its no-`render_tx` early return.
+        let render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<skim::prelude::Event>>> =
+            Arc::new(OnceLock::new());
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        render_tx.set(tx).unwrap();
+        let header_flash = Arc::new(super::items::HeaderFlash::default());
         let remover = AltXRemover {
             items: Arc::clone(&items),
             repo: repo.clone(),
             approvals: Arc::new(Approvals::default()),
-            render_tx: Arc::new(OnceLock::new()),
+            render_tx: Arc::clone(&render_tx),
             stashed_warnings: Arc::clone(&stashed),
             shortcut_table: Arc::new(Mutex::new(std::collections::HashMap::new())),
             layout_slot: Arc::new(Mutex::new(None)),
+            header_flash: Arc::clone(&header_flash),
         };
 
         remover.apply(token.clone());
@@ -4052,6 +4417,15 @@ pub mod tests {
         assert!(
             warnings.iter().any(|w| w.contains("wt remove -D unmerged")),
             "a kept unmerged branch stashes the actionable `-D` hint: {warnings:?}"
+        );
+        // The *why* also flashes in the header immediately (the in-picker echo of
+        // the stash), not only on exit.
+        let flash = header_flash.current();
+        assert!(
+            flash
+                .as_deref()
+                .is_some_and(|f| f.contains("Kept") && f.contains("unmerged")),
+            "the keep path flashes the reason in the header: {flash:?}"
         );
 
         // A second alt-x on the same kept row dedups — the stash doesn't grow.

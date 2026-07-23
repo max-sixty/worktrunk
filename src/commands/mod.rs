@@ -42,6 +42,7 @@ pub(crate) use config::{
     handle_logs_list, handle_logs_profile, handle_opencode_install, handle_opencode_uninstall,
     handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
     handle_state_show, handle_vars_clear, handle_vars_get, handle_vars_list, handle_vars_set,
+    list_approvals,
 };
 pub(crate) use configure_shell::{
     handle_configure_shell, handle_show_theme, handle_unconfigure_shell,

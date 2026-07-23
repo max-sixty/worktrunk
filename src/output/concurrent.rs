@@ -47,7 +47,7 @@ use worktrunk::command_log::log_command;
 use worktrunk::git::WorktrunkError;
 use worktrunk::shell_exec::{
     DIRECTIVE_CD_FILE_ENV_VAR, DIRECTIVE_EXEC_FILE_ENV_VAR, DIRECTIVE_FILE_ENV_VAR, ShellConfig,
-    scrub_directive_env_vars,
+    scrub_directive_env_vars, scrub_git_discovery_env_vars,
 };
 #[cfg(unix)]
 use worktrunk::signal_forwarder::ForegroundSignals;
@@ -72,6 +72,10 @@ pub struct ConcurrentCommand<'a> {
     /// Directive file env vars to pass through to the child. See
     /// `DirectivePassthrough` for the trust model (CD passthrough, EXEC scrub).
     pub directives: &'a DirectivePassthrough,
+    /// Scrub inherited git-discovery vars (`GIT_DIR`/`GIT_WORK_TREE`/…) from the
+    /// child. `true` for hooks (they operate on the worktree wt targets), `false`
+    /// for aliases (they keep wt's inherited context). See issue #3373.
+    pub scrub_git_discovery: bool,
 }
 
 /// Run every command concurrently and return each per-child result in input
@@ -292,6 +296,12 @@ fn spawn_child(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    // User hooks discover their repo from the cwd wt sets, not an inherited
+    // GIT_DIR/GIT_WORK_TREE (issue #3373). Aliases keep the inherited context.
+    if cmd.scrub_git_discovery {
+        scrub_git_discovery_env_vars(&mut command);
+    }
+
     // Scrub all directive env vars, then re-add the passthroughs.
     scrub_directive_env_vars(&mut command);
     if let Some(path) = &cmd.directives.cd_file {
@@ -494,6 +504,7 @@ mod tests {
             context_json: "{}",
             log_label,
             directives,
+            scrub_git_discovery: false,
         }];
         run_concurrent_commands(&specs).expect("spawn failed")
     }

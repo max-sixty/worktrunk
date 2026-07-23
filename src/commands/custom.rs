@@ -241,18 +241,18 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn run_custom_propagates_signal_exit_code() {
-        use std::os::unix::fs::PermissionsExt;
+        // Exec a stable system binary (`/bin/sh -c 'kill -TERM $$'`) rather than
+        // writing a script to a tempdir and exec'ing it. Writing an executable
+        // and immediately exec'ing it races with other test threads: a
+        // concurrent fork+exec elsewhere in the suite can inherit a writable fd
+        // to the just-written file, so this exec sporadically fails with
+        // ETXTBSY, surfacing as a spawn error instead of the signal error we
+        // assert on. `/bin/sh` is never written by the test, so it can't race.
+        // The production code path (spawn, wait, signal handling) is identical.
+        let sh = Path::new("/bin/sh");
+        let args = [OsString::from("-c"), OsString::from("kill -TERM $$")];
 
-        let dir = tempfile::tempdir().expect("create tempdir");
-        let script = dir.path().join("wt-signal-test");
-        std::fs::write(&script, "#!/bin/sh\nkill -TERM $$\n").expect("write script");
-        let mut perms = std::fs::metadata(&script)
-            .expect("stat script")
-            .permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&script, perms).expect("chmod script");
-
-        let err = run_custom(&script, &[], None).expect_err("child killed by SIGTERM");
+        let err = run_custom(sh, &args, None).expect_err("child killed by SIGTERM");
         let wt_err = err
             .downcast_ref::<WorktrunkError>()
             .expect("signal should surface as WorktrunkError::AlreadyDisplayed");

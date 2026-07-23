@@ -58,4 +58,6 @@ Measures pure skeleton latency. Target: <60ms.
 - `collect/` — orchestrates collection, manages pre/post-skeleton phases, task definitions and execution (see `collect/mod.rs` module docstring for phase details)
 - `render.rs` — row formatting, skeleton rows, cell rendering
 - `layout.rs` — column width calculation
-- `progressive_table.rs` — terminal rendering with in-place updates
+- `progressive_table.rs` — terminal rendering with in-place updates; reserves
+  blank rows below the table so the shell prompt printed after exit renders
+  into pre-scrolled rows instead of jerking the settled table up

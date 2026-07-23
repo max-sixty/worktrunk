@@ -58,7 +58,25 @@ use crate::trace::CommandTrace;
 
 /// Semaphore to limit concurrent command execution.
 /// Prevents resource exhaustion when spawning many parallel git commands.
+///
+/// Only background threads consume permits. The foreground thread runs
+/// commands one at a time, so it can't contribute to fan-out — and it is what
+/// the user is waiting on: were it to queue here, background work that
+/// saturates the permits (per-row preview diffs in the picker, each holding a
+/// permit for seconds on a large repo) would stall the accept path of
+/// `wt switch` until the pool drained. The cap is deliberately approximate:
+/// a work-stealing pool (rayon) can run a capped closure on the foreground
+/// thread, briefly exceeding the limit.
 static CMD_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
+
+/// The thread that entered `main()`, captured by [`init_startup`]. Commands
+/// on this thread bypass [`CMD_SEMAPHORE`] (see there). Unset when `wt` runs
+/// as a library (unit tests), where every thread is capped.
+static FOREGROUND_THREAD: OnceLock<std::thread::ThreadId> = OnceLock::new();
+
+fn is_foreground_thread() -> bool {
+    FOREGROUND_THREAD.get() == Some(&std::thread::current().id())
+}
 
 /// The working directory at `wt` startup. Captured once so relative `GIT_*`
 /// path variables inherited from a parent `git` process can be resolved to
@@ -83,14 +101,17 @@ pub const INHERITED_GIT_PATH_VARS: &[&str] = &[
     "GIT_OBJECT_DIRECTORY",
 ];
 
-/// Record the current working directory at `wt` startup so relative `GIT_*`
-/// path variables inherited from a parent process can later be resolved to
-/// absolute paths by [`Cmd`]'s env setup.
+/// Record process-startup facts: the current working directory (so relative
+/// `GIT_*` path variables inherited from a parent process can later be
+/// resolved to absolute paths by [`Cmd`]'s env setup) and the calling thread
+/// (the foreground thread, exempt from the command semaphore —
+/// see `CMD_SEMAPHORE`).
 ///
-/// Call once during `wt` startup, before any code changes the process's
-/// working directory. Subsequent calls are no-ops.
-pub fn init_startup_cwd() {
+/// Call once from `main()`, before any code changes the process's working
+/// directory and before spawning threads. Subsequent calls are no-ops.
+pub fn init_startup() {
     STARTUP_CWD.get_or_init(|| std::env::current_dir().ok());
+    FOREGROUND_THREAD.get_or_init(|| std::thread::current().id());
 }
 
 fn startup_cwd() -> Option<&'static PathBuf> {
@@ -359,6 +380,55 @@ pub fn scrub_directive_env_vars(cmd: &mut std::process::Command) {
     cmd.env_remove(DIRECTIVE_CD_FILE_ENV_VAR);
     cmd.env_remove(DIRECTIVE_EXEC_FILE_ENV_VAR);
     cmd.env_remove(DIRECTIVE_FILE_ENV_VAR);
+}
+
+/// Scrub the git-discovery path vars ([`INHERITED_GIT_PATH_VARS`]) from a child
+/// `Command`, so the spawned process discovers its repository from its working
+/// directory rather than a `GIT_DIR`/`GIT_WORK_TREE` that `wt` inherited.
+///
+/// Git resolves these vars **before** walking up from the cwd, so an inherited
+/// value silently overrides whatever working directory the child was given.
+/// Whether a child keeps them is decided by who chose its cwd:
+///
+/// - **`wt` relocated a user command into a worktree it selected** — hooks
+///   (run in the operation's worktree), `wt step for-each` (run in each
+///   worktree in turn), and the `--execute` no-integration fallback (run in
+///   the switch target when `wt` itself executes the payload) — the cwd
+///   carries `wt`'s intent, so the inherited context is scrubbed and the
+///   command's `git` calls discover the worktree from the cwd. The inherited
+///   context is common, not exotic: `git` exports an absolute `GIT_DIR`
+///   pinned to the invoking worktree's private gitdir when `wt` runs as a
+///   `!wt` alias from a **linked worktree**, and git itself exports discovery
+///   vars (e.g. `GIT_INDEX_FILE`) to the hooks it spawns. Forwarding those
+///   into a relocated command misdirects every `git` call in it; with both
+///   `GIT_DIR` and `GIT_WORK_TREE` present, a `git init` even writes
+///   `core.worktree` into the *inherited* repo's config, silently redirecting
+///   every later plain git command there. See issue #3373.
+///
+/// - **The child runs where the user already was** — aliases (the user's own
+///   top-level command, run from the invoking worktree) and `commit.generation`
+///   commands (spawned with no `current_dir`) — the inherited context *is* the
+///   user's context, so it is forwarded untouched. Under shell integration the
+///   `--execute` payload also lands here: the wrapper shell evaluates it, so
+///   it sees that shell's own environment (which never contains the vars a
+///   `!wt` git alias exports — git's exports die with `wt`'s process tree).
+///   Scrubbing the fallback therefore *converges* the two `--execute` paths
+///   for the alias case; only a `GIT_DIR` the user globally exported in their
+///   interactive shell still differs, and such an env misdirects every plain
+///   `git` command they run anyway.
+///
+/// - **`wt`'s own git plumbing** ([`Cmd`] via `Repository::run_command`) keeps
+///   the inherited context on purpose (relative values absolutized, see issue
+///   #1914): `wt` honoring the context it was handed is the point of running
+///   `wt` under `git`.
+///
+/// Any new spawn site that relocates a user command into a `wt`-chosen
+/// worktree must apply this scrub, via this helper or
+/// [`Cmd::scrub_git_discovery_env`].
+pub fn scrub_git_discovery_env_vars(cmd: &mut std::process::Command) {
+    for var in INHERITED_GIT_PATH_VARS {
+        cmd.env_remove(var);
+    }
 }
 
 // ============================================================================
@@ -1081,6 +1151,23 @@ impl Cmd {
         self
     }
 
+    /// Scrub inherited git-discovery vars ([`INHERITED_GIT_PATH_VARS`]) from the
+    /// child environment. Applied by spawn sites that relocate a user command
+    /// into a `wt`-chosen worktree (hooks, `wt step for-each`) so the command's
+    /// `git` calls discover the repository from the working directory `wt` sets,
+    /// not a `GIT_DIR`/`GIT_WORK_TREE` `wt` inherited. See
+    /// [`scrub_git_discovery_env_vars`] for the site classification (issue #3373).
+    ///
+    /// Applied after the inherited-`GIT_*` absolutization in
+    /// `apply_common_settings` (env-removes run last), so it also overrides the
+    /// relative-path absolutization that would otherwise re-add these vars.
+    pub fn scrub_git_discovery_env(mut self) -> Self {
+        for var in INHERITED_GIT_PATH_VARS {
+            self.env_removes.push(OsString::from(*var));
+        }
+        self
+    }
+
     /// Set stdout configuration for `.stream()`.
     ///
     /// Defaults to `Stdio::inherit()`. Use `Stdio::from(io::stderr())` to redirect
@@ -1220,8 +1307,8 @@ impl Cmd {
         let external_log = ExternalCommandLog::new(self.external_label.clone(), cmd_str.clone());
         self.log_run_start(&cmd_str);
 
-        // Acquire semaphore to limit concurrent commands
-        let _guard = semaphore().acquire();
+        // Limit concurrent commands (background threads only; see CMD_SEMAPHORE)
+        let _guard = (!is_foreground_thread()).then(|| semaphore().acquire());
 
         let mut trace = CommandTrace::new(self.context.as_deref(), &cmd_str)
             .reads_stdin(self.stdin_data.is_some());
@@ -1303,9 +1390,10 @@ impl Cmd {
     ///
     /// `stdin_bytes` on the source feeds the pipeline's input (the sink's
     /// stdin always comes from the source). Timeouts and `external()` logging
-    /// are not supported on either side. The pipeline consumes one semaphore
-    /// permit even though it runs two processes concurrently — acquiring two
-    /// would deadlock under `concurrency = 1`.
+    /// are not supported on either side. On a background thread the pipeline
+    /// consumes one semaphore permit even though it runs two processes
+    /// concurrently — acquiring two would deadlock under `concurrency = 1`;
+    /// the foreground thread is exempt (see `CMD_SEMAPHORE`).
     pub fn pipe_into(
         mut self,
         next: Cmd,
@@ -1341,7 +1429,7 @@ impl Cmd {
         self.log_run_start(&first_cmd_str);
         next.log_run_start(&second_cmd_str);
 
-        let _guard = semaphore().acquire();
+        let _guard = (!is_foreground_thread()).then(|| semaphore().acquire());
 
         // Validate both commands before spawning either. Nothing has spawned
         // yet, so a precondition failure emits a one-shot failed record rather
@@ -1907,6 +1995,19 @@ pub fn forward_signal_with_escalation(pgid: i32, sig: i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The only test allowed to set `FOREGROUND_THREAD` (a process-wide
+    /// set-once): with it unset, `is_foreground_thread()` is false everywhere,
+    /// which is the state every other test runs under.
+    #[test]
+    fn test_foreground_thread_exempt_after_init() {
+        assert!(!is_foreground_thread());
+        init_startup();
+        assert!(is_foreground_thread());
+        // Threads other than the initializing one stay capped.
+        let from_spawned = std::thread::spawn(is_foreground_thread).join().unwrap();
+        assert!(!from_spawned);
+    }
 
     #[test]
     fn test_powershell_escape() {

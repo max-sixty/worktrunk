@@ -225,6 +225,113 @@ fn test_list_json_with_metadata(mut repo: TestRepo) {
     });
 }
 
+/// Schema 2 (`[list] json-schema = 2`): envelope with repo facts and
+/// per-item orthogonal facts. Pins the full shape, including the absence
+/// rule (locked reason present, integration null vs absent).
+#[rstest]
+fn test_list_json_schema_2_envelope(mut repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 2\n");
+
+    repo.add_worktree("feature-detached");
+    repo.add_worktree("locked-feature");
+    repo.lock_worktree("locked-feature", Some("Testing"));
+
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--format=json");
+        cmd
+    });
+}
+
+/// `[list] json-schema` selects the output schema: unset emits schema 1
+/// plus a one-time nag, an explicit value is silent, and anything except
+/// 1 or 2 is an error.
+#[rstest]
+fn test_list_json_schema_selection(repo: TestRepo) {
+    // Unset with no user config file → nag names both settings to write by
+    // hand; there is no file for `wt config update` to rewrite.
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(!json.is_empty(), "schema 1 root is a bare array");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("json-schema = 1") && stderr.contains("json-schema = 2"),
+        "unset key should nag with the manual settings: {stderr}"
+    );
+    assert!(
+        !stderr.contains("config update"),
+        "no update hint without a config file to update: {stderr}"
+    );
+
+    // Unset with a user config file present → the hint offers wt config
+    // update, which writes json-schema = 2.
+    repo.write_test_config("");
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("wt config update"),
+        "unset key with a config file should offer the update command: {stderr}"
+    );
+
+    // Explicit 1 → schema 1, no nag.
+    repo.write_test_config("[list]\njson-schema = 1\n");
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(!json.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("json-schema"),
+        "explicit value should not nag: {stderr}"
+    );
+
+    // Explicit 2 → envelope, no nag.
+    repo.write_test_config("[list]\njson-schema = 2\n");
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["schema"], 2);
+    assert_eq!(json["repo"]["default_branch"], "main");
+    assert!(json["items"].as_array().is_some_and(|i| !i.is_empty()));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("json-schema"), "no nag with a value set");
+
+    // Invalid value → warn and degrade to schema 1, like a config type
+    // error (config problems never brick a command).
+    repo.write_test_config("[list]\njson-schema = 3\n");
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "invalid value must not fail");
+    let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(!json.is_empty(), "degrades to schema 1");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("expected 1 or 2"),
+        "invalid value should warn: {stderr}"
+    );
+}
+
 /// `repo_url` is derived locally from the primary remote, converting an SSH
 /// remote to its HTTPS web URL without shelling out to a forge.
 #[rstest]
@@ -3513,8 +3620,8 @@ fn test_list_unborn_worktree_no_task_failures(repo: TestRepo) {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !stderr.contains("working-tree-diff") && !stderr.contains("working-tree-conflicts"),
-        "wt list should not surface working-tree-* task failures for unborn worktrees, got stderr:\n{stderr}"
+        !stderr.contains("working-tree diff") && !stderr.contains("working-tree conflict check"),
+        "wt list should not surface working-tree task failures for unborn worktrees, got stderr:\n{stderr}"
     );
     assert!(
         !stderr.contains("ambiguous argument 'HEAD'")
@@ -3754,11 +3861,178 @@ fn test_list_tolerates_missing_index(mut repo: TestRepo) {
         "missing index must not surface as a copy error.\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert!(
-        !combined.contains("working-tree-conflicts ("),
-        "missing index must not produce a working-tree-conflicts task error.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        !combined.contains("working-tree conflict check ("),
+        "missing index must not produce a working-tree conflict task error.\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert!(
         !feature_index.exists(),
         "wt list must not resurrect the real index"
     );
+}
+
+/// Recursively strips write permission from a repository's object database and
+/// restores the original modes on drop, so a test can exercise the read-only
+/// sandbox path without leaving an unremovable directory behind.
+#[cfg(unix)]
+struct ReadOnlyObjectDirectory {
+    modes: Vec<(std::path::PathBuf, u32)>,
+}
+
+#[cfg(unix)]
+impl ReadOnlyObjectDirectory {
+    fn new(repo: &TestRepo) -> Self {
+        use std::os::unix::fs::PermissionsExt;
+
+        fn collect_dirs(path: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            out.push(path.to_path_buf());
+            for entry in std::fs::read_dir(path).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    collect_dirs(&path, out);
+                }
+            }
+        }
+
+        let mut dirs = Vec::new();
+        collect_dirs(&repo.root_path().join(".git/objects"), &mut dirs);
+        let modes = dirs
+            .into_iter()
+            .map(|path| {
+                let original = std::fs::metadata(&path).unwrap().permissions().mode();
+                // Keep read + execute (traversal), drop every write bit.
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(original & !0o222))
+                    .unwrap();
+                (path, original)
+            })
+            .collect();
+        Self { modes }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ReadOnlyObjectDirectory {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        // Restore deepest-first so a parent is never re-locked before its
+        // children are restored.
+        for (path, mode) in self.modes.iter().rev() {
+            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(*mode));
+        }
+    }
+}
+
+/// `wt list --full` must keep working when the Git object database is
+/// read-only (a managed sandbox). Its merge and conflict probes write
+/// ephemeral objects — `merge-tree --write-tree` for the integration diff and
+/// `write-tree` against a temp index for the dirty-worktree conflict check —
+/// which `Repository::redirect_objects_if_read_only` reroutes into a temporary
+/// object database. The analysis stays complete instead of erroring with
+/// "insufficient permission for adding an object".
+#[cfg(unix)]
+#[rstest]
+fn test_list_full_survives_read_only_object_database(mut repo: TestRepo) {
+    // Explicit schema keeps stderr free of the unset-schema nag.
+    repo.write_test_config("[list]\njson-schema = 1\n");
+
+    // Diverged, cleanly-mergeable topology: `feature` adds one file, `main`
+    // adds another. Merging them yields a genuinely new tree, so the
+    // integration probe must write an object (unlike a fast-forward).
+    let feature =
+        repo.add_worktree_with_commit("feature", "feature.txt", "feature\n", "Add feature");
+    repo.commit("main diverges");
+
+    // Dirty the feature worktree so the conflict probe takes the temp-index
+    // `write-tree` path — the exact command the original report saw fail.
+    std::fs::write(feature.join("feature.txt"), "feature edited\n").unwrap();
+
+    // All object-writing setup is done; freeze the object database.
+    let _read_only = ReadOnlyObjectDirectory::new(&repo);
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--full", "--format=json"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "wt list --full must succeed with a read-only object database.\nstderr:\n{stderr}"
+    );
+    for marker in [
+        "insufficient permission",
+        "unable to create",
+        "Operation not permitted",
+        "failed to write",
+    ] {
+        assert!(
+            !stdout.contains(marker) && !stderr.contains(marker),
+            "a read-only object database leaked a write error ({marker}).\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+
+    // The merge analysis actually ran (not silently degraded): the integration
+    // probe wrote to the temporary store and produced a concrete diverged
+    // classification with the would-merge diff.
+    let items: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
+    let feature = items
+        .iter()
+        .find(|w| w["branch"] == "feature")
+        .expect("feature worktree present in list output");
+    assert_eq!(feature["main_state"], "diverged", "entry: {feature}");
+    assert_eq!(feature["main"]["ahead"], 1, "entry: {feature}");
+    assert_eq!(feature["main"]["behind"], 1, "entry: {feature}");
+    assert_eq!(feature["main"]["diff"]["added"], 1, "entry: {feature}");
+}
+
+/// `wt list statusline` is a separate entry point from `wt list` (it calls
+/// `populate_item` directly, not `collect()`) and renders on every Claude Code
+/// prompt inside the managed read-only sandbox this targets. Its merge/conflict
+/// probes must redirect too, or the statusline silently drops `main_state` and
+/// the integration symbols in a read-only object database.
+#[cfg(unix)]
+#[rstest]
+fn test_list_statusline_survives_read_only_object_database(mut repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
+
+    let feature =
+        repo.add_worktree_with_commit("feature", "feature.txt", "feature\n", "Add feature");
+    repo.commit("main diverges");
+
+    // All object-writing setup is done; freeze the object database.
+    let _read_only = ReadOnlyObjectDirectory::new(&repo);
+
+    // Statusline reports the current worktree, so run it from the feature tree.
+    let output = repo
+        .wt_command()
+        .current_dir(&feature)
+        .args(["list", "statusline", "--format", "json"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "wt list statusline must succeed with a read-only object database.\nstderr:\n{stderr}"
+    );
+    for marker in [
+        "insufficient permission",
+        "unable to create",
+        "Operation not permitted",
+        "failed to write",
+    ] {
+        assert!(
+            !stdout.contains(marker) && !stderr.contains(marker),
+            "a read-only object database leaked a write error ({marker}).\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+
+    // The integration classification comes from the object-writing probe; it
+    // must be present, not silently dropped to null.
+    let items: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
+    let feature = &items[0];
+    assert_eq!(feature["branch"], "feature", "entry: {feature}");
+    assert_eq!(feature["main_state"], "diverged", "entry: {feature}");
 }

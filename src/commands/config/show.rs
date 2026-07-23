@@ -105,8 +105,20 @@ fn handle_config_show_json() -> anyhow::Result<()> {
 
     let (project_path, project_config, project_identifier) = if let Ok(repo) = Repository::current()
     {
-        let path = repo.project_config_path()?;
         let config = repo.load_project_config()?;
+        let on_disk = repo.project_config_path()?;
+        // When config resolved but not from an existing on-disk file, it came
+        // from the object-store fallback (bare repo, default branch checked out
+        // in no worktree — #3461). Surface that revision spec as the source so
+        // `path`/`exists`/`config` agree, instead of pointing `path` at a
+        // missing file while `config` is populated.
+        let path = match &on_disk {
+            Some(p) if p.exists() => on_disk.clone(),
+            _ if config.is_some() => repo
+                .default_branch_project_config_content()
+                .map(|(_, spec)| spec),
+            _ => on_disk.clone(),
+        };
         let identifier = repo.project_identifier().ok();
         (
             path,
@@ -128,7 +140,12 @@ fn handle_config_show_json() -> anyhow::Result<()> {
         },
         "project": {
             "path": project_path,
-            "exists": project_path.as_ref().is_some_and(|p| p.exists()),
+            // Config source resolved — an on-disk file or the object-store
+            // fallback — iff `config` is populated. Keying `exists` off the
+            // loaded config (not `path.exists()`) keeps it consistent with
+            // `config` in the object-store case, where `path` is a revision
+            // spec with no file on disk.
+            "exists": project_config.is_some(),
             "identifier": project_identifier,
             "config": project_config,
         },
@@ -247,10 +264,29 @@ fn git_version() -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// Args for the interactive zsh compinit probe.
+///
+/// `+m` (disable job control) is load-bearing: without it the interactive
+/// `zsh -ic` grabs wt's controlling terminal and, if the timeout kills it
+/// first, leaves the pager to suspend with SIGTTOU. See `check_zsh_compinit_missing`
+/// and issue #3322.
+const ZSH_COMPINIT_PROBE_ARGS: [&str; 4] =
+    ["--no-globalrcs", "+m", "-ic", "(( $+functions[compdef] ))"];
+
 /// Check if zsh has compinit enabled by spawning an interactive shell
 ///
 /// Returns true if compinit is NOT enabled (i.e., user needs to add it).
 /// Returns false if compinit is enabled or we can't determine (fail-safe: don't warn).
+///
+// TODO(zsh-compinit-probe-unify): this duplicates `shell::detect_zsh_compinit`
+// — both spawn an interactive `zsh -ic` to probe for the `compdef` function, and
+// #3322 had to add the `+m` job-control fix to both. They diverge on purpose, so
+// folding them into one parameterized probe isn't a mechanical rename: this one
+// passes `--no-globalrcs` (checks the USER's config so we only nudge when *they*
+// haven't enabled compinit) while `detect_zsh_compinit` intentionally sources
+// global rcs (so shell setup won't re-add what /etc/zshrc already enables); they
+// also differ in result type (bool vs Option<bool>) and runner (`Cmd` vs raw
+// `Command`). Unify behind one `probe_zsh_compdef(no_globalrcs: bool)` helper.
 fn check_zsh_compinit_missing() -> bool {
     // Allow tests to bypass this check since zsh subprocess behavior varies across CI envs
     if std::env::var("WORKTRUNK_TEST_COMPINIT_CONFIGURED").is_ok() {
@@ -276,8 +312,14 @@ fn check_zsh_compinit_missing() -> bool {
     // bypasses both the stdin=null default and the stderr suppression above)
     // would otherwise hang `wt config show` indefinitely. On timeout run()
     // returns Err, so the `else` below declines to warn rather than misreport.
+    // `+m` disables job control so this interactive probe doesn't grab wt's
+    // controlling terminal. An interactive zsh with job control on `tcsetpgrp`s
+    // to claim the terminal foreground; if the 2s timeout kills it before it
+    // restores that, wt is left in a background process group and the pager
+    // spawned moments later (config show always pages) raises SIGTTOU,
+    // suspending the command (`suspended (tty output)`). See issue #3322.
     let Ok(output) = Cmd::new("zsh")
-        .args(["--no-globalrcs", "-ic", "(( $+functions[compdef] ))"])
+        .args(ZSH_COMPINIT_PROBE_ARGS)
         .env("ZSH_DISABLE_COMPFIX", "true")
         .timeout(std::time::Duration::from_secs(2))
         .run()
@@ -639,18 +681,18 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
     // Read and display the file contents
     let contents = std::fs::read_to_string(&config_path).context("Failed to read config file")?;
 
-    if contents.trim().is_empty() {
-        writeln!(out, "{}", hint_message("Empty file (using defaults)"))?;
-        return Ok(());
-    }
-
     // Check for deprecations with emit_inline_warnings=false (silent mode)
     // User config is global, not tied to any repository
-    let has_deprecations = match worktrunk::config::check_and_migrate(
+    // Deprecated patterns supersede the TOML dump below (their diff covers
+    // the file); a pending-default pin is additive, so the dump stays. An
+    // empty file still gets the pending-pin details — `wt config update`
+    // would rewrite it — just no dump.
+    let mut details_shown = false;
+    let skip_dump = match worktrunk::config::check_and_migrate(
         &config_path,
         &contents,
         true,
-        "User config",
+        worktrunk::config::ConfigFileKind::User,
         None,
         false, // silent mode - we'll format the output ourselves
     ) {
@@ -659,7 +701,8 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
                 out.push_str(&worktrunk::config::format_deprecation_details(
                     &info, &contents,
                 ));
-                true
+                details_shown = true;
+                info.has_deprecated_patterns()
             } else {
                 false
             }
@@ -669,6 +712,11 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
             false
         }
     };
+
+    if contents.trim().is_empty() {
+        writeln!(out, "{}", hint_message("Empty file (using defaults)"))?;
+        return Ok(());
+    }
 
     // Validate config (syntax + schema) and warn if invalid
     if let Err(e) = toml::from_str::<UserConfig>(&contents) {
@@ -681,7 +729,11 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
 
     // Display TOML with syntax highlighting (gutter at column 0).
     // Skip when deprecations were shown — the proposed diff already covers it.
-    if !has_deprecations {
+    if !skip_dump {
+        if details_shown {
+            // Pending-pin details above end in their diff; separate phases.
+            out.push('\n');
+        }
         writeln!(out, "{}", format_toml(&contents))?;
     }
 
@@ -731,7 +783,11 @@ fn format_show_warning(warning: &worktrunk::config::UnknownWarning) -> String {
         UnknownWarning::TopLevelWrongConfig {
             key,
             other_description,
-        } => cformat!("Key <bold>{key}</> belongs in {other_description} (will be ignored)"),
+        } => worktrunk::config::with_scope_note(
+            cformat!("Key <bold>{key}</> belongs in {other_description} (will be ignored)"),
+            other_description,
+            key,
+        ),
         UnknownWarning::TopLevelDeprecatedWrongConfig {
             key,
             other_description,
@@ -740,7 +796,11 @@ fn format_show_warning(warning: &worktrunk::config::UnknownWarning) -> String {
         UnknownWarning::NestedWrongConfig {
             path,
             other_description,
-        } => cformat!("Key <bold>{path}</> belongs in {other_description} (will be ignored)"),
+        } => worktrunk::config::with_scope_note(
+            cformat!("Key <bold>{path}</> belongs in {other_description} (will be ignored)"),
+            other_description,
+            path,
+        ),
         UnknownWarning::NestedUnknown { path } => {
             cformat!("Unknown key <bold>{path}</> will be ignored")
         }
@@ -763,46 +823,63 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
             return Ok(());
         }
     };
-    let config_path = match repo.project_config_path() {
-        Ok(Some(path)) => path,
-        _ => {
-            writeln!(
-                out,
-                "{}",
-                cformat!(
-                    "<dim>{}</>",
-                    format_heading("PROJECT CONFIG", Some("Not in a git repository"))
-                )
-            )?;
-            return Ok(());
+    // Helper: heading + project identifier, shared across the resolved and
+    // absent branches so their output stays uniform.
+    fn write_heading_and_identifier(
+        out: &mut String,
+        repo: &Repository,
+        source: &str,
+    ) -> anyhow::Result<()> {
+        writeln!(out, "{}", format_heading("PROJECT CONFIG", Some(source)))?;
+        // Project identifier — used as the key for [projects."..."] sections in
+        // user config. Surface it here so users can find the right key without
+        // hand-deriving it from the remote URL.
+        if let Ok(project_id) = repo.project_identifier() {
+            let line = info_message(cformat!("Identifier: <bold>{project_id}</>"));
+            writeln!(out, "{line}")?;
         }
+        Ok(())
+    }
+
+    // Resolve the effective config source, mirroring `ProjectConfig::load`: an
+    // on-disk `.config/wt.toml` when one exists, otherwise the committed
+    // default-branch config read from the object store (bare repo, default
+    // branch checked out in no worktree — #3461). Reading the raw text here
+    // rather than calling `load_project_config` keeps the deprecation and
+    // validation rendering below, which operates on the TOML source. Without
+    // this fallback, `config show` reports "Not found" while the hooks from the
+    // object-store config actually run — the opposite of reality.
+    let on_disk = repo.project_config_path()?;
+    let (config_path, contents) = match &on_disk {
+        Some(path) if path.exists() => {
+            let contents = std::fs::read_to_string(path).context("Failed to read config file")?;
+            let source = format!("@ {}", format_path_for_display(path));
+            write_heading_and_identifier(out, &repo, &source)?;
+            (path.clone(), contents)
+        }
+        _ => match repo.default_branch_project_config_content() {
+            Some((object_store_contents, spec)) => {
+                // `spec` is a git revision spec (`<default>:.config/wt.toml`),
+                // not a filesystem path — display it verbatim, tagged as the
+                // object-store source so it isn't mistaken for an on-disk file.
+                let source = format!("@ {} (from object store)", spec.to_string_lossy());
+                write_heading_and_identifier(out, &repo, &source)?;
+                (spec, object_store_contents)
+            }
+            None => {
+                // Neither an on-disk file nor a committed fallback resolved.
+                let Some(path) = on_disk else {
+                    let heading = format_heading("PROJECT CONFIG", Some("No project config"));
+                    writeln!(out, "{}", cformat!("<dim>{}</>", heading))?;
+                    return Ok(());
+                };
+                let source = format!("@ {}", format_path_for_display(&path));
+                write_heading_and_identifier(out, &repo, &source)?;
+                writeln!(out, "{}", hint_message("Not found"))?;
+                return Ok(());
+            }
+        },
     };
-
-    writeln!(
-        out,
-        "{}",
-        format_heading(
-            "PROJECT CONFIG",
-            Some(&format!("@ {}", format_path_for_display(&config_path)))
-        )
-    )?;
-
-    // Project identifier — used as the key for [projects."..."] sections in
-    // user config. Surface it here so users can find the right key without
-    // hand-deriving it from the remote URL.
-    if let Ok(project_id) = repo.project_identifier() {
-        let line = info_message(cformat!("Identifier: <bold>{project_id}</>"));
-        writeln!(out, "{line}")?;
-    }
-
-    // Check if file exists
-    if !config_path.exists() {
-        writeln!(out, "{}", hint_message("Not found"))?;
-        return Ok(());
-    }
-
-    // Read and display the file contents
-    let contents = std::fs::read_to_string(&config_path).context("Failed to read config file")?;
 
     if contents.trim().is_empty() {
         writeln!(out, "{}", hint_message("Empty file"))?;
@@ -810,13 +887,18 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
     }
 
     // Check for deprecations with emit_inline_warnings=false (silent mode)
-    // Only write migration file in main worktree, not linked worktrees
+    // Only write migration file in main worktree, not linked worktrees.
+    // Deprecated patterns supersede the TOML dump below (their diff covers
+    // the file); a pending-default pin would be additive, so the dump stays —
+    // no pending-default rule targets project config today, but the shape
+    // mirrors render_user_config so the two stay interchangeable.
     let is_main_worktree = !repo.current_worktree().is_linked().unwrap_or(true);
-    let has_deprecations = match worktrunk::config::check_and_migrate(
+    let mut details_shown = false;
+    let skip_dump = match worktrunk::config::check_and_migrate(
         &config_path,
         &contents,
         is_main_worktree,
-        "Project config",
+        worktrunk::config::ConfigFileKind::Project,
         Some(&repo),
         false, // silent mode - we'll format the output ourselves
     ) {
@@ -825,7 +907,8 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
                 out.push_str(&worktrunk::config::format_deprecation_details(
                     &info, &contents,
                 ));
-                true
+                details_shown = true;
+                info.has_deprecated_patterns()
             } else {
                 false
             }
@@ -847,7 +930,11 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
 
     // Display TOML with syntax highlighting (gutter at column 0).
     // Skip when deprecations were shown — the proposed diff already covers it.
-    if !has_deprecations {
+    if !skip_dump {
+        if details_shown {
+            // Pending-pin details above end in their diff; separate phases.
+            out.push('\n');
+        }
         writeln!(out, "{}", format_toml(&contents))?;
     }
 
@@ -1155,11 +1242,22 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
             }
         }
 
+        // Show the shell actually running wt — the process tree names the
+        // interactive shell even when $SHELL points at a different login shell
+        let ancestor = worktrunk::shell::ancestor_shell();
+        if let Some(ancestor) = ancestor {
+            debug_lines.push(cformat!(
+                "Detected shell: <bold>{}</> (process tree)",
+                ancestor.name
+            ));
+        }
         // Show $SHELL to help diagnose rc file sourcing issues
         let shell_env = std::env::var("SHELL").ok().filter(|s| !s.is_empty());
         if let Some(shell_env) = &shell_env {
             debug_lines.push(cformat!("$SHELL: <bold>{shell_env}</>"));
-        } else if let Some(detected) = worktrunk::shell::current_shell() {
+        } else if ancestor.is_none()
+            && let Some(detected) = worktrunk::shell::current_shell()
+        {
             debug_lines.push(cformat!(
                 "Detected shell: <bold>{detected}</> (via PSModulePath)"
             ));
@@ -1450,6 +1548,10 @@ fn render_version_check(out: &mut String) -> anyhow::Result<()> {
 
 /// Fetch the latest release version from GitHub
 fn fetch_latest_version() -> anyhow::Result<String> {
+    // Held for the whole lookup; the sub-startup-delay paths (test injection,
+    // fast failures, response parsing) return before it ever renders.
+    let _watchdog = worktrunk::progress::Watchdog::start("the version check", None);
+
     // Allow tests to inject a version without network access.
     // Set to "error" to simulate a fetch failure.
     if let Ok(version) = std::env::var("WORKTRUNK_TEST_LATEST_VERSION") {
@@ -1463,14 +1565,13 @@ fn fetch_latest_version() -> anyhow::Result<String> {
         "worktrunk/{} (https://worktrunk.dev)",
         env!("CARGO_PKG_VERSION")
     );
-    // The watchdog (below) supplies "still waiting" feedback, so the fetch needn't
+    // The watchdog (above) supplies "still waiting" feedback, so the fetch needn't
     // be cut off at an aggressive 5s. But the watchdog is TTY-gated — a
     // non-interactive run (CI, scripts, redirected stderr) gets no feedback — so a
     // hard ceiling still has to exist or such a run could hang silently:
     // --connect-timeout fails fast when offline, and a generous --max-time bounds a
     // connected-but-stalled host without cutting off a slow-but-progressing fetch.
     let output = {
-        let _watchdog = worktrunk::progress::Watchdog::start("the latest version", None);
         Cmd::new("curl")
             .args([
                 "--silent",
@@ -1548,6 +1649,25 @@ mod tests {
         // Invalid input
         assert!(!is_newer_version("invalid", "0.23.2"));
         assert!(!is_newer_version("0.23.2", "invalid"));
+    }
+
+    /// Regression guard for #3322: the interactive zsh compinit probe must
+    /// disable job control (`+m`). Without it, the probe grabs wt's controlling
+    /// terminal; a timeout-kill then leaves wt in a background process group and
+    /// the `wt config show` pager suspends with SIGTTOU (`suspended (tty output)`).
+    #[test]
+    fn test_compinit_probe_disables_job_control() {
+        assert!(
+            ZSH_COMPINIT_PROBE_ARGS.contains(&"+m"),
+            "compinit probe must pass +m to disable job control (#3322); got {ZSH_COMPINIT_PROBE_ARGS:?}"
+        );
+        // `+m` must precede `-ic` so it's parsed as an option, not a command arg.
+        let m = ZSH_COMPINIT_PROBE_ARGS.iter().position(|a| *a == "+m");
+        let ic = ZSH_COMPINIT_PROBE_ARGS.iter().position(|a| *a == "-ic");
+        assert!(
+            m < ic,
+            "+m must come before -ic: {ZSH_COMPINIT_PROBE_ARGS:?}"
+        );
     }
 
     #[test]

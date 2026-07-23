@@ -25,6 +25,7 @@ info:
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -97,7 +98,7 @@ Add to the project config:
 
 [1m[32mWhat gets copied[0m
 
-All gitignored files are copied by default, except for built-in excluded directories: VCS metadata ([2m.bzr/[0m, [2m.hg/[0m, [2m.jj/[0m, [2m.pijul/[0m, [2m.sl/[0m, [2m.svn/[0m) and tool-state ([2m.conductor/[0m, [2m.entire/[0m, [2m.worktrees/[0m). Tracked files are never touched.
+All gitignored files are copied by default, except for built-in excluded directories: VCS metadata ([2m.bzr/[0m, [2m.hg/[0m, [2m.jj/[0m, [2m.pijul/[0m, [2m.sl/[0m, [2m.svn/[0m), tool-state ([2m.conductor/[0m, [2m.entire/[0m, [2m.worktrees/[0m), and nested worktrees. Tracked files are never touched. Discovery handles nested [2m.gitignore[0m files, global excludes, and [2m.git/info/exclude[0m. Existing files in the destination are skipped, so re-running is safe; [2m--force[0m overwrites them.
 
 To limit what gets copied further, create [2m.worktreeinclude[0m with gitignore-style patterns. Files must be [1mboth[0m gitignored [1mand[0m in [2m.worktreeinclude[0m:
 
@@ -125,14 +126,6 @@ Without [2m.worktreeinclude[0m, the command is a no-op (it reports that nothin
  Build caches      [2m.cache/[0m, [2m.next/[0m, [2m.parcel-cache/[0m, [2m.turbo/[0m       
  Generated assets  Images, ML models, binaries too large for git  
  Environment files [2m.env[0m (if not generated per-worktree)           
-
-[1m[32mFeatures[0m
-
-- Uses copy-on-write (reflink) when available for space-efficient copies
-- Handles nested [2m.gitignore[0m files, global excludes, and [2m.git/info/exclude[0m
-- Skips existing files by default (safe to re-run)
-- [2m--force[0m overwrites existing files in the destination
-- Always skips built-in excluded directories — VCS metadata ([2m.bzr/[0m, [2m.hg/[0m, [2m.jj/[0m, [2m.pijul/[0m, [2m.sl/[0m, [2m.svn/[0m) and tool-state ([2m.conductor/[0m, [2m.entire/[0m, [2m.worktrees/[0m) — and nested worktrees
 
 [1m[32mPerformance[0m
 
@@ -175,7 +168,7 @@ Virtual environments contain absolute paths and can't be copied. Use [2muv sync
 The [2m.worktreeinclude[0m pattern is shared with Claude Code on desktop, which copies matching files when creating worktrees. Differences:
 
 - worktrunk copies all gitignored files by default; Claude Code requires [2m.worktreeinclude[0m. Pass [2m--require-include[0m to match Claude Code (copy nothing without [2m.worktreeinclude[0m)
-- worktrunk uses copy-on-write for large directories like [2mtarget/[0m — potentially 30x faster on macOS, 6x on Linux
+- worktrunk uses copy-on-write for large directories like [2mtarget/[0m (see Performance above)
 - worktrunk runs as a configurable hook in the worktree lifecycle
 
 ----- stderr -----

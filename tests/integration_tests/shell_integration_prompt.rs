@@ -202,6 +202,105 @@ fn test_switch_no_shell_env_shows_hint(repo: TestRepo) {
     );
 }
 
+///
+/// $SHELL names the login shell (zsh, with integration installed), but the
+/// process tree says wt is really running under fish. Restart advice would be
+/// wrong — restarting fish activates nothing — so the warning must take the
+/// not-installed shape for the shell actually in use.
+#[cfg(unix)]
+#[rstest]
+fn test_login_shell_mismatch_uses_process_tree_shell(repo: TestRepo) {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+
+    repo.configure_shell_integration(); // writes the zsh eval line to ~/.zshrc
+
+    let mut cmd = repo.wt_command();
+    cmd.env("SHELL", "/bin/zsh");
+    cmd.env("WORKTRUNK_TEST_PARENT_SHELL", "fish");
+    cmd.arg0("wt"); // PATH-style invocation, not the explicit-path warning
+
+    let output = cmd
+        .args(["switch", "--create", "feature"])
+        .stdin(Stdio::piped())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "Switch should succeed");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("shell integration not installed"),
+        "The actual shell (fish) has no integration: {stderr}"
+    );
+    assert!(
+        !stderr.contains("restart"),
+        "Restart advice targets the wrong shell here: {stderr}"
+    );
+}
+
+///
+/// The process tree names a supported shell whose integration IS installed;
+/// $SHELL points at a different, unconfigured shell. The process tree wins:
+/// the warning takes the installed-but-not-active shape with the hedged
+/// restart hint.
+#[cfg(unix)]
+#[rstest]
+fn test_process_tree_shell_configured_shows_restart_hint(repo: TestRepo) {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+
+    repo.configure_shell_integration(); // writes the zsh eval line to ~/.zshrc
+
+    let mut cmd = repo.wt_command();
+    cmd.env("SHELL", "/bin/bash"); // login shell without integration
+    cmd.env("WORKTRUNK_TEST_PARENT_SHELL", "zsh");
+    cmd.arg0("wt");
+
+    let output = cmd
+        .args(["switch", "--create", "feature"])
+        .stdin(Stdio::piped())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "Switch should succeed");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("shell integration installed but not active"),
+        "zsh (from the process tree) has integration: {stderr}"
+    );
+    assert!(
+        stderr.contains("A shell restart usually activates shell integration"),
+        "Should show the hedged restart hint: {stderr}"
+    );
+}
+
+///
+/// The process tree names a known-but-unsupported shell (tcsh); $SHELL points
+/// at a supported one. The unsupported-shell hint must name the shell actually
+/// in use rather than trusting $SHELL.
+#[cfg(unix)]
+#[rstest]
+fn test_process_tree_unsupported_shell_overrides_shell_env(repo: TestRepo) {
+    use std::process::Stdio;
+
+    let mut cmd = repo.wt_command();
+    cmd.env("SHELL", "/bin/zsh");
+    cmd.env("WORKTRUNK_TEST_PARENT_SHELL", "tcsh");
+
+    let output = cmd
+        .args(["switch", "--create", "feature"])
+        .stdin(Stdio::piped())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "Switch should succeed");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not yet supported for tcsh"),
+        "Should name the shell from the process tree: {stderr}"
+    );
+}
+
 // PTY-based tests for interactive scenarios
 #[cfg(all(unix, feature = "shell-integration-tests"))]
 mod pty_tests {

@@ -964,3 +964,99 @@ fn test_promote_detached_head_linked(mut repo: TestRepo) {
         Some(&feature_path),
     ));
 }
+
+/// `step promote --format=json` reports `already_in_main` when target branch is
+/// already in the main worktree, mirroring `step rebase --format=json` shape.
+#[rstest]
+fn test_promote_already_in_main_json(mut repo: TestRepo) {
+    let _settings_guard = setup_snapshot_settings(&repo).bind_to_scope();
+    let _feature_path = repo.add_worktree("feature");
+
+    // 'main' is already in main worktree
+    let output = repo
+        .wt_command()
+        .args(["step", "promote", "main", "--format=json"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid JSON to stdout");
+    assert_eq!(parsed["outcome"], "already_in_main");
+    assert_eq!(parsed["branch"], "main");
+}
+
+/// `step promote --format=json` reports `promoted` with target, main_branch,
+/// swapped count, and mismatch flag when a feature branch is promoted.
+#[rstest]
+fn test_promote_swap_json(mut repo: TestRepo) {
+    let _settings_guard = setup_snapshot_settings(&repo).bind_to_scope();
+    let _feature_path = repo.add_worktree_with_commit("feature", "f.txt", "x", "feat: x");
+
+    let output = repo
+        .wt_command()
+        .args(["step", "promote", "feature", "--format=json"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "promote failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid JSON to stdout");
+    assert_eq!(parsed["outcome"], "promoted");
+    assert_eq!(parsed["target"], "feature");
+    assert_eq!(parsed["main_branch"], "main");
+    assert_eq!(parsed["swapped"], 0);
+    assert_eq!(parsed["mismatch"], true);
+
+    // The mismatch warning still appears on stderr even in JSON mode (safety signal).
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("mismatched worktree state"),
+        "expected mismatch warning on stderr, got: {stderr}"
+    );
+    // The "Promoted:" success line also goes to stderr in JSON mode, matching
+    // `rebase`/`push`: the human status line is stderr, the JSON on stdout is
+    // the machine-readable signal.
+    assert!(
+        stderr.contains("Promoted:"),
+        "expected promote success line on stderr, got: {stderr}"
+    );
+}
+
+/// `step promote --format=json` reports `mismatch: false` when restoring the
+/// default branch back to the main worktree.
+#[rstest]
+fn test_promote_restore_json(mut repo: TestRepo) {
+    let _settings_guard = setup_snapshot_settings(&repo).bind_to_scope();
+    let feature_path = repo.add_worktree("feature");
+
+    // First promote creates mismatch (main now has feature)
+    repo.wt_command()
+        .args(["step", "promote", "feature"])
+        .output()
+        .unwrap();
+
+    // Now restore — promote the default branch (main) back
+    let output = repo
+        .wt_command()
+        .args(["step", "promote", "main", "--format=json"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "restore failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid JSON to stdout");
+    assert_eq!(parsed["outcome"], "promoted");
+    assert_eq!(parsed["target"], "main");
+    assert_eq!(parsed["main_branch"], "feature");
+    assert_eq!(parsed["swapped"], 0);
+    assert_eq!(parsed["mismatch"], false);
+}

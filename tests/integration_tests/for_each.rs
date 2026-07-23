@@ -252,6 +252,57 @@ fn test_for_each_aborts_on_signal_exit(repo: TestRepo) {
     );
 }
 
+/// for-each relocates the user's command into each worktree, so inherited
+/// git-discovery vars (`GIT_DIR`/`GIT_WORK_TREE`) must be scrubbed — git
+/// resolves them before walking up from the cwd, so a forwarded value would
+/// misdirect every iteration's `git` calls to the one inherited repo
+/// (issue #3373; same contract as the hook tests in `user_hooks.rs`).
+///
+/// Sets a discovery context consistent with the repo wt operates on (as a
+/// `!wt` git alias would), so wt itself runs normally; each visited worktree
+/// records the `GIT_DIR`/`GIT_WORK_TREE` it sees — `[][]` once scrubbed.
+#[rstest]
+#[cfg(unix)]
+fn test_for_each_does_not_inherit_git_discovery_vars(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    let marker_dir = tempfile::tempdir().expect("create marker tmpdir");
+    let marker_path = marker_dir.path().to_string_lossy().to_string();
+    let shell_cmd = format!(
+        r#"printf '[%s][%s]' "$GIT_DIR" "$GIT_WORK_TREE" > {marker_path}/$(basename "$(pwd)")"#
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["step", "for-each", "--", "sh", "-c", &shell_cmd])
+        .env("GIT_DIR", repo.root_path().join(".git"))
+        .env("GIT_WORK_TREE", repo.root_path())
+        .output()
+        .expect("run wt step for-each");
+    assert!(
+        output.status.success(),
+        "for-each run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Both the primary worktree and the added one must have been visited and
+    // seen a scrubbed environment; misdirection is only observable when the
+    // command runs in a worktree other than the inherited context's.
+    for dir in [repo.root_path(), feature_path.as_path()] {
+        let marker = marker_dir
+            .path()
+            .join(dir.file_name().expect("worktree dir has a name"));
+        let seen = std::fs::read_to_string(&marker)
+            .unwrap_or_else(|e| panic!("marker for {} missing: {e}", dir.display()));
+        assert_eq!(
+            seen,
+            "[][]",
+            "for-each child in {} inherited git-discovery vars ([GIT_DIR][GIT_WORK_TREE]): {seen}",
+            dir.display()
+        );
+    }
+}
+
 #[rstest]
 fn test_for_each_skips_prunable_worktrees(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature");

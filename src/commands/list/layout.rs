@@ -1500,6 +1500,7 @@ mod tests {
                 remote: Some("origin".to_string()),
                 ahead: 4,
                 behind: 2,
+                ..Default::default()
             }),
             pr_status: None,
             url: None,
@@ -1510,6 +1511,7 @@ mod tests {
             status_symbols: StatusSymbols::default(),
             statusline: None,
             custom_values: Vec::new(),
+            seeded: Default::default(),
             kind: ItemKind::Worktree(Box::new(WorktreeData {
                 path: PathBuf::from("/test/path"),
                 detached: false,
@@ -1625,6 +1627,7 @@ mod tests {
             status_symbols: StatusSymbols::default(),
             statusline: None,
             custom_values: Vec::new(),
+            seeded: Default::default(),
             kind: ItemKind::Worktree(Box::new(WorktreeData {
                 path: PathBuf::from("/test"),
                 detached: false,
@@ -1754,6 +1757,7 @@ mod tests {
             status_symbols: StatusSymbols::default(),
             statusline: None,
             custom_values: Vec::new(),
+            seeded: Default::default(),
             kind: ItemKind::Worktree(Box::new(WorktreeData {
                 path: PathBuf::from("/test/wt"),
                 detached: false,
@@ -2221,6 +2225,7 @@ mod tests {
             status_symbols: StatusSymbols::default(),
             statusline: None,
             custom_values: Vec::new(),
+            seeded: Default::default(),
             kind: ItemKind::Worktree(Box::new(WorktreeData {
                 path: PathBuf::from(path),
                 detached: false,
@@ -2348,6 +2353,7 @@ mod tests {
                 remote: Some("origin".to_string()),
                 ahead: 0,
                 behind: 0,
+                ..Default::default()
             });
             super::super::model::ListItem {
                 head: "a620bcfe".to_string(),
@@ -2375,6 +2381,7 @@ mod tests {
                 status_symbols: StatusSymbols::default(),
                 statusline: None,
                 custom_values: Vec::new(),
+                seeded: Default::default(),
                 kind: ItemKind::Worktree(Box::new(WorktreeData {
                     path: PathBuf::from(path),
                     detached: false,

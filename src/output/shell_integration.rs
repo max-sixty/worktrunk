@@ -9,7 +9,7 @@
 //! | Condition | Warning | Hint |
 //! |-----------|---------|------|
 //! | Not installed | `Worktree for X @ path, but cannot change directory — shell integration not installed` | `To enable automatic cd, run wt config shell install` |
-//! | Needs restart | `Worktree for X @ path, but cannot change directory — shell requires restart` | `Restart shell to activate shell integration` |
+//! | Installed, not active | `Worktree for X @ path, but cannot change directory — shell integration installed but not active` | `A shell restart usually activates shell integration; if it doesn't, ask an agent to debug with the docs @ https://worktrunk.dev/llms.txt` |
 //! | Explicit path | `Worktree for X @ path, but cannot change directory — ran ./wt; shell integration wraps wt` | `To change directory, run wt switch X` |
 //! | Git subcommand | `Worktree for X @ path, but cannot change directory — ran git wt; running through git prevents cd` | `For automatic cd, invoke directly (with the -): git-wt` |
 //!
@@ -41,8 +41,8 @@
 //! |-----------|--------|
 //! | Git subcommand | Return early (warning already shown) |
 //! | Unsupported shell | Hint: `Shell integration not yet supported for <shell>` |
-//! | $SHELL not set | Hint: `To enable automatic cd, run wt config shell install` |
-//! | Current shell already installed | Hint: `Restart shell to activate shell integration` |
+//! | No shell detected | Hint: `To enable automatic cd, run wt config shell install` |
+//! | Current shell already installed | Hint: `A shell restart usually activates shell integration; …` |
 //! | `skip-shell-integration-prompt` / Non-TTY | Hint: `To enable automatic cd, run wt config shell install` |
 //! | TTY | Prompt: `Install shell integration? [y/N/?]` |
 //!
@@ -53,7 +53,7 @@
 //! | Reason | Meaning |
 //! |--------|---------|
 //! | `shell integration not installed` | Shell config doesn't have the `eval` line |
-//! | `shell requires restart` | Shell config has `eval` line but wrapper not active |
+//! | `shell integration installed but not active` | Shell config has `eval` line but wrapper not active |
 //! | `ran X; shell integration wraps Y` | Invoked with explicit path (e.g., `./target/debug/wt`) |
 //!
 //! Note: The git subcommand case (`ran git wt; ...`) is handled separately via [`crate::is_git_subcommand`].
@@ -64,7 +64,7 @@ use color_print::cformat;
 use worktrunk::config::{UserConfig, require_config_path};
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
-use worktrunk::shell::{Shell, current_shell, current_shell_name, extract_filename_from_path};
+use worktrunk::shell::{Shell, current_shell, current_shell_name};
 use worktrunk::styling::{
     eprintln, format_bash_with_gutter, hint_message, info_message, success_message, warning_message,
 };
@@ -109,16 +109,26 @@ pub(crate) fn print_shell_integration_hint(repo: &Repository) {
     let _ = repo.mark_hint_shown(SHELL_INTEGRATION_HINT);
 }
 
-/// Hint when shell integration is installed but shell needs restart.
+/// Hint shown right after installing: the wrapper cannot be active yet, so
+/// the restart advice is unconditional.
 pub(crate) fn shell_restart_hint() -> &'static str {
     "Restart shell to activate shell integration"
 }
 
+/// Hint when integration is installed for the current shell but the wrapper
+/// didn't intercept this invocation. Hedged: shell detection can still be
+/// wrong (non-interactive contexts, exotic nesting), so restart is presented
+/// as the likely fix with an escape hatch, not a certainty. The escape hatch
+/// points at the LLM docs index, which any agent can fetch — unlike the
+/// `/worktrunk` skill, which only plugin users have.
+pub(crate) fn shell_inactive_hint() -> String {
+    cformat!(
+        "A shell restart usually activates shell integration; if it doesn't, ask an agent to debug with the docs @ <underline>https://worktrunk.dev/llms.txt</>"
+    )
+}
+
 /// Shell integration hint for unknown/unsupported shell.
-fn shell_integration_unsupported_shell(shell_path: &str) -> String {
-    // Extract shell name from path, handling both Unix and Windows paths
-    // e.g., "/bin/tcsh" -> "tcsh", "C:\...\tcsh.exe" -> "tcsh"
-    let shell_name = extract_filename_from_path(shell_path).unwrap_or(shell_path);
+fn shell_integration_unsupported_shell(shell_name: &str) -> String {
     format!(
         "Shell integration not yet supported for {shell_name} (supports bash, zsh, fish, nu, PowerShell)"
     )
@@ -150,10 +160,10 @@ pub(crate) fn should_show_explicit_path_hint() -> bool {
 /// Returns a reason string explaining why shell integration isn't working.
 /// See the module documentation for the complete spec of warning messages.
 ///
-/// Checks specifically if the CURRENT shell (detected via $SHELL or PSModulePath
-/// fallback) has integration configured, not just any shell. This prevents misleading
-/// "shell requires restart" messages when e.g. bash has integration but the user is
-/// running fish.
+/// Checks specifically if the CURRENT shell (detected via the process tree,
+/// falling back to $SHELL / PSModulePath) has integration configured, not just
+/// any shell. This prevents misleading "restart" advice when e.g. bash has
+/// integration but the user is running fish.
 pub(crate) fn compute_shell_warning_reason() -> String {
     // Check if the CURRENT shell has integration configured, not just ANY shell
     let is_configured = current_shell()
@@ -204,7 +214,7 @@ fn compute_shell_warning_reason_inner(
                 cformat!("ran <bold>{invoked_name}</>; shell integration wraps <bold>{wraps}</>")
             }
         } else {
-            "shell requires restart".to_string()
+            "shell integration installed but not active".to_string()
         }
     } else {
         "shell integration not installed".to_string()
@@ -363,19 +373,19 @@ pub fn print_shell_install_result(scan_result: &crate::commands::configure_shell
         );
     }
 
-    // Restart hint for current shell
+    // Restart hint for current shell. Compare Shell values, not display
+    // names — the detected name can be "pwsh" or "zsh-5.9", which would
+    // never equal the canonical "powershell"/"zsh" strings.
     if shells_configured_count > 0 {
-        let current_shell = current_shell_name();
-
-        let current_shell_result = current_shell.as_ref().and_then(|shell_name| {
+        let current_shell_configured = current_shell().is_some_and(|shell| {
             scan_result
                 .configured
                 .iter()
                 .filter(|r| !matches!(r.action, ConfigAction::AlreadyExists))
-                .find(|r| r.shell.to_string().eq_ignore_ascii_case(shell_name))
+                .any(|r| r.shell == shell)
         });
 
-        if current_shell_result.is_some() {
+        if current_shell_configured {
             eprintln!("{}", hint_message(shell_restart_hint()));
         }
     }
@@ -405,18 +415,17 @@ pub fn prompt_shell_integration(
 
     let is_tty = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
 
-    // Check the current shell (via $SHELL or PSModulePath fallback)
-    // Only prompt if current shell is supported (so they benefit immediately)
-    let shell_env = std::env::var("SHELL").ok();
+    // Check the current shell (via the process tree, falling back to $SHELL /
+    // PSModulePath). Only prompt if it's supported (so they benefit immediately).
     if current_shell().is_none() {
-        match &shell_env {
-            Some(path) => {
+        match current_shell_name() {
+            Some(name) => {
                 eprintln!(
                     "{}",
-                    hint_message(shell_integration_unsupported_shell(path))
+                    hint_message(shell_integration_unsupported_shell(&name))
                 );
             }
-            // $SHELL not set: could be Windows PowerShell, or unusual Unix setup
+            // No shell detected: could be Windows PowerShell, or unusual Unix setup
             // Point them to manual installation (and count it as a shown install hint)
             None => print_shell_integration_hint(repo),
         }
@@ -444,8 +453,8 @@ pub fn prompt_shell_integration(
     if current_shell_installed {
         // Shell integration is configured but not active for this invocation
         if !crate::was_invoked_with_explicit_path() {
-            // Invoked via PATH but wrapper isn't active - needs shell restart
-            eprintln!("{}", hint_message(shell_restart_hint()));
+            // Invoked via PATH but wrapper isn't active — a restart usually fixes it
+            eprintln!("{}", hint_message(shell_inactive_hint()));
         }
         // For explicit paths: no hint needed - handle_switch_output() warning already explains
         return Ok(false);
@@ -584,15 +593,11 @@ pub fn print_shell_uninstall_result(scan_result: &UninstallScanResult, explicit_
         ))
     );
 
-    // Hint about restarting shell (only if current shell was affected)
-    let current_shell = current_shell_name();
-
-    let current_shell_affected = current_shell.as_ref().is_some_and(|shell_name| {
-        scan_result
-            .results
-            .iter()
-            .any(|r| r.shell.to_string().eq_ignore_ascii_case(shell_name))
-    });
+    // Hint about restarting shell (only if current shell was affected).
+    // Compare Shell values, not display names — the detected name can be
+    // "pwsh" or "zsh-5.9", which would never equal "powershell"/"zsh".
+    let current_shell_affected =
+        current_shell().is_some_and(|shell| scan_result.results.iter().any(|r| r.shell == shell));
 
     if current_shell_affected {
         eprintln!("{}", hint_message("Restart shell to complete uninstall"));
@@ -647,9 +652,9 @@ mod tests {
         let reason = compute_shell_warning_reason_inner(true, true, "/usr/local/bin/git-wt", "wt");
         assert_snapshot!(reason, @"ran [1mgit-wt[22m; shell integration wraps [1mwt[22m");
 
-        // Shell integration configured + NOT explicit path -> "shell requires restart"
+        // Shell integration configured + NOT explicit path -> installed but not active
         let reason = compute_shell_warning_reason_inner(true, false, "wt", "wt");
-        assert_eq!(reason, "shell requires restart");
+        assert_eq!(reason, "shell integration installed but not active");
     }
 
     #[test]

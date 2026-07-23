@@ -2723,7 +2723,7 @@ fi
     #[rstest]
     fn test_readme_example_approval_prompt(repo: TestRepo) {
         use portable_pty::CommandBuilder;
-        use std::io::{Read, Write};
+        use std::io::Write;
 
         // Remove origin so worktrunk uses directory name as project identifier
         repo.run_git(&["remote", "remove", "origin"]);
@@ -2777,8 +2777,7 @@ fi
         drop(writer);
 
         // Read all output
-        let mut buf = String::new();
-        reader.read_to_string(&mut buf).unwrap();
+        let buf = crate::common::pty::read_pty_master_to_string(&mut reader);
         child.wait().unwrap();
 
         // Normalize: strip ANSI codes and control characters
@@ -2835,8 +2834,6 @@ fi
     /// - Completion output being executed as commands (the COMPLETE mode bug)
     #[rstest]
     fn test_bash_completion_produces_correct_output(repo: TestRepo) {
-        use std::io::Read;
-
         let wt_bin = wt_bin();
         let wt_bin_dir = wt_bin.parent().unwrap();
 
@@ -2922,8 +2919,7 @@ fi
         drop(pair.slave);
 
         let mut reader = pair.master.try_clone_reader().unwrap();
-        let mut buf = String::new();
-        reader.read_to_string(&mut buf).unwrap();
+        let buf = crate::common::pty::read_pty_master_to_string(&mut reader);
 
         let status = child.wait().unwrap();
         let output = buf.replace("\r\n", "\n");
@@ -2971,8 +2967,6 @@ fi
     /// wt command with COMPLETE=zsh produces completion candidates.
     #[rstest]
     fn test_zsh_completion_produces_correct_output(repo: TestRepo) {
-        use std::io::Read;
-
         let wt_bin = wt_bin();
         let wt_bin_dir = wt_bin.parent().unwrap();
 
@@ -3047,8 +3041,7 @@ fi
         drop(pair.slave);
 
         let mut reader = pair.master.try_clone_reader().unwrap();
-        let mut buf = String::new();
-        reader.read_to_string(&mut buf).unwrap();
+        let buf = crate::common::pty::read_pty_master_to_string(&mut reader);
 
         let status = child.wait().unwrap();
         let output = buf.replace("\r\n", "\n");
@@ -3368,8 +3361,6 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
     #[case("zsh")]
     #[case("fish")]
     fn test_wrapper_help_redirect_captures_all_output(#[case] shell: &str, repo: TestRepo) {
-        use std::io::Read;
-
         let wt_bin = wt_bin();
         let wt_bin_dir = wt_bin.parent().unwrap();
 
@@ -3458,8 +3449,7 @@ echo "SCRIPT_COMPLETED"
         drop(pair.slave);
 
         let mut reader = pair.master.try_clone_reader().unwrap();
-        let mut buf = String::new();
-        reader.read_to_string(&mut buf).unwrap();
+        let buf = crate::common::pty::read_pty_master_to_string(&mut reader);
 
         let _status = child.wait().unwrap();
         let terminal_output = buf.replace("\r\n", "\n");
@@ -3519,8 +3509,6 @@ echo "SCRIPT_COMPLETED"
     #[case("zsh")]
     #[case("fish")]
     fn test_wrapper_help_interactive_uses_pager(#[case] shell: &str, repo: TestRepo) {
-        use std::io::Read;
-
         let wt_bin = wt_bin();
         let wt_bin_dir = wt_bin.parent().unwrap();
 
@@ -3625,8 +3613,7 @@ echo "SCRIPT_COMPLETED"
         drop(pair.slave);
 
         let mut reader = pair.master.try_clone_reader().unwrap();
-        let mut buf = String::new();
-        reader.read_to_string(&mut buf).unwrap();
+        let buf = crate::common::pty::read_pty_master_to_string(&mut reader);
 
         let _status = child.wait().unwrap();
         let terminal_output = buf.replace("\r\n", "\n");

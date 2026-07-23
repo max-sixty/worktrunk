@@ -23,11 +23,13 @@
 //! **Serial steps** run one at a time. If a step exits non-zero, the
 //! pipeline aborts — later steps don't run.
 //!
-//! **Concurrent groups** spawn all children at once, then wait for every
-//! child before proceeding. If any child fails, the group is reported as
-//! failed, but all children are allowed to finish. Template expansion for
-//! concurrent commands happens sequentially before any child is spawned
-//! (expansion may read git config, so order matters for `vars.*`).
+//! **Concurrent groups** spawn each child as soon as its own template is
+//! expanded, then wait for every child before proceeding. If any child fails,
+//! the group is reported as failed, but all children are allowed to finish.
+//! Expansion runs in a single sequential loop in command order — each command
+//! is expanded immediately before its own child is spawned (expansion may read
+//! git config, so order matters for `vars.*`), so a later command's expansion
+//! can run after an earlier command's child has already started.
 //!
 //! **Stdin**: every child receives the spec's context as JSON on stdin,
 //! matching the foreground hook convention. Commands that don't read stdin
@@ -62,7 +64,7 @@ use std::process::{Child, ExitStatus, Stdio};
 use anyhow::Context;
 
 use worktrunk::git::{Repository, WorktrunkError};
-use worktrunk::shell_exec::ShellConfig;
+use worktrunk::shell_exec::{ShellConfig, scrub_git_discovery_env_vars};
 use worktrunk::trace::CommandTrace;
 
 use super::command_executor::{expand_shell_template, wait_first_error};
@@ -164,14 +166,17 @@ fn spawn_shell_command(
     // `context_json` on stdin, so mark it stdin-reading — the same command
     // across worktrees isn't a duplicate (different per-worktree input).
     let mut trace = CommandTrace::new(None, expanded).reads_stdin(true);
-    let mut child = match shell
-        .command(expanded)
+    let mut command = shell.command(expanded);
+    command
         .current_dir(worktree_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::from(log_file))
-        .stderr(Stdio::from(log_err))
-        .spawn()
-    {
+        .stderr(Stdio::from(log_err));
+    // Background hooks, like foreground ones, discover their repo from the
+    // worktree cwd, not an inherited GIT_DIR/GIT_WORK_TREE (issue #3373). This
+    // runner only ever executes hook pipelines, so the scrub is unconditional.
+    scrub_git_discovery_env_vars(&mut command);
+    let mut child = match command.spawn() {
         Ok(child) => child,
         Err(e) => {
             trace.fail(&e);

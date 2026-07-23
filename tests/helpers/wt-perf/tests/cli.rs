@@ -1,12 +1,14 @@
 //! Integration tests for the wt-perf trace command.
+//!
+//! In-package so cargo builds the wt-perf binary to run them and provides its
+//! path via `CARGO_BIN_EXE_wt-perf` — this is what triggers the binary build
+//! under a workspace `cargo test` (see Cargo.toml's header comment).
 
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-use crate::common::workspace_bin;
-
-fn wt_perf_bin() -> std::path::PathBuf {
-    workspace_bin("wt-perf")
+fn wt_perf_bin() -> &'static str {
+    env!("CARGO_BIN_EXE_wt-perf")
 }
 
 /// Test that the binary produces Chrome Trace Format JSON for sample trace input.

@@ -50,6 +50,6 @@ exit_code: 0
 + review-ui      [36m?[39m [2m↑[22m 💬              [32m↑1[0m        [32m+1[0m                ../repo.review-ui    [2ma585d6ed[0m  [2m1d[0m    [2mAdd dashboard component[0m
 + wip-docs       [36m?[39m [2m–[22m                                             ../repo.wip-docs     [2m33323bc1[0m  [2m1d[0m    [2mInitial commit[0m
 
-[2m○[22m [2mShowing 4 worktrees, 2 with changes, 2 ahead[0m
-
 ----- stderr -----
+
+[2m○[22m [2mShowing 4 worktrees, 2 with changes, 2 ahead[0m

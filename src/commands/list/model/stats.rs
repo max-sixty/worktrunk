@@ -34,6 +34,10 @@ pub struct BranchDiffTotals {
 #[derive(Default, Clone, Debug)]
 pub struct UpstreamStatus {
     pub(crate) remote: Option<String>,
+    /// Upstream short name as git reports it (e.g. `origin/feature`).
+    /// `None` when no upstream is configured; may also be `None` on
+    /// pre-existing constructions that only carry the remote.
+    pub(crate) upstream_short: Option<String>,
     pub(crate) ahead: usize,
     pub(crate) behind: usize,
 }
@@ -41,6 +45,9 @@ pub struct UpstreamStatus {
 /// Active upstream tracking information (when a remote is configured).
 pub struct ActiveUpstream<'a> {
     pub remote: &'a str,
+    /// Branch name on the remote (the upstream short name with the remote
+    /// prefix removed); `None` when only the remote is known.
+    pub branch: Option<&'a str>,
     pub ahead: usize,
     pub behind: usize,
 }
@@ -50,6 +57,11 @@ impl UpstreamStatus {
     pub fn active(&self) -> Option<ActiveUpstream<'_>> {
         self.remote.as_deref().map(|remote| ActiveUpstream {
             remote,
+            branch: self
+                .upstream_short
+                .as_deref()
+                .and_then(|short| short.strip_prefix(remote))
+                .and_then(|rest| rest.strip_prefix('/')),
             ahead: self.ahead,
             behind: self.behind,
         })
@@ -66,6 +78,7 @@ mod tests {
             remote: Some("origin".to_string()),
             ahead: 3,
             behind: 2,
+            ..Default::default()
         };
         let active = status.active().unwrap();
         assert_eq!(active.remote, "origin");
@@ -79,6 +92,7 @@ mod tests {
             remote: None,
             ahead: 0,
             behind: 0,
+            ..Default::default()
         };
         assert!(status.active().is_none());
     }

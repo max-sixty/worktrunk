@@ -50,7 +50,7 @@ Preserve commit history (no squash):
 
 {{ terminal(cmd="wt merge --no-squash") }}
 
-Create a merge commit — semi-linear history:
+Create a merge commit — rebased semi-linear history by default:
 
 {{ terminal(cmd="wt merge --no-ff") }}
 
@@ -58,20 +58,24 @@ Skip committing/squashing (rebase still runs unless --no-rebase):
 
 {{ terminal(cmd="wt merge --no-commit") }}
 
+Preserve the exact clean commit graph and tip:
+
+{{ terminal(cmd="wt merge --no-commit --no-rebase") }}
+
 ## Pipeline
 
 `wt merge` runs these steps:
 
 1. **Commit** — Pre-commit hooks run, then uncommitted changes are committed. Post-commit hooks run in background. Skipped when squashing (the default) — changes are staged during the squash step instead. With `--no-squash`, this is the only commit step.
 2. **Squash** — Combines all commits since target into one (like GitHub's "Squash and merge"). Use `--stage` to control what gets staged: `all` (default), `tracked`, or `none`. A backup ref is saved to `refs/wt-backup/<branch>`. With `--no-squash`, individual commits are preserved.
-3. **Rebase** — Rebases onto target if behind. Skipped if already up-to-date. Conflicts abort immediately.
+3. **Rebase** — Rebases onto target if behind. Skipped if already up-to-date. Conflicts abort immediately. With `--no-rebase`, the graph produced by earlier commit/squash steps is preserved and the target must be able to fast-forward to its tip.
 4. **Pre-merge hooks** — Hooks run after rebase, before merge. Failures abort. See [`wt hook`](@/hook.md).
-5. **Merge** — Fast-forward merge to the target branch. With `--no-ff`, a merge commit is created instead — semi-linear history with rebased commits plus a merge commit. Non-fast-forward merges are rejected.
+5. **Merge** — Fast-forward merge to the target branch. With `--no-ff`, a merge commit is created instead — semi-linear history after the default rebase, while explicit `--no-rebase` preserves the graph produced by earlier steps before adding the merge commit. Non-fast-forward merges are rejected.
 6. **Pre-remove hooks** — Hooks run before removing worktree. Failures abort.
 7. **Cleanup** — Removes the worktree and branch. Use `--no-remove` to keep the worktree. When already on the target branch or in the primary worktree, the worktree is preserved.
 8. **Post-remove + post-merge hooks** — Run in background after cleanup.
 
-Use `--no-commit` to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless `--no-rebase` is passed. Useful after preparing commits manually with `wt step commit`. Requires a clean working tree.
+Use `--no-commit` to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless `--no-rebase` is passed. Combining both flags preserves the exact source graph and requires the target to be its ancestor. Useful after preparing commits manually with `wt step commit`. Requires a clean working tree.
 
 ## Local CI
 
@@ -116,7 +120,7 @@ Usage: <b><span class=c>wt merge</span></b> <span class=c>[OPTIONS]</span> <span
           Skip commit and squash
 
       <b><span class=c>--no-rebase</span></b>
-          Skip rebase (fail if not already rebased)
+          Skip rebase; require the target to fast-forward to the resulting tip
 
       <b><span class=c>--no-remove</span></b>
           Keep worktree after merge

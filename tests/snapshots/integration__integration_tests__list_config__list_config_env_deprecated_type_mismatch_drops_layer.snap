@@ -51,9 +51,9 @@ exit_code: 0
 + feature-b      [2m↑[22m                 [32m↑1[0m        [32m+1[0m                ../repo.feature-b  [2mf62940fc[0m  [2m16h[0m   [2mAdd feature-b file[0m
 + feature-c      [2m↑[22m                 [32m↑1[0m        [32m+1[0m                ../repo.feature-c  [2m345c7c93[0m  [2m16h[0m   [2mAdd feature-c file[0m
 
-[2m○[22m [2mShowing 4 worktrees, 3 ahead[0m
-
 ----- stderr -----
 [33m▲[39m [33mIgnoring env var overrides: WORKTRUNK__COMMIT_GENERATION__COMMAND=42[39m
 [107m [0m invalid type: integer `42`, expected a string
 [107m [0m in `commit.generation.command`
+
+[2m○[22m [2mShowing 4 worktrees, 3 ahead[0m

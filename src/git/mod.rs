@@ -8,6 +8,8 @@ mod diff;
 mod error;
 pub mod fsmonitor;
 mod parse;
+#[cfg(unix)]
+pub mod reap;
 pub mod recover;
 pub mod remote_ref;
 pub mod remove;

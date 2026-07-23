@@ -457,29 +457,12 @@ fn format_switch_message(
     }
 }
 
-/// Format a branch-worktree mismatch warning message.
-///
-/// Shows when a worktree is at a path that doesn't match the config template.
-/// Displays both the actual location and the expected location.
-fn format_path_mismatch_warning(
-    branch: &str,
-    actual_path: &Path,
-    expected_path: &Path,
-) -> FormattedMessage {
-    let actual_display = format_path_for_display(actual_path);
-    let expected_display = format_path_for_display(expected_path);
-    warning_message(cformat!(
-        "Branch-worktree mismatch: <bold>{branch}</> @ <bold>{actual_display}</>, expected @ <bold>{expected_display}</> <red>⚑</>"
-    ))
-}
-
 struct SwitchOutputContext {
     path: PathBuf,
     path_display: String,
     branch: String,
     shell_warning_reason: Option<String>,
     user_wont_be_in_worktree: bool,
-    branch_worktree_mismatch_warning: Option<FormattedMessage>,
     is_git_subcommand: bool,
 }
 
@@ -505,10 +488,6 @@ fn build_switch_output_context(
         Some(compute_shell_warning_reason())
     };
     let user_wont_be_in_worktree = !change_dir || shell_warning_reason.is_some();
-    let branch_worktree_mismatch_warning = branch_info
-        .expected_path
-        .as_ref()
-        .map(|expected| format_path_mismatch_warning(&branch, &path, expected));
 
     SwitchOutputContext {
         path,
@@ -516,14 +495,7 @@ fn build_switch_output_context(
         branch,
         shell_warning_reason,
         user_wont_be_in_worktree,
-        branch_worktree_mismatch_warning,
         is_git_subcommand,
-    }
-}
-
-fn print_switch_path_mismatch_warning(ctx: &SwitchOutputContext) {
-    if let Some(warning) = &ctx.branch_worktree_mismatch_warning {
-        eprintln!("{}", warning);
     }
 }
 
@@ -536,7 +508,6 @@ fn print_switch_directory_hint(branch: &str, is_git_subcommand: bool) {
 }
 
 fn handle_switch_already_at_output(ctx: &SwitchOutputContext) -> Option<PathBuf> {
-    print_switch_path_mismatch_warning(ctx);
     eprintln!(
         "{}",
         info_message(cformat!(
@@ -549,8 +520,6 @@ fn handle_switch_already_at_output(ctx: &SwitchOutputContext) -> Option<PathBuf>
 }
 
 fn handle_switch_existing_output(ctx: &SwitchOutputContext) -> Option<PathBuf> {
-    print_switch_path_mismatch_warning(ctx);
-
     if let Some(reason) = &ctx.shell_warning_reason {
         eprintln!(
             "{}",
@@ -859,12 +828,21 @@ fn print_switch_message_if_changed(
     Ok(())
 }
 
-/// Compute the target directory for `cd` after switching, preserving the user's
-/// subdirectory position when possible.
+/// Compute the target directory for `cd` when moving the shell between
+/// worktrees, preserving the user's subdirectory position when possible.
 ///
 /// If the user is in `source_root/apps/gateway/` and `target_root/apps/gateway/`
 /// exists, returns `target_root/apps/gateway/`. Otherwise returns `target_root`.
-fn resolve_subdir_in_target(target_root: &Path, source_root: Option<&Path>, cwd: &Path) -> PathBuf {
+///
+/// Shared by every command that relocates the shell — `switch`, `remove` (and
+/// `merge`, which lands via the same handler), and `step relocate` — so they
+/// preserve subdirectory position identically (canonicalizing to survive
+/// symlinks, and falling back to the root when the subdir is absent).
+pub(crate) fn resolve_subdir_in_target(
+    target_root: &Path,
+    source_root: Option<&Path>,
+    cwd: &Path,
+) -> PathBuf {
     if let Some(source_root) = source_root {
         // Canonicalize both paths to handle symlinks (e.g., /var -> /private/var on macOS)
         let cwd = dunce::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
@@ -1035,7 +1013,6 @@ pub fn handle_remove_output(
             deletion_mode,
             target_branch,
             force_worktree,
-            expected_path,
             removed_commit,
         } => handle_removed_worktree_output(
             RemovedWorktreeOutputContext {
@@ -1046,7 +1023,6 @@ pub fn handle_remove_output(
                 deletion_mode: *deletion_mode,
                 target_branch: target_branch.as_deref(),
                 force_worktree: *force_worktree,
-                expected_path: expected_path.as_deref(),
                 removed_commit: removed_commit.as_deref(),
                 plan,
                 foreground,
@@ -1493,7 +1469,6 @@ struct RemovedWorktreeOutputContext<'a> {
     deletion_mode: BranchDeletionMode,
     target_branch: Option<&'a str>,
     force_worktree: bool,
-    expected_path: Option<&'a Path>,
     removed_commit: Option<&'a str>,
     /// The frozen, approved hook plan. `pre-remove` / `post-remove` /
     /// `post-switch` execute only from this — no `.config/wt.toml` re-read,
@@ -1606,10 +1581,20 @@ fn refresh_removal_safety_after_pre_remove(
 
 fn prepare_remove_directory_change(
     main_path: &Path,
+    worktree_path: &Path,
     changed_directory: bool,
 ) -> anyhow::Result<()> {
     if changed_directory {
-        super::change_directory(main_path)?;
+        // Preserve the user's subdirectory position, mirroring `wt switch`
+        // (#3343). The removal hasn't run yet, so the current directory still
+        // exists inside the worktree being removed — if the user is in
+        // `worktree/apps/gateway/` and `main/apps/gateway/` exists, cd there
+        // instead of the main worktree root. Falls back to the root when the
+        // subdir is absent in the destination or the cwd can't be read.
+        let cd_target = std::env::current_dir()
+            .map(|cwd| resolve_subdir_in_target(main_path, Some(worktree_path), &cwd))
+            .unwrap_or_else(|_| main_path.to_path_buf());
+        super::change_directory(&cd_target)?;
         stderr().flush()?; // Force flush to ensure shell processes the cd
         // Mark that the CWD worktree is being removed, so the error handler
         // can show a hint if a subsequent command (e.g., post-merge hook) fails.
@@ -1710,13 +1695,6 @@ fn handle_named_removed_worktree_foreground(
         progress_message(cformat!("Removing <bold>{branch_name}</> worktree..."))
     );
 
-    if let Some(expected) = ctx.expected_path {
-        eprintln!(
-            "{}",
-            format_path_mismatch_warning(branch_name, ctx.worktree_path, expected)
-        );
-    }
-
     let snapshot = repo.capture_refs()?;
     let output = remove_worktree_with_cleanup(
         repo,
@@ -1765,13 +1743,6 @@ fn handle_named_removed_worktree_background(
     branch_name: &str,
     announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
-    if let Some(expected) = ctx.expected_path {
-        eprintln!(
-            "{}",
-            format_path_mismatch_warning(branch_name, ctx.worktree_path, expected)
-        );
-    }
-
     let display_info = RemovalDisplayInfo::from_precomputed(
         ctx.deletion_mode,
         safety.integration_reason,
@@ -1831,7 +1802,7 @@ fn handle_removed_worktree_output(
         return remove_removed_worktree_silently(&repo, &ctx, &safety, announcer);
     }
 
-    prepare_remove_directory_change(ctx.main_path, ctx.changed_directory)?;
+    prepare_remove_directory_change(ctx.main_path, ctx.worktree_path, ctx.changed_directory)?;
 
     // Handle detached HEAD case (no branch known)
     let Some(branch_name) = ctx.branch_name else {
@@ -1883,10 +1854,10 @@ fn remove_removed_worktree_silently(
 
 /// Run a shell command with streaming output, signal forwarding, and ANSI reset.
 ///
-/// Unified entry point for all foreground command execution — hooks, aliases,
-/// and `for-each` all call this. The background pipeline runner
-/// (`run_pipeline.rs`) has its own spawning logic since it redirects to log
-/// files and runs detached.
+/// Entry point for foreground hook and alias execution. `wt step for-each`
+/// (`for_each.rs`, direct argv exec with no shell) and the background
+/// pipeline runner (`run_pipeline.rs`, redirects to log files and runs
+/// detached) have their own spawning logic.
 ///
 /// Capabilities: optional stdout→stderr redirect for deterministic ordering,
 /// SIGINT/SIGTERM forwarding to child process group, ANSI reset before child
@@ -1928,6 +1899,16 @@ fn remove_removed_worktree_silently(
 /// maintain a single rendering state machine — if stdout writes color codes
 /// but stderr's output arrives next, the terminal applies stdout's color
 /// state to stderr's text. The reset to stderr prevents this.
+///
+/// ## Git discovery
+///
+/// `scrub_git_discovery` removes inherited `GIT_DIR`/`GIT_WORK_TREE` (and the
+/// rest of [`INHERITED_GIT_PATH_VARS`]) from the child so its `git` commands
+/// discover the repo from `working_dir`. Hooks pass `true` (they operate on the
+/// worktree wt targets); aliases pass `false` (they keep wt's inherited context,
+/// like a top-level command the user typed). See issue #3373.
+///
+/// [`INHERITED_GIT_PATH_VARS`]: worktrunk::shell_exec::INHERITED_GIT_PATH_VARS
 pub fn execute_shell_command(
     working_dir: &std::path::Path,
     command: &str,
@@ -1935,6 +1916,7 @@ pub fn execute_shell_command(
     command_log_label: Option<&str>,
     directives: DirectivePassthrough,
     redirect_stdout_to_stderr: bool,
+    scrub_git_discovery: bool,
 ) -> anyhow::Result<()> {
     // Flush stdout before executing command to ensure all our messages appear
     // before the child process output
@@ -1949,6 +1931,12 @@ pub fn execute_shell_command(
     let mut cmd = Cmd::shell(command)
         .current_dir(working_dir)
         .forward_signals();
+
+    // User hooks discover their repo from the cwd wt sets, not an inherited
+    // GIT_DIR/GIT_WORK_TREE (issue #3373). Aliases keep the inherited context.
+    if scrub_git_discovery {
+        cmd = cmd.scrub_git_discovery_env();
+    }
 
     if redirect_stdout_to_stderr {
         cmd = cmd.stdout(Stdio::from(std::io::stderr()));

@@ -9,6 +9,7 @@ info:
     - verbose-hooks
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
+    CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
@@ -37,6 +38,7 @@ info:
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -56,7 +58,7 @@ exit_code: 0
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Setting up {{ branch | sanitize }} in {{ worktree_path }}'[0m
 [2m○[22m [1mproject:setup[22m result
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Setting up verbose-hooks in _REPO_.verbose-hooks'[0m
-[2m○[22m template variables:
+[2m○[22m [1mpre-start[22m template variables:
 [107m [0m branch                = verbose-hooks
 [107m [0m worktree_path         = _REPO_.verbose-hooks
 [107m [0m worktree_name         = repo.verbose-hooks

@@ -151,9 +151,10 @@ pub(super) fn process_log_with_dimming(
 /// Takes pre-processed log output (graph + commits) and a stats map.
 /// Each commit line has format: `graph_prefix short_hash \x1f timestamp \x1f decoration message`
 ///
-/// The full hash for stats lookup is embedded as: `SOH full_hash NUL` before the short hash,
-/// but this was already stripped by process_log_with_dimming. We need the hash in the line
-/// to look up stats - so we keep the full hash in a different delimiter for this function.
+/// The full hash for stats lookup is embedded as `SOH full_hash NUL` before the short hash.
+/// `process_log_with_dimming` deliberately preserves these markers so this pass can recover
+/// the hash (`extract_hash_from_line`) and look up its diffstat; `format_commit_line` then
+/// strips them via `strip_hash_markers` once the lookup is done.
 pub(super) fn format_log_output(
     log_output: &str,
     stats: &HashMap<String, (usize, usize)>,

@@ -153,6 +153,30 @@ impl TaskKind {
             TaskKind::CiStatus | TaskKind::UrlStatus | TaskKind::SummaryGenerate
         )
     }
+
+    /// Human-readable task name for user-facing messages (failure warnings,
+    /// stall footers, timeout diagnostics). The strum kebab-case form
+    /// (`IntoStaticStr`) is developer vocabulary for tracing and `-vv`
+    /// diagnostics; this form names what the task computes for the table.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            TaskKind::AheadBehind => "ahead/behind counts",
+            TaskKind::CommittedTreesMatch => "trees-match check",
+            TaskKind::HasFileChanges => "file-changes check",
+            TaskKind::WouldMergeAdd => "merge-simulation check",
+            TaskKind::IsAncestor => "ancestor check",
+            TaskKind::BranchDiff => "branch diff",
+            TaskKind::WorkingTreeDiff => "working-tree diff",
+            TaskKind::MergeTreeConflicts => "merge-conflict check",
+            TaskKind::WorkingTreeConflicts => "working-tree conflict check",
+            TaskKind::GitOperation => "operation-state check",
+            TaskKind::UserMarker => "user-marker lookup",
+            TaskKind::Upstream => "upstream status",
+            TaskKind::CiStatus => "CI status",
+            TaskKind::UrlStatus => "URL check",
+            TaskKind::SummaryGenerate => "summary generation",
+        }
+    }
 }
 
 /// Result of draining task results - indicates whether all results were received
@@ -237,5 +261,20 @@ mod tests {
     fn test_task_error_timeout_is_timeout() {
         let error = TaskError::new(0, TaskKind::AheadBehind, "timed out", ErrorCause::Timeout);
         assert!(error.is_timeout());
+    }
+
+    /// Duplicate display names would make two different task failures
+    /// indistinguishable in the `wt list` failure warning.
+    #[test]
+    fn test_task_kind_display_names_unique_and_nonempty() {
+        use strum::IntoEnumIterator;
+        let names: Vec<&str> = TaskKind::iter().map(TaskKind::display_name).collect();
+        assert!(names.iter().all(|name| !name.is_empty()));
+        let unique: std::collections::HashSet<_> = names.iter().collect();
+        assert_eq!(
+            unique.len(),
+            names.len(),
+            "duplicate display names: {names:?}"
+        );
     }
 }

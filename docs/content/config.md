@@ -146,7 +146,7 @@ command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haik
 
 ```toml
 [commit.generation]
-command = "codex exec -m gpt-5.4-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
+command = "codex exec -m gpt-5.6-luna -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
 ```
 
 ### OpenCode
@@ -185,6 +185,8 @@ summary = false    # Enable LLM branch summaries (requires [commit.generation])
 full = false       # Show CI status and LLM summaries (--full)
 branches = false   # Include branches without worktrees (--branches)
 remotes = false    # Include remote-only branches (--remotes)
+
+json-schema = 2    # JSON output schema: 2 (envelope) or 1 (bare array, the current default); unset emits 1 with a warning
 
 columns = ["branch", "status", "ci", "path"]   # Columns to show, in order — built-ins or custom headers (omit for the default set)
 
@@ -226,8 +228,10 @@ named one. A column whose data source is missing still stays hidden — `summary
 needs an LLM command (`[commit.generation]`), `url` needs a `[list] url`
 template — since listing can't supply the data.
 
-The selection drives the table and the `wt switch` picker; `wt list --format
-json` ignores it and emits every field.
+The selection drives the table and the `wt switch` picker. `wt list --format
+json` always emits every field, but a listed gated column (`ci`, `summary`)
+still forces its data collection on, so the JSON carries the same data the
+table shows.
 
 #### Custom columns
 
@@ -246,20 +250,30 @@ priority = 9                     # Optional drop order when the terminal narrows
 ```
 
 Templates may reference `{{ branch }}`, `{{ worktree_path }}`,
-`{{ worktree_name }}` (empty for branch-only rows), and `{{ vars.* }}` —
-per-branch values stored with
-[`wt config state vars set`](@/config.md#wt-config-state-vars).
+`{{ worktree_name }}` (empty for branch-only rows), and two per-branch
+namespaces:
+
+- `{{ vars.* }}` — values stored with
+  [`wt config state vars set`](@/config.md#wt-config-state-vars).
+- `{{ git.branch.* }}` — the branch's own git config under `branch.<name>.*`,
+  read straight from `git config` (e.g. `{{ git.branch.jira }}` for a key you
+  set yourself, or the git-native `description`). Git lowercases config variable
+  names, so `branch.<name>.nvciShelf` reads as `{{ git.branch.nvcishelf }}`.
+
 All standard filters work (`sanitize`, `hash_port`, `codename`, …). A row
-where the template renders empty (e.g. a branch without the vars key) shows an
+where the template renders empty (e.g. a branch without the key) shows an
 empty cell; a column that is empty for every row is dropped from the table.
 `wt list --format json` includes the rendered values under `columns`.
 
-A `Note` column showing free-form descriptions, set per branch with
-`wt config state vars set note "Bug fix for production fire"`:
+A `Jira` column reading a key kept in git config, and a `Summary` column
+showing just the first line of the git-native branch description:
 
 ```toml
-[list.custom-columns.Note]
-template = "{{ vars.note }}"
+[list.custom-columns.Jira]
+template = "{{ git.branch.jira }}"
+
+[list.custom-columns.Summary]
+template = "{{ git.branch.description | lines | first }}"
 ```
 
 ### Commit
@@ -311,7 +325,7 @@ pager = "delta --paging=never"   # Example: override git's core.pager for diff p
 exclude = []   # Additional excludes (e.g., [".cache/", ".turbo/"])
 ```
 
-Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.worktrees/`). User config and project config exclusions are combined.
+Built-in excludes (VCS metadata and tool-state directories) always apply; [the `wt step copy-ignored` docs](@/step.md#wt-step-copy-ignored) list them. User config and project config exclusions are combined.
 
 ### Aliases
 
@@ -480,7 +494,7 @@ squash-template = """
 
 <span class="badge-experimental"></span>
 
-`template-append` adds to the prompt instead of replacing it. The value is rendered as its own minijinja template (same variables) and injected into the default templates' `{{ user_guidance }}` slot — a `<user-guidance>` block right after `<style>`. It applies to both commit and squash. Use it for personal preferences without restating the whole template:
+`template-append` adds personal conventions to the commit and squash prompts without restating the whole template:
 
 ```toml
 [commit.generation]
@@ -489,7 +503,7 @@ template-append = """
 """
 ```
 
-The [project config](@/config.md#project-configuration) has a `template-append` of its own; it renders into a separate `<project-guidance>` block right after `<user-guidance>`.
+How the fragment renders, and the project-config counterpart: [the LLM commits guide](@/llm-commits.md#appending-to-the-prompt).
 
 ## Hooks
 
@@ -535,7 +549,7 @@ hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)
 
 <span class="badge-experimental"></span>
 
-Project-wide commit-message conventions appended to the LLM commit and squash prompts inside a `<project-guidance>` block, after the main template's `<style>` section (and after any user `<user-guidance>`). Rendered as a [minijinja](https://docs.rs/minijinja/) template with the same variables as the main commit template (`{{ branch }}`, `{{ git_diff }}`, etc.), so it can reference them directly. The first time the fragment changes, `wt` prompts the user to approve it — the same one-shot gate as project-defined hooks.
+`template-append` adds project-wide conventions to the LLM commit and squash prompts, shared so every teammate's LLM sees the same style guide:
 
 ```toml
 [commit.generation]
@@ -545,7 +559,7 @@ template-append = """
 """
 ```
 
-Only `template-append` is honored from the project file. The LLM command and the main prompt template stay in [user config](@/config.md) — they describe per-developer environment (which CLI is installed, which agent the developer prefers). User config has a `[commit.generation] template-append` of its own; it renders into a separate `<user-guidance>` block immediately before this one.
+The first time the fragment is used (and whenever it changes), `wt` prompts the user to approve it — the same one-shot gate as project-defined hooks. Only `template-append` is honored from the project file; the LLM command and the main prompt template stay in [user config](@/config.md), since they describe per-developer environment (which CLI is installed, which agent the developer prefers). How the fragment renders: [the LLM commits guide](@/llm-commits.md#appending-to-the-prompt).
 
 ## Copy-ignored excludes
 
@@ -556,7 +570,7 @@ Additional excludes for `wt step copy-ignored`:
 exclude = [".cache/", ".turbo/"]
 ```
 
-Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.worktrees/`). User config and project config exclusions are combined.
+Built-in excludes (VCS metadata and tool-state directories) always apply; [the `wt step copy-ignored` docs](@/step.md#wt-step-copy-ignored) list them. User config and project config exclusions are combined.
 
 ## Aliases
 
@@ -616,7 +630,7 @@ Override the LLM command in CI to use a mock:
 | `WORKTRUNK_BIN` | Override binary path for shell wrappers; useful for testing dev builds |
 | `WORKTRUNK_CONFIG_PATH` | Override user config file location |
 | `WORKTRUNK_SYSTEM_CONFIG_PATH` | Override system config file location |
-| `WORKTRUNK_PROJECT_CONFIG_PATH` | Override project config file location (defaults to `.config/wt.toml`) |
+| `WORKTRUNK_PROJECT_CONFIG_PATH` | Override project config file location (defaults to `.config/wt.toml`); relative paths resolve from the worktree root |
 | `XDG_CONFIG_DIRS` | Colon-separated system config directories (default: `/etc/xdg`) |
 | `WORKTRUNK_DIRECTIVE_CD_FILE` | Internal: set by shell wrappers. wt writes a raw path; the wrapper `cd`s to it |
 | `WORKTRUNK_DIRECTIVE_EXEC_FILE` | Internal: set by shell wrappers. wt writes shell commands; the wrapper sources the file |
@@ -747,11 +761,17 @@ Project hooks and project aliases prompt for approval on first run to prevent un
 
 ### Examples
 
+List commands and their approval status for current project:
+{{ terminal(cmd="wt config approvals list") }}
+
 Pre-approve all hook and alias commands for current project:
 {{ terminal(cmd="wt config approvals add") }}
 
 Clear approvals for current project:
 {{ terminal(cmd="wt config approvals clear") }}
+
+Clear only approvals for commands no longer in the project config:
+{{ terminal(cmd="wt config approvals clear --stale") }}
 
 Clear global approvals:
 {{ terminal(cmd="wt config approvals clear --global") }}
@@ -768,6 +788,7 @@ wt config approvals - Manage command approvals
 Usage: <b><span class=c>wt config approvals</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
 
 <b><span class=g>Commands:</span></b>
+  <b><span class=c>list</span></b>   List project commands and their approval status
   <b><span class=c>add</span></b>    Store approvals in approvals.toml
   <b><span class=c>clear</span></b>  Clear approved commands from approvals.toml
 
@@ -1008,7 +1029,7 @@ Worktrunk detects the default branch automatically:
 3. **Remote query** — If not cached, queries `git ls-remote` — typically 100ms–2s
 4. **Local inference** — If no remote, infers from local branches
 
-Once detected, the result is cached in `worktrunk.default-branch` for fast access.
+Once detected, the result is cached in `worktrunk.default-branch` for fast access. The cache isn't re-validated on every command, so a later change to `origin/HEAD` — a renamed default branch followed by `git remote set-head origin -a` — isn't picked up automatically. `wt config state` flags the drift when the cached value differs from the remote's local HEAD; `set` adopts the new branch and `clear` re-detects.
 
 The local inference fallback uses these heuristics in order:
 - If only one local branch exists, uses it
@@ -1098,7 +1119,7 @@ All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the
 | `subprocess.log` | Running with `-vv` |
 | `diagnostic.md` | Running with `-vv` |
 
-`trace.log` is the human-readable trace at `-vv` — each command's start (`$ …`) and completion (`✓`/`✗ … 12.3ms`), in-process spans, milestones, and bounded subprocess previews. `trace.jsonl` is the same event stream as one JSON object per line, for machines (`jq`, chrome://tracing); `wt config state logs profile` reads it to summarize a performance report (where time went, parallelism, redundant commands). `subprocess.log` holds the raw uncapped subprocess stdout/stderr bodies. `diagnostic.md` is a markdown bug-report bundle that inlines `trace.log` and a rendered performance profile; `wt` prints a `gh gist create` command pointing at it. All four are overwritten on each `-vv` run.
+`trace.log` is the human-readable trace at `-vv` — each command's start (`$ …`) and completion (`✓`/`✗ … 12.3ms`), in-process spans, milestones, and bounded subprocess previews. `trace.jsonl` is the same event stream as one JSON object per line, for machines (`jq`, chrome://tracing); `wt config state logs profile` reads it to summarize a performance report (where time went, parallelism, redundant commands). `subprocess.log` holds the raw uncapped subprocess stdout/stderr bodies. `diagnostic.md` is a markdown bug-report bundle that leads with that same performance profile and inlines `trace.log`; `wt` prints a `gh gist create` command pointing at it. All four are overwritten on each `-vv` run.
 
 ### Location
 
@@ -1170,26 +1191,7 @@ CI status cache.
 
 **Deprecated** — the CI status cache is now part of [`wt config state cache`](@/config.md#wt-config-state-cache). This subcommand still works but prints a deprecation notice.
 
-Caches GitHub/GitLab CI status for display in [`wt list`](@/list.md#ci-status).
-
-Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated. Platform auto-detects from the remote URL; set `forge.platform = "github"` (or `"gitlab"`) in `.config/wt.toml` for SSH host aliases or self-hosted instances. For GitHub Enterprise or self-hosted GitLab, also set `forge.hostname`.
-
-Checks open PRs/MRs first, then branch pipelines for branches with upstream. Local-only branches (no remote tracking) show blank.
-
-Results cache for 30-60 seconds. Indicators dim when local changes haven't been pushed.
-
-### Status values
-
-| Status | Meaning |
-|--------|---------|
-| `passed` | All checks passed |
-| `running` | Checks in progress |
-| `failed` | Checks failed |
-| `conflicts` | PR has merge conflicts |
-| `no-ci` | No checks configured |
-| `error` | Fetch error (rate limit, network, auth) |
-
-See [`wt list` CI status](@/list.md#ci-status) for display symbols and colors.
+Status values, display symbols, and fetch behavior: [`wt list` CI status](@/list.md#ci-status).
 
 Without a subcommand, runs `get` for the current branch. Use `clear` to reset cache for a branch or `clear --all` to reset all.
 

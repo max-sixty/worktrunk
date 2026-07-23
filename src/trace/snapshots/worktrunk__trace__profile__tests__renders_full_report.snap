@@ -11,6 +11,11 @@ BY COMMAND TYPE
   git config      2   7.00ms   4.00ms   3.50ms
   git diff        1   5.00ms   5.00ms   5.00ms
 
+BY CONTEXT
+  context  count    total
+  main         4  24.00ms
+  feature      1   8.00ms
+
 SLOWEST CALLS
   12.00ms  git status --porcelain [main]
    8.00ms  git status --porcelain [feature]

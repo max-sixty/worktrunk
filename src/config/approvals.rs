@@ -263,6 +263,26 @@ impl Approvals {
             .iter()
             .map(|(id, p)| (id.as_str(), p.approved_commands.as_slice()))
     }
+
+    /// Approved commands for `project` that match none of `templates` (after
+    /// template-variable normalization) — approvals left behind when a config
+    /// command was edited or removed.
+    pub fn stale_approvals<'a>(&'a self, project: &str, templates: &[&str]) -> Vec<&'a str> {
+        let normalized: Vec<_> = templates
+            .iter()
+            .map(|t| normalize_template_vars(t))
+            .collect();
+        self.projects
+            .get(project)
+            .map(|p| {
+                p.approved_commands
+                    .iter()
+                    .filter(|c| !normalized.contains(&normalize_template_vars(c)))
+                    .map(String::as_str)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
 }
 
 // =========================================================================
@@ -393,6 +413,43 @@ impl Approvals {
             approvals.projects.remove(&project);
             true
         })
+    }
+
+    /// Remove approvals for `project` that match none of `templates` (the
+    /// project's current command set) and save. Returns the removed commands.
+    ///
+    /// Staleness is recomputed under the file lock via [`Self::stale_approvals`],
+    /// so an approval another process records between the caller's read and
+    /// this call is never removed by mistake.
+    pub fn revoke_stale(
+        &mut self,
+        project: &str,
+        templates: &[&str],
+        approvals_path: &Path,
+    ) -> Result<Vec<String>, ConfigError> {
+        let mut removed = Vec::new();
+        self.with_locked_mutation(approvals_path, |approvals| {
+            let stale: Vec<String> = approvals
+                .stale_approvals(project, templates)
+                .into_iter()
+                .map(String::from)
+                .collect();
+            if stale.is_empty() {
+                return false;
+            }
+            let Some(project_config) = approvals.projects.get_mut(project) else {
+                return false;
+            };
+            project_config
+                .approved_commands
+                .retain(|c| !stale.contains(c));
+            if project_config.approved_commands.is_empty() {
+                approvals.projects.remove(project);
+            }
+            removed = stale;
+            true
+        })?;
+        Ok(removed)
     }
 
     /// Clear all approvals for all projects and save.
@@ -942,6 +999,75 @@ approved-command = ["npm test"]
         approvals.save_to(&path).unwrap();
         // Now revoke_project should find the project but see empty commands → no-op
         approvals.revoke_project("project-a", &path).unwrap();
+    }
+
+    /// Stale = approved but matching no config template, with the same
+    /// normalization as `is_command_approved`: an approval saved with a
+    /// deprecated variable name still matches its canonical config command.
+    #[test]
+    fn test_stale_approvals() {
+        let (_temp_dir, path) = test_dir();
+
+        let mut approvals = Approvals::default();
+        approvals
+            .approve_commands(
+                "project".to_string(),
+                vec![
+                    "npm test".to_string(),
+                    "echo {{ repo_root }}".to_string(),
+                    "removed command".to_string(),
+                ],
+                &path,
+            )
+            .unwrap();
+
+        let stale = approvals.stale_approvals("project", &["npm test", "echo {{ repo_path }}"]);
+        assert_eq!(stale, vec!["removed command"]);
+        assert!(
+            approvals
+                .stale_approvals("other-project", &["npm test"])
+                .is_empty()
+        );
+    }
+
+    /// `revoke_stale` removes only approvals matching no template (same
+    /// normalization as `stale_approvals`), keeps the rest, and drops the
+    /// project entry entirely when nothing remains.
+    #[test]
+    fn test_revoke_stale() {
+        let (_temp_dir, path) = test_dir();
+
+        let mut approvals = Approvals::default();
+        approvals
+            .approve_commands(
+                "project".to_string(),
+                vec![
+                    "npm test".to_string(),
+                    "echo {{ repo_root }}".to_string(),
+                    "removed command".to_string(),
+                ],
+                &path,
+            )
+            .unwrap();
+
+        let templates = ["npm test", "echo {{ repo_path }}"];
+        let removed = approvals
+            .revoke_stale("project", &templates, &path)
+            .unwrap();
+        assert_eq!(removed, vec!["removed command"]);
+        assert!(approvals.is_command_approved("project", "npm test"));
+        assert!(approvals.is_command_approved("project", "echo {{ repo_root }}"));
+
+        // Nothing stale left — a second call is a no-op.
+        let removed = approvals
+            .revoke_stale("project", &templates, &path)
+            .unwrap();
+        assert!(removed.is_empty());
+
+        // Every remaining approval stale — the project entry disappears.
+        let removed = approvals.revoke_stale("project", &[], &path).unwrap();
+        assert_eq!(removed.len(), 2);
+        assert!(!approvals.projects.contains_key("project"));
     }
 
     #[test]

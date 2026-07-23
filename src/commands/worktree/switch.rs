@@ -30,7 +30,7 @@ use worktrunk::styling::{
     warning_message,
 };
 
-use super::resolve::{compute_worktree_path, offer_bare_repo_worktree_path_fix, path_mismatch};
+use super::resolve::{compute_worktree_path, offer_bare_repo_worktree_path_fix};
 use super::types::{CreationMethod, SwitchBranchInfo, SwitchPlan, SwitchResult};
 use crate::cli::{SwitchArgs, SwitchFormat};
 use crate::commands::backup::back_up_clobbered_path_now;
@@ -210,7 +210,7 @@ fn fetch_ref_info(
     repo: &Repository,
 ) -> anyhow::Result<RemoteRefInfo> {
     let _watchdog = worktrunk::progress::Watchdog::start(
-        &format!("the {} info", provider.ref_type().name()),
+        &format!("the {} lookup", provider.ref_type().name()),
         None,
     );
     provider.fetch_info(number, repo)
@@ -901,9 +901,7 @@ fn plan_switch(
 /// Execute a validated switch plan.
 ///
 /// Takes a `SwitchPlan` from `plan_switch()` and executes it.
-/// For `SwitchPlan::Existing`, just records history. The returned
-/// `SwitchBranchInfo` has `expected_path: None` — callers fill it in after
-/// first output to avoid computing path mismatch on the hot path.
+/// For `SwitchPlan::Existing`, just records history.
 /// For `SwitchPlan::Create`, creates the worktree and runs hooks.
 fn execute_switch(
     repo: &Repository,
@@ -940,15 +938,7 @@ fn execute_switch(
                 SwitchResult::Existing { path }
             };
 
-            // Path mismatch is computed lazily by callers after first output,
-            // avoiding ~7 git commands on the hot path for existing switches.
-            Ok((
-                result,
-                SwitchBranchInfo {
-                    branch,
-                    expected_path: None,
-                },
-            ))
+            Ok((result, SwitchBranchInfo { branch }))
         }
 
         SwitchPlan::Create {
@@ -1041,6 +1031,21 @@ fn execute_switch(
                         Repository::SLOW_OPERATION_DELAY_MS,
                         progress_msg,
                     ) {
+                        // A new branch whose name is a path prefix of (or sits
+                        // under) an existing branch can't be created: git stores
+                        // refs as file paths, so `release` and `release/2026.4`
+                        // can't coexist. Surface that as a clear, actionable
+                        // error instead of git's raw "cannot lock ref" text.
+                        if *create_branch
+                            && let Some(conflicting) =
+                                detect_branch_namespace_conflict(repo, &branch)
+                        {
+                            return Err(GitError::BranchNamespaceConflict {
+                                branch: branch.clone(),
+                                conflicting,
+                            }
+                            .into());
+                        }
                         return Err(worktree_creation_error(
                             &e,
                             branch.clone(),
@@ -1213,15 +1218,36 @@ fn execute_switch(
                 },
                 SwitchBranchInfo {
                     branch: Some(branch),
-                    expected_path: None,
                 },
             ))
         }
     }
 }
 
-/// Resolve the deferred path mismatch for existing worktree switches.
+/// Detect a git ref directory/file (D/F) conflict for a branch about to be
+/// created, returning an existing branch it collides with.
 ///
+/// Git stores refs as file paths under `refs/heads/`, so a branch name can't
+/// be both a file and a directory: creating `release` fails when
+/// `release/2026.4` exists, and creating `release/foo` fails when `release`
+/// exists. This inspects the cached local-branch inventory (no extra
+/// subprocess) for either shape and returns the first colliding branch.
+fn detect_branch_namespace_conflict(repo: &Repository, branch: &str) -> Option<String> {
+    let prefix = format!("{branch}/");
+    repo.local_branches()
+        .ok()?
+        .iter()
+        .map(|b| b.name.as_str())
+        .find(|name| {
+            // `branch` is a directory prefix of an existing branch, or an
+            // existing branch is a directory prefix of `branch`.
+            name.starts_with(&prefix) || branch.starts_with(&format!("{name}/"))
+        })
+        .map(String::from)
+}
+
+/// Build a `GitError::WorktreeCreationFailed` from a failed `git worktree add`,
+/// extracting the underlying command output for the error message.
 fn worktree_creation_error(
     err: &anyhow::Error,
     branch: String,
@@ -1525,9 +1551,13 @@ fn capture_switch_source(repo: &Repository, is_recovered: bool) -> (String, Stri
 /// its own copy of that call.
 ///
 /// The picker-vs-argument differences are field values, not separate code: the
-/// picker passes `verify: true`, `yes: false`, `capture_source: false`,
-/// `suggestion_ctx: None`, `execute: None`, and `shell_integration_binary:
-/// None`.
+/// picker passes `verify: true`, `yes: false`, `suggestion_ctx: None`, and
+/// `shell_integration_binary: None`. It threads `execute` / `execute_args`
+/// through from `wt switch -x <cmd>` (no branch), and — like the argument path
+/// — captures the pre-switch source worktree, so a picked worktree runs the
+/// command and resolves its `{{ base }}` exactly as the argument path does.
+/// Source capture is no longer a divergence axis: both entry points always
+/// capture, with `is_recovered` the only thing that suppresses it.
 pub(crate) struct SwitchPipeline<'a> {
     pub repo: &'a Repository,
     /// Mutable because the bare-repo path-fix offer
@@ -1548,18 +1578,15 @@ pub(crate) struct SwitchPipeline<'a> {
     pub format: SwitchFormat,
     /// True when `current_or_recover` recovered from a deleted CWD. Suppresses
     /// pre-switch hooks (no source worktree to run them against) and source
-    /// capture.
+    /// capture (`{{ base }}` / `{{ base_worktree_path }}` stay unset — there is
+    /// no live source worktree to read).
     pub is_recovered: bool,
     /// Error-enrichment context for a failed `plan_switch`, so the hint
-    /// suggests the full `wt switch … --execute=… -- …`. `None` for the
-    /// picker, which has no `--execute`.
+    /// suggests the full `wt switch … --execute=… -- …`. `None` for the picker,
+    /// which has no branch argument to embed in that suggested command.
     pub suggestion_ctx: Option<SwitchSuggestionCtx>,
-    /// Whether to capture the source worktree's branch/root before the switch,
-    /// for post-switch `{{ base }}` / `{{ base_worktree_path }}`. The argument
-    /// path captures; the picker does not — it does not track where the user
-    /// came from, so an existing switch's base vars stay unset.
-    pub capture_source: bool,
-    /// `--execute` command and its trailing args. `None` / empty for the picker.
+    /// `--execute` command and its trailing args. Flows from `wt switch -x
+    /// <cmd>` on both the argument path and the picker (no branch given).
     pub execute: Option<&'a str>,
     pub execute_args: &'a [String],
     /// Binary name for the shell-integration offer. `Some` only on the argument
@@ -1584,7 +1611,6 @@ impl SwitchPipeline<'_> {
             format,
             is_recovered,
             suggestion_ctx,
-            capture_source,
             execute,
             execute_args,
             shell_integration_binary,
@@ -1594,8 +1620,9 @@ impl SwitchPipeline<'_> {
         // (.git, .bare) before anything reads worktree-path config.
         offer_bare_repo_worktree_path_fix(repo, config, identifier)?;
 
-        // Run pre-switch hooks before branch resolution or worktree creation.
-        // {{ branch }} receives the raw user input (before resolution). Skip
+        // Run pre-switch hooks before worktree creation. run_pre_switch_hooks
+        // resolves symbolic args (`-`, `@`, `^`) first, so {{ branch }} and
+        // {{ target }} carry the concrete destination, not the raw token. Skip
         // when recovered — the source worktree is gone, nothing to run hooks
         // against. `yes` is the single switch-wide flag, so the picker (no
         // `--yes`) and the argument path gate `pre-switch` hooks identically.
@@ -1605,14 +1632,10 @@ impl SwitchPipeline<'_> {
 
         // Capture source (base) worktree identity BEFORE the switch, for
         // post-switch {{ base }} / {{ base_worktree_path }}. Done here — after
-        // pre-switch hooks, before plan / approve / validate, none of which
-        // move the current worktree. The picker passes `capture_source: false`;
-        // it does not track where the user came from.
-        let (source_branch, source_path) = if capture_source {
-            capture_switch_source(repo, is_recovered)
-        } else {
-            (String::new(), String::new())
-        };
+        // pre-switch hooks, before plan / approve / validate, none of which move
+        // the current worktree. Both entry points capture; `capture_switch_source`
+        // returns empty on the recovered path (no live source worktree).
+        let (source_branch, source_path) = capture_switch_source(repo, is_recovered);
 
         // Validate and resolve the target branch.
         let plan = plan_switch(repo, identifier, create, base, clobber, config).map_err(|err| {
@@ -1654,23 +1677,6 @@ impl SwitchPipeline<'_> {
         if std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some() {
             return Ok(());
         }
-
-        // Compute path mismatch lazily (deferred from plan_switch for existing
-        // worktrees). Skip detached HEAD worktrees (branch is None) — no branch
-        // to compute the expected path from.
-        let branch_info = match &result {
-            SwitchResult::Existing { path } | SwitchResult::AlreadyAt(path) => {
-                let expected_path = branch_info
-                    .branch
-                    .as_deref()
-                    .and_then(|b| path_mismatch(repo, b, path, config));
-                SwitchBranchInfo {
-                    expected_path,
-                    ..branch_info
-                }
-            }
-            _ => branch_info,
-        };
 
         // Show success message (temporal locality: immediately after the
         // worktree operation). Returns the path to display in hooks when the
@@ -1839,7 +1845,6 @@ fn run_switch(
         format,
         is_recovered,
         suggestion_ctx,
-        capture_source: true,
         execute,
         execute_args,
         shell_integration_binary: Some(binary_name),
@@ -1865,13 +1870,16 @@ pub fn handle_switch_command(args: SwitchArgs, yes: bool) -> anyhow::Result<()> 
             let change_dir_flag = flag_pair(args.cd, args.no_cd);
 
             let Some(branch) = args.branch else {
-                // No branch argument: open the interactive picker.
+                // No branch argument: open the interactive picker. `--execute`
+                // (and its trailing args) run against the picked worktree.
                 return crate::commands::handle_picker(
                     args.branches,
                     args.remotes,
                     args.prs,
                     change_dir_flag,
                     args.format,
+                    args.execute.as_deref(),
+                    &args.execute_args,
                 );
             };
 

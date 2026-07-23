@@ -61,6 +61,8 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
           
           Replaces the wt process with the command after switching, giving it full terminal control. Useful for launching editors, AI agents, or other interactive tools.[0m
           
+          Without a branch argument, the interactive picker opens and the command runs against the selected worktree — so [1mwt switch -x claude[0m picks a worktree, then launches Claude Code there.[0m
+          
           Supports ]8;;@/hook.md#template-variables\[4mhook template variables]8;;\[0m ([1m{{ branch }}[0m, [1m{{ worktree_path }}[0m, etc.) and filters. [1m{{ base }}[0m and [1m{{ base_worktree_path }}[0m require [1m--create[0m.[0m
           
           Especially useful with shell aliases:[0m

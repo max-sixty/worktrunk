@@ -51,7 +51,7 @@
 //!
 //! ```text
 //! git log --no-walk --no-show-signature \
-//!   --format=%H%x00%h%x00%ct%x00%s \
+//!   --format=%H%x00%h%x00%ct%x00%T%x00%s \
 //!   SHA₁ SHA₂ … SHA_N
 //! ```
 //!
@@ -62,10 +62,10 @@
 //! - `--no-show-signature` — skip GPG verification. If `gpg.program` is set
 //!   and any of these commits are signed, the default forks `gpg` per
 //!   commit; disabled here.
-//! - `--format=%H%x00%h%x00%ct%x00%s` — four fields per commit,
+//! - `--format=%H%x00%h%x00%ct%x00%T%x00%s` — five fields per commit,
 //!   NUL-separated because subjects can contain anything except NUL:
 //!   - `%H` full SHA, `%h` abbreviated SHA, `%ct` committer date (Unix
-//!     epoch), `%s` subject (first line of message).
+//!     epoch), `%T` tree SHA, `%s` subject (first line of message).
 //!
 //! SHAs come from #4 (worktree HEADs) ∪ #5 (branch tips), deduplicated.
 //! Argv length scales with N — Linux `ARG_MAX` (~128 KB) bounds the
@@ -77,13 +77,16 @@
 //! - `%ct` again, post-skeleton — Age column ("3 hours ago").
 //! - `%s` post-skeleton — Message column.
 //! - `%h` post-skeleton — abbreviated-SHA cell.
+//! - `%T` post-skeleton — primes the `commit_tree` cache so the per-row
+//!   `CommittedTreesMatch` / `WouldMergeAdd` tree lookups never fork
+//!   `git rev-parse <sha>^{tree}` (see [`Repository::commit_details_many`]).
 //!
-//! Subjects and abbreviated SHAs ride along for free: git resolves each
-//! commit object to read its timestamp anyway, so the extra bytes add no
-//! measurable latency to the round trip. Without this batch you'd be
-//! forking `git log -1` per SHA later — same data, N forks instead of one.
-//! The full `(timestamp, subject)` map is handed to the post-skeleton loop
-//! that populates `ListItem.commit` directly.
+//! Tree SHAs, subjects, and abbreviated SHAs ride along for free: git resolves
+//! each commit object to read its timestamp anyway, so the extra bytes add no
+//! measurable latency to the round trip. Without this batch you'd be forking
+//! `git log -1` (and `rev-parse ^{tree}`) per SHA later — same data, N forks
+//! instead of one. The full `(timestamp, subject)` map is handed to the
+//! post-skeleton loop that populates `ListItem.commit` directly.
 //!
 //! When the batch fails (e.g., a listed SHA was deleted mid-run), the
 //! failure is surfaced once and Age/Message cells render placeholders for
@@ -223,6 +226,7 @@
 //! | `has-added-changes/` | `git::repository::sha_cache` | `{branch_sha}-{target_sha}.json` | Never — content-addressed |
 //! | `diff-stats/` | `git::repository::sha_cache` | `{base_sha}-{head_sha}.json` | Never — content-addressed |
 //! | `ahead-behind/` | `git::repository::sha_cache` | `{base_sha}-{head_sha}.json` | Never — content-addressed |
+//! | `merge-base/` | `git::repository::sha_cache` | `{sha1}-{sha2}.json` (sorted) | Never — content-addressed |
 //! | `ci-status/` | `commands::list::ci_status::cache` | `{branch}.json` | TTL 30–60s + HEAD SHA check |
 //! | `summary/{branch}/` | `summary` | `{diff_hash}.json` | Miss if no file exists for the current hash; siblings pruned on write |
 //!
@@ -230,7 +234,7 @@
 //!
 //! - **SHA-pair**: pure function of two commit SHAs. Never stale, no TTL, no invalidation.
 //!   Used by all `sha_cache` kinds (merge-tree conflicts, merge-add probes, ancestry
-//!   checks, file-change probes, diff stats, ahead/behind counts).
+//!   checks, file-change probes, diff stats, ahead/behind counts, merge-base).
 //! - **Branch + TTL + HEAD**: external mutable state (CI API, remote refs). TTL bounds
 //!   staleness; the HEAD check invalidates early when the branch moves.
 //! - **Branch + content-addressed hash in filename**: content hash (SHA-256
@@ -249,7 +253,7 @@
 //! | `IsAncestor` | `sha_cache` (is-ancestor) |
 //! | `HasFileChanges` | `sha_cache` (has-added-changes) |
 //! | `BranchDiff` | `sha_cache` (diff-stats, skipped when sparse checkout is active) |
-//! | `AheadBehind`, `Upstream` | `sha_cache` (ahead-behind); on a cold cache both columns are pre-filled from `for-each-ref %(ahead-behind:SHA)` walks — one against the default branch (`main↕`, in `RefSnapshot::capture_ahead_behind`) and one per unique upstream SHA (`Remote⇅`, in `Repository::prime_upstream_ahead_behind_cache`) |
+//! | `AheadBehind`, `Upstream` | `sha_cache` (ahead-behind for counts, merge-base for the orphan check); on a cold cache both columns are pre-filled from `for-each-ref %(ahead-behind:SHA)` walks — one against the default branch (`main↕`, in `RefSnapshot::capture_ahead_behind`) and one per unique upstream SHA (`Remote⇅`, in `Repository::prime_upstream_ahead_behind_cache`) |
 //! | `CiStatus` | `ci_status::cache` |
 //! | `SummaryGenerate` | `summary` |
 //!
@@ -257,7 +261,11 @@
 //!
 //! ### Already optimized (not cache candidates)
 //!
-//! - `CommittedTreesMatch` — single `git rev-parse` resolving both tree SHAs (~1ms)
+//! - `CommittedTreesMatch` — resolves both commit→tree SHAs through the
+//!   in-memory `commit_tree` cache, which the pre-skeleton commit-details
+//!   `git log` batch primes via `%T` (see [`Repository::commit_details_many`]).
+//!   So on the `wt list` path it forks nothing per row — the tree SHAs are
+//!   already in memory.
 //!
 //! ### Cached via tree SHA
 //!
@@ -306,7 +314,7 @@ use once_cell::sync::OnceCell;
 use rayon::prelude::*;
 use worktrunk::git::{ErrorExt, LocalBranch, Repository, WorktreeInfo};
 use worktrunk::styling::{
-    INFO_SYMBOL, eprintln, format_with_gutter, hint_message, warning_message,
+    INFO_SYMBOL, eprintln, format_with_gutter, hint_message, truncate_visible, warning_message,
 };
 
 use crate::commands::is_worktree_at_expected_path;
@@ -405,8 +413,12 @@ fn print_buffered_table(header: &str, rows: &[String], summary: &str) {
     for row in rows {
         println!("{row}");
     }
-    println!();
-    println!("{summary}");
+    // The summary narrates the table rather than being part of the answer
+    // (`--format=json` omits it), so it goes to stderr and piped stdout ends
+    // cleanly after the last row. The progressive path keeps it on stdout:
+    // there it's a repainted row of the table region.
+    eprintln!();
+    eprintln!("{summary}");
 }
 
 /// Options for controlling what data to collect.
@@ -648,17 +660,57 @@ fn format_stall_footer(
     first_name: &str,
 ) -> String {
     let dim = Style::new().dimmed();
-    let kind_str: &'static str = first_kind.into();
+    let kind_name = first_kind.display_name();
     let waiting_clause = if pending_count == 1 {
-        cformat!("waiting on <underline>{kind_str}</> for <underline>{first_name}</>")
+        cformat!("waiting on <underline>{kind_name}</> for <underline>{first_name}</>")
     } else {
         cformat!(
-            "waiting on {pending_count} tasks, including <underline>{kind_str}</> for <underline>{first_name}</>"
+            "waiting on {pending_count} tasks, including <underline>{kind_name}</> for <underline>{first_name}</>"
         )
     };
     cformat!(
         "{INFO_SYMBOL} {dim}{footer_base} ({completed}/{total} loaded, no recent progress; {waiting_clause}){dim:#}"
     )
+}
+
+/// Caps on the message shown per failed task: at most `MAX_LINES` lines,
+/// each at most `MAX_COLS` columns. Real git errors fit well under both
+/// (the index.lock guidance is ~7 short lines); the caps exist so a
+/// crashing task command (an LLM summary tool dumping a stack trace, or
+/// one enormous line of output) can't flood the warning block. The `-vv`
+/// diagnostic hint that follows the warning is the route to full output.
+const TASK_FAILURE_MESSAGE_MAX_LINES: usize = 12;
+const TASK_FAILURE_MESSAGE_MAX_COLS: usize = 500;
+
+/// Render one entry of the task-failure warning: `branch: task-name`,
+/// with a single-line message inline in parens and a multi-line message
+/// indented underneath — git's recovery guidance (e.g. the index.lock
+/// "remove the file manually" paragraph) must survive display. The
+/// caller joins entries and wraps them in one gutter block.
+fn format_task_failure(name: &str, kind: TaskKind, message: &str) -> String {
+    let mut rendered = cformat!("<bold>{}</>: {}", name, kind.display_name());
+    let message = message.trim();
+    let line_count = message.lines().count();
+    if line_count > 1 {
+        for line in message.lines().take(TASK_FAILURE_MESSAGE_MAX_LINES) {
+            let line = truncate_visible(line.trim_end(), TASK_FAILURE_MESSAGE_MAX_COLS);
+            rendered.push('\n');
+            if !line.is_empty() {
+                rendered.push_str("  ");
+                rendered.push_str(&line);
+            }
+        }
+        if line_count > TASK_FAILURE_MESSAGE_MAX_LINES {
+            let extra = line_count - TASK_FAILURE_MESSAGE_MAX_LINES;
+            let plural = if extra == 1 { "" } else { "s" };
+            rendered.push('\n');
+            rendered.push_str(&format!("  … ({extra} more line{plural})"));
+        }
+    } else if !message.is_empty() {
+        let message = truncate_visible(message, TASK_FAILURE_MESSAGE_MAX_COLS);
+        rendered.push_str(&format!(" ({message})"));
+    }
+    rendered
 }
 
 /// Emit the drain-timeout warning + hint when the default 120s
@@ -710,8 +762,11 @@ fn format_drain_timeout_diag(
             .iter()
             .take(MAX_SHOWN)
             .map(|result| {
-                let missing_names: Vec<&str> =
-                    result.missing_kinds.iter().map(|k| k.into()).collect();
+                let missing_names: Vec<&str> = result
+                    .missing_kinds
+                    .iter()
+                    .map(|k| k.display_name())
+                    .collect();
                 cformat!("<bold>{}</>: {}", result.name, missing_names.join(", "))
             })
             .collect();
@@ -745,6 +800,15 @@ pub fn collect(
     show_config: ShowConfig,
     render_target: RenderTarget,
 ) -> anyhow::Result<Option<super::model::ListData>> {
+    // `wt list`'s merge and conflict probes write ephemeral Git objects
+    // (`write-tree`, `commit-tree`, `merge-tree --write-tree`). In a read-only
+    // checkout those writes fail; redirect them into a temporary object
+    // database (real database as a read-only alternate) so the analysis still
+    // runs — see `Repository::redirect_objects_if_read_only`. A `None` (writable
+    // store, or no writable temp dir) leaves object-writing tasks on the real
+    // database, where they surface their own errors.
+    let redirected = repo.redirect_objects_if_read_only();
+    let repo = redirected.as_ref().unwrap_or(repo);
     let show_progress = matches!(render_target, RenderTarget::Table { progressive: true });
     let render_table = matches!(render_target, RenderTarget::Table { .. });
     worktrunk::trace::instant("List collect started");
@@ -1119,6 +1183,7 @@ pub fn collect(
                 status_symbols: StatusSymbols::default(),
                 statusline: None,
                 custom_values: Vec::new(),
+                seeded: super::model::SeededFacts::default(),
                 kind: ItemKind::Worktree(Box::new(worktree_data)),
             }
         })
@@ -1145,9 +1210,10 @@ pub fn collect(
     let llm_command = config.commit_generation.command.clone();
 
     // Custom [list.custom-columns] values expand before layout: their inputs
-    // (branch, worktree identity, vars from the bulk config snapshot) are
-    // already in memory, so cells paint with the skeleton and column widths
-    // are measured from content like Branch/Path. Pure CPU — no subprocess.
+    // (branch, worktree identity, vars and branch_config from the bulk config
+    // snapshot) are already in memory, so cells paint with the skeleton and
+    // column widths are measured from content like Branch/Path. Pure CPU — no
+    // subprocess.
     //
     // A broken column definition aborts `wt list` with the error. The picker
     // shares this path but runs collect on a background thread while skim
@@ -1164,10 +1230,12 @@ pub fn collect(
         };
     if !custom_columns.is_empty() {
         let all_vars = repo.all_vars_from_snapshot()?;
+        let all_branch_config = repo.all_branch_config_from_snapshot()?;
         super::custom_columns::expand_custom_columns(
             &custom_columns,
             &mut all_items,
             &all_vars,
+            &all_branch_config,
             repo,
         );
     }
@@ -1205,8 +1273,11 @@ pub fn collect(
     //   a listed `summary` that `Default` alone wouldn't plan (LLM command set,
     //   `[list] summary` off): without it the picker would hide a column `wt list`
     //   shows. CI is already covered — the picker is always `show_full`.
-    // - `--format json` → `all_columns` (source `Default`), ignoring the
-    //   selection: its every-field contract (`src/cli/mod.rs`) needs the full set.
+    // - `--format json` → `all_columns` unioned with the selection's forced-on
+    //   columns: the every-field contract (`src/cli/mod.rs`) needs the full
+    //   set, never a narrowing — but a listed `ci` forces the fetch on, so
+    //   JSON reports the same data the table shows (and `collected.ci` says
+    //   so).
     //
     // So a branch/path `ls` alias over many dirty worktrees runs no `git status`
     // / diffs / ahead-behind walks (#3133), while a default column gated off by
@@ -1235,12 +1306,12 @@ pub fn collect(
         render_table && progressive_handler.is_none() && !selected_columns.is_empty();
     let tasks = if prune_to_selection {
         listed_plan()
-    } else if progressive_handler.is_some() {
+    } else {
+        // Picker and JSON: the full set plus the selection's forced-on
+        // columns (a no-op when nothing is selected).
         let mut tasks = full_plan();
         tasks.extend(listed_plan());
         tasks
-    } else {
-        full_plan()
     };
 
     // The picker primes its CI cells from the local cache so the column paints
@@ -1284,6 +1355,13 @@ pub fn collect(
     // Single-line invariant: with no detectable width, an unlimited width
     // keeps rows untruncated rather than wrapping at a guessed width
     let max_width = crate::display::terminal_width().unwrap_or(usize::MAX);
+
+    // Which gated fact families the plan requested — recorded on `ListData`
+    // so JSON output can distinguish "not requested" from "undetermined".
+    let collected = super::model::Collected {
+        ci: tasks.contains(&TaskKind::CiStatus),
+        summary: tasks.contains(&TaskKind::SummaryGenerate),
+    };
 
     // Create collection options from the planned task set. `integration_targets`
     // is patched in after the parallel phase below extracts it — at this
@@ -1412,6 +1490,15 @@ pub fn collect(
     //
     // These operations run in parallel using rayon::scope with single-level parallelism.
     // See module docs for the timing diagram.
+
+    // Seed root/git-dir for every worktree from the list we already fetched, so
+    // the per-worktree tasks below don't each fork `git rev-parse
+    // --show-toplevel` / `--git-dir`. Deferred to post-skeleton: only the
+    // worker-pool tasks consume these (the pre-skeleton current-worktree probe
+    // uses the prewarmed discovery-worktree root), so seeding here keeps the
+    // local fs reads off the skeleton critical path — and skips them entirely
+    // on the `WORKTRUNK_SKELETON_ONLY` exit above, which runs no tasks.
+    repo.prime_worktree_path_caches(worktrees);
 
     // Collect worktree paths for fsmonitor starts (macOS only, fast, no git commands).
     // Git's builtin fsmonitor has race conditions under parallel load - pre-starting
@@ -1909,8 +1996,6 @@ pub fn collect(
         item.refresh_status_symbols(primary_target);
     }
 
-    // Count errors for summary
-    let error_count = errors.len();
     let timed_out_count = errors.iter().filter(|e| e.is_timeout()).count();
 
     let table_render = render_table.then(|| TableRenderPlan {
@@ -1924,7 +2009,6 @@ pub fn collect(
             &all_items,
             show_branches || show_remotes,
             layout.hidden_column_count,
-            error_count,
             timed_out_count,
         ),
     });
@@ -1952,14 +2036,13 @@ pub fn collect(
                 .iter()
                 .map(|error| {
                     let name = all_items[error.item_idx].branch_name();
-                    let kind_str: &'static str = error.kind.into();
-                    // Take first line only - git errors can be multi-line with usage hints
-                    let msg = error.message.lines().next().unwrap_or(&error.message);
-                    cformat!("<bold>{}</>: {} ({})", name, kind_str, msg)
+                    format_task_failure(name, error.kind, &error.message)
                 })
                 .collect();
+            let count = sorted_errors.len();
+            let plural = if count == 1 { "" } else { "s" };
             warning_parts.push(format!(
-                "Some git operations failed:\n{}",
+                "{count} task{plural} failed:\n{}",
                 format_with_gutter(&error_lines.join("\n"), None)
             ));
         }
@@ -2005,6 +2088,7 @@ pub fn collect(
     Ok(Some(super::model::ListData {
         items,
         custom_columns,
+        collected,
     }))
 }
 
@@ -2103,6 +2187,7 @@ pub fn build_worktree_item(
         status_symbols: StatusSymbols::default(),
         statusline: None,
         custom_values: Vec::new(),
+        seeded: super::model::SeededFacts::default(),
         kind: ItemKind::Worktree(Box::new(WorktreeData::from_worktree(
             wt,
             is_main,
@@ -2127,6 +2212,16 @@ pub fn populate_item(
     item: &mut ListItem,
     mut options: CollectOptions,
 ) -> anyhow::Result<()> {
+    // Mirror `collect()`: in a read-only checkout, redirect this item's
+    // object-writing merge/conflict probes into a temporary object database so
+    // the statusline still classifies integration state. `wt list statusline`
+    // is a separate entry point from `collect()` (its only callers are in
+    // `commands/statusline.rs`) and renders on every Claude Code prompt inside
+    // exactly the managed read-only sandbox this targets. See
+    // `Repository::redirect_objects_if_read_only`.
+    let redirected = repo.redirect_objects_if_read_only();
+    let repo = redirected.as_ref().unwrap_or(repo);
+
     // Populate commit data directly. The main `collect()` path batches this
     // across all items pre-skeleton; the single-item statusline path has no
     // such batch, so fetch the one SHA here. Skip null OIDs (unborn branches).
@@ -2295,6 +2390,7 @@ pub fn populate_item(
 mod tests {
     use super::*;
     use ansi_str::AnsiStr;
+    use insta::assert_snapshot;
 
     #[test]
     fn test_collect_pool_num_threads_honors_env() {
@@ -2308,9 +2404,9 @@ mod tests {
     fn test_format_stall_footer_single_pending() {
         let rendered =
             format_stall_footer("Showing 3 worktrees", 5, 12, 1, TaskKind::CiStatus, "feat");
-        insta::assert_snapshot!(
+        assert_snapshot!(
             rendered.ansi_strip(),
-            @"○ Showing 3 worktrees (5/12 loaded, no recent progress; waiting on ci-status for feat)"
+            @"○ Showing 3 worktrees (5/12 loaded, no recent progress; waiting on CI status for feat)"
         );
     }
 
@@ -2318,9 +2414,98 @@ mod tests {
     fn test_format_stall_footer_many_pending() {
         let rendered =
             format_stall_footer("Showing 3 worktrees", 5, 12, 3, TaskKind::CiStatus, "feat");
-        insta::assert_snapshot!(
+        assert_snapshot!(
             rendered.ansi_strip(),
-            @"○ Showing 3 worktrees (5/12 loaded, no recent progress; waiting on 3 tasks, including ci-status for feat)"
+            @"○ Showing 3 worktrees (5/12 loaded, no recent progress; waiting on 3 tasks, including CI status for feat)"
+        );
+    }
+
+    /// The multi-line git failure the display must preserve: recovery
+    /// guidance follows a blank line.
+    const INDEX_LOCK_MESSAGE: &str = r"fatal: Unable to create '/repo/.git/index.lock': File exists.
+
+Another git process seems to be running in this repository, e.g.
+an editor opened by 'git commit'. Please make sure all processes
+are terminated then try again. If it still fails, a git process
+may have crashed in this repository earlier:
+remove the file manually to continue.";
+
+    /// Single-line git errors stay inline; multi-line ones keep every line
+    /// (git's recovery guidance) indented under the label, capped at
+    /// `TASK_FAILURE_MESSAGE_MAX_LINES`.
+    #[test]
+    fn test_format_task_failure() {
+        assert_snapshot!(
+            format_task_failure("plugins", TaskKind::WorkingTreeDiff, "fatal: bad object HEAD")
+                .ansi_strip(),
+            @"plugins: working-tree diff (fatal: bad object HEAD)"
+        );
+        assert_snapshot!(
+            format_task_failure("plugins", TaskKind::WorkingTreeConflicts, INDEX_LOCK_MESSAGE)
+                .ansi_strip(),
+            @r"
+        plugins: working-tree conflict check
+          fatal: Unable to create '/repo/.git/index.lock': File exists.
+
+          Another git process seems to be running in this repository, e.g.
+          an editor opened by 'git commit'. Please make sure all processes
+          are terminated then try again. If it still fails, a git process
+          may have crashed in this repository earlier:
+          remove the file manually to continue.
+        "
+        );
+        assert_snapshot!(
+            format_task_failure("plugins", TaskKind::CiStatus, "").ansi_strip(),
+            @"plugins: CI status"
+        );
+        // A crashing task command (e.g. an LLM summary tool's stack trace)
+        // is capped rather than flooding the warning block.
+        let trace = (0..30)
+            .map(|i| format!("at frame {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_snapshot!(
+            format_task_failure("plugins", TaskKind::SummaryGenerate, &trace).ansi_strip(),
+            @r"
+        plugins: summary generation
+          at frame 0
+          at frame 1
+          at frame 2
+          at frame 3
+          at frame 4
+          at frame 5
+          at frame 6
+          at frame 7
+          at frame 8
+          at frame 9
+          at frame 10
+          at frame 11
+          … (18 more lines)
+        "
+        );
+        // Whitespace-only interior lines render empty, not as trailing spaces.
+        let padded = format_task_failure("plugins", TaskKind::BranchDiff, "a\n   \nb");
+        assert!(
+            padded.lines().all(|line| line == line.trim_end()),
+            "{padded:?}"
+        );
+        // Exactly one line over the cap pluralizes the elision marker.
+        let thirteen = (0..13)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let capped = format_task_failure("plugins", TaskKind::CiStatus, &thirteen);
+        let capped = capped.ansi_strip();
+        assert!(capped.ends_with("… (1 more line)"), "{capped:?}");
+        // One enormous line with no newlines is bounded too — the inline
+        // form truncates rather than word-wrapping across dozens of rows.
+        let monster = format_task_failure("plugins", TaskKind::CiStatus, &"x".repeat(2_000));
+        let monster = monster.ansi_strip();
+        assert!(monster.ends_with("…)"), "{monster:?}");
+        assert!(
+            monster.len() <= TASK_FAILURE_MESSAGE_MAX_COLS + "plugins: CI status ()…".len(),
+            "len={}",
+            monster.len()
         );
     }
 
@@ -2329,7 +2514,7 @@ mod tests {
     #[test]
     fn test_format_drain_timeout_diag_no_items() {
         let rendered = format_drain_timeout_diag(7, &[]);
-        insta::assert_snapshot!(
+        assert_snapshot!(
             rendered.ansi_strip(),
             @"Listing worktrees timed out after 120s (7 results received)"
         );
@@ -2413,12 +2598,12 @@ mod tests {
             },
         ];
         let rendered = format_drain_timeout_diag(3, &items);
-        insta::assert_snapshot!(
+        assert_snapshot!(
             rendered.ansi_strip(),
-            @r"
+            @"
         Listing worktrees timed out after 120s (3 results received); blocked tasks:
-          feature-a: ci-status, branch-diff
-          feature-b: ahead-behind
+          feature-a: CI status, branch diff
+          feature-b: ahead/behind counts
         "
         );
     }
@@ -2435,15 +2620,15 @@ mod tests {
             })
             .collect();
         let rendered = format_drain_timeout_diag(2, &items);
-        insta::assert_snapshot!(
+        assert_snapshot!(
             rendered.ansi_strip(),
-            @r"
+            @"
         Listing worktrees timed out after 120s (2 results received); blocked tasks:
-          feature-0: ahead-behind
-          feature-1: ahead-behind
-          feature-2: ahead-behind
-          feature-3: ahead-behind
-          feature-4: ahead-behind
+          feature-0: ahead/behind counts
+          feature-1: ahead/behind counts
+          feature-2: ahead/behind counts
+          feature-3: ahead/behind counts
+          feature-4: ahead/behind counts
           … and 3 more
         "
         );

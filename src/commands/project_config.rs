@@ -1,7 +1,9 @@
 use std::fmt;
 
+use color_print::cformat;
 use worktrunk::config::{Command, ProjectConfig};
 use worktrunk::git::HookType;
+use worktrunk::styling::{format_bash_with_gutter, format_with_gutter};
 
 /// What triggered a project command — determines the label in approval prompts.
 #[derive(Clone)]
@@ -41,6 +43,32 @@ impl ApprovableCommand {
             phase: Phase::CommitTemplateAppend,
             command: Command::new(None, text),
         }
+    }
+
+    /// `phase name:` label shown before the command body, in the approval
+    /// prompt and the approvals listing.
+    pub fn label(&self) -> String {
+        command_label(&self.phase, self.command.name.as_deref())
+    }
+
+    /// Gutter-formatted template. Shell commands get bash syntax
+    /// highlighting; the commit template fragment is plain text
+    /// (markdown-ish) and shouldn't be tokenized as bash.
+    pub fn format_template(&self) -> String {
+        match self.phase {
+            Phase::CommitTemplateAppend => format_with_gutter(&self.command.template, None),
+            _ => format_bash_with_gutter(&self.command.template),
+        }
+    }
+}
+
+/// `phase name:` label shown before a command body. Free-standing rather
+/// than a method on [`ApprovableCommand`] so `wt hook show` can label user
+/// hooks, which are never approvable.
+pub fn command_label(phase: impl fmt::Display, name: Option<&str>) -> String {
+    match name {
+        Some(name) => cformat!("{phase} <bold>{name}</>:"),
+        None => format!("{phase}:"),
     }
 }
 

@@ -56,8 +56,6 @@ impl SwitchResult {
 pub struct SwitchBranchInfo {
     /// The branch being switched to. `None` for detached HEAD worktrees.
     pub branch: Option<String>,
-    /// Expected path when there's a branch-worktree mismatch (None = path matches template)
-    pub expected_path: Option<PathBuf>,
 }
 
 /// How the worktree will be created.
@@ -163,9 +161,6 @@ pub enum RemoveResult {
         target_branch: Option<String>,
         /// Force git worktree removal even with untracked files.
         force_worktree: bool,
-        /// Expected path based on config template. `Some` when actual path differs
-        /// from expected (path mismatch), `None` when path matches template.
-        expected_path: Option<PathBuf>,
         /// Commit SHA of the removed worktree's HEAD, captured before removal.
         /// Used for post-remove hook template variables so they reference the
         /// removed worktree's state, not the execution context.
@@ -201,6 +196,19 @@ impl RemoveResult {
         match self {
             RemoveResult::RemovedWorktree { worktree_path, .. } => Some(worktree_path),
             RemoveResult::BranchOnly { .. } => None,
+        }
+    }
+
+    /// Branch name of the removed worktree, if known. `None` for detached-HEAD
+    /// worktrees and (structurally) for branch-only deletions.
+    ///
+    /// Only the `--reap` label needs this, which is Unix-only; gated to avoid a
+    /// dead-code warning on Windows where nothing consumes it.
+    #[cfg(unix)]
+    pub fn branch_name(&self) -> Option<&str> {
+        match self {
+            RemoveResult::RemovedWorktree { branch_name, .. } => branch_name.as_deref(),
+            RemoveResult::BranchOnly { branch_name, .. } => Some(branch_name),
         }
     }
 
@@ -255,6 +263,31 @@ mod tests {
         assert_eq!(result.path(), &path);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn remove_result_branch_name_reads_both_variants() {
+        let removed = RemoveResult::RemovedWorktree {
+            main_path: PathBuf::from("/main"),
+            worktree_path: PathBuf::from("/wt"),
+            changed_directory: false,
+            branch_name: Some("feature".to_string()),
+            deletion_mode: BranchDeletionMode::default(),
+            target_branch: None,
+            force_worktree: false,
+            removed_commit: None,
+        };
+        assert_eq!(removed.branch_name(), Some("feature"));
+
+        let branch_only = RemoveResult::BranchOnly {
+            branch_name: "solo".to_string(),
+            deletion_mode: BranchDeletionMode::default(),
+            pruned: false,
+            target_branch: None,
+            integration_reason: None,
+        };
+        assert_eq!(branch_only.branch_name(), Some("solo"));
+    }
+
     #[test]
     fn test_switch_result_path_existing() {
         let path = PathBuf::from("/test/existing");
@@ -302,7 +335,6 @@ mod tests {
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
             force_worktree: false,
-            expected_path: None,
             removed_commit: Some("abc1234567890".to_string()),
         };
         match result {
@@ -314,7 +346,6 @@ mod tests {
                 deletion_mode,
                 target_branch,
                 force_worktree,
-                expected_path,
                 removed_commit,
             } => {
                 assert_eq!(main_path.to_str().unwrap(), "/main");
@@ -325,7 +356,6 @@ mod tests {
                 assert!(!deletion_mode.is_force());
                 assert_eq!(target_branch.as_deref(), Some("main"));
                 assert!(!force_worktree);
-                assert!(expected_path.is_none());
                 assert_eq!(removed_commit.as_deref(), Some("abc1234567890"));
             }
             _ => panic!("Expected RemovedWorktree variant"),
@@ -397,7 +427,6 @@ mod tests {
             deletion_mode: BranchDeletionMode::ForceDelete,
             target_branch: None,
             force_worktree: true,
-            expected_path: None,
             removed_commit: None, // Detached HEAD may not have meaningful commit
         };
         match result {

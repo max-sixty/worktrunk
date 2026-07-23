@@ -1,8 +1,8 @@
 //! Progressive-rendering glue between `collect::collect` and the skim picker.
 //!
-//! Each event funnels into three places: skim's item stream (`tx`, alive
-//! while updates may arrive so the picker stays non-idle), each item's
-//! shared `rendered` mutex (in-place redraws), and `shared_items` used by
+//! Each event funnels into three places: skim's item stream (`tx`, consumed
+//! by the skeleton batch — the handler's only send), each item's shared
+//! `rendered` mutex (in-place redraws), and `shared_items` used by
 //! `PickerCollector` for alt-x.
 //!
 //! # Why updates poke a render
@@ -41,7 +41,7 @@ use std::time::{Duration, Instant};
 use color_print::cformat;
 use skim::prelude::*;
 use worktrunk::git::Repository;
-use worktrunk::styling::{StyledLine, strip_osc8_hyperlinks};
+use worktrunk::styling::{HINT_SYMBOL, StyledLine, strip_osc8_hyperlinks};
 
 use super::super::list::ci_status::PrStatus;
 
@@ -52,25 +52,29 @@ use super::super::list::ci_status::PrStatus;
 const RENDER_THROTTLE: Duration = Duration::from_millis(16);
 
 use super::items::{
-    HeaderLoading, HeaderSkimItem, LayoutSlot, LocalCheckout, LocalContent, LocalContentSlot,
-    MorphHandle, PickerRow, PrStatusSlot, PreviewCache, RowShortcutData, RowUrl, ShortcutTable,
-    pr_presence, pr_status_pane_eq, worktree_output_token,
+    HeaderFlash, HeaderLoading, HeaderSkimItem, LayoutSlot, LocalCheckout, LocalContent,
+    LocalContentSlot, MorphHandle, PickerRow, PrStatusSlot, PreviewCache, RowShortcutData, RowUrl,
+    ShortcutTable, pr_presence, pr_status_pane_eq, worktree_output_token,
 };
 use super::preview::PreviewMode;
 use super::preview_notify::PrStatusDelta;
-use super::preview_orchestrator::PreviewOrchestrator;
+use super::preview_orchestrator::{PreviewOrchestrator, SpawnGeneration};
 use crate::commands::list::collect::PickerProgressHandler;
 use crate::commands::list::model::{BranchScope, ItemKind, ListItem};
 
 /// Handler owned by the background collect thread. Implements the
 /// `PickerProgressHandler` trait that `collect` drives.
-///
-/// The `tx` clone lives as long as this handler is referenced — dropping the
-/// handler (when the collect thread exits) drops the last sender, which signals
-/// EOF to skim's reader. That's the explicit contract: once background work is
-/// done, the picker can go idle.
 pub(super) struct PickerHandler {
-    pub(super) tx: SkimItemSender,
+    /// skim's item channel, consumed by `on_skeleton`'s single send. Sending
+    /// the skeleton batch takes the sender out and drops it, so the channel
+    /// closes as soon as the last live sender (the `--prs` thread's clone, if
+    /// any) finishes — not when the handler itself drops. Row updates after the
+    /// skeleton are in-place (`rendered` mutexes + `request_render`), never
+    /// resent, so nothing needs the channel past that send, and holding it open
+    /// is expensive: skim's reader polls an open-but-empty channel with kanal's
+    /// `recv_timeout`, whose wait yields instead of parking — a full core spun
+    /// for as long as collect still grinds (a slow CI fetch, an LLM summary).
+    pub(super) tx: Mutex<Option<SkimItemSender>>,
     /// skim's event sender, published by the picker once `Skim::init_tui` has
     /// run. `None` until then — early skeleton sends drive the first paint via
     /// the item channel, so a missed poke before the TUI exists is harmless.
@@ -112,16 +116,21 @@ pub(super) struct PickerHandler {
     pub(super) local_content_slots: OnceLock<Box<[LocalContentSlot]>>,
     pub(super) preview_cache: PreviewCache,
     /// Fresh `Repository` for this spawn, used for the mutation-sensitive
-    /// `on_skeleton` reads (`list_worktrees`, `local_branches`). The
-    /// `orchestrator` carries its own startup-cloned repo shared across every
-    /// spawn — reading worktrees/branches through that re-probes a
-    /// `RepoCache.worktrees`/`local_branches` `OnceCell` primed at startup and
-    /// never invalidated, so after an in-picker removal it would yield the stale
-    /// pre-removal set. `spawn` rebuilds this repo per pass (same `spawn_repo`
-    /// the collect/prs threads use); read inventories through it, not through
-    /// `orchestrator.repo()`.
+    /// `on_skeleton` reads (`list_worktrees`, `local_branches`) — a
+    /// `RepoCache` is a set of `OnceCell`s that are never invalidated, so
+    /// these reads must go through a repo rebuilt after any in-picker
+    /// removal, or they'd yield the stale pre-removal inventory. `spawn`
+    /// rebuilds this repo per pass: the same `spawn_repo` the collect/prs
+    /// threads use and `PreviewOrchestrator::refresh` rebinds for preview
+    /// compute; this field is the handler's direct handle to it.
     pub(super) repo: Repository,
     pub(super) orchestrator: Arc<PreviewOrchestrator>,
+    /// This spawn's producer token (see [`SpawnGeneration`]): every
+    /// precompute spawn, comments fetch, and skim row this handler starts
+    /// carries it, so a refresh that supersedes this spawn also supersedes
+    /// everything it still has in flight — including this handler's own
+    /// `on_collect_complete` firing after the refresh.
+    pub(super) spawn_gen: SpawnGeneration,
     pub(super) preview_dims: (usize, usize),
     pub(super) llm_command: Option<String>,
     /// Filled into the Summary preview cache for every item when summaries
@@ -149,6 +158,10 @@ pub(super) struct PickerHandler {
     /// flight, so the header shows a "loading…" marker. The `--prs` thread
     /// clears it when the fetch resolves. `None` on non-`--prs` pickers.
     pub(super) prs_loading: Option<Arc<AtomicBool>>,
+    /// Shared picker-lifetime with the header and [`AltXRemover`](super::AltXRemover):
+    /// a declined `alt-x` sets a transient "couldn't remove this row" message
+    /// here, shown in place of the column labels for a beat (see [`HeaderFlash`]).
+    pub(super) header_flash: Arc<HeaderFlash>,
 }
 
 impl PickerHandler {
@@ -191,6 +204,16 @@ impl PickerHandler {
         branch_name: &str,
         pr_status: &Option<Option<PrStatus>>,
     ) {
+        // A superseded handler (its collect thread draining past an `alt-r`)
+        // must not act at all: its corrected-number path below *removes* the
+        // shared `(branch, Comments)` entry — possibly the one the live spawn
+        // just fetched — and its replacement fetch would then drop at `fill`
+        // on the stale token, stranding the tab on its loading placeholder
+        // (nothing else refills Comments; the live handler's dedup slot
+        // already records the number). Gate the removal with the fetch.
+        if !self.spawn_gen.is_current() {
+            return;
+        }
         let Some(Some(status)) = pr_status else {
             return;
         };
@@ -223,6 +246,7 @@ impl PickerHandler {
         }
         super::prs::spawn_worktree_comments_fetch(
             &self.orchestrator,
+            &self.spawn_gen,
             branch_name.to_string(),
             number as u32,
             status.updated_at.clone(),
@@ -322,20 +346,22 @@ impl PickerProgressHandler for PickerHandler {
             .and_then(|wt| wt.path.parent().map(Path::to_path_buf));
 
         // Header row — non-selectable via `header_lines(1)` on the options.
-        // In `--prs` mode it shows a dim "loading open PRs…" line (in place of
+        // In `--prs` mode it shows a dim "↳ Loading open PRs…" line (in place of
         // the column labels) until the forge call's rows land — wording mirrors
-        // the empty-list "No open PRs found".
+        // the empty-list "No open PRs found", styled as a hint (the dim `↳` sits
+        // in the pointer gutter, the text aligned with the row content at col 2).
         let loading = self.prs_loading.as_ref().map(|pending| {
-            let noun = super::prs::forge_noun(self.orchestrator.repo());
+            let noun = super::prs::forge_noun(&self.repo);
             HeaderLoading {
                 pending: Arc::clone(pending),
-                marker_ansi: cformat!("  <dim>loading open {noun}…</>"),
+                marker_ansi: cformat!("{HINT_SYMBOL} <dim>Loading open {noun}…</>"),
             }
         });
         skim_items.push(Arc::new(HeaderSkimItem {
             display_text: header.plain_text(),
             display_text_with_ansi: header.render(),
             loading,
+            flash: Arc::clone(&self.header_flash),
         }) as Arc<dyn SkimItem>);
 
         for (item, rendered_line) in items.into_iter().zip(rendered) {
@@ -443,6 +469,9 @@ impl PickerProgressHandler for PickerHandler {
                 pr_status: pr_status_arc,
                 notifier: Arc::clone(self.orchestrator.notifier()),
                 local: Some(LocalCheckout {
+                    item: Arc::clone(&item_arc),
+                    demand: Arc::clone(self.orchestrator.demand()),
+                    spawn_gen: self.spawn_gen.clone(),
                     has_upstream,
                     summaries_enabled,
                     local_content: local_content_arc,
@@ -460,16 +489,38 @@ impl PickerProgressHandler for PickerHandler {
         let _ = self
             .local_content_slots
             .set(local_content_slots.into_boxed_slice());
-        *self.shared_items.lock().unwrap() = skim_items.clone();
-        *self.shortcut_table.lock().unwrap() = shortcut_map;
+        // The session-shared list and shortcut table take only the live
+        // spawn's rows: a superseded skeleton landing late (its collect
+        // thread scheduled after a rapid second `alt-r`'s spawn already
+        // published) would otherwise overwrite them with pre-refresh rows,
+        // and a later `alt-x` resync or `alt-y`/`alt-o` would act on those.
+        // Checked inside each lock so the check pairs with the live spawn's
+        // own overwrite — its generation bump precedes its publish.
+        {
+            let mut list = self.shared_items.lock().unwrap();
+            if self.spawn_gen.is_current() {
+                *list = skim_items.clone();
+            }
+        }
+        {
+            let mut table = self.shortcut_table.lock().unwrap();
+            if self.spawn_gen.is_current() {
+                *table = shortcut_map;
+            }
+        }
 
         // skim 4.x's item channel carries Vec batches; the skeleton is a single
         // batch. This append wakes skim's reader (`items_available`) and drives
         // the first paint. Later field updates happen in place through each
         // item's shared `rendered` mutex and are *not* resent — they surface via
         // `request_render` (see module docstring), since skim won't repaint a
-        // silent in-place mutation on its own.
-        let _ = self.tx.send(skim_items);
+        // silent in-place mutation on its own. Sending consumes the sender
+        // (see the `tx` field doc): this is the handler's only send, and
+        // releasing it here lets skim's reader stop polling the channel while
+        // collect's remaining tasks grind on.
+        if let Some(tx) = self.tx.lock().unwrap().take() {
+            let _ = tx.send(skim_items);
+        }
 
         // Skeleton is in skim's channel; now wake the `--prs` thread (see the
         // `shown_branches` note above). Its rows append after the skeleton, so a PR
@@ -486,6 +537,7 @@ impl PickerProgressHandler for PickerHandler {
         // of row tasks in `COLLECT_POOL`'s injector while workers are still
         // grinding through the row work.
         self.orchestrator.spawn_initial_precompute(
+            &self.spawn_gen,
             &list_items,
             self.preview_dims,
             self.llm_command.as_deref(),
@@ -498,8 +550,12 @@ impl PickerProgressHandler for PickerHandler {
         }
         // Static Summary hint is a synchronous in-memory insert, no
         // contention concern. Pre-fill every row at skeleton time so the
-        // Summary tab is usable for any selection immediately.
+        // Summary tab is usable for any selection immediately. Gated like
+        // the shared publish above: the seeding bypasses `fill` (static
+        // content, documented exception), so a superseded skeleton would
+        // otherwise write its stale rows' keys into the refreshed cache.
         if self.llm_command.is_none()
+            && self.spawn_gen.is_current()
             && let Some(hint) = self.summary_hint.as_deref()
         {
             self.orchestrator.seed_summary_hints(&list_items, hint);
@@ -606,6 +662,7 @@ impl PickerProgressHandler for PickerHandler {
             return;
         }
         self.orchestrator.spawn_deferred_precompute(
+            &self.spawn_gen,
             &items[1..],
             self.preview_dims,
             self.llm_command.as_deref(),
@@ -633,8 +690,9 @@ mod tests {
         render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
     ) -> PickerHandler {
         let preview_cache: PreviewCache = Arc::clone(&orchestrator.cache);
+        let spawn_gen = orchestrator.generation();
         PickerHandler {
-            tx,
+            tx: Mutex::new(Some(tx)),
             render_tx,
             last_render_poke: Mutex::new(Instant::now()),
             shared_items: Arc::new(Mutex::new(Vec::new())),
@@ -646,6 +704,7 @@ mod tests {
             preview_cache,
             repo,
             orchestrator,
+            spawn_gen,
             preview_dims: (80, 24),
             llm_command: None,
             summary_hint: Some("disabled".to_string()),
@@ -654,6 +713,7 @@ mod tests {
             grid_slot: Arc::new(super::super::prs::GridSlot::new()),
             layout_slot: Arc::new(Mutex::new(None)),
             prs_loading: None,
+            header_flash: Arc::new(HeaderFlash::default()),
         }
     }
 
@@ -811,6 +871,34 @@ mod tests {
         handler.repaint_rows(vec!["rev-one".into(), "rev-two".into()]);
         assert_eq!(*slots[0].lock().unwrap(), "rev-one");
         assert_eq!(*slots[1].lock().unwrap(), "rev-two");
+    }
+
+    /// The skeleton send consumes the handler's sender (see the `tx` field
+    /// doc): with no `--prs` clone in play, the channel closes at the skeleton
+    /// batch even though the handler — and the collect thread driving it —
+    /// lives on. Held open instead, skim's reader would spin a full core on the
+    /// empty channel (kanal's `recv_timeout` yields rather than parking) for as
+    /// long as collect's slower tasks (a CI fetch, an LLM summary) keep running.
+    #[test]
+    fn skeleton_send_consumes_sender_and_closes_channel() {
+        let (handler, _test, rx) = make_handler();
+        handler.on_skeleton(
+            vec![ListItem::new_branch("abc".into(), "one".into())],
+            vec!["skel".into()],
+            header("hdr"),
+            grid(),
+        );
+
+        let received = rx.recv().expect("skeleton batch");
+        assert_eq!(received.len(), 2, "expected header + 1 item");
+        assert!(
+            rx.recv().is_err(),
+            "channel should be closed after the skeleton send"
+        );
+        assert!(
+            handler.tx.lock().unwrap().is_none(),
+            "the sender should be consumed, not merely unused"
+        );
     }
 
     /// `on_update` mirrors a row's live CI status into the preview-feeding slots,
@@ -1624,6 +1712,104 @@ mod tests {
             handler.preview_cache.iter().count(),
             before,
             "on_collect_complete must not spawn additional work for a single-item skeleton"
+        );
+    }
+
+    /// A handler superseded by a refresh must not publish its skeleton into
+    /// the session-shared row list / shortcut table, nor seed summary hints:
+    /// a rapid second `alt-r` can schedule the new spawn's skeleton before a
+    /// slow prior spawn's, and the stale skeleton landing second would
+    /// otherwise overwrite the live rows (feeding a later `alt-x` resync and
+    /// the `alt-y`/`alt-o` lookups) and write stale-row hint keys into the
+    /// refreshed cache.
+    #[test]
+    fn superseded_skeleton_leaves_shared_state_alone() {
+        let (handler, test, rx) = make_handler();
+        handler.orchestrator.refresh(test.repo.clone());
+
+        handler.on_skeleton(
+            vec![ListItem::new_branch("abc".into(), "stale".into())],
+            vec!["skel".into()],
+            header("hdr"),
+            grid(),
+        );
+        handler.orchestrator.wait_for_idle();
+
+        // The rows still stream to this spawn's (dead) skim channel...
+        let received = rx.recv().expect("skeleton batch");
+        assert_eq!(received.len(), 2, "header + row still sent");
+        // ...but nothing session-shared takes them.
+        assert!(
+            handler.shared_items.lock().unwrap().is_empty(),
+            "superseded skeleton must not overwrite the shared row list"
+        );
+        assert!(
+            handler.shortcut_table.lock().unwrap().is_empty(),
+            "superseded skeleton must not overwrite the shortcut table"
+        );
+        assert!(
+            handler.preview_cache.is_empty(),
+            "superseded skeleton must not seed hints into the refreshed cache"
+        );
+    }
+
+    /// A superseded handler's `maybe_spawn_comments` is fully inert. Its
+    /// corrected-number path would otherwise evict the live spawn's
+    /// `(branch, Comments)` entry from the shared cache while its own refetch
+    /// drops at `fill` on the stale token — stranding the tab on its loading
+    /// placeholder, since the live handler's dedup slot already records the
+    /// number and nothing else refills Comments.
+    #[test]
+    fn superseded_handler_does_not_evict_live_comments() {
+        use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef, PrStatus};
+
+        let status = |n: u64| {
+            Some(Some(PrStatus {
+                ci_status: CiStatus::Passed,
+                source: CiSource::PullRequest,
+                is_stale: false,
+                is_priming: false,
+                url: None,
+                number: Some(PrRef::pr(n)),
+                review_state: None,
+                title: None,
+                body: None,
+                author: None,
+                comment_count: None,
+                updated_at: None,
+            }))
+        };
+
+        let (handler, test, rx) = make_handler();
+        handler.on_skeleton(
+            vec![ListItem::new_branch("abc".into(), "b".into())],
+            vec!["skel".into()],
+            header("hdr"),
+            grid(),
+        );
+        let _ = rx.recv();
+        // Record PR #5 in this handler's dedup slot (the fetch resolves
+        // synchronously to the "unsupported forge" pane — the test repo has
+        // no forge remote — only the recorded number matters here).
+        handler.maybe_spawn_comments(0, "b", &status(5));
+
+        // A refresh supersedes this handler; the live spawn fetches the thread.
+        handler.orchestrator.refresh(test.repo.clone());
+        let key = ("b".to_string(), PreviewMode::Comments);
+        handler.orchestrator.fill_external(
+            &handler.orchestrator.generation(),
+            key.clone(),
+            "live thread".to_string(),
+        );
+
+        // The stale handler observing a corrected number must not touch the
+        // live spawn's entry.
+        handler.maybe_spawn_comments(0, "b", &status(6));
+        handler.orchestrator.wait_for_idle();
+        assert_eq!(
+            handler.preview_cache.get(&key).map(|v| v.clone()),
+            Some("live thread".to_string()),
+            "a superseded handler must not evict the live spawn's Comments entry"
         );
     }
 }

@@ -163,6 +163,42 @@ fn assert_valid_abort_exit_code(exit_code: i32) {
     );
 }
 
+/// Assert the exit code of a *successful* picker-create (alt-c).
+///
+/// A create that succeeds exits 0 — `run_picker` returns `Ok(())` after the
+/// `SwitchPipeline` runs, and the "cannot cd — shell integration not installed"
+/// line is a warning, not an error. Callers still prove the create succeeded the
+/// deterministic way: the new branch and worktree exist in git afterward.
+///
+/// On Windows the picker process has been observed to *self-exit* with code 1
+/// after a fully-correct create under the advisory `affected tests (windows)`
+/// leg's load, while the required `test (windows)` leg passed 0 on the same SHA
+/// (PR #3424 CI: branch + worktree created, pre-start hook ran, only the exit
+/// code diverged; the test finished in ~5.6s, well under `CHILD_EXIT_TIMEOUT`,
+/// so it was a genuine self-exit and not a harness kill). This is the same
+/// "slow-but-successful exit reports 1 on Windows" class the abort helpers
+/// already tolerate via [`assert_valid_abort_exit_code`]. Tolerate it here so a
+/// correct create doesn't false-fail the advisory leg, while keeping the exit
+/// code strict everywhere it is reliable — a create that genuinely *fails*
+/// leaves no branch, so the git-state assertions remain the real guard.
+fn assert_valid_create_exit_code(exit_code: i32) {
+    let valid = if cfg!(windows) {
+        exit_code == 0 || exit_code == 1
+    } else {
+        exit_code == 0
+    };
+    assert!(
+        valid,
+        "Unexpected create exit code: {} (expected 0{})",
+        exit_code,
+        if cfg!(windows) {
+            ", or 1 for the Windows slow-exit quirk"
+        } else {
+            ""
+        }
+    );
+}
+
 /// Check if skim is ready (shows "> " prompt indicating it's accepting input)
 fn is_skim_ready(screen_content: &str) -> bool {
     // Skim shows "> " at the start of the prompt line when accepting input.
@@ -1525,7 +1561,7 @@ fn test_switch_picker_prs_github_list(mut repo: TestRepo) {
     );
     // The header's loading marker is gone once the rows have streamed in.
     assert!(
-        !screen.contains("loading open PRs"),
+        !screen.contains("Loading open PRs"),
         "loading marker cleared once rows arrived:\n{screen}"
     );
 }
@@ -1653,6 +1689,59 @@ fn test_switch_picker_prs_rows_survive_alt_x_removal(mut repo: TestRepo) {
     );
 }
 
+/// alt-x on a row that can't be removed flashes the reason in the header at
+/// alt-x time, not only when the stash drains on exit. The current worktree is
+/// the picker's pinned top row, so launching from the main worktree and pressing
+/// alt-x (no cursor move) targets it — and the main worktree can't be removed, so
+/// the header swaps the column labels for `✗ The main worktree cannot be removed`
+/// for a beat. The flash *clearing* after the beat is covered by the `HeaderFlash`
+/// unit tests; this asserts it paints. A presence-wait catches it before the beat
+/// elapses (`HEADER_FLASH_DURATION`), so the test never depends on the timer.
+#[rstest]
+fn test_switch_picker_alt_x_flashes_unremovable_reason(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+    // A second worktree so the skeleton paints a distinctive row to gate on; the
+    // cursor still starts on the pinned current (main) worktree above it.
+    repo.add_worktree("wt-extra");
+
+    let env_vars = repo.test_env_vars();
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+    );
+
+    // The worktree rows have painted (one skeleton batch); the cursor is on the
+    // pinned current worktree — the main worktree, which can't be removed.
+    wait_for_stable_with_content(&rx, &mut parser, Some("wt-extra"));
+
+    // alt-x is declined, and the reason flashes in the header. The presence-wait
+    // returns as soon as the flash paints — before it self-clears.
+    send_input_awaiting_content(
+        &writer,
+        &rx,
+        &mut parser,
+        "\x1bx",
+        Some("main worktree cannot be removed"),
+    );
+
+    let screen = parser.screen().contents();
+    let exit_code = abort_and_exit_code(child, writer, rx);
+    assert_valid_abort_exit_code(exit_code);
+    assert!(
+        screen.contains("main worktree cannot be removed"),
+        "the unremovable reason flashes in the header at alt-x time:\n{screen}"
+    );
+}
+
 /// A preview pane fills in on its own once its background compute lands — no
 /// keystroke needed. The deterministic vehicle is a `--prs` row's `comments`
 /// tab: the comment fetch (`gh pr view <n> --json comments`) is mocked behind a
@@ -1731,7 +1820,7 @@ fn test_switch_picker_preview_auto_refreshes_when_compute_lands(mut repo: TestRe
     );
 }
 
-/// `wt switch --prs` shows a dim "loading open PRs…" marker on the header row
+/// `wt switch --prs` shows a dim "↳ Loading open PRs…" marker on the header row
 /// while the forge call is in flight. A delayed mock holds the PR list long
 /// enough to observe the marker on the real screen before the rows land. The
 /// picker captures and aborts at stabilize time — well before the delay
@@ -1760,13 +1849,13 @@ fn test_switch_picker_prs_shows_loading_marker(mut repo: TestRepo) {
         &env_vars,
         // The loading line paints at skeleton, before the (slow) forge call
         // returns its rows.
-        &[("", Some("loading open PRs"))],
+        &[("", Some("Loading open PRs"))],
     );
 
     assert_valid_abort_exit_code(result.exit_code);
     let (list, _preview) = result.panels();
     assert!(
-        list.contains("loading open PRs"),
+        list.contains("Loading open PRs"),
         "loading line on the header while --prs fetches:\n{list}"
     );
     // The PR row hasn't streamed in yet — still inside the delayed forge call.
@@ -2186,11 +2275,10 @@ fn test_switch_picker_create_worktree_with_alt_c(mut repo: TestRepo) {
         ],
     );
 
-    // Alt-C triggers accept which should exit normally
-    assert_eq!(
-        result.exit_code, 0,
-        "Expected exit code 0 for successful create"
-    );
+    // Alt-C triggers accept which should exit normally. The create's success is
+    // proven deterministically by the branch existing below; the exit code
+    // tolerates the Windows self-exit-1 quirk (see assert_valid_create_exit_code).
+    assert_valid_create_exit_code(result.exit_code);
 
     let screen = result.screen();
 
@@ -2325,12 +2413,12 @@ fn test_switch_picker_create_validates_templates_before_worktree(mut repo: TestR
         &env_vars,
         &[("new-feature", None), ("\x1bc", None)],
     );
-    assert_eq!(
-        result.exit_code,
-        0,
-        "Re-running picker-create with fixed template should succeed.\nScreen:\n{}",
-        result.screen()
-    );
+    // Re-running with the fixed template should succeed. Success is proven by the
+    // branch existing below (no half-state was left behind); the exit code
+    // tolerates the Windows self-exit-1 quirk (see assert_valid_create_exit_code)
+    // — the flake this test hit on the advisory `affected tests (windows)` leg,
+    // where a fully-correct create self-exited 1 (PR #3424 CI).
+    assert_valid_create_exit_code(result.exit_code);
 
     let branch_output = repo
         .git_command()
@@ -2339,7 +2427,8 @@ fn test_switch_picker_create_validates_templates_before_worktree(mut repo: TestR
         .unwrap();
     assert!(
         String::from_utf8_lossy(&branch_output.stdout).contains("new-feature"),
-        "Branch `new-feature` should exist after fix"
+        "Branch `new-feature` should exist after fix.\nScreen:\n{}",
+        result.screen()
     );
 }
 
@@ -2467,6 +2556,109 @@ fn test_switch_picker_no_cd_switches_without_cd_directive(mut repo: TestRepo) {
         cd_content.trim().is_empty(),
         "CD file should be empty with --no-cd, got: {}",
         cd_content
+    );
+}
+
+/// `wt switch -x <cmd>` with no branch argument opens the picker and runs the
+/// command against the selected worktree — the composition requested in #3370.
+/// Before the fix, `--execute`'s `requires = "branch"` rejected this at parse
+/// time. The EXEC directive file is the observable proof: `--execute` writes
+/// the expanded command there for the shell wrapper to source, so its presence
+/// confirms the picker threaded `execute` into the shared `SwitchPipeline`.
+#[rstest]
+fn test_switch_picker_runs_execute_command(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.add_worktree("target-branch");
+
+    let (cd_path, exec_path, _guard) = directive_files_for_pty();
+
+    let mut env_vars = repo.test_env_vars();
+    env_vars.push((
+        "WORKTRUNK_DIRECTIVE_CD_FILE".to_string(),
+        cd_path.display().to_string(),
+    ));
+    env_vars.push((
+        "WORKTRUNK_DIRECTIVE_EXEC_FILE".to_string(),
+        exec_path.display().to_string(),
+    ));
+
+    // No branch argument — `-x` alone opens the picker. Select target-branch and
+    // press Enter; the switch pipeline then writes the execute command to the
+    // EXEC file instead of a cd directive.
+    let result = exec_in_pty_with_input_expectations(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--execute", "echo picker-exec-ran"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            // Preview-pane gate: see test_switch_picker_emits_cd_directive_by_default.
+            ("target", Some("target-branch has no uncommitted changes")),
+            ("\r", None), // Enter to switch
+        ],
+    );
+
+    assert_eq!(
+        result.exit_code, 0,
+        "Expected exit code 0 for picker switch with --execute"
+    );
+
+    let exec_contents = std::fs::read_to_string(&exec_path).unwrap_or_default();
+    assert!(
+        exec_contents.contains("picker-exec-ran"),
+        "EXEC file should contain the --execute command after a picker switch, got: {}",
+        exec_contents
+    );
+}
+
+/// `{{ base }}` in a picker `--execute` resolves to the source worktree, just
+/// as it does on the argument path (`wt switch <branch> -x …`). The picker now
+/// captures pre-switch source identity, so the two paths no longer diverge:
+/// before, the picker left `base` unset while pre-flight validation still
+/// accepted the template, so `-x 'echo {{ base }}'` passed validation and then
+/// errored on the undefined value *after* the switch had already landed.
+/// Selecting from the `main` worktree, `{{ base }}` expands to `main`.
+#[rstest]
+fn test_switch_picker_execute_base_resolves_to_source(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.add_worktree("target-branch");
+
+    let (cd_path, exec_path, _guard) = directive_files_for_pty();
+
+    let mut env_vars = repo.test_env_vars();
+    env_vars.push((
+        "WORKTRUNK_DIRECTIVE_CD_FILE".to_string(),
+        cd_path.display().to_string(),
+    ));
+    env_vars.push((
+        "WORKTRUNK_DIRECTIVE_EXEC_FILE".to_string(),
+        exec_path.display().to_string(),
+    ));
+
+    // Run from the `main` worktree so the captured source branch is `main`.
+    let result = exec_in_pty_with_input_expectations(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--execute", "echo {{ base }}"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            ("target", Some("target-branch has no uncommitted changes")),
+            ("\r", None), // Enter to switch
+        ],
+    );
+
+    assert_eq!(
+        result.exit_code, 0,
+        "picker `-x '{{{{ base }}}}'` should succeed, not error on an undefined \
+         value after the switch"
+    );
+
+    let exec_contents = std::fs::read_to_string(&exec_path).unwrap_or_default();
+    assert!(
+        exec_contents.contains("echo main"),
+        "EXEC file should contain the expanded `{{{{ base }}}}` (the source \
+         branch `main`), got: {exec_contents}"
     );
 }
 
@@ -2991,31 +3183,40 @@ fn test_switch_picker_alt_x_keeps_unmerged_branch_row(mut repo: TestRepo) {
     repo.run_git(&["checkout", &default_branch]);
 
     let env_vars = repo.test_env_vars();
-    let result = exec_in_pty_capture_before_abort(
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(
         wt_bin().to_str().unwrap(),
         &["switch", "--branches"],
         repo.root_path(),
         &env_vars,
-        &[
-            ("unmerged-orphan", Some("unmerged-orphan")), // filter to the branch
-            ("\x1bx", Some("unmerged-orphan")),           // alt-x keeps it: still visible
-        ],
     );
 
-    assert_valid_abort_exit_code(result.exit_code);
-    let (list, _preview) = result.panels();
-    // `list` (cols 0..LIST_WIDTH of every row) includes skim's query-echo prompt
-    // line `> unmerged-orphan`, which holds the branch name whether or not the row
-    // survives. So `contains` alone is tautological — assert the name appears at
-    // least twice (the prompt echo PLUS the data row). A regression that dropped
-    // the row optimistically would empty the filtered list, leaving only the
-    // prompt's single occurrence, and fail here.
-    let occurrences = list.matches("unmerged-orphan").count();
-    assert!(
-        occurrences >= 2,
-        "the unmerged branch-only row survives alt-x — expected the branch name in \
-         both the prompt echo and a data row, got {occurrences} occurrence(s).\nList:\n{list}"
-    );
+    // Filter to the branch-only row, then wait for the cursor (`>`) to land on it.
+    // A local branch with no worktree carries the `/` gutter, so `/ unmerged-orphan`
+    // names the data row specifically — skim's query-echo prompt line is
+    // `> unmerged-orphan` (no gutter), which this gate ignores. Keying off the
+    // gutter rather than the bare name is what makes the wait robust: under Windows
+    // CI load the prompt echo trails its keystrokes (the final character can still
+    // be unrendered once the row is already on screen), and an assertion that
+    // counted the name across both the prompt and the row flaked when the prompt
+    // came up a character short.
+    send_input_awaiting_content(&writer, &rx, &mut parser, "unmerged-orphan", None);
+    wait_for_cursor_on_row(&rx, &mut parser, "/ unmerged-orphan");
+
+    // alt-x: `SafeDelete` refuses to drop an unmerged branch, so the row stays and
+    // the cursor holds on `/ unmerged-orphan`. A regression that dropped the row
+    // would empty the filtered list, the `/` data row would never reappear, and
+    // this wait would time out with a screen dump.
+    send_input_awaiting_content(&writer, &rx, &mut parser, "\x1bx", None);
+    wait_for_cursor_on_row(&rx, &mut parser, "/ unmerged-orphan");
+
+    let exit_code = abort_and_exit_code(child, writer, rx);
+    assert_valid_abort_exit_code(exit_code);
 }
 
 /// alt-x on a *worktree* row whose branch is unmerged morphs the row to
