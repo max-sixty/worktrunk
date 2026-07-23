@@ -1298,12 +1298,10 @@ fn test_uninstall_scan_removes_custom_cmd_fish_files(repo: TestRepo, temp_home: 
 
 #[rstest]
 fn test_uninstall_scan_removes_custom_cmd_nushell_file(repo: TestRepo, temp_home: TempDir) {
-    let home = std::fs::canonicalize(temp_home.path()).unwrap();
-    let nu_autoload = home
-        .join(".config")
-        .join("nushell")
-        .join("vendor")
-        .join("autoload");
+    let home = canonical_temp_home(&temp_home);
+    // Pin the vendor-autoload dir so the target is deterministic across
+    // platforms and independent of whether `nu` is on the runner's PATH.
+    let nu_autoload = home.join(".local/share/nushell/vendor/autoload");
     fs::create_dir_all(&nu_autoload).unwrap();
     let default_config = nu_autoload.join("wt.nu");
     fs::write(&default_config, "def --env --wrapped wt [] {}\n").unwrap();
@@ -1311,6 +1309,7 @@ fn test_uninstall_scan_removes_custom_cmd_nushell_file(repo: TestRepo, temp_home
     let mut install_cmd = wt_command();
     repo.configure_wt_cmd(&mut install_cmd);
     set_temp_home_env(&mut install_cmd, temp_home.path());
+    install_cmd.env("WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR", &nu_autoload);
     install_cmd.env("SHELL", "/bin/nu");
     install_cmd
         .args([
@@ -1330,6 +1329,7 @@ fn test_uninstall_scan_removes_custom_cmd_nushell_file(repo: TestRepo, temp_home
     let mut uninstall_cmd = wt_command();
     repo.configure_wt_cmd(&mut uninstall_cmd);
     set_temp_home_env(&mut uninstall_cmd, temp_home.path());
+    uninstall_cmd.env("WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR", &nu_autoload);
     uninstall_cmd.env("SHELL", "/bin/nu");
     uninstall_cmd
         .args(["config", "shell", "uninstall", "nu", "--yes"])
