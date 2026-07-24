@@ -159,7 +159,16 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
-          name: unsigned-windows-zip
+          # actions/upload-artifact always wraps the upload in its own
+          # storage zip unless archive: false — since the file we're
+          # uploading is already a zip, the default produced a zip-of-a-zip
+          # that SignPath saw as "the artifact", so the configured
+          # <pe-file path="wt.exe"> never matched (confirmed via a real
+          # signing-request failure: "Expected path to match exactly 1
+          # item, but found 0", processing unsigned-windows-zip.zip).
+          # archive: false uploads the file as-is; the artifact name then
+          # becomes the file's own name, so `name:` here is ignored.
+          archive: false
           path: target/distrib/worktrunk-x86_64-pc-windows-msvc.zip
       - name: Submit SignPath signing request
         if: contains(matrix.targets, 'x86_64-pc-windows-msvc') && steps.upload-unsigned-windows-artifact.outcome == 'success'
