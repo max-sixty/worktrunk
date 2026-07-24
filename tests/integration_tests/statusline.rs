@@ -189,6 +189,42 @@ fn test_statusline_claude_code_directory_flag(mut repo: TestRepo) {
     });
 }
 
+/// A stdin directory in a *different* repository than the one wt discovered.
+///
+/// The worktree comes from stdin while `list_worktrees` comes from the
+/// discovered repo, so the stdin directory matches none of them and only its
+/// branch can be reported. That split is the known limit of taking the
+/// directory from stdin: everything repo-wide still comes from wt's own
+/// discovery path.
+#[rstest]
+fn test_statusline_claude_code_foreign_repo_on_stdin(repo: TestRepo) {
+    let foreign = repo.root_path().join("foreign");
+    std::fs::create_dir(&foreign).unwrap();
+    repo.git_command()
+        .args(["init", "--initial-branch=elsewhere"])
+        .current_dir(&foreign)
+        .run()
+        .unwrap();
+    repo.git_command()
+        .args(["commit", "-m", "init", "--allow-empty"])
+        .current_dir(&foreign)
+        .run()
+        .unwrap();
+
+    let json = format!(
+        r#"{{"workspace": {{"current_dir": "{}"}}}}"#,
+        escape_path_for_json(&foreign)
+    );
+    let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
+    let mut settings = claude_code_snapshot_settings();
+    // A nested directory renders home-relative, which the platform-specific
+    // `[PATH]` filters don't reach; the branch is this test's subject.
+    settings.add_filter(r"[^ ]*foreign", "[FOREIGN]");
+    settings.bind(|| {
+        assert_snapshot!(output, @"[0m [FOREIGN]  elsewhere");
+    });
+}
+
 #[rstest]
 fn test_statusline_json_directory_flag(mut repo: TestRepo) {
     let feature_path = repo.add_worktree("feature");
