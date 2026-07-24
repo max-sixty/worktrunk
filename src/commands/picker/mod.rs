@@ -493,32 +493,30 @@ impl AltXRemover {
         let render_tx = Arc::clone(&self.render_tx);
         let stashed_warnings = Arc::clone(&self.stashed_warnings);
         let header_flash = Arc::clone(&self.header_flash);
-        let _ = std::thread::Builder::new()
-            .name(format!("picker-remove-{selected_output}"))
-            .spawn(move || worktrunk::shell_exec::uninterruptible(move || {
-                if let Err(e) = Self::do_removal(&repo, &result, &approvals) {
-                    tracing::warn!(selected_output = %selected_output, error = %e, "picker: removal of '{selected_output}' errored: {e:#}");
-                }
-                // A removal that keeps its branch never reaches here — that's the
-                // morph path (`morph_and_remove_in_background`). So a surviving
-                // target means the removal itself failed: put the row back.
-                if removal_target_still_present(&repo, &result)
-                    && let Some((item, pos)) = removed
-                {
-                    restore_failed_removal(
-                        &items,
-                        &header_flash,
-                        &render_tx,
-                        &stashed_warnings,
-                        DroppedRow {
-                            item,
-                            pos,
-                            label: removal_label,
-                            noun: removal_noun,
-                        },
-                    );
-                }
-            }));
+        spawn_removal(format!("picker-remove-{selected_output}"), move || {
+            if let Err(e) = Self::do_removal(&repo, &result, &approvals) {
+                tracing::warn!(selected_output = %selected_output, error = %e, "picker: removal of '{selected_output}' errored: {e:#}");
+            }
+            // A removal that keeps its branch never reaches here — that's the
+            // morph path (`morph_and_remove_in_background`). So a surviving
+            // target means the removal itself failed: put the row back.
+            if removal_target_still_present(&repo, &result)
+                && let Some((item, pos)) = removed
+            {
+                restore_failed_removal(
+                    &items,
+                    &header_flash,
+                    &render_tx,
+                    &stashed_warnings,
+                    DroppedRow {
+                        item,
+                        pos,
+                        label: removal_label,
+                        noun: removal_noun,
+                    },
+                );
+            }
+        });
     }
 
     /// Flash a one-line message in the header for a beat (see the free
@@ -672,18 +670,16 @@ impl AltXRemover {
             branch_token: branch.clone(),
             worktree_token: selected_output.clone(),
         };
-        let _ = std::thread::Builder::new()
-            .name(format!("picker-morph-{branch}"))
-            .spawn(move || worktrunk::shell_exec::uninterruptible(move || {
-                if let Err(e) = Self::do_removal(&repo, &result, &approvals) {
-                    tracing::warn!(branch = %branch, error = %e, "picker: removal of '{branch}' worktree errored: {e:#}");
-                }
-                // Only the worktree removal can realistically fail here; if it did,
-                // the worktree dir survives — undo the morph and say so.
-                if removal_target_still_present(&repo, &result) {
-                    revert_morph(revert, &header_flash, &stashed_warnings, &render_tx);
-                }
-            }));
+        spawn_removal(format!("picker-morph-{branch}"), move || {
+            if let Err(e) = Self::do_removal(&repo, &result, &approvals) {
+                tracing::warn!(branch = %branch, error = %e, "picker: removal of '{branch}' worktree errored: {e:#}");
+            }
+            // Only the worktree removal can realistically fail here; if it did,
+            // the worktree dir survives — undo the morph and say so.
+            if removal_target_still_present(&repo, &result) {
+                revert_morph(revert, &header_flash, &stashed_warnings, &render_tx);
+            }
+        });
 
         RemovalEffect::Morphed
     }
@@ -2150,9 +2146,9 @@ summary = true
     //
     // Not everything running here is discardable — an `alt-x` removal is
     // dispatched to its own thread and can still be mid-`git worktree remove`
-    // if the user pressed Enter straight after. Those threads mark themselves
-    // `uninterruptible` and run to completion; this reaches only speculative
-    // work.
+    // if the user pressed Enter straight after. Removal threads are spawned
+    // through `spawn_removal`, which marks them `uninterruptible` and lets
+    // them run to completion; this reaches only speculative work.
     worktrunk::shell_exec::cancel_background_commands();
 
     // `run_skim` returns Err only on a genuine TUI init / event-loop failure;
@@ -2407,6 +2403,21 @@ fn install_remove_keybinding(keymap: &mut skim::binds::KeyMap, remover: AltXRemo
         }
     }));
     keymap.insert(key, vec![cb]);
+}
+
+/// Run a removal's git work on a named background thread, exempt from
+/// background-command cancellation: a removal is work the user asked for, and
+/// a SIGTERM landing between `git worktree remove` and the branch delete would
+/// leave them half-removed. Every removal dispatch goes through here so the
+/// exemption is carried by the spawn path itself rather than remembered at
+/// each call site.
+fn spawn_removal<F>(name: String, work: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    let _ = std::thread::Builder::new()
+        .name(name)
+        .spawn(move || worktrunk::shell_exec::uninterruptible(work));
 }
 
 /// Run a row shortcut's OS action on a named background thread, logging any
