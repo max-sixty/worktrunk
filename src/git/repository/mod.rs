@@ -1468,7 +1468,7 @@ impl Repository {
     ///
     /// A precondition for the commit-replaying commands (`wt step rebase`,
     /// `wt merge`). Mid-rebase, HEAD is detached on a linear extension of the
-    /// target, so [`is_rebased_onto`](crate::git::Repository) — and every
+    /// target, so `is_rebased_onto` — and every
     /// ancestry check like it — reads as "already up to date"; without this
     /// gate a caller reports success over a tree that still holds conflict
     /// markers. The other states are gated for the same reason rather than
