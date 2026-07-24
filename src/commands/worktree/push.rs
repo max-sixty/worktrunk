@@ -124,6 +124,13 @@ impl MergeContext {
         let stash_guard =
             repo.prepare_target_worktree(target_worktree_path.as_ref(), &target_branch)?;
 
+        // TODO(#3519 follow-up): when `target_branch` was behind its upstream
+        // (see `Repository::span_upstream`), this count mixes the carried
+        // fast-forwarded upstream commits in with the branch's own squash
+        // commit, so the success line ("Merged to main (N commits, ...)")
+        // overstates what the branch itself contributed. Splitting them needs
+        // a carried-count threaded through `MergeContext`; deferred as
+        // cosmetic.
         let commit_count = repo.count_commits(&target_branch, "HEAD")?;
 
         let stats_summary = if commit_count > 0 {

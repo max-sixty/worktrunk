@@ -370,6 +370,10 @@ fn preview_squash(target: Option<&str>, dry_run: bool, yes: bool) -> anyhow::Res
 
     let integration_target = repo.require_target_ref(target)?;
     // #3519: preview against the same upstream-aware span the real squash uses.
+    // TODO(#3519 follow-up): unlike `handle_squash`, this path (--dry-run /
+    // --show-prompt) has no test asserting it measures against the stale
+    // target's upstream — a snapshot test pinning the preview output in that
+    // topology would close the one unasserted consumer of `span_upstream`.
     let span_target = repo
         .span_upstream(&integration_target)?
         .unwrap_or(integration_target);
