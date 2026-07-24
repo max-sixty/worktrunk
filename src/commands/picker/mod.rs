@@ -2122,8 +2122,9 @@ summary = true
     //
     // Don't join `collect_handle` after skim exits: drain may still be running
     // network tasks, and joining would block exit for up to DRAIN_TIMEOUT
-    // (120s). Process exit terminates the bg thread; its git subprocesses
-    // are read-only.
+    // (120s). Process exit terminates the bg thread; everything it started is
+    // read-only, and the cancellation below stops the subprocesses it spawned,
+    // which process exit does not.
     let output = run_skim(options, rx, &render_tx);
     drop(collect_handle);
     // Same rationale as `collect_handle`: don't join — the forge call may still be
@@ -2136,6 +2137,17 @@ summary = true
     // may still be in flight; we capture whatever has landed by now and let
     // the rest fall on the floor with the bg thread.
     drain_stashed_warnings(&stashed_warnings);
+
+    // The picker is over, so its background work has no consumer left: the
+    // preview cache dies with the process and skim will never repaint again.
+    // Uncancelled, a preview diff per worktree runs to completion against a
+    // repo the user has already left — `wt`'s exit ends the pool's threads,
+    // not the git children they spawned. Applies equally to accept and abort.
+    //
+    // After the drain, not before: a `--prs` forge call killed mid-flight
+    // fails like any other, and stashes that failure as a warning. Cancelling
+    // first would drain a spurious "couldn't fetch PRs" onto the user.
+    worktrunk::shell_exec::cancel_background_commands();
 
     // `run_skim` returns Err only on a genuine TUI init / event-loop failure;
     // a user cancel is `Ok` with `is_abort` set. Surface a real failure.
