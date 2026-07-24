@@ -95,9 +95,11 @@ fn is_foreground_thread() -> bool {
 /// diff per worktree, each able to churn disk for seconds on a large repo,
 /// filling an in-memory cache that no longer exists.
 ///
-/// Only background threads register. The foreground thread is the one that
-/// cancels, and is never itself inside a tracked command while doing so, so
-/// the work the user is actually waiting on is never a target.
+/// Only cancellable threads register ([`is_cancellable_thread`]): the
+/// foreground thread is the one that cancels, and is never itself inside a
+/// tracked command while doing so, so the work the user is actually waiting
+/// on is never a target; an [`uninterruptible`] thread finishes what it
+/// started.
 static BACKGROUND_PIDS: Mutex<BTreeSet<u32>> = Mutex::new(BTreeSet::new());
 
 /// Deregisters a background command's PID however the command finishes.
@@ -156,7 +158,7 @@ fn is_cancellable_thread() -> bool {
 /// Register a freshly spawned child as cancellable for as long as the returned
 /// guard lives. Returns `None` when this thread's commands aren't subject to
 /// cancellation (see [`is_cancellable_thread`]).
-fn track_if_background(child: &std::process::Child) -> Option<BackgroundPid> {
+fn track_if_cancellable(child: &std::process::Child) -> Option<BackgroundPid> {
     is_cancellable_thread().then(|| {
         let pid = child.id();
         BACKGROUND_PIDS.lock().unwrap().insert(pid);
@@ -200,12 +202,8 @@ fn cancelled_error() -> std::io::Error {
 /// caller already treats as "no result".
 pub fn cancel_background_commands() {
     BACKGROUND_CANCELLED.store(true, Ordering::SeqCst);
-    signal_background_commands();
-}
-
-fn signal_background_commands() {
-    for pid in BACKGROUND_PIDS.lock().unwrap().iter() {
-        signal_background_pid(*pid);
+    for &pid in BACKGROUND_PIDS.lock().unwrap().iter() {
+        signal_background_pid(pid);
     }
 }
 
@@ -866,7 +864,7 @@ fn run_with_timeout_impl(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
-    let _tracked = track_if_background(&child);
+    let _tracked = track_if_cancellable(&child);
 
     let mut child_stdout = child.stdout.take();
     let mut child_stderr = child.stderr.take();
@@ -1494,7 +1492,7 @@ impl Cmd {
 
             match cmd.spawn() {
                 Ok(mut child) => {
-                    let _tracked = track_if_background(&child);
+                    let _tracked = track_if_cancellable(&child);
                     // Write stdin data in an inner scope so the handle DROPS
                     // (closing the pipe) before `wait_with_output` — otherwise a
                     // child that reads stdin to EOF (e.g. `git … --stdin`) blocks
@@ -1524,7 +1522,7 @@ impl Cmd {
                 .stderr(Stdio::piped());
             match cmd.spawn() {
                 Ok(child) => {
-                    let _tracked = track_if_background(&child);
+                    let _tracked = track_if_cancellable(&child);
                     child.wait_with_output()
                 }
                 Err(e) => Err(e),
@@ -1659,7 +1657,7 @@ impl Cmd {
                 return Err(e);
             }
         };
-        let _first_tracked = track_if_background(&first_child);
+        let _first_tracked = track_if_cancellable(&first_child);
         let first_stdout = first_child
             .stdout
             .take()
@@ -1699,7 +1697,7 @@ impl Cmd {
                 return Err(e);
             }
         };
-        let _second_tracked = track_if_background(&second_child);
+        let _second_tracked = track_if_cancellable(&second_child);
 
         // `first`'s stderr must be drained concurrently with `second`'s
         // execution; otherwise pathological stderr volume (~64 KiB pipe
