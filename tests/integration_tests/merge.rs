@@ -3518,6 +3518,77 @@ fn test_merge_refuses_mid_merge(mut repo: TestRepo) {
     );
 }
 
+/// Leave `feature` holding an unmerged path with *no* operation open. A
+/// conflicted `git stash pop` is the plainest way there: it leaves the index
+/// conflicted and writes no state file, so the operation check cannot see it
+/// and only the index knows.
+fn stop_feature_on_conflicted_stash_pop(repo: &mut TestRepo) -> PathBuf {
+    let feature_wt = repo.add_worktree("feature");
+    repo.commit_in_worktree(&feature_wt, "conflict.txt", "base\n", "Base edit");
+
+    let git = |repo: &TestRepo, args: &[&str]| {
+        repo.git_command()
+            .current_dir(&feature_wt)
+            .args(args.iter().copied())
+            .run()
+            .unwrap();
+    };
+    fs::write(feature_wt.join("conflict.txt"), "stashed\n").unwrap();
+    git(repo, &["stash"]);
+    fs::write(feature_wt.join("conflict.txt"), "committed\n").unwrap();
+    git(repo, &["commit", "-am", "Conflicting edit"]);
+    // Pops onto a line the commit already changed, so the merge fails.
+    git(repo, &["stash", "pop"]);
+
+    assert!(
+        !worktree_git_dir(repo, &feature_wt)
+            .join("MERGE_HEAD")
+            .exists(),
+        "a conflicted stash pop should leave no operation state behind"
+    );
+
+    feature_wt
+}
+
+/// `wt step squash` rewrites history, so an operation already replaying commits
+/// blocks it for the same reason it blocks `wt merge` — and mid-rebase the
+/// detached HEAD would otherwise get blamed, pointing at `git switch`.
+#[rstest]
+fn test_step_squash_refuses_mid_merge(mut repo: TestRepo) {
+    let feature_wt = stop_feature_mid_merge(&mut repo);
+    let head_before = repo.head_sha_in(&feature_wt);
+
+    assert_cmd_snapshot!(
+        "step_squash_refuses_mid_merge",
+        make_snapshot_cmd(&repo, "step", &["squash", "--yes"], Some(&feature_wt))
+    );
+    assert_eq!(
+        repo.head_sha_in(&feature_wt),
+        head_before,
+        "the refusal must leave HEAD alone; squashing here would commit the conflict markers"
+    );
+}
+
+/// The index is the authority on conflicts, not the state files: `wt step
+/// commit` stages on the user's behalf, and `git add -A` would resolve an
+/// unmerged path to whatever is on disk — conflict markers included — taking
+/// git's own refusal to commit with it.
+#[rstest]
+fn test_step_commit_refuses_unmerged_paths(mut repo: TestRepo) {
+    let feature_wt = stop_feature_on_conflicted_stash_pop(&mut repo);
+    let head_before = repo.head_sha_in(&feature_wt);
+
+    assert_cmd_snapshot!(
+        "step_commit_refuses_unmerged_paths",
+        make_snapshot_cmd(&repo, "step", &["commit", "--yes"], Some(&feature_wt))
+    );
+    assert_eq!(
+        repo.head_sha_in(&feature_wt),
+        head_before,
+        "the refusal must leave HEAD alone; committing here would commit the conflict markers"
+    );
+}
+
 // =============================================================================
 // JSON output tests
 // =============================================================================
