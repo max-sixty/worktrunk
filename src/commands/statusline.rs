@@ -17,8 +17,7 @@ use ansi_str::AnsiStr;
 use anyhow::{Context, Result};
 use worktrunk::git::Repository;
 use worktrunk::styling::{
-    fix_dim_after_color_reset, terminal_supports_hyperlinks, terminal_width_for_statusline,
-    truncate_visible,
+    fix_dim_after_color_reset, terminal_width_for_statusline, truncate_visible,
 };
 
 use super::list::{self, CollectOptions, StatuslineSegment, json_output};
@@ -728,12 +727,6 @@ pub fn run(format: StatuslineFormat) -> Result<()> {
 
     let claude_code = matches!(format, StatuslineFormat::ClaudeCode);
 
-    // Whether the terminal renders OSC 8. Nobody draws this line from our
-    // stdout: a shell prompt captures it through command substitution, Claude
-    // Code parses it into its own frame. Both re-emit to the terminal, so it is
-    // the terminal that decides, and only the environment describes it.
-    let include_links = terminal_supports_hyperlinks();
-
     // Get context - either from stdin (claude-code mode) or current directory
     let (cwd, model_name, context_used_percentage, rate_limits) = if claude_code {
         let ctx = ClaudeCodeContext::from_stdin();
@@ -781,7 +774,7 @@ pub fn run(format: StatuslineFormat) -> Result<()> {
     if let Ok(repo) = Repository::current()
         && repo.worktree_at(&cwd).git_dir().is_ok()
     {
-        let git_segments = git_status_segments(&repo, &cwd, include_links)?;
+        let git_segments = git_status_segments(&repo, &cwd)?;
 
         // In claude-code mode, skip branch segment if directory matches worktrunk template
         let git_segments = if let Some(ref dir) = dir_str {
@@ -997,13 +990,8 @@ fn filter_redundant_branch(segments: Vec<StatuslineSegment>, dir: &str) -> Vec<S
 
 /// Get git status as prioritized segments for the current worktree.
 ///
-/// With `include_links`, the CI status and the dev-server URL render as
-/// clickable OSC 8 hyperlinks.
-fn git_status_segments(
-    repo: &Repository,
-    cwd: &Path,
-    include_links: bool,
-) -> Result<Vec<StatuslineSegment>> {
+/// CI status and the dev-server URL render as clickable OSC 8 hyperlinks.
+fn git_status_segments(repo: &Repository, cwd: &Path) -> Result<Vec<StatuslineSegment>> {
     use super::list::columns::ColumnKind;
 
     // Get current worktree info
@@ -1073,7 +1061,7 @@ fn git_status_segments(
     list::populate_item(repo, &mut item, options)?;
 
     // Get prioritized segments
-    let segments = item.format_statusline_segments(include_links);
+    let segments = item.format_statusline_segments();
 
     if segments.is_empty() {
         // Fallback: just show branch name

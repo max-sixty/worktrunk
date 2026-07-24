@@ -2,20 +2,8 @@
 
 use osc8::Hyperlink;
 
-/// Whether `stream` is a terminal that renders OSC 8.
-///
-/// The usual choice: a command writing its own output asks about the stream it
-/// writes to, so piping to a file or a pager yields plain text.
+// Re-export for direct use
 pub use supports_hyperlinks::{Stream, on as supports_hyperlinks};
-
-/// Whether the terminal renders OSC 8, from the environment alone.
-///
-/// For output that reaches a terminal through something other than this
-/// process's own stdout — the statusline, which a shell prompt or an editor
-/// embeds in a line it draws itself. There the file descriptor answers a
-/// question about the wrong channel, and only the environment describes the
-/// terminal that finally draws the escape.
-pub use supports_hyperlinks::supports_hyperlinks as terminal_supports_hyperlinks;
 
 /// Strip OSC 8 hyperlinks while preserving other ANSI sequences (colors).
 ///

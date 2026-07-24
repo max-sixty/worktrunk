@@ -16,17 +16,6 @@ fn run_statusline_from_dir(
     stdin_json: Option<&str>,
     cwd: &std::path::Path,
 ) -> String {
-    run_statusline_from_dir_with_env(repo, args, stdin_json, cwd, &[])
-}
-
-/// As [`run_statusline_from_dir`], with extra environment for the child.
-fn run_statusline_from_dir_with_env(
-    repo: &TestRepo,
-    args: &[&str],
-    stdin_json: Option<&str>,
-    cwd: &std::path::Path,
-    env: &[(&str, &str)],
-) -> String {
     let mut cmd = wt_command();
     cmd.current_dir(cwd);
     cmd.args(["list", "statusline"]);
@@ -40,10 +29,6 @@ fn run_statusline_from_dir_with_env(
     // the `run_statusline_with_locale` helper. `LC_ALL=C` is already pinned
     // globally by the test harness.
     cmd.env("TZ", "UTC");
-
-    for (key, value) in env {
-        cmd.env(key, value);
-    }
 
     if stdin_json.is_some() {
         cmd.stdin(Stdio::piped());
@@ -439,27 +424,6 @@ url = "http://{{ branch }}.localhost:3000"
     // Run statusline from feature worktree
     let output = run_statusline_from_dir(&repo, &[], None, &feature_path);
     assert_snapshot!(output, @r"[0m feature  [2m_[22m  [2m]8;;http://feature.localhost:3000\:3000]8;;\[22m");
-}
-
-/// Only the click depends on the terminal. The linked snapshots above and this
-/// unlinked one show the same `:3000` at the same width, so a terminal without
-/// OSC 8 keeps a segment that the width budget would otherwise drop first.
-#[rstest]
-fn test_statusline_url_without_terminal_hyperlinks_keeps_its_width(repo: TestRepo) {
-    repo.write_project_config(
-        r#"[list]
-url = "http://{{ branch }}.localhost:3000"
-"#,
-    );
-
-    let output = run_statusline_from_dir_with_env(
-        &repo,
-        &[],
-        None,
-        repo.root_path(),
-        &[("FORCE_HYPERLINK", "0")],
-    );
-    assert_snapshot!(output, @"[0m main  [36m?[0m[2m^[22m[2m|[22m  @[32m+2[0m  [2m:3000[22m");
 }
 
 /// The URL segment lands after the CI reference and before the model in Claude

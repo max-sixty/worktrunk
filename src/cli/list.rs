@@ -12,7 +12,7 @@ pub enum ListSubcommand {
 - `json`: Same structure as `wt list --format=json` but for the current worktree only
 - `claude-code`: `dir  branch  status  ±working  commits  upstream  ci  url  model  context  pace`
 
-The CI reference links to its PR/MR, and a dev server URL carrying a port shows as `:3000`, dim until something answers on it. Both link via OSC 8 on a terminal known to render them (`TERM`, `TERM_PROGRAM`, or `FORCE_HYPERLINK=1`), and read as plain text elsewhere — the line is a fixed width either way, so a terminal without OSC 8 loses the click, not the segment.
+The CI reference links to its PR/MR, and a dev server URL carrying a port shows as `:3000` linking to the URL in full, dim until something answers on that port — the same cells `wt list` renders. Both links are OSC 8, which a terminal that doesn't support them discards, leaving the same text unclickable.
 
 ## Claude Code mode
 

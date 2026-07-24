@@ -13,7 +13,7 @@ use super::stats::{AheadBehind, BranchDiffTotals, CommitDetails, UpstreamStatus}
 use super::status_symbols::{StatusSymbols, WorkingTreeStatus};
 use crate::commands::list::ci_status::PrStatus;
 use crate::commands::list::columns::ColumnKind;
-use crate::commands::list::layout::format_url_segment;
+use crate::commands::list::layout::format_url_cell;
 
 /// Compute the `WorktreeState` from `WorktreeData` metadata alone.
 ///
@@ -470,13 +470,9 @@ impl ListItem {
     ///
     /// Format: `branch  status  @working  commits  ^branch_diff  upstream  ci  url`
     /// Uses 2-space separators between non-empty parts.
-    ///
-    /// Links are on unconditionally: this feeds the JSON `statusline` field,
-    /// and a data format must not vary with the terminal that happens to be
-    /// attached, or `wt list --format=json` would differ machine to machine.
     pub fn format_statusline(&self) -> String {
         use super::statusline_segment::StatuslineSegment;
-        StatuslineSegment::join(&self.format_statusline_segments(true))
+        StatuslineSegment::join(&self.format_statusline_segments())
     }
 
     /// Format this item as prioritized segments for smart truncation.
@@ -484,14 +480,12 @@ impl ListItem {
     /// Returns segments with priorities matching `wt list` column priorities.
     /// Use [`super::statusline_segment::StatuslineSegment::fit_to_width`] to truncate intelligently.
     ///
-    /// `include_links` says whether the terminal renders OSC 8; it decides only
-    /// whether the CI reference and the dev-server port are clickable, never
-    /// what they say. See [`format_url_segment`] for why the URL cell keeps its
-    /// width either way.
-    pub fn format_statusline_segments(
-        &self,
-        include_links: bool,
-    ) -> Vec<super::statusline_segment::StatuslineSegment> {
+    /// The CI reference and the dev-server port always carry their OSC 8 link:
+    /// a terminal without OSC 8 discards the escape and renders the same text,
+    /// and the alternative rendering `wt list` uses when links are unavailable
+    /// (the URL in full) would outgrow this line's budget. See
+    /// [`format_url_cell`].
+    pub fn format_statusline_segments(&self) -> Vec<super::statusline_segment::StatuslineSegment> {
         use super::statusline_segment::StatuslineSegment;
 
         let mut segments = Vec::new();
@@ -560,7 +554,7 @@ impl ListItem {
         // bare `#` otherwise (no width cap in the statusline)
         if let Some(Some(ref pr_status)) = self.pr_status {
             segments.push(StatuslineSegment::from_column(
-                pr_status.format_cell(usize::MAX, include_links),
+                pr_status.format_cell(usize::MAX, true),
                 ColumnKind::CiStatus,
             ));
         }
@@ -568,7 +562,7 @@ impl ListItem {
         // 8. URL (priority 9) — the dev server, as in `wt list`: the port as a
         // link, dimmed unless the health check found something listening on it.
         if let Some(ref url) = self.url {
-            let cell = format_url_segment(url, include_links);
+            let cell = format_url_cell(url, true);
             segments.push(StatuslineSegment::from_column(
                 if self.url_active == Some(true) {
                     cell
@@ -925,7 +919,7 @@ mod tests {
         }));
 
         let ci = item
-            .format_statusline_segments(true)
+            .format_statusline_segments()
             .into_iter()
             .find(|s| s.kind == Some(ColumnKind::CiStatus))
             .expect("CI segment present when a PR is known");
@@ -939,35 +933,6 @@ mod tests {
         assert_eq!(ci.width(), "#123".len());
     }
 
-    /// The terminal decides whether the port is clickable, not how much room it
-    /// takes. The statusline drops its worst-priority segment first and the URL
-    /// is the worst, so a cell that grew to the full URL without links would be
-    /// dropped entirely at the widths where it is needed.
-    #[test]
-    fn test_statusline_url_segment_keeps_its_width_without_links() {
-        let mut item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
-        item.url = Some("http://127.0.0.1:17913".to_string());
-        item.url_active = Some(true);
-
-        let url_segment = |include_links| {
-            item.format_statusline_segments(include_links)
-                .into_iter()
-                .find(|s| s.kind == Some(ColumnKind::Url))
-                .expect("URL segment present when a URL is known")
-        };
-
-        let linked = url_segment(true);
-        assert!(
-            linked.content.contains("\x1b]8;;http://127.0.0.1:17913"),
-            "linked URL segment should carry an OSC 8 link, got {:?}",
-            linked.content
-        );
-
-        let plain = url_segment(false);
-        assert_eq!(plain.content, ":17913");
-        assert_eq!(linked.width(), plain.width());
-    }
-
     /// A URL nothing answers on is dim, as in `wt list` — the port is still
     /// worth showing, but it isn't somewhere to go yet.
     #[test]
@@ -975,19 +940,17 @@ mod tests {
         let mut item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
         item.url = Some("http://127.0.0.1:17913".to_string());
 
-        // Unlinked, so the only difference left between these three is the dim
-        // wrapper.
         let url_cell = |active| {
             let mut item = item.clone();
             item.url_active = active;
-            item.format_statusline_segments(false)
+            item.format_statusline_segments()
                 .into_iter()
                 .find(|s| s.kind == Some(ColumnKind::Url))
                 .expect("URL segment present when a URL is known")
                 .content
         };
 
-        let plain = ":17913";
+        let plain = format_url_cell("http://127.0.0.1:17913", true);
         let dim = cformat!("<dim>{plain}</>");
         assert_eq!(url_cell(Some(false)), dim, "a dead port should dim");
         assert_eq!(url_cell(None), dim, "an unfinished health check should dim");
