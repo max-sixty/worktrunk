@@ -19,6 +19,12 @@ use worktrunk::shell_exec::{Cmd, cancel_background_commands, uninterruptible};
 /// live PIDs can't see a task still queued behind the command semaphore — while
 /// leaving an `uninterruptible` thread's commands alone in both directions.
 ///
+/// The first half is also what pins PID registration: the sweep can only reach
+/// a running command that registered itself, so if registration regressed this
+/// test's `sleep` would run to completion. Asserting on the registry directly
+/// instead would be weaker — it is process-global, so under a shared-process
+/// runner the assertion can be satisfied by some other test's command.
+///
 /// Every command runs on a spawned thread: the foreground thread is exempt (it
 /// is the one doing the cancelling), and with `FOREGROUND_THREAD` unset under a
 /// test harness, every other thread counts as background.

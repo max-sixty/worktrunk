@@ -2844,33 +2844,6 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    /// A background command is registered as cancellable for as long as it
-    /// runs, which is what makes `cancel_background_commands` able to reach it.
-    ///
-    /// Signals nothing: the sweep covers every background command in the
-    /// process, so a test that called it would take out whatever else was
-    /// running alongside it under a shared-process runner.
-    #[test]
-    #[cfg(unix)]
-    fn test_background_command_registers_while_running() {
-        // `FOREGROUND_THREAD` is unset under the test harness, so every thread
-        // counts as background — this command registers exactly as a picker
-        // preview task's would.
-        let handle = std::thread::spawn(|| Cmd::new("sh").arg("-c").arg("sleep 0.5").run());
-
-        let start = Instant::now();
-        while BACKGROUND_PIDS.lock().unwrap().is_empty() {
-            assert!(
-                start.elapsed() < Duration::from_secs(10),
-                "background command never registered as cancellable"
-            );
-            std::thread::sleep(Duration::from_millis(1));
-        }
-
-        let output = handle.join().unwrap().expect("command runs to completion");
-        assert!(output.status.success());
-    }
-
     #[test]
     fn test_background_pid_deregisters_on_drop() {
         // Not a live PID: this exercises the registry bookkeeping only, and
