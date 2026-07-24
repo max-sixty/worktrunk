@@ -3247,6 +3247,72 @@ fn test_remove_resolves_all_fsmonitor_daemons_in_one_lsof(mut repo: TestRepo) {
     );
 }
 
+/// When `pgrep` succeeds but yields no parseable PID, the sweep returns before
+/// spawning `lsof` at all.
+///
+/// `pgrep` exits 0 with output that isn't a PID (the `parse::<u32>` filter
+/// drops every line), so the candidate set is empty. `enumerate_daemons` must
+/// take its empty-set early return — never build a `lsof -p` call with an
+/// empty PID list, which would resolve every open Unix socket on the machine.
+/// Asserted by `lsof` being spawned zero times and the per-daemon "resolving
+/// sockets" trace line (emitted only past the guard) being absent.
+#[rstest]
+#[cfg(unix)]
+fn test_remove_sweep_skips_lsof_when_no_daemon_pids(mut repo: TestRepo) {
+    use crate::common::mock_commands::{MockConfig, MockResponse, mock_calls};
+
+    let bin_dir = repo.root_path().join(".bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    // Exit 0 (a match) but a non-numeric line, so parsing drops it to empty.
+    MockConfig::new("pgrep")
+        .command("_default", MockResponse::output("not-a-pid\n"))
+        .write(&bin_dir);
+    // Present so a stray call would be logged and caught; it must never run.
+    MockConfig::new("lsof")
+        .command("_default", MockResponse::output(""))
+        .write(&bin_dir);
+
+    let mut paths: Vec<std::path::PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default();
+    paths.insert(0, bin_dir.clone());
+    let new_path = std::env::join_paths(&paths).unwrap();
+
+    let call_log = tempfile::tempdir().unwrap();
+
+    repo.add_worktree("feature-fsmon");
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature-fsmon", "-vv"])
+        .env("PATH", &new_path)
+        .env("MOCK_CONFIG_DIR", &bin_dir)
+        .env("MOCK_CALL_LOG_DIR", call_log.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt remove should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(
+        mock_calls(call_log.path(), "lsof").is_empty(),
+        "an empty PID set must skip the lsof spawn entirely"
+    );
+
+    let trace_log =
+        crate::common::resolve_git_common_dir(repo.root_path()).join("wt/logs/trace.log");
+    let trace = std::fs::read_to_string(&trace_log).unwrap();
+    assert!(
+        trace.contains("◷ enumerate-fsmonitor-daemons"),
+        "sweep span should still appear even when it finds no PIDs. trace.log: {trace}"
+    );
+    assert!(
+        !trace.contains("resolving sockets for"),
+        "the per-daemon resolution line must not appear when there are no PIDs. trace.log: {trace}"
+    );
+}
+
 /// Tests that foreground removal shows remaining directory entries when
 /// `git worktree remove` fails because a directory can't be deleted.
 ///
