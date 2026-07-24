@@ -287,21 +287,25 @@ Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span>
 
 Rebase onto target.
 
-A rebase makes the branch a linear extension of the target, which is what [`wt step push`](#wt-step-push) needs to fast-forward. `wt merge` runs this step as part of its pipeline; on its own it brings a branch up to date with a target that has moved, without merging into it. The target is any commit-ish — a branch, a tag, a SHA — while a push updates a branch ref and so needs a branch name.
+A rebase puts the branch's commits on top of the target, which is what [`wt step push`](#wt-step-push) needs — a push fast-forwards only if the target is an ancestor of the branch. `wt merge` runs this step as part of its pipeline; on its own it brings a branch up to date with a target that has moved, without merging into it.
+
+The target is any commit: a branch, a tag, a SHA.
 
 ### Examples
 
-{{ terminal(cmd="wt step rebase            # Rebase onto default branch|||wt step rebase develop    # Rebase onto develop") }}
+{{ terminal(cmd="wt step rebase            # Rebase onto default branch|||wt step rebase develop    # Rebase onto develop|||wt step rebase v1.2.0     # Rebase onto a tag") }}
 
 ### Outcomes
 
-| When | Result |
-|------|--------|
-| Branch is already a linear extension of the target | Nothing runs — `Already up to date` |
-| Branch holds no commits of its own | `Fast-forwarded to <target>` |
+The first matching row wins:
+
+| Branch and target | Result |
+|-------------------|--------|
+| The target is already an ancestor of the branch, with no merge commit in between | Nothing runs — `Already up to date` |
+| The branch is an ancestor of the target, so it has no commits of its own | `Fast-forwarded to <target>` |
 | Otherwise | The branch's commits replay onto the target's tip |
 
-A branch that merged the target into itself carries a merge commit, so it isn't linear and rebases even though the target is already its merge base.
+A branch that merged the target into itself matches no row but the last: the target is its ancestor, but the merge commit in between means the history still needs linearizing.
 
 ### Conflicts
 
@@ -316,7 +320,7 @@ Usage: <b><span class=c>wt step rebase</span></b> <span class=c>[OPTIONS]</span>
 
 <b><span class=g>Arguments:</span></b>
   <span class=c>[TARGET]</span>
-          Target branch
+          Target branch, tag, or commit
 
           Defaults to default branch.
 
@@ -356,9 +360,9 @@ Usage: <b><span class=c>wt step rebase</span></b> <span class=c>[OPTIONS]</span>
 
 Fast-forward target to current branch.
 
-Despite the name, nothing here reaches a remote. `git push` runs against this repository itself, so the target branch's ref moves forward locally and a worktree holding that branch is updated along with it.
+Despite the name, no commits leave the repository. `git push` runs against this repository itself, so the target branch's ref moves forward locally and a worktree holding that branch is updated along with it. Publishing is a separate `git push` to the remote afterward.
 
-The target must already be an ancestor of the current branch. A target that has moved ahead is refused rather than forced; [`wt step rebase`](#wt-step-rebase) puts the branch back on top of it first.
+The target is a branch, and must already be an ancestor of the current branch. One that has moved ahead is refused, and there is no force variant — [`wt step rebase`](#wt-step-rebase) puts the branch back on top of it first.
 
 ### Examples
 
