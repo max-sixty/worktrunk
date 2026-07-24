@@ -136,6 +136,76 @@ fn test_statusline_commits_ahead(mut repo: TestRepo) {
     assert_snapshot!(output, @"[0m feature  [2m↑[22m  [32m↑2[0m  ^[32m+2[0m");
 }
 
+/// `-C` selects the worktree, not the process cwd.
+///
+/// Every other test here sets the child's cwd, which reaches the worktree by a
+/// different route: `-C` sets wt's discovery path without chdir'ing, so a
+/// statusline built from `std::env::current_dir()` would describe the cwd's
+/// worktree (`main`) and pass those tests while ignoring the flag.
+#[rstest]
+fn test_statusline_directory_flag(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    // cwd is the main worktree; only `-C` points at `feature`
+    let output = run_statusline_from_dir(
+        &repo,
+        &["-C", feature_path.to_str().unwrap()],
+        None,
+        repo.root_path(),
+    );
+    assert_snapshot!(output, @"[0m feature  [2m_[22m");
+}
+
+/// With no stdin JSON, claude-code mode falls back to the same worktree the
+/// table format uses, so it honours `-C` too. A directory on stdin still wins:
+/// it names the session's directory rather than the one wt was pointed at.
+#[rstest]
+fn test_statusline_claude_code_directory_flag(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    let output = run_statusline_from_dir(
+        &repo,
+        &["--format=claude-code", "-C", feature_path.to_str().unwrap()],
+        None,
+        repo.root_path(),
+    );
+    claude_code_snapshot_settings().bind(|| {
+        assert_snapshot!(output, @"[0m [PATH].feature  [2m_[22m");
+    });
+
+    // stdin's directory outranks `-C`
+    let json = format!(
+        r#"{{"workspace": {{"current_dir": "{}"}}}}"#,
+        escape_path_for_json(repo.root_path())
+    );
+    let output = run_statusline_from_dir(
+        &repo,
+        &["--format=claude-code", "-C", feature_path.to_str().unwrap()],
+        Some(&json),
+        repo.root_path(),
+    );
+    claude_code_snapshot_settings().bind(|| {
+        assert_snapshot!(output, @"[0m [PATH]  main  [2m^[22m[2m|[22m");
+    });
+}
+
+#[rstest]
+fn test_statusline_json_directory_flag(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    // cwd is the main worktree; only `-C` points at `feature`
+    let output = run_statusline_from_dir(
+        &repo,
+        &["--format=json", "-C", feature_path.to_str().unwrap()],
+        None,
+        repo.root_path(),
+    );
+    let parsed: Value = serde_json::from_str(&output).expect("should be valid JSON");
+    let items = parsed.as_array().expect("should be an array");
+    assert_eq!(items.len(), 1, "should describe just the -C worktree");
+    assert_eq!(items[0]["branch"], "feature");
+}
+
 #[rstest]
 fn test_statusline_does_not_run_repo_wide_ahead_behind_scan(repo: TestRepo) {
     for i in 0..12 {
