@@ -5,6 +5,7 @@
 
 use std::path::PathBuf;
 
+use color_print::cformat;
 use worktrunk::git::{IntegrationReason, IntegrationSignals, LineDiff, check_integration};
 
 use super::state::{ActiveGitOperation, Divergence, MainState, OperationState, WorktreeState};
@@ -465,20 +466,33 @@ impl ListItem {
         self.is_potentially_removable() == Some(true)
     }
 
-    /// Format this item as a single-line statusline string with clickable links.
+    /// Format this item as a single-line statusline string.
     ///
-    /// Format: `branch  status  @working  commits  ^branch_diff  upstream  ci`
+    /// Format: `branch  status  @working  commits  ^branch_diff  upstream  ci  url`
     /// Uses 2-space separators between non-empty parts.
+    ///
+    /// Links are on: this feeds the JSON `statusline` field, whose contract is a
+    /// pre-formatted line with colors and links. A consumer that wants the URL
+    /// as data reads the sibling `url` field.
     pub fn format_statusline(&self) -> String {
         use super::statusline_segment::StatuslineSegment;
-        StatuslineSegment::join(&self.format_statusline_segments())
+        StatuslineSegment::join(&self.format_statusline_segments(true))
     }
 
     /// Format this item as prioritized segments for smart truncation.
     ///
     /// Returns segments with priorities matching `wt list` column priorities.
     /// Use [`super::statusline_segment::StatuslineSegment::fit_to_width`] to truncate intelligently.
-    pub fn format_statusline_segments(&self) -> Vec<super::statusline_segment::StatuslineSegment> {
+    ///
+    /// `include_links` says whether the consumer renders OSC 8, and the caller
+    /// decides it the way `wt list` does. It is not cosmetic for the URL: a
+    /// linked cell hides the URL inside the escape sequence and shows only
+    /// `:port`, so a consumer that drops OSC 8 would be left with a port and no
+    /// host. Without links the URL renders in full instead.
+    pub fn format_statusline_segments(
+        &self,
+        include_links: bool,
+    ) -> Vec<super::statusline_segment::StatuslineSegment> {
         use super::statusline_segment::StatuslineSegment;
 
         let mut segments = Vec::new();
@@ -547,15 +561,21 @@ impl ListItem {
         // bare `#` otherwise (no width cap in the statusline)
         if let Some(Some(ref pr_status)) = self.pr_status {
             segments.push(StatuslineSegment::from_column(
-                pr_status.format_cell(usize::MAX, true),
+                pr_status.format_cell(usize::MAX, include_links),
                 ColumnKind::CiStatus,
             ));
         }
 
-        // 8. URL (priority 9) — the port as a link to the dev server, as in `wt list`
+        // 8. URL (priority 9) — the dev server, as in `wt list`: the port as a
+        // link, dimmed unless the health check found something listening on it.
         if let Some(ref url) = self.url {
+            let cell = format_url_cell(url, include_links);
             segments.push(StatuslineSegment::from_column(
-                format_url_cell(url, true),
+                if self.url_active == Some(true) {
+                    cell
+                } else {
+                    cformat!("<dim>{cell}</>")
+                },
                 ColumnKind::Url,
             ));
         }
@@ -838,6 +858,8 @@ impl ListItem {
 
 #[cfg(test)]
 mod tests {
+    use ansi_str::AnsiStr;
+
     use super::*;
 
     /// The yellow actionable states outrank the informational (dim yellow)
@@ -906,7 +928,7 @@ mod tests {
         }));
 
         let ci = item
-            .format_statusline_segments()
+            .format_statusline_segments(true)
             .into_iter()
             .find(|s| s.kind == Some(ColumnKind::CiStatus))
             .expect("CI segment present when a PR is known");
@@ -918,6 +940,59 @@ mod tests {
             ci.content
         );
         assert_eq!(ci.width(), "#123".len());
+    }
+
+    /// The URL segment mirrors the `wt list` cell: a link hides the URL inside
+    /// the escape sequence and shows only `:port`, so a consumer that can't
+    /// render OSC 8 gets the URL in full rather than a bare port.
+    #[test]
+    fn test_statusline_url_segment_needs_the_link_to_shorten() {
+        let mut item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
+        item.url = Some("http://127.0.0.1:17913".to_string());
+        item.url_active = Some(true);
+
+        let url_segment = |include_links| {
+            item.format_statusline_segments(include_links)
+                .into_iter()
+                .find(|s| s.kind == Some(ColumnKind::Url))
+                .expect("URL segment present when a URL is known")
+                .content
+        };
+
+        let linked = url_segment(true);
+        assert!(
+            linked.contains("\x1b]8;;http://127.0.0.1:17913"),
+            "linked URL segment should carry an OSC 8 link, got {linked:?}"
+        );
+        assert_eq!(linked.ansi_strip(), ":17913");
+
+        assert_eq!(url_segment(false), "http://127.0.0.1:17913");
+    }
+
+    /// A URL nothing answers on is dim, as in `wt list` — the port is still
+    /// worth showing, but it isn't somewhere to go yet.
+    #[test]
+    fn test_statusline_url_segment_dims_until_the_port_answers() {
+        let mut item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
+        item.url = Some("http://127.0.0.1:17913".to_string());
+
+        // Unlinked, so the cell is the bare URL and the only difference left
+        // between these three is the dim wrapper.
+        let url_cell = |active| {
+            let mut item = item.clone();
+            item.url_active = active;
+            item.format_statusline_segments(false)
+                .into_iter()
+                .find(|s| s.kind == Some(ColumnKind::Url))
+                .expect("URL segment present when a URL is known")
+                .content
+        };
+
+        let plain = "http://127.0.0.1:17913";
+        let dim = cformat!("<dim>{plain}</>");
+        assert_eq!(url_cell(Some(false)), dim, "a dead port should dim");
+        assert_eq!(url_cell(None), dim, "an unfinished health check should dim");
+        assert_eq!(url_cell(Some(true)), plain, "a live port should not dim");
     }
 
     #[test]

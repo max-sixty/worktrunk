@@ -402,7 +402,7 @@ url = "http://{{ branch }}.localhost:3000"
 
     let output = run_statusline(&repo, &[], None);
     // Shows `?` because writing project config creates uncommitted file
-    assert_snapshot!(output, @r"[0m main  [36m?[0m[2m^[22m[2m|[22m  @[32m+2[0m  ]8;;http://main.localhost:3000\:3000]8;;\");
+    assert_snapshot!(output, @"[0m main  [36m?[0m[2m^[22m[2m|[22m  @[32m+2[0m  [2mhttp://main.localhost:3000[22m");
 }
 
 #[rstest]
@@ -423,7 +423,27 @@ url = "http://{{ branch }}.localhost:3000"
 
     // Run statusline from feature worktree
     let output = run_statusline_from_dir(&repo, &[], None, &feature_path);
-    assert_snapshot!(output, @r"[0m feature  [2m_[22m  ]8;;http://feature.localhost:3000\:3000]8;;\");
+    assert_snapshot!(output, @"[0m feature  [2m_[22m  [2mhttp://feature.localhost:3000[22m");
+}
+
+/// Claude Code renders OSC 8 but pipes both of wt's streams, so no probe can
+/// see it. The two tests above run through the same pipe and get the full URL;
+/// this one gets the link, and with it the short `:3000`.
+#[rstest]
+fn test_statusline_claude_code_url_links_through_a_pipe(repo: TestRepo) {
+    repo.write_project_config(
+        r#"[list]
+url = "http://{{ branch }}.localhost:3000"
+"#,
+    );
+
+    let escaped_path = escape_path_for_json(repo.root_path());
+    let json = format!(r#"{{"workspace": {{"current_dir": "{escaped_path}"}}}}"#);
+
+    let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
+    claude_code_snapshot_settings().bind(|| {
+        assert_snapshot!(output, @r"[0m [PATH]  main  [36m?[0m[2m^[22m[2m|[22m  @[32m+2[0m  [2m]8;;http://main.localhost:3000\:3000]8;;\[22m");
+    });
 }
 
 // --- JSON Format Tests ---

@@ -8,9 +8,11 @@ pub enum ListSubcommand {
     /// Single-line status for shell prompts
     #[command(after_long_help = r#"## Output formats
 
-- `table` (default): `branch  status  ±working  commits  upstream  ci`
+- `table` (default): `branch  status  ±working  commits  upstream  ci  url`
 - `json`: Same structure as `wt list --format=json` but for the current worktree only
-- `claude-code`: `dir  branch  status  ±working  commits  upstream  ci  model  context  pace`
+- `claude-code`: `dir  branch  status  ±working  commits  upstream  ci  url  model  context  pace`
+
+The CI reference links to its PR/MR, and the dev server URL collapses to a clickable `:3000`, dim while nothing is listening on the port — the same cells `wt list` renders. Claude Code renders OSC 8 hyperlinks, so `--format=claude-code` always emits them; `table` emits them when the terminal supports them and otherwise prints the URL in full.
 
 ## Claude Code mode
 
