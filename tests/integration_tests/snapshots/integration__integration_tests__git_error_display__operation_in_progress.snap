@@ -1,0 +1,7 @@
+---
+source: tests/integration_tests/git_error_display.rs
+expression: "rendered.join(\"\\n\\n\")"
+---
+[31m✗[39m [31mCannot rebase: a git operation is already in progress[39m
+
+[31m✗[39m [31mCannot merge: a git operation is already in progress[39m

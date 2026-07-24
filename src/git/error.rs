@@ -404,6 +404,16 @@ pub enum GitError {
     DetachedHead {
         action: Option<String>,
     },
+    /// The worktree is partway through a git operation, so a command that
+    /// replays commits (`wt merge`, `wt step rebase`) refuses to start.
+    ///
+    /// Carries no operation and offers no remedy: `git status` names which
+    /// operation is open and how to finish it, so restating either here only
+    /// adds a line that can drift from what git accepts.
+    OperationInProgress {
+        /// The action the user asked for ("merge", "rebase").
+        action: String,
+    },
     UncommittedChanges {
         action: Option<String>,
         /// Branch name (for multi-worktree operations)
@@ -630,6 +640,10 @@ impl GitError {
                 Some(action) => cformat!("Cannot {action}: not on a branch (detached HEAD)"),
                 None => "Not on a branch (detached HEAD)".to_string(),
             },
+
+            GitError::OperationInProgress { action } => {
+                cformat!("Cannot {action}: a git operation is already in progress")
+            }
 
             GitError::UncommittedChanges { action, branch, .. } => match (action, branch) {
                 (Some(action), Some(b)) => {
@@ -860,6 +874,11 @@ impl GitError {
                         "To switch to a branch, run <underline>git switch <<branch>></>"
                     ))
                 )
+            }
+
+            GitError::OperationInProgress { .. } => {
+                let title = self.title();
+                write!(f, "{}", error_message(&title))
             }
 
             GitError::UncommittedChanges {
@@ -1192,21 +1211,18 @@ impl GitError {
                 }
             }
 
+            // Git's own stderr carries the way out — `--continue`, `--skip`,
+            // `--abort` — so it is forwarded in the gutter rather than
+            // paraphrased. Nothing stands in for it when it is empty: the
+            // rebase is still on disk, and `git status` names the remedy in
+            // git's words for whichever operation is actually open.
             GitError::RebaseConflict { git_output, .. } => {
                 let title = self.title();
                 write!(f, "{}", error_message(&title))?;
                 if !git_output.is_empty() {
-                    write!(f, "\n{}", format_with_gutter(git_output, None))
-                } else {
-                    write!(
-                        f,
-                        "\n{}\n{}",
-                        hint_message(cformat!(
-                            "To continue after resolving conflicts, run <underline>git rebase --continue</>"
-                        )),
-                        hint_message(cformat!("To abort, run <underline>git rebase --abort</>"))
-                    )
+                    write!(f, "\n{}", format_with_gutter(git_output, None))?;
                 }
+                Ok(())
             }
 
             GitError::NotRebased { target_branch } => {
@@ -2428,11 +2444,7 @@ mod tests {
             target_branch: "main".into(),
             git_output: "".into(),
         };
-        assert_snapshot!(err.render(), @"
-        [31m✗[39m [31mRebase onto [1mmain[22m incomplete[39m
-        [2m↳[22m [2mTo continue after resolving conflicts, run [4mgit rebase --continue[24m[22m
-        [2m↳[22m [2mTo abort, run [4mgit rebase --abort[24m[22m
-        ");
+        assert_snapshot!(err.render(), @"[31m✗[39m [31mRebase onto [1mmain[22m incomplete[39m");
     }
 
     #[test]

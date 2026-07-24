@@ -3406,6 +3406,118 @@ fn test_step_rebase_already_up_to_date(mut repo: TestRepo) {
     ));
 }
 
+/// Give `feature` and main conflicting edits to the same path, so replaying
+/// either onto the other stops. Both branches add the path, so it is an add/add
+/// conflict on the first pick.
+fn feature_conflicting_with_main(repo: &mut TestRepo) -> PathBuf {
+    let feature_wt = repo.add_worktree("feature");
+    repo.commit_in_worktree(&feature_wt, "conflict.txt", "feature\n", "Feature edit");
+    fs::write(repo.root_path().join("conflict.txt"), "main\n").unwrap();
+    repo.run_git(&["add", "conflict.txt"]);
+    repo.run_git(&["commit", "-m", "Main edit"]);
+
+    feature_wt
+}
+
+/// A worktree's own git dir, where git records in-progress operation state.
+fn worktree_git_dir(repo: &TestRepo, worktree: &Path) -> PathBuf {
+    let output = repo
+        .git_command()
+        .current_dir(worktree)
+        .args(["rev-parse", "--absolute-git-dir"])
+        .run()
+        .unwrap();
+    PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Leave `feature` stopped partway through a conflicted rebase onto main, which
+/// detaches HEAD.
+fn stop_feature_mid_rebase(repo: &mut TestRepo) -> PathBuf {
+    let feature_wt = feature_conflicting_with_main(repo);
+
+    let rebase = repo
+        .git_command()
+        .current_dir(&feature_wt)
+        .args(["rebase", "main"])
+        .run()
+        .unwrap();
+    assert!(
+        !rebase.status.success(),
+        "rebase should have stopped on the conflict"
+    );
+    assert!(
+        worktree_git_dir(repo, &feature_wt)
+            .join("rebase-merge")
+            .exists(),
+        "rebase state should be on disk"
+    );
+
+    feature_wt
+}
+
+/// Leave `feature` stopped in a conflicted merge, which keeps HEAD on the branch.
+fn stop_feature_mid_merge(repo: &mut TestRepo) -> PathBuf {
+    let feature_wt = feature_conflicting_with_main(repo);
+
+    let merge = repo
+        .git_command()
+        .current_dir(&feature_wt)
+        .args(["merge", "main"])
+        .run()
+        .unwrap();
+    assert!(
+        !merge.status.success(),
+        "merge should have stopped on the conflict"
+    );
+    assert!(
+        worktree_git_dir(repo, &feature_wt)
+            .join("MERGE_HEAD")
+            .exists(),
+        "merge state should be on disk"
+    );
+
+    feature_wt
+}
+
+/// Mid-rebase, HEAD is detached on a linear extension of the target, so the
+/// ancestry check alone reads as up to date. `wt step rebase` has to refuse
+/// rather than report success over a tree that still holds conflict markers.
+#[rstest]
+fn test_step_rebase_refuses_mid_rebase(mut repo: TestRepo) {
+    let feature_wt = stop_feature_mid_rebase(&mut repo);
+
+    assert_cmd_snapshot!(
+        "step_rebase_refuses_mid_rebase",
+        make_snapshot_cmd(&repo, "step", &["rebase", "main"], Some(&feature_wt))
+    );
+}
+
+/// From the same state `wt merge` names the open rebase instead of blaming the
+/// detached HEAD, whose `git switch` hint would abandon the rebase rather than
+/// finish it.
+#[rstest]
+fn test_merge_refuses_mid_rebase(mut repo: TestRepo) {
+    let feature_wt = stop_feature_mid_rebase(&mut repo);
+
+    assert_cmd_snapshot!(
+        "merge_refuses_mid_rebase",
+        make_snapshot_cmd(&repo, "merge", &[], Some(&feature_wt))
+    );
+}
+
+/// The gate covers every operation git can leave open, not just rebase. A
+/// conflicted merge keeps HEAD on the branch, so the detached-HEAD check waves
+/// it through and `wt merge` would otherwise try to commit the conflict markers.
+#[rstest]
+fn test_merge_refuses_mid_merge(mut repo: TestRepo) {
+    let feature_wt = stop_feature_mid_merge(&mut repo);
+
+    assert_cmd_snapshot!(
+        "merge_refuses_mid_merge",
+        make_snapshot_cmd(&repo, "merge", &[], Some(&feature_wt))
+    );
+}
+
 // =============================================================================
 // JSON output tests
 // =============================================================================

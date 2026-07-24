@@ -1208,7 +1208,7 @@ Missing a field that would be generally useful? Open an issue at https://github.
 ## See also
 
 - [`wt switch`](@/switch.md) — Switch worktrees or open interactive picker
-"#
+<!-- subdoc: statusline -->"#
     )]
     // TODO: `args_conflicts_with_subcommands` causes confusing errors for unknown
     // subcommands ("cannot be used with --branches") instead of "unknown subcommand".

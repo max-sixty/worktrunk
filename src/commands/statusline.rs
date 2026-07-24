@@ -1,7 +1,8 @@
-//! Statusline output for shell prompts and editors.
+//! Statusline output for hosts that render in the background (Claude Code's
+//! statusline, a `tmux` status bar).
 //!
 //! Outputs a single-line status for the current worktree:
-//! `branch  status  ±working  commits  upstream  [ci]  [url]`
+//! `branch  status  HEAD±  main↕  main…±  Remote⇅  CI  URL`
 //!
 //! This command reuses the data collection infrastructure from `wt list`,
 //! avoiding duplication of git operations.

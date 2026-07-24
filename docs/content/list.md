@@ -441,7 +441,7 @@ Usage: <b><span class=c>wt list</span></b> <span class=c>[OPTIONS]</span>
        <b><span class=c>wt list</span></b> <span class=c>&lt;COMMAND&gt;</span>
 
 <b><span class=g>Commands:</span></b>
-  <b><span class=c>statusline</span></b>  Single-line status for shell prompts
+  <b><span class=c>statusline</span></b>  Single-line status for the current worktree
 
 <b><span class=g>Options:</span></b>
       <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
@@ -465,6 +465,78 @@ Usage: <b><span class=c>wt list</span></b> <span class=c>[OPTIONS]</span>
           Displays local data (branches, paths, status) first, then updates with remote data (CI,
           upstream) as it arrives. Use --no-progressive to force buffered rendering. Auto-enabled
           for TTY.
+
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+          Working directory for this command
+
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+          User config file path
+
+      <b><span class=c>--config-set</span></b><span class=c> &lt;toml&gt;</span>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
+          apply the same level everywhere — including shell completion, which no flag can reach
+
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
+{% end %}
+
+# Subcommands
+
+## wt list statusline
+
+Single-line status for the current worktree.
+
+The line carries the same cells as the worktree's row in `wt list`. A stale CI status cache makes it reach the network for a second or two, so it fits a statusline the host renders in the background — Claude Code's, a `tmux` status bar — better than a prompt the shell blocks on. Want it fast enough for a synchronous prompt? [Open an issue](https://github.com/max-sixty/worktrunk/issues).
+
+### Output formats
+
+- `table` (default): `branch  status  HEAD±  main↕  main…±  Remote⇅  CI  URL`
+- `json`: A one-entry array in the `wt list --format=json` schema
+- `claude-code`: the `table` cells, preceded by `dir` and followed by `model  context  pace`
+
+A cell with nothing to show is left out rather than blanked, so most lines are shorter than that; `claude-code` also drops `branch` where `dir` already ends in `.<branch>`. A line that still overruns the terminal drops whole cells, least important first, starting with the dev server URL.
+
+The CI reference links to its PR/MR, and a dev server URL carrying a port shows as `:3000` linking to the URL in full, dim until something answers on that port. Both links are OSC 8, which a terminal that doesn't support them discards, leaving the same text unclickable.
+
+### Claude Code mode
+
+`--format=claude-code` reads JSON context from stdin (`.workspace.current_dir` is required; the rest are optional):
+
+- `.workspace.current_dir` — working directory
+- `.model.display_name` — model name
+- `.context_window.used_percentage` — context usage (0–100), rendered as `🌔 65%`, the moon waning 🌕→🌑 as context fills
+- `.rate_limits.{five_hour,seven_day}.used_percentage` — rate-limit window usage (0–100)
+- `.rate_limits.{five_hour,seven_day}.resets_at` — window reset time (Unix epoch seconds)
+
+The pace segment appears only when usage is likely to hit a rate limit before its window resets, and shows the higher-risk window: `2.9×(Tue–Tue 5pm)` reads as 2.9× the pace that would exactly fill that window. Above 90% used it shows usage instead of pace — `93%(Tue–Tue 5pm)` — near the cap, how much is left matters more than how fast it's going. "Likely" is a Bayesian forecast; early-window bursts don't trigger it. Its colour deepens with severity — dim, then dim-yellow, then yellow — as the forecast lockout (how much of the window would be spent capped) grows, so a fast pace that would only tip over near the reset stays dim rather than alarming. With `-vv`, each window's inputs and projection are logged to `.git/wt/logs/trace.log`.
+
+[Claude Code statusline setup](@/claude-code.md#statusline-claude-code-only) has the `~/.claude/settings.json` entry that feeds this mode.
+
+### Command reference
+
+{% terminal() %}
+wt list statusline - Single-line status for the current worktree
+
+Usage: <b><span class=c>wt list statusline</span></b> <span class=c>[OPTIONS]</span>
+
+<b><span class=g>Options:</span></b>
+      <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
+          Output format
+
+          Possible values:
+          - <b><span class=c>table</span></b>
+          - <b><span class=c>json</span></b>
+          - <b><span class=c>claude-code</span></b>: Claude Code statusline mode (reads context from stdin)
+
+          [default: table]
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
