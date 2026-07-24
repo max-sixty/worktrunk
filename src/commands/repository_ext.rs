@@ -411,8 +411,18 @@ impl RepositoryCliExt for Repository {
         let Some(merge_base) = self.merge_base("HEAD", target)? else {
             return Ok(false);
         };
+        // `merge_base` peels an annotated tag to the commit it points at; a bare
+        // `rev-parse` returns the tag object's own SHA. Comparing the two forms
+        // never matches, so an annotated-tag target would always be reported as
+        // needing a rebase — and `wt step rebase <annotated-tag>` would replay
+        // nothing while announcing "Rebased onto <tag>". Peel both sides.
         let target_sha = self
-            .run_command(&["rev-parse", "--verify", "--end-of-options", target])?
+            .run_command(&[
+                "rev-parse",
+                "--verify",
+                "--end-of-options",
+                &format!("{target}^{{commit}}"),
+            ])?
             .trim()
             .to_string();
 

@@ -3538,6 +3538,37 @@ fn test_step_rebase_up_to_date_json(mut repo: TestRepo) {
     assert_eq!(parsed["target"], "main");
 }
 
+/// An annotated-tag target is peeled before the up-to-date check.
+///
+/// `git merge-base` resolves an annotated tag to the commit it points at, so
+/// comparing it against an unpeeled `rev-parse` never matches: the branch was
+/// reported as needing a rebase, and `wt step rebase <tag>` replayed nothing
+/// while printing "Rebased onto <tag>" and emitting `"outcome": "rebased"`.
+/// The lightweight tag is the single-factor control — same graph, same commit,
+/// and it always took the `up_to_date` path.
+#[rstest]
+fn test_step_rebase_annotated_tag_is_peeled(mut repo: TestRepo) {
+    repo.run_git(&["tag", "-a", "v1.0.0", "-m", "release"]);
+    repo.run_git(&["tag", "v1.0.0-lw"]);
+    let feature_wt = repo.add_worktree_with_commit("feature", "f.txt", "x", "feat: x");
+
+    for tag in ["v1.0.0", "v1.0.0-lw"] {
+        let output = repo
+            .wt_command()
+            .args(["step", "rebase", tag, "--format=json"])
+            .current_dir(&feature_wt)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+        assert_eq!(
+            parsed["outcome"], "up_to_date",
+            "{tag}: branch already sits on the tagged commit, so nothing should replay"
+        );
+        assert_eq!(parsed["target"], tag);
+    }
+}
+
 /// `step rebase --format=json` reports `fast_forwarded` when target advanced cleanly.
 #[rstest]
 fn test_step_rebase_fast_forwarded_json(mut repo: TestRepo) {
