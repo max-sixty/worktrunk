@@ -330,18 +330,29 @@ jobs:
 
           gh release create "${{ needs.plan.outputs.tag }}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
 
+  # Auth is via crates.io Trusted Publishing (GitHub Actions OIDC): the job mints
+  # a short-lived, auto-revoked token per run instead of a long-lived API token.
+  # This requires a Trusted Publisher to be configured for the crate on
+  # crates.io, scoped to this repo, the `release.yaml` workflow, and the
+  # `release` environment.
   publish-cargo:
     needs:
       - plan
       - host
     runs-on: ubuntu-24.04
     environment: release
+    permissions:
+      contents: read
+      id-token: write
     if: ${{ needs.plan.outputs.publishing == 'true' }}
     steps:
       - uses: actions/checkout@v7
+      - name: Authenticate with crates.io
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
       - name: Publish to crates.io
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: cargo publish --package worktrunk
 
   publish-winget:
