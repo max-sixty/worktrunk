@@ -599,28 +599,51 @@ struct PendingColumn<'a> {
     format: ColumnFormat,
 }
 
-/// Format the dev-server URL, optionally as an OSC 8 hyperlink.
+/// Format the dev-server URL for the `wt list` table.
 ///
 /// A linked cell shows just the port (e.g. `:3000`) — the URL rides inside the
 /// escape sequence, so the cell costs the port's width rather than the whole
 /// URL's. Without links, or when the URL carries no parseable port, there is
-/// nowhere to hide the URL, so it renders in full and stays copyable.
+/// nowhere to hide the URL, so it renders in full and stays copyable. The table
+/// can afford that because [`estimate_url_width`] reserves a column wide enough
+/// for it — the two have to agree on when a cell collapses to `:port`, hence the
+/// adjacency.
 ///
-/// Callers pass the decision rather than probing the terminal here: the
-/// statusline's stdout is a pipe to its editor, so `supports_hyperlinks` reports
-/// false there even though the consumer renders OSC 8.
-///
-/// [`estimate_url_width`] budgets the column against this, so the two have to
-/// agree on when a cell collapses to `:port` — hence the adjacency.
+/// Callers pass the link decision rather than probing the terminal here; see
+/// [`format_url_segment`] for the surface where the probe differs.
 pub(crate) fn format_url_cell(url: &str, include_link: bool) -> String {
-    if include_link && let Some(port) = parse_port_from_url(url) {
-        return format!(
+    if include_link {
+        return format_url_segment(url, true);
+    }
+    url.to_string()
+}
+
+/// Format the dev-server URL for the statusline, where the cell is the port
+/// whether or not it links.
+///
+/// The statusline reserves nothing: it fits a fixed-width line by dropping its
+/// worst-priority segment first, and the URL is the worst. A cell that grew to
+/// the full URL when links were unavailable would be dropped entirely at
+/// ordinary widths, so the terminal's OSC 8 support would decide between a port
+/// and nothing at all. Collapsing unconditionally keeps the width the same
+/// either way, leaving the terminal to decide only whether the port is
+/// clickable.
+///
+/// A URL with no parseable port has nothing to collapse to, so it renders in
+/// full on both surfaces.
+pub(crate) fn format_url_segment(url: &str, include_link: bool) -> String {
+    let Some(port) = parse_port_from_url(url) else {
+        return url.to_string();
+    };
+    if include_link {
+        format!(
             "{}:{port}{}",
             osc8::Hyperlink::new(url),
             osc8::Hyperlink::END
-        );
+        )
+    } else {
+        format!(":{port}")
     }
-    url.to_string()
 }
 
 /// Estimate URL column width using heuristics.

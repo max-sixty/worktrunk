@@ -13,7 +13,7 @@ use super::stats::{AheadBehind, BranchDiffTotals, CommitDetails, UpstreamStatus}
 use super::status_symbols::{StatusSymbols, WorkingTreeStatus};
 use crate::commands::list::ci_status::PrStatus;
 use crate::commands::list::columns::ColumnKind;
-use crate::commands::list::layout::format_url_cell;
+use crate::commands::list::layout::format_url_segment;
 
 /// Compute the `WorktreeState` from `WorktreeData` metadata alone.
 ///
@@ -484,11 +484,10 @@ impl ListItem {
     /// Returns segments with priorities matching `wt list` column priorities.
     /// Use [`super::statusline_segment::StatuslineSegment::fit_to_width`] to truncate intelligently.
     ///
-    /// `include_links` says whether the consumer renders OSC 8, and the caller
-    /// decides it the way `wt list` does. It is not cosmetic for the URL: a
-    /// linked cell hides the URL inside the escape sequence and shows only
-    /// `:port`, so a consumer that drops OSC 8 would be left with a port and no
-    /// host. Without links the URL renders in full instead.
+    /// `include_links` says whether the terminal renders OSC 8; it decides only
+    /// whether the CI reference and the dev-server port are clickable, never
+    /// what they say. See [`format_url_segment`] for why the URL cell keeps its
+    /// width either way.
     pub fn format_statusline_segments(
         &self,
         include_links: bool,
@@ -569,7 +568,7 @@ impl ListItem {
         // 8. URL (priority 9) — the dev server, as in `wt list`: the port as a
         // link, dimmed unless the health check found something listening on it.
         if let Some(ref url) = self.url {
-            let cell = format_url_cell(url, include_links);
+            let cell = format_url_segment(url, include_links);
             segments.push(StatuslineSegment::from_column(
                 if self.url_active == Some(true) {
                     cell
@@ -858,8 +857,6 @@ impl ListItem {
 
 #[cfg(test)]
 mod tests {
-    use ansi_str::AnsiStr;
-
     use super::*;
 
     /// The yellow actionable states outrank the informational (dim yellow)
@@ -942,11 +939,12 @@ mod tests {
         assert_eq!(ci.width(), "#123".len());
     }
 
-    /// The URL segment mirrors the `wt list` cell: a link hides the URL inside
-    /// the escape sequence and shows only `:port`, so a consumer that can't
-    /// render OSC 8 gets the URL in full rather than a bare port.
+    /// The terminal decides whether the port is clickable, not how much room it
+    /// takes. The statusline drops its worst-priority segment first and the URL
+    /// is the worst, so a cell that grew to the full URL without links would be
+    /// dropped entirely at the widths where it is needed.
     #[test]
-    fn test_statusline_url_segment_needs_the_link_to_shorten() {
+    fn test_statusline_url_segment_keeps_its_width_without_links() {
         let mut item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
         item.url = Some("http://127.0.0.1:17913".to_string());
         item.url_active = Some(true);
@@ -956,17 +954,18 @@ mod tests {
                 .into_iter()
                 .find(|s| s.kind == Some(ColumnKind::Url))
                 .expect("URL segment present when a URL is known")
-                .content
         };
 
         let linked = url_segment(true);
         assert!(
-            linked.contains("\x1b]8;;http://127.0.0.1:17913"),
-            "linked URL segment should carry an OSC 8 link, got {linked:?}"
+            linked.content.contains("\x1b]8;;http://127.0.0.1:17913"),
+            "linked URL segment should carry an OSC 8 link, got {:?}",
+            linked.content
         );
-        assert_eq!(linked.ansi_strip(), ":17913");
 
-        assert_eq!(url_segment(false), "http://127.0.0.1:17913");
+        let plain = url_segment(false);
+        assert_eq!(plain.content, ":17913");
+        assert_eq!(linked.width(), plain.width());
     }
 
     /// A URL nothing answers on is dim, as in `wt list` — the port is still
@@ -976,8 +975,8 @@ mod tests {
         let mut item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
         item.url = Some("http://127.0.0.1:17913".to_string());
 
-        // Unlinked, so the cell is the bare URL and the only difference left
-        // between these three is the dim wrapper.
+        // Unlinked, so the only difference left between these three is the dim
+        // wrapper.
         let url_cell = |active| {
             let mut item = item.clone();
             item.url_active = active;
@@ -988,7 +987,7 @@ mod tests {
                 .content
         };
 
-        let plain = "http://127.0.0.1:17913";
+        let plain = ":17913";
         let dim = cformat!("<dim>{plain}</>");
         assert_eq!(url_cell(Some(false)), dim, "a dead port should dim");
         assert_eq!(url_cell(None), dim, "an unfinished health check should dim");

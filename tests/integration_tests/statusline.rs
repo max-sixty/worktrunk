@@ -16,6 +16,17 @@ fn run_statusline_from_dir(
     stdin_json: Option<&str>,
     cwd: &std::path::Path,
 ) -> String {
+    run_statusline_from_dir_with_env(repo, args, stdin_json, cwd, &[])
+}
+
+/// As [`run_statusline_from_dir`], with extra environment for the child.
+fn run_statusline_from_dir_with_env(
+    repo: &TestRepo,
+    args: &[&str],
+    stdin_json: Option<&str>,
+    cwd: &std::path::Path,
+    env: &[(&str, &str)],
+) -> String {
     let mut cmd = wt_command();
     cmd.current_dir(cwd);
     cmd.args(["list", "statusline"]);
@@ -29,6 +40,10 @@ fn run_statusline_from_dir(
     // the `run_statusline_with_locale` helper. `LC_ALL=C` is already pinned
     // globally by the test harness.
     cmd.env("TZ", "UTC");
+
+    for (key, value) in env {
+        cmd.env(key, value);
+    }
 
     if stdin_json.is_some() {
         cmd.stdin(Stdio::piped());
@@ -426,26 +441,46 @@ url = "http://{{ branch }}.localhost:3000"
     assert_snapshot!(output, @r"[0m feature  [2m_[22m  [2m]8;;http://feature.localhost:3000\:3000]8;;\[22m");
 }
 
-/// Without a terminal known to render OSC 8, the URL prints in full: the two
-/// tests above show the linked form, where the URL rides inside the escape and
-/// only `:3000` is visible, so dropping the escape would leave a bare port.
+/// Only the click depends on the terminal. The linked snapshots above and this
+/// unlinked one show the same `:3000` at the same width, so a terminal without
+/// OSC 8 keeps a segment that the width budget would otherwise drop first.
 #[rstest]
-fn test_statusline_url_prints_in_full_without_terminal_hyperlinks(repo: TestRepo) {
+fn test_statusline_url_without_terminal_hyperlinks_keeps_its_width(repo: TestRepo) {
     repo.write_project_config(
         r#"[list]
 url = "http://{{ branch }}.localhost:3000"
 "#,
     );
 
-    let output = repo
-        .wt_command()
-        .args(["list", "statusline"])
-        .env("FORCE_HYPERLINK", "0")
-        .output()
-        .expect("statusline should run");
-    let output = String::from_utf8_lossy(&output.stdout).to_string();
+    let output = run_statusline_from_dir_with_env(
+        &repo,
+        &[],
+        None,
+        repo.root_path(),
+        &[("FORCE_HYPERLINK", "0")],
+    );
+    assert_snapshot!(output, @"[0m main  [36m?[0m[2m^[22m[2m|[22m  @[32m+2[0m  [2m:3000[22m");
+}
 
-    assert_snapshot!(output, @"[0m main  [36m?[0m[2m^[22m[2m|[22m  @[32m+2[0m  [2mhttp://main.localhost:3000[22m");
+/// The URL segment lands after the CI reference and before the model in Claude
+/// Code mode, where the directory and model segments share the line with it.
+#[rstest]
+fn test_statusline_claude_code_url_placement(repo: TestRepo) {
+    repo.write_project_config(
+        r#"[list]
+url = "http://{{ branch }}.localhost:3000"
+"#,
+    );
+
+    let escaped_path = escape_path_for_json(repo.root_path());
+    let json = format!(
+        r#"{{"model": {{"display_name": "Opus"}}, "workspace": {{"current_dir": "{escaped_path}"}}}}"#
+    );
+
+    let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
+    claude_code_snapshot_settings().bind(|| {
+        assert_snapshot!(output, @r"[0m [PATH]  main  [36m?[0m[2m^[22m[2m|[22m  @[32m+2[0m  [2m]8;;http://main.localhost:3000\:3000]8;;\[22m  Opus");
+    });
 }
 
 // --- JSON Format Tests ---
