@@ -462,6 +462,14 @@ pub(super) static WORKTRUNK_USER_CONFIG_PRELOAD: OnceLock<UserConfig> = OnceLock
 ///
 /// This should be called once at program startup from main().
 /// If not called, defaults to "." (current directory).
+///
+/// `-C` sets this path without chdir'ing the process, so it is the base for the
+/// two things git gets from its own chdir: the repository [`Repository::current`]
+/// discovers, and any relative path argument the user passes, which resolves by
+/// joining onto [`Repository::discovery_path`]. The process cwd answers a
+/// different question — where the user's shell physically is (the `cd` target
+/// after a switch, the cwd-removed recovery check) — so
+/// `std::env::current_dir()` substitutes for neither.
 pub fn set_base_path(path: PathBuf) {
     BASE_PATH.set(path).ok();
 }

@@ -855,15 +855,13 @@ fn plan_switch(
     // If the argument looks like a path (not a branch name), try to find a worktree there.
     if !create {
         let candidate = Path::new(branch);
-        let abs_path = if candidate.is_absolute() {
-            Some(candidate.to_path_buf())
-        } else if candidate.components().count() > 1 {
-            // Relative path with directory separators (e.g., "../repo.feature").
-            // Single-component names are ambiguous with branch names (already tried in Phase 2).
-            std::env::current_dir().ok().map(|cwd| cwd.join(candidate))
-        } else {
-            None
-        };
+        // Absolute, or relative with directory separators (e.g. "../repo.feature");
+        // a single-component name is ambiguous with a branch name (already tried in
+        // Phase 2), so it stays branch-only. A relative path resolves against the
+        // directory wt was pointed at, the way git resolves path arguments against
+        // its own `-C`; an unflagged discovery path is the process cwd.
+        let looks_like_path = candidate.is_absolute() || candidate.components().count() > 1;
+        let abs_path = looks_like_path.then(|| repo.discovery_path().join(candidate));
         if let Some(abs_path) = abs_path
             && let Some((path, wt_branch)) = repo.worktree_at_path(&abs_path)?
         {
