@@ -354,7 +354,7 @@ fn enumerate_daemons() -> Vec<DaemonProcess> {
         .collect::<Vec<_>>()
         .join(",");
     let Ok(out) = Cmd::new("lsof")
-        .args(["-a", "-p", &pid_list, "-U", "-F", "pn"])
+        .args(["-a", "-p", &pid_list, "-U", "-F", "on"])
         .timeout(timeout)
         .run()
     else {
@@ -369,7 +369,7 @@ fn enumerate_daemons() -> Vec<DaemonProcess> {
     daemons_from_batched_lsof(&String::from_utf8_lossy(&out.stdout))
 }
 
-/// Split batched `lsof -F pn` output into per-PID records and classify each
+/// Split batched `lsof -F on` output into per-PID records and classify each
 /// via [`daemon_from_lsof_stdout`].
 ///
 /// `lsof -F` streams field-prefixed lines; a `p<pid>` line opens a process
@@ -544,7 +544,7 @@ mod tests {
         assert_eq!(parse_lsof_socket_path(lsof), None);
     }
 
-    /// Verbatim `lsof -a -p <pids> -U -F pn` output shape (macOS 26, lsof
+    /// Verbatim `lsof -a -p <pids> -U -F on` output shape (macOS 26, lsof
     /// 4.99.5): each process opens with `p<pid>`, then `f`/`n` pairs. Covers
     /// all three classifications in one batch — a resolved socket, a bare
     /// name (orphan class 1), and a `pgrep` false positive holding no
