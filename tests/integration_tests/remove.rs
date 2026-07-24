@@ -3155,25 +3155,42 @@ fn test_remove_sweeps_stale_trash_entries(mut repo: TestRepo) {
     );
 }
 
-/// `wt remove -vv` traces the end-of-command fsmonitor sweep: the
-/// `enumerate-fsmonitor-daemons` span appears and the machine-wide daemon
-/// count is surfaced, so a slow sweep (per-PID `lsof` resolution) is
-/// explainable from the trace. `pgrep` is mocked to report one bogus PID —
-/// CI runners have no real fsmonitor daemons, so the count line is otherwise
-/// unreachable — and `lsof` is mocked to fail its per-PID resolution, which
-/// the best-effort sweep treats as "no daemons".
+/// `wt remove -vv` resolves every fsmonitor daemon in ONE `lsof` spawn and
+/// traces the sweep.
+///
+/// The spawn count is the load-bearing assertion. The candidate set is
+/// machine-wide, so a machine that has accumulated a daemon per repo ever
+/// touched (100+ is routine) once paid one `lsof` spawn each on every
+/// `wt remove`. That fork storm makes macOS assess each new image under
+/// contention, inflating per-spawn cost for everything else on the box — so
+/// regressing to a per-PID loop is not a linear slowdown, and a duration
+/// assertion would not catch it on an idle CI runner. Counting spawns does.
+///
+/// `pgrep` is mocked to report three bogus PIDs (CI runners have no real
+/// daemons) and `lsof` to return batched `-F pn` output covering all three.
 #[rstest]
 #[cfg(unix)]
-fn test_remove_vv_traces_fsmonitor_sweep(mut repo: TestRepo) {
-    use crate::common::mock_commands::{MockConfig, MockResponse};
+fn test_remove_resolves_all_fsmonitor_daemons_in_one_lsof(mut repo: TestRepo) {
+    use crate::common::mock_commands::{MockConfig, MockResponse, mock_calls};
 
     let bin_dir = repo.root_path().join(".bin");
     std::fs::create_dir_all(&bin_dir).unwrap();
     MockConfig::new("pgrep")
-        .command("_default", MockResponse::output("999999999\n"))
+        .command("_default", MockResponse::output("777001\n777002\n777003\n"))
         .write(&bin_dir);
+    // Batched `lsof -F pn` shape: a `p<pid>` line opens each process record.
+    // All three sockets resolve under a git-dir that is not this repo's, so
+    // the sweep classifies them as "not ours" and signals nothing — the test
+    // asserts call shape, and must never depend on killing a real PID.
     MockConfig::new("lsof")
-        .command("_default", MockResponse::exit(1))
+        .command(
+            "_default",
+            MockResponse::output(concat!(
+                "p777001\nf18\nn/elsewhere/a/.git/fsmonitor--daemon.ipc\n",
+                "p777002\nf18\nn/elsewhere/b/.git/fsmonitor--daemon.ipc\n",
+                "p777003\nf18\nn/elsewhere/c/.git/fsmonitor--daemon.ipc\n",
+            )),
+        )
         .write(&bin_dir);
 
     let mut paths: Vec<std::path::PathBuf> = std::env::var_os("PATH")
@@ -3182,18 +3199,36 @@ fn test_remove_vv_traces_fsmonitor_sweep(mut repo: TestRepo) {
     paths.insert(0, bin_dir.clone());
     let new_path = std::env::join_paths(&paths).unwrap();
 
+    // Outside the repo: a call log written under `bin_dir` (which lives at
+    // `<repo>/.bin`) would leave an untracked file in the working tree the
+    // command under test is inspecting.
+    let call_log = tempfile::tempdir().unwrap();
+
     repo.add_worktree("feature-fsmon");
     let output = repo
         .wt_command()
         .args(["remove", "feature-fsmon", "-vv"])
         .env("PATH", &new_path)
         .env("MOCK_CONFIG_DIR", &bin_dir)
+        .env("MOCK_CALL_LOG_DIR", call_log.path())
         .output()
         .unwrap();
     assert!(
         output.status.success(),
         "wt remove should succeed: {}",
         String::from_utf8_lossy(&output.stderr)
+    );
+
+    let calls = mock_calls(call_log.path(), "lsof");
+    assert_eq!(
+        calls.len(),
+        1,
+        "3 daemons must cost exactly one lsof spawn, not one per PID. calls: {calls:#?}"
+    );
+    assert!(
+        calls[0].contains("777001,777002,777003"),
+        "the single lsof call must pass every PID as one comma-separated list. call: {}",
+        calls[0]
     );
 
     // -vv streams primary output to stderr but writes trace records to the
@@ -3207,7 +3242,7 @@ fn test_remove_vv_traces_fsmonitor_sweep(mut repo: TestRepo) {
         "sweep span should appear in the -vv trace. trace.log: {trace}"
     );
     assert!(
-        trace.contains("resolving sockets for 1 daemon(s) via lsof"),
+        trace.contains("resolving sockets for 3 daemon(s) via one lsof"),
         "sweep should surface the daemon count. trace.log: {trace}"
     );
 }

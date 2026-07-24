@@ -1126,6 +1126,29 @@ impl TestRepo {
         check_git_status(&output, &args.join(" "));
     }
 
+    /// Create many branches at `HEAD` in a single `git update-ref --stdin`
+    /// spawn, panicking on failure.
+    ///
+    /// A fixture that needs N branches to cross a threshold cares about the
+    /// ref count, not about how the refs got there. Looping `git branch`
+    /// turns that into N process spawns, and integration tests run at full
+    /// core parallelism — so a fixture loop is multiplied by every other test
+    /// running beside it. One spawn keeps the fixture's cost proportional to
+    /// what it is actually setting up.
+    pub fn create_branches(&self, names: &[String]) {
+        let stdin: String = names
+            .iter()
+            .map(|n| format!("create refs/heads/{n} HEAD\n"))
+            .collect();
+        let output = self
+            .git_command()
+            .args(["update-ref", "--stdin"])
+            .stdin_bytes(stdin)
+            .run()
+            .unwrap();
+        check_git_status(&output, "update-ref --stdin");
+    }
+
     /// Run a git command in a specific directory, panicking on failure.
     ///
     /// Thin wrapper around `git_command()` that runs in `dir` and checks status.

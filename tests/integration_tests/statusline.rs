@@ -138,9 +138,7 @@ fn test_statusline_commits_ahead(mut repo: TestRepo) {
 
 #[rstest]
 fn test_statusline_does_not_run_repo_wide_ahead_behind_scan(repo: TestRepo) {
-    for i in 0..12 {
-        repo.run_git(&["branch", &format!("unused-{i}")]);
-    }
+    repo.create_branches(&(0..12).map(|i| format!("unused-{i}")).collect::<Vec<_>>());
 
     let output = repo
         .wt_command()

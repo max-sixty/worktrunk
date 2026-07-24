@@ -1054,10 +1054,11 @@ fn test_switch_picker_scrollbar_on_overflow(mut repo: TestRepo) {
 
     // Far more branches than the ~24 item rows the 30-row terminal can show, so
     // the list is guaranteed to overflow and skim paints the scrollbar.
-    for i in 0..50 {
-        let name = format!("scroll-{i:02}");
-        repo.run_git(&["branch", name.as_str()]);
-    }
+    repo.create_branches(
+        &(0..50)
+            .map(|i| format!("scroll-{i:02}"))
+            .collect::<Vec<_>>(),
+    );
 
     let env_vars = repo.test_env_vars();
     let result = exec_in_pty_capture_before_abort(
