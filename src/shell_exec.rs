@@ -101,6 +101,16 @@ fn is_foreground_thread() -> bool {
 static BACKGROUND_PIDS: Mutex<BTreeSet<u32>> = Mutex::new(BTreeSet::new());
 
 /// Deregisters a background command's PID however the command finishes.
+///
+/// The child is reaped inside the `wait` this guard outlives, so for the few
+/// instructions between that reap and this `drop` a freed PID is still listed,
+/// and a sweep landing in that window would signal whatever the kernel handed
+/// the number to next. Signalling by PID can't close this — the reap and the
+/// deregistration are not one operation — and deregistering before the wait
+/// instead is not a fix but a removal: the wait *is* the command's lifetime,
+/// so nothing would ever be cancellable. Accepted rather than mitigated:
+/// PID allocation is incremental up to `pid_max`, which makes reuse inside a
+/// microsecond window require wrapping the entire PID space first.
 struct BackgroundPid(u32);
 
 impl Drop for BackgroundPid {
