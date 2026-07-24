@@ -471,9 +471,9 @@ impl ListItem {
     /// Format: `branch  status  @working  commits  ^branch_diff  upstream  ci  url`
     /// Uses 2-space separators between non-empty parts.
     ///
-    /// Links are on: this feeds the JSON `statusline` field, whose contract is a
-    /// pre-formatted line with colors and links. A consumer that wants the URL
-    /// as data reads the sibling `url` field.
+    /// Links are on unconditionally: this feeds the JSON `statusline` field,
+    /// and a data format must not vary with the terminal that happens to be
+    /// attached, or `wt list --format=json` would differ machine to machine.
     pub fn format_statusline(&self) -> String {
         use super::statusline_segment::StatuslineSegment;
         StatuslineSegment::join(&self.format_statusline_segments(true))

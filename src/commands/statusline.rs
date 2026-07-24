@@ -17,7 +17,7 @@ use ansi_str::AnsiStr;
 use anyhow::{Context, Result};
 use worktrunk::git::Repository;
 use worktrunk::styling::{
-    Stream, fix_dim_after_color_reset, supports_hyperlinks, terminal_width_for_statusline,
+    fix_dim_after_color_reset, terminal_supports_hyperlinks, terminal_width_for_statusline,
     truncate_visible,
 };
 
@@ -728,11 +728,11 @@ pub fn run(format: StatuslineFormat) -> Result<()> {
 
     let claude_code = matches!(format, StatuslineFormat::ClaudeCode);
 
-    // Whether the consumer renders OSC 8. Claude Code does, and no probe can
-    // see that: it pipes both of our streams. Every other consumer is a shell
-    // prompt, whose stdout is captured by command substitution while stderr is
-    // still the terminal — so that is the stream worth asking.
-    let include_links = claude_code || supports_hyperlinks(Stream::Stderr);
+    // Whether the terminal renders OSC 8. Nobody draws this line from our
+    // stdout: a shell prompt captures it through command substitution, Claude
+    // Code parses it into its own frame. Both re-emit to the terminal, so it is
+    // the terminal that decides, and only the environment describes it.
+    let include_links = terminal_supports_hyperlinks();
 
     // Get context - either from stdin (claude-code mode) or current directory
     let (cwd, model_name, context_used_percentage, rate_limits) = if claude_code {

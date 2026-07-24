@@ -12,7 +12,7 @@ pub enum ListSubcommand {
 - `json`: Same structure as `wt list --format=json` but for the current worktree only
 - `claude-code`: `dir  branch  status  ±working  commits  upstream  ci  url  model  context  pace`
 
-The CI reference links to its PR/MR, and the dev server URL collapses to a clickable `:3000`, dim while nothing is listening on the port — the same cells `wt list` renders. Claude Code renders OSC 8 hyperlinks, so `--format=claude-code` always emits them; `table` emits them when the terminal supports them and otherwise prints the URL in full.
+The CI reference links to its PR/MR, and the dev server URL collapses to a clickable `:3000`, dim while nothing is listening on the port — the same cells `wt list` renders. Both are OSC 8 hyperlinks, emitted for a terminal known to render them (`TERM`, `TERM_PROGRAM`, or `FORCE_HYPERLINK=1`); elsewhere the URL prints in full, since the link is the only thing carrying its host.
 
 ## Claude Code mode
 

@@ -402,7 +402,7 @@ url = "http://{{ branch }}.localhost:3000"
 
     let output = run_statusline(&repo, &[], None);
     // Shows `?` because writing project config creates uncommitted file
-    assert_snapshot!(output, @"[0m main  [36m?[0m[2m^[22m[2m|[22m  @[32m+2[0m  [2mhttp://main.localhost:3000[22m");
+    assert_snapshot!(output, @r"[0m main  [36m?[0m[2m^[22m[2m|[22m  @[32m+2[0m  [2m]8;;http://main.localhost:3000\:3000]8;;\[22m");
 }
 
 #[rstest]
@@ -423,27 +423,29 @@ url = "http://{{ branch }}.localhost:3000"
 
     // Run statusline from feature worktree
     let output = run_statusline_from_dir(&repo, &[], None, &feature_path);
-    assert_snapshot!(output, @"[0m feature  [2m_[22m  [2mhttp://feature.localhost:3000[22m");
+    assert_snapshot!(output, @r"[0m feature  [2m_[22m  [2m]8;;http://feature.localhost:3000\:3000]8;;\[22m");
 }
 
-/// Claude Code renders OSC 8 but pipes both of wt's streams, so no probe can
-/// see it. The two tests above run through the same pipe and get the full URL;
-/// this one gets the link, and with it the short `:3000`.
+/// Without a terminal known to render OSC 8, the URL prints in full: the two
+/// tests above show the linked form, where the URL rides inside the escape and
+/// only `:3000` is visible, so dropping the escape would leave a bare port.
 #[rstest]
-fn test_statusline_claude_code_url_links_through_a_pipe(repo: TestRepo) {
+fn test_statusline_url_prints_in_full_without_terminal_hyperlinks(repo: TestRepo) {
     repo.write_project_config(
         r#"[list]
 url = "http://{{ branch }}.localhost:3000"
 "#,
     );
 
-    let escaped_path = escape_path_for_json(repo.root_path());
-    let json = format!(r#"{{"workspace": {{"current_dir": "{escaped_path}"}}}}"#);
+    let output = repo
+        .wt_command()
+        .args(["list", "statusline"])
+        .env("FORCE_HYPERLINK", "0")
+        .output()
+        .expect("statusline should run");
+    let output = String::from_utf8_lossy(&output.stdout).to_string();
 
-    let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
-    claude_code_snapshot_settings().bind(|| {
-        assert_snapshot!(output, @r"[0m [PATH]  main  [36m?[0m[2m^[22m[2m|[22m  @[32m+2[0m  [2m]8;;http://main.localhost:3000\:3000]8;;\[22m");
-    });
+    assert_snapshot!(output, @"[0m main  [36m?[0m[2m^[22m[2m|[22m  @[32m+2[0m  [2mhttp://main.localhost:3000[22m");
 }
 
 // --- JSON Format Tests ---

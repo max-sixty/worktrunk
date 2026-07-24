@@ -109,7 +109,7 @@ Claude Code agents can run in isolated worktrees (`isolation: "worktree"`). By d
 
 <code>~/w/myproject.feature-auth  !🤖  @<span style='color:#0a0'>+42</span> <span style='color:#a00'>-8</span>  <span style='color:#0a0'>↑3</span>  <span style='color:#0a0'>⇡1</span>  <span style='color:#0a0'>#3035</span>  Opus  🌔 65%  <span style='color:#a70'>1.4×(10am–3pm)</span></code>
 
-The CI reference (`#3035`) links to its pull request, and a configured [dev server URL](@/list.md) collapses to a clickable `:3000` instead of rendering in full. Both are OSC 8 hyperlinks: underlined and clickable in terminals that support them, plain text everywhere else.
+The CI reference (`#3035`) links to its pull request, and a configured [dev server URL](@/list.md) collapses to a clickable `:3000`, dim while nothing is listening on the port. Both are OSC 8 hyperlinks. Claude Code re-emits them to the terminal, so the terminal decides: one known to render them (`TERM`, `TERM_PROGRAM`, or `FORCE_HYPERLINK=1`) underlines them, and elsewhere the URL prints in full rather than shrinking to a port with no host.
 
 When Claude Code provides context window usage via stdin JSON, a moon phase gauge appears (🌕→🌑 as context fills). A `<n>×(<window>)` segment appears when Claude's 5-hour or weekly rate limit is on track to be hit before reset — `1.4×(10am–3pm)` reads as 1.4× the pace that would exactly fill that window. Its colour deepens with severity — dim, then dim-yellow, then yellow — as more of the window would be spent locked out at the cap, so a fast pace that would only tip over near the reset stays dim. Above 90% used it shows usage instead of pace — `93%(10am–3pm)` — near the cap, how much is left matters more than how fast it's going.
 
