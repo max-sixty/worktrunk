@@ -606,12 +606,16 @@ struct PendingColumn<'a> {
 /// URL's. Without links, or when the URL carries no parseable port, there is
 /// nowhere to hide the URL, so it renders in full and stays copyable.
 ///
-/// Callers pass the decision rather than probing the terminal here: the
-/// statusline's stdout is a pipe to its editor, so `supports_hyperlinks` reports
-/// false there even though the consumer renders OSC 8.
-///
-/// [`estimate_url_width`] budgets the column against this, so the two have to
-/// agree on when a cell collapses to `:port` — hence the adjacency.
+/// `wt list` passes the terminal probe, because there the answer changes what
+/// the reader gets: [`estimate_url_width`] reserves a column wide enough for the
+/// full URL, so an unlinked cell can print it (the two have to agree on when a
+/// cell collapses to `:port`, hence the adjacency). The statusline passes
+/// `true`. It has no column to reserve — it fits a fixed-width line by dropping
+/// its worst-priority segment, and the URL is the worst — so an unlinked cell
+/// would grow past the budget and be dropped entirely, trading a port for
+/// nothing. A terminal that doesn't implement OSC 8 discards the escape and
+/// renders the same `:3000`, so emitting it unconditionally costs that reader
+/// nothing.
 pub(crate) fn format_url_cell(url: &str, include_link: bool) -> String {
     if include_link && let Some(port) = parse_port_from_url(url) {
         return format!(

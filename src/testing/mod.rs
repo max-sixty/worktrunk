@@ -352,7 +352,7 @@ fn default_llvm_profile_file_with(inherited: Option<std::ffi::OsString>) -> std:
 /// Prepare a subprocess to run with a clean wt environment.
 ///
 /// Strips every `GIT_*` and `WORKTRUNK_*` from the parent env, plus
-/// `NO_COLOR` / `SHELL` / `PSModulePath`, then points the three
+/// `NO_COLOR` / `FORCE_HYPERLINK` / `SHELL` / `PSModulePath`, then points the three
 /// `WORKTRUNK_*_PATH` env vars at known locations:
 ///
 /// - `WORKTRUNK_CONFIG_PATH` ← `user_config` (or [`DEFAULT_ISOLATED_USER_CONFIG`])
@@ -392,6 +392,10 @@ where
         }
     }
     cmd.env_remove("NO_COLOR");
+    // Overrides the OSC 8 probe, so an inherited value changes whether `wt
+    // list` links its CI cell and shortens its URL cell to `:port`. The
+    // statusline links unconditionally and is unaffected.
+    cmd.env_remove("FORCE_HYPERLINK");
     cmd.env_remove("SHELL");
     // PSModulePath being inherited triggers false PowerShell detection on
     // CI environments where PowerShell Core is installed but not in use.
@@ -3099,11 +3103,12 @@ mod tests {
             .collect();
 
         // Scrubbed: GIT_*, WORKTRUNK_* (overwritten path vars also appear here),
-        // NO_COLOR, SHELL, PSModulePath.
+        // NO_COLOR, FORCE_HYPERLINK, SHELL, PSModulePath.
         assert_eq!(removed.get("GIT_DIR"), Some(&None));
         assert_eq!(removed.get("GIT_AUTHOR_DATE"), Some(&None));
         assert_eq!(removed.get("WORKTRUNK_HISTORY"), Some(&None));
         assert_eq!(removed.get("NO_COLOR"), Some(&None));
+        assert_eq!(removed.get("FORCE_HYPERLINK"), Some(&None));
 
         // Not scrubbed: vars that don't match either prefix.
         assert!(!removed.contains_key("PATH"));

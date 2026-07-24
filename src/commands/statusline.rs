@@ -1,7 +1,7 @@
 //! Statusline output for shell prompts and editors.
 //!
 //! Outputs a single-line status for the current worktree:
-//! `branch  status  ±working  commits  upstream  [ci]`
+//! `branch  status  ±working  commits  upstream  [ci]  [url]`
 //!
 //! This command reuses the data collection infrastructure from `wt list`,
 //! avoiding duplication of git operations.

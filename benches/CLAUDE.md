@@ -32,6 +32,32 @@ cargo bench --bench picker_preview               # all variants
 cargo bench --bench picker_preview warm          # warm only
 ```
 
+## Fixtures and Benches
+
+**Bench groups are named for what they measure; fixtures for the repo shape they
+build.** The two never match by convention because the relationship is
+many-to-one — one fixture feeds several bench groups that measure different
+things (`RepoConfig::typical` alone backs five). Don't read a bench group and its
+fixture as duplicates of each other: `full` is a benchmark, `mixed` is the repo
+it runs on.
+
+| Fixture (generator) | `wt-perf setup` handle | Bench group(s) |
+|---|---|---|
+| `RepoConfig::typical(N)` | `typical-N` | `skeleton`, `worktree_scaling` (list.rs); `first_output` (time_to_first_output.rs); `picker_preview`; `remove_e2e` |
+| `RepoConfig::branches(N, M)` | `branches-N[-M]` | `completion_switch` (completion.rs) |
+| `RepoConfig::many_divergent_branches()` | `divergent` | `divergent_branches` (list.rs) |
+| `create_mixed_repo(W, B)` | `mixed-W-B` | `full` (list.rs) |
+| `create_prune_repo_at(M, U)` | `prune-M-U` | `prune_e2e` (prune.rs) |
+| `ensure_prune_real_repo(M, U)` | `prune-real[-M-U]` | `prune_real_repo` (prune.rs) |
+| rust-lang/rust clone (`clone_rust_repo`) | — | `real_repo`, `real_repo_many_branches` (list.rs) |
+| `lean_worktrees` (local to alias.rs) | — | `dispatch` (alias.rs) |
+| `RepoConfig::picker_test()` | `picker-test` | — (interactive picker debugging only) |
+
+Renaming a bench group is not free: `.github/scripts/criterion-to-jsonl.py`
+keys each time-series row by the criterion output path (`<group>/<id>`), and the
+daily `benchmarks` workflow appends those to a gist. A rename orphans that
+series.
+
 ## Rust Repo Caching
 
 Real repo benchmarks clone rust-lang/rust on first run (~2-5 minutes). The clone is cached in `target/wt-perf/bench-repos/` and reused. Corrupted caches are auto-recovered.

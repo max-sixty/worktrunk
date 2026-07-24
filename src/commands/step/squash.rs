@@ -139,6 +139,12 @@ pub fn handle_squash(
 
     // Get and validate target ref (any commit-ish for merge-base calculation)
     let integration_target = repo.require_target_ref(target)?;
+    // #3519: when the branch's history extends past the local target into the
+    // target's upstream, measure the squash against the upstream — so commits
+    // already published there are never folded into the squash commit.
+    let span_target = repo
+        .span_upstream(&integration_target)?
+        .unwrap_or_else(|| integration_target.clone());
     let template_vars = TemplateVars::new().with_target(&integration_target);
 
     // Auto-stage changes before running pre-commit hooks so both beta and merge paths behave identically
@@ -169,7 +175,7 @@ pub fn handle_squash(
 
     // Get merge base with target branch (required for squash)
     let merge_base = repo
-        .merge_base("HEAD", &integration_target)?
+        .merge_base("HEAD", &span_target)?
         .context("Cannot squash: no common ancestor with target branch")?;
 
     // Count commits since merge base
@@ -182,7 +188,7 @@ pub fn handle_squash(
     // Handle different scenarios
     if commit_count == 0 && !has_staged {
         // No commits and no staged changes - nothing to squash
-        return Ok(SquashResult::NoCommitsAhead(integration_target));
+        return Ok(SquashResult::NoCommitsAhead(span_target));
     }
 
     if commit_count == 1 && !has_staged {
@@ -251,7 +257,7 @@ pub fn handle_squash(
 
     // Create safety backup before potentially destructive reset if there are working tree changes
     if has_staged {
-        let backup_message = format!("{} → {} (squash)", current_branch, integration_target);
+        let backup_message = format!("{} → {} (squash)", current_branch, span_target);
         let sha = wt.create_safety_backup(&backup_message)?;
         eprintln!("{}", hint_message(format!("Backup created @ {sha}")));
     }
@@ -275,7 +281,7 @@ pub fn handle_squash(
         .unwrap_or("repo");
 
     let commit_message = crate::llm::generate_squash_message(
-        &integration_target,
+        &span_target,
         &merge_base,
         &commit_details,
         &current_branch,
@@ -363,12 +369,20 @@ fn preview_squash(target: Option<&str>, dry_run: bool, yes: bool) -> anyhow::Res
     let commit_config = config.commit_generation(project_id.as_deref());
 
     let integration_target = repo.require_target_ref(target)?;
+    // #3519: preview against the same upstream-aware span the real squash uses.
+    // TODO(#3519 follow-up): unlike `handle_squash`, this path (--dry-run /
+    // --show-prompt) has no test asserting it measures against the stale
+    // target's upstream — a snapshot test pinning the preview output in that
+    // topology would close the one unasserted consumer of `span_upstream`.
+    let span_target = repo
+        .span_upstream(&integration_target)?
+        .unwrap_or(integration_target);
 
     let wt = repo.current_worktree();
     let current_branch = wt.branch()?.unwrap_or_else(|| "HEAD".to_string());
 
     let merge_base = repo
-        .merge_base("HEAD", &integration_target)?
+        .merge_base("HEAD", &span_target)?
         .context("Cannot generate squash message: no common ancestor with target branch")?;
 
     let range = format!("{}..HEAD", merge_base);
@@ -385,7 +399,7 @@ fn preview_squash(target: Option<&str>, dry_run: bool, yes: bool) -> anyhow::Res
     let project_append = resolve_template_for_preview(&ctx, &commit_config, dry_run)?;
 
     let prompt = crate::llm::build_squash_prompt(
-        &integration_target,
+        &span_target,
         &merge_base,
         &commit_details,
         &current_branch,
@@ -398,7 +412,7 @@ fn preview_squash(target: Option<&str>, dry_run: bool, yes: bool) -> anyhow::Res
         return Ok(());
     }
     let message = crate::llm::generate_squash_message(
-        &integration_target,
+        &span_target,
         &merge_base,
         &commit_details,
         &current_branch,

@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use anyhow::Context;
+use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::{MergeConfig, UserConfig};
 use worktrunk::git::Repository;
@@ -204,6 +205,51 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
 
     // Get and validate target branch (must be a branch since we're updating it)
     let target_branch = repo.require_target_branch(target)?;
+
+    // #3519: when the branch is based past the local target into the target's
+    // upstream, the rewrite steps measure against the upstream (see
+    // `span_upstream`) and the final fast-forward carries the local target
+    // through the upstream commits by their real SHAs. That fast-forward exists
+    // only while the local target is strictly behind its upstream; a target
+    // that has *diverged* — its own commits AND behind — can never fast-forward
+    // to this branch, so refuse up front with the real reason rather than
+    // failing late in the push step. Local-only check — no fetch.
+    if let Some(upstream) = repo.span_upstream(&target_branch)? {
+        let target_sha = repo
+            .run_command(&[
+                "rev-parse",
+                "--verify",
+                "--end-of-options",
+                &format!("refs/heads/{target_branch}"),
+            ])?
+            .trim()
+            .to_string();
+        let upstream_sha = repo
+            .run_command(&["rev-parse", "--verify", "--end-of-options", &upstream])?
+            .trim()
+            .to_string();
+        if repo.is_ancestor_by_sha(&target_sha, &upstream_sha)? {
+            let carried = repo.count_commits(&target_branch, &upstream)?;
+            let (commit_text, pronoun) = if carried == 1 {
+                ("commit", "it")
+            } else {
+                ("commits", "them")
+            };
+            eprintln!(
+                "{}",
+                info_message(cformat!(
+                    "Local <bold>{target_branch}</> is {carried} {commit_text} behind <bold>{upstream}</>; the merge fast-forwards through {pronoun}"
+                ))
+            );
+        } else {
+            return Err(worktrunk::git::GitError::MergeTargetDivergedFromUpstream {
+                target_branch: target_branch.clone(),
+                upstream,
+            }
+            .into());
+        }
+    }
+
     // Worktree for target is optional: if present we use it for safety checks and as destination.
     let target_worktree_path = repo.worktree_for_branch(&target_branch)?;
     // Where `post-merge` / `post-remove` / `post-switch` run: the target

@@ -8,9 +8,11 @@ pub enum ListSubcommand {
     /// Single-line status for shell prompts
     #[command(after_long_help = r#"## Output formats
 
-- `table` (default): `branch  status  ±working  commits  upstream  ci`
+- `table` (default): `branch  status  ±working  commits  upstream  ci  url`
 - `json`: Same structure as `wt list --format=json` but for the current worktree only
-- `claude-code`: `dir  branch  status  ±working  commits  upstream  ci  model  context  pace`
+- `claude-code`: `dir  branch  status  ±working  commits  upstream  ci  url  model  context  pace`
+
+The CI reference links to its PR/MR, and a dev server URL carrying a port shows as `:3000` linking to the URL in full, dim until something answers on that port — the same cells `wt list` renders. Both links are OSC 8, which a terminal that doesn't support them discards, leaving the same text unclickable.
 
 ## Claude Code mode
 

@@ -378,4 +378,4 @@ maintenance, verify the month matches the current month and update it if stale.
 ## Per-Workflow References
 
 - **PR review**: `@references/review-pr.md` — Rust idioms, documentation accuracy, duplication search
-- **Nightly sweep**: `@references/nightly-cleaner.md` — branch naming
+- **Nightly sweep**: `@references/nightly-cleaner.md` — survey checklist, branch naming, CI-breakage ownership

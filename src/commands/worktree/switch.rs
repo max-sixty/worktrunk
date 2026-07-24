@@ -1481,6 +1481,14 @@ fn spawn_switch_background_hooks(
     hooks_display_path: Option<&Path>,
     hook_plan: &ApprovedHookPlan,
 ) -> anyhow::Result<()> {
+    // The common case (no project hooks configured): nothing to render or
+    // announce, so skip building the destination-rooted `Repository` — it
+    // would only be discarded by `HookAnnouncer::flush`'s own no-op-when-empty
+    // check below.
+    if hook_plan.is_empty() {
+        return Ok(());
+    }
+
     // Background hooks run in the new/destination worktree. `hook_repo` roots
     // the *render* context there; the command set is the frozen `hook_plan`
     // (selected at the gate from the invoking worktree's config), so no

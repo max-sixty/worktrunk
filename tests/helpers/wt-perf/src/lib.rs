@@ -1119,8 +1119,7 @@ pub fn create_prune_repo_at(merged: usize, unmerged: usize, base_path: &Path) {
         worktree_uncommitted_files: 0,
     };
     create_repo_at(&config, base_path);
-    add_diverged_backdrop(base_path, unmerged, unmerged);
-    add_squash_merged(base_path, merged, 0);
+    add_prune_populations(base_path, merged, unmerged);
     // The squash commits advanced main past the fake remote ref written by
     // `create_repo_at`; refresh so origin/main tracks the final tip.
     setup_fake_remote(base_path);
@@ -1209,6 +1208,20 @@ pub fn add_squash_merged(repo_path: &Path, count: usize, round: usize) {
     }
 }
 
+/// Add the two populations that turn a repo into a `wt step prune` workload:
+/// `unmerged` two-sided-diverged worktrees and branches (`add_diverged_backdrop`
+/// — the backdrop prune scans every run but never removes) and `merged`
+/// squash-merged candidate pairs (`add_squash_merged` — what prune removes).
+///
+/// The base repo is the only thing the synthetic ([`create_prune_repo_at`]) and
+/// rust-scale (`create_prune_real_repo_at`) prune fixtures differ in; both layer
+/// these identical populations on top, so keeping the layering in one place
+/// stops the two fixtures from drifting.
+fn add_prune_populations(base_path: &Path, merged: usize, unmerged: usize) {
+    add_diverged_backdrop(base_path, unmerged, unmerged);
+    add_squash_merged(base_path, merged, 0);
+}
+
 /// Default populations for the rust-scale prune fixture (`prune-real`):
 /// 12 squash-merged candidates of each kind + 24 unmerged worktrees and
 /// branches → 36 linked worktrees, and a live prune that removes 24
@@ -1236,8 +1249,7 @@ pub const PRUNE_REAL_UNMERGED: usize = 24;
 /// `target/wt-perf/bench-repos` and repairs consumed candidates on later runs.
 fn create_prune_real_repo_at(merged: usize, unmerged: usize, base_path: &Path) {
     clone_rust_repo_at(base_path);
-    add_diverged_backdrop(base_path, unmerged, unmerged);
-    add_squash_merged(base_path, merged, 0);
+    add_prune_populations(base_path, merged, unmerged);
 }
 
 /// How a cached prune fixture compares to its expected populations.

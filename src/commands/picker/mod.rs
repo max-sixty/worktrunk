@@ -2162,12 +2162,7 @@ summary = true
         let query = out.query.trim().to_string();
         let identifier = resolve_identifier(&action, query, selected_name)?;
 
-        // Load config — reuse the recovered repo if we recovered earlier.
-        let repo = if is_recovered {
-            repo.clone()
-        } else {
-            Repository::current().context("Failed to switch worktree")?
-        };
+        let repo = switch_pipeline_repo(&repo, is_recovered)?;
         // Clone user config out — `SwitchPipeline` takes `&mut UserConfig` (the
         // bare-repo path-fix offer and the shell-integration offer record onto
         // it). Project config is loaded on demand inside the pipeline.
@@ -2487,13 +2482,33 @@ fn resolve_identifier(
     }
 }
 
+/// Select the `Repository` the accept path's `SwitchPipeline` runs against.
+///
+/// Extracted from the picker's accept handler for testability.
+///
+/// Rebuilds fresh rather than reuse `repo` (whose `OnceCell` worktree/branch
+/// caches were primed at picker startup and never invalidated, same
+/// discipline `spawn`'s `rebuild_repo` doc explains): an in-picker alt-x/alt-r
+/// during this session can have removed or added worktrees/branches since.
+/// `Repository::current()` re-discovers from cwd, which fails after a
+/// deleted-CWD recovery, so the recovered arm rebuilds via `Repository::at`
+/// on the already-recovered discovery path instead of reusing the stale
+/// startup snapshot.
+fn switch_pipeline_repo(repo: &Repository, is_recovered: bool) -> anyhow::Result<Repository> {
+    if is_recovered {
+        Repository::at(repo.discovery_path()).context("Failed to switch worktree")
+    } else {
+        Repository::current().context("Failed to switch worktree")
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::items::{LocalCheckout, LocalContent, PickerRow, worktree_output_token};
     use super::{
         AltXRemover, PickerAction, PickerRemovalTarget, RemovalEffect, drain_stashed_warnings,
         install_preview_tab_keybindings, install_shortcut_keybindings, picker_item_identifier,
-        resolve_identifier, resolve_shortcut_branch, resolve_shortcut_url,
+        resolve_identifier, resolve_shortcut_branch, resolve_shortcut_url, switch_pipeline_repo,
     };
     use crate::commands::list::model::{BranchScope, ItemKind, ListItem, WorktreeData};
     use crate::commands::worktree::RemoveResult;
@@ -2657,6 +2672,47 @@ pub mod tests {
         // Create with empty query is an error
         let result = resolve_identifier(&PickerAction::Create, String::new(), None);
         assert!(result.unwrap_err().to_string().contains("no branch name"));
+    }
+
+    /// `is_recovered=true` must rebuild rather than reuse `repo`: a worktree
+    /// added after `repo`'s `OnceCell` list is primed must be visible through
+    /// the returned `Repository`, and not through the stale one — proving the
+    /// fix actually observes post-mutation state instead of just "not
+    /// panicking".
+    #[test]
+    fn test_switch_pipeline_repo_recovered_rebuilds_fresh() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let stale_repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        // Prime the worktree-list cache before the mutation, same as the
+        // picker priming its startup repo.
+        assert!(stale_repo.worktree_for_branch("feature").unwrap().is_none());
+
+        stale_repo
+            .run_command(&[
+                "worktree",
+                "add",
+                "-b",
+                "feature",
+                test.path()
+                    .parent()
+                    .unwrap()
+                    .join("feature")
+                    .to_str()
+                    .unwrap(),
+            ])
+            .unwrap();
+
+        let fresh_repo = switch_pipeline_repo(&stale_repo, true).unwrap();
+        assert!(
+            fresh_repo.worktree_for_branch("feature").unwrap().is_some(),
+            "recovered arm must rebuild fresh so a worktree added after the \
+             startup snapshot was primed is visible"
+        );
+        assert!(
+            stale_repo.worktree_for_branch("feature").unwrap().is_none(),
+            "the startup repo's own cache stays stale, confirming the fix \
+             rebuilds rather than mutates in place"
+        );
     }
 
     /// `from_signal` rejects tokens that carry no usable target: a blank or

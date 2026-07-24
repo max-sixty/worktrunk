@@ -5,6 +5,7 @@
 
 use std::path::PathBuf;
 
+use color_print::cformat;
 use worktrunk::git::{IntegrationReason, IntegrationSignals, LineDiff, check_integration};
 
 use super::state::{ActiveGitOperation, Divergence, MainState, OperationState, WorktreeState};
@@ -465,9 +466,9 @@ impl ListItem {
         self.is_potentially_removable() == Some(true)
     }
 
-    /// Format this item as a single-line statusline string with clickable links.
+    /// Format this item as a single-line statusline string.
     ///
-    /// Format: `branch  status  @working  commits  ^branch_diff  upstream  ci`
+    /// Format: `branch  status  @working  commits  ^branch_diff  upstream  ci  url`
     /// Uses 2-space separators between non-empty parts.
     pub fn format_statusline(&self) -> String {
         use super::statusline_segment::StatuslineSegment;
@@ -478,6 +479,12 @@ impl ListItem {
     ///
     /// Returns segments with priorities matching `wt list` column priorities.
     /// Use [`super::statusline_segment::StatuslineSegment::fit_to_width`] to truncate intelligently.
+    ///
+    /// The CI reference and the dev-server port always carry their OSC 8 link:
+    /// a terminal without OSC 8 discards the escape and renders the same text,
+    /// and the alternative rendering `wt list` uses when links are unavailable
+    /// (the URL in full) would outgrow this line's budget. See
+    /// [`format_url_cell`].
     pub fn format_statusline_segments(&self) -> Vec<super::statusline_segment::StatuslineSegment> {
         use super::statusline_segment::StatuslineSegment;
 
@@ -552,10 +559,16 @@ impl ListItem {
             ));
         }
 
-        // 8. URL (priority 9) — the port as a link to the dev server, as in `wt list`
+        // 8. URL (priority 9) — the dev server, as in `wt list`: the port as a
+        // link, dimmed unless the health check found something listening on it.
         if let Some(ref url) = self.url {
+            let cell = format_url_cell(url, true);
             segments.push(StatuslineSegment::from_column(
-                format_url_cell(url, true),
+                if self.url_active == Some(true) {
+                    cell
+                } else {
+                    cformat!("<dim>{cell}</>")
+                },
                 ColumnKind::Url,
             ));
         }
@@ -918,6 +931,30 @@ mod tests {
             ci.content
         );
         assert_eq!(ci.width(), "#123".len());
+    }
+
+    /// A URL nothing answers on is dim, as in `wt list` — the port is still
+    /// worth showing, but it isn't somewhere to go yet.
+    #[test]
+    fn test_statusline_url_segment_dims_until_the_port_answers() {
+        let mut item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
+        item.url = Some("http://127.0.0.1:17913".to_string());
+
+        let url_cell = |active| {
+            let mut item = item.clone();
+            item.url_active = active;
+            item.format_statusline_segments()
+                .into_iter()
+                .find(|s| s.kind == Some(ColumnKind::Url))
+                .expect("URL segment present when a URL is known")
+                .content
+        };
+
+        let plain = format_url_cell("http://127.0.0.1:17913", true);
+        let dim = cformat!("<dim>{plain}</>");
+        assert_eq!(url_cell(Some(false)), dim, "a dead port should dim");
+        assert_eq!(url_cell(None), dim, "an unfinished health check should dim");
+        assert_eq!(url_cell(Some(true)), plain, "a live port should not dim");
     }
 
     #[test]
