@@ -113,7 +113,7 @@ Claude Code agents can run in isolated worktrees (`isolation: "worktree"`). By d
 
 Worktree state comes from the same cells [`wt list`](https://worktrunk.dev/list/) renders. Claude Code's stdin JSON adds the model, the `🌔 65%` context gauge, and the rate-limit pace notice, where `1.4×(10am–3pm)` reads as 1.4× the pace that would exactly fill that window, coloured by how much of it would be spent locked out at the cap. [`wt list statusline`](https://worktrunk.dev/list/#wt-list-statusline) documents every segment and the JSON fields behind them.
 
-The CI reference and the dev server URL are OSC 8 links, which Claude Code re-emits to the terminal rather than drawing itself: underlined and clickable where the terminal supports them, the same text unclickable where it doesn't.
+The CI reference and the dev server URL are clickable links where the terminal supports them, plain text where it doesn't.
 
 Add to `~/.claude/settings.json`:
 
