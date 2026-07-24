@@ -1211,21 +1211,18 @@ impl GitError {
                 }
             }
 
+            // Git's own stderr carries the way out — `--continue`, `--skip`,
+            // `--abort` — so it is forwarded in the gutter rather than
+            // paraphrased. Nothing stands in for it when it is empty: the
+            // rebase is still on disk, and `git status` names the remedy in
+            // git's words for whichever operation is actually open.
             GitError::RebaseConflict { git_output, .. } => {
                 let title = self.title();
                 write!(f, "{}", error_message(&title))?;
                 if !git_output.is_empty() {
-                    write!(f, "\n{}", format_with_gutter(git_output, None))
-                } else {
-                    write!(
-                        f,
-                        "\n{}\n{}",
-                        hint_message(cformat!(
-                            "To continue after resolving conflicts, run <underline>git rebase --continue</>"
-                        )),
-                        hint_message(cformat!("To abort, run <underline>git rebase --abort</>"))
-                    )
+                    write!(f, "\n{}", format_with_gutter(git_output, None))?;
                 }
+                Ok(())
             }
 
             GitError::NotRebased { target_branch } => {
@@ -2447,11 +2444,7 @@ mod tests {
             target_branch: "main".into(),
             git_output: "".into(),
         };
-        assert_snapshot!(err.render(), @"
-        [31m✗[39m [31mRebase onto [1mmain[22m incomplete[39m
-        [2m↳[22m [2mTo continue after resolving conflicts, run [4mgit rebase --continue[24m[22m
-        [2m↳[22m [2mTo abort, run [4mgit rebase --abort[24m[22m
-        ");
+        assert_snapshot!(err.render(), @"[31m✗[39m [31mRebase onto [1mmain[22m incomplete[39m");
     }
 
     #[test]
