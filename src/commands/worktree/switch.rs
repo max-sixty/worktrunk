@@ -22,7 +22,7 @@ use worktrunk::git::remote_ref::{
 };
 use worktrunk::git::{
     GitError, GitRemoteUrl, RefContext, RefType, Repository, SwitchSuggestionCtx,
-    current_or_recover,
+    current_or_recover, resolve_input_path,
 };
 use worktrunk::shell_exec::{ShellEscapeMode, directive_shell_escape_mode, shell_escape_for};
 use worktrunk::styling::{
@@ -857,11 +857,10 @@ fn plan_switch(
         let candidate = Path::new(branch);
         // Absolute, or relative with directory separators (e.g. "../repo.feature");
         // a single-component name is ambiguous with a branch name (already tried in
-        // Phase 2), so it stays branch-only. A relative path resolves against the
-        // directory wt was pointed at, the way git resolves path arguments against
-        // its own `-C`; an unflagged discovery path is the process cwd.
+        // Phase 2), so it stays branch-only. A relative path resolves against `-C`,
+        // like git's own path arguments — see `resolve_input_path`.
         let looks_like_path = candidate.is_absolute() || candidate.components().count() > 1;
-        let abs_path = looks_like_path.then(|| repo.discovery_path().join(candidate));
+        let abs_path = looks_like_path.then(|| resolve_input_path(candidate));
         if let Some(abs_path) = abs_path
             && let Some((path, wt_branch)) = repo.worktree_at_path(&abs_path)?
         {

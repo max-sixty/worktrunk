@@ -3726,6 +3726,41 @@ approved-commands = ["npm install", "npm test"]
     assert!(approvals.contains("npm test"));
 }
 
+/// A relative `--config` resolves against `-C`, the way git resolves the path
+/// options in its own command line.
+///
+/// Run from outside the repo, so the process cwd and the `-C` directory
+/// disagree: the file is only reachable from the latter.
+#[rstest]
+fn test_explicit_config_path_honors_directory_flag(repo: TestRepo) {
+    fs::write(
+        repo.root_path().join("side-config.toml"),
+        "[list]\nfull = true\n",
+    )
+    .unwrap();
+    let outside = repo.root_path().parent().unwrap().to_path_buf();
+    let root = repo.root_path().to_string_lossy().to_string();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args([
+        "-C",
+        &root,
+        "--config",
+        "side-config.toml",
+        "config",
+        "show",
+    ])
+    .current_dir(&outside);
+    let output = cmd.output().unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("full = true"),
+        "config show should report the config named relative to -C:\n{stdout}"
+    );
+}
+
 /// Test that explicitly specified --config path that doesn't exist shows a warning
 #[rstest]
 fn test_explicit_config_path_not_found_shows_warning(repo: TestRepo) {

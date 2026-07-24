@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use color_print::cformat;
 use normalize_path::NormalizePath;
 use worktrunk::config::UserConfig;
-use worktrunk::git::{Repository, ResolvedWorktree};
+use worktrunk::git::{Repository, ResolvedWorktree, resolve_input_path};
 use worktrunk::path::{format_path_for_display, paths_match};
 use worktrunk::styling::{
     eprintln, format_toml, hint_message, info_message, success_message, warning_message,
@@ -49,11 +49,10 @@ pub fn resolve_worktree_arg(repo: &Repository, name: &str) -> anyhow::Result<Res
         });
     }
 
-    // No worktree for branch - fall back to path-based lookup (supports detached worktrees).
-    // A relative path resolves against the directory wt was pointed at, the way git
-    // resolves path arguments against its own `-C`; `join` leaves an absolute
-    // candidate alone, and an unflagged discovery path is the process cwd.
-    let abs_path = repo.discovery_path().join(name);
+    // No worktree for branch - fall back to path-based lookup (supports detached
+    // worktrees). A relative path resolves against `-C`, like git's own path
+    // arguments — see `resolve_input_path`.
+    let abs_path = resolve_input_path(name);
     if let Some((path, wt_branch)) = repo.worktree_at_path(&abs_path)? {
         return Ok(ResolvedWorktree::Worktree {
             path,
