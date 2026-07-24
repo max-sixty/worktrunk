@@ -180,7 +180,7 @@ impl Repository {
         Ok(())
     }
 
-    /// Resolve a worktree name, expanding "@" to current, "-" to previous, and "^" to main.
+    /// Resolve a worktree name, expanding "@" to current, "-" to previous, and "^" to the default branch.
     ///
     /// # Arguments
     /// * `name` - The worktree name to resolve:
@@ -237,7 +237,7 @@ impl Repository {
     /// * `name` - The worktree name to resolve:
     ///   - "@" for current worktree (works even in detached HEAD)
     ///   - "-" for previous branch's worktree
-    ///   - "^" for main worktree
+    ///   - "^" for the default branch's worktree
     ///   - any other string is treated as a branch name
     ///
     /// # Returns
