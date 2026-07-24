@@ -151,7 +151,7 @@ Three sections are printed: the rendered prompt, the shell command that would in
 
     /// Rebase onto target
     #[command(
-        after_long_help = r#"Rebases the current branch onto the target branch. Conflicts abort immediately; use `git rebase --abort` to recover.
+        after_long_help = r#"A rebase makes the branch a linear extension of the target, which is what [`wt step push`](#wt-step-push) needs to fast-forward. `wt merge` runs this step as part of its pipeline; on its own it brings a branch up to date with a target that has moved, without merging into it. The target is any commit-ish — a branch, a tag, a SHA — while a push updates a branch ref and so needs a branch name.
 
 ## Examples
 
@@ -159,6 +159,20 @@ Three sections are printed: the rendered prompt, the shell command that would in
 $ wt step rebase            # Rebase onto default branch
 $ wt step rebase develop    # Rebase onto develop
 ```
+
+## Outcomes
+
+| When | Result |
+|------|--------|
+| Branch is already a linear extension of the target | Nothing runs — `Already up to date` |
+| Branch holds no commits of its own | `Fast-forwarded to <target>` |
+| Otherwise | The branch's commits replay onto the target's tip |
+
+A branch that merged the target into itself carries a merge commit, so it isn't linear and rebases even though the target is already its merge base.
+
+## Conflicts
+
+A conflicting commit leaves the rebase open rather than undoing it. The worktree keeps git's conflict markers, and git's own output names the ways out: `git rebase --continue` once the conflict is resolved, `git rebase --skip`, or `git rebase --abort`. Until the rebase is settled, `wt step rebase` and `wt merge` refuse to run.
 "#
     )]
     Rebase {
@@ -177,16 +191,21 @@ $ wt step rebase develop    # Rebase onto develop
 
     /// Fast-forward target to current branch
     #[command(
-        after_long_help = r#"Updates the local target branch to include current commits.
+        after_long_help = r#"Despite the name, nothing here reaches a remote. `git push` runs against this repository itself, so the target branch's ref moves forward locally and a worktree holding that branch is updated along with it.
+
+The target must already be an ancestor of the current branch. A target that has moved ahead is refused rather than forced; [`wt step rebase`](#wt-step-rebase) puts the branch back on top of it first.
 
 ## Examples
 
 ```console
 $ wt step push             # Fast-forward main to current branch
 $ wt step push develop     # Fast-forward develop instead
+$ wt step push --no-ff     # Merge commit instead of a fast-forward
 ```
 
-Similar to `git push . HEAD:<target>`, but uses `receive.denyCurrentBranch=updateInstead` internally.
+## Target worktree
+
+When the target branch has a worktree of its own, that worktree's files move to the new commits along with the ref, because the push runs `git push --receive-pack='git -c receive.denyCurrentBranch=updateInstead receive-pack'` against this repository. Uncommitted changes there are stashed for the duration and restored afterward; one touching a file the push also changes is refused instead, naming the file.
 "#
     )]
     Push {
