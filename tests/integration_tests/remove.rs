@@ -3167,7 +3167,7 @@ fn test_remove_sweeps_stale_trash_entries(mut repo: TestRepo) {
 /// assertion would not catch it on an idle CI runner. Counting spawns does.
 ///
 /// `pgrep` is mocked to report three bogus PIDs (CI runners have no real
-/// daemons) and `lsof` to return batched `-F on` output covering all three.
+/// daemons) and `lsof` to return batched `-F pn` output covering all three.
 #[rstest]
 #[cfg(unix)]
 fn test_remove_resolves_all_fsmonitor_daemons_in_one_lsof(mut repo: TestRepo) {
@@ -3178,7 +3178,7 @@ fn test_remove_resolves_all_fsmonitor_daemons_in_one_lsof(mut repo: TestRepo) {
     MockConfig::new("pgrep")
         .command("_default", MockResponse::output("777001\n777002\n777003\n"))
         .write(&bin_dir);
-    // Batched `lsof -F on` shape: a `p<pid>` line opens each process record.
+    // Batched `lsof -F pn` shape: a `p<pid>` line opens each process record.
     // All three sockets resolve under a git-dir that is not this repo's, so
     // the sweep classifies them as "not ours" and signals nothing — the test
     // asserts call shape, and must never depend on killing a real PID.
