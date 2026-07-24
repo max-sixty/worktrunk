@@ -3050,8 +3050,8 @@ fn test_list_maximum_working_tree_symbols(mut repo: TestRepo) {
 
 #[rstest]
 fn test_list_maximum_status_with_git_operation(mut repo: TestRepo) {
-    // Test maximum status symbols including git operation (rebase/merge):
-    // ?!+ (working_tree) + = (conflicts) + ↻ (rebase) + ↕ (diverged) + ⊠ (locked) + 🤖 (user marker)
+    // Test maximum status symbols including an in-progress git operation:
+    // ?!+ (working_tree) + = (conflicts) + ↻ (operation) + ↕ (diverged) + ⊠ (locked) + 🤖 (user marker)
     // This pushes the Status column to ~10-11 chars of actual content
 
     // Create initial commit with a file that will conflict

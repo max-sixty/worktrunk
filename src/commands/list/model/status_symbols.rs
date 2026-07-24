@@ -276,7 +276,7 @@ impl PositionMask {
             1, // STAGED: + (1 char)
             1, // MODIFIED: ! (1 char)
             1, // UNTRACKED: ? (1 char)
-            1, // WORKTREE_STATE: ✘↻/⊟⊞⚑ (1 char, priority: conflicts > rebase > merge > prunable > locked > branch_worktree_mismatch > branch)
+            1, // WORKTREE_STATE: ✘↻/⊟⊞⚑ (1 char, priority: conflicts > in-progress operation > prunable > locked > branch_worktree_mismatch > branch)
             1, // MAIN_STATE: ^_⊂✗–↕↑↓ (1 char, priority: is_main > orphan > empty > integrated > would_conflict > same_commit > diverged > ahead > behind)
             1, // UPSTREAM_DIVERGENCE: |⇡⇣⇅ (1 char)
             2, // USER_MARKER: single emoji or two chars (allocate 2)
