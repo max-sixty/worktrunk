@@ -10,14 +10,11 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use worktrunk::git::{
-    ErrorExt, InProgressOperation, IntegrationTargets, LineDiff, RefSnapshot, Repository,
-    select_comparison_base,
+    ErrorExt, IntegrationTargets, LineDiff, RefSnapshot, Repository, select_comparison_base,
 };
 
 use super::super::ci_status::{CiBranchName, PrStatus};
-use super::super::model::{
-    ActiveGitOperation, AheadBehind, BranchDiffTotals, UpstreamStatus, WorkingTreeStatus,
-};
+use super::super::model::{AheadBehind, BranchDiffTotals, UpstreamStatus, WorkingTreeStatus};
 use super::types::{ErrorCause, TaskError, TaskKind, TaskResult};
 
 // ============================================================================
@@ -778,7 +775,7 @@ impl Task for WorkingTreeConflictsTask {
     }
 }
 
-/// Task 7 (worktree only): Git operation state detection (rebase/merge)
+/// Task 7 (worktree only): Git operation state detection (rebase, merge, …)
 pub struct GitOperationTask;
 
 impl Task for GitOperationTask {
@@ -790,7 +787,9 @@ impl Task for GitOperationTask {
             .branch_ref
             .working_tree(&ctx.repo)
             .ok_or_else(|| ctx.error(Self::KIND, &anyhow::anyhow!("requires a worktree")))?;
-        let git_operation = detect_active_git_operation(&wt);
+        let git_operation = wt
+            .operation_in_progress()
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
         Ok(TaskResult::GitOperation {
             item_idx: ctx.item_idx,
             git_operation,
@@ -991,22 +990,6 @@ fn first_line(s: &str) -> String {
         .find(|l| !l.trim().is_empty())
         .unwrap_or(s)
         .to_string()
-}
-
-/// Detect if a worktree is in the middle of a git operation (rebase/merge).
-///
-/// The gutter symbols cover the two operations `wt merge` itself performs, so
-/// the states with no symbol of their own (cherry-pick, revert, bisect) report
-/// as `None` here — they still block the commit-replaying commands, via
-/// `ensure_no_operation_in_progress`.
-pub(crate) fn detect_active_git_operation(
-    wt: &worktrunk::git::WorkingTree<'_>,
-) -> ActiveGitOperation {
-    match wt.operation_in_progress() {
-        Ok(Some(InProgressOperation::Rebase)) => ActiveGitOperation::Rebase,
-        Ok(Some(InProgressOperation::Merge)) => ActiveGitOperation::Merge,
-        _ => ActiveGitOperation::None,
-    }
 }
 
 /// Parse port number from a URL string (e.g., "http://localhost:12345" -> 12345)

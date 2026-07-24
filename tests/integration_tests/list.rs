@@ -1074,6 +1074,30 @@ fn test_list_json_with_git_operation(mut repo: TestRepo) {
     });
 }
 
+/// A bisect is the plainest of the operations that had no symbol of their own
+/// before every operation folded into `↻`: it leaves HEAD on the branch and the
+/// working tree clean, so nothing else in the Status cell stands in for it.
+/// JSON still names the operation the symbol no longer distinguishes.
+#[rstest]
+fn test_list_shows_symbol_for_bisect(mut repo: TestRepo) {
+    let feature = repo.add_worktree("bisecting");
+    repo.git_command()
+        .current_dir(&feature)
+        .args(["bisect", "start"])
+        .run()
+        .unwrap();
+
+    assert_cmd_snapshot!(
+        "list_bisect_symbol",
+        list_snapshots::command(&repo, repo.root_path())
+    );
+    assert_cmd_snapshot!("list_bisect_json", {
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--format=json");
+        cmd
+    });
+}
+
 #[rstest]
 fn test_list_branch_only_with_status(repo: TestRepo) {
     // Test that branch-only entries (no worktree) can display branch-keyed status

@@ -1498,8 +1498,8 @@ mod tests {
     #[test]
     fn test_visible_columns_follow_gap_rule() {
         use crate::commands::list::model::{
-            ActiveGitOperation, AheadBehind, BranchDiffTotals, CommitDetails, ItemKind, ListItem,
-            StatusSymbols, UpstreamStatus, WorktreeData,
+            AheadBehind, BranchDiffTotals, CommitDetails, ItemKind, ListItem, StatusSymbols,
+            UpstreamStatus, WorktreeData,
         };
 
         // Create test data with specific widths to verify position calculation
@@ -1549,7 +1549,7 @@ mod tests {
                 working_tree_status: None,
                 has_conflicts: None,
                 has_working_tree_conflicts: None,
-                git_operation: Some(ActiveGitOperation::None),
+                git_operation: Some(None),
                 is_main: false,
                 is_current: false,
                 is_previous: false,
@@ -1619,8 +1619,8 @@ mod tests {
     #[test]
     fn test_column_positions_with_empty_columns() {
         use crate::commands::list::model::{
-            ActiveGitOperation, AheadBehind, BranchDiffTotals, CommitDetails, ItemKind, ListItem,
-            StatusSymbols, UpstreamStatus, WorktreeData,
+            AheadBehind, BranchDiffTotals, CommitDetails, ItemKind, ListItem, StatusSymbols,
+            UpstreamStatus, WorktreeData,
         };
 
         // Create minimal data - most columns will be empty
@@ -1665,7 +1665,7 @@ mod tests {
                 working_tree_status: None,
                 has_conflicts: None,
                 has_working_tree_conflicts: None,
-                git_operation: Some(ActiveGitOperation::None),
+                git_operation: Some(None),
                 is_main: true, // Primary worktree: no ahead/behind shown
                 is_current: false,
                 is_previous: false,
@@ -1759,9 +1759,7 @@ mod tests {
 
     /// Helper: create a minimal ListItem for layout tests.
     fn make_test_item(branch: &str) -> super::super::model::ListItem {
-        use crate::commands::list::model::{
-            ActiveGitOperation, ItemKind, StatusSymbols, WorktreeData,
-        };
+        use crate::commands::list::model::{ItemKind, StatusSymbols, WorktreeData};
         super::super::model::ListItem {
             head: "abc12345".to_string(),
             short_sha: "abc1234".to_string(),
@@ -1795,7 +1793,7 @@ mod tests {
                 working_tree_status: None,
                 has_conflicts: None,
                 has_working_tree_conflicts: None,
-                git_operation: Some(ActiveGitOperation::None),
+                git_operation: Some(None),
                 is_main: false,
                 is_current: false,
                 is_previous: false,
@@ -2227,9 +2225,7 @@ mod tests {
 
     /// Helper: create a test item with a specific worktree path and no mismatch.
     fn make_test_item_at(branch: &str, path: &str) -> super::super::model::ListItem {
-        use crate::commands::list::model::{
-            ActiveGitOperation, ItemKind, StatusSymbols, WorktreeData,
-        };
+        use crate::commands::list::model::{ItemKind, StatusSymbols, WorktreeData};
         super::super::model::ListItem {
             head: "abc12345".to_string(),
             short_sha: "abc1234".to_string(),
@@ -2263,7 +2259,7 @@ mod tests {
                 working_tree_status: None,
                 has_conflicts: None,
                 has_working_tree_conflicts: None,
-                git_operation: Some(ActiveGitOperation::None),
+                git_operation: Some(None),
                 is_main: false,
                 is_current: false,
                 is_previous: false,
@@ -2352,8 +2348,8 @@ mod tests {
     #[test]
     fn test_snapshot_path_yields_to_summary() {
         use crate::commands::list::model::{
-            ActiveGitOperation, AheadBehind, BranchDiffTotals, CommitDetails, ItemKind,
-            StatusSymbols, UpstreamStatus, WorktreeData,
+            AheadBehind, BranchDiffTotals, CommitDetails, ItemKind, StatusSymbols, UpstreamStatus,
+            WorktreeData,
         };
         use worktrunk::git::LineDiff;
 
@@ -2419,7 +2415,7 @@ mod tests {
                     working_tree_status: None,
                     has_conflicts: None,
                     has_working_tree_conflicts: None,
-                    git_operation: Some(ActiveGitOperation::None),
+                    git_operation: Some(None),
                     is_main,
                     is_current,
                     is_previous: false,

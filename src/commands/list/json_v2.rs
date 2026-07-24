@@ -31,7 +31,7 @@ use worktrunk::git::{
 use super::ci_status::{CiSource, CiStatus, PrStatus, ReviewState};
 use super::custom_columns::ResolvedCustomColumn;
 use super::json_output::{JsonDiff, format_raw_symbols};
-use super::model::{ActiveGitOperation, BranchScope, Collected, ItemKind, ListItem, WorktreeData};
+use super::model::{BranchScope, Collected, ItemKind, ListItem, WorktreeData};
 
 /// Tri-state field encoding the absence rule (see module docs).
 #[derive(Debug, Clone, PartialEq)]
@@ -210,8 +210,8 @@ pub struct JsonWorktreeV2 {
     /// created for.
     pub branch_mismatch: bool,
 
-    /// In-progress operation: `"rebase"` or `"merge"`; absent when none,
-    /// null while unresolved.
+    /// In-progress operation: `"rebase"`, `"merge"`, `"cherry_pick"`,
+    /// `"revert"`, or `"bisect"`; absent when none, null while unresolved.
     #[serde(skip_serializing_if = "Tri::is_absent")]
     pub operation: Tri<&'static str>,
 
@@ -573,9 +573,8 @@ fn json_worktree(data: &WorktreeData) -> JsonWorktreeV2 {
 
     let operation = match data.git_operation {
         None => Tri::Unknown,
-        Some(ActiveGitOperation::None) => Tri::Absent,
-        Some(ActiveGitOperation::Rebase) => Tri::Known("rebase"),
-        Some(ActiveGitOperation::Merge) => Tri::Known("merge"),
+        Some(None) => Tri::Absent,
+        Some(Some(operation)) => Tri::Known(operation.into()),
     };
 
     let changes = data.working_tree_status.map(|wt| JsonChanges {
@@ -763,6 +762,8 @@ mod tests {
     use insta::assert_snapshot;
 
     use super::*;
+    use worktrunk::git::InProgressOperation;
+
     use crate::commands::list::ci_status::PrRef;
     use crate::commands::list::model::{AheadBehind, SeededFacts, UpstreamStatus};
 
@@ -1205,14 +1206,19 @@ mod tests {
                 .is_some_and(|v| v.is_null())
         );
 
+        // Every operation keeps its own name in JSON, including the three that
+        // share the `↻` symbol with rebase and merge.
         for (op, expected) in [
-            (ActiveGitOperation::Rebase, "rebase"),
-            (ActiveGitOperation::Merge, "merge"),
+            (InProgressOperation::Rebase, "rebase"),
+            (InProgressOperation::Merge, "merge"),
+            (InProgressOperation::CherryPick, "cherry_pick"),
+            (InProgressOperation::Revert, "revert"),
+            (InProgressOperation::Bisect, "bisect"),
         ] {
             let item = worktree_item(
                 "feature",
                 WorktreeData {
-                    git_operation: Some(op),
+                    git_operation: Some(Some(op)),
                     ..Default::default()
                 },
             );

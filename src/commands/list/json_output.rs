@@ -531,7 +531,7 @@ pub(crate) fn format_raw_symbols(symbols: &super::model::StatusSymbols) -> Strin
         }
     }
 
-    // Worktree state (gate 2) — operations (✘⤴⤵) take priority over
+    // Worktree state (gate 2) — operations (✘↻) take priority over
     // location (/⚑⊟⊞). Gate 2 is "operation_state is Some"; the metadata
     // worktree_state is filled synchronously and always Some by the time
     // the operation family is known.
@@ -589,12 +589,13 @@ pub fn to_json_items(
 mod tests {
     use insta::assert_snapshot;
     use worktrunk::git::GitRepoProvider;
+    use worktrunk::git::InProgressOperation;
 
     use super::*;
     use crate::commands::list::ci_status::{CiStatus, PrRef};
     use crate::commands::list::model::{
-        ActiveGitOperation, Divergence, MainState, OperationState, StatusSymbols,
-        WorkingTreeStatus, WorktreeData, WorktreeState,
+        Divergence, MainState, OperationState, StatusSymbols, WorkingTreeStatus, WorktreeData,
+        WorktreeState,
     };
 
     // ============================================================================
@@ -822,7 +823,7 @@ mod tests {
             working_tree_status: None,
             has_conflicts: None,
             has_working_tree_conflicts: None,
-            git_operation: Some(ActiveGitOperation::None),
+            git_operation: Some(None),
             branch_worktree_mismatch: false,
         }
     }
@@ -939,14 +940,14 @@ mod tests {
 
         // Operation state takes priority over worktree state
         let operation = format_raw_symbols(&StatusSymbols {
-            operation_state: Some(OperationState::Rebase),
+            operation_state: Some(OperationState::InProgress(InProgressOperation::Rebase)),
             ..Default::default()
         });
-        assert_snapshot!(operation, @"⤴");
+        assert_snapshot!(operation, @"↻");
 
         // Worktree metadata renders only once the operation-family gate
         // has resolved to "no operation" — otherwise we can't rule out
-        // ✘⤴⤵ taking priority. Callers that want just the metadata
+        // ✘↻ taking priority. Callers that want just the metadata
         // symbol must set both `operation_state` and `worktree_state`.
         let worktree = format_raw_symbols(&StatusSymbols {
             operation_state: Some(OperationState::None),
