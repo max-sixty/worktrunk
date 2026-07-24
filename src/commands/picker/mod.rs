@@ -495,7 +495,7 @@ impl AltXRemover {
         let header_flash = Arc::clone(&self.header_flash);
         let _ = std::thread::Builder::new()
             .name(format!("picker-remove-{selected_output}"))
-            .spawn(move || {
+            .spawn(move || worktrunk::shell_exec::uninterruptible(move || {
                 if let Err(e) = Self::do_removal(&repo, &result, &approvals) {
                     tracing::warn!(selected_output = %selected_output, error = %e, "picker: removal of '{selected_output}' errored: {e:#}");
                 }
@@ -518,7 +518,7 @@ impl AltXRemover {
                         },
                     );
                 }
-            });
+            }));
     }
 
     /// Flash a one-line message in the header for a beat (see the free
@@ -674,7 +674,7 @@ impl AltXRemover {
         };
         let _ = std::thread::Builder::new()
             .name(format!("picker-morph-{branch}"))
-            .spawn(move || {
+            .spawn(move || worktrunk::shell_exec::uninterruptible(move || {
                 if let Err(e) = Self::do_removal(&repo, &result, &approvals) {
                     tracing::warn!(branch = %branch, error = %e, "picker: removal of '{branch}' worktree errored: {e:#}");
                 }
@@ -683,7 +683,7 @@ impl AltXRemover {
                 if removal_target_still_present(&repo, &result) {
                     revert_morph(revert, &header_flash, &stashed_warnings, &render_tx);
                 }
-            });
+            }));
 
         RemovalEffect::Morphed
     }
@@ -2147,6 +2147,12 @@ summary = true
     // After the drain, not before: a `--prs` forge call killed mid-flight
     // fails like any other, and stashes that failure as a warning. Cancelling
     // first would drain a spurious "couldn't fetch PRs" onto the user.
+    //
+    // Not everything running here is discardable — an `alt-x` removal is
+    // dispatched to its own thread and can still be mid-`git worktree remove`
+    // if the user pressed Enter straight after. Those threads mark themselves
+    // `uninterruptible` and run to completion; this reaches only speculative
+    // work.
     worktrunk::shell_exec::cancel_background_commands();
 
     // `run_skim` returns Err only on a genuine TUI init / event-loop failure;

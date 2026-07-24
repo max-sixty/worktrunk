@@ -12,17 +12,18 @@
 use std::io::ErrorKind;
 use std::time::{Duration, Instant};
 
-use worktrunk::shell_exec::{Cmd, cancel_background_commands};
+use worktrunk::shell_exec::{Cmd, cancel_background_commands, uninterruptible};
 
-/// Cancelling reaches a command that is already running, and refuses one that
+/// Cancelling reaches a command that is already running and refuses one that
 /// has not started yet — the two halves of the guarantee, since a sweep over
-/// live PIDs can't see a task still queued behind the command semaphore.
+/// live PIDs can't see a task still queued behind the command semaphore — while
+/// leaving an `uninterruptible` thread's commands alone in both directions.
 ///
 /// Every command runs on a spawned thread: the foreground thread is exempt (it
 /// is the one doing the cancelling), and with `FOREGROUND_THREAD` unset under a
 /// test harness, every other thread counts as background.
 #[test]
-fn cancel_signals_running_and_refuses_new_background_commands() {
+fn cancel_stops_speculative_commands_and_spares_uninterruptible_ones() {
     let dir = tempfile::tempdir().unwrap();
     let started = dir.path().join("started");
     let marker = started.display().to_string();
@@ -42,6 +43,27 @@ fn cancel_signals_running_and_refuses_new_background_commands() {
     let deadline = Instant::now() + Duration::from_secs(30);
     while !started.exists() {
         assert!(Instant::now() < deadline, "the command never started");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    // A mutation the user already asked for — an `alt-x` removal — runs on a
+    // thread that opts out, and must survive the sweep rather than be killed
+    // between two git steps.
+    let protected_marker = dir.path().join("protected");
+    let protected_path = protected_marker.display().to_string();
+    let protected = std::thread::spawn(move || {
+        uninterruptible(|| {
+            Cmd::new("sh")
+                .arg("-c")
+                .arg(format!("touch '{protected_path}'; exec sleep 2"))
+                .run()
+        })
+    });
+    while !protected_marker.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "the exempt command never started"
+        );
         std::thread::sleep(Duration::from_millis(10));
     }
 
@@ -87,4 +109,22 @@ fn cancel_signals_running_and_refuses_new_background_commands() {
             .kind(),
         ErrorKind::Interrupted
     );
+
+    // The exempt command ran to completion despite the sweep.
+    let protected_output = protected
+        .join()
+        .unwrap()
+        .expect("an uninterruptible command runs");
+    assert!(
+        protected_output.status.success(),
+        "cancellation must not signal a command the user asked for"
+    );
+
+    // And the latch doesn't refuse its *later* commands either — a removal is
+    // several git calls, not one, and the ones after the sweep must still run.
+    let after = std::thread::spawn(|| uninterruptible(|| Cmd::new("true").run()))
+        .join()
+        .unwrap()
+        .expect("an uninterruptible command still spawns after cancellation");
+    assert!(after.status.success());
 }

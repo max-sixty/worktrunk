@@ -119,11 +119,45 @@ impl Drop for BackgroundPid {
     }
 }
 
+std::thread_local! {
+    /// Whether this thread is running work cancellation must not touch. See
+    /// [`uninterruptible`].
+    static UNINTERRUPTIBLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run `f` with this thread's commands exempt from cancellation, for work the
+/// user has already asked for rather than work done on spec.
+///
+/// Cancelling is safe for a preview because its only effect is a cache entry
+/// nobody will read. It is not safe for a mutation: the picker runs an `alt-x`
+/// worktree removal on a background thread so the UI stays live, and a SIGTERM
+/// landing between `git worktree remove` and the branch delete would leave the
+/// user half-removed. Such a thread finishes what it started; only its result
+/// is discardable, not its effects.
+pub fn uninterruptible<T>(f: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            UNINTERRUPTIBLE.with(|flag| flag.set(self.0));
+        }
+    }
+
+    let _restore = Restore(UNINTERRUPTIBLE.with(|flag| flag.replace(true)));
+    f()
+}
+
+/// Whether this thread's commands are subject to cancellation: background (the
+/// foreground thread is the one doing the cancelling, and goes on to run the
+/// switch itself) and not marked [`uninterruptible`].
+fn is_cancellable_thread() -> bool {
+    !is_foreground_thread() && !UNINTERRUPTIBLE.with(std::cell::Cell::get)
+}
+
 /// Register a freshly spawned child as cancellable for as long as the returned
-/// guard lives. Returns `None` on the foreground thread, which isn't tracked
-/// (see [`BACKGROUND_PIDS`]).
+/// guard lives. Returns `None` when this thread's commands aren't subject to
+/// cancellation (see [`is_cancellable_thread`]).
 fn track_if_background(child: &std::process::Child) -> Option<BackgroundPid> {
-    (!is_foreground_thread()).then(|| {
+    is_cancellable_thread().then(|| {
         let pid = child.id();
         BACKGROUND_PIDS.lock().unwrap().insert(pid);
         let guard = BackgroundPid(pid);
@@ -150,11 +184,9 @@ fn track_if_background(child: &std::process::Child) -> Option<BackgroundPid> {
 /// permits the sweep just freed by signalling everything holding one.
 static BACKGROUND_CANCELLED: AtomicBool = AtomicBool::new(false);
 
-/// Whether the calling thread's commands have been cancelled. Always false on
-/// the foreground thread, which goes on to do the work the user is waiting
-/// for (the switch itself) after cancelling the background.
+/// Whether the calling thread's commands have been cancelled.
 fn background_cancelled() -> bool {
-    !is_foreground_thread() && BACKGROUND_CANCELLED.load(Ordering::SeqCst)
+    is_cancellable_thread() && BACKGROUND_CANCELLED.load(Ordering::SeqCst)
 }
 
 fn cancelled_error() -> std::io::Error {
