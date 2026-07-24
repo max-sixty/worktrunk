@@ -407,8 +407,9 @@ pub enum GitError {
     /// The worktree is partway through a git operation, so a command that
     /// replays commits (`wt merge`, `wt step rebase`) refuses to start.
     ///
-    /// Carries no operation: `git status` names it and how to finish it, so
-    /// there is no table here to drift from what git actually accepts.
+    /// Carries no operation and offers no remedy: `git status` names which
+    /// operation is open and how to finish it, so restating either here only
+    /// adds a line that can drift from what git accepts.
     OperationInProgress {
         /// The action the user asked for ("merge", "rebase").
         action: String,
@@ -877,14 +878,7 @@ impl GitError {
 
             GitError::OperationInProgress { .. } => {
                 let title = self.title();
-                write!(
-                    f,
-                    "{}\n{}",
-                    error_message(&title),
-                    hint_message(cformat!(
-                        "To see what is in progress and how to finish it, run <underline>git status</>"
-                    ))
-                )
+                write!(f, "{}", error_message(&title))
             }
 
             GitError::UncommittedChanges {

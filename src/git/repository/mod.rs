@@ -373,9 +373,8 @@ pub enum ResolvedWorktree {
 /// Produced by [`Repository::worktree_state`]. Detection only: it reports what
 /// git left on disk and deliberately maps nothing to a remedy. `git status`
 /// already names the operation and the way out of it, in git's own words and
-/// git's own translations, including states worktrunk has no variant for — so
-/// the refusal points there rather than restating a table that has to be
-/// maintained against every git release.
+/// git's own translations, including states worktrunk has no variant for, so a
+/// table here would only be a second copy to keep current with git.
 ///
 /// Structured rather than a display string so [`Rebase`](Self::Rebase) can be
 /// recognised without matching on user-visible text.
