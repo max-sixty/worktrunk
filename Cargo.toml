@@ -144,6 +144,13 @@ name = "integration"
 path = "tests/integration.rs"
 required-features = ["cli", "syntax-highlighting"]
 
+# Deliberately a second binary rather than another module under `integration`:
+# it latches process-wide cancellation state, which would take out any test
+# running beside it in the same process. See the file's module docs.
+[[test]]
+name = "cancel_background"
+path = "tests/cancel_background.rs"
+
 [dependencies]
 anyhow = "1.0.102"
 anstream = "1.0"
