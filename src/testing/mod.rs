@@ -392,8 +392,9 @@ where
         }
     }
     cmd.env_remove("NO_COLOR");
-    // Overrides the OSC 8 probe, so an inherited value changes whether the
-    // statusline links its CI reference and shortens its dev-server URL.
+    // Overrides the OSC 8 probe, so an inherited value changes whether `wt
+    // list` links its CI cell and shortens its URL cell to `:port`. The
+    // statusline links unconditionally and is unaffected.
     cmd.env_remove("FORCE_HYPERLINK");
     cmd.env_remove("SHELL");
     // PSModulePath being inherited triggers false PowerShell detection on
