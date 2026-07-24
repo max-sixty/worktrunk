@@ -1210,6 +1210,15 @@ fn test_uninstall_scan_removes_all_worktrunk_zsh_lines(repo: TestRepo, temp_home
     let installed = fs::read_to_string(&zshrc_path).unwrap();
     assert!(installed.contains("git-wt config shell init zsh"));
 
+    // A hand-written line in the `git wt` dispatch form, which install never
+    // emits: uninstall recognizes worktrunk's integration by whatever name it
+    // is invoked under, not only the names install writes.
+    fs::write(
+        &zshrc_path,
+        format!("{installed}eval \"$(git wt config shell init zsh)\"\n"),
+    )
+    .unwrap();
+
     let mut uninstall_cmd = wt_command();
     repo.configure_wt_cmd(&mut uninstall_cmd);
     set_temp_home_env(&mut uninstall_cmd, temp_home.path());
@@ -1232,7 +1241,7 @@ fn test_uninstall_scan_removes_all_worktrunk_zsh_lines(repo: TestRepo, temp_home
     );
     assert!(
         !content.contains("wt config shell init zsh"),
-        "Default command integration should also be removed (scan-all)"
+        "Default command and `git wt` integration should also be removed (scan-all)"
     );
     assert!(
         content.contains("# Existing config"),

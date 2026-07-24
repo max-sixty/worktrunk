@@ -124,35 +124,36 @@ fn is_worktrunk_managed_content(content: &str, cmd: &str) -> bool {
     content.contains(&format!("{cmd} config shell init")) && content.contains("| source")
 }
 
+/// The header comment every wrapper template worktrunk has shipped opens with,
+/// and which a user's own `wt.fish` / `wt.nu` would not carry.
+const WRAPPER_MARKER: &str = "worktrunk shell integration for";
+
 /// Cmd-agnostic content check: matches a worktrunk-generated wrapper file
 /// regardless of the binary name embedded in it.
 ///
 /// Used by `uninstall` to recognize wrapper files installed under any binary
 /// name (e.g. `wt.fish`, `git-wt.fish`, `git-wt.nu`) when scanning the wrapper
-/// directories. The canonical marker is the `# worktrunk shell integration for
-/// <shell>` comment at the top of every wrapper template; a regex fallback
-/// catches older installs that predate the marker.
+/// directories. Every wrapper template worktrunk renders carries the header, so
+/// that answers first; the fallback covers the legacy `conf.d/{cmd}.fish`, which
+/// predates the templates and is a bare init line. Reusing the rc-file line
+/// detector for that fallback keeps one definition of "an integration line" —
+/// and, being per-line, it does not admit a file on the strength of a mention in
+/// one place and a `| source` of something else in another.
 fn is_worktrunk_managed_content_any_cmd(content: &str) -> bool {
-    if content.contains("# worktrunk shell integration for") {
-        return true;
-    }
-    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let re = RE.get_or_init(|| {
-        regex::Regex::new(r"\b[\w.-]+?(?:\.exe)?\s+config\s+shell\s+init\b")
-            .expect("static regex is valid")
-    });
-    re.is_match(content) && content.contains("| source")
+    content.contains(WRAPPER_MARKER)
+        || content
+            .lines()
+            .any(shell::is_shell_integration_line_for_uninstall_any_cmd)
 }
 
 /// Check if a Nushell wrapper file is worktrunk-managed.
 ///
 /// The Nushell wrapper is a complete autoload file (not a `source` line), so it
-/// carries no `config shell init` marker. Every version worktrunk has shipped
-/// opens with this header comment, which a user's own `wt.nu` would not — so it
-/// is a safe signal that the file is ours to remove during stranded-file
-/// cleanup (issue #2878).
+/// carries no `config shell init` marker — the header comment is the whole
+/// signal that the file is ours to remove during stranded-file cleanup
+/// (issue #2878).
 fn is_worktrunk_managed_nushell(content: &str) -> bool {
-    content.contains("worktrunk shell integration for nushell")
+    content.contains(&format!("{WRAPPER_MARKER} nushell"))
 }
 
 /// Clean up legacy fish conf.d file after installing to functions/
@@ -1630,6 +1631,29 @@ mod tests {
         let old = "# Docs: https://worktrunk.dev/docs/shell-integration\nfunction wt\n    command wt $argv\nend";
         let new = "# Docs: https://worktrunk.dev/config/#shell-integration\nfunction wt\n    command wt $argv\nend";
         assert_eq!(fish_code_lines(old), fish_code_lines(new));
+    }
+
+    #[test]
+    fn test_managed_content_any_cmd_matches_wrappers_not_mentions() {
+        // Ours: the header every wrapper template carries, under any binary
+        // name, plus the headerless legacy `conf.d/{cmd}.fish` init line.
+        for content in [
+            "# worktrunk shell integration for fish\nfunction git-wt\nend\n",
+            "# worktrunk shell integration for nushell\ndef --env wt [] {}\n",
+            "wt config shell init fish | source",
+        ] {
+            assert!(is_worktrunk_managed_content_any_cmd(content), "{content}");
+        }
+
+        // Not ours: uninstall walks directories the user owns, so a file that
+        // only mentions the command must survive — including one that sources
+        // something unrelated elsewhere, which a file-wide match would delete.
+        for content in [
+            "function notes\n    echo run wt config shell init fish to set up\nend\n",
+            "# reminder: wt config shell init fish\nfunction helpers\n    cat ~/.aliases | source\nend\n",
+        ] {
+            assert!(!is_worktrunk_managed_content_any_cmd(content), "{content}");
+        }
     }
 
     #[test]

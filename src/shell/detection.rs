@@ -96,30 +96,75 @@ pub fn is_shell_integration_line_for_uninstall(line: &str, cmd: &str) -> bool {
     is_shell_integration_line_impl(line, cmd, false)
 }
 
-/// Cmd-agnostic line detection: matches any `<binary> config shell init` line
-/// in an execution context, regardless of binary name. Extracts binary-name
-/// candidates from the line via regex and delegates to
-/// `is_shell_integration_line_for_uninstall` for the execution-context check.
+/// The invariant part of every integration line. Only the binary name in front
+/// of it varies, so it anchors both the cmd-specific and cmd-agnostic searches.
+const INIT_MARKER: &str = " config shell init";
+
+/// Cmd-agnostic line detection: matches an integration line whatever binary name
+/// it was installed under.
 ///
-/// Used by `uninstall` when scanning to remove worktrunk-managed shell
-/// integration regardless of the binary name it was installed under.
+/// Where the cmd-specific detectors search for a known name and check what
+/// precedes it, this reads the name off the line: it is the run of command-name
+/// characters ending at `INIT_MARKER`. Holding that run to
+/// [`validate_shell_command_name`](super::validate_shell_command_name) — the
+/// same rule governing what worktrunk is willing to write into shell code —
+/// keeps detection and generation from drifting apart.
+///
+/// Unlike the cmd-specific detectors this deliberately does not exclude a `git `
+/// prefix: `git wt config shell init` is worktrunk's own integration too, and
+/// uninstall asks only whether a line is ours, not which install it belongs to.
+///
+/// Used by `wt config shell uninstall`, which removes every worktrunk-managed
+/// integration it finds.
 pub fn is_shell_integration_line_for_uninstall_any_cmd(line: &str) -> bool {
     let trimmed = line.trim();
     if trimmed.starts_with('#') || trimmed.starts_with("<#") {
         return false;
     }
-    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let re = RE.get_or_init(|| {
-        regex::Regex::new(r"([\w.-]+?)(?:\.exe)?\s+config\s+shell\s+init\b")
-            .expect("static regex is valid")
-    });
-    for cap in re.captures_iter(trimmed) {
-        let candidate = &cap[1];
-        if is_shell_integration_line_for_uninstall(line, candidate) {
-            return true;
-        }
+    is_execution_context(trimmed, false)
+        && trimmed
+            .match_indices(INIT_MARKER)
+            .any(|(pos, _)| command_name_precedes(trimmed, pos))
+}
+
+/// Does a plausible command name end at `pos`?
+///
+/// Reads backwards over command-name characters, which stops at the shell
+/// punctuation wrapping the invocation (`"$(`, `<(`) and at the directory
+/// separator of an absolute path, leaving the bare name. An empty run means the
+/// marker stands alone with nothing invoking it.
+fn command_name_precedes(line: &str, pos: usize) -> bool {
+    let before = &line[..pos];
+    before
+        .char_indices()
+        .rev()
+        .take_while(|(_, c)| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        .map(|(i, _)| i)
+        .last()
+        .is_some_and(|start| super::validate_shell_command_name(&before[start..]).is_ok())
+}
+
+/// Does the line run the command's output, rather than merely mention it?
+///
+/// A property of the whole line, not of where the command sits within it.
+///
+/// PowerShell is checked first, case-insensitively. It needs `| Out-String` to
+/// work — without it `Invoke-Expression` fails with "Cannot convert
+/// 'System.Object[]'" (issue #885). Strict mode leaves an old config lacking it
+/// undetected so `wt config shell install` will rewrite it; permissive mode
+/// (uninstall) matches it so it can be removed.
+fn is_execution_context(line: &str, strict: bool) -> bool {
+    let line_lower = line.to_lowercase();
+    if line_lower.contains("invoke-expression") || line_lower.contains("iex") {
+        return !strict || line_lower.contains("out-string");
     }
-    false
+
+    // POSIX shells (bash, zsh, fish) and nushell
+    line.contains("eval")
+        || line.contains("source")
+        || line.contains(". <(") // POSIX dot command with process substitution
+        || line.contains(". =(") // zsh dot command with =() substitution
+        || line.contains("save") // nushell pipe to save
 }
 
 fn is_shell_integration_line_impl(line: &str, cmd: &str, strict: bool) -> bool {
@@ -165,59 +210,21 @@ fn has_init_invocation(line: &str, cmd: &str, strict: bool) -> bool {
 /// When `strict` is true, PowerShell lines must include `| Out-String`.
 /// When `strict` is false (for uninstall), old PowerShell lines also match.
 fn has_init_pattern_with_prefix_check(line: &str, cmd: &str, strict: bool) -> bool {
-    // Search for both plain command and .exe variant (Windows Git Bash)
-    let patterns = [
-        format!("{cmd} config shell init"),
-        format!("{cmd}.exe config shell init"),
-    ];
+    if !is_execution_context(line, strict) {
+        return false;
+    }
 
-    for init_pattern in &patterns {
-        // Determine the command portion for position checking
-        // For ".exe" pattern, the command in the line includes ".exe"
-        let cmd_in_line = if init_pattern.contains(".exe") {
-            format!("{cmd}.exe")
-        } else {
-            cmd.to_string()
-        };
+    // Search for both plain command and .exe variant (Windows Git Bash)
+    for cmd_in_line in [cmd.to_string(), format!("{cmd}.exe")] {
+        let init_pattern = format!("{cmd_in_line}{INIT_MARKER}");
 
         let mut search_start = 0;
-        while let Some(pos) = line[search_start..].find(init_pattern.as_str()) {
+        while let Some(pos) = line[search_start..].find(&init_pattern) {
             let absolute_pos = search_start + pos;
 
             // Check what precedes the match
             if is_valid_command_position(line, absolute_pos, &cmd_in_line) {
-                // Must be in an execution context (eval, source, dot command, PowerShell, etc.)
-                //
-                // PowerShell detection is checked FIRST and uses case-insensitive matching.
-                // PowerShell requires | Out-String to work correctly (issue #885).
-                // Without it, Invoke-Expression fails with "Cannot convert 'System.Object[]'".
-                // In strict mode, we don't detect old configs without Out-String so that
-                // `wt config shell install` will update them.
-                // In permissive mode (uninstall), we match old configs so they can be removed.
-                let line_lower = line.to_lowercase();
-                let has_invoke =
-                    line_lower.contains("invoke-expression") || line_lower.contains("iex");
-                if has_invoke {
-                    // PowerShell line
-                    if !strict || line_lower.contains("out-string") {
-                        return true;
-                    }
-                    // Strict mode: old PowerShell config without Out-String, don't detect
-                    // Skip to next pattern search position
-                    search_start = absolute_pos + 1;
-                    continue;
-                }
-
-                // POSIX shells (bash, zsh, fish) and nushell
-                let is_shell_exec = line.contains("eval")
-                    || line.contains("source")
-                    || line.contains(". <(") // POSIX dot command with process substitution
-                    || line.contains(". =(") // zsh dot command with =() substitution
-                    || line.contains("save"); // nushell pipe to save
-
-                if is_shell_exec {
-                    return true;
-                }
+                return true;
             }
 
             // Continue searching after this match
@@ -824,19 +831,35 @@ mod tests {
 
     #[test]
     fn test_any_cmd_detects_managed_line_regardless_of_binary_name() {
-        // The cmd-agnostic detector extracts the binary candidate from the line
-        // and confirms it via the execution-context check, matching a wrapper
-        // installed under any binary name.
-        assert!(is_shell_integration_line_for_uninstall_any_cmd(
-            "eval \"$(wt config shell init bash)\""
-        ));
-        assert!(is_shell_integration_line_for_uninstall_any_cmd(
-            "eval \"$(git-wt config shell init zsh)\""
-        ));
-        // A bare mention with no execution context is not a managed line.
-        assert!(!is_shell_integration_line_for_uninstall_any_cmd(
-            "echo wt config shell init bash"
-        ));
+        // The name is read off the line, so every form worktrunk writes matches,
+        // as does the `git wt` dispatch form a cmd-specific detector rejects.
+        for line in [
+            r#"eval "$(wt config shell init bash)""#,
+            r#"eval "$(command git-wt config shell init zsh)""#,
+            r#"eval "$(git wt config shell init bash)""#,
+            r#"eval "$(git-wt.exe config shell init bash)""#,
+            r#"eval "$(/opt/homebrew/bin/my.tool_1 config shell init bash)""#,
+            "if type -q wt; command wt config shell init fish | source; end",
+            "iex (wt config shell init powershell | Out-String)",
+        ] {
+            assert!(
+                is_shell_integration_line_for_uninstall_any_cmd(line),
+                "should detect: {line}"
+            );
+        }
+
+        // Not managed: a mention that never runs, a commented-out line, and a
+        // marker with no command in front of it.
+        for line in [
+            "echo wt config shell init bash",
+            r#"# eval "$(wt config shell init bash)""#,
+            r#"eval "$( config shell init bash)""#,
+        ] {
+            assert!(
+                !is_shell_integration_line_for_uninstall_any_cmd(line),
+                "should not detect: {line}"
+            );
+        }
     }
 
     // ------------------------------------------------------------------------
