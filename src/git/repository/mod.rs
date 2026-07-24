@@ -165,7 +165,7 @@ pub use diff::CommitMessageDetail;
 pub use integration::{BranchDiffSpec, IntegrationTargets, select_comparison_base};
 pub use ref_snapshot::RefSnapshot;
 pub(super) use working_tree::path_to_logging_context;
-pub use working_tree::{TempIndex, WorkingTree};
+pub use working_tree::{InProgressOperation, TempIndex, WorkingTree};
 
 // ============================================================================
 // Repository Cache
@@ -365,30 +365,6 @@ pub enum ResolvedWorktree {
         /// The branch name
         branch: String,
     },
-}
-
-/// A git operation a worktree is partway through, detected from the state files
-/// git writes under its git dir (`MERGE_HEAD`, `rebase-merge/`, `BISECT_LOG`, …).
-///
-/// Produced by [`Repository::worktree_state`]. Detection only: it reports what
-/// git left on disk and deliberately maps nothing to a remedy. `git status`
-/// already names the operation and the way out of it, in git's own words and
-/// git's own translations, including states worktrunk has no variant for, so a
-/// table here would only be a second copy to keep current with git.
-///
-/// Structured rather than a display string so [`Rebase`](Self::Rebase) can be
-/// recognised without matching on user-visible text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InProgressOperation {
-    Merge,
-    /// Rebase, from either backend. `git am` shares the am backend's
-    /// `rebase-apply` directory and lands here too, which costs nothing: the
-    /// only caller that cares is classifying a rebase worktrunk itself just
-    /// started, and this gate stops that from happening during an am session.
-    Rebase,
-    CherryPick,
-    Revert,
-    Bisect,
 }
 
 /// Global base path for repository operations, set by -C flag.
@@ -1481,38 +1457,11 @@ impl Repository {
         }
     }
 
-    /// Get merge/rebase status for the worktree at this repository's discovery path.
-    pub fn worktree_state(&self) -> anyhow::Result<Option<InProgressOperation>> {
-        let git_dir = self.worktree_at(self.discovery_path()).git_dir()?;
-
-        // Check for merge
-        if git_dir.join("MERGE_HEAD").exists() {
-            return Ok(Some(InProgressOperation::Merge));
-        }
-
-        // Check for rebase. `rebase-merge` (interactive/merge backend) and
-        // `rebase-apply` (am backend, also used by `git am`) are mutually
-        // exclusive; either one means commits are mid-replay.
-        if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
-            return Ok(Some(InProgressOperation::Rebase));
-        }
-
-        // Check for cherry-pick
-        if git_dir.join("CHERRY_PICK_HEAD").exists() {
-            return Ok(Some(InProgressOperation::CherryPick));
-        }
-
-        // Check for revert
-        if git_dir.join("REVERT_HEAD").exists() {
-            return Ok(Some(InProgressOperation::Revert));
-        }
-
-        // Check for bisect
-        if git_dir.join("BISECT_LOG").exists() {
-            return Ok(Some(InProgressOperation::Bisect));
-        }
-
-        Ok(None)
+    /// The git operation the worktree at this repository's discovery path is
+    /// partway through, if any. See [`WorkingTree::operation_in_progress`].
+    pub fn operation_in_progress(&self) -> anyhow::Result<Option<InProgressOperation>> {
+        self.worktree_at(self.discovery_path())
+            .operation_in_progress()
     }
 
     /// Fail when the worktree is already partway through a git operation.
@@ -1530,7 +1479,7 @@ impl Repository {
     /// The refusal names no operation, so nothing here has to track what git
     /// calls each state or how to leave it; `git status` answers both.
     pub fn ensure_no_operation_in_progress(&self, action: &str) -> anyhow::Result<()> {
-        match self.worktree_state()? {
+        match self.operation_in_progress()? {
             Some(_) => Err(crate::git::GitError::OperationInProgress {
                 action: action.to_string(),
             }

@@ -10,7 +10,8 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use worktrunk::git::{
-    ErrorExt, IntegrationTargets, LineDiff, RefSnapshot, Repository, select_comparison_base,
+    ErrorExt, InProgressOperation, IntegrationTargets, LineDiff, RefSnapshot, Repository,
+    select_comparison_base,
 };
 
 use super::super::ci_status::{CiBranchName, PrStatus};
@@ -993,15 +994,18 @@ fn first_line(s: &str) -> String {
 }
 
 /// Detect if a worktree is in the middle of a git operation (rebase/merge).
+///
+/// The gutter symbols cover the two operations `wt merge` itself performs, so
+/// the states with no symbol of their own (cherry-pick, revert, bisect) report
+/// as `None` here — they still block the commit-replaying commands, via
+/// `ensure_no_operation_in_progress`.
 pub(crate) fn detect_active_git_operation(
     wt: &worktrunk::git::WorkingTree<'_>,
 ) -> ActiveGitOperation {
-    if wt.is_rebasing().unwrap_or(false) {
-        ActiveGitOperation::Rebase
-    } else if wt.is_merging().unwrap_or(false) {
-        ActiveGitOperation::Merge
-    } else {
-        ActiveGitOperation::None
+    match wt.operation_in_progress() {
+        Ok(Some(InProgressOperation::Rebase)) => ActiveGitOperation::Rebase,
+        Ok(Some(InProgressOperation::Merge)) => ActiveGitOperation::Merge,
+        _ => ActiveGitOperation::None,
     }
 }
 

@@ -24,6 +24,51 @@ fn has_initialized_submodules_from_status(status: &str) -> bool {
     })
 }
 
+/// A git operation a worktree is partway through, detected from the state files
+/// git writes under its git dir (`MERGE_HEAD`, `rebase-merge/`, `BISECT_LOG`, …).
+///
+/// Produced by [`WorkingTree::operation_in_progress`]. Detection only: it
+/// reports what git left on disk and deliberately maps nothing to a remedy.
+/// `git status` already names the operation and the way out of it, in git's own
+/// words and git's own translations, including states worktrunk has no variant
+/// for, so a table here would only be a second copy to keep current with git.
+///
+/// Structured rather than a display string so [`Rebase`](Self::Rebase) can be
+/// recognized without matching on user-visible text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InProgressOperation {
+    Merge,
+    /// Rebase, from either backend. `git am` shares the am backend's
+    /// `rebase-apply` directory and lands here too, which costs nothing: the
+    /// only caller that cares is classifying a rebase worktrunk itself just
+    /// started, and this gate stops that from happening during an am session.
+    Rebase,
+    CherryPick,
+    Revert,
+    Bisect,
+}
+
+/// The operation a queued sequencer belongs to, or `None` when nothing is
+/// queued.
+///
+/// `git cherry-pick`/`git revert` over several commits keep the remaining
+/// instructions in `sequencer/todo`, one `<command> <sha> <subject>` line each,
+/// and delete the directory once the sequence finishes or is aborted. Reading
+/// the first line mirrors git's own `sequencer_get_last_command`, which is how
+/// `git status` reports a sequence whose stopped pick was committed by hand.
+///
+/// Only cherry-pick and revert write this file — a rebase has its own todo
+/// under `rebase-merge/` — so an unrecognized first word means the file isn't a
+/// sequence worktrunk should read, and it reports nothing rather than guessing.
+fn sequencer_operation(git_dir: &Path) -> Option<InProgressOperation> {
+    let todo = std::fs::read_to_string(git_dir.join("sequencer").join("todo")).ok()?;
+    match todo.split_whitespace().next()? {
+        "pick" => Some(InProgressOperation::CherryPick),
+        "revert" => Some(InProgressOperation::Revert),
+        _ => None,
+    }
+}
+
 /// Typed snapshot returned by [`WorkingTree::prewarm_info`].
 ///
 /// Mirrors what the batched `git rev-parse` actually resolved so callers can
@@ -401,16 +446,46 @@ impl<'a> WorkingTree<'a> {
         }
     }
 
-    /// Check if a rebase is in progress.
-    pub fn is_rebasing(&self) -> anyhow::Result<bool> {
+    /// The git operation this worktree is partway through, if any.
+    ///
+    /// Reads the state files git writes under the worktree's git dir, in the
+    /// order [`git status`](https://git-scm.com/docs/git-status) consults them,
+    /// so the answer tracks what git itself calls "in progress".
+    pub fn operation_in_progress(&self) -> anyhow::Result<Option<InProgressOperation>> {
         let git_dir = self.git_dir()?;
-        Ok(git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists())
-    }
 
-    /// Check if a merge is in progress.
-    pub fn is_merging(&self) -> anyhow::Result<bool> {
-        let git_dir = self.git_dir()?;
-        Ok(git_dir.join("MERGE_HEAD").exists())
+        if git_dir.join("MERGE_HEAD").exists() {
+            return Ok(Some(InProgressOperation::Merge));
+        }
+
+        // `rebase-merge` (interactive/merge backend) and `rebase-apply` (am
+        // backend, also used by `git am`) are mutually exclusive; either one
+        // means commits are mid-replay.
+        if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
+            return Ok(Some(InProgressOperation::Rebase));
+        }
+
+        if git_dir.join("CHERRY_PICK_HEAD").exists() {
+            return Ok(Some(InProgressOperation::CherryPick));
+        }
+
+        if git_dir.join("REVERT_HEAD").exists() {
+            return Ok(Some(InProgressOperation::Revert));
+        }
+
+        // The two `_HEAD` files above exist only while a single pick is
+        // stopped: resolving one with `git commit` instead of `--continue`
+        // removes it and leaves the rest of the sequence queued, which git
+        // still reports as in progress.
+        if let Some(operation) = sequencer_operation(&git_dir) {
+            return Ok(Some(operation));
+        }
+
+        if git_dir.join("BISECT_LOG").exists() {
+            return Ok(Some(InProgressOperation::Bisect));
+        }
+
+        Ok(None)
     }
 
     /// Check if this is a linked worktree (vs the main worktree).

@@ -58,13 +58,13 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
 
     // If rebase failed, classify the failure (interrupt vs conflict vs other).
     if let Err(e) = rebase_result {
-        let state = repo.worktree_state()?;
+        let state = repo.operation_in_progress()?;
         let is_rebasing = matches!(state, Some(InProgressOperation::Rebase));
         return Err(classify_rebase_failure(e, is_rebasing, &integration_target));
     }
 
     // Verify rebase completed successfully (safety check for edge cases)
-    if repo.worktree_state()?.is_some() {
+    if repo.operation_in_progress()?.is_some() {
         return Err(worktrunk::git::GitError::RebaseConflict {
             target_branch: integration_target,
             git_output: String::new(),

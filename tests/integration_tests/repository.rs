@@ -44,56 +44,135 @@ fn test_is_bare_returns_true_for_bare_repo() {
 }
 
 // =============================================================================
-// worktree_state() tests - simulate various git operation states
+// operation_in_progress() tests - simulate various git operation states
 // =============================================================================
 
 /// Build a repo, let `setup` plant state files under its git dir, and report
-/// what `worktree_state` makes of them.
-fn worktree_state_after(setup: impl FnOnce(&Path)) -> Option<InProgressOperation> {
+/// what `operation_in_progress` makes of them.
+fn operation_after(setup: impl FnOnce(&Path)) -> Option<InProgressOperation> {
     let repo = TestRepo::new();
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
     setup(&repo.root_path().join(".git"));
-    repository.worktree_state().unwrap()
+    repository.operation_in_progress().unwrap()
 }
 
-/// `worktree_state` reads each in-progress operation off the state files git
-/// writes under the git dir. Both rebase backends report as a rebase:
+/// Plant the todo list a multi-commit `git cherry-pick`/`git revert` leaves
+/// behind while instructions are still queued.
+fn write_sequencer_todo(git_dir: &Path, todo: &str) {
+    let sequencer = git_dir.join("sequencer");
+    fs::create_dir_all(&sequencer).unwrap();
+    fs::write(sequencer.join("todo"), todo).unwrap();
+}
+
+/// `operation_in_progress` reads each in-progress operation off the state files
+/// git writes under the git dir. Both rebase backends report as a rebase:
 /// `rebase-merge` (interactive/merge) and `rebase-apply` (am backend, shared
 /// with `git am`).
 #[test]
-fn test_worktree_state_detects_each_operation() {
-    assert_eq!(worktree_state_after(|_| {}), None, "clean worktree");
+fn test_operation_in_progress_detects_each_operation() {
+    assert_eq!(operation_after(|_| {}), None, "clean worktree");
 
     assert_eq!(
-        worktree_state_after(|d| fs::write(d.join("MERGE_HEAD"), "abc123\n").unwrap()),
+        operation_after(|d| fs::write(d.join("MERGE_HEAD"), "abc123\n").unwrap()),
         Some(InProgressOperation::Merge),
         "merge",
     );
     assert_eq!(
-        worktree_state_after(|d| fs::create_dir_all(d.join("rebase-merge")).unwrap()),
+        operation_after(|d| fs::create_dir_all(d.join("rebase-merge")).unwrap()),
         Some(InProgressOperation::Rebase),
         "rebase, merge backend",
     );
     assert_eq!(
-        worktree_state_after(|d| fs::create_dir_all(d.join("rebase-apply")).unwrap()),
+        operation_after(|d| fs::create_dir_all(d.join("rebase-apply")).unwrap()),
         Some(InProgressOperation::Rebase),
         "rebase, am backend",
     );
     assert_eq!(
-        worktree_state_after(|d| fs::write(d.join("CHERRY_PICK_HEAD"), "def456\n").unwrap()),
+        operation_after(|d| fs::write(d.join("CHERRY_PICK_HEAD"), "def456\n").unwrap()),
         Some(InProgressOperation::CherryPick),
         "cherry-pick",
     );
     assert_eq!(
-        worktree_state_after(|d| fs::write(d.join("REVERT_HEAD"), "789abc\n").unwrap()),
+        operation_after(|d| fs::write(d.join("REVERT_HEAD"), "789abc\n").unwrap()),
         Some(InProgressOperation::Revert),
         "revert",
     );
     assert_eq!(
-        worktree_state_after(|d| fs::write(d.join("BISECT_LOG"), "# bisect log\n").unwrap()),
+        operation_after(|d| fs::write(d.join("BISECT_LOG"), "# bisect log\n").unwrap()),
         Some(InProgressOperation::Bisect),
         "bisect",
     );
+
+    assert_eq!(
+        operation_after(|d| write_sequencer_todo(d, "pick abc123 first\npick def456 second\n")),
+        Some(InProgressOperation::CherryPick),
+        "queued cherry-pick",
+    );
+    assert_eq!(
+        operation_after(|d| write_sequencer_todo(d, "revert abc123 first\n")),
+        Some(InProgressOperation::Revert),
+        "queued revert",
+    );
+    assert_eq!(
+        operation_after(|d| write_sequencer_todo(d, "")),
+        None,
+        "drained sequencer",
+    );
+    // `label` belongs to a rebase todo, which lives under `rebase-merge` and is
+    // detected there; an unrecognized instruction is not a sequence to report.
+    assert_eq!(
+        operation_after(|d| write_sequencer_todo(d, "label onto\n")),
+        None,
+        "todo that isn't a pick or revert sequence",
+    );
+}
+
+/// Resolving a stopped cherry-pick with `git commit` instead of `git cherry-pick
+/// --continue` clears `CHERRY_PICK_HEAD` while the rest of the sequence stays
+/// queued. `git status` still calls that a cherry-pick in progress, and so must
+/// this: the `_HEAD` files alone report an idle worktree with picks pending.
+#[test]
+fn test_operation_in_progress_reads_the_queued_sequencer() {
+    let repo = TestRepo::with_initial_commit();
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    let root = repo.root_path().to_path_buf();
+
+    repo.run_git(&["switch", "-c", "side"]);
+    repo.commit_in_worktree(&root, "conflict.txt", "side one\n", "Side edit");
+    repo.commit_in_worktree(&root, "conflict.txt", "side two\n", "Side edit again");
+    repo.run_git(&["switch", "main"]);
+    repo.commit_in_worktree(&root, "conflict.txt", "main\n", "Main edit");
+
+    // Two picks, so instructions remain queued once the first one stops.
+    let picked = repo
+        .git_command()
+        .args(["cherry-pick", "side~1", "side"])
+        .run()
+        .unwrap();
+    assert!(!picked.status.success(), "the first pick must conflict");
+    assert_eq!(
+        repository.operation_in_progress().unwrap(),
+        Some(InProgressOperation::CherryPick),
+        "stopped pick",
+    );
+
+    fs::write(root.join("conflict.txt"), "resolved\n").unwrap();
+    repo.run_git(&["add", "conflict.txt"]);
+    repo.run_git(&["commit", "--no-edit"]);
+
+    assert!(
+        !root.join(".git").join("CHERRY_PICK_HEAD").exists(),
+        "committing by hand is what clears the state file",
+    );
+    assert_eq!(
+        repository.operation_in_progress().unwrap(),
+        Some(InProgressOperation::CherryPick),
+        "the remaining picks are still queued",
+    );
+
+    // `git cherry-pick --quit` is how the queue is abandoned; state clears with it.
+    repo.run_git(&["cherry-pick", "--quit"]);
+    assert_eq!(repository.operation_in_progress().unwrap(), None);
 }
 
 // =============================================================================
