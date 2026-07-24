@@ -433,7 +433,11 @@ fn test_configure_shell_fish_legacy_cleanup_even_when_already_exists(
     // Also create completions (so it reports "all already configured")
     let completions_d = temp_home.path().join(".config/fish/completions");
     fs::create_dir_all(&completions_d).unwrap();
-    fs::write(completions_d.join("wt.fish"), "# completions").unwrap();
+    fs::write(
+        completions_d.join("wt.fish"),
+        "# worktrunk completions for fish\ncomplete --command wt\n",
+    )
+    .unwrap();
 
     // Create legacy conf.d file (old location that should be cleaned up)
     let conf_d = temp_home.path().join(".config/fish/conf.d");
@@ -499,7 +503,11 @@ fn test_uninstall_shell_fish_legacy_conf_d_cleanup(repo: TestRepo, temp_home: Te
     let completions_d = temp_home.path().join(".config/fish/completions");
     fs::create_dir_all(&completions_d).unwrap();
     let completions_file = completions_d.join("wt.fish");
-    fs::write(&completions_file, "# completions").unwrap();
+    fs::write(
+        &completions_file,
+        "# worktrunk completions for fish\ncomplete --command wt\n",
+    )
+    .unwrap();
 
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
@@ -609,7 +617,11 @@ fn test_configure_shell_fish_dry_run_does_not_delete_legacy(repo: TestRepo, temp
     // Create completions (so it reports "all already configured")
     let completions_d = temp_home.path().join(".config/fish/completions");
     fs::create_dir_all(&completions_d).unwrap();
-    fs::write(completions_d.join("wt.fish"), "# completions").unwrap();
+    fs::write(
+        completions_d.join("wt.fish"),
+        "# worktrunk completions for fish\ncomplete --command wt\n",
+    )
+    .unwrap();
 
     // Create legacy conf.d file that should NOT be deleted in dry-run mode
     let conf_d = temp_home.path().join(".config/fish/conf.d");
@@ -1260,6 +1272,22 @@ fn test_uninstall_scan_removes_custom_cmd_fish_files(repo: TestRepo, temp_home: 
     fs::write(&default_function, "function wt\nend\n").unwrap();
     fs::write(&default_completion, "complete --command wt\n").unwrap();
 
+    // A second worktrunk-managed wrapper left over from an earlier install
+    // under another name, and an orphaned completion whose wrapper is already
+    // gone: both carry worktrunk's markers, so scan-all removes them too.
+    let stale_wrapper = fish_functions.join("old-wt.fish");
+    fs::write(
+        &stale_wrapper,
+        "# worktrunk shell integration for fish\nfunction old-wt\nend\n",
+    )
+    .unwrap();
+    let orphan_completion = fish_completions.join("stale.fish");
+    fs::write(
+        &orphan_completion,
+        "# worktrunk completions for fish\ncomplete --command stale\n",
+    )
+    .unwrap();
+
     let mut install_cmd = wt_command();
     repo.configure_wt_cmd(&mut install_cmd);
     set_temp_home_env(&mut install_cmd, temp_home.path());
@@ -1296,13 +1324,52 @@ fn test_uninstall_scan_removes_custom_cmd_fish_files(repo: TestRepo, temp_home: 
         String::from_utf8_lossy(&uninstall_output.stderr)
     );
 
-    // Scan-all removes git-wt.fish (worktrunk-managed by content) but leaves the
-    // hand-written wt.fish stub alone — it lacks the `config shell init … | source`
-    // marker so it doesn't look like a worktrunk wrapper.
+    // Scan-all removes every worktrunk-managed file (git-wt install, the stale
+    // second wrapper, the orphaned completion) but leaves the hand-written
+    // wt.fish stubs alone — they carry no worktrunk marker.
     assert!(!custom_function.exists());
     assert!(!custom_completion.exists());
+    assert!(!stale_wrapper.exists());
+    assert!(!orphan_completion.exists());
     assert!(default_function.exists());
     assert!(default_completion.exists());
+}
+
+#[cfg(unix)]
+#[rstest]
+fn test_uninstall_shell_powershell_removes_integration_line(repo: TestRepo, temp_home: TempDir) {
+    // Unix-only: the Windows profile path comes from the real Documents
+    // folder, which a temp HOME does not redirect.
+    let profile_dir = temp_home.path().join(".config/powershell");
+    fs::create_dir_all(&profile_dir).unwrap();
+    let profile = profile_dir.join("Microsoft.PowerShell_profile.ps1");
+    fs::write(
+        &profile,
+        "# my profile\nInvoke-Expression (& wt config shell init powershell)\nSet-Alias ll Get-ChildItem\n",
+    )
+    .unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.args(["config", "shell", "uninstall", "powershell", "--yes"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().expect("Failed to execute uninstall");
+    assert!(
+        output.status.success(),
+        "Uninstall should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The old pre-Out-String integration line is removed; everything else stays.
+    let content = fs::read_to_string(&profile).unwrap();
+    assert!(
+        !content.contains("config shell init"),
+        "Integration line should be removed:\n{content}"
+    );
+    assert!(content.contains("# my profile"));
+    assert!(content.contains("Set-Alias ll Get-ChildItem"));
 }
 
 #[rstest]
@@ -1802,7 +1869,11 @@ fn test_uninstall_shell_dry_run_fish(repo: TestRepo, temp_home: TempDir) {
     let completions_d = temp_home.path().join(".config/fish/completions");
     fs::create_dir_all(&completions_d).unwrap();
     let completions_file = completions_d.join("wt.fish");
-    fs::write(&completions_file, "# fish completions").unwrap();
+    fs::write(
+        &completions_file,
+        "# worktrunk completions for fish\ncomplete --command wt\n",
+    )
+    .unwrap();
 
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
@@ -1845,7 +1916,11 @@ fn test_uninstall_shell_dry_run_fish_canonical(repo: TestRepo, temp_home: TempDi
     let completions_d = temp_home.path().join(".config/fish/completions");
     fs::create_dir_all(&completions_d).unwrap();
     let completions_file = completions_d.join("wt.fish");
-    fs::write(&completions_file, "# fish completions").unwrap();
+    fs::write(
+        &completions_file,
+        "# worktrunk completions for fish\ncomplete --command wt\n",
+    )
+    .unwrap();
 
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {

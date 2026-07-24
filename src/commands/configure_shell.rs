@@ -128,22 +128,31 @@ fn is_worktrunk_managed_content(content: &str, cmd: &str) -> bool {
 /// and which a user's own `wt.fish` / `wt.nu` would not carry.
 const WRAPPER_MARKER: &str = "worktrunk shell integration for";
 
+/// The header every fish completion file worktrunk has shipped opens with.
+const COMPLETION_MARKER: &str = "# worktrunk completions for";
+
 /// Cmd-agnostic content check: matches a worktrunk-generated wrapper file
 /// regardless of the binary name embedded in it.
 ///
 /// Used by `uninstall` to recognize wrapper files installed under any binary
 /// name (e.g. `wt.fish`, `git-wt.fish`, `git-wt.nu`) when scanning the wrapper
 /// directories. Every wrapper template worktrunk renders carries the header, so
-/// that answers first; the fallback covers the legacy `conf.d/{cmd}.fish`, which
-/// predates the templates and is a bare init line. Reusing the rc-file line
-/// detector for that fallback keeps one definition of "an integration line" —
-/// and, being per-line, it does not admit a file on the strength of a mention in
-/// one place and a `| source` of something else in another.
+/// that answers first. The fallback covers the legacy `conf.d/{cmd}.fish`, which
+/// predates the templates and holds nothing but the init line: a file qualifies
+/// only when every non-blank, non-comment line is an integration line
+/// (per the rc-file line detector, keeping one definition of "an integration
+/// line"). Uninstall walks directories the user owns, so a user's own file that
+/// runs `wt config shell init` amid other code — or merely mentions it — must
+/// survive.
 fn is_worktrunk_managed_content_any_cmd(content: &str) -> bool {
-    content.contains(WRAPPER_MARKER)
-        || content
-            .lines()
-            .any(shell::is_shell_integration_line_for_uninstall_any_cmd)
+    if content.contains(WRAPPER_MARKER) {
+        return true;
+    }
+    let code_lines = fish_code_lines(content);
+    !code_lines.is_empty()
+        && code_lines
+            .into_iter()
+            .all(shell::is_shell_integration_line_for_uninstall_any_cmd)
 }
 
 /// Check if a Nushell wrapper file is worktrunk-managed.
@@ -674,10 +683,12 @@ fn is_install_shell_integration_line(line: &str, shell: Shell, cmd: &str) -> boo
             .contains(&format!("config shell init {shell}"))
 }
 
-/// Extract non-comment, non-blank lines from fish source for comparison.
+/// Extract non-comment, non-blank lines from fish/nushell source.
 ///
-/// This lets us detect existing installations even when comment text has changed
-/// between versions (e.g. updated documentation URLs).
+/// Install compares wrapper code lines so it detects existing installations even
+/// when comment text has changed between versions (e.g. updated documentation
+/// URLs); uninstall classifies a headerless file by whether its code lines are
+/// all integration lines.
 fn fish_code_lines(source: &str) -> Vec<&str> {
     source
         .lines()
@@ -948,8 +959,6 @@ pub fn process_shell_completions(
     dry_run: bool,
     cmd: &str,
 ) -> Result<Vec<CompletionResult>, String> {
-    shell::validate_shell_command_name(cmd)?;
-
     let mut results = Vec::new();
     let fish_completion = fish_completion_content(cmd);
 
@@ -1065,9 +1074,10 @@ fn remove_config_file(path: &std::path::Path) -> Result<(), String> {
 /// Uninstall scans the shell-owned directories and removes every worktrunk-managed
 /// file or line, regardless of the binary name it was installed under.
 ///
-/// For Fish/Nushell wrapper files (one file per binary name), this lists the
-/// wrapper directories and admits any file whose content matches
-/// `is_worktrunk_managed_content_any_cmd`. For Bash/Zsh/PowerShell (line-based),
+/// For Fish/Nushell wrapper files and Fish completion files (one file per binary
+/// name), this lists the owning directories and admits any file whose content
+/// matches the worktrunk marker (`is_worktrunk_managed_content_any_cmd`, or the
+/// completion header for `completions/`). For Bash/Zsh/PowerShell (line-based),
 /// it scans the rc/profile files and uses `is_shell_integration_line_for_uninstall_any_cmd`.
 /// No `--cmd` is needed because the marker is the content, not the file name.
 fn scan_for_uninstall(
@@ -1085,9 +1095,6 @@ fn scan_for_uninstall(
 
     let mut results = Vec::new();
     let mut not_found = Vec::new();
-    // Wrapper file names found (e.g. `wt.fish`, `git-wt.fish`); the matching
-    // completion files in `completions/` share these names.
-    let mut fish_wrapper_names: HashSet<String> = HashSet::new();
 
     for &shell in &shells {
         match shell {
@@ -1095,14 +1102,16 @@ fn scan_for_uninstall(
                 let functions_dir = home.join(".config").join("fish").join("functions");
                 let confd_dir = home.join(".config").join("fish").join("conf.d");
 
-                let canonical = scan_fish_wrappers(&functions_dir)?;
-                let legacy = scan_fish_wrappers(&confd_dir)?;
+                let canonical = scan_managed_files(
+                    &functions_dir,
+                    "fish",
+                    is_worktrunk_managed_content_any_cmd,
+                )?;
+                let legacy =
+                    scan_managed_files(&confd_dir, "fish", is_worktrunk_managed_content_any_cmd)?;
                 let found_any = !canonical.is_empty() || !legacy.is_empty();
 
                 for path in &canonical {
-                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        fish_wrapper_names.insert(name.to_string());
-                    }
                     let action = if dry_run {
                         UninstallAction::WouldRemove
                     } else {
@@ -1118,9 +1127,6 @@ fn scan_for_uninstall(
                 }
 
                 for path in &legacy {
-                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        fish_wrapper_names.insert(name.to_string());
-                    }
                     let superseded_by = path.file_name().map(|n| functions_dir.join(n));
                     let action = if dry_run {
                         UninstallAction::WouldRemove
@@ -1145,7 +1151,11 @@ fn scan_for_uninstall(
                 let mut found_any = false;
                 let candidates = shell::nushell_autoload_candidates(&home);
                 for autoload_dir in &candidates {
-                    let nu_files = scan_nushell_wrappers(autoload_dir)?;
+                    let nu_files = scan_managed_files(
+                        autoload_dir,
+                        "nu",
+                        is_worktrunk_managed_content_any_cmd,
+                    )?;
                     for path in &nu_files {
                         found_any = true;
                         let action = if dry_run {
@@ -1171,7 +1181,7 @@ fn scan_for_uninstall(
             }
 
             Shell::Bash | Shell::Zsh | Shell::PowerShell => {
-                let paths = line_based_config_paths(shell, &home);
+                let paths = shell::line_based_config_paths(shell, &home);
                 let mut found = false;
 
                 for path in &paths {
@@ -1179,11 +1189,9 @@ fn scan_for_uninstall(
                         continue;
                     }
 
-                    // Only process the first matching file per shell.
                     if let Some(result) = uninstall_from_file(shell, path, dry_run)? {
                         results.push(result);
                         found = true;
-                        break;
                     }
                 }
 
@@ -1194,31 +1202,30 @@ fn scan_for_uninstall(
         }
     }
 
-    // Fish completion files share names with the wrappers; clean up the same set.
+    // Fish completion files carry their own header marker, so they are scanned
+    // the same way as the wrappers — a completion whose wrapper is already gone
+    // is still cleaned up.
     let mut completion_results = Vec::new();
     let mut completion_not_found = Vec::new();
     if shells.contains(&Shell::Fish) {
         let completions_dir = home.join(".config").join("fish").join("completions");
-        let mut completion_found_any = false;
-        for name in &fish_wrapper_names {
-            let comp_path = completions_dir.join(name);
-            if comp_path.exists() {
-                completion_found_any = true;
-                let action = if dry_run {
-                    UninstallAction::WouldRemove
-                } else {
-                    remove_config_file(&comp_path)?;
-                    UninstallAction::Removed
-                };
-                completion_results.push(CompletionUninstallResult {
-                    shell: Shell::Fish,
-                    path: comp_path,
-                    action,
-                });
-            }
-        }
-        if !completion_found_any {
+        let completions =
+            scan_managed_files(&completions_dir, "fish", |c| c.contains(COMPLETION_MARKER))?;
+        if completions.is_empty() {
             completion_not_found.push((Shell::Fish, completions_dir));
+        }
+        for path in completions {
+            let action = if dry_run {
+                UninstallAction::WouldRemove
+            } else {
+                remove_config_file(&path)?;
+                UninstallAction::Removed
+            };
+            completion_results.push(CompletionUninstallResult {
+                shell: Shell::Fish,
+                path,
+                action,
+            });
         }
     }
 
@@ -1230,35 +1237,13 @@ fn scan_for_uninstall(
     })
 }
 
-/// Compute line-based config paths (Bash/Zsh/PowerShell) inline so uninstall
-/// doesn't need a cmd to drive `Shell::config_paths` (which uses cmd only for
-/// wrapper-shell file names).
-fn line_based_config_paths(shell: Shell, home: &Path) -> Vec<PathBuf> {
-    match shell {
-        Shell::Bash => vec![home.join(".bashrc")],
-        Shell::Zsh => {
-            let zdotdir = std::env::var("ZDOTDIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| home.to_path_buf());
-            vec![zdotdir.join(".zshrc")]
-        }
-        Shell::PowerShell => shell::powershell_profile_paths(home),
-        Shell::Fish | Shell::Nushell => Vec::new(),
-    }
-}
-
-/// List `*.fish` files in `dir` whose content matches a worktrunk wrapper
-/// (regardless of binary name). Returns empty if `dir` does not exist.
-fn scan_fish_wrappers(dir: &Path) -> Result<Vec<PathBuf>, String> {
-    scan_wrapper_directory(dir, "fish")
-}
-
-/// List `*.nu` files in `dir` whose content matches a worktrunk wrapper.
-fn scan_nushell_wrappers(dir: &Path) -> Result<Vec<PathBuf>, String> {
-    scan_wrapper_directory(dir, "nu")
-}
-
-fn scan_wrapper_directory(dir: &Path, extension: &str) -> Result<Vec<PathBuf>, String> {
+/// List `*.{extension}` files in `dir` whose content `is_managed` accepts.
+/// Returns empty if `dir` does not exist; sorted so removal order is stable.
+fn scan_managed_files(
+    dir: &Path,
+    extension: &str,
+    is_managed: fn(&str) -> bool,
+) -> Result<Vec<PathBuf>, String> {
     if !dir.exists() {
         return Ok(Vec::new());
     }
@@ -1279,7 +1264,7 @@ fn scan_wrapper_directory(dir: &Path, extension: &str) -> Result<Vec<PathBuf>, S
             Ok(s) => s,
             Err(_) => continue, // unreadable file: skip, don't fail the whole uninstall
         };
-        if is_worktrunk_managed_content_any_cmd(&content) {
+        if is_managed(&content) {
             out.push(path);
         }
     }
@@ -1636,21 +1621,26 @@ mod tests {
     #[test]
     fn test_managed_content_any_cmd_matches_wrappers_not_mentions() {
         // Ours: the header every wrapper template carries, under any binary
-        // name, plus the headerless legacy `conf.d/{cmd}.fish` init line.
+        // name, plus the headerless legacy `conf.d/{cmd}.fish`, whose code
+        // lines are nothing but the init invocation.
         for content in [
             "# worktrunk shell integration for fish\nfunction git-wt\nend\n",
             "# worktrunk shell integration for nushell\ndef --env wt [] {}\n",
             "wt config shell init fish | source",
+            "# added by worktrunk\nif type -q wt; command wt config shell init fish | source; end\n",
         ] {
             assert!(is_worktrunk_managed_content_any_cmd(content), "{content}");
         }
 
         // Not ours: uninstall walks directories the user owns, so a file that
-        // only mentions the command must survive — including one that sources
-        // something unrelated elsewhere, which a file-wide match would delete.
+        // only mentions the command must survive — as must a user's own file
+        // that runs the init line amid other code, which a per-line any-match
+        // would delete whole.
         for content in [
             "function notes\n    echo run wt config shell init fish to set up\nend\n",
             "# reminder: wt config shell init fish\nfunction helpers\n    cat ~/.aliases | source\nend\n",
+            "function helper\n    command wt config shell init fish | source\nend\n",
+            "",
         ] {
             assert!(!is_worktrunk_managed_content_any_cmd(content), "{content}");
         }
@@ -1661,24 +1651,28 @@ mod tests {
         // Fish and Nushell are configured via wrapper files, not line-based rc
         // edits, so the line-based path list is empty for them.
         let home = Path::new("/home/user");
-        assert!(line_based_config_paths(Shell::Fish, home).is_empty());
-        assert!(line_based_config_paths(Shell::Nushell, home).is_empty());
+        assert!(shell::line_based_config_paths(Shell::Fish, home).is_empty());
+        assert!(shell::line_based_config_paths(Shell::Nushell, home).is_empty());
     }
 
     #[test]
-    fn test_scan_wrapper_directory_skips_wrong_extension_and_directories() {
+    fn test_scan_managed_files_skips_wrong_extension_and_directories() {
         let dir = tempfile::TempDir::new().unwrap();
         let root = dir.path();
         // Wrong extension: skipped.
         fs::write(root.join("notes.txt"), "anything").unwrap();
         // A directory carrying the wrapper extension: skipped (not a file).
         fs::create_dir(root.join("nested.fish")).unwrap();
-        assert!(scan_fish_wrappers(root).unwrap().is_empty());
+        assert!(
+            scan_managed_files(root, "fish", is_worktrunk_managed_content_any_cmd)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[cfg(unix)]
     #[test]
-    fn test_scan_wrapper_directory_skips_unreadable_file() {
+    fn test_scan_managed_files_skips_unreadable_file() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::TempDir::new().unwrap();
         let root = dir.path();
@@ -1686,7 +1680,7 @@ mod tests {
         fs::write(&unreadable, "function wt\nend\n").unwrap();
         fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000)).unwrap();
         // An unreadable wrapper file is skipped, not surfaced as an error.
-        let found = scan_fish_wrappers(root);
+        let found = scan_managed_files(root, "fish", is_worktrunk_managed_content_any_cmd);
         // Restore perms so TempDir cleanup can remove the file.
         fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o644)).unwrap();
         assert!(found.unwrap().is_empty());
