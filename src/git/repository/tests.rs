@@ -978,16 +978,7 @@ fn build_worktree_config_bare_layout() -> (tempfile::TempDir, std::path::PathBuf
         "[init]\n\tdefaultBranch = main\n[user]\n\tname = test\n\temail = test@test\n",
     )
     .unwrap();
-    let git = || {
-        Cmd::new("git")
-            .env("GIT_CONFIG_GLOBAL", &gitconfig)
-            .env("GIT_CONFIG_SYSTEM", "/dev/null")
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .env("LC_ALL", "C")
-            .env("LANG", "C")
-            .env("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z")
-            .env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z")
-    };
+    let git = || crate::testing::configure_git_env(Cmd::new("git"), &gitconfig);
 
     let path_str = |p: &std::path::Path| p.to_str().unwrap().to_owned();
 

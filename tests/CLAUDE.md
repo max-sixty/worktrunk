@@ -47,6 +47,7 @@ be isolated from the host environment to prevent:
 - **Directive leakage**: Test commands writing to the user's shell directive file
 - **Config pollution**: Tests reading/writing the user's real config
 - **Git interference**: Host GIT_* environment variables affecting test behavior
+- **Network access**: a fixture's `https://` remote URL becoming a real connect, with no timeout bounding it (`GIT_ALLOWED_PROTOCOLS` in `src/testing/mod.rs`)
 
 ### With a TestRepo fixture (most tests)
 

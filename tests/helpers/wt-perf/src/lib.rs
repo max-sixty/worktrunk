@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 use tempfile::TempDir;
-use worktrunk::testing::{NULL_DEVICE, configure_git_cmd};
+use worktrunk::testing::{NULL_DEVICE, allow_network_transports, configure_git_cmd};
 
 /// Lazy-initialized rust repo path.
 static RUST_REPO: OnceLock<PathBuf> = OnceLock::new();
@@ -156,7 +156,8 @@ pub fn parse_pair(config: &str, prefix: &str) -> Option<(usize, usize)> {
 /// redirected to `NULL_DEVICE`. Thin call-site wrapper around
 /// [`configure_git_cmd`] — every git invocation in this crate goes
 /// through here. Doesn't set `current_dir`; callers do that explicitly
-/// when they have a target.
+/// when they have a target. Network transports are denied; the upstream
+/// fixture clone re-permits them via [`allow_network_transports`].
 fn git_command() -> Command {
     let mut cmd = Command::new("git");
     configure_git_cmd(&mut cmd, Path::new(NULL_DEVICE));
@@ -709,7 +710,9 @@ fn ensure_rust_repo() -> PathBuf {
             std::fs::create_dir_all(&cache_dir).unwrap();
             eprintln!("Cloning rust-lang/rust (this will take several minutes)...");
 
-            let clone_output = git_command()
+            let mut clone = git_command();
+            allow_network_transports(&mut clone);
+            let clone_output = clone
                 .args([
                     "clone",
                     "https://github.com/rust-lang/rust.git",
