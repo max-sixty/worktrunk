@@ -66,6 +66,8 @@ pub use error::{
     WorktrunkError,
     // Wrap a HookCommandFailed-bearing error with a --no-hooks hint
     add_hook_skip_hint,
+    // Shared phrasing for an unmerged index ("1 path with unresolved conflicts")
+    format_unresolved_conflicts,
     // Render a single error via Diagnostic if it implements one
     try_render_diagnostic,
 };

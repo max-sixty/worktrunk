@@ -640,6 +640,15 @@ pub enum GitError {
 
 impl std::error::Error for GitError {}
 
+/// `"1 path with unresolved conflicts"` — the shared tail of every message
+/// about an unmerged index. [`GitError::UnmergedPaths`] refuses outright;
+/// `wt step relocate` warns and skips instead, because a conflict blocks only
+/// one of the many worktrees it walks. The phrase is shared, not the error type.
+pub fn format_unresolved_conflicts(count: usize) -> String {
+    let paths = if count == 1 { "path" } else { "paths" };
+    format!("{count} {paths} with unresolved conflicts")
+}
+
 impl GitError {
     /// Styled title for this variant (first line, with inline `<bold>`
     /// highlights on entity names like branch and path).
@@ -662,9 +671,10 @@ impl GitError {
             }
 
             GitError::UnmergedPaths { action, files } => {
-                let count = files.len();
-                let paths = if count == 1 { "path" } else { "paths" };
-                cformat!("Cannot {action}: {count} {paths} with unresolved conflicts")
+                format!(
+                    "Cannot {action}: {}",
+                    format_unresolved_conflicts(files.len())
+                )
             }
 
             GitError::UncommittedChanges { action, branch, .. } => match (action, branch) {
