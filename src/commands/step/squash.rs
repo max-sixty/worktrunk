@@ -82,6 +82,13 @@ pub fn handle_squash(
 
     let env = CommandEnv::for_action(config)?;
     let repo = &env.repo;
+    // Refuse before anything touches the index. A conflicted merge keeps HEAD
+    // on the branch, so the detached-HEAD check below waves it through — and
+    // then staging marks the conflict *resolved* with git's markers as its
+    // content, after which the squash dies at `reset --soft` ("Cannot do a soft
+    // reset in the middle of a merge") having destroyed the unmerged state that
+    // was stopping `git merge --continue` from committing them.
+    repo.ensure_no_operation_in_progress("squash")?;
     // Squash requires being on a branch (can't squash in detached HEAD)
     let current_branch = env.require_branch("squash")?.to_string();
     let ctx = env.context(yes);

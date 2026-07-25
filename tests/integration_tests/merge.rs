@@ -3455,6 +3455,34 @@ fn stop_feature_mid_rebase(repo: &mut TestRepo) -> PathBuf {
     feature_wt
 }
 
+/// Leave `feature` stopped mid-rebase with one commit already replayed.
+///
+/// [`stop_feature_mid_rebase`] conflicts on the first pick, which leaves the
+/// detached HEAD *at* main — so a push from there carries nothing and reports
+/// up to date. Only once a pick has landed does the detached HEAD hold commits
+/// a fast-forward would move the target onto.
+fn stop_feature_mid_rebase_after_one_pick(repo: &mut TestRepo) -> PathBuf {
+    let feature_wt = repo.add_worktree("feature");
+    repo.commit_in_worktree(&feature_wt, "clean.txt", "feature\n", "Replays cleanly");
+    repo.commit_in_worktree(&feature_wt, "conflict.txt", "feature\n", "Feature edit");
+    fs::write(repo.root_path().join("conflict.txt"), "main\n").unwrap();
+    repo.run_git(&["add", "conflict.txt"]);
+    repo.run_git(&["commit", "-m", "Main edit"]);
+
+    let rebase = repo
+        .git_command()
+        .current_dir(&feature_wt)
+        .args(["rebase", "main"])
+        .run()
+        .unwrap();
+    assert!(
+        !rebase.status.success(),
+        "rebase should have stopped on the second pick"
+    );
+
+    feature_wt
+}
+
 /// Leave `feature` stopped in a conflicted merge, which keeps HEAD on the branch.
 fn stop_feature_mid_merge(repo: &mut TestRepo) -> PathBuf {
     let feature_wt = feature_conflicting_with_main(repo);
@@ -3515,6 +3543,62 @@ fn test_merge_refuses_mid_merge(mut repo: TestRepo) {
     assert_cmd_snapshot!(
         "merge_refuses_mid_merge",
         make_snapshot_cmd(&repo, "merge", &[], Some(&feature_wt))
+    );
+}
+
+/// The commit a ref resolves to in `dir` — for asserting a refusal moved nothing.
+fn ref_sha(repo: &TestRepo, dir: &Path, name: &str) -> String {
+    let output = repo
+        .git_command()
+        .current_dir(dir)
+        .args(["rev-parse", name])
+        .run()
+        .unwrap();
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+/// Mid-rebase the detached HEAD is a linear extension of the target, so the
+/// fast-forward check passes: without the gate `wt step push` moves the target
+/// branch onto a half-replayed history whose worktree still holds conflict
+/// markers, and leaves the rebase open behind it.
+#[rstest]
+fn test_step_push_refuses_mid_rebase(mut repo: TestRepo) {
+    let feature_wt = stop_feature_mid_rebase_after_one_pick(&mut repo);
+    let root = repo.root_path().to_path_buf();
+    let main_before = ref_sha(&repo, &root, "main");
+    assert_ne!(
+        ref_sha(&repo, &feature_wt, "HEAD"),
+        main_before,
+        "the detached HEAD has to carry a replayed commit, or the push is a no-op"
+    );
+
+    assert_cmd_snapshot!(
+        "step_push_refuses_mid_rebase",
+        make_snapshot_cmd(&repo, "step", &["push", "main"], Some(&feature_wt))
+    );
+    assert_eq!(
+        ref_sha(&repo, &root, "main"),
+        main_before,
+        "main must not move while the rebase is open"
+    );
+}
+
+/// A conflicted merge keeps HEAD on the branch, so the detached-HEAD check
+/// `wt step squash` already runs waves it through: without the gate the squash
+/// stages the conflicted worktree and records git's markers as content.
+#[rstest]
+fn test_step_squash_refuses_mid_merge(mut repo: TestRepo) {
+    let feature_wt = stop_feature_mid_merge(&mut repo);
+    let feature_before = ref_sha(&repo, &feature_wt, "feature");
+
+    assert_cmd_snapshot!(
+        "step_squash_refuses_mid_merge",
+        make_snapshot_cmd(&repo, "step", &["squash"], Some(&feature_wt))
+    );
+    assert_eq!(
+        ref_sha(&repo, &feature_wt, "feature"),
+        feature_before,
+        "no commit may be recorded while the merge is open"
     );
 }
 

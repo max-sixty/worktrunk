@@ -1466,15 +1466,19 @@ impl Repository {
 
     /// Fail when the worktree is already partway through a git operation.
     ///
-    /// A precondition for the commit-replaying commands (`wt step rebase`,
-    /// `wt merge`). Mid-rebase, HEAD is detached on a linear extension of the
-    /// target, so `is_rebased_onto` — and every
-    /// ancestry check like it — reads as "already up to date"; without this
+    /// A precondition for every command that rewrites or moves commits:
+    /// `wt step rebase`, `wt step squash`, `wt step push`, and `wt merge`.
+    /// Mid-rebase, HEAD is detached on a linear extension of the target, so
+    /// `is_rebased_onto` — and every ancestry check like it, including the
+    /// push's fast-forward check — reads as "already up to date"; without this
     /// gate a caller reports success over a tree that still holds conflict
-    /// markers. The other states are gated for the same reason rather than
-    /// their own symptom: a rebase started from any of them either compounds
-    /// the half-finished operation or dies inside git with its own plumbing
-    /// error, and neither tells the user what to do next.
+    /// markers, or moves the target branch onto one. Mid-merge the symptom
+    /// inverts: HEAD stays on the branch, so the detached-HEAD checks wave the
+    /// state through and a squash stages the conflict as resolved content. The
+    /// other states are gated for the same reason rather than their own
+    /// symptom: an operation started from any of them either compounds the
+    /// half-finished one or dies inside git with its own plumbing error, and
+    /// neither tells the user what to do next.
     ///
     /// The refusal names no operation, so nothing here has to track what git
     /// calls each state or how to leave it; `git status` answers both.

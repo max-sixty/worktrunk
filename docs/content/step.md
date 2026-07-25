@@ -311,7 +311,7 @@ When the target's local ref lags its upstream, the rows are measured against tha
 
 ### Conflicts
 
-A conflicting commit leaves the rebase open rather than undoing it. The worktree keeps git's conflict markers, and the ways out are `git rebase --continue` once the conflict is resolved, `git rebase --skip`, or `git rebase --abort`. Until the rebase is settled, `wt step rebase` and `wt merge` refuse to run.
+A conflicting commit leaves the rebase open rather than undoing it. The worktree keeps git's conflict markers, and the ways out are `git rebase --continue` once the conflict is resolved, `git rebase --skip`, or `git rebase --abort`. Until the rebase is settled, `wt step rebase`, `wt step squash`, `wt step push`, and `wt merge` refuse to run — as they do while any other git operation is open, a conflicted `git merge` included.
 
 ### Command reference
 
@@ -373,6 +373,8 @@ The target is a branch, and must already be an ancestor of the current branch. O
 ### Target worktree
 
 When the target branch has a worktree of its own, that worktree's files move to the new commits too. A fast-forward does both at once, pushing into this repository with `receive.denyCurrentBranch=updateInstead`; `--no-ff` moves the ref first and syncs the worktree after, warning rather than failing if that sync doesn't apply. Uncommitted changes in that worktree are stashed for the duration and restored afterward; one touching a file the push also changes is refused instead, naming the file.
+
+A worktree that is still registered but whose directory is gone is refused as well, since nothing can be synced into it — `git worktree prune` clears the registration.
 
 ### Command reference
 

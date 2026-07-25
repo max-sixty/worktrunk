@@ -58,6 +58,10 @@ pub trait RepositoryCliExt {
     ) -> anyhow::Result<RemoveResult>;
 
     /// Prepare the target worktree for push by auto-stashing non-overlapping changes when safe.
+    ///
+    /// The caller has already established that `target_worktree` exists on disk
+    /// (`MergeContext::prepare` refuses a registered-but-missing worktree), so
+    /// the status read here is free to fail if the directory is gone.
     fn prepare_target_worktree(
         &self,
         target_worktree: Option<&PathBuf>,
@@ -321,11 +325,6 @@ impl RepositoryCliExt for Repository {
         let Some(wt_path) = target_worktree else {
             return Ok(None);
         };
-
-        // Skip if target worktree directory is missing (prunable worktree)
-        if !wt_path.exists() {
-            return Ok(None);
-        }
 
         let wt = self.worktree_at(wt_path);
         if !wt.is_dirty()? {
