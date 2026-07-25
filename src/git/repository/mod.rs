@@ -1570,13 +1570,35 @@ impl Repository {
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn run_command(&self, args: &[&str]) -> anyhow::Result<String> {
-        let output = self
-            .with_object_store_env(
-                Cmd::new("git")
-                    .args(args.iter().copied())
-                    .current_dir(&self.discovery_path)
-                    .context(self.logging_context()),
-            )
+        self.run_command_bounded(args, None)
+    }
+
+    /// [`run_command`](Self::run_command) with an optional wall-clock bound.
+    ///
+    /// A child still running when `timeout` expires is killed and the call
+    /// fails with [`std::io::ErrorKind::TimedOut`].
+    ///
+    /// Local git commands pass `None`: they finish or fail on their own, so a
+    /// bound would only turn machine load into a spurious failure. The bound
+    /// is for the one git command in worktrunk that can reach the wire —
+    /// `ls-remote` in [`default_branch`](Self::default_branch), where nothing
+    /// else limits how long an unreachable host takes to not answer.
+    pub(super) fn run_command_bounded(
+        &self,
+        args: &[&str],
+        timeout: Option<std::time::Duration>,
+    ) -> anyhow::Result<String> {
+        let mut cmd = self.with_object_store_env(
+            Cmd::new("git")
+                .args(args.iter().copied())
+                .current_dir(&self.discovery_path)
+                .context(self.logging_context()),
+        );
+        if let Some(timeout) = timeout {
+            cmd = cmd.timeout(timeout);
+        }
+
+        let output = cmd
             .run()
             .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
 

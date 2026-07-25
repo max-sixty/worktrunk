@@ -755,10 +755,7 @@ mod tests {
         )
         .unwrap();
         let git = |dir: &Path| {
-            Cmd::new("git")
-                .current_dir(dir)
-                .env("GIT_CONFIG_GLOBAL", &gitconfig)
-                .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            crate::testing::configure_git_env(Cmd::new("git"), &gitconfig).current_dir(dir)
         };
 
         let main = tmp.path().join("repo");
@@ -817,10 +814,8 @@ mod tests {
         .unwrap();
         let main = tmp.path().join("repo");
         std::fs::create_dir(&main).unwrap();
-        Cmd::new("git")
+        crate::testing::configure_git_env(Cmd::new("git"), &gitconfig)
             .current_dir(&main)
-            .env("GIT_CONFIG_GLOBAL", &gitconfig)
-            .env("GIT_CONFIG_SYSTEM", "/dev/null")
             .args(["init", "-b", "main"])
             .run()
             .unwrap();
@@ -854,10 +849,8 @@ mod tests {
         .unwrap();
         let main = tmp.path().join("repo");
         std::fs::create_dir(&main).unwrap();
-        Cmd::new("git")
+        crate::testing::configure_git_env(Cmd::new("git"), &gitconfig)
             .current_dir(&main)
-            .env("GIT_CONFIG_GLOBAL", &gitconfig)
-            .env("GIT_CONFIG_SYSTEM", "/dev/null")
             .args(["init", "-b", "main"])
             .run()
             .unwrap();

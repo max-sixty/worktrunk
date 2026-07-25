@@ -1145,10 +1145,7 @@ fn prewarm_still_caches_preload_when_worktree_config_disabled() {
     let gitconfig = tmp.path().join("test-gitconfig");
     std::fs::write(&gitconfig, "[init]\n\tdefaultBranch = main\n").unwrap();
 
-    let out = Cmd::new("git")
-        .env("GIT_CONFIG_GLOBAL", &gitconfig)
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .env("LC_ALL", "C")
+    let out = crate::testing::configure_git_env(Cmd::new("git"), &gitconfig)
         .args(["init", "-b", "main", root.to_str().unwrap()])
         .run()
         .unwrap();
