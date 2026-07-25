@@ -849,6 +849,63 @@ pub fn run(format: StatuslineFormat) -> Result<()> {
     Ok(())
 }
 
+/// The collection plan both statusline surfaces share.
+///
+/// The statusline renders the full column set condensed (status, diffs,
+/// ahead/behind, upstream, CI, URL — see `format_statusline_segments`) but no
+/// LLM summary, so its plan is every column's tasks under full gates: CI runs,
+/// summary doesn't. URL is gated on a configured template like everywhere else.
+fn statusline_options(repo: &Repository) -> CollectOptions {
+    let url_template = repo.url_template();
+    let gates = list::columns::ColumnGates {
+        show_full: true,
+        summary_enabled: false,
+        has_llm_command: false,
+        has_url_template: url_template.is_some(),
+    };
+    CollectOptions {
+        url_template,
+        // Match `wt list --full`: include untracked files in the working
+        // diff (`HEAD±`) so the segment counts the same lines `wt step
+        // diff` would show, consistent with the rest of the statusline data.
+        include_untracked_in_working_diff: true,
+        ..CollectOptions::for_columns(list::columns::all_columns(), &gates)
+    }
+}
+
+/// Build the unpopulated list item for `worktree`, matched by its toplevel
+/// against the repo's worktree list.
+///
+/// `None` when the directory belongs to no worktree of the repo; the two
+/// callers render that differently (an empty JSON result, a bare branch
+/// segment), so this reports it rather than deciding.
+fn current_worktree_item(worktree: &WorkingTree) -> Result<Option<list::model::ListItem>> {
+    let repo = worktree.repo();
+
+    // Use git rev-parse --show-toplevel (via WorkingTree::root()) to correctly identify
+    // the worktree containing that directory, rather than prefix matching which fails for
+    // nested worktrees.
+    let worktree_root = worktree.root()?;
+    let Some(wt) = repo.list_worktrees()?.iter().find(|wt| {
+        canonicalize(&wt.path)
+            .map(|p| p == worktree_root)
+            .unwrap_or(false)
+    }) else {
+        return Ok(None);
+    };
+
+    // Determine if this is the primary worktree
+    // - Normal repos: the main worktree (repo root)
+    // - Bare repos: the default branch's worktree
+    let is_home = repo
+        .primary_worktree()
+        .ok()
+        .flatten()
+        .is_some_and(|p| wt.path == p);
+
+    Ok(Some(list::build_worktree_item(wt, is_home, true, false)))
+}
+
 /// Run statusline with JSON output format.
 ///
 /// Outputs the current worktree as JSON, using the same structure as `wt list --format=json`.
@@ -860,25 +917,7 @@ fn run_json() -> Result<()> {
     // next interactive `wt list --format=json`.
     let json_schema = list::resolve_json_schema(&repo);
 
-    // The statusline renders the full column set condensed (status, diffs,
-    // ahead/behind, upstream, CI, URL — see `format_statusline_segments`) but no
-    // LLM summary, so its plan is every column's tasks under full gates: CI runs,
-    // summary doesn't. URL is gated on a configured template like everywhere else.
-    let url_template = repo.url_template();
-    let gates = list::columns::ColumnGates {
-        show_full: true,
-        summary_enabled: false,
-        has_llm_command: false,
-        has_url_template: url_template.is_some(),
-    };
-    let options = CollectOptions {
-        url_template,
-        // Match `wt list --full`: include untracked files in the working
-        // diff (`HEAD±`) so the segment counts the same lines `wt step
-        // diff` would show, consistent with the rest of the statusline data.
-        include_untracked_in_working_diff: true,
-        ..CollectOptions::for_columns(list::columns::all_columns(), &gates)
-    };
+    let options = statusline_options(&repo);
     // What the schema-2 envelope reports as requested — read from the task
     // plan itself (like `collect()` does), so it can't drift from the gates.
     let collected = list::model::Collected {
@@ -900,38 +939,17 @@ fn run_json() -> Result<()> {
         }
     };
 
+    let worktree = repo.current_worktree();
     // Verify the directory this command operates on (`-C`, else the process
     // cwd) is in a worktree
-    if repo.current_worktree().git_dir().is_err() {
+    if worktree.git_dir().is_err() {
         // Not in a worktree - emit an empty result (consistent with wt list)
         return print_empty();
     }
 
-    // Get current worktree info
-    // Use git rev-parse --show-toplevel (via current_worktree().root()) to correctly identify
-    // the worktree containing that directory, rather than prefix matching which fails for
-    // nested worktrees.
-    let worktrees = repo.list_worktrees()?;
-    let worktree_root = repo.current_worktree().root()?;
-    let current_worktree = worktrees.iter().find(|wt| {
-        canonicalize(&wt.path)
-            .map(|p| p == worktree_root)
-            .unwrap_or(false)
-    });
-
-    let Some(wt) = current_worktree else {
+    let Some(mut item) = current_worktree_item(&worktree)? else {
         return print_empty();
     };
-
-    // Determine if this is the primary worktree
-    let is_home = repo
-        .primary_worktree()
-        .ok()
-        .flatten()
-        .is_some_and(|p| wt.path == p);
-
-    // Build item with identity fields
-    let mut item = list::build_worktree_item(wt, is_home, true, false);
 
     // Populate computed fields (parallel git operations)
     list::populate_item(&repo, &mut item, options)?;
@@ -1010,19 +1028,7 @@ fn git_status_segments(worktree: &WorkingTree) -> Result<Vec<StatuslineSegment>>
 
     let repo = worktree.repo();
 
-    // Get current worktree info
-    // Use git rev-parse --show-toplevel (via WorkingTree::root()) to correctly identify
-    // the worktree containing the path, rather than prefix matching which fails for
-    // nested worktrees.
-    let worktrees = repo.list_worktrees()?;
-    let worktree_root = worktree.root()?;
-    let current_worktree = worktrees.iter().find(|wt| {
-        canonicalize(&wt.path)
-            .map(|p| p == worktree_root)
-            .unwrap_or(false)
-    });
-
-    let Some(wt) = current_worktree else {
+    let Some(mut item) = current_worktree_item(worktree)? else {
         // Not in a worktree - just show branch name as a segment
         if let Ok(Some(branch)) = worktree.branch() {
             return Ok(vec![StatuslineSegment::from_column(
@@ -1036,59 +1042,18 @@ fn git_status_segments(worktree: &WorkingTree) -> Result<Vec<StatuslineSegment>>
     // If we can't determine the default branch, just show current branch
     if repo.default_branch().is_none() {
         return Ok(vec![StatuslineSegment::from_column(
-            wt.branch.as_deref().unwrap_or("HEAD").to_string(),
+            item.branch.as_deref().unwrap_or("HEAD").to_string(),
             ColumnKind::Branch,
         )]);
     }
 
-    // Determine if this is the primary worktree
-    // - Normal repos: the main worktree (repo root)
-    // - Bare repos: the default branch's worktree
-    let is_home = repo
-        .primary_worktree()
-        .ok()
-        .flatten()
-        .is_some_and(|p| wt.path == p);
+    // Populate computed fields (parallel git operations) — the full plan gives
+    // complete status symbols.
+    list::populate_item(repo, &mut item, statusline_options(repo))?;
 
-    // Build item with identity fields
-    let mut item = list::build_worktree_item(wt, is_home, true, false);
-
-    // Load URL template from project config (if configured)
-    let url_template = repo.url_template();
-
-    // Same plan as the other statusline path: the full column set condensed
-    // (CI included), no LLM summary. See `format_statusline_segments`.
-    let gates = list::columns::ColumnGates {
-        show_full: true,
-        summary_enabled: false,
-        has_llm_command: false,
-        has_url_template: url_template.is_some(),
-    };
-    let options = CollectOptions {
-        url_template,
-        // Match `wt list --full`: include untracked files in the working
-        // diff (`HEAD±`) so the segment counts the same lines `wt step
-        // diff` would show, consistent with the rest of the statusline data.
-        include_untracked_in_working_diff: true,
-        ..CollectOptions::for_columns(list::columns::all_columns(), &gates)
-    };
-
-    // Populate computed fields (parallel git operations) — the full plan above
-    // gives complete status symbols.
-    list::populate_item(repo, &mut item, options)?;
-
-    // Get prioritized segments
-    let segments = item.format_statusline_segments();
-
-    if segments.is_empty() {
-        // Fallback: just show branch name
-        Ok(vec![StatuslineSegment::from_column(
-            wt.branch.as_deref().unwrap_or("HEAD").to_string(),
-            ColumnKind::Branch,
-        )])
-    } else {
-        Ok(segments)
-    }
+    // Never empty: the branch segment is unconditional, so there is no
+    // emptier case to fall back to.
+    Ok(item.format_statusline_segments())
 }
 
 #[cfg(test)]

@@ -1272,6 +1272,70 @@ fn scan_managed_files(
     Ok(out)
 }
 
+/// Replace a file's contents by renaming a sibling temp file over it.
+///
+/// `fs::write` truncates in place, so a crash, a full disk, or a lost power
+/// cable between the truncate and the write leaves the user's rc file empty or
+/// half-written — every line they ever added to it gone. Uninstall is the one
+/// place worktrunk rewrites a file whose other contents belong to the user, so
+/// it takes the rename path: the file is either entirely the old version or
+/// entirely the new one.
+///
+/// Three details a bare `NamedTempFile::new()` + `persist()` gets wrong:
+///
+/// - **Symlinks.** Dotfile managers (Mackup, chezmoi, stow) symlink `~/.zshrc`
+///   into a repo or a synced folder. `fs::write` follows the link and updates
+///   the real file; a rename would replace the link itself with a regular file
+///   and silently detach the user's setup. The target is resolved first, so the
+///   rename lands on the real file and the link survives.
+/// - **Same directory.** A temp file elsewhere (`/tmp`) means `persist` crosses
+///   a filesystem boundary, where it degrades to a copy — no longer atomic, and
+///   an outright failure on some setups. The temp file is created beside the
+///   resolved target.
+/// - **Mode.** A fresh temp file is `0600`; an rc file is typically `0644`. The
+///   target's mode is copied onto the temp file before the rename, so the
+///   permissions survive the replacement. Windows has no equivalent to carry.
+///
+/// Ownership is not preserved — the replacement belongs to the running user, so
+/// a root-run uninstall against another user's rc file would change its owner.
+/// Restoring it needs a `chown`, which no current dependency exposes.
+///
+/// Creating the temp file needs write access to the target's directory, which a
+/// truncating write did not, so uninstall now fails where a read-only directory
+/// holds a writable rc file. Failing is the trade Data Safety asks for: the rc
+/// file is left as it was, and the user can rerun once the directory is
+/// writable.
+fn replace_file_atomically(path: &Path, content: &str) -> Result<(), String> {
+    let write_err =
+        |e: io::Error| format!("Failed to write {}: {e}", format_path_for_display(path));
+
+    let target = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let dir = target.parent().unwrap_or_else(|| Path::new("."));
+
+    let mut temp = tempfile::Builder::new()
+        .prefix(".wt-shell-config.")
+        .suffix(".tmp")
+        .tempfile_in(dir)
+        .map_err(write_err)?;
+    temp.write_all(content.as_bytes()).map_err(write_err)?;
+    temp.flush().map_err(write_err)?;
+
+    // Before the sync, so the mode lands on disk with the contents.
+    #[cfg(unix)]
+    if let Ok(metadata) = fs::metadata(&target) {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = metadata.permissions().mode();
+        temp.as_file()
+            .set_permissions(fs::Permissions::from_mode(mode))
+            .map_err(write_err)?;
+    }
+
+    temp.as_file().sync_all().map_err(write_err)?;
+    temp.persist(&target).map_err(|e| write_err(e.error))?;
+
+    Ok(())
+}
+
 fn uninstall_from_file(
     shell: Shell,
     path: &Path,
@@ -1324,8 +1388,7 @@ fn uninstall_from_file(
         new_content
     };
 
-    fs::write(path, new_content)
-        .map_err(|e| format!("Failed to write {}: {}", format_path_for_display(path), e))?;
+    replace_file_atomically(path, &new_content)?;
 
     Ok(Some(UninstallResult {
         shell,
@@ -1668,6 +1731,100 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    /// An rc file with one integration line and content the user owns on either
+    /// side of it. Unix-only, like the atomic-rewrite tests that use it: mode
+    /// and symlink semantics have no Windows equivalent.
+    #[cfg(unix)]
+    fn write_rc(path: &Path) {
+        fs::write(
+            path,
+            "export EDITOR=hx\n\neval \"$(wt config shell init bash)\"\nalias ll='ls -l'\n",
+        )
+        .unwrap();
+    }
+
+    #[cfg(unix)]
+    const RC_AFTER_UNINSTALL: &str = "export EDITOR=hx\nalias ll='ls -l'\n";
+
+    #[cfg(unix)]
+    #[test]
+    fn test_uninstall_from_file_preserves_mode_and_leaves_no_temp_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().unwrap();
+        let rc = dir.path().join(".bashrc");
+        write_rc(&rc);
+        // 0644 is the usual rc mode and differs from the 0600 a fresh temp file
+        // is created with, so an uncopied mode shows up as a diff.
+        fs::set_permissions(&rc, fs::Permissions::from_mode(0o644)).unwrap();
+
+        uninstall_from_file(Shell::Bash, &rc, false)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(fs::read_to_string(&rc).unwrap(), RC_AFTER_UNINSTALL);
+        assert_eq!(
+            fs::metadata(&rc).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
+        // The temp file is renamed, not left beside the target.
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_uninstall_from_file_writes_through_symlink() {
+        // A dotfile manager's layout: the real file lives in a repo and `~/.bashrc`
+        // is a link to it. The rewrite must follow the link, not replace it —
+        // otherwise the user's rc silently stops tracking their dotfiles.
+        let dir = tempfile::TempDir::new().unwrap();
+        let repo = dir.path().join("dotfiles");
+        let home = dir.path().join("home");
+        fs::create_dir(&repo).unwrap();
+        fs::create_dir(&home).unwrap();
+        let real = repo.join("bashrc");
+        let link = home.join(".bashrc");
+        write_rc(&real);
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        uninstall_from_file(Shell::Bash, &link, false)
+            .unwrap()
+            .unwrap();
+
+        assert!(
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::read_to_string(&real).unwrap(), RC_AFTER_UNINSTALL);
+        // The temp file was created next to the resolved target, so a rename
+        // across filesystems can't silently downgrade to a copy.
+        assert_eq!(fs::read_dir(&repo).unwrap().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_uninstall_from_file_leaves_rc_intact_when_write_fails() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().unwrap();
+        let rc = dir.path().join(".bashrc");
+        write_rc(&rc);
+        let original = fs::read_to_string(&rc).unwrap();
+        // Read and traverse still work, so the rewrite gets as far as creating
+        // its temp file and fails there — the point a truncate-in-place write
+        // would already have emptied the file.
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o500)).unwrap();
+
+        let result = uninstall_from_file(Shell::Bash, &rc, false);
+
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(
+            result.is_err(),
+            "expected the rewrite to fail in a read-only directory"
+        );
+        assert_eq!(fs::read_to_string(&rc).unwrap(), original);
     }
 
     #[cfg(unix)]
