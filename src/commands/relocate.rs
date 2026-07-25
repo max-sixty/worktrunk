@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::UserConfig;
-use worktrunk::git::{ErrorExt, Repository, WorktreeInfo};
+use worktrunk::git::{ErrorExt, Repository, WorktreeInfo, format_unresolved_conflicts};
 use worktrunk::path::{format_path_for_display, paths_match};
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, println, progress_message,
@@ -283,12 +283,11 @@ pub fn validate_candidates(
                 // is the policy choice of skip over abort, not the guard.
                 let unmerged = worktree.unmerged_paths()?;
                 if !unmerged.is_empty() {
-                    let count = unmerged.len();
-                    let paths = if count == 1 { "path" } else { "paths" };
                     eprintln!(
                         "{}",
                         warning_message(cformat!(
-                            "Skipping <bold>{branch}</> ({count} {paths} with unresolved conflicts)"
+                            "Skipping <bold>{branch}</> ({})",
+                            format_unresolved_conflicts(unmerged.len())
                         ))
                     );
                     eprintln!("{}", format_with_gutter(&unmerged.join("\n"), None));
