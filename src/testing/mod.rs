@@ -243,6 +243,34 @@ pub const TEST_EPOCH: u64 = 1735776000;
 /// Generous to avoid flakiness under CI load; exponential backoff means fast tests when things work.
 const BG_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// Value for `GIT_ALLOW_PROTOCOL` on every git process a test spawns, whether
+/// directly or as a child of `wt`: local paths and `file://` only, so the
+/// suite cannot reach the wire.
+///
+/// Tests point remotes at real hosts (`https://github.com/test-owner/…`) to
+/// drive forge detection, and `Repository::default_branch()` is allowed to
+/// fall through to `git ls-remote` when neither the worktrunk cache nor
+/// `origin/HEAD` resolves. So a test that never meant to do network work
+/// makes an unbounded connect to whatever host the URL names. Nothing in that
+/// path has a timeout: an unanswered SYN costs ~127 s per address on Linux
+/// (`tcp_syn_retries=6`) and a host with several A/AAAA records is tried in
+/// turn, which is how a 2-second test reaches nextest's 180 s limit.
+///
+/// Denying the transport turns that into an immediate `transport 'https' not
+/// allowed`; detection then falls back to local inference, leaving output
+/// unchanged. The adjacent `GIT_TERMINAL_PROMPT=0` doesn't subsume this: it
+/// only suppresses the credential prompt the host's 401 triggers, so the
+/// request has already gone out by the time it applies.
+const GIT_ALLOWED_PROTOCOLS: &str = "file";
+
+/// Restore git's default protocol set on a command built by
+/// [`configure_git_cmd`], for a caller whose job is to fetch a fixture from
+/// upstream — the real-repo benchmark clone. Grep for this to enumerate
+/// everything that may reach the wire; tests are not among them.
+pub fn allow_network_transports(cmd: &mut Command) {
+    cmd.env_remove("GIT_ALLOW_PROTOCOL");
+}
+
 /// Static environment variables shared by all test isolation helpers.
 ///
 /// These are used by both `configure_cli_command()` (for Command-based tests)
@@ -253,6 +281,10 @@ const BG_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 /// are NOT included here because they depend on the TestRepo instance.
 pub const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
     ("CLICOLOR_FORCE", "1"),
+    // Deny network git transports (see GIT_ALLOWED_PROTOCOLS). Host-independent,
+    // so it belongs here rather than in each builder's path-dependent block —
+    // which is what reaches the hand-rolled PTY env builders too.
+    ("GIT_ALLOW_PROTOCOL", GIT_ALLOWED_PROTOCOLS),
     // Terminal width for PTY tests. configure_cli_command() overrides to 500 for longer paths.
     ("COLUMNS", "150"),
     // Deterministic locale settings
@@ -290,33 +322,6 @@ pub const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
 // - configure_cli_command() sets TERM=alacritty for hyperlink detection testing
 // - PTY tests (especially skim-based picker tests) need a TERM with valid terminfo
 // - macOS CI doesn't have alacritty terminfo, causing skim to fail
-
-/// Value for `GIT_ALLOW_PROTOCOL` on every git process a test spawns: local
-/// paths and `file://` only, so the suite cannot reach the wire.
-///
-/// Tests point remotes at real hosts (`https://github.com/test-owner/…`) to
-/// drive forge detection, and `Repository::default_branch()` is allowed to
-/// fall through to `git ls-remote` when neither the worktrunk cache nor
-/// `origin/HEAD` resolves. So a test that never meant to do network work
-/// makes an unbounded connect to whatever host the URL names. Nothing in that
-/// path has a timeout: an unanswered SYN costs ~127 s per address on Linux
-/// (`tcp_syn_retries=6`) and a host with several A/AAAA records is tried in
-/// turn, which is how a 2-second test reaches nextest's 180 s limit.
-///
-/// Denying the transport turns that into an immediate `transport 'https' not
-/// allowed`; detection then falls back to local inference, leaving output
-/// unchanged. The adjacent `GIT_TERMINAL_PROMPT=0` doesn't subsume this: it
-/// only suppresses the credential prompt the host's 401 triggers, so the
-/// request has already gone out by the time it applies.
-const GIT_ALLOWED_PROTOCOLS: &str = "file";
-
-/// Restore git's default protocol set on a command built by
-/// [`configure_git_cmd`], for a caller whose job is to fetch a fixture from
-/// upstream — the real-repo benchmark clone. Grep for this to enumerate
-/// everything that may reach the wire; tests are not among them.
-pub fn allow_network_transports(cmd: &mut Command) {
-    cmd.env_remove("GIT_ALLOW_PROTOCOL");
-}
 
 /// Null device path, platform-appropriate.
 /// Use this for GIT_CONFIG_SYSTEM to disable system config in tests.
@@ -1093,10 +1098,6 @@ impl TestRepo {
             ),
             // Prevent git from prompting for credentials when running under a TTY
             ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
-            (
-                "GIT_ALLOW_PROTOCOL".to_string(),
-                GIT_ALLOWED_PROTOCOLS.to_string(),
-            ),
             // Use test-specific home directory for isolation
             ("HOME".to_string(), self.home_path().display().to_string()),
             (
@@ -3105,10 +3106,10 @@ mod tests {
         };
 
         let local = ls_remote(&path_slash::PathExt::to_slash_lossy(repo.root_path()));
+        let local_stderr = String::from_utf8_lossy(&local.stderr);
         assert!(
             local.status.success(),
-            "local-path remote must still resolve: {}",
-            String::from_utf8_lossy(&local.stderr)
+            "local-path remote must still resolve: {local_stderr}"
         );
 
         let remote = ls_remote("https://github.com/test-owner/test-repo.git");
