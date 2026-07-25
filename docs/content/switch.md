@@ -40,6 +40,12 @@ If the branch already has a worktree, `wt switch` changes directories to it. Oth
 
 {{ terminal(cmd="wt switch feature                        # Existing branch → creates worktree|||wt switch --create feature               # New branch and worktree|||wt switch --create fix --base release    # New branch from release|||wt switch --create temp --no-hooks       # Skip hooks") }}
 
+## Naming a worktree
+
+A worktree answers to its branch name and to its own path, so `wt switch feature` and `wt switch ../repo.feature` reach the same place. The branch is tried first, so a directory that shares a branch's name never shadows it. A path is what names the worktrees a branch cannot: a detached one, or one of two checkouts of the same branch.
+
+Every argument that names a worktree resolves this way — `wt remove`, `wt merge`, `wt step diff --branch`, and the rest — as does every argument that names a branch, where a worktree's path stands for the branch checked out there. Relative paths resolve against `-C`, and a leading `~` against the home directory, so a path worktrunk printed can be pasted back.
+
 ## Shortcuts
 
 | Shortcut | Meaning |
@@ -149,7 +155,7 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
 
 <b><span class=g>Arguments:</span></b>
   <span class=c>[BRANCH]</span>
-          Branch name, shortcut, or PR/MR URL
+          Branch, worktree path, shortcut, or PR/MR URL
 
           Opens interactive picker if omitted. Shortcuts: <b>^</b> (default branch), <b>-</b> (previous), <b>@</b>
           (current), <b>pr:{N}</b> (GitHub PR), <b>mr:{N}</b> (GitLab MR)
@@ -165,7 +171,7 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           Create a new branch
 
   <b><span class=c>-b</span></b>, <b><span class=c>--base</span></b><span class=c> &lt;BASE&gt;</span>
-          Base branch
+          Base branch or worktree path
 
           Defaults to default branch. Supports the same shortcuts as the branch argument: <b>^</b>, <b>@</b>, <b>-</b>,
 <b>          pr:{N}</b>, <b>mr:{N}</b>.

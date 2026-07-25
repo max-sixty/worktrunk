@@ -110,7 +110,7 @@ Usage: <b><span class=c>wt merge</span></b> <span class=c>[OPTIONS]</span> <span
 
 <b><span class=g>Arguments:</span></b>
   <span class=c>[TARGET]</span>
-          Target branch
+          Target branch or worktree path
 
           Defaults to default branch.
 

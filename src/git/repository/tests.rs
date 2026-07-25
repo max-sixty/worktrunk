@@ -1160,3 +1160,146 @@ fn prewarm_still_caches_preload_when_worktree_config_disabled() {
         "prewarm should preload normal repos (no extensions.worktreeConfig)"
     );
 }
+
+/// A worktree answers to its branch and to its own path, and the branch wins.
+///
+/// Both spellings reaching the same worktree is the point of routing every
+/// worktree argument through one canonicalizer; branch-first is what keeps a
+/// directory from shadowing a branch that shares its name.
+#[test]
+fn resolve_worktree_accepts_branch_and_path() {
+    use crate::git::ResolvedWorktree;
+    use crate::testing::TestRepo;
+    use dunce::canonicalize;
+
+    let mut test = TestRepo::with_initial_commit();
+    let worktree_path = test.add_worktree("feature");
+
+    // A relative path resolves against `-C`, which only a spawned `wt` has —
+    // `switch::switch_by_relative_worktree_path` covers that spelling.
+    for selector in ["feature", worktree_path.to_str().unwrap()] {
+        let resolved = test.repo.resolve_worktree(selector).unwrap();
+        let ResolvedWorktree::Worktree { path, branch } = resolved else {
+            panic!("{selector} should resolve to a worktree");
+        };
+        assert_eq!(canonicalize(&path).unwrap(), worktree_path);
+        assert_eq!(branch.as_deref(), Some("feature"));
+    }
+}
+
+/// A directory whose name matches a branch does not shadow it: `wt switch docs`
+/// means the branch even when `docs/` is also a worktree.
+#[test]
+fn resolve_worktree_prefers_branch_over_same_named_directory() {
+    use crate::git::ResolvedWorktree;
+    use crate::testing::TestRepo;
+    use dunce::canonicalize;
+
+    let mut test = TestRepo::with_initial_commit();
+    let branch_worktree = test.add_worktree("docs");
+    // A second worktree literally at `<repo>/docs`, on a different branch.
+    let nested = test.root_path().join("docs");
+    test.add_worktree_at_path("docs-nested", &nested);
+
+    let ResolvedWorktree::Worktree { path, branch } = test.repo.resolve_worktree("docs").unwrap()
+    else {
+        panic!("docs should resolve to a worktree");
+    };
+    assert_eq!(branch.as_deref(), Some("docs"));
+    assert_eq!(canonicalize(&path).unwrap(), branch_worktree);
+}
+
+/// A detached worktree has no branch to be named by, so its path is the only
+/// selector that reaches it.
+#[test]
+fn resolve_worktree_reaches_detached_worktree_by_path() {
+    use crate::git::ResolvedWorktree;
+    use crate::testing::TestRepo;
+    use dunce::canonicalize;
+
+    let mut test = TestRepo::with_initial_commit();
+    let worktree_path = test.add_worktree("feature");
+    test.detach_head_in_worktree("feature");
+
+    let ResolvedWorktree::Worktree { path, branch } = test
+        .repo
+        .resolve_worktree(worktree_path.to_str().unwrap())
+        .unwrap()
+    else {
+        panic!("a detached worktree should resolve by path");
+    };
+    assert_eq!(canonicalize(&path).unwrap(), worktree_path);
+    assert_eq!(branch, None);
+
+    // And it is the one case `require_selected_branch` refuses.
+    let err = test
+        .repo
+        .require_selected_branch(worktree_path.to_str().unwrap(), "promote")
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("detached"),
+        "expected a detached-HEAD error, got: {err}"
+    );
+}
+
+/// `-` and `^` expand to a branch, so the literal token never reaches the path
+/// lookup — a directory named `-` cannot hijack `wt switch -`.
+#[test]
+fn resolve_worktree_does_not_treat_shortcuts_as_paths() {
+    use crate::git::ResolvedWorktree;
+    use crate::testing::TestRepo;
+
+    let mut test = TestRepo::with_initial_commit();
+    let default_branch = test.repo.default_branch().unwrap();
+    // A worktree literally at `<repo>/^`, which `^` must not resolve to.
+    let decoy = test.root_path().join("^");
+    test.add_worktree_at_path("decoy", &decoy);
+
+    let resolved = test.repo.resolve_worktree("^").unwrap();
+    let branch = match resolved {
+        ResolvedWorktree::Worktree { branch, .. } => branch,
+        ResolvedWorktree::BranchOnly { branch } => Some(branch),
+    };
+    assert_eq!(branch.as_deref(), Some(default_branch.as_str()));
+}
+
+/// A name matching neither a branch nor a worktree path is branch-only, which
+/// is what lets `wt remove` still delete a worktree-less branch.
+#[test]
+fn resolve_worktree_falls_through_to_branch_only() {
+    use crate::git::ResolvedWorktree;
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::with_initial_commit();
+
+    let resolved = test.repo.resolve_worktree("../nowhere").unwrap();
+    let ResolvedWorktree::BranchOnly { branch } = resolved else {
+        panic!("an unmatched selector should resolve to branch-only");
+    };
+    assert_eq!(branch, "../nowhere");
+
+    // A selector matching nothing names neither, so the error claims neither —
+    // suggesting `wt switch ../nowhere` to create a worktree would only fail.
+    let err = test.repo.require_worktree("../nowhere").unwrap_err();
+    assert!(
+        err.to_string().contains("No branch or worktree named"),
+        "expected an unmatched-selector error, got: {err}"
+    );
+}
+
+/// A branch that exists without a checkout is the one case where offering to
+/// create a worktree is right, so it keeps the distinct message and hint.
+#[test]
+fn require_worktree_distinguishes_a_branch_with_no_checkout() {
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::with_initial_commit();
+    test.run_git(&["branch", "worktreeless"]);
+
+    let err = test.repo.require_worktree("worktreeless").unwrap_err();
+    let rendered = format!("{err}");
+    assert!(
+        rendered.contains("has no worktree"),
+        "expected the branch-without-worktree error, got: {rendered}"
+    );
+}

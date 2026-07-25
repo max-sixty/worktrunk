@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use color_print::cformat;
 use dunce::canonicalize;
 
-use super::{GitError, Repository, ResolvedWorktree, WorktreeInfo};
+use super::{GitError, Repository, ResolvedWorktree, WorktreeInfo, resolve_input_path};
 use crate::path::{format_path_for_display, paths_match};
 
 impl Repository {
@@ -227,55 +227,139 @@ impl Repository {
         }
     }
 
-    /// Resolve a worktree by name, returning its path and branch (if known).
+    /// Resolve a worktree selector — the one place a token the user typed
+    /// becomes a worktree.
     ///
-    /// Unlike `resolve_worktree_name` which returns a branch name, this returns
-    /// the worktree path directly. This is useful for commands like `wt remove`
-    /// that operate on worktrees, not branches.
+    /// Every argument that names a worktree routes through here, so they all
+    /// accept the same vocabulary: the shortcuts, a branch name, and the path
+    /// of the worktree itself. wt addresses worktrees by branch (see the
+    /// "Worktree Model" section of `CLAUDE.md`), so the branch is tried first
+    /// and a path only answers what a branch name cannot — a detached worktree,
+    /// or one of several checkouts of the same branch.
     ///
-    /// # Arguments
-    /// * `name` - The worktree name to resolve:
-    ///   - "@" for current worktree (works even in detached HEAD)
-    ///   - "-" for previous branch's worktree
-    ///   - "^" for the default branch's worktree
-    ///   - any other string is treated as a branch name
+    /// Resolution order:
+    /// 1. `@` — the current worktree, matched by path so detached HEAD resolves
+    /// 2. `-` / `^` — the previous / default branch, then as a branch below
+    /// 3. a branch with a worktree
+    /// 4. a path naming a registered worktree — absolute, `~`-relative, or
+    ///    relative to `-C` (see [`resolve_input_path`])
+    /// 5. otherwise the branch alone, which may or may not exist
     ///
     /// # Returns
-    /// - `Worktree { path, branch }` if a worktree exists
-    /// - `BranchOnly { branch }` if only the branch exists (no worktree)
-    /// - `Err` if neither worktree nor branch exists
+    /// - `Worktree { path, branch }` — `branch` is `None` for a detached worktree
+    /// - `BranchOnly { branch }` when nothing is checked out under that name
     pub fn resolve_worktree(&self, name: &str) -> anyhow::Result<ResolvedWorktree> {
-        match name {
-            "@" => {
-                // Current worktree by path - works even in detached HEAD
-                // If worktree_root fails (e.g., in bare repo directory), give a clear error
-                let path = self
-                    .current_worktree()
-                    .root()
-                    .map_err(|_| GitError::NotInWorktree {
-                        action: Some("resolve @".into()),
-                    })?;
-                // root() returns canonicalized path, so canonicalize worktree paths
-                // for comparison to handle symlinks (e.g., macOS /var -> /private/var)
-                let worktrees = self.list_worktrees()?;
-                let branch = worktrees
-                    .iter()
-                    .find(|wt| canonicalize(&wt.path).map(|p| p == path).unwrap_or(false))
-                    .and_then(|wt| wt.branch.clone());
-                Ok(ResolvedWorktree::Worktree { path, branch })
-            }
-            _ => {
-                // Resolve to branch name first, then find its worktree
-                let branch = self.resolve_worktree_name(name)?;
-                match self.worktree_for_branch(&branch)? {
-                    Some(path) => Ok(ResolvedWorktree::Worktree {
-                        path,
-                        branch: Some(branch),
-                    }),
-                    None => Ok(ResolvedWorktree::BranchOnly { branch }),
-                }
-            }
+        if name == "@" {
+            // Current worktree by path - works even in detached HEAD
+            // If worktree_root fails (e.g., in bare repo directory), give a clear error
+            let path = self
+                .current_worktree()
+                .root()
+                .map_err(|_| GitError::NotInWorktree {
+                    action: Some("resolve @".into()),
+                })?;
+            // root() returns canonicalized path, so canonicalize worktree paths
+            // for comparison to handle symlinks (e.g., macOS /var -> /private/var)
+            let worktrees = self.list_worktrees()?;
+            let branch = worktrees
+                .iter()
+                .find(|wt| canonicalize(&wt.path).map(|p| p == path).unwrap_or(false))
+                .and_then(|wt| wt.branch.clone());
+            return Ok(ResolvedWorktree::Worktree { path, branch });
         }
+
+        let branch = self.resolve_worktree_name(name)?;
+        if let Some(path) = self.worktree_for_branch(&branch)? {
+            return Ok(ResolvedWorktree::Worktree {
+                path,
+                branch: Some(branch),
+            });
+        }
+
+        // A shortcut named a branch, not a directory: `resolve_worktree_name`
+        // returns a non-shortcut token unchanged, so an unequal result is
+        // exactly the case where the literal token would be a nonsense path.
+        if branch == name
+            && let Some((path, wt_branch)) = self.worktree_at_input_path(name)?
+        {
+            return Ok(ResolvedWorktree::Worktree {
+                path,
+                branch: wt_branch,
+            });
+        }
+
+        Ok(ResolvedWorktree::BranchOnly { branch })
+    }
+
+    /// The branch a selector names, erroring only when it names a detached
+    /// worktree.
+    ///
+    /// [`resolve_worktree`](Self::resolve_worktree) for the arguments that want
+    /// a branch rather than a worktree — `wt step promote`, and the `--branch`
+    /// of the `wt config state` commands, which key state by branch name. A
+    /// branch with no worktree is a fine answer to those; a worktree named by
+    /// path that has no branch is not.
+    pub fn require_selected_branch(&self, name: &str, action: &str) -> anyhow::Result<String> {
+        match self.resolve_worktree(name)? {
+            ResolvedWorktree::Worktree {
+                branch: Some(branch),
+                ..
+            }
+            | ResolvedWorktree::BranchOnly { branch } => Ok(branch),
+            ResolvedWorktree::Worktree { path, branch: None } => Err(GitError::DetachedHead {
+                action: Some(cformat!(
+                    "{action} — <bold>{}</> is detached",
+                    format_path_for_display(&path)
+                )),
+            }
+            .into()),
+        }
+    }
+
+    /// The path of the worktree a selector names, erroring when it names none.
+    ///
+    /// [`resolve_worktree`](Self::resolve_worktree) for the commands that need a
+    /// worktree to operate in rather than a branch to reason about — `wt step
+    /// diff --branch`, `copy-ignored --from`/`--to`, `promote`. A branch with no
+    /// checkout and a name matching nothing at all are the same answer to them.
+    /// A selector matching nothing at all is reported as such, rather than as a
+    /// branch without a worktree: `wt switch <the selector>` creates a worktree
+    /// only when the branch exists, so offering it for a mistyped path would
+    /// just fail again.
+    pub fn require_worktree(&self, name: &str) -> anyhow::Result<PathBuf> {
+        match self.resolve_worktree(name)? {
+            ResolvedWorktree::Worktree { path, .. } => Ok(path),
+            ResolvedWorktree::BranchOnly { branch } => Err(self.no_worktree_error(branch)),
+        }
+    }
+
+    /// The error for a selector that resolved to a branch with no checkout.
+    fn no_worktree_error(&self, branch: String) -> anyhow::Error {
+        match self.branch(&branch).exists_locally() {
+            Ok(true) => GitError::WorktreeNotFound { branch }.into(),
+            // A ref lookup that fails says nothing about the branch, so fall
+            // back to the message that claims less.
+            _ => GitError::WorktreeSelectorNotFound { selector: branch }.into(),
+        }
+    }
+
+    /// The worktree a user-supplied token names by path, if it names one.
+    ///
+    /// The path half of [`resolve_worktree`](Self::resolve_worktree), split out
+    /// for arguments that want a branch rather than a worktree — a merge target,
+    /// a state key. Resolving the token is the whole point: it goes through
+    /// [`resolve_input_path`] here so no call site
+    /// has to remember that a relative path answers to `-C` and a leading `~` to
+    /// the home directory.
+    ///
+    /// Branch-first is the rule everywhere, so callers reach for this only after
+    /// a branch or ref lookup has already come up empty. `branch` is `None` for
+    /// a detached worktree.
+    pub fn worktree_at_input_path(
+        &self,
+        name: &str,
+    ) -> anyhow::Result<Option<(PathBuf, Option<String>)>> {
+        self.worktree_at_path(&resolve_input_path(name))
     }
 
     /// Find the "home" path - where to cd when leaving a worktree.

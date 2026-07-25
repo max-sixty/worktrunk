@@ -101,7 +101,7 @@ Usage: wt merge [OPTIONS] [TARGET]
 
 Arguments:
   [TARGET]
-          Target branch
+          Target branch or worktree path
 
           Defaults to default branch.
 

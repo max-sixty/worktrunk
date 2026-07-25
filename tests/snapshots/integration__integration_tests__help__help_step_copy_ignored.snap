@@ -9,6 +9,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_ALLOW_PROTOCOL: file
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
@@ -42,12 +43,12 @@ Usage: [1m[36mwt step copy-ignored[0m [36m[OPTIONS][0m
 
 [1m[32mOptions:[0m
       [1m[36m--from[0m[36m [0m[36m<FROM>[0m
-          Source worktree branch[0m
+          Source worktree branch or path[0m
           
           Defaults to main worktree.[0m
 
       [1m[36m--to[0m[36m [0m[36m<TO>[0m
-          Destination worktree branch[0m
+          Destination worktree branch or path[0m
           
           Defaults to current worktree.[0m
 

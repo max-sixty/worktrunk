@@ -8,6 +8,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_ALLOW_PROTOCOL: file
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
@@ -41,7 +42,7 @@ Usage: wt merge [OPTIONS] [TARGET]
 
 Arguments:
   [TARGET]
-          Target branch
+          Target branch or worktree path
           
           Defaults to default branch.
 

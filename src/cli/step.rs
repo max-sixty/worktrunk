@@ -2,7 +2,7 @@ use clap::{Args, Subcommand};
 
 #[derive(Args)]
 pub struct CommitArgs {
-    /// Branch to operate on (defaults to current worktree)
+    /// Branch or worktree path (defaults to current worktree)
     #[arg(short, long, add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
     pub(crate) branch: Option<String>,
 
@@ -30,7 +30,7 @@ pub struct CommitArgs {
 
 #[derive(Args)]
 pub struct SquashArgs {
-    /// Target branch
+    /// Target branch or worktree path
     ///
     /// Defaults to default branch.
     #[arg(add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
@@ -183,7 +183,7 @@ A conflicting commit leaves the rebase open rather than undoing it. The worktree
 "#
     )]
     Rebase {
-        /// Target branch, tag, or commit
+        /// Target branch, tag, commit, or worktree path
         ///
         /// Defaults to default branch.
         #[arg(add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
@@ -218,7 +218,7 @@ A worktree that is still registered but whose directory is gone is refused as we
 "#
     )]
     Push {
-        /// Target branch
+        /// Target branch or worktree path
         ///
         /// Defaults to default branch.
         #[arg(add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
@@ -285,13 +285,13 @@ $ GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state defau
 "#
     )]
     Diff {
-        /// Target branch
+        /// Target branch or worktree path
         ///
         /// Defaults to default branch.
         #[arg(add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         target: Option<String>,
 
-        /// Branch to operate on (defaults to current worktree)
+        /// Branch or worktree path (defaults to current worktree)
         #[arg(short, long, add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
 
@@ -397,13 +397,13 @@ The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://c
 - worktrunk runs as a configurable hook in the worktree lifecycle
 "#)]
     CopyIgnored {
-        /// Source worktree branch
+        /// Source worktree branch or path
         ///
         /// Defaults to main worktree.
         #[arg(long, add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
         from: Option<String>,
 
-        /// Destination worktree branch
+        /// Destination worktree branch or path
         ///
         /// Defaults to current worktree.
         #[arg(long, add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
@@ -587,7 +587,7 @@ The swap uses `rename()` for each entry — fast regardless of entry size, since
 "#
     )]
     Promote {
-        /// Branch to promote to main worktree
+        /// Branch or worktree path to promote to main worktree
         ///
         /// Defaults to current branch, or default branch from main worktree.
         #[arg(add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
@@ -713,7 +713,7 @@ refuses), unless `--commit` is passed.
 - **Detached HEAD** — no branch to compute expected path
 "#)]
     Relocate {
-        /// Worktrees to relocate (defaults to all mismatched)
+        /// Worktrees to relocate, by branch or path (defaults to all mismatched)
         #[arg(add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
         branches: Vec<String>,
 

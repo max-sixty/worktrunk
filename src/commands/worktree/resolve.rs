@@ -1,6 +1,9 @@
-//! Worktree resolution and path computation.
+//! Worktree path computation and display.
 //!
-//! Functions for resolving worktree arguments and computing expected paths.
+//! Where a worktree *belongs* — the `worktree-path` template, the expected-path
+//! check that names a worktree in output, and the bare-repo template prompt.
+//! Turning what the user typed into a worktree is the opposite direction and
+//! lives in [`Repository::resolve_worktree`](worktrunk::git::Repository::resolve_worktree).
 
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -8,61 +11,13 @@ use std::path::PathBuf;
 use color_print::cformat;
 use normalize_path::NormalizePath;
 use worktrunk::config::UserConfig;
-use worktrunk::git::{Repository, ResolvedWorktree, resolve_input_path};
+use worktrunk::git::Repository;
 use worktrunk::path::{format_path_for_display, paths_match};
 use worktrunk::styling::{
     eprintln, format_toml, hint_message, info_message, success_message, warning_message,
 };
 
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
-
-/// Resolve a worktree argument using branch-first lookup.
-///
-/// Resolution order:
-/// 1. Special symbols ("@", "-", "^") are handled specially
-/// 2. Resolve argument as branch name
-/// 3. If branch has a worktree, return it
-/// 4. Fall back to path-based lookup (supports detached worktrees)
-/// 5. Otherwise, return branch-only (no worktree)
-///
-/// If branch lookup fails to find a worktree, the argument is tried as a
-/// filesystem path — absolute, or relative to the directory wt was pointed at
-/// (`-C`, else the process cwd). This supports removing detached HEAD worktrees
-/// which have no branch name.
-pub fn resolve_worktree_arg(repo: &Repository, name: &str) -> anyhow::Result<ResolvedWorktree> {
-    // Special symbols - delegate to Repository for consistent error handling
-    match name {
-        "@" | "-" | "^" => {
-            return repo.resolve_worktree(name);
-        }
-        _ => {}
-    }
-
-    // Resolve as branch name
-    let branch = repo.resolve_worktree_name(name)?;
-
-    // Branch-first: check if branch has worktree anywhere
-    if let Some(path) = repo.worktree_for_branch(&branch)? {
-        return Ok(ResolvedWorktree::Worktree {
-            path,
-            branch: Some(branch),
-        });
-    }
-
-    // No worktree for branch - fall back to path-based lookup (supports detached
-    // worktrees). A relative path resolves against `-C`, like git's own path
-    // arguments — see `resolve_input_path`.
-    let abs_path = resolve_input_path(name);
-    if let Some((path, wt_branch)) = repo.worktree_at_path(&abs_path)? {
-        return Ok(ResolvedWorktree::Worktree {
-            path,
-            branch: wt_branch,
-        });
-    }
-
-    // No worktree for branch and no worktree at the path
-    Ok(ResolvedWorktree::BranchOnly { branch })
-}
 
 /// Compute the expected worktree path for a branch name.
 ///

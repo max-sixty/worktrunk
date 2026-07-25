@@ -342,7 +342,7 @@ impl HookFlags {
 
 #[derive(Args)]
 pub(crate) struct SwitchArgs {
-    /// Branch name, shortcut, or PR/MR URL
+    /// Branch, worktree path, shortcut, or PR/MR URL
     ///
     /// Opens interactive picker if omitted.
     /// Shortcuts: `^` (default branch), `-` (previous), `@` (current), `pr:{N}` (GitHub PR), `mr:{N}` (GitLab MR)
@@ -365,7 +365,7 @@ pub(crate) struct SwitchArgs {
     #[arg(short = 'c', long, requires = "branch")]
     pub(crate) create: bool,
 
-    /// Base branch
+    /// Base branch or worktree path
     ///
     /// Defaults to default branch. Supports the same shortcuts as the branch
     /// argument: `^`, `@`, `-`, `pr:{N}`, `mr:{N}`.
@@ -526,7 +526,7 @@ pub(crate) struct RemoveArgs {
 
 #[derive(Args)]
 pub(crate) struct MergeArgs {
-    /// Target branch
+    /// Target branch or worktree path
     ///
     /// Defaults to default branch.
     #[arg(add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
@@ -641,6 +641,12 @@ $ wt switch --create feature               # New branch and worktree
 $ wt switch --create fix --base release    # New branch from release
 $ wt switch --create temp --no-hooks       # Skip hooks
 ```
+
+## Naming a worktree
+
+A worktree answers to its branch name and to its own path, so `wt switch feature` and `wt switch ../repo.feature` reach the same place. The branch is tried first, so a directory that shares a branch's name never shadows it. A path is what names the worktrees a branch cannot: a detached one, or one of two checkouts of the same branch.
+
+Every argument that names a worktree resolves this way — `wt remove`, `wt merge`, `wt step diff --branch`, and the rest — as does every argument that names a branch, where a worktree's path stands for the branch checked out there. Relative paths resolve against `-C`, and a leading `~` against the home directory, so a path worktrunk printed can be pasted back.
 
 ## Shortcuts
 
