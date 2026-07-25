@@ -92,7 +92,7 @@ pub struct RelocatedEntry {
 
 /// A worktree that was skipped during validation or execution. `reason` is a
 /// short stable identifier suitable for JSON / scripting (e.g. `"locked"`,
-/// `"uncommitted"`, `"target_blocked"`).
+/// `"uncommitted"`, `"unmerged"`, `"target_blocked"`).
 pub struct SkippedEntry {
     pub branch: String,
     pub reason: &'static str,
@@ -274,14 +274,38 @@ pub fn validate_candidates(
         let worktree = repo.worktree_at(&candidate.wt.path);
         if worktree.is_dirty()? && (auto_commit || is_main) {
             if auto_commit {
+                // An unresolved conflict can't be committed by anyone until
+                // the user resolves it by hand — the same class of blocker as
+                // a locked worktree, so skip this one and carry on with the
+                // rest rather than failing the whole run. Checked before the
+                // progress line so nothing announces a commit that won't
+                // happen. `worktree.stage` below refuses the same state; this
+                // is the policy choice of skip over abort, not the guard.
+                let unmerged = worktree.unmerged_paths()?;
+                if !unmerged.is_empty() {
+                    let count = unmerged.len();
+                    let paths = if count == 1 { "path" } else { "paths" };
+                    eprintln!(
+                        "{}",
+                        warning_message(cformat!(
+                            "Skipping <bold>{branch}</> ({count} {paths} with unresolved conflicts)"
+                        ))
+                    );
+                    eprintln!("{}", format_with_gutter(&unmerged.join("\n"), None));
+                    skipped.push(SkippedEntry {
+                        branch: branch.to_string(),
+                        reason: "unmerged",
+                    });
+                    continue;
+                }
                 eprintln!(
                     "{}",
                     progress_message(cformat!("Committing changes in <bold>{branch}</>..."))
                 );
-                // Stage all changes
-                worktree
-                    .run_command(&["add", "-A"])
-                    .context("Failed to stage changes")?;
+                // Stage all changes. `stage` refuses an unmerged index first —
+                // `git add -A` over an unresolved conflict would otherwise
+                // commit the `<<<<<<<` markers.
+                worktree.stage(StageMode::All, "relocate")?;
                 // Commit using shared pipeline
                 let project_id = repo.project_identifier().ok();
                 let commit_config = config.commit_generation(project_id.as_deref());

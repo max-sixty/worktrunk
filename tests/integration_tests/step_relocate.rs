@@ -335,6 +335,141 @@ command = "cat >/dev/null && echo 'chore: auto-commit before relocate'"
     );
 }
 
+/// Create a worktree for `branch` at `path`, stopped on an unresolved
+/// conflict: `git merge side` leaves the index at stages 1–3 with `<<<<<<<` on
+/// disk — the state `git add -A` would silently resolve.
+fn add_conflicted_worktree(repo: &TestRepo, branch: &str, path: &Path) {
+    // A `side` branch that edits the same line, to conflict against.
+    fs::write(repo.root_path().join("conflict.txt"), "base\n").unwrap();
+    repo.run_git(&["add", "conflict.txt"]);
+    repo.run_git(&["commit", "-m", "Base edit"]);
+    repo.run_git(&["checkout", "-b", "side"]);
+    fs::write(repo.root_path().join("conflict.txt"), "side\n").unwrap();
+    repo.run_git(&["commit", "-am", "Conflicting edit on side"]);
+    repo.run_git(&["checkout", "main"]);
+
+    repo.run_git(&["worktree", "add", "-b", branch, path.to_str().unwrap()]);
+    let git = |args: &[&str]| {
+        repo.git_command()
+            .current_dir(path)
+            .args(args.iter().copied())
+            .run()
+            .unwrap()
+    };
+    fs::write(path.join("conflict.txt"), "theirs\n").unwrap();
+    git(&["commit", "-am", "Conflicting edit on branch"]);
+    // Conflicts: both sides changed the same line.
+    git(&["merge", "side"]);
+
+    let unmerged = git(&["diff", "--name-only", "--diff-filter=U"]);
+    assert_eq!(
+        String::from_utf8_lossy(&unmerged.stdout).trim(),
+        "conflict.txt",
+        "setup must leave an unresolved conflict in the index"
+    );
+}
+
+/// Regression: `--commit` stages with `git add -A` before committing, and
+/// `git add -A` collapses an unmerged path's index stages — resolving the
+/// conflict as far as the index is concerned while `<<<<<<<` is still on disk,
+/// and taking git's own refusal to commit with it. So relocate would commit
+/// the markers and leave a broken merge looking finished.
+#[rstest]
+fn test_relocate_refuses_unmerged_paths(repo: TestRepo) {
+    let parent = worktree_parent(&repo);
+    let wrong_path = parent.join("wrong-location");
+    add_conflicted_worktree(&repo, "feature", &wrong_path);
+    let head_before = repo.head_sha_in(&wrong_path);
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["relocate", "--commit"],
+        None
+    ));
+
+    assert_eq!(
+        repo.head_sha_in(&wrong_path),
+        head_before,
+        "the refusal must leave HEAD alone; committing here would commit the conflict markers"
+    );
+    assert!(
+        wrong_path.exists() && !parent.join("repo.feature").exists(),
+        "the conflicted worktree must stay put rather than move on an uncommitted conflict"
+    );
+    assert!(
+        fs::read_to_string(wrong_path.join("conflict.txt"))
+            .unwrap()
+            .contains("<<<<<<<"),
+        "the conflict must be left for the user to resolve, markers intact"
+    );
+}
+
+/// An unresolved conflict is a per-worktree blocker the user must fix by hand,
+/// like a locked worktree — so it skips that worktree with a stable JSON
+/// `reason` and relocates the rest, rather than failing the whole run.
+#[rstest]
+fn test_relocate_unmerged_skips_only_that_worktree(repo: TestRepo) {
+    let parent = worktree_parent(&repo);
+
+    // One worktree stopped on a conflict, one merely dirty (index clean).
+    let conflicted_path = parent.join("wrong-conflicted");
+    add_conflicted_worktree(&repo, "conflicted", &conflicted_path);
+    let clean_path = parent.join("wrong-clean");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "clean",
+        clean_path.to_str().unwrap(),
+    ]);
+    fs::write(clean_path.join("dirty.txt"), "uncommitted").unwrap();
+
+    fs::write(
+        repo.test_config_path(),
+        r#"
+[commit.generation]
+command = "cat >/dev/null && echo 'chore: auto-commit before relocate'"
+"#,
+    )
+    .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "relocate", "--commit", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "one conflicted worktree must not fail the whole run; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+
+    let skipped = parsed["skipped"].as_array().expect("skipped array");
+    assert!(
+        skipped
+            .iter()
+            .any(|s| s["branch"] == "conflicted" && s["reason"] == "unmerged"),
+        "conflicted worktree should be skipped with reason \"unmerged\": {parsed}"
+    );
+    let entries = parsed["entries"].as_array().expect("entries array");
+    assert!(
+        entries.iter().any(|e| e["branch"] == "clean"),
+        "the dirty-but-committable sibling should still relocate: {parsed}"
+    );
+
+    // The conflicted worktree stayed put with its conflict; the sibling moved.
+    assert!(
+        conflicted_path.exists(),
+        "conflicted worktree should not move"
+    );
+    assert!(
+        parent.join("repo.clean").exists() && !clean_path.exists(),
+        "clean worktree should have relocated"
+    );
+}
+
 /// Test that --clobber backs up non-worktree paths at target locations
 #[rstest]
 fn test_relocate_clobber_backs_up(repo: TestRepo) {

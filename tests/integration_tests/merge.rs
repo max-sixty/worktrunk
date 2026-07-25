@@ -3589,6 +3589,70 @@ fn test_step_commit_refuses_unmerged_paths(mut repo: TestRepo) {
     );
 }
 
+/// The early refusal runs *before* the pre-commit hooks, so that a doomed
+/// commit runs no project commands — which leaves a window the early refusal
+/// structurally cannot see: a hook is arbitrary project code, free to leave an
+/// unmerged index behind after that check has passed. `git add -A` would then
+/// collapse it and commit the markers. Only the check inside
+/// `WorkingTree::stage`, with nothing between it and the `git add`, catches
+/// this.
+#[rstest]
+fn test_step_commit_refuses_hook_created_conflict(mut repo: TestRepo) {
+    // A pre-commit hook that conflicts the index. `|| true` so the hook
+    // succeeds and the commit proceeds to staging; output suppressed to keep
+    // git's own wording out of the snapshot.
+    repo.write_project_config(r#"pre-commit = "git merge side >/dev/null 2>&1 || true""#);
+    repo.run_git(&["add", ".config/wt.toml"]);
+    repo.run_git(&["commit", "-m", "Add project config"]);
+
+    fs::write(repo.root_path().join("conflict.txt"), "base\n").unwrap();
+    repo.run_git(&["add", "conflict.txt"]);
+    repo.run_git(&["commit", "-m", "Base edit"]);
+    repo.run_git(&["checkout", "-b", "side"]);
+    fs::write(repo.root_path().join("conflict.txt"), "side\n").unwrap();
+    repo.run_git(&["commit", "-am", "Conflicting edit on side"]);
+    repo.run_git(&["checkout", "main"]);
+
+    let feature_wt = repo.add_worktree("feature");
+    repo.commit_in_worktree(&feature_wt, "conflict.txt", "theirs\n", "Conflicting edit");
+    // Something for the commit to do, so it reaches the staging step.
+    fs::write(feature_wt.join("other.txt"), "new\n").unwrap();
+
+    let head_before = repo.head_sha_in(&feature_wt);
+    let unmerged_before = repo
+        .git_command()
+        .args(["diff", "--name-only", "--diff-filter=U"])
+        .current_dir(&feature_wt)
+        .run()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&unmerged_before.stdout)
+            .trim()
+            .is_empty(),
+        "the index must be clean when the early refusal runs — the hook is what conflicts it"
+    );
+
+    assert_cmd_snapshot!(
+        "step_commit_refuses_hook_created_conflict",
+        make_snapshot_cmd(&repo, "step", &["commit", "--yes"], Some(&feature_wt))
+    );
+    assert_eq!(
+        repo.head_sha_in(&feature_wt),
+        head_before,
+        "the refusal must leave HEAD alone; committing here would commit the conflict markers"
+    );
+    let committed = repo
+        .git_command()
+        .args(["show", "HEAD:conflict.txt"])
+        .current_dir(&feature_wt)
+        .run()
+        .unwrap();
+    assert!(
+        !String::from_utf8_lossy(&committed.stdout).contains("<<<<<<<"),
+        "no commit may carry conflict markers"
+    );
+}
+
 // =============================================================================
 // JSON output tests
 // =============================================================================

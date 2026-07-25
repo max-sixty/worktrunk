@@ -266,22 +266,10 @@ impl CommitOptions<'_> {
             warn_about_untracked_files(&status)?;
         }
 
-        // Stage changes based on mode
-        match self.stage_mode {
-            StageMode::All => {
-                // Stage everything: tracked modifications + untracked files
-                wt.run_command(&["add", "-A"])
-                    .context("Failed to stage changes")?;
-            }
-            StageMode::Tracked => {
-                // Stage tracked modifications only (no untracked files)
-                wt.run_command(&["add", "-u"])
-                    .context("Failed to stage tracked changes")?;
-            }
-            StageMode::None => {
-                // Stage nothing - commit only what's already in the index
-            }
-        }
+        // Stage changes based on mode. Re-gated inside `stage`: the refusal
+        // above ran before the pre-commit hooks, and a hook is free to leave
+        // unmerged paths behind.
+        wt.stage(self.stage_mode, "commit")?;
 
         let effective_config = self.ctx.commit_generation();
         // Skip the approval gate when the LLM isn't configured — the fallback

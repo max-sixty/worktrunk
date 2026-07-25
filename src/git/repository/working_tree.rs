@@ -512,12 +512,18 @@ impl<'a> WorkingTree<'a> {
     /// Fail when the index still holds unresolved conflicts.
     ///
     /// A precondition for the commands that stage on the user's behalf
-    /// (`wt step commit`, `wt step squash`). `git add -A` collapses an
+    /// (`wt step commit`, `wt step squash`, `wt step relocate --commit`).
+    /// `git add -A` collapses an
     /// unmerged path's three stages into one entry, so it resolves the
     /// conflict as far as the index is concerned while the file on disk still
     /// holds `<<<<<<<` markers — and it takes git's own refusal to commit
     /// with it. Asking before staging is what keeps the markers out of a
     /// commit.
+    ///
+    /// Callers use this to refuse *early* — ahead of hooks, approval prompts,
+    /// and the LLM call, none of which is worth running for a commit that
+    /// cannot happen. The staging itself is guarded by [`stage`](Self::stage),
+    /// which runs the same check with nothing between it and the `git add`.
     pub fn ensure_no_unmerged_paths(&self, action: &str) -> anyhow::Result<()> {
         let files = self.unmerged_paths()?;
         if files.is_empty() {
@@ -528,6 +534,51 @@ impl<'a> WorkingTree<'a> {
             files,
         }
         .into())
+    }
+
+    /// Stage the working tree on the user's behalf, refusing an unmerged index.
+    ///
+    /// **The only path to `git add` against a worktree's real index** — the
+    /// other `git add` calls all write a throwaway index via
+    /// [`temp_index`](Self::temp_index), which commits nothing. Staging
+    /// for the user is what turns an unresolved conflict into a commit full of
+    /// `<<<<<<<` markers (see
+    /// [`ensure_no_unmerged_paths`](Self::ensure_no_unmerged_paths)), so the
+    /// check and the `git add` live in one call rather than as a convention
+    /// every caller re-applies. A command that stages through here cannot
+    /// forget the gate, and cannot order it after the staging that destroys
+    /// the evidence — `git add` collapses the index stages, so a check run
+    /// afterwards passes vacuously.
+    ///
+    /// This is *in addition to* the callers' early refusals, not a replacement
+    /// for them: the two guard different windows. `wt step commit` gates
+    /// before its `pre-commit` hooks so a doomed commit runs no project
+    /// commands — and those hooks are arbitrary project code, free to leave
+    /// unmerged paths behind after that gate has passed.
+    ///
+    /// [`StageMode::None`] stages nothing but is still gated: the caller is
+    /// about to commit whatever the index already holds.
+    ///
+    /// [`StageMode::None`]: crate::config::StageMode::None
+    pub fn stage(&self, mode: crate::config::StageMode, action: &str) -> anyhow::Result<()> {
+        use crate::config::StageMode;
+
+        self.ensure_no_unmerged_paths(action)?;
+        match mode {
+            // Stage everything: tracked modifications + untracked files
+            StageMode::All => {
+                self.run_command(&["add", "-A"])
+                    .context("Failed to stage changes")?;
+            }
+            // Stage tracked modifications only (no untracked files)
+            StageMode::Tracked => {
+                self.run_command(&["add", "-u"])
+                    .context("Failed to stage tracked changes")?;
+            }
+            // Commit only what is already in the index
+            StageMode::None => {}
+        }
+        Ok(())
     }
 
     /// Check if this is a linked worktree (vs the main worktree).
