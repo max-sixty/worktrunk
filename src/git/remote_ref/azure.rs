@@ -236,22 +236,12 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
     })?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let stdout_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-
-        if stderr.contains("does not exist") || stdout_str.contains("does not exist") {
-            bail!("Azure DevOps PR #{} not found", pr_number);
-        }
-        if stderr.contains("login") || stderr.contains("authenticate") {
-            bail!("Azure CLI not authenticated; run az login");
-        }
-        if stderr.contains("azure-devops") && stderr.contains("extension") {
-            bail!(
-                "Azure DevOps CLI extension not installed; \
-                 run: az extension add --name azure-devops"
-            );
-        }
-
+        // `az` reports failures only as prose on stderr — no exit-code or JSON
+        // error channel to branch on. Rather than guess at the cause from
+        // English substrings, surface what `az` said: its own text names the
+        // remedy ("Please run 'az login' …", the missing-extension prompt) more
+        // reliably than a paraphrase keyed on a word that can occur anywhere in
+        // an org, project, or repo name.
         return Err(cli_api_error(
             RefType::Pr,
             format!("az repos pr show failed for PR #{}", pr_number),

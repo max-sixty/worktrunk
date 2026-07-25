@@ -147,6 +147,28 @@ pub(super) fn cli_api_error(ref_type: RefType, message: String, output: &Output)
     .into()
 }
 
+/// Whether `host` is `domain` itself or a subdomain of it.
+///
+/// Compared label-wise, so `dev.azure.com` matches `dev.azure.com` and
+/// `x.dev.azure.com` but not `dev.azure.com.attacker.example` or
+/// `notdev.azure.com` — a plain substring test accepts an attacker-chosen host
+/// that merely contains the domain.
+fn host_is_within(host: &str, domain: &str) -> bool {
+    let host = host.to_ascii_lowercase();
+    host == domain || host.strip_suffix(domain).is_some_and(|p| p.ends_with('.'))
+}
+
+/// Whether any dot-separated label of `host` is exactly `label`.
+///
+/// Recognizes both `github.com` and the usual self-hosted naming
+/// (`github.corp.example`) without matching a host that merely spells the name
+/// inside a longer label, such as a `github-mirror.example` running something
+/// else. A deployment this misses names its provider explicitly — see
+/// `provider_override`.
+fn host_has_label(host: &str, label: &str) -> bool {
+    host.to_ascii_lowercase().split('.').any(|l| l == label)
+}
+
 /// Extract the host (e.g. `github.com`) from a PR/MR `html_url` returned by
 /// the forge API. Both GitHub and Gitea responses use the same `https://host/...`
 /// shape, so we share the parser.
@@ -405,8 +427,7 @@ pub fn repo_info_from_ref_url_with_provider(
 
     let provider = match marker {
         "pull" => {
-            if provider_override == Some(GitRepoProvider::GitHub)
-                || host.to_ascii_lowercase().contains("github")
+            if provider_override == Some(GitRepoProvider::GitHub) || host_has_label(&host, "github")
             {
                 GitRepoProvider::GitHub
             } else {
@@ -417,8 +438,8 @@ pub fn repo_info_from_ref_url_with_provider(
         "merge_requests" => GitRepoProvider::GitLab,
         "pullrequest" => {
             if provider_override == Some(GitRepoProvider::AzureDevOps)
-                || host.to_ascii_lowercase().contains("dev.azure.com")
-                || host.to_ascii_lowercase().contains("visualstudio.com")
+                || host_is_within(&host, "dev.azure.com")
+                || host_is_within(&host, "visualstudio.com")
             {
                 GitRepoProvider::AzureDevOps
             } else {
@@ -514,6 +535,31 @@ fn azure_repo_segments(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_host_matching_respects_label_boundaries() {
+        // The domain itself and subdomains of it.
+        assert!(host_is_within("dev.azure.com", "dev.azure.com"));
+        assert!(host_is_within("DEV.AZURE.COM", "dev.azure.com"));
+        assert!(host_is_within("myorg.visualstudio.com", "visualstudio.com"));
+        // A host that only spells the domain inside a longer name. A substring
+        // test takes each of these for Azure DevOps.
+        assert!(!host_is_within(
+            "dev.azure.com.attacker.example",
+            "dev.azure.com"
+        ));
+        assert!(!host_is_within("notdev.azure.com", "dev.azure.com"));
+        assert!(!host_is_within("evil-visualstudio.com", "visualstudio.com"));
+
+        // github.com and the usual self-hosted naming.
+        assert!(host_has_label("github.com", "github"));
+        assert!(host_has_label("github.corp.example", "github"));
+        assert!(host_has_label("git.github.corp.example", "github"));
+        // Spelled inside a longer label: not GitHub.
+        assert!(!host_has_label("github-mirror.example", "github"));
+        assert!(!host_has_label("mygithubmirror.com", "github"));
+        assert!(!host_has_label("notgithub.io", "github"));
+    }
 
     #[test]
     fn test_ref_paths() {

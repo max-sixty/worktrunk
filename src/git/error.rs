@@ -1144,6 +1144,13 @@ impl GitError {
                         hint_message(cformat!("Remaining in directory: <underline>{listing}</>"))
                     )?;
                 }
+                // Fragile by necessity: matches git's English, which is
+                // localized and could be reworded. `remaining_entries` is not a
+                // substitute — a permission-denied failure also leaves entries
+                // behind, and this hint is only right for ENOTEMPTY. The
+                // structured form (`io::ErrorKind::DirectoryNotEmpty`) is lost
+                // upstream, where the cause is flattened to a rendered string
+                // before it reaches this type. A miss costs one hint.
                 if error.contains("not empty") {
                     write!(
                         f,

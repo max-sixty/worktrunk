@@ -5798,8 +5798,12 @@ fn test_switch_pr_azure_fork(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
-/// `az repos pr show` reporting "does not exist" hits the dedicated
-/// not-found bail in `azure::fetch_pr_info`.
+/// A missing PR reaches the user as the `TF401174` line `az` printed.
+///
+/// `azure::fetch_pr_info` classifies nothing: `az` has no error channel but
+/// prose on stderr, so worktrunk reports that prose rather than guessing a
+/// cause from it. The three azure error tests each pin the tool's own words
+/// surviving to the terminal.
 #[rstest]
 fn test_switch_pr_azure_not_found(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&[
@@ -5950,7 +5954,8 @@ fn test_switch_pr_azure_server_error(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
-/// `az repos pr show` reporting a login error hits the dedicated auth bail.
+/// An unauthenticated `az` reaches the user as its own "run 'az login'" line,
+/// which already names the remedy a paraphrase would have restated.
 #[rstest]
 fn test_switch_pr_azure_auth_error(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&[
@@ -5981,8 +5986,13 @@ fn test_switch_pr_azure_auth_error(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
-/// `az repos pr show` failing because the `azure-devops` extension is missing
-/// hits the dedicated extension-install bail.
+/// A missing `azure-devops` extension reaches the user as `az`'s own line.
+///
+/// This is the case that cost something: worktrunk used to append the exact
+/// `az extension add --name azure-devops` command, which `az` doesn't print.
+/// Detecting it needs prose matching — no code, no exit status distinguishes
+/// it — and the extension is named in the text `az` does print, so the
+/// remaining gap is the install verb rather than the package.
 #[rstest]
 fn test_switch_pr_azure_extension_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&[
