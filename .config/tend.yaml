@@ -8,6 +8,7 @@ workflows:
   ci-fix:
     watched_workflows:
     - ci
+    - coverage
     - publish-docs
     # nightly hosts `full-tests` (the cargo-affected safety net), so a red
     # nightly is actionable: Tend fixes it instead of leaving main's gaps
