@@ -1734,7 +1734,9 @@ mod tests {
     }
 
     /// An rc file with one integration line and content the user owns on either
-    /// side of it.
+    /// side of it. Unix-only, like the atomic-rewrite tests that use it: mode
+    /// and symlink semantics have no Windows equivalent.
+    #[cfg(unix)]
     fn write_rc(path: &Path) {
         fs::write(
             path,
@@ -1743,6 +1745,7 @@ mod tests {
         .unwrap();
     }
 
+    #[cfg(unix)]
     const RC_AFTER_UNINSTALL: &str = "export EDITOR=hx\nalias ll='ls -l'\n";
 
     #[cfg(unix)]
