@@ -21,7 +21,7 @@ Workflows check `user.login == 'worktrunk-bot'` directly.
 Only the repo owner (`@max-sixty`, admin) can merge to `main`.
 `worktrunk-bot` has `write` role only. Enforced by a "Merge access" ruleset
 (restrict updates, admin bypass in exempt mode). Required status checks:
-`test (linux)`, `test (macos)`, `test (windows)`.
+`test (linux)`, `test (macos)`, `test (windows)`, `fast-checks`.
 
 ## Environment protection
 

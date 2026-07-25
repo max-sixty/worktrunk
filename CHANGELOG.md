@@ -6,7 +6,23 @@
 
 - **`wt remove` resolves every fsmonitor daemon in one `lsof` call**: The end-of-command sweep forked one `lsof` per `git fsmonitor--daemon` on the machine — with `core.fsmonitor` enabled globally that is one daemon per repo ever touched, routinely over a hundred — and the spawn cost compounds under load rather than staying fixed per call. All daemons now resolve in a single call: 108 spawns to 1 on a live machine. ([#3581](https://github.com/max-sixty/worktrunk/pull/3581))
 
+### Fixed
+
+- **Shell integration no longer deletes user data that merely quotes the init command**: Three places decided whether text was worktrunk's by testing a blob for substrings, and two of them deleted on a wrong guess. `wt config shell uninstall` removed an rc line like `alias setup='echo "run: wt config shell init fish | source"'`; `wt config shell install`'s legacy cleanup deleted a user's own `~/.config/fish/conf.d/wt.fish` outright when the file happened to mention the init command. Both now require the command name in command position, not merely somewhere in the text. ([#3589](https://github.com/max-sixty/worktrunk/pull/3589))
+
+- **Forge detection matches host labels, not substrings**: `wt switch pr:<n>` and friends picked their provider with `host.contains("github")` / `contains("dev.azure.com")`, so a host that only spells the name inside a longer one — `github-mirror.example`, `dev.azure.com.attacker.example` — resolved as that provider. Matching is now label-wise, accepting the domain and its subdomains only; a self-hosted deployment this misses can still name its provider explicitly. ([#3589](https://github.com/max-sixty/worktrunk/pull/3589))
+
+- **A crash mid-write no longer empties the file being written**: `wt config shell uninstall` ended its rc rewrite by truncating in place, so a crash, a full disk, or a lost power cable between the truncate and the write left `~/.bashrc`, `~/.zshrc`, or a PowerShell profile empty or half-written, taking every line the user had ever added. Every user-file write now goes through one writer that writes a temp file beside the target and renames it into place. ([#3585](https://github.com/max-sixty/worktrunk/pull/3585), [#3591](https://github.com/max-sixty/worktrunk/pull/3591))
+
+- **`wt step push` refuses to run out of a half-finished operation**: Mid-rebase the detached HEAD looks like a linear extension of the target, so `wt step push main` reported `✓ Pushed to main (1 commit)` while moving the target branch onto a half-replayed history and leaving the rebase open; it now runs the same operation gate as `wt step rebase` and `wt merge`. The same change fixes an annotated-tag target always reporting as needing a rebase — the tag object's SHA was compared against a `merge-base` that peels it — and makes both push paths refuse a target worktree whose directory is gone, rather than `--no-ff` moving the ref over the stale registration. ([#3578](https://github.com/max-sixty/worktrunk/pull/3578))
+
+- **Conflict markers can't reach a commit, and the refusal names the command you ran**: `wt step relocate --commit` staged with `git add -A` and committed straight through an unresolved merge, reaching neither gate added for the other staging commands; every staging path is now gated on an unmerged index. `wt merge` already refused, but in a sub-step's name. ([#3588](https://github.com/max-sixty/worktrunk/pull/3588), [#3587](https://github.com/max-sixty/worktrunk/pull/3587))
+
+- **OpenCode activity markers land in the worktree they belong to**: The plugin issued its marker commands through the process-global Bun shell without scoping them, so each ran in whatever the process-wide cwd happened to be — under concurrent parallel-agent sessions, a marker write could land in another session's worktree. ([#3554](https://github.com/max-sixty/worktrunk/pull/3554), thanks @4i3n6)
+
 ### Documentation
+
+- **`wt step rebase` and `wt step push` render on the docs site**: the only two of twelve step operations whose help was terminal-only. Both bodies are rewritten, correcting (among others) the claim that conflicts abort immediately — nothing aborts; the worktree is left mid-rebase with git's markers — and a `wt step squash` note promising a backup ref unconditionally, when a clean-tree squash writes none. ([#3578](https://github.com/max-sixty/worktrunk/pull/3578))
 
 - **Troubleshooting no longer suggests disabling `core.fsmonitor` globally**: the guidance for a wedged daemon keeps to the targeted fixes — kill the daemon serving that worktree, or let the next `wt list` respawn the live ones. ([#3581](https://github.com/max-sixty/worktrunk/pull/3581))
 
