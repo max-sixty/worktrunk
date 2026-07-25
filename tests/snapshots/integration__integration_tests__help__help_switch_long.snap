@@ -54,7 +54,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
           Create a new branch
 
   [1m[36m-b[0m, [1m[36m--base[0m[36m [0m[36m<BASE>[0m
-          Base branch or worktree path[0m
+          Base branch[0m
           
           Defaults to default branch. Supports the same shortcuts as the branch argument: [1m^[0m, [1m@[0m, [1m-[0m, [1mpr:{N}[0m, [1mmr:{N}[0m.[0m
 
@@ -157,9 +157,7 @@ If the branch already has a worktree, [2mwt switch[0m changes directories to i
 
 [1m[32mNaming a worktree[0m
 
-A worktree answers to its branch name and to its own path, so [2mwt switch feature[0m and [2mwt switch ../repo.feature[0m reach the same place. The branch is tried first, so a directory that shares a branch's name never shadows it. A path is what names the worktrees a branch cannot: a detached one, or one of two checkouts of the same branch.
-
-Every argument that names a worktree resolves this way — [2mwt remove[0m, [2mwt merge[0m, [2mwt step diff --branch[0m, and the rest — as does every argument that names a branch, where a worktree's path stands for the branch checked out there. Relative paths resolve against [2m-C[0m, and a leading [2m~[0m against the home directory, so a path worktrunk printed can be pasted back.
+Worktrees are addressed by branch name, and every argument that takes one also accepts the path of the worktree itself — resolved after the branch, so a directory never shadows a branch sharing its name. A path names what a branch cannot: a detached worktree, or one of two checkouts of the same branch. Relative paths resolve against [2m-C[0m and a leading [2m~[0m against the home directory, so a path worktrunk printed can be pasted back.
 
 [1m[32mShortcuts[0m
 

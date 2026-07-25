@@ -135,7 +135,7 @@ Usage: wt step commit [OPTIONS]
 
 Options:
   -b, --branch <BRANCH>
-          Branch or worktree path (defaults to current worktree)
+          Branch to operate on (defaults to current worktree)
 
       --stage <STAGE>
           What to stage before committing [default: all]
@@ -232,7 +232,7 @@ Usage: wt step squash [OPTIONS] [TARGET]
 
 Arguments:
   [TARGET]
-          Target branch or worktree path
+          Target branch
 
           Defaults to default branch.
 
@@ -325,7 +325,7 @@ Usage: wt step rebase [OPTIONS] [TARGET]
 
 Arguments:
   [TARGET]
-          Target branch, tag, commit, or worktree path
+          Target branch, tag, or commit
 
           Defaults to default branch.
 
@@ -392,7 +392,7 @@ Usage: wt step push [OPTIONS] [TARGET]
 
 Arguments:
   [TARGET]
-          Target branch or worktree path
+          Target branch
 
           Defaults to default branch.
 
@@ -486,7 +486,7 @@ Usage: wt step diff [OPTIONS] [TARGET] [-- <EXTRA_ARGS>...]
 
 Arguments:
   [TARGET]
-          Target branch or worktree path
+          Target branch
 
           Defaults to default branch.
 
@@ -495,7 +495,7 @@ Arguments:
 
 Options:
   -b, --branch <BRANCH>
-          Branch or worktree path (defaults to current worktree)
+          Branch to operate on (defaults to current worktree)
 
   -h, --help
           Print help (see a summary with '-h')
@@ -627,12 +627,12 @@ Usage: wt step copy-ignored [OPTIONS]
 
 Options:
       --from <FROM>
-          Source worktree branch or path
+          Source worktree branch
 
           Defaults to main worktree.
 
       --to <TO>
-          Destination worktree branch or path
+          Destination worktree branch
 
           Defaults to current worktree.
 
@@ -914,7 +914,7 @@ Usage: wt step promote [OPTIONS] [BRANCH]
 
 Arguments:
   [BRANCH]
-          Branch or worktree path to promote to main worktree
+          Branch to promote to main worktree
 
           Defaults to current branch, or default branch from main worktree.
 
@@ -1108,7 +1108,7 @@ Usage: wt step relocate [OPTIONS] [BRANCHES]...
 
 Arguments:
   [BRANCHES]...
-          Worktrees to relocate, by branch or path (defaults to all mismatched)
+          Worktrees to relocate (defaults to all mismatched)
 
 Options:
       --dry-run

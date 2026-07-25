@@ -1175,7 +1175,7 @@ $ wt config state ci-status clear && wt config state ci-status get
 ```"#
     )]
     Get {
-        /// Branch or worktree path (defaults to current)
+        /// Target branch (defaults to current)
         #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
     },
@@ -1198,7 +1198,7 @@ Clear all CI status cache:
 $ wt config state ci-status clear --all
 ```"#)]
     Clear {
-        /// Branch or worktree path (defaults to current)
+        /// Target branch (defaults to current)
         #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch, conflicts_with = "all")]
         branch: Option<String>,
 
@@ -1224,7 +1224,7 @@ Get marker for a specific branch:
 $ wt config state marker get --branch=feature
 ```"#)]
     Get {
-        /// Branch or worktree path (defaults to current)
+        /// Target branch (defaults to current)
         #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
     },
@@ -1245,7 +1245,7 @@ $ wt config state marker set "✅ ready" --branch=feature
         /// Marker text (shown in `wt list` output)
         value: String,
 
-        /// Branch or worktree path (defaults to current)
+        /// Target branch (defaults to current)
         #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
     },
@@ -1268,7 +1268,7 @@ Clear all markers:
 $ wt config state marker clear --all
 ```"#)]
     Clear {
-        /// Branch or worktree path (defaults to current)
+        /// Target branch (defaults to current)
         #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch, conflicts_with = "all")]
         branch: Option<String>,
 
@@ -1467,7 +1467,7 @@ $ wt config state vars get env --branch=feature
         /// Key name
         key: String,
 
-        /// Branch or worktree path (defaults to current)
+        /// Target branch (defaults to current)
         #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
     },
@@ -1485,7 +1485,7 @@ List keys for a specific branch:
 $ wt config state vars list --branch=feature
 ```"#)]
     List {
-        /// Branch or worktree path (defaults to current)
+        /// Target branch (defaults to current)
         #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
 
@@ -1516,7 +1516,7 @@ $ wt config state vars set env=production --branch=main
         #[arg(value_name = "KEY=VALUE", value_parser = super::parse_vars_assignment)]
         assignment: (String, String),
 
-        /// Branch or worktree path (defaults to current)
+        /// Target branch (defaults to current)
         #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
     },
@@ -1547,7 +1547,7 @@ $ wt config state vars clear env --branch=feature
         #[arg(long)]
         all: bool,
 
-        /// Branch or worktree path (defaults to current)
+        /// Target branch (defaults to current)
         #[arg(long, add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
         branch: Option<String>,
     },

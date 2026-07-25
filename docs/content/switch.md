@@ -42,9 +42,7 @@ If the branch already has a worktree, `wt switch` changes directories to it. Oth
 
 ## Naming a worktree
 
-A worktree answers to its branch name and to its own path, so `wt switch feature` and `wt switch ../repo.feature` reach the same place. The branch is tried first, so a directory that shares a branch's name never shadows it. A path is what names the worktrees a branch cannot: a detached one, or one of two checkouts of the same branch.
-
-Every argument that names a worktree resolves this way — `wt remove`, `wt merge`, `wt step diff --branch`, and the rest — as does every argument that names a branch, where a worktree's path stands for the branch checked out there. Relative paths resolve against `-C`, and a leading `~` against the home directory, so a path worktrunk printed can be pasted back.
+Worktrees are addressed by branch name, and every argument that takes one also accepts the path of the worktree itself — resolved after the branch, so a directory never shadows a branch sharing its name. A path names what a branch cannot: a detached worktree, or one of two checkouts of the same branch. Relative paths resolve against `-C` and a leading `~` against the home directory, so a path worktrunk printed can be pasted back.
 
 ## Shortcuts
 
@@ -171,7 +169,7 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           Create a new branch
 
   <b><span class=c>-b</span></b>, <b><span class=c>--base</span></b><span class=c> &lt;BASE&gt;</span>
-          Base branch or worktree path
+          Base branch
 
           Defaults to default branch. Supports the same shortcuts as the branch argument: <b>^</b>, <b>@</b>, <b>-</b>,
 <b>          pr:{N}</b>, <b>mr:{N}</b>.

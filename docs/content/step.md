@@ -140,7 +140,7 @@ Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
 
 <b><span class=g>Options:</span></b>
   <b><span class=c>-b</span></b>, <b><span class=c>--branch</span></b><span class=c> &lt;BRANCH&gt;</span>
-          Branch or worktree path (defaults to current worktree)
+          Branch to operate on (defaults to current worktree)
 
       <b><span class=c>--stage</span></b><span class=c> &lt;STAGE&gt;</span>
           What to stage before committing [default: all]
@@ -233,7 +233,7 @@ Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span>
 
 <b><span class=g>Arguments:</span></b>
   <span class=c>[TARGET]</span>
-          Target branch or worktree path
+          Target branch
 
           Defaults to default branch.
 
@@ -322,7 +322,7 @@ Usage: <b><span class=c>wt step rebase</span></b> <span class=c>[OPTIONS]</span>
 
 <b><span class=g>Arguments:</span></b>
   <span class=c>[TARGET]</span>
-          Target branch, tag, commit, or worktree path
+          Target branch, tag, or commit
 
           Defaults to default branch.
 
@@ -385,7 +385,7 @@ Usage: <b><span class=c>wt step push</span></b> <span class=c>[OPTIONS]</span> <
 
 <b><span class=g>Arguments:</span></b>
   <span class=c>[TARGET]</span>
-          Target branch or worktree path
+          Target branch
 
           Defaults to default branch.
 
@@ -467,7 +467,7 @@ Usage: <b><span class=c>wt step diff</span></b> <span class=c>[OPTIONS]</span> <
 
 <b><span class=g>Arguments:</span></b>
   <span class=c>[TARGET]</span>
-          Target branch or worktree path
+          Target branch
 
           Defaults to default branch.
 
@@ -476,7 +476,7 @@ Usage: <b><span class=c>wt step diff</span></b> <span class=c>[OPTIONS]</span> <
 
 <b><span class=g>Options:</span></b>
   <b><span class=c>-b</span></b>, <b><span class=c>--branch</span></b><span class=c> &lt;BRANCH&gt;</span>
-          Branch or worktree path (defaults to current worktree)
+          Branch to operate on (defaults to current worktree)
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
@@ -608,12 +608,12 @@ Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]<
 
 <b><span class=g>Options:</span></b>
       <b><span class=c>--from</span></b><span class=c> &lt;FROM&gt;</span>
-          Source worktree branch or path
+          Source worktree branch
 
           Defaults to main worktree.
 
       <b><span class=c>--to</span></b><span class=c> &lt;TO&gt;</span>
-          Destination worktree branch or path
+          Destination worktree branch
 
           Defaults to current worktree.
 
@@ -876,7 +876,7 @@ Usage: <b><span class=c>wt step promote</span></b> <span class=c>[OPTIONS]</span
 
 <b><span class=g>Arguments:</span></b>
   <span class=c>[BRANCH]</span>
-          Branch or worktree path to promote to main worktree
+          Branch to promote to main worktree
 
           Defaults to current branch, or default branch from main worktree.
 
@@ -1055,7 +1055,7 @@ Usage: <b><span class=c>wt step relocate</span></b> <span class=c>[OPTIONS]</spa
 
 <b><span class=g>Arguments:</span></b>
   <span class=c>[BRANCHES]...</span>
-          Worktrees to relocate, by branch or path (defaults to all mismatched)
+          Worktrees to relocate (defaults to all mismatched)
 
 <b><span class=g>Options:</span></b>
       <b><span class=c>--dry-run</span></b>

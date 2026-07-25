@@ -43,7 +43,7 @@ Usage: [1m[36mwt step promote[0m [36m[OPTIONS][0m [36m[BRANCH][0m
 
 [1m[32mArguments:[0m
   [36m[BRANCH][0m
-          Branch or worktree path to promote to main worktree[0m
+          Branch to promote to main worktree[0m
           
           Defaults to current branch, or default branch from main worktree.[0m
 

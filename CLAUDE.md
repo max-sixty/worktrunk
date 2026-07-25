@@ -37,7 +37,7 @@ Load relevant skills before starting; reload when scope changes mid-session. Pro
 
 ## Worktree Model
 
-- Worktrees are **addressed by branch name**; a worktree's own path is an accepted alias for it, resolved branch-first by `Repository::resolve_worktree` — the one canonicalizer every worktree-naming argument goes through. Paths never become a second addressing scheme: they name what a branch cannot (a detached worktree, one of two checkouts of a branch), and a new argument routes through the canonicalizer rather than growing its own rule.
+- Worktrees are **addressed by branch name**, with a worktree's own path as an alias — resolved branch-first by `Repository::resolve_worktree`, the one canonicalizer every worktree-naming argument routes through. A path is not a second addressing scheme: it names what a branch cannot (a detached worktree, one of two checkouts of a branch). So document arguments as taking a branch, state the path alias once rather than per argument, and give a new argument the canonicalizer rather than its own rule.
 - Each worktree maps to **exactly one branch**.
 - **Never retarget an existing worktree** to a different branch; create/switch/remove instead. (Sole exception: `wt step promote`, experimental, exchanges branches between two worktrees.)
 
