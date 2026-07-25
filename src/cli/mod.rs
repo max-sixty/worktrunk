@@ -905,7 +905,7 @@ Independent flags from `git status`; several can show at once (e.g. `+!?`). Each
 
 ### Worktree
 
-An in-progress git operation, a worktree-location attribute, or a branch with no worktree. One symbol shows, highest priority first (`✘ > ↻ > ⊟ > ⊞ > ⧉ > ⚑ > /`):
+An in-progress git operation, a worktree-location attribute, or a branch with no worktree. One symbol shows, highest priority first (`✘ > ↻ > ⊟ > ⊞ > ⚑ > /`):
 
 | Symbol | JSON | Meaning |
 |--------|------|---------|
@@ -913,7 +913,7 @@ An in-progress git operation, a worktree-location attribute, or a branch with no
 | `↻` | `operation_state` `"rebase"`, `"merge"`, `"cherry_pick"`, `"revert"`, `"bisect"` | A git operation is in progress; `git status` names it |
 | `⊟` | `worktree.state` `"prunable"` | Prunable (worktree directory missing) |
 | `⊞` | `worktree.state` `"locked"` | Locked worktree |
-| `⧉` | `worktree.state` `"duplicate_branch"` | Branch checked out in more than one worktree; `wt` resolves it to whichever git lists first, and every affected row is flagged |
+| `⚑` | `worktree.state` `"duplicate_branch"` | Branch checked out in more than one worktree, so `wt` resolves it to whichever git lists first; every worktree on the branch is flagged |
 | `⚑` | `worktree.state` `"branch_worktree_mismatch"` | Branch name doesn't match the worktree path |
 | `/` | `kind` `"branch"` | Branch without a worktree (no `worktree` object) |
 

@@ -316,7 +316,7 @@ pub(crate) fn worktree_paths_for_branch(worktrees: &[WorktreeInfo], branch: &str
 ///
 /// The all-at-once counterpart to `worktree_paths_for_branch`, for callers
 /// classifying the whole list rather than resolving one branch — `wt list`
-/// flags each affected row with `⧉` so the ambiguity is visible before a
+/// flags each affected row with `⚑` so the ambiguity is visible before a
 /// command resolves the branch and warns.
 pub fn duplicated_branches(worktrees: &[WorktreeInfo]) -> HashSet<&str> {
     let mut seen = HashSet::new();
