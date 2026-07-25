@@ -126,7 +126,8 @@ fn create_config_file(
 
     // Write the example config with all values commented out
     let commented_config = comment_out_config(content);
-    std::fs::write(&path, commented_config).context("Failed to write config file")?;
+    worktrunk::utils::write_atomically(&path, &commented_config)
+        .context("Failed to write config file")?;
 
     // Success message
     eprintln!(

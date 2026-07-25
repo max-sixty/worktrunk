@@ -10,6 +10,7 @@ use worktrunk::styling::{
     INFO_SYMBOL, SUCCESS_SYMBOL, eprint, eprintln, format_bash_with_gutter, format_toml,
     format_with_gutter, hint_message, println, prompt_message, warning_message,
 };
+use worktrunk::utils::write_atomically;
 
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
 use crate::output::shell_integration::shell_extension_label;
@@ -659,7 +660,7 @@ fn configure_shell_file(
             }
 
             // Write the config content
-            fs::write(path, format!("{}\n", config_line)).map_err(|e| {
+            write_atomically(path, &format!("{}\n", config_line)).map_err(|e| {
                 format!(
                     "Failed to write to {}: {}",
                     format_path_for_display(path),
@@ -765,7 +766,7 @@ fn configure_wrapper_file(
     }
 
     // Write the complete wrapper file
-    fs::write(path, format!("{}\n", content))
+    write_atomically(path, &format!("{}\n", content))
         .map_err(|e| format!("Failed to write {}: {e}", format_path_for_display(path)))?;
 
     Ok(Some(ConfigureResult {
@@ -1024,7 +1025,7 @@ pub fn process_shell_completions(
         }
 
         // Write the completion file
-        fs::write(&completion_path, &fish_completion).map_err(|e| {
+        write_atomically(&completion_path, &fish_completion).map_err(|e| {
             format!(
                 "Failed to write {}: {e}",
                 format_path_for_display(&completion_path)
@@ -1282,70 +1283,6 @@ fn scan_managed_files(
     Ok(out)
 }
 
-/// Replace a file's contents by renaming a sibling temp file over it.
-///
-/// `fs::write` truncates in place, so a crash, a full disk, or a lost power
-/// cable between the truncate and the write leaves the user's rc file empty or
-/// half-written — every line they ever added to it gone. Uninstall is the one
-/// place worktrunk rewrites a file whose other contents belong to the user, so
-/// it takes the rename path: the file is either entirely the old version or
-/// entirely the new one.
-///
-/// Three details a bare `NamedTempFile::new()` + `persist()` gets wrong:
-///
-/// - **Symlinks.** Dotfile managers (Mackup, chezmoi, stow) symlink `~/.zshrc`
-///   into a repo or a synced folder. `fs::write` follows the link and updates
-///   the real file; a rename would replace the link itself with a regular file
-///   and silently detach the user's setup. The target is resolved first, so the
-///   rename lands on the real file and the link survives.
-/// - **Same directory.** A temp file elsewhere (`/tmp`) means `persist` crosses
-///   a filesystem boundary, where it degrades to a copy — no longer atomic, and
-///   an outright failure on some setups. The temp file is created beside the
-///   resolved target.
-/// - **Mode.** A fresh temp file is `0600`; an rc file is typically `0644`. The
-///   target's mode is copied onto the temp file before the rename, so the
-///   permissions survive the replacement. Windows has no equivalent to carry.
-///
-/// Ownership is not preserved — the replacement belongs to the running user, so
-/// a root-run uninstall against another user's rc file would change its owner.
-/// Restoring it needs a `chown`, which no current dependency exposes.
-///
-/// Creating the temp file needs write access to the target's directory, which a
-/// truncating write did not, so uninstall now fails where a read-only directory
-/// holds a writable rc file. Failing is the trade Data Safety asks for: the rc
-/// file is left as it was, and the user can rerun once the directory is
-/// writable.
-fn replace_file_atomically(path: &Path, content: &str) -> Result<(), String> {
-    let write_err =
-        |e: io::Error| format!("Failed to write {}: {e}", format_path_for_display(path));
-
-    let target = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    let dir = target.parent().unwrap_or_else(|| Path::new("."));
-
-    let mut temp = tempfile::Builder::new()
-        .prefix(".wt-shell-config.")
-        .suffix(".tmp")
-        .tempfile_in(dir)
-        .map_err(write_err)?;
-    temp.write_all(content.as_bytes()).map_err(write_err)?;
-    temp.flush().map_err(write_err)?;
-
-    // Before the sync, so the mode lands on disk with the contents.
-    #[cfg(unix)]
-    if let Ok(metadata) = fs::metadata(&target) {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = metadata.permissions().mode();
-        temp.as_file()
-            .set_permissions(fs::Permissions::from_mode(mode))
-            .map_err(write_err)?;
-    }
-
-    temp.as_file().sync_all().map_err(write_err)?;
-    temp.persist(&target).map_err(|e| write_err(e.error))?;
-
-    Ok(())
-}
-
 fn uninstall_from_file(
     shell: Shell,
     path: &Path,
@@ -1404,7 +1341,8 @@ fn uninstall_from_file(
         new_content
     };
 
-    replace_file_atomically(path, &new_content)?;
+    write_atomically(path, &new_content)
+        .map_err(|e| format!("Failed to write {}: {e}", format_path_for_display(path)))?;
 
     Ok(Some(UninstallResult {
         shell,

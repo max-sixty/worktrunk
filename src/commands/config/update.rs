@@ -111,7 +111,7 @@ pub fn handle_config_update(yes: bool, print: bool) -> anyhow::Result<()> {
             );
         }
 
-        std::fs::write(&candidate.config_path, &candidate.migrated)
+        worktrunk::utils::write_atomically(&candidate.config_path, &candidate.migrated)
             .with_context(|| format!("Failed to update {}", candidate.info.label()))?;
         eprintln!(
             "{}",

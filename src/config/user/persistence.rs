@@ -189,7 +189,7 @@ impl UserConfig {
             doc.to_string()
         };
 
-        std::fs::write(config_path, toml_string)
+        crate::utils::write_atomically(config_path, &toml_string)
             .map_err(|e| ConfigError(format!("Failed to write config file: {}", e)))?;
 
         Ok(())
