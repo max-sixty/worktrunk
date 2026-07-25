@@ -20,7 +20,7 @@ A target-filtered run (`--lib`, `--test integration`, …) on a fresh `target/` 
 
 ## Coverage Investigation
 
-`task coverage` runs the suite and writes an HTML report to `target/llvm-cov/html/index.html`. Both CI (`code-coverage` job) and local `task coverage` pass `--features shell-integration-tests`, so code behind that flag is compiled and measured.
+`task coverage` runs the suite and writes an HTML report to `target/llvm-cov/html/index.html`. Both CI (the `coverage` workflow) and local `task coverage` pass `--features shell-integration-tests`, so code behind that flag is compiled and measured.
 
 When `codecov/patch` fails, investigate before declaring ready (the merge gate itself is in the root `CLAUDE.md` → Coverage):
 
@@ -29,7 +29,34 @@ task coverage
 cargo llvm-cov report --show-missing-lines | grep <file>   # authoritative miss list; matches codecov line-for-line
 ```
 
-For each uncovered function, either write a test (integration tests via `assert_cmd_snapshot!` do capture subprocess coverage) or document why it's intentionally untested. If codecov's compare API must be queried directly, `coverage.head` is a `LineType` enum: `0=hit`, `1=miss`, `2=partial`, and per-file `.totals.head.diff` (`[files, lines, hits, misses, partials, coverage, …]`) is what reproduces the posted patch percentage — the top-level `totals.base.diff` reports different numbers. Prefer measuring: the API is for disputing a posted check, not a substitute for `task coverage`.
+For each uncovered function, either write a test (integration tests via `assert_cmd_snapshot!` do capture subprocess coverage) or document why it's intentionally untested.
+
+**Querying codecov directly** serves two cases the local report can't: disputing a posted check, and running in CI, where `task coverage` isn't installed. Prefer measuring everywhere else.
+
+```bash
+API=https://api.codecov.io/api/v2/github/max-sixty/repos/worktrunk
+# Full SHAs throughout; an abbreviation 404s. `?pullid=N` compares the PR's
+# *current* head, so name both SHAs to ask about an earlier commit.
+curl -sL "$API/compare/?base=<base-sha>&head=<head-sha>" > /tmp/codecov.json
+
+# Patch coverage per file. `.name` is an object, and the files carrying patch
+# lines are the ones with `has_diff`:
+jq '.files[] | select(.has_diff) | {name: .name.head, patch: .totals.patch}' /tmp/codecov.json
+
+# The missed patch lines in one file. `.coverage.head` is a LineType enum
+# (0=hit, 1=miss, 2=partial), and `.added` keeps context lines inside a hunk
+# from reading as patch misses:
+jq '.files[] | select(.name.head == "<path>") | .lines[]
+    | select(.is_diff and .added and .coverage.head == 1) | {line: .number.head, code: .value}' /tmp/codecov.json
+
+# Whole-file line coverage at one commit. No trailing slash after the path —
+# the route swallows it and answers 404 "coverage info not found":
+curl -sL "$API/file_report/<path>?sha=<sha>"
+```
+
+Per-file `.totals.patch` (equivalently `.totals.head.diff`, `[files, lines, hits, misses, …]`) holds that file's patch numbers, and the posted percentage aggregates them over the files in the PR's own diff. The top-level `totals.base.diff` is a different quantity: the base's coverage of those lines. Commit messages arrive with raw newlines in them, so the JSON is strictly invalid — `jq` copes, Python needs `json.loads(…, strict=False)`.
+
+**A compare listing files the PR never touched** means the merge-base has no report, so codecov walked back to the newest ancestor that does and diffed from there. The posted patch check still scopes to the PR's own diff; it's the API object that widens. Every main commit uploads from the `coverage` workflow, so this points at a failed or missing run on the base commit.
 
 **`skim` fails with E0554 (`#![feature]` on stable):** the local `cargo-llvm-cov` predates 0.7.0, which stopped putting the coverage flags in global `RUSTFLAGS` and started instrumenting only workspace crates. Older versions leak `--cfg=coverage` into every dependency, and `skim` gates a nightly feature on it. Install the version the `code-coverage` job pins rather than working around it (`--no-cfg-coverage` also avoids it; `--no-rustc-wrapper` reinstates it).
 
