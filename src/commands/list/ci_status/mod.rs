@@ -1061,7 +1061,8 @@ mod tests {
         let status = retriable_pr_error(&out).expect("retriable should yield Some");
         assert_eq!(status.ci_status, CiStatus::Error);
 
-        // Retriable from stdout (the `tea` shape).
+        // Retriable from stdout — a tool that copies the server's error body
+        // through rather than writing its own message to stderr.
         let out = fake_output("", r#"{"message":"rate limit exceeded"}"#);
         assert!(retriable_pr_error(&out).is_some());
 

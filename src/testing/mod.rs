@@ -1797,6 +1797,27 @@ impl TestRepo {
             .write(mock_bin);
     }
 
+    /// Add a mock `az` (installed and authenticated) whose `az extension list`
+    /// reports `extensions_json` to the existing mock bin.
+    ///
+    /// Call this after `setup_mock_ci_tools_unauthenticated()` to make
+    /// `wt config show --full` against an Azure DevOps remote deterministic —
+    /// the Azure diagnostics rows depend on `az`'s state and on whether the
+    /// `azure-devops` extension is among the installed ones.
+    pub fn setup_mock_az_with_extensions(&mut self, extensions_json: &str) {
+        let mock_bin = self
+            .mock_bin_path
+            .as_ref()
+            .expect("call setup_mock_ci_tools_unauthenticated() first");
+        std::fs::write(mock_bin.join("az_extensions.json"), extensions_json).unwrap();
+        MockConfig::new("az")
+            .version("azure-cli 2.60.0 (mock)")
+            .command("account show", MockResponse::exit(0))
+            .command("extension list", MockResponse::file("az_extensions.json"))
+            .command("_default", MockResponse::exit(1))
+            .write(mock_bin);
+    }
+
     /// Setup mock `claude` CLI as installed
     ///
     /// Call this after setup_mock_ci_tools_unauthenticated() to simulate

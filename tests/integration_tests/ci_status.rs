@@ -1347,6 +1347,16 @@ fn run_gitea_ci_status_test(
     });
 }
 
+/// Gitea's `APIError` body, which the API returns in place of the resource
+/// whenever a request fails — and which `tea api` copies to stdout with exit 0,
+/// since it never reads the HTTP status. The message is a 500's wrapped
+/// internal error (Gitea passes it through for an admin token), so
+/// `is_retriable_error` recognizes the cause.
+const GITEA_API_ERROR_BODY: &str = r#"{
+    "message": "pq: dial tcp 10.0.0.5:5432: connect: connection refused",
+    "url": "https://gitea.example.com/api/swagger"
+}"#;
+
 /// Build a one-PR `tea api .../pulls` response for the `feature` branch.
 fn gitea_feature_pr_json(head_sha: &str, mergeable: bool) -> String {
     format!(
@@ -1426,14 +1436,47 @@ fn test_list_full_with_gitea_no_ci(mut repo: TestRepo) {
     );
 }
 
-/// A retriable error from `tea api .../pulls` surfaces as an error indicator
+/// A Gitea 500 whose `APIError` body names a retriable cause surfaces as an
+/// error indicator rather than NoCI. `tea api` exits 0 here — it copies the
+/// response body through without reading the HTTP status — so the body's shape
+/// is what separates this from a PR list.
+#[rstest]
+fn test_list_full_with_gitea_pr_error_body(mut repo: TestRepo) {
+    let head_sha = setup_gitea_repo_with_feature(&mut repo);
+    run_gitea_ci_status_test(
+        &mut repo,
+        "gitea_pr_error_body",
+        &head_sha,
+        GITEA_API_ERROR_BODY,
+        r#"{"state":"","total_count":0}"#,
+    );
+}
+
+/// The same `APIError` body from the commit-status lookup (when no PR exists
+/// for the branch). Without shape discrimination this one is the quieter bug:
+/// every field of `GiteaCombinedStatus` defaults, so the error body would
+/// deserialize as "no statuses" and paint a blank cell.
+#[rstest]
+fn test_list_full_with_gitea_commit_status_error_body(mut repo: TestRepo) {
+    let head_sha = setup_gitea_repo_with_feature(&mut repo);
+    run_gitea_ci_status_test(
+        &mut repo,
+        "gitea_commit_status_error_body",
+        &head_sha,
+        "[]",
+        GITEA_API_ERROR_BODY,
+    );
+}
+
+/// `tea` itself failing on `tea api .../pulls` surfaces as an error indicator
 /// rather than NoCI (exercises the `is_retriable_error` branch in
-/// `detect_gitea_pr`).
+/// `detect_gitea_pr`). A transport failure is the case that does exit non-zero,
+/// and `tea` names it on stderr.
 #[rstest]
 fn test_list_full_with_gitea_retriable_error(mut repo: TestRepo) {
     setup_gitea_repo_with_feature(&mut repo);
     repo.setup_mock_tea_with_detection_error(
-        "Error: GET .../api/v1/repos/owner/test-repo/pulls: 429 Too Many Requests",
+        r#"Error: Get "https://gitea.example.com/api/v1/repos/owner/test-repo/pulls": dial tcp 10.0.0.5:443: connect: connection refused"#,
     );
 
     let settings = setup_snapshot_settings(&repo);
@@ -1452,7 +1495,7 @@ fn test_list_full_with_gitea_commit_status_retriable_error(mut repo: TestRepo) {
     let head_sha = setup_gitea_repo_with_feature(&mut repo);
     repo.setup_mock_tea_commit_status_error(
         &head_sha,
-        "Error: GET .../api/v1/repos/owner/test-repo/commits/.../status: 429 Too Many Requests",
+        r#"Error: Get "https://gitea.example.com/api/v1/repos/owner/test-repo/commits/HEAD/status": dial tcp 10.0.0.5:443: connect: connection refused"#,
     );
 
     let settings = setup_snapshot_settings(&repo);

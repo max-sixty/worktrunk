@@ -1560,6 +1560,58 @@ fn test_config_show_full_gitea_remote(mut repo: TestRepo, temp_home: TempDir) {
     });
 }
 
+/// `wt config show --full` against an Azure DevOps remote reports the `az` CLI
+/// row plus the `azure-devops` extension, which the whole `az repos` command
+/// group ships in: without it CI status stays blank however well `az` is
+/// authenticated, and only the user can install it.
+#[rstest]
+#[case::missing("[]", "config_show_full_azure_extension_missing")]
+#[case::installed(
+    r#"[{"name": "azure-devops", "version": "1.0.0"}]"#,
+    "config_show_full_azure_extension_installed"
+)]
+fn test_config_show_full_azure_remote(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+    #[case] extensions_json: &str,
+    #[case] snapshot_name: &str,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_az_with_extensions(extensions_json);
+
+    // The fixture already has an `origin`; point it at an Azure DevOps host.
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://dev.azure.com/myorg/myproject/_git/test-repo",
+    ]);
+
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        "worktree-path = \"../{{ repo }}.{{ branch }}\"",
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"));
+        cmd.arg("config")
+            .arg("show")
+            .arg("--full")
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(snapshot_name, cmd);
+    });
+}
+
 #[rstest]
 fn test_config_show_github_remote(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output

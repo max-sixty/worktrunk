@@ -12,6 +12,7 @@ use color_print::cformat;
 use worktrunk::config::{
     ProjectConfig, UserConfig, default_system_config_path, require_config_path, system_config_path,
 };
+use worktrunk::git::remote_ref::azure::azure_devops_extension_installed;
 use worktrunk::git::{CiPlatform, ErrorExt, Repository};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{FileDetectionResult, Shell, scan_for_detection_details};
@@ -570,6 +571,18 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
                 ci_tools.az_installed,
                 ci_tools.az_authenticated,
             )?;
+            // The whole `az repos` command group ships in the azure-devops
+            // extension, so an `az` without it reports no CI status however
+            // well it's authenticated — and only the user can install it.
+            if ci_tools.az_installed && !azure_devops_extension_installed(repo.repo_path()?) {
+                writeln!(
+                    out,
+                    "{}",
+                    warning_message(cformat!(
+                        "<bold>azure-devops</> extension not installed; run <bold>az extension add --name azure-devops</>"
+                    ))
+                )?;
+            }
         }
         None => {
             writeln!(

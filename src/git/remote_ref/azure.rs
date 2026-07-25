@@ -216,9 +216,13 @@ struct AzExtension {
 /// `az extension list --output json` answers with a name/version array, so no
 /// prose is involved. An `az` that can't answer — spawn failure, non-zero
 /// exit, output that won't parse — leaves the question open, and an open
-/// question counts as installed: the caller then falls through to `az`'s own
-/// error rather than blaming an extension we never confirmed was missing.
-fn azure_devops_extension_installed(repo_root: &std::path::Path) -> bool {
+/// question counts as installed: callers then say nothing about the extension
+/// rather than blaming one we never confirmed was missing.
+///
+/// Two callers, both on a path where the answer is actionable: `fetch_pr_info`
+/// when `az repos pr show` has already failed, and `wt config show --full`,
+/// which reports a missing extension as the persistent condition it is.
+pub fn azure_devops_extension_installed(repo_root: &std::path::Path) -> bool {
     Cmd::new("az")
         .args(["extension", "list", "--output", "json"])
         .current_dir(repo_root)
@@ -268,9 +272,7 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
         // answers it in JSON. Asking it here, on the failure path only, keeps
         // the install command out of the happy path's cost.
         if !azure_devops_extension_installed(repo_root) {
-            bail!(
-                "Azure DevOps CLI extension not installed; run az extension add --name azure-devops"
-            );
+            bail!("azure-devops extension not installed; run az extension add --name azure-devops");
         }
         // Everything else `az` reports is prose on stderr — no exit code, no
         // JSON error channel. Rather than guess at the cause from English
