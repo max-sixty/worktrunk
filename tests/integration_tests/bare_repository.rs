@@ -2096,10 +2096,9 @@ mod bare_repo_prompt_pty {
 
         // Declining records the opt-out as a hint (count 1), not under the legacy
         // top-level key — so it participates in `wt config state`.
-        let hint_value = Cmd::new("git")
+        let hint_value = configure_git_env(Cmd::new("git"), test.git_config_path())
             .args(["config", "worktrunk.hints.skip-bare-repo-prompt"])
             .current_dir(&main_worktree)
-            .env("GIT_CONFIG_GLOBAL", test.git_config_path())
             .run()
             .unwrap();
         assert_eq!(
@@ -2109,10 +2108,9 @@ mod bare_repo_prompt_pty {
         );
 
         // The legacy top-level key must not be written anymore.
-        let legacy_key = Cmd::new("git")
+        let legacy_key = configure_git_env(Cmd::new("git"), test.git_config_path())
             .args(["config", "worktrunk.skip-bare-repo-prompt"])
             .current_dir(&main_worktree)
-            .env("GIT_CONFIG_GLOBAL", test.git_config_path())
             .run()
             .unwrap();
         assert!(

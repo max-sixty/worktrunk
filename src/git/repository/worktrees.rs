@@ -1,12 +1,15 @@
 //! Worktree management operations for Repository.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
 
 use color_print::cformat;
 use dunce::canonicalize;
 
 use super::{GitError, Repository, ResolvedWorktree, WorktreeInfo, resolve_input_path};
 use crate::path::{format_path_for_display, paths_match};
+use crate::styling::{eprintln, format_with_gutter, hint_message, warning_message};
 
 impl Repository {
     /// List all worktrees for this repository.
@@ -61,13 +64,20 @@ impl Repository {
     }
 
     /// Find the worktree path for a given branch, if one exists.
+    ///
+    /// A branch normally maps to at most one worktree, but `git worktree add
+    /// --force <path> <branch>` bypasses git's "already used by worktree" guard
+    /// and lets the same branch live in several at once. Worktrunk never creates
+    /// that state; when it exists, this resolves to the first worktree git lists
+    /// (roughly creation order) and warns once per branch so the otherwise-silent
+    /// choice is visible. See `warn_duplicate_checkout`.
     pub fn worktree_for_branch(&self, branch: &str) -> anyhow::Result<Option<PathBuf>> {
         let worktrees = self.list_worktrees()?;
-
-        Ok(worktrees
-            .iter()
-            .find(|wt| wt.branch.as_deref() == Some(branch))
-            .map(|wt| wt.path.clone()))
+        let paths = worktree_paths_for_branch(worktrees, branch);
+        if paths.len() > 1 {
+            warn_duplicate_checkout(branch, &paths);
+        }
+        Ok(paths.into_iter().next())
     }
 
     /// The "home" worktree — main worktree for normal repos, default branch worktree for bare.
@@ -370,5 +380,64 @@ impl Repository {
     pub fn home_path(&self) -> anyhow::Result<PathBuf> {
         self.primary_worktree()?
             .map_or_else(|| self.repo_path().map(|p| p.to_path_buf()), Ok)
+    }
+}
+
+/// Paths of every worktree checked out on `branch`, in git's listing order.
+///
+/// At most one under normal use; more than one only when the user ran
+/// `git worktree add --force <path> <branch>`, which bypasses git's
+/// "already used by worktree" guard. Worktrunk never creates that state.
+pub(crate) fn worktree_paths_for_branch(worktrees: &[WorktreeInfo], branch: &str) -> Vec<PathBuf> {
+    worktrees
+        .iter()
+        .filter(|wt| wt.branch.as_deref() == Some(branch))
+        .map(|wt| wt.path.clone())
+        .collect()
+}
+
+/// Warn once per process that `branch` resolves ambiguously across worktrees.
+///
+/// Worktrunk addresses worktrees by branch name and resolves an ambiguous
+/// branch to the first worktree git lists, leaving the others unreachable by
+/// name. The warning surfaces that otherwise-silent choice — naming every
+/// path — without changing which worktree is used. Deduplicated per branch so
+/// a command that resolves the same branch repeatedly (the picker, `wt list`)
+/// warns only once.
+///
+/// Called only from `worktree_for_branch` with `paths.len() > 1`, so `paths[1..]`
+/// names at least one shadowed worktree.
+fn warn_duplicate_checkout(branch: &str, paths: &[PathBuf]) {
+    static WARNED: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+    // A poisoned set of already-warned branches never justifies aborting; recover it.
+    let is_new = WARNED
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(branch.to_string());
+    if is_new {
+        let listing = paths
+            .iter()
+            .map(|p| format_path_for_display(p))
+            .collect::<Vec<_>>()
+            .join("\n");
+        eprintln!(
+            "{}",
+            warning_message(cformat!(
+                "Branch <bold>{branch}</> is checked out in {} worktrees; wt uses the first:",
+                paths.len()
+            ))
+        );
+        eprintln!("{}", format_with_gutter(&listing, None));
+        // Name every shadowed worktree so removing them all is actionable; with a
+        // single extra (the common case) this is one hint.
+        for extra in &paths[1..] {
+            eprintln!(
+                "{}",
+                hint_message(cformat!(
+                    "To drop a duplicate, run <underline>git worktree remove {}</>",
+                    format_path_for_display(extra)
+                ))
+            );
+        }
     }
 }

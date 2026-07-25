@@ -408,20 +408,23 @@ fn test_configure_shell_fish_legacy_conf_d_cleanup(repo: TestRepo, temp_home: Te
     );
 }
 
-/// Installing fish integration leaves a user's own `conf.d/wt.fish` alone.
+/// Installing fish integration reclaims `conf.d/{cmd}.fish` whatever it holds.
 ///
-/// The legacy cleanup deletes a whole file the user never asked it to touch, so
-/// it has to recognize worktrunk's own wrapper rather than any file that
-/// mentions the init command. This one names it in a comment and pipes
-/// something unrelated to `source` — both substrings a whole-file test would
-/// take as proof the file was worktrunk's.
+/// The path names the command being installed, so it's worktrunk's; the file's
+/// contents don't enter into it. Leaving this one would break the install
+/// besides — `conf.d` is sourced at startup, so a `function wt` defined there
+/// is already loaded when fish would otherwise autoload `functions/wt.fish`.
 #[rstest]
-fn test_configure_shell_fish_preserves_user_conf_d_file(repo: TestRepo, temp_home: TempDir) {
+fn test_configure_shell_fish_reclaims_conf_d_path(repo: TestRepo, temp_home: TempDir) {
     let conf_d = temp_home.path().join(".config/fish/conf.d");
     fs::create_dir_all(&conf_d).unwrap();
-    let user_file = conf_d.join("wt.fish");
-    let user_content = "# reminder: set up with wt config shell init fish\nfunction wt_helpers\n    cat ~/.aliases | source\nend\n";
-    fs::write(&user_file, user_content).unwrap();
+    let stale = conf_d.join("wt.fish");
+    // No worktrunk header, and nothing a content test would recognize.
+    fs::write(&stale, "function wt\n    command wt-old $argv\nend\n").unwrap();
+    // A neighbour under another name is untouched: only `{cmd}.fish` is ours.
+    let neighbour = conf_d.join("aliases.fish");
+    let neighbour_content = "# reminder: wt config shell init fish\nalias ll 'ls -l'\n";
+    fs::write(&neighbour, neighbour_content).unwrap();
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
@@ -437,16 +440,22 @@ fn test_configure_shell_fish_preserves_user_conf_d_file(repo: TestRepo, temp_hom
             .path()
             .join(".config/fish/functions/wt.fish")
             .exists(),
-        "install should still write functions/wt.fish"
+        "install should write functions/wt.fish"
     );
     assert!(
-        user_file.exists(),
-        "install deleted the user's own conf.d/wt.fish"
+        !stale.exists(),
+        "install should reclaim conf.d/wt.fish: {stale:?}"
     );
     assert_eq!(
-        fs::read_to_string(&user_file).unwrap(),
-        user_content,
-        "user's own conf.d/wt.fish must survive install untouched"
+        fs::read_to_string(&neighbour).unwrap(),
+        neighbour_content,
+        "a conf.d file under another name is not worktrunk's"
+    );
+    // The removal is reported, not silent.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("deprecated"),
+        "install should report the conf.d cleanup:\n{stderr}"
     );
 }
 
@@ -2774,21 +2783,23 @@ fn test_nushell_install_cleans_stranded_legacy(repo: TestRepo, temp_home: TempDi
     );
 }
 
-/// Data safety: install must NOT delete a `wt.nu` at a legacy location that
-/// isn't worktrunk-managed (no worktrunk header) — it could be the user's own
-/// file. Only files carrying the worktrunk header are cleaned up (issue #2878).
+/// The stranded-file cleanup is scoped by path, so it reclaims `{cmd}.nu` at a
+/// legacy autoload dir whatever the file holds — and touches nothing else in
+/// that directory (issue #2878).
 #[rstest]
-fn test_nushell_install_keeps_unmanaged_legacy_file(repo: TestRepo, temp_home: TempDir) {
+fn test_nushell_install_reclaims_only_the_command_name(repo: TestRepo, temp_home: TempDir) {
     let home = canonical_temp_home(&temp_home);
     let autoload = home.join(".local/share/nushell/vendor/autoload");
 
-    // A user-authored wt.nu at the legacy config-dir location — no worktrunk
-    // header, so it must be left untouched.
     let legacy_dir = home.join(".config/nushell/vendor/autoload");
     fs::create_dir_all(&legacy_dir).unwrap();
+    // No worktrunk header: the path is what makes it worktrunk's.
     let legacy = legacy_dir.join("wt.nu");
-    let user_content = "# my own wt helper\ndef wt [] { echo hi }\n";
-    fs::write(&legacy, user_content).unwrap();
+    fs::write(&legacy, "def wt [] { echo hi }\n").unwrap();
+    // A neighbour under another name stays put.
+    let neighbour = legacy_dir.join("helpers.nu");
+    let neighbour_content = "def hi [] { echo hi }\n";
+    fs::write(&neighbour, neighbour_content).unwrap();
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
@@ -2805,16 +2816,15 @@ fn test_nushell_install_keeps_unmanaged_legacy_file(repo: TestRepo, temp_home: T
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Canonical wrapper written, user's legacy file preserved verbatim.
     assert!(autoload.join("wt.nu").exists(), "canonical wrapper missing");
     assert!(
-        legacy.exists(),
-        "unmanaged legacy wt.nu must be preserved: {legacy:?}"
+        !legacy.exists(),
+        "install should reclaim the legacy wt.nu: {legacy:?}"
     );
     assert_eq!(
-        fs::read_to_string(&legacy).unwrap(),
-        user_content,
-        "unmanaged legacy file must be left unchanged"
+        fs::read_to_string(&neighbour).unwrap(),
+        neighbour_content,
+        "a legacy-dir file under another name is not worktrunk's"
     );
 }
 

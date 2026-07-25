@@ -1469,8 +1469,30 @@ fn seed_ci_status(repo: &TestRepo, branch: &str, status_json: &str) {
 }
 
 /// Install a mock forge CLI (`gh`/`glab`) that answers the `--prs` list call
-/// from a canned JSON file, and return env vars (mock on PATH + MOCK_CONFIG_DIR)
-/// for a `wt switch --prs` PTY run. No network is touched. `list_delay_ms`
+/// from a canned JSON file with a caller-supplied response shape, and return env
+/// vars (mock on PATH + MOCK_CONFIG_DIR) for a `wt switch --prs` PTY run. No
+/// network is touched. The `list.json` file the response reads from is written
+/// here, so `list_response` should be built with `MockResponse::file("list.json")`.
+fn mock_forge_env_with(
+    repo: &TestRepo,
+    cli: &str,
+    list_cmd: &str,
+    list_json: &str,
+    list_response: MockResponse,
+) -> Vec<(String, String)> {
+    let mock_bin = repo.root_path().join("mock-bin");
+    std::fs::create_dir_all(&mock_bin).unwrap();
+    std::fs::write(mock_bin.join("list.json"), list_json).unwrap();
+    MockConfig::new(cli)
+        .version(&format!("{cli} version 1.0.0 (mock)"))
+        .command(list_cmd, list_response)
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    forge_mock_env_vars(repo, &mock_bin)
+}
+
+/// [`mock_forge_env_with`] with a fixed-delay list response. `list_delay_ms`
 /// sleeps the list call (0 = instant) so a test can observe the picker's
 /// in-flight loading marker before the rows land.
 fn mock_forge_env(
@@ -1480,19 +1502,13 @@ fn mock_forge_env(
     list_json: &str,
     list_delay_ms: u64,
 ) -> Vec<(String, String)> {
-    let mock_bin = repo.root_path().join("mock-bin");
-    std::fs::create_dir_all(&mock_bin).unwrap();
-    std::fs::write(mock_bin.join("list.json"), list_json).unwrap();
-    MockConfig::new(cli)
-        .version(&format!("{cli} version 1.0.0 (mock)"))
-        .command(
-            list_cmd,
-            MockResponse::file("list.json").with_delay_ms(list_delay_ms),
-        )
-        .command("_default", MockResponse::exit(1))
-        .write(&mock_bin);
-
-    forge_mock_env_vars(repo, &mock_bin)
+    mock_forge_env_with(
+        repo,
+        cli,
+        list_cmd,
+        list_json,
+        MockResponse::file("list.json").with_delay_ms(list_delay_ms),
+    )
 }
 
 /// Env vars (mock-bin on PATH + `MOCK_CONFIG_DIR`) for a PTY `wt` run that should
@@ -1822,13 +1838,14 @@ fn test_switch_picker_preview_auto_refreshes_when_compute_lands(mut repo: TestRe
 }
 
 /// `wt switch --prs` shows a dim "↳ Loading open PRs…" marker on the header row
-/// while the forge call is in flight. A delayed mock holds the PR list long
-/// enough to observe the marker on the real screen before the rows land. The
-/// picker captures and aborts at stabilize time — well before the delay
-/// elapses — and the `--prs` thread is detached on exit (not joined), so the
-/// test never pays the full delay. The marker's *clearing* once rows arrive is
-/// covered by the `header_loading_marker_shows_until_cleared` unit test and the
-/// negative assertion in `test_switch_picker_prs_github_list`.
+/// while the forge call is in flight. The mock holds the PR list until `wt`
+/// exits (`hold_until_parent_exit`), so the marker is on the real screen for
+/// exactly the picker's lifetime and the presence assertion never races boot
+/// latency. The picker captures and aborts at stabilize time, and the `--prs`
+/// thread is detached on exit (not joined), so the test finishes in about a
+/// second. The marker's *clearing* once rows arrive is covered by the
+/// `header_loading_marker_shows_until_cleared` unit test and the negative
+/// assertion in `test_switch_picker_prs_github_list`.
 #[rstest]
 fn test_switch_picker_prs_shows_loading_marker(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
@@ -1839,9 +1856,35 @@ fn test_switch_picker_prs_shows_loading_marker(mut repo: TestRepo) {
         "https://github.com/owner/test-repo.git",
     ]);
     let pr_json = r#"[{"number":42,"title":"Retry the flaky network test","headRefName":"fix/flaky","author":{"login":"octocat"},"isDraft":false,"url":"https://github.com/owner/test-repo/pull/42","body":""}]"#;
-    // 3s delay >> the ~1s capture, so the marker is still on screen when the
-    // helper snapshots and aborts.
-    let env_vars = mock_forge_env(&repo, "gh", "pr list", pr_json, 3000);
+    // Hold the loading marker on screen for exactly the picker's lifetime — no
+    // fixed delay to outguess boot latency. `hold_until_parent_exit` makes the
+    // mocked `gh pr list` block until `wt` exits (it polls for its stdout pipe's
+    // read end to close), so the transient "Loading open PRs" frame is present
+    // for the entire window the helper could observe it, on any hardware. A
+    // fixed `delay_ms` can't guarantee this: a 3s hold flaked on a loaded
+    // Windows runner because `boot_picker_pty`'s skim-ready wait plus its initial
+    // `wait_for_stable`, and the async worktree-column churn, ate the whole 3s
+    // window, so by the time `send_input_awaiting_content` first polled for the
+    // marker the mock had already returned and the rows had streamed in — the
+    // marker was gone and the wait timed out at STABILIZE_TIMEOUT (30s). Bumping
+    // the delay only widens the margin; tying release to parent death removes the
+    // race outright.
+    //
+    // The picker still exits in well under a second: `exec_in_pty_capture_before_abort`
+    // snapshots and sends Escape the instant the marker settles, and abort does
+    // *not* join the background `--prs` fetch thread — the interactive teardown
+    // ends it with `drop(prs_handle)` (see `run_picker` in
+    // `src/commands/picker/mod.rs`: "don't join — the forge call may still be in
+    // flight, and process exit terminates the thread"). When `wt` exits it closes
+    // the mock's stdout pipe, the mock's next write fails with `BrokenPipe`, and
+    // the mock exits — no orphaned sleeper left behind.
+    let env_vars = mock_forge_env_with(
+        &repo,
+        "gh",
+        "pr list",
+        pr_json,
+        MockResponse::file("list.json").hold_until_parent_exit(),
+    );
 
     let result = exec_in_pty_capture_before_abort(
         wt_bin().to_str().unwrap(),

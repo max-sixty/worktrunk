@@ -190,6 +190,32 @@ fn test_step_diff_branch_empty(repo: TestRepo) {
     ));
 }
 
+/// A branch checked out in two worktrees (as `git worktree add --force`
+/// produces) resolves to the first, warning once and naming every path so the
+/// otherwise-silent choice is visible.
+#[rstest]
+fn test_step_diff_duplicate_branch_warns(mut repo: TestRepo) {
+    repo.add_worktree("feature");
+    let dup_path = repo.root_path().parent().unwrap().join("repo.feature-dup");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "--force",
+        dup_path.to_str().unwrap(),
+        "feature",
+    ]);
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["diff", "--branch=feature"],
+        None,
+    ));
+}
+
 fn git_status(repo: &TestRepo, dir: &Path) -> String {
     let output = repo
         .git_command()
