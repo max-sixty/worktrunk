@@ -6404,12 +6404,15 @@ fn test_switch_mr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
     // Copy mock-stub binary as "glab"
     copy_mock_binary(&mock_bin, "glab");
 
-    // Configure glab api to return 404 error (JSON on stdout like real GitLab API)
+    // Configure glab api to return 404 error (JSON on stdout, human-readable on
+    // stderr — glab formats the API's own message as `glab: <message> (HTTP N)`)
     MockConfig::new("glab")
         .version("glab version 1.40.0 (mock)")
         .command(
             "api",
-            MockResponse::output(r#"{"message":"404 Not found"}"#).with_exit_code(1),
+            MockResponse::output(r#"{"message":"404 Not found"}"#)
+                .with_stderr("glab: 404 Not found (HTTP 404)")
+                .with_exit_code(1),
         )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
@@ -6430,12 +6433,15 @@ fn test_switch_mr_not_authenticated(#[from(repo_with_remote)] repo: TestRepo) {
 
     copy_mock_binary(&mock_bin, "glab");
 
-    // Configure glab api to return 401 error (JSON on stdout like real GitLab API)
+    // Configure glab api to return 401 error (JSON on stdout, human-readable on
+    // stderr — the shape a real `glab api` produces for a rejected token)
     MockConfig::new("glab")
         .version("glab version 1.40.0 (mock)")
         .command(
             "api",
-            MockResponse::output(r#"{"message":"401 Unauthorized"}"#).with_exit_code(1),
+            MockResponse::output(r#"{"message":"401 Unauthorized"}"#)
+                .with_stderr("glab: 401 Unauthorized (HTTP 401)")
+                .with_exit_code(1),
         )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
