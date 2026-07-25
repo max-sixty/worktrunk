@@ -163,7 +163,7 @@ jobs:
           # storage zip unless archive: false — since the file we're
           # uploading is already a zip, the default produced a zip-of-a-zip
           # that SignPath saw as "the artifact", so the configured
-          # <pe-file path="wt.exe"> never matched (confirmed via a real
+          # <pe-file> paths never matched (confirmed via a real
           # signing-request failure: "Expected path to match exactly 1
           # item, but found 0", processing unsigned-windows-zip.zip).
           # archive: false uploads the file as-is; the artifact name then
@@ -171,6 +171,7 @@ jobs:
           archive: false
           path: target/distrib/worktrunk-x86_64-pc-windows-msvc.zip
       - name: Submit SignPath signing request
+        id: signpath
         if: contains(matrix.targets, 'x86_64-pc-windows-msvc') && steps.upload-unsigned-windows-artifact.outcome == 'success'
         continue-on-error: true
         uses: signpath/github-action-submit-signing-request@v2
@@ -181,11 +182,33 @@ jobs:
           signing-policy-slug: 'test-signing'
           github-artifact-id: '${{ steps.upload-unsigned-windows-artifact.outputs.artifact-id }}'
           wait-for-completion: true
-          output-artifact-directory: 'target/distrib'
-          # Without this, the action extracts the zip's contents as loose
-          # files instead of saving back the signed zip under its original
-          # name, silently breaking the checksum step and the release upload.
+          # A scratch directory, not target/distrib: SignPath names the
+          # download after the GitHub artifact, which is already
+          # worktrunk-x86_64-pc-windows-msvc.zip, so writing it alongside the
+          # unsigned build would land it at …zip.zip and leave the unsigned
+          # original in place (how v0.69.1 shipped unsigned). The next step
+          # takes whatever lands here, so SignPath's naming doesn't matter.
+          output-artifact-directory: 'target/signpath'
+          # Without this, the action extracts the returned zip's contents as
+          # loose files instead of saving back the signed zip.
           skip-decompress: true
+      - name: Replace the Windows artifact with the signed one
+        if: contains(matrix.targets, 'x86_64-pc-windows-msvc') && steps.signpath.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          signed=(target/signpath/*)
+          if [ ${#signed[@]} -ne 1 ]; then
+            echo "::error::expected one signed artifact, found ${#signed[@]}: ${signed[*]-}"
+            exit 1
+          fi
+          # Check the replacement before it overwrites the build: shipping an
+          # unsigned zip is tolerable while the certificate is a test one,
+          # shipping a corrupt one never is.
+          python .github/verify-windows-signature.py "${signed[0]}"
+          mv "${signed[0]}" target/distrib/worktrunk-x86_64-pc-windows-msvc.zip
       - name: Recompute checksum for signed Windows artifact
         if: contains(matrix.targets, 'x86_64-pc-windows-msvc')
         shell: bash
@@ -194,6 +217,15 @@ jobs:
           # -b matches cargo-dist's own checksum format (`<hash> *<filename>`);
           # sha256sum's default text mode omits the asterisk.
           sha256sum -b worktrunk-x86_64-pc-windows-msvc.zip > worktrunk-x86_64-pc-windows-msvc.zip.sha256
+      # Records what the release actually ships. The step above gates the
+      # overwrite; this one answers the question the logs never could — a
+      # signing request can complete while the signed file never reaches the
+      # release, which is how v0.69.0 and v0.69.1 shipped unsigned.
+      - name: Report whether the shipped Windows artifact is signed
+        if: contains(matrix.targets, 'x86_64-pc-windows-msvc')
+        continue-on-error: true
+        shell: bash
+        run: python .github/verify-windows-signature.py target/distrib/worktrunk-x86_64-pc-windows-msvc.zip
       - id: cargo-dist
         name: Post-build
         # We force bash here just because github makes it really hard to get values up
