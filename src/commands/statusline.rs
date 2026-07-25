@@ -1051,18 +1051,9 @@ fn git_status_segments(worktree: &WorkingTree) -> Result<Vec<StatuslineSegment>>
     // complete status symbols.
     list::populate_item(repo, &mut item, statusline_options(repo))?;
 
-    // Get prioritized segments
-    let segments = item.format_statusline_segments();
-
-    if segments.is_empty() {
-        // Fallback: just show branch name
-        Ok(vec![StatuslineSegment::from_column(
-            item.branch.as_deref().unwrap_or("HEAD").to_string(),
-            ColumnKind::Branch,
-        )])
-    } else {
-        Ok(segments)
-    }
+    // Never empty: the branch segment is unconditional, so there is no
+    // emptier case to fall back to.
+    Ok(item.format_statusline_segments())
 }
 
 #[cfg(test)]
