@@ -843,7 +843,9 @@ fn add_branch_with_commits(repo_path: &Path, branch: &str, fork: &str, commits: 
 /// Create branches pointing at different depths in the repo's commit history.
 ///
 /// Samples `count` commits via `history_spread_shas` and creates
-/// `feature-NNN` branches pointing at them (behind-only — no own commits).
+/// `feature-NNN` branches pointing at them. None carries its own commits, so
+/// every branch is an ancestor of the tip — behind it, except `feature-000`:
+/// the newest sample is the tip itself, so that one sits exactly on it.
 pub fn add_history_spread_branches(repo_path: &Path, count: usize) {
     for (i, commit) in history_spread_shas(repo_path, count).iter().enumerate() {
         add_branch_with_commits(repo_path, &format!("feature-{i:03}"), commit, 0);
@@ -1443,6 +1445,30 @@ pub fn parse_config(s: &str) -> Option<SetupConfig> {
 mod tests {
     use super::*;
 
+    /// Sorted `git status --porcelain` lines for a worktree.
+    ///
+    /// Reads raw stdout rather than going through `capture_git`, which trims:
+    /// porcelain's leading status column is significant (` M` unstaged vs
+    /// `M ` staged), and trimming silently merges the two.
+    fn status_lines(wt: &Path) -> Vec<String> {
+        let out = git_command()
+            .args(["status", "--porcelain"])
+            .current_dir(wt)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git status failed in {}",
+            wt.display()
+        );
+        let mut lines: Vec<String> = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(str::to_string)
+            .collect();
+        lines.sort();
+        lines
+    }
+
     /// `target_dir_from_exe` finds the cargo target dir as the parent of the
     /// closest `debug`/`release` profile dir, so fixtures track wherever cargo
     /// actually built: a relocated `CARGO_TARGET_DIR`, a bench binary under
@@ -1583,27 +1609,6 @@ mod tests {
             behind_depths.windows(2).all(|w| w[0] > w[1]),
             "behind-branch fork depths must fan out across history: {behind_depths:?}"
         );
-
-        // Porcelain's leading status column is significant (` M` unstaged vs
-        // `M ` staged), so read raw stdout — `capture_git` trims it away.
-        let status_lines = |wt: &Path| {
-            let out = git_command()
-                .args(["status", "--porcelain"])
-                .current_dir(wt)
-                .output()
-                .unwrap();
-            assert!(
-                out.status.success(),
-                "git status failed in {}",
-                wt.display()
-            );
-            let mut lines: Vec<String> = String::from_utf8_lossy(&out.stdout)
-                .lines()
-                .map(str::to_string)
-                .collect();
-            lines.sort();
-            lines
-        };
 
         // Worktree states: 0 clean+ahead, 1 unstaged, 2 staged+unstaged+
         // untracked, 3 clean at the tip.
@@ -1885,13 +1890,8 @@ mod tests {
             let (_, ahead) = counts(&branch);
             assert_eq!(ahead, 5, "{branch} must carry its own commits");
             let wt = temp.path().join(format!("repo.{branch}"));
-            let mut status: Vec<String> = capture_git(&wt, &["status", "--porcelain"])
-                .lines()
-                .map(str::to_string)
-                .collect();
-            status.sort();
             assert_eq!(
-                status,
+                status_lines(&wt),
                 ["?? uncommitted_0.txt", "?? uncommitted_1.txt"],
                 "{branch} must be dirty only via untracked scratch"
             );
