@@ -222,6 +222,15 @@ impl CommitOptions<'_> {
     /// share one announce line; standalone callers (e.g. `wt commit`)
     /// construct an announcer of their own and flush right after.
     pub fn commit(self, announcer: &mut HookAnnouncer<'_>) -> anyhow::Result<CommitOutcome> {
+        // Use the worktree path from context — this is the target worktree when
+        // --branch is specified, or the current worktree otherwise.
+        let wt = self.ctx.repo.worktree_at(self.ctx.worktree_path);
+
+        // Refuse before hooks, staging, or any announcement: auto-staging an
+        // unmerged path is what would put conflict markers in the commit, and
+        // nothing below is worth doing for a commit that cannot happen.
+        wt.ensure_no_unmerged_paths("commit")?;
+
         let project_config = self.ctx.repo.load_project_config()?;
         let user_hooks = self.ctx.config.hooks(self.ctx.project_id().as_deref());
         let any_hooks_exist = user_hooks.get(HookType::PreCommit).is_some()
@@ -249,10 +258,6 @@ impl CommitOptions<'_> {
                 FailureStrategy::FailFast,
             )?;
         }
-
-        // Use the worktree path from context — this is the target worktree when
-        // --branch is specified, or the current worktree otherwise.
-        let wt = self.ctx.repo.worktree_at(self.ctx.worktree_path);
 
         if self.warn_about_untracked && self.stage_mode == StageMode::All {
             let status = wt

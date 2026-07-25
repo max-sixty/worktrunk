@@ -165,7 +165,7 @@ pub use diff::CommitMessageDetail;
 pub use integration::{BranchDiffSpec, IntegrationTargets, select_comparison_base};
 pub use ref_snapshot::RefSnapshot;
 pub(super) use working_tree::path_to_logging_context;
-pub use working_tree::{TempIndex, WorkingTree};
+pub use working_tree::{InProgressOperation, TempIndex, WorkingTree};
 
 // ============================================================================
 // Repository Cache
@@ -462,6 +462,14 @@ pub(super) static WORKTRUNK_USER_CONFIG_PRELOAD: OnceLock<UserConfig> = OnceLock
 ///
 /// This should be called once at program startup from main().
 /// If not called, defaults to "." (current directory).
+///
+/// `-C` sets this path without chdir'ing the process, so it is the base for the
+/// two things git gets from its own chdir: the repository [`Repository::current`]
+/// discovers, and every path the user supplies, which resolves through
+/// [`resolve_input_path`]. The process cwd answers a different question — where
+/// the user's shell physically is (the `cd` target after a switch, the
+/// cwd-removed recovery check) — so `std::env::current_dir()` substitutes for
+/// neither.
 pub fn set_base_path(path: PathBuf) {
     BASE_PATH.set(path).ok();
 }
@@ -469,6 +477,34 @@ pub fn set_base_path(path: PathBuf) {
 /// Get the base path for repository operations.
 fn base_path() -> &'static PathBuf {
     BASE_PATH.get().unwrap_or(&DEFAULT_BASE_PATH)
+}
+
+/// Resolve a path the user supplied, against the directory wt was pointed at.
+///
+/// Git resolves the paths in its command line against its own `-C`, because it
+/// chdir's there first. wt's `-C` sets [`set_base_path`] instead, so the same
+/// semantics come from joining onto that path. An absolute path passes through,
+/// as does every path when `-C` was not given — the process cwd already resolves
+/// those, and joining `.` onto them would surface as a stray `./` in output.
+///
+/// This is the one resolution point for those paths, so they cannot drift
+/// apart: worktree path arguments (`wt switch ../repo.feature`), `--config`,
+/// `WORKTRUNK_CONFIG_PATH`, `WORKTRUNK_SYSTEM_CONFIG_PATH`, and the trace file
+/// of `wt config state logs profile`. The rule is "the user named a file for wt
+/// to open" — three neighbours look similar and are deliberately outside it:
+///
+/// - Paths wt derives itself (a worktree root from `git worktree list`, an XDG
+///   config directory) are already absolute.
+/// - `WORKTRUNK_PROJECT_CONFIG_PATH` resolves from the worktree root, its
+///   documented base, because the project config is per-worktree.
+/// - `WORKTRUNK_BIN` and `XDG_CONFIG_DIRS` are never opened by wt: the first is
+///   expanded by the generated shell wrapper, and the XDG spec already requires
+///   the second to be absolute.
+pub fn resolve_input_path(path: impl AsRef<Path>) -> PathBuf {
+    match BASE_PATH.get() {
+        Some(base) => base.join(path),
+        None => path.as_ref().to_path_buf(),
+    }
 }
 
 /// Repository state for git operations.
@@ -1457,52 +1493,35 @@ impl Repository {
         }
     }
 
-    /// Get merge/rebase status for the worktree at this repository's discovery path.
-    pub fn worktree_state(&self) -> anyhow::Result<Option<String>> {
-        let git_dir = self.worktree_at(self.discovery_path()).git_dir()?;
+    /// The git operation the worktree at this repository's discovery path is
+    /// partway through, if any. See [`WorkingTree::operation_in_progress`].
+    pub fn operation_in_progress(&self) -> anyhow::Result<Option<InProgressOperation>> {
+        self.worktree_at(self.discovery_path())
+            .operation_in_progress()
+    }
 
-        // Check for merge
-        if git_dir.join("MERGE_HEAD").exists() {
-            return Ok(Some("MERGING".to_string()));
-        }
-
-        // Check for rebase. `rebase-merge` (interactive/merge backend) and
-        // `rebase-apply` (am backend) are mutually exclusive; probe each once.
-        let rebase_merge = git_dir.join("rebase-merge");
-        let rebase_apply = git_dir.join("rebase-apply");
-        if let Some(rebase_dir) = rebase_merge
-            .exists()
-            .then_some(rebase_merge)
-            .or_else(|| rebase_apply.exists().then_some(rebase_apply))
-        {
-            if let (Ok(msgnum), Ok(end)) = (
-                std::fs::read_to_string(rebase_dir.join("msgnum")),
-                std::fs::read_to_string(rebase_dir.join("end")),
-            ) {
-                let current = msgnum.trim();
-                let total = end.trim();
-                return Ok(Some(format!("REBASING {}/{}", current, total)));
+    /// Fail when the worktree is already partway through a git operation.
+    ///
+    /// A precondition for the commit-replaying commands (`wt step rebase`,
+    /// `wt merge`). Mid-rebase, HEAD is detached on a linear extension of the
+    /// target, so `is_rebased_onto` — and every
+    /// ancestry check like it — reads as "already up to date"; without this
+    /// gate a caller reports success over a tree that still holds conflict
+    /// markers. The other states are gated for the same reason rather than
+    /// their own symptom: a rebase started from any of them either compounds
+    /// the half-finished operation or dies inside git with its own plumbing
+    /// error, and neither tells the user what to do next.
+    ///
+    /// The refusal names no operation, so nothing here has to track what git
+    /// calls each state or how to leave it; `git status` answers both.
+    pub fn ensure_no_operation_in_progress(&self, action: &str) -> anyhow::Result<()> {
+        match self.operation_in_progress()? {
+            Some(_) => Err(crate::git::GitError::OperationInProgress {
+                action: action.to_string(),
             }
-
-            return Ok(Some("REBASING".to_string()));
+            .into()),
+            None => Ok(()),
         }
-
-        // Check for cherry-pick
-        if git_dir.join("CHERRY_PICK_HEAD").exists() {
-            return Ok(Some("CHERRY-PICKING".to_string()));
-        }
-
-        // Check for revert
-        if git_dir.join("REVERT_HEAD").exists() {
-            return Ok(Some("REVERTING".to_string()));
-        }
-
-        // Check for bisect
-        if git_dir.join("BISECT_LOG").exists() {
-            return Ok(Some("BISECTING".to_string()));
-        }
-
-        Ok(None)
     }
 
     // =========================================================================

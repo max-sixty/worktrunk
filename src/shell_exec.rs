@@ -39,7 +39,15 @@
 //! spawn paths; both isolate-by-default for the same `killpg` reason. They
 //! never share wt's pgroup because they don't drive the tty (concurrent uses
 //! piped stdio, detached escapes the PTY entirely).
+//!
+//! ## Cancelling background children
+//!
+//! `wt` exiting ends its own threads but not the children they spawned, which
+//! keep running as orphans. [`cancel_background_commands`] lets the foreground
+//! thread stop that work — both what is running and what has yet to start —
+//! once nobody is left to read its results.
 
+use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
 use std::fs::Metadata;
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
@@ -77,6 +85,141 @@ static FOREGROUND_THREAD: OnceLock<std::thread::ThreadId> = OnceLock::new();
 fn is_foreground_thread() -> bool {
     FOREGROUND_THREAD.get() == Some(&std::thread::current().id())
 }
+
+/// PIDs of capture-mode commands currently running on background threads, so
+/// the foreground thread can cancel them once nobody will read their results.
+///
+/// A background thread dies with the process, but the `git` child it spawned
+/// does not — it keeps running, orphaned, against a repo `wt` has already
+/// left. The picker is where this bites: accepting a row abandons one preview
+/// diff per worktree, each able to churn disk for seconds on a large repo,
+/// filling an in-memory cache that no longer exists.
+///
+/// Only cancellable threads register ([`is_cancellable_thread`]): the
+/// foreground thread is the one that cancels, and is never itself inside a
+/// tracked command while doing so, so the work the user is actually waiting
+/// on is never a target; an [`uninterruptible`] thread finishes what it
+/// started.
+static BACKGROUND_PIDS: Mutex<BTreeSet<u32>> = Mutex::new(BTreeSet::new());
+
+/// Deregisters a background command's PID however the command finishes.
+///
+/// The child is reaped inside the `wait` this guard outlives, so for the few
+/// instructions between that reap and this `drop` a freed PID is still listed,
+/// and a sweep landing in that window would signal whatever the kernel handed
+/// the number to next. Signalling by PID can't close this — the reap and the
+/// deregistration are not one operation — and deregistering before the wait
+/// instead is not a fix but a removal: the wait *is* the command's lifetime,
+/// so nothing would ever be cancellable. Accepted rather than mitigated:
+/// PID allocation is incremental up to `pid_max`, which makes reuse inside a
+/// microsecond window require wrapping the entire PID space first.
+struct BackgroundPid(u32);
+
+impl Drop for BackgroundPid {
+    fn drop(&mut self) {
+        BACKGROUND_PIDS.lock().unwrap().remove(&self.0);
+    }
+}
+
+std::thread_local! {
+    /// Whether this thread is running work cancellation must not touch. See
+    /// [`uninterruptible`].
+    static UNINTERRUPTIBLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run `f` with this thread's commands exempt from cancellation, for work the
+/// user has already asked for rather than work done on spec.
+///
+/// Cancelling is safe for a preview because its only effect is a cache entry
+/// nobody will read. It is not safe for a mutation: the picker runs an `alt-x`
+/// worktree removal on a background thread so the UI stays live, and a SIGTERM
+/// landing between `git worktree remove` and the branch delete would leave the
+/// user half-removed. Such a thread finishes what it started; only its result
+/// is discardable, not its effects.
+pub fn uninterruptible<T>(f: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            UNINTERRUPTIBLE.with(|flag| flag.set(self.0));
+        }
+    }
+
+    let _restore = Restore(UNINTERRUPTIBLE.with(|flag| flag.replace(true)));
+    f()
+}
+
+/// Whether this thread's commands are subject to cancellation: background (the
+/// foreground thread is the one doing the cancelling, and goes on to run the
+/// switch itself) and not marked [`uninterruptible`].
+fn is_cancellable_thread() -> bool {
+    !is_foreground_thread() && !UNINTERRUPTIBLE.with(std::cell::Cell::get)
+}
+
+/// Register a freshly spawned child as cancellable for as long as the returned
+/// guard lives. Returns `None` when this thread's commands aren't subject to
+/// cancellation (see [`is_cancellable_thread`]).
+fn track_if_cancellable(child: &std::process::Child) -> Option<BackgroundPid> {
+    is_cancellable_thread().then(|| {
+        let pid = child.id();
+        BACKGROUND_PIDS.lock().unwrap().insert(pid);
+        let guard = BackgroundPid(pid);
+        // Re-read after publishing the PID, closing the window between this
+        // command's pre-spawn check and its registration. Either the sweep
+        // takes the set lock after the insert and signals this PID itself, or
+        // it ran first — in which case the store it followed is visible here
+        // and the signal it couldn't deliver is delivered now. A child spawned
+        // into that window is exactly the orphan the sweep exists to prevent.
+        if BACKGROUND_CANCELLED.load(Ordering::SeqCst) {
+            signal_background_pid(pid);
+        }
+        guard
+    })
+}
+
+/// Set once the foreground thread has cancelled background work, so commands
+/// that haven't spawned yet never do.
+///
+/// Cancellation has to be a state, not a one-shot sweep over
+/// [`BACKGROUND_PIDS`]. A task that already cleared its caller's own
+/// supersede check and then parked on [`CMD_SEMAPHORE`] holds no PID for a
+/// sweep to find, and would spawn the moment a permit frees — precisely the
+/// permits the sweep just freed by signalling everything holding one.
+static BACKGROUND_CANCELLED: AtomicBool = AtomicBool::new(false);
+
+/// Whether the calling thread's commands have been cancelled.
+fn background_cancelled() -> bool {
+    is_cancellable_thread() && BACKGROUND_CANCELLED.load(Ordering::SeqCst)
+}
+
+fn cancelled_error() -> std::io::Error {
+    std::io::Error::new(ErrorKind::Interrupted, "background command cancelled")
+}
+
+/// Abandon background work: nothing further spawns, and whatever is already
+/// running is signalled rather than left to finish as an orphan.
+///
+/// Callers see either as an ordinary command failure, which every background
+/// caller already treats as "no result".
+pub fn cancel_background_commands() {
+    BACKGROUND_CANCELLED.store(true, Ordering::SeqCst);
+    for &pid in BACKGROUND_PIDS.lock().unwrap().iter() {
+        signal_background_pid(pid);
+    }
+}
+
+/// SIGTERM rather than SIGKILL: git's lockfile handlers run on the former, so
+/// a diff interrupted mid-index-refresh cleans up after itself instead of
+/// stranding an `index.lock` in a worktree the user is about to work in.
+#[cfg(unix)]
+fn signal_background_pid(pid: u32) {
+    forward_signal_to_pid(pid as i32, signal_hook::consts::SIGTERM);
+}
+
+/// Windows has no signal to deliver to an unrelated PID, so a command already
+/// running there runs to completion; the latch still stops everything that
+/// hasn't spawned, which is the bulk of a large fan-out.
+#[cfg(windows)]
+fn signal_background_pid(_pid: u32) {}
 
 /// The working directory at `wt` startup. Captured once so relative `GIT_*`
 /// path variables inherited from a parent `git` process can be resolved to
@@ -721,6 +864,7 @@ fn run_with_timeout_impl(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
+    let _tracked = track_if_cancellable(&child);
 
     let mut child_stdout = child.stdout.take();
     let mut child_stderr = child.stderr.take();
@@ -1313,6 +1457,16 @@ impl Cmd {
         let mut trace = CommandTrace::new(self.context.as_deref(), &cmd_str)
             .reads_stdin(self.stdin_data.is_some());
 
+        // Checked after the permit, not before: a command can be cancelled
+        // while parked on the semaphore, and that is the common case in a
+        // large fan-out.
+        if background_cancelled() {
+            let e = cancelled_error();
+            trace.fail(&e);
+            external_log.record(None);
+            return Err(e);
+        }
+
         if let Err(e) = self.check_spawn_preconditions() {
             trace.fail(&e);
             external_log.record(None);
@@ -1338,6 +1492,7 @@ impl Cmd {
 
             match cmd.spawn() {
                 Ok(mut child) => {
+                    let _tracked = track_if_cancellable(&child);
                     // Write stdin data in an inner scope so the handle DROPS
                     // (closing the pipe) before `wait_with_output` — otherwise a
                     // child that reads stdin to EOF (e.g. `git … --stdin`) blocks
@@ -1357,8 +1512,21 @@ impl Cmd {
             // Timeout handling uses the existing impl
             run_with_timeout_impl(&mut cmd, timeout_duration)
         } else {
-            // Simple case: just run and capture output
-            cmd.output()
+            // Simple case: run and capture output. Spawned explicitly rather
+            // than via `cmd.output()` — which matches these stdio defaults —
+            // because `output()` hands back only the finished result, never
+            // the running child, and a background command has to be
+            // registered as cancellable while it runs (see BACKGROUND_PIDS).
+            cmd.stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            match cmd.spawn() {
+                Ok(child) => {
+                    let _tracked = track_if_cancellable(&child);
+                    child.wait_with_output()
+                }
+                Err(e) => Err(e),
+            }
         };
 
         record_captured(&mut trace, self.stdin_data.as_deref(), &result);
@@ -1431,6 +1599,19 @@ impl Cmd {
 
         let _guard = (!is_foreground_thread()).then(|| semaphore().acquire());
 
+        // Cancelled, possibly while parked on the semaphore above (see
+        // `background_cancelled`). Nothing has spawned, so neither half runs.
+        if background_cancelled() {
+            let e = cancelled_error();
+            CommandTrace::record_failed(
+                self.context.as_deref(),
+                &first_cmd_str,
+                self.stdin_data.is_some(),
+                &e,
+            );
+            return Err(e);
+        }
+
         // Validate both commands before spawning either. Nothing has spawned
         // yet, so a precondition failure emits a one-shot failed record rather
         // than holding a guard across an execution that never happens.
@@ -1476,6 +1657,7 @@ impl Cmd {
                 return Err(e);
             }
         };
+        let _first_tracked = track_if_cancellable(&first_child);
         let first_stdout = first_child
             .stdout
             .take()
@@ -1515,6 +1697,7 @@ impl Cmd {
                 return Err(e);
             }
         };
+        let _second_tracked = track_if_cancellable(&second_child);
 
         // `first`'s stderr must be drained concurrently with `second`'s
         // execution; otherwise pathological stderr volume (~64 KiB pipe
@@ -2657,6 +2840,22 @@ mod tests {
             .env_remove("SOME_NONEXISTENT_VAR")
             .stream();
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_background_pid_deregisters_on_drop() {
+        // Not a live PID: this exercises the registry bookkeeping only, and
+        // nothing in this test signals anything.
+        let pid = u32::MAX;
+        {
+            BACKGROUND_PIDS.lock().unwrap().insert(pid);
+            let _guard = BackgroundPid(pid);
+            assert!(BACKGROUND_PIDS.lock().unwrap().contains(&pid));
+        }
+        assert!(
+            !BACKGROUND_PIDS.lock().unwrap().contains(&pid),
+            "the guard should deregister its PID once the command finishes"
+        );
     }
 
     #[test]

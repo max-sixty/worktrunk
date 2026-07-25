@@ -2545,13 +2545,14 @@ fn test_remove_detached_worktree_by_path(mut repo: TestRepo) {
 }
 
 /// Verify that detached worktrees can be removed by relative path.
-/// This tests resolve_worktree_arg's CWD-relative path resolution.
+/// This tests `resolve_worktree_arg`'s path resolution, which here runs from a
+/// cwd inside the repo.
 #[rstest]
 fn test_remove_detached_worktree_by_relative_path(mut repo: TestRepo) {
     repo.add_worktree("feature-detached");
     repo.detach_head_in_worktree("feature-detached");
 
-    // From the main worktree (repo/), the relative path resolves against CWD
+    // From the main worktree (repo/), the detached worktree is at ../repo.feature-detached
     let relative_path = "../repo.feature-detached";
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
@@ -2559,6 +2560,46 @@ fn test_remove_detached_worktree_by_relative_path(mut repo: TestRepo) {
         &[relative_path, "--foreground", "--yes"],
         None,
     ));
+}
+
+/// A relative path resolves against `-C`, not the process cwd — git's own rule
+/// for path arguments under `-C`.
+///
+/// The test above reaches the worktree from a cwd inside the repo, the route
+/// that works under either rule. Running from outside the repo is what tells
+/// the two resolution bases apart: `../repo.feature-detached` names the
+/// worktree only when it is resolved from the `-C` directory.
+#[rstest]
+fn test_remove_detached_worktree_by_relative_path_honors_directory_flag(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-detached");
+    repo.detach_head_in_worktree("feature-detached");
+
+    let outside = repo.root_path().parent().unwrap().to_path_buf();
+    let root = repo.root_path().to_string_lossy().to_string();
+    let output = repo
+        .wt_command()
+        .current_dir(&outside)
+        .args([
+            "-C",
+            &root,
+            "remove",
+            "../repo.feature-detached",
+            "--foreground",
+            "--yes",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "remove should resolve the relative path against -C:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !worktree_path.exists(),
+        "the worktree the path names relative to -C should be gone"
+    );
 }
 
 /// Test that resolve_worktree("@") works when the worktree is accessed via a symlink.

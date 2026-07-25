@@ -6,9 +6,11 @@
 use std::path::PathBuf;
 
 use color_print::cformat;
-use worktrunk::git::{IntegrationReason, IntegrationSignals, LineDiff, check_integration};
+use worktrunk::git::{
+    InProgressOperation, IntegrationReason, IntegrationSignals, LineDiff, check_integration,
+};
 
-use super::state::{ActiveGitOperation, Divergence, MainState, OperationState, WorktreeState};
+use super::state::{Divergence, MainState, OperationState, WorktreeState};
 use super::stats::{AheadBehind, BranchDiffTotals, CommitDetails, UpstreamStatus};
 use super::status_symbols::{StatusSymbols, WorkingTreeStatus};
 use crate::commands::list::ci_status::PrStatus;
@@ -52,10 +54,10 @@ pub struct WorktreeData {
     /// was clean, so fall back to the committed-HEAD merge-tree check.
     /// Outer `Some(Some(b))` = dirty working tree, `b` is the conflict result.
     pub has_working_tree_conflicts: Option<Option<bool>>,
-    /// Git operation in progress (rebase/merge). `None` = not yet loaded;
-    /// `Some(ActiveGitOperation::None)` = loaded, no operation in progress.
+    /// Git operation in progress. Outer `None` = not yet loaded;
+    /// `Some(None)` = loaded, no operation in progress.
     /// Fed by the `GitOperation` task.
-    pub git_operation: Option<ActiveGitOperation>,
+    pub git_operation: Option<Option<InProgressOperation>>,
     pub is_main: bool,
     /// Whether this is the current worktree (matches repo discovery path: PWD or `-C`)
     pub is_current: bool,
@@ -662,7 +664,7 @@ impl ListItem {
 
     /// Gate 2: operation state. Resolves once both `has_conflicts` and
     /// `git_operation` have reported. Priority within the gate:
-    /// `has_conflicts` > rebase > merge > none.
+    /// `has_conflicts` > in-progress operation > none.
     fn try_gate_operation_state(&self) -> Option<OperationState> {
         match &self.kind {
             ItemKind::Worktree(data) => {
@@ -670,12 +672,10 @@ impl ListItem {
                 if has_conflicts {
                     return Some(OperationState::Conflicts);
                 }
-                let git_operation = data.git_operation.as_ref()?;
-                match git_operation {
-                    ActiveGitOperation::Rebase => Some(OperationState::Rebase),
-                    ActiveGitOperation::Merge => Some(OperationState::Merge),
-                    ActiveGitOperation::None => Some(OperationState::None),
-                }
+                Some(match data.git_operation? {
+                    Some(operation) => OperationState::InProgress(operation),
+                    None => OperationState::None,
+                })
             }
             // Branches have no operation state; trivially resolved to None.
             ItemKind::Branch(_) => Some(OperationState::None),
@@ -1166,7 +1166,7 @@ mod tests {
     #[test]
     fn gate_operation_state_waits_for_both_inputs() {
         // `has_conflicts = Some(false)` but `git_operation = None` →
-        // gate stays Loading (could still become Rebase/Merge).
+        // gate stays Loading (an operation could still report).
         let mut item = make_worktree_item();
         if let ItemKind::Worktree(ref mut data) = item.kind {
             data.has_conflicts = Some(false);
@@ -1177,12 +1177,12 @@ mod tests {
 
         // Set git_operation → gate resolves.
         if let ItemKind::Worktree(ref mut data) = item.kind {
-            data.git_operation = Some(ActiveGitOperation::Rebase);
+            data.git_operation = Some(Some(InProgressOperation::Rebase));
         }
         item.refresh_status_symbols(None);
         assert_eq!(
             item.status_symbols.operation_state,
-            Some(OperationState::Rebase)
+            Some(OperationState::InProgress(InProgressOperation::Rebase))
         );
     }
 

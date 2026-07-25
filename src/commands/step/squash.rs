@@ -82,6 +82,17 @@ pub fn handle_squash(
 
     let env = CommandEnv::for_action(config)?;
     let repo = &env.repo;
+    // Rewriting history under a half-finished operation is never what the user
+    // meant, and mid-rebase HEAD is detached — so this runs ahead of the branch
+    // check, which would otherwise blame the detached HEAD and point at
+    // `git switch`, the one command that throws the operation away.
+    repo.ensure_no_operation_in_progress("squash")?;
+    // Squash auto-stages, and `git add -A` would resolve an unmerged path to
+    // whatever is on disk — conflict markers included. Refuse ahead of the
+    // hooks and the LLM call, neither of which is worth running for a squash
+    // that cannot happen.
+    repo.worktree_at(&env.worktree_path)
+        .ensure_no_unmerged_paths("squash")?;
     // Squash requires being on a branch (can't squash in detached HEAD)
     let current_branch = env.require_branch("squash")?.to_string();
     let ctx = env.context(yes);

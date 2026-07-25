@@ -34,7 +34,7 @@
 
 ### Internal
 
-- **Windows release binaries are submitted to SignPath for code signing**: Signed with a test certificate for now, while the project's OSS-program application is under review, and non-blocking so a signing failure can't hold up publishing to crates.io, Homebrew, winget, or AUR. ([#3553](https://github.com/max-sixty/worktrunk/pull/3553), [#3556](https://github.com/max-sixty/worktrunk/pull/3556))
+- **Windows release binaries are submitted to SignPath for code signing**: Submitted for signing under a test certificate for now, while the project's OSS-program application is under review, and non-blocking so a signing failure can't hold up publishing to crates.io, Homebrew, winget, or AUR. ([#3553](https://github.com/max-sixty/worktrunk/pull/3553), [#3556](https://github.com/max-sixty/worktrunk/pull/3556), [#3566](https://github.com/max-sixty/worktrunk/pull/3566))
 
 - **`wt list` runs its merge analysis in a read-only object database**: When the git object store is read-only, `wt list` and `wt list statusline` redirect their object-writing merge/conflict probes into a temporary object database layered over the real one, so the full analysis still runs. Mutating commands keep the persistent store and fail loudly on a read-only one. ([#3535](https://github.com/max-sixty/worktrunk/pull/3535))
 

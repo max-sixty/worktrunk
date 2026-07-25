@@ -348,7 +348,11 @@ impl SkimItem for HeaderSkimItem {
 /// only ever produces the name-free body.
 ///
 /// `prefix` is the command through the `diff` subcommand (e.g. `["diff"]` or
-/// `["-C", path, "diff"]`); `revs` are the positional revisions.
+/// `["-C", path, "diff"]`); `revs` are the positional revisions. Both commands
+/// use `--no-optional-locks` to avoid index lock contention, as `wt list`'s
+/// `git status` does: a preview runs on a background thread against a worktree
+/// the user may be working in, and can be signalled mid-run by
+/// [`worktrunk::shell_exec::cancel_background_commands`].
 ///
 /// The diff options precede an `--end-of-options` sentinel, which fences the
 /// positional `revs` so a ref that looks like a flag (a branch literally named
@@ -364,7 +368,8 @@ fn compute_diff_preview(
     let stat_width_arg = format!("--stat-width={width}");
 
     // Check stat output first.
-    let mut stat_args = prefix.to_vec();
+    let mut stat_args = vec!["--no-optional-locks"];
+    stat_args.extend_from_slice(prefix);
     stat_args.extend([
         "--stat",
         "--color=always",
@@ -381,7 +386,8 @@ fn compute_diff_preview(
     let mut output = stat;
 
     // Build diff args with color.
-    let mut diff_args = prefix.to_vec();
+    let mut diff_args = vec!["--no-optional-locks"];
+    diff_args.extend_from_slice(prefix);
     diff_args.extend(["--color=always", "--end-of-options"]);
     diff_args.extend_from_slice(revs);
 

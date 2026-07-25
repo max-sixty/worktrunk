@@ -22,7 +22,7 @@ use worktrunk::git::remote_ref::{
 };
 use worktrunk::git::{
     GitError, GitRemoteUrl, RefContext, RefType, Repository, SwitchSuggestionCtx,
-    current_or_recover,
+    current_or_recover, resolve_input_path,
 };
 use worktrunk::shell_exec::{ShellEscapeMode, directive_shell_escape_mode, shell_escape_for};
 use worktrunk::styling::{
@@ -855,15 +855,12 @@ fn plan_switch(
     // If the argument looks like a path (not a branch name), try to find a worktree there.
     if !create {
         let candidate = Path::new(branch);
-        let abs_path = if candidate.is_absolute() {
-            Some(candidate.to_path_buf())
-        } else if candidate.components().count() > 1 {
-            // Relative path with directory separators (e.g., "../repo.feature").
-            // Single-component names are ambiguous with branch names (already tried in Phase 2).
-            std::env::current_dir().ok().map(|cwd| cwd.join(candidate))
-        } else {
-            None
-        };
+        // Absolute, or relative with directory separators (e.g. "../repo.feature");
+        // a single-component name is ambiguous with a branch name (already tried in
+        // Phase 2), so it stays branch-only. A relative path resolves against `-C`,
+        // like git's own path arguments — see `resolve_input_path`.
+        let looks_like_path = candidate.is_absolute() || candidate.components().count() > 1;
+        let abs_path = looks_like_path.then(|| resolve_input_path(candidate));
         if let Some(abs_path) = abs_path
             && let Some((path, wt_branch)) = repo.worktree_at_path(&abs_path)?
         {
@@ -1481,6 +1478,14 @@ fn spawn_switch_background_hooks(
     hooks_display_path: Option<&Path>,
     hook_plan: &ApprovedHookPlan,
 ) -> anyhow::Result<()> {
+    // The common case (no project hooks configured): nothing to render or
+    // announce, so skip building the destination-rooted `Repository` — it
+    // would only be discarded by `HookAnnouncer::flush`'s own no-op-when-empty
+    // check below.
+    if hook_plan.is_empty() {
+        return Ok(());
+    }
+
     // Background hooks run in the new/destination worktree. `hook_repo` roots
     // the *render* context there; the command set is the frozen `hook_plan`
     // (selected at the gate from the invoking worktree's config), so no

@@ -3,13 +3,12 @@
 //! Functions for resolving worktree arguments and computing expected paths.
 
 use std::io::IsTerminal;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use anyhow::Context;
 use color_print::cformat;
 use normalize_path::NormalizePath;
 use worktrunk::config::UserConfig;
-use worktrunk::git::{Repository, ResolvedWorktree};
+use worktrunk::git::{Repository, ResolvedWorktree, resolve_input_path};
 use worktrunk::path::{format_path_for_display, paths_match};
 use worktrunk::styling::{
     eprintln, format_toml, hint_message, info_message, success_message, warning_message,
@@ -27,8 +26,9 @@ use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
 /// 5. Otherwise, return branch-only (no worktree)
 ///
 /// If branch lookup fails to find a worktree, the argument is tried as a
-/// filesystem path (absolute or relative to CWD). This supports removing
-/// detached HEAD worktrees which have no branch name.
+/// filesystem path — absolute, or relative to the directory wt was pointed at
+/// (`-C`, else the process cwd). This supports removing detached HEAD worktrees
+/// which have no branch name.
 pub fn resolve_worktree_arg(repo: &Repository, name: &str) -> anyhow::Result<ResolvedWorktree> {
     // Special symbols - delegate to Repository for consistent error handling
     match name {
@@ -49,16 +49,10 @@ pub fn resolve_worktree_arg(repo: &Repository, name: &str) -> anyhow::Result<Res
         });
     }
 
-    // No worktree for branch - fall back to path-based lookup (supports detached worktrees)
-    let candidate = Path::new(name);
-    // Try as absolute path, or resolve relative to CWD
-    let abs_path = if candidate.is_absolute() {
-        candidate.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .context("Failed to determine current directory")?
-            .join(candidate)
-    };
+    // No worktree for branch - fall back to path-based lookup (supports detached
+    // worktrees). A relative path resolves against `-C`, like git's own path
+    // arguments — see `resolve_input_path`.
+    let abs_path = resolve_input_path(name);
     if let Some((path, wt_branch)) = repo.worktree_at_path(&abs_path)? {
         return Ok(ResolvedWorktree::Worktree {
             path,

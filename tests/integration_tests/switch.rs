@@ -1704,7 +1704,8 @@ fn test_switch_worktree_by_symlinked_path(mut repo: TestRepo) {
 }
 
 /// Switch to a detached worktree by relative path (#1661).
-/// Relative paths with directory separators (e.g., "../repo.feature") are resolved against CWD.
+/// Relative paths with directory separators (e.g., "../repo.feature") resolve
+/// against the directory wt was pointed at, which here is the process cwd.
 #[rstest]
 fn test_switch_detached_worktree_by_relative_path(mut repo: TestRepo) {
     repo.add_worktree("feature-detached");
@@ -1717,6 +1718,40 @@ fn test_switch_detached_worktree_by_relative_path(mut repo: TestRepo) {
         "switch_detached_worktree_by_relative_path",
         &repo,
         &[relative_path],
+    );
+}
+
+/// A relative path resolves against `-C`, not the process cwd — git's own rule
+/// for path arguments under `-C`.
+///
+/// The test above reaches the worktree from a cwd inside the repo, the route
+/// that works under either rule. Running from outside the repo is what tells
+/// the two resolution bases apart: `../repo.feature-detached` names the
+/// worktree only when it is resolved from the `-C` directory.
+#[rstest]
+fn test_switch_detached_worktree_by_relative_path_honors_directory_flag(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-detached");
+    repo.detach_head_in_worktree("feature-detached");
+
+    let outside = repo.root_path().parent().unwrap().to_path_buf();
+    let root = repo.root_path().to_string_lossy().to_string();
+    let (cd_path, exec_path, _guard) = directive_files();
+    let mut cmd = repo.wt_command();
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    cmd.current_dir(&outside)
+        .args(["-C", &root, "switch", "../repo.feature-detached"]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "switch should resolve the relative path against -C:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(&cd_path).unwrap().trim(),
+        worktree_path.to_string_lossy(),
+        "switch should land in the worktree the path names relative to -C"
     );
 }
 

@@ -76,7 +76,7 @@ use crate::commands::picker::preview_cache;
 use anyhow::Context;
 use color_print::cformat;
 use path_slash::PathExt as _;
-use worktrunk::git::{BranchRef, Repository, sha_cache};
+use worktrunk::git::{BranchRef, Repository, resolve_input_path, sha_cache};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
     eprintln, format_heading, format_with_gutter, hint_message, info_message, println,
@@ -656,6 +656,8 @@ pub fn handle_logs_profile(file: Option<PathBuf>, format: SwitchFormat) -> anyho
             (buf, "stdin".to_string())
         }
         Some(p) => {
+            // A relative trace path resolves against `-C` — see `resolve_input_path`.
+            let p = resolve_input_path(p);
             let content = std::fs::read_to_string(&p)
                 .with_context(|| format!("Failed to read trace {}", format_path_for_display(&p)))?;
             (content, format_path_for_display(&p).to_string())
