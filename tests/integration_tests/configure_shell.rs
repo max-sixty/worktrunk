@@ -408,6 +408,48 @@ fn test_configure_shell_fish_legacy_conf_d_cleanup(repo: TestRepo, temp_home: Te
     );
 }
 
+/// Installing fish integration leaves a user's own `conf.d/wt.fish` alone.
+///
+/// The legacy cleanup deletes a whole file the user never asked it to touch, so
+/// it has to recognize worktrunk's own wrapper rather than any file that
+/// mentions the init command. This one names it in a comment and pipes
+/// something unrelated to `source` — both substrings a whole-file test would
+/// take as proof the file was worktrunk's.
+#[rstest]
+fn test_configure_shell_fish_preserves_user_conf_d_file(repo: TestRepo, temp_home: TempDir) {
+    let conf_d = temp_home.path().join(".config/fish/conf.d");
+    fs::create_dir_all(&conf_d).unwrap();
+    let user_file = conf_d.join("wt.fish");
+    let user_content = "# reminder: set up with wt config shell init fish\nfunction wt_helpers\n    cat ~/.aliases | source\nend\n";
+    fs::write(&user_file, user_content).unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/fish");
+    cmd.args(["config", "shell", "install", "fish", "--yes"])
+        .current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+    assert!(output.status.success(), "install failed: {output:?}");
+
+    assert!(
+        temp_home
+            .path()
+            .join(".config/fish/functions/wt.fish")
+            .exists(),
+        "install should still write functions/wt.fish"
+    );
+    assert!(
+        user_file.exists(),
+        "install deleted the user's own conf.d/wt.fish"
+    );
+    assert_eq!(
+        fs::read_to_string(&user_file).unwrap(),
+        user_content,
+        "user's own conf.d/wt.fish must survive install untouched"
+    );
+}
+
 /// Test that legacy cleanup happens even when new file already exists with correct content
 ///
 /// This handles the case where:
