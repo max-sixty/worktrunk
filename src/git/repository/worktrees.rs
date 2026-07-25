@@ -259,46 +259,49 @@ impl Repository {
     /// - `Worktree { path, branch }` — `branch` is `None` for a detached worktree
     /// - `BranchOnly { branch }` when nothing is checked out under that name
     pub fn resolve_worktree(&self, name: &str) -> anyhow::Result<ResolvedWorktree> {
-        if name == "@" {
-            // Current worktree by path - works even in detached HEAD
-            // If worktree_root fails (e.g., in bare repo directory), give a clear error
-            let path = self
-                .current_worktree()
-                .root()
-                .map_err(|_| GitError::NotInWorktree {
-                    action: Some("resolve @".into()),
-                })?;
-            // root() returns canonicalized path, so canonicalize worktree paths
-            // for comparison to handle symlinks (e.g., macOS /var -> /private/var)
-            let worktrees = self.list_worktrees()?;
-            let branch = worktrees
-                .iter()
-                .find(|wt| canonicalize(&wt.path).map(|p| p == path).unwrap_or(false))
-                .and_then(|wt| wt.branch.clone());
-            return Ok(ResolvedWorktree::Worktree { path, branch });
-        }
+        match name {
+            "@" => {
+                // Current worktree by path - works even in detached HEAD
+                // If worktree_root fails (e.g., in bare repo directory), give a clear error
+                let path = self
+                    .current_worktree()
+                    .root()
+                    .map_err(|_| GitError::NotInWorktree {
+                        action: Some("resolve @".into()),
+                    })?;
+                // root() returns canonicalized path, so canonicalize worktree paths
+                // for comparison to handle symlinks (e.g., macOS /var -> /private/var)
+                let worktrees = self.list_worktrees()?;
+                let branch = worktrees
+                    .iter()
+                    .find(|wt| canonicalize(&wt.path).map(|p| p == path).unwrap_or(false))
+                    .and_then(|wt| wt.branch.clone());
+                Ok(ResolvedWorktree::Worktree { path, branch })
+            }
+            _ => {
+                let branch = self.resolve_worktree_name(name)?;
+                if let Some(path) = self.worktree_for_branch(&branch)? {
+                    return Ok(ResolvedWorktree::Worktree {
+                        path,
+                        branch: Some(branch),
+                    });
+                }
 
-        let branch = self.resolve_worktree_name(name)?;
-        if let Some(path) = self.worktree_for_branch(&branch)? {
-            return Ok(ResolvedWorktree::Worktree {
-                path,
-                branch: Some(branch),
-            });
-        }
+                // A shortcut named a branch, not a directory: `resolve_worktree_name`
+                // returns a non-shortcut token unchanged, so an unequal result is
+                // exactly the case where the literal token would be a nonsense path.
+                if branch == name
+                    && let Some((path, wt_branch)) = self.worktree_at_input_path(name)?
+                {
+                    return Ok(ResolvedWorktree::Worktree {
+                        path,
+                        branch: wt_branch,
+                    });
+                }
 
-        // A shortcut named a branch, not a directory: `resolve_worktree_name`
-        // returns a non-shortcut token unchanged, so an unequal result is
-        // exactly the case where the literal token would be a nonsense path.
-        if branch == name
-            && let Some((path, wt_branch)) = self.worktree_at_input_path(name)?
-        {
-            return Ok(ResolvedWorktree::Worktree {
-                path,
-                branch: wt_branch,
-            });
+                Ok(ResolvedWorktree::BranchOnly { branch })
+            }
         }
-
-        Ok(ResolvedWorktree::BranchOnly { branch })
     }
 
     /// The branch a selector names, erroring only when it names a detached

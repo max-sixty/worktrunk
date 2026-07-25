@@ -247,10 +247,9 @@ mod tests {
     /// so a path from wt's own output can be pasted into a wt command.
     #[test]
     fn expand_tilde_round_trips_displayed_paths() {
-        let Some(home) = home_dir() else {
-            // Skip if HOME/USERPROFILE is not set in the environment
-            return;
-        };
+        // No skip guard: every platform the suite runs on sets HOME or
+        // USERPROFILE, and skipping would leave the assertion silently unrun.
+        let home = home_dir().expect("HOME or USERPROFILE is set");
 
         let path = home.join("workspace").join("repo.feature");
         let displayed = format_path_for_display(&path);
