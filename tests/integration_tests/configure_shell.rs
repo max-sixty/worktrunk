@@ -962,13 +962,14 @@ fn test_uninstall_shell(repo: TestRepo, temp_home: TempDir) {
             .arg("--yes")
             .current_dir(repo.root_path());
 
-        assert_cmd_snapshot!(cmd, @"
+        assert_cmd_snapshot!(cmd, @r#"
         success: true
         exit_code: 0
         ----- stdout -----
 
         ----- stderr -----
         [32m✓[39m [32mRemoved shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
+        [107m [0m [2m[0m[2m[35mif[0m[2m [0m[2m[34mcommand[0m[2m [0m[2m[36m-v[0m[2m wt [0m[2m[36m>[0m[2m/dev/null [0m[2m[33m2[0m[2m>&1; [0m[2m[35mthen[0m[2m [0m[2m[34meval[0m[2m [0m[2m[32m"$([0m[2m[34mcommand[0m[2m wt config shell init zsh)"[0m[2m; [0m[2m[35mfi[0m
         [2m↳[22m [2mNo [4mbash[24m shell extension & completions in ~/.bashrc[22m
         [2m↳[22m [2mNo [4mfish[24m shell extension in ~/.config/fish/functions[22m
         [2m↳[22m [2mNo [4mnu[24m shell extension & completions in ~/.local/share/nushell/vendor/autoload[22m
@@ -976,7 +977,7 @@ fn test_uninstall_shell(repo: TestRepo, temp_home: TempDir) {
 
         [32m✓[39m [32mRemoved integration from 1 shell[39m
         [2m↳[22m [2mRestart shell to complete uninstall[22m
-        ");
+        "#);
     });
 
     // Verify the file no longer contains the integration
@@ -1026,21 +1027,23 @@ fn test_uninstall_shell_multiple(repo: TestRepo, temp_home: TempDir) {
             .arg("--yes")
             .current_dir(repo.root_path());
 
-        assert_cmd_snapshot!(cmd, @"
+        assert_cmd_snapshot!(cmd, @r#"
         success: true
         exit_code: 0
         ----- stdout -----
 
         ----- stderr -----
         [32m✓[39m [32mRemoved shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m[39m
+        [107m [0m [2m[0m[2m[35mif[0m[2m [0m[2m[34mcommand[0m[2m [0m[2m[36m-v[0m[2m wt [0m[2m[36m>[0m[2m/dev/null [0m[2m[33m2[0m[2m>&1; [0m[2m[35mthen[0m[2m [0m[2m[34meval[0m[2m [0m[2m[32m"$([0m[2m[34mcommand[0m[2m wt config shell init bash)"[0m[2m; [0m[2m[35mfi[0m
         [32m✓[39m [32mRemoved shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
+        [107m [0m [2m[0m[2m[35mif[0m[2m [0m[2m[34mcommand[0m[2m [0m[2m[36m-v[0m[2m wt [0m[2m[36m>[0m[2m/dev/null [0m[2m[33m2[0m[2m>&1; [0m[2m[35mthen[0m[2m [0m[2m[34meval[0m[2m [0m[2m[32m"$([0m[2m[34mcommand[0m[2m wt config shell init zsh)"[0m[2m; [0m[2m[35mfi[0m
         [2m↳[22m [2mNo [4mfish[24m shell extension in ~/.config/fish/functions[22m
         [2m↳[22m [2mNo [4mnu[24m shell extension & completions in ~/.local/share/nushell/vendor/autoload[22m
         [2m↳[22m [2mNo [4mfish[24m completions in ~/.config/fish/completions[22m
 
         [32m✓[39m [32mRemoved integration from 2 shells[39m
         [2m↳[22m [2mRestart shell to complete uninstall[22m
-        ");
+        "#);
     });
 
     // Verify both files no longer contain the integration
@@ -1258,6 +1261,69 @@ fn test_uninstall_scan_removes_all_worktrunk_zsh_lines(repo: TestRepo, temp_home
     assert!(
         content.contains("# Existing config"),
         "Unrelated comment should be preserved"
+    );
+}
+
+/// Uninstall deletes lines out of a file the user owns, so a line that merely
+/// quotes an integration command must survive — and every line it does take
+/// must be named in the output, since `--yes` skips the confirmation.
+#[rstest]
+fn test_uninstall_preserves_user_lines_quoting_the_init_command(
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
+    // Each survivor puts `wt config shell init` in argument position while an
+    // exec keyword sits elsewhere on the line — the shape that makes the
+    // whole-line execution-context check alone insufficient.
+    let survivors = [
+        r#"alias setup='echo "run: wt config shell init fish | source"'"#,
+        r#"echo "wt config shell init bash | source""#,
+    ];
+    let zshrc_path = temp_home.path().join(".zshrc");
+    fs::write(
+        &zshrc_path,
+        format!(
+            "{}\nif command -v wt >/dev/null 2>&1; then eval \"$(command wt config shell init zsh)\"; fi\n",
+            survivors.join("\n"),
+        ),
+    )
+    .unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/zsh");
+    cmd.args(["config", "shell", "uninstall", "zsh", "--yes"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().expect("Failed to execute uninstall");
+    assert!(
+        output.status.success(),
+        "Uninstall should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let content = fs::read_to_string(&zshrc_path).unwrap();
+    for survivor in survivors {
+        assert!(
+            content.contains(survivor),
+            "User's own line should survive uninstall: {survivor}\nremaining:\n{content}"
+        );
+    }
+    assert!(
+        !content.contains("command wt config shell init zsh"),
+        "worktrunk's own integration line should be removed:\n{content}"
+    );
+
+    // The removed line is named, so a --yes run still shows what it took.
+    // The gutter syntax-highlights it, so compare against stripped output.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let plain = regex::Regex::new(r"\x1b\[[0-9;]*m")
+        .unwrap()
+        .replace_all(&stderr, "");
+    assert!(
+        plain.contains("command wt config shell init zsh"),
+        "Uninstall should show the line it removed:\n{plain}"
     );
 }
 

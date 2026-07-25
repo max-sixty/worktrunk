@@ -115,58 +115,122 @@ const INIT_MARKER: &str = " config shell init";
 /// Cmd-agnostic line detection: matches an integration line whatever binary name
 /// it was installed under.
 ///
-/// Where the cmd-specific detectors search for a known name and check what
-/// precedes it, this reads the name off the line: it is the run of command-name
-/// characters ending at `INIT_MARKER`. Holding that run to
-/// [`validate_shell_command_name`](super::validate_shell_command_name) — the
-/// same rule governing what worktrunk is willing to write into shell code —
-/// keeps detection and generation from drifting apart.
+/// The whole rule is one question — does this line *invoke*
+/// `<name> config shell init`? — answered by `command_invocation_precedes`.
+/// Where the cmd-specific detectors search for a known name, this reads the name
+/// off the line.
+///
+/// It deliberately asks nothing about how the output is consumed. A detector
+/// that also scanned for `eval`/`source`/`save` would be reading English words
+/// out of the whole line, matching them inside quoted strings as readily as in
+/// code, and it turns out to reject nothing this doesn't: a line that merely
+/// mentions the command has it in argument position, which is already the
+/// disqualifier. What is left over is the narrow case of a line that runs
+/// `<name> config shell init` and discards the output, which is a worktrunk
+/// invocation in an rc file either way.
 ///
 /// Unlike the cmd-specific detectors this deliberately does not exclude a `git `
 /// prefix: `git wt config shell init` is worktrunk's own integration too, and
 /// uninstall asks only whether a line is ours, not which install it belongs to.
 ///
-/// Used by `wt config shell uninstall`, which removes every worktrunk-managed
-/// integration it finds.
+/// Used by `wt config shell uninstall`, which deletes the lines it matches. That
+/// makes a false positive destructive — it takes a line the user wrote — while a
+/// false negative only strands a line they can delete by hand. So where the two
+/// trade off, this errs toward leaving the line, and `wt config shell uninstall`
+/// shows every line it matched before removing it.
 pub fn is_shell_integration_line_for_uninstall_any_cmd(line: &str) -> bool {
     let code = line_code_portion(line);
-    is_execution_context(code, false)
-        && code
-            .match_indices(INIT_MARKER)
-            .any(|(pos, _)| command_name_precedes(code, pos))
+    code.match_indices(INIT_MARKER)
+        .any(|(pos, _)| command_invocation_precedes(code, pos))
 }
 
-/// Does a plausible command name end at `pos`?
+/// Does a command *invocation* end at `pos`?
 ///
-/// Reads backwards over command-name characters, which stops at the shell
-/// punctuation wrapping the invocation (`"$(`, `<(`) and at the directory
-/// separator of an absolute path, leaving the bare name. An empty run means the
-/// marker stands alone with nothing invoking it.
-fn command_name_precedes(line: &str, pos: usize) -> bool {
+/// Two things must hold: the word ending at `pos` names a command, and it sits
+/// in command position — it starts a command rather than sitting inside one as
+/// an argument.
+///
+/// The word is read backwards over everything that is neither whitespace nor
+/// the shell punctuation wrapping an invocation (`"$(`, `<(`, backticks), so a
+/// path to the binary stays whole and its basename is the name. Holding that
+/// name to [`validate_shell_command_name`](super::validate_shell_command_name)
+/// — the same rule governing what worktrunk is willing to write into shell code
+/// — keeps detection and generation from drifting apart. A bare `$VAR` fails it,
+/// so `eval "$($WORKTRUNK_BIN config shell init bash)"` is not claimed by
+/// either detector: which binary it names isn't knowable from the line.
+///
+/// Command position is the whole of what separates worktrunk's own line from a
+/// user's line that quotes one: in
+/// `alias setup='echo "run: wt config shell init fish | source"'` the name is an
+/// argument to `echo`, and without that check uninstall deletes the alias.
+fn command_invocation_precedes(line: &str, pos: usize) -> bool {
     let before = &line[..pos];
-    before
-        .char_indices()
+    let word = trailing_word(before);
+    if word.is_empty() {
+        // The marker stands alone with nothing invoking it.
+        return false;
+    }
+    let name = word.rsplit_once(['/', '\\']).map_or(word, |(_, base)| base);
+    super::validate_shell_command_name(name).is_ok()
+        && starts_command(&before[..before.len() - word.len()])
+}
+
+/// The word ending at the end of `s`: everything back to the nearest whitespace
+/// or shell punctuation. Empty when `s` ends in one of those.
+fn trailing_word(s: &str) -> &str {
+    s.char_indices()
         .rev()
-        .take_while(|(_, c)| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        .take_while(|&(_, c)| {
+            !c.is_whitespace()
+                && !matches!(
+                    c,
+                    ';' | '&' | '|' | '(' | ')' | '{' | '}' | '<' | '>' | '`' | '"' | '\''
+                )
+        })
         .map(|(i, _)| i)
         .last()
-        .is_some_and(|start| super::validate_shell_command_name(&before[start..]).is_ok())
+        .map_or("", |start| &s[start..])
+}
+
+/// Words that hand command position to whatever follows them: the two that
+/// prefix a worktrunk integration line in practice. `command` is what every rc
+/// line worktrunk writes uses; `git` covers the hand-written `git wt` dispatch
+/// form. A shell has other such words (`then`, `exec`, `do`), but no integration
+/// line puts one directly in front of the binary, and admitting one it doesn't
+/// need only widens what uninstall will delete.
+const COMMAND_MODIFIERS: [&str; 2] = ["command", "git"];
+
+/// Does a command start where `before` ends?
+///
+/// True at the start of the code and after the punctuation that separates or
+/// opens one — `;`, `&`, `|`, a group `{`, and the substitution forms wrapping
+/// an integration line (`$(`, `<(`, `=(`, backticks, PowerShell's `&` call
+/// operator). A bare word in front means the following word is that word's
+/// *argument*, unless the word is a [`COMMAND_MODIFIERS`] entry.
+fn starts_command(before: &str) -> bool {
+    let before = before.trim_end_matches([' ', '\t']);
+    match before.chars().last() {
+        None => true,
+        Some(';' | '&' | '|' | '(' | '{' | '`') => true,
+        Some(_) => COMMAND_MODIFIERS.contains(&trailing_word(before)),
+    }
 }
 
 /// Does the line run the command's output, rather than merely mention it?
 ///
-/// A property of the whole line, not of where the command sits within it.
+/// A property of the whole line, not of where the command sits within it: an
+/// exec keyword anywhere satisfies it, including inside a quoted string. That
+/// makes it too loose to decide a deletion on, so it is confined to the
+/// cmd-specific detectors, whose answer only picks a message.
 ///
-/// PowerShell is checked first, case-insensitively. It needs `| Out-String` to
-/// work — without it `Invoke-Expression` fails with "Cannot convert
-/// 'System.Object[]'" (issue #885). Strict mode (the cmd-specific install-side
-/// detector) leaves an old config lacking it undetected so `wt config shell
-/// install` will rewrite it; the cmd-agnostic uninstall detector passes
-/// `strict: false` so the old line can be removed.
-fn is_execution_context(line: &str, strict: bool) -> bool {
+/// What it buys there is a PowerShell line lacking `| Out-String`, which does
+/// not work — `Invoke-Expression` fails with "Cannot convert
+/// 'System.Object[]'" (issue #885). Reporting such a line as *not* configured
+/// is what gets `wt config shell install` to rewrite it.
+fn is_execution_context(line: &str) -> bool {
     let line_lower = line.to_lowercase();
     if line_lower.contains("invoke-expression") || line_lower.contains("iex") {
-        return !strict || line_lower.contains("out-string");
+        return line_lower.contains("out-string");
     }
 
     // POSIX shells (bash, zsh, fish) and nushell
@@ -202,7 +266,7 @@ fn has_init_invocation(line: &str, cmd: &str) -> bool {
 /// eval "$(git-wt.exe config shell init bash)"
 /// ```
 fn has_init_pattern_with_prefix_check(line: &str, cmd: &str) -> bool {
-    if !is_execution_context(line, true) {
+    if !is_execution_context(line) {
         return false;
     }
 
@@ -822,9 +886,13 @@ mod tests {
             "if type -q wt; command wt config shell init fish | source; end",
             "iex (wt config shell init powershell | Out-String)",
             // Old PowerShell forms without `| Out-String`, which uninstall
-            // must still remove (permissive execution-context check).
+            // must still remove even though they do not work.
             "iex (wt config shell init powershell)",
             "if (Get-Command wt -ErrorAction SilentlyContinue) { Invoke-Expression (& wt config shell init powershell) }",
+            // A bare invocation, with nothing consuming the output. Matched
+            // because uninstall asks only whether the line invokes the command:
+            // this is a worktrunk line whichever way it got there.
+            "wt config shell init bash",
         ] {
             assert!(
                 is_shell_integration_line_for_uninstall_any_cmd(line),
@@ -843,6 +911,45 @@ mod tests {
                 !is_shell_integration_line_for_uninstall_any_cmd(line),
                 "should not detect: {line}"
             );
+        }
+    }
+
+    /// Uninstall deletes what it matches, so a line that merely quotes an
+    /// integration command must not match — the exec keyword satisfying
+    /// `is_execution_context` can sit inside the quoted string itself, leaving
+    /// the command's own position as the only thing telling the two apart.
+    #[test]
+    fn test_any_cmd_rejects_quoted_mention_alongside_exec_keyword() {
+        for line in [
+            // The user's own alias: `source` is inside the echoed string, and
+            // `wt` is an argument to `echo`, not a command.
+            r#"alias setup='echo "run: wt config shell init fish | source"'"#,
+            // Same shape without the alias wrapper.
+            r#"echo "wt config shell init bash | source""#,
+            // A real integration line elsewhere on the line does not license
+            // deleting a mention that sits in argument position.
+            r#"eval "$(direnv hook bash)"; echo "see wt config shell init bash""#,
+        ] {
+            assert!(
+                !is_shell_integration_line_for_uninstall_any_cmd(line),
+                "quoted mention should not be claimed for deletion: {line}"
+            );
+        }
+    }
+
+    /// Every line worktrunk writes, and the documented hand-written forms, put
+    /// the command in a position the deletion check accepts. Regressions here
+    /// strand a working install.
+    #[test]
+    fn test_any_cmd_detects_every_generated_config_line() {
+        for shell in crate::shell::Shell::all() {
+            for cmd in ["wt", "git-wt"] {
+                let line = shell.config_line(cmd);
+                assert!(
+                    is_shell_integration_line_for_uninstall_any_cmd(&line),
+                    "uninstall must match its own generated line for {shell}/{cmd}: {line}"
+                );
+            }
         }
     }
 

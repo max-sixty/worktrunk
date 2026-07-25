@@ -27,6 +27,14 @@ pub struct UninstallResult {
     pub action: UninstallAction,
     /// Path that replaces this one (for deprecated location cleanup)
     pub superseded_by: Option<PathBuf>,
+    /// The lines the action applies to, for a file worktrunk edits in place
+    /// (the bash/zsh/PowerShell rc files, which are the user's).
+    ///
+    /// Shown before removal and again after, so no line leaves a user's rc file
+    /// unseen: detection is a heuristic, and `wt config shell uninstall` is the
+    /// one command that acts on it destructively. Empty for the fish/nushell
+    /// wrappers, whole files worktrunk owns and the path already names.
+    pub matched_lines: Vec<String>,
 }
 
 pub struct UninstallScanResult {
@@ -846,14 +854,13 @@ pub fn show_install_preview(
     blocks.join("\n\n")
 }
 
-/// Format what will be uninstalled (shell extensions and completions).
+/// Format what will be uninstalled (shell extensions and completions), naming
+/// the individual rc-file lines under each entry.
 ///
-/// Returns the preview as a string (no trailing newline). Used only for
-/// `--dry-run`, which is the command's answer, so the caller prints it to
-/// stdout. See /writing-user-outputs.
-///
-/// Note: I/O errors are intentionally ignored - preview is best-effort
-/// and shouldn't block the flow.
+/// Returns the preview as a string (no trailing newline). The caller picks the
+/// stream: `--dry-run` mutates nothing, so its preview is the command's answer
+/// and goes to stdout; the same text inside the confirmation prompt is
+/// narration and goes to stderr. See /writing-user-outputs.
 pub fn show_uninstall_preview(
     results: &[UninstallResult],
     completion_results: &[CompletionUninstallResult],
@@ -876,9 +883,10 @@ pub fn show_uninstall_preview(
             let what = shell_extension_label(shell);
 
             lines.push(format!(
-                "{} {} {what} for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
+                "{} {} {what} for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}{}",
                 result.action.symbol(),
                 result.action.description(),
+                format_matched_lines(&result.matched_lines),
             ));
         }
     }
@@ -895,6 +903,16 @@ pub fn show_uninstall_preview(
     }
 
     lines.join("\n")
+}
+
+/// The rc-file lines an uninstall entry covers, as a gutter block under the
+/// entry's own line. Empty for a whole file worktrunk owns, whose path is
+/// already the whole story.
+pub(crate) fn format_matched_lines(matched_lines: &[String]) -> String {
+    if matched_lines.is_empty() {
+        return String::new();
+    }
+    format!("\n{}", format_bash_with_gutter(&matched_lines.join("\n")))
 }
 
 /// Prompt for install with [y/N/?] options
@@ -1123,6 +1141,7 @@ fn scan_for_uninstall(
                         path: path.clone(),
                         action,
                         superseded_by: None,
+                        matched_lines: Vec::new(),
                     });
                 }
 
@@ -1139,6 +1158,7 @@ fn scan_for_uninstall(
                         path: path.clone(),
                         action,
                         superseded_by,
+                        matched_lines: Vec::new(),
                     });
                 }
 
@@ -1169,6 +1189,7 @@ fn scan_for_uninstall(
                             path: path.clone(),
                             action,
                             superseded_by: None,
+                            matched_lines: Vec::new(),
                         });
                     }
                 }
@@ -1292,12 +1313,18 @@ fn uninstall_from_file(
         return Ok(None);
     }
 
+    let matched_lines: Vec<String> = integration_lines
+        .iter()
+        .map(|(_, line)| line.trim().to_string())
+        .collect();
+
     if dry_run {
         return Ok(Some(UninstallResult {
             shell,
             path: path.to_path_buf(),
             action: UninstallAction::WouldRemove,
             superseded_by: None,
+            matched_lines,
         }));
     }
 
@@ -1332,37 +1359,21 @@ fn uninstall_from_file(
         path: path.to_path_buf(),
         action: UninstallAction::Removed,
         superseded_by: None,
+        matched_lines,
     }))
 }
 
+/// Show what uninstall would take, then ask.
+///
+/// Renders through `show_uninstall_preview` so the confirmation lists the exact
+/// rc-file lines `--dry-run` lists — the user approves the lines, not just the
+/// file. Shown inside the prompt, so it narrates to stderr rather than joining
+/// the `--dry-run` answer on stdout. See /writing-user-outputs.
 fn prompt_for_uninstall_confirmation(
     results: &[UninstallResult],
     completion_results: &[CompletionUninstallResult],
 ) -> Result<bool, String> {
-    for result in results {
-        let bold = Style::new().bold();
-        let shell = result.shell;
-        let path = format_path_for_display(&result.path);
-        let what = shell_extension_label(shell);
-
-        eprintln!(
-            "{} {} {what} for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
-            result.action.symbol(),
-            result.action.description(),
-        );
-    }
-
-    for result in completion_results {
-        let bold = Style::new().bold();
-        let shell = result.shell;
-        let path = format_path_for_display(&result.path);
-
-        eprintln!(
-            "{} {} completions for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
-            result.action.symbol(),
-            result.action.description(),
-        );
-    }
+    eprintln!("{}", show_uninstall_preview(results, completion_results));
 
     prompt_yes_no()
 }
