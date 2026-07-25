@@ -22,6 +22,39 @@
 //! # }
 //! ```
 //!
+//! # Error Messages
+//!
+//! When a forge CLI reports a failure, the message the user sees is the CLI's
+//! own, in a gutter under one line of our context — see `cli_api_error` below.
+//! `gh` and `glab` both render an API failure as the API's own message plus the
+//! status (`gh: Not Found (HTTP 404)`, `glab: 401 Unauthorized (HTTP 401)`);
+//! `az` writes its own prose, which names the remedy where there is one. Either
+//! way that line stays accurate across locale, CLI version, and API rewording in
+//! a way our paraphrase of it would not.
+//!
+//! A provider writes a message of its own only where the CLI structurally cannot
+//! report the condition:
+//!
+//! - **GitHub's 404** answers about an owner/repo that is *our* choice — from
+//!   `gh repo set-default` or from a remote — so it often means the choice was
+//!   wrong rather than that the PR is missing. `gh` reports the miss; only we
+//!   know what we asked for and where the question came from.
+//! - **Azure DevOps' missing extension** is a precondition, not a guess: the
+//!   whole `az repos` command group ships in the `azure-devops` extension, and
+//!   `az extension list` answers for it. `az` itself never names it.
+//!
+//! Everything else forwards. Reading more nicely than the CLI does not qualify:
+//! "GitLab CLI not authenticated" restated `glab: 401 Unauthorized (HTTP 401)`
+//! with the status dropped, and cost a `starts_with("401")` test against prose
+//! to select it.
+//!
+//! Where a provider still classifies, it keys on structure and falls through to
+//! forwarding when the structure isn't there: `gh` puts a `status` field in its
+//! error body, while `glab` puts the status only inside the message text, so
+//! there is nothing there to key on. Gitea is the one provider whose response
+//! *shape* is the error channel at all, because `tea api` copies the body to
+//! stdout and exits 0 whatever the status — see [`gitea`].
+//!
 //! # Platform-Specific Notes
 //!
 //! ## GitHub
@@ -129,6 +162,11 @@ pub(super) fn run_cli_api(request: CliApiRequest<'_>) -> anyhow::Result<Output> 
     }
 }
 
+/// The CLI's own account of the failure: stderr when it wrote any, else stdout.
+///
+/// `gh` and `glab` write a formatted line to stderr (`gh: Not Found (HTTP 404)`)
+/// and the raw API body to stdout, so preferring stderr picks the human form
+/// over the JSON. The stdout fallback covers a CLI that writes only a body.
 pub(super) fn cli_api_error_details(output: &Output) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr);
     if stderr.trim().is_empty() {
@@ -138,6 +176,15 @@ pub(super) fn cli_api_error_details(output: &Output) -> String {
     }
 }
 
+/// Wrap a failed forge-CLI invocation, rendering `message` above the CLI's own
+/// output in a gutter.
+///
+/// Every provider's failure path ends here, and forwarding is the default:
+/// `message` names the request we made ("gh api failed for PR #123") and the
+/// gutter carries the CLI's verdict on it. A provider with something of its own
+/// to say — the cases in the module docs — passes it as `message` rather than
+/// bailing, so its words are added to the CLI's rather than substituted for
+/// them.
 pub(super) fn cli_api_error(ref_type: RefType, message: String, output: &Output) -> anyhow::Error {
     GitError::CliApiError {
         ref_type,

@@ -80,15 +80,6 @@ struct GlabProject {
     http_url_to_repo: Option<String>,
 }
 
-/// Error response from GitLab API.
-#[derive(Debug, Deserialize)]
-struct GlabApiErrorResponse {
-    #[serde(default)]
-    message: String,
-    #[serde(default)]
-    error: String,
-}
-
 /// Fetch MR information from GitLab using the `glab` CLI.
 fn fetch_mr_info(mr_number: u32, repo_root: &Path) -> anyhow::Result<RemoteRefInfo> {
     let api_path = format!("projects/:id/merge_requests/{}", mr_number);
@@ -103,24 +94,10 @@ fn fetch_mr_info(mr_number: u32, repo_root: &Path) -> anyhow::Result<RemoteRefIn
     })?;
 
     if !output.status.success() {
-        if let Ok(error_response) = serde_json::from_slice::<GlabApiErrorResponse>(&output.stdout) {
-            let error_text = if !error_response.message.is_empty() {
-                &error_response.message
-            } else {
-                &error_response.error
-            };
-
-            if error_text.starts_with("404") {
-                bail!("MR !{} not found", mr_number);
-            }
-            if error_text.starts_with("401") {
-                bail!("GitLab CLI not authenticated; run glab auth login");
-            }
-            if error_text.starts_with("403") {
-                bail!("GitLab API access forbidden for MR !{}", mr_number);
-            }
-        }
-
+        // GitLab puts the status only inside the message text
+        // (`{"message":"401 Unauthorized"}`), so classifying here would mean
+        // matching prose — and there is nothing to say afterwards that glab's own
+        // line doesn't already: `glab: 401 Unauthorized (HTTP 401)`. Forward it.
         return Err(cli_api_error(
             RefType::Mr,
             format!("glab api failed for MR !{}", mr_number),
