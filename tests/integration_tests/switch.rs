@@ -4917,6 +4917,11 @@ fn test_switch_pr_gitea_fork(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
+/// A missing PR reaches the user as Gitea's own message.
+///
+/// `tea api` exits 0 for every HTTP response, so the 404 arrives as a
+/// successful spawn whose stdout carries Gitea's `APIError` body rather than
+/// the PR — the shape, not the exit code, is what says the request failed.
 #[rstest]
 fn test_switch_pr_gitea_not_found(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&[
@@ -4935,7 +4940,9 @@ fn test_switch_pr_gitea_not_found(#[from(repo_with_remote)] repo: TestRepo) {
         .version("tea version development (mock)")
         .command(
             "api",
-            MockResponse::output(r#"{"message":"404 Not found"}"#).with_exit_code(1),
+            MockResponse::output(
+                r#"{"errors":null,"message":"pull request does not exist [index: 9999]","url":"https://gitea.example.com/api/swagger"}"#,
+            ),
         )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
@@ -5272,10 +5279,10 @@ fn test_switch_pr_gitea_invalid_json(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
-/// Gitea API returns a 5xx-style generic error (non-404/401/403) — exercises
-/// the generic `cli_api_error` fallback in `gitea::fetch_pr_info`.
+/// `tea` itself failing — never reaching the API — is the one case that
+/// exits non-zero, and it surfaces `tea`'s own stderr via `cli_api_error`.
 #[rstest]
-fn test_switch_pr_gitea_server_error(#[from(repo_with_remote)] repo: TestRepo) {
+fn test_switch_pr_gitea_request_failed(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&[
         "remote",
         "set-url",
@@ -5291,9 +5298,10 @@ fn test_switch_pr_gitea_server_error(#[from(repo_with_remote)] repo: TestRepo) {
         .version("tea version development (mock)")
         .command(
             "api",
-            MockResponse::output(r#"{"message":"500 Internal Server Error"}"#)
-                .with_stderr("tea: server error\n")
-                .with_exit_code(1),
+            MockResponse::stderr(
+                "Error: request failed: Get \"https://gitea.example.com/api/v1/repos/owner/test-repo/pulls/101\": dial tcp: connection refused\n",
+            )
+            .with_exit_code(1),
         )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
@@ -5302,7 +5310,7 @@ fn test_switch_pr_gitea_server_error(#[from(repo_with_remote)] repo: TestRepo) {
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
-        assert_cmd_snapshot!("switch_pr_gitea_server_error", cmd);
+        assert_cmd_snapshot!("switch_pr_gitea_request_failed", cmd);
     });
 }
 
@@ -5384,8 +5392,8 @@ fn test_switch_pr_gitea_deleted_fork(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
-/// Gitea CLI returning 401/Unauthorized hits the dedicated bail message
-/// (covers the auth-error branch in `gitea::fetch_pr_info`).
+/// An unauthenticated request reaches the user as Gitea's own message, which
+/// names the remedy a paraphrase would have restated.
 #[rstest]
 fn test_switch_pr_gitea_unauthorized(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&[
@@ -5403,7 +5411,9 @@ fn test_switch_pr_gitea_unauthorized(#[from(repo_with_remote)] repo: TestRepo) {
         .version("tea version development (mock)")
         .command(
             "api",
-            MockResponse::output(r#"{"message":"401 Unauthorized"}"#).with_exit_code(1),
+            MockResponse::output(
+                r#"{"errors":null,"message":"token is required","url":"https://gitea.example.com/api/swagger"}"#,
+            ),
         )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
@@ -5416,8 +5426,9 @@ fn test_switch_pr_gitea_unauthorized(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
-/// Gitea CLI returning 403/Forbidden hits the dedicated bail message
-/// (covers the forbidden branch in `gitea::fetch_pr_info`).
+/// A PR the token can see but not read reaches the user as Gitea's own
+/// message — the same path as the 404 and 401, which is the point: `tea`
+/// hands over one body shape for every failed request.
 #[rstest]
 fn test_switch_pr_gitea_forbidden(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&[
@@ -5435,7 +5446,9 @@ fn test_switch_pr_gitea_forbidden(#[from(repo_with_remote)] repo: TestRepo) {
         .version("tea version development (mock)")
         .command(
             "api",
-            MockResponse::output(r#"{"message":"403 Forbidden"}"#).with_exit_code(1),
+            MockResponse::output(
+                r#"{"errors":null,"message":"user does not have permission to read this repository","url":"https://gitea.example.com/api/swagger"}"#,
+            ),
         )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
@@ -5457,6 +5470,13 @@ fn test_switch_pr_gitea_forbidden(#[from(repo_with_remote)] repo: TestRepo) {
 // matches and the ambiguous fallback is skipped — the runtime calls only the
 // mock `az`, not real `gh`.
 // ============================================================================
+
+/// `az extension list --output json` with the azure-devops extension present.
+///
+/// Every `az repos pr show` failure asks this, so an az failure that is *not*
+/// a missing extension has to answer it — otherwise the test proves nothing
+/// about which of the two errors the user sees.
+const AZ_EXTENSION_INSTALLED: &str = r#"[{"name": "azure-devops", "version": "1.0.0"}]"#;
 
 /// Helper to set up mock `az` for Azure DevOps PR tests with a custom
 /// `az repos pr show` response.
@@ -5800,10 +5820,10 @@ fn test_switch_pr_azure_fork(#[from(repo_with_remote)] repo: TestRepo) {
 
 /// A missing PR reaches the user as the `TF401174` line `az` printed.
 ///
-/// `azure::fetch_pr_info` classifies nothing: `az` has no error channel but
-/// prose on stderr, so worktrunk reports that prose rather than guessing a
-/// cause from it. The three azure error tests each pin the tool's own words
-/// surviving to the terminal.
+/// Once the extension question is settled, `azure::fetch_pr_info` classifies
+/// nothing: `az` has no error channel but prose on stderr, so worktrunk
+/// reports that prose rather than guessing a cause from it. Each azure error
+/// test below pins the tool's own words surviving to the terminal.
 #[rstest]
 fn test_switch_pr_azure_not_found(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&[
@@ -5825,6 +5845,10 @@ fn test_switch_pr_azure_not_found(#[from(repo_with_remote)] repo: TestRepo) {
                 "TF401174: The requested pull request was not found, or it does not exist.\n",
             )
             .with_exit_code(1),
+        )
+        .command(
+            "extension list",
+            MockResponse::output(AZ_EXTENSION_INSTALLED),
         )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
@@ -5922,8 +5946,12 @@ fn test_switch_pr_azure_invalid_json(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
-/// `az repos pr show` failing with a generic (non-auth, non-not-found) error
-/// exercises the `cli_api_error` fallback in `azure::fetch_pr_info`.
+/// An `az` that can't answer the extension question still reports its own
+/// error, not a missing extension.
+///
+/// Here `az extension list` fails alongside the generic `az repos pr show`
+/// failure, so the check comes back unanswered — and an unanswered check must
+/// not turn into an accusation the user would act on.
 #[rstest]
 fn test_switch_pr_azure_server_error(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&[
@@ -5943,6 +5971,7 @@ fn test_switch_pr_azure_server_error(#[from(repo_with_remote)] repo: TestRepo) {
             "repos pr show",
             MockResponse::stderr("az: TF400898: An internal error occurred.\n").with_exit_code(1),
         )
+        .command("extension list", MockResponse::exit(1))
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
 
@@ -5975,6 +6004,10 @@ fn test_switch_pr_azure_auth_error(#[from(repo_with_remote)] repo: TestRepo) {
             "repos pr show",
             MockResponse::stderr("Please run 'az login' to setup account.\n").with_exit_code(1),
         )
+        .command(
+            "extension list",
+            MockResponse::output(AZ_EXTENSION_INSTALLED),
+        )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
 
@@ -5986,13 +6019,12 @@ fn test_switch_pr_azure_auth_error(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
-/// A missing `azure-devops` extension reaches the user as `az`'s own line.
+/// A missing `azure-devops` extension reaches the user as the install command,
+/// which `az` names the need for but never spells out.
 ///
-/// This is the case that cost something: worktrunk used to append the exact
-/// `az extension add --name azure-devops` command, which `az` doesn't print.
-/// Detecting it needs prose matching — no code, no exit status distinguishes
-/// it — and the extension is named in the text `az` does print, so the
-/// remaining gap is the install verb rather than the package.
+/// The whole `repos` command group lives in that extension, so `az extension
+/// list` decides this from JSON — `az`'s "is misspelled or not recognized"
+/// prose is never consulted, and never reaches the user.
 #[rstest]
 fn test_switch_pr_azure_extension_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&[
@@ -6016,6 +6048,7 @@ fn test_switch_pr_azure_extension_not_installed(#[from(repo_with_remote)] repo: 
             )
             .with_exit_code(2),
         )
+        .command("extension list", MockResponse::output("[]"))
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
 
