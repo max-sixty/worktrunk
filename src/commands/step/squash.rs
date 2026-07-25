@@ -88,9 +88,9 @@ pub fn handle_squash(
     // `git switch`, the one command that throws the operation away.
     repo.ensure_no_operation_in_progress("squash")?;
     // Squash auto-stages, and `git add -A` would resolve an unmerged path to
-    // whatever is on disk — conflict markers included. Refuse ahead of the
-    // hooks and the LLM call, neither of which is worth running for a squash
-    // that cannot happen. `wt.stage` re-checks with nothing in between.
+    // whatever is on disk — conflict markers included. `wt.stage` gates that
+    // directly; refusing here too keeps the approval prompt below from asking
+    // about hooks for a squash that cannot happen.
     let wt = repo.worktree_at(&env.worktree_path);
     wt.ensure_no_unmerged_paths("squash")?;
     // Squash requires being on a branch (can't squash in detached HEAD)
@@ -162,7 +162,7 @@ pub fn handle_squash(
     if stage_mode == StageMode::All {
         repo.warn_if_auto_staging_untracked()?;
     }
-    wt.stage(stage_mode, "squash")?;
+    wt.stage(stage_mode)?;
 
     // Run pre-commit hooks (user first, then project).
     if hooks.run() {

@@ -64,7 +64,6 @@ pub struct CommitOptions<'a> {
     pub target_branch: Option<&'a str>,
     pub hooks: HookGate,
     pub stage_mode: StageMode,
-    pub warn_about_untracked: bool,
     pub show_no_squash_note: bool,
     /// Whether `commit()` runs its own guidance approval gate or trusts a
     /// value supplied by the caller (`wt merge` resolves the guidance via
@@ -73,14 +72,12 @@ pub struct CommitOptions<'a> {
 }
 
 impl<'a> CommitOptions<'a> {
-    /// Convenience constructor for the common case where untracked files should trigger a warning.
     pub fn new(ctx: &'a CommandContext<'a>) -> Self {
         Self {
             ctx,
             target_branch: None,
             hooks: HookGate::Run,
             stage_mode: StageMode::All,
-            warn_about_untracked: true,
             show_no_squash_note: false,
             guidance: super::step::PreApprovedGuidance::RunOwnGate,
         }
@@ -259,7 +256,7 @@ impl CommitOptions<'_> {
             )?;
         }
 
-        if self.warn_about_untracked && self.stage_mode == StageMode::All {
+        if self.stage_mode == StageMode::All {
             let status = wt
                 .run_command(&["status", "--porcelain", "-z"])
                 .context("Failed to get status")?;
@@ -269,7 +266,7 @@ impl CommitOptions<'_> {
         // Stage changes based on mode. Re-gated inside `stage`: the refusal
         // above ran before the pre-commit hooks, and a hook is free to leave
         // unmerged paths behind.
-        wt.stage(self.stage_mode, "commit")?;
+        wt.stage(self.stage_mode)?;
 
         let effective_config = self.ctx.commit_generation();
         // Skip the approval gate when the LLM isn't configured — the fallback

@@ -520,8 +520,10 @@ impl<'a> WorkingTree<'a> {
     /// with it. Asking before staging is what keeps the markers out of a
     /// commit.
     ///
-    /// `action` names the command the user typed, so each entry point gates in
-    /// its own name rather than in the name of a step it delegates to.
+    /// `action` names the command the user typed. An entry point knows only
+    /// that, and often not yet whether it will commit at all —
+    /// `wt merge --no-commit` resolves its flags after this gate — so it
+    /// refuses in the name of the operation it was asked for.
     ///
     /// Every one of those gates refuses *early* — ahead of hooks, approval
     /// prompts, and the LLM call, none of which is worth running for a commit
@@ -560,27 +562,21 @@ impl<'a> WorkingTree<'a> {
     /// commands — and those hooks are arbitrary project code, free to leave
     /// unmerged paths behind after that gate has passed.
     ///
+    /// The refusal names the commit rather than taking an `action` from the
+    /// caller, because the commit is the only thing this gate guards — staging
+    /// on the user's behalf happens for no other reason. So
+    /// `wt merge --no-squash` reports `Cannot commit` even though the user
+    /// typed `merge`: that is the step actually blocked, and by then the flags
+    /// have resolved and the commit is certain.
+    ///
     /// [`StageMode::None`] stages nothing but is still gated: the caller is
     /// about to commit whatever the index already holds.
     ///
     /// [`StageMode::None`]: crate::config::StageMode::None
-    pub fn stage(&self, mode: crate::config::StageMode, action: &str) -> anyhow::Result<()> {
-        use crate::config::StageMode;
-
-        self.ensure_no_unmerged_paths(action)?;
-        match mode {
-            // Stage everything: tracked modifications + untracked files
-            StageMode::All => {
-                self.run_command(&["add", "-A"])
-                    .context("Failed to stage changes")?;
-            }
-            // Stage tracked modifications only (no untracked files)
-            StageMode::Tracked => {
-                self.run_command(&["add", "-u"])
-                    .context("Failed to stage tracked changes")?;
-            }
-            // Commit only what is already in the index
-            StageMode::None => {}
+    pub fn stage(&self, mode: crate::config::StageMode) -> anyhow::Result<()> {
+        self.ensure_no_unmerged_paths("commit")?;
+        if let Some(args) = mode.add_args() {
+            self.run_command(args).context("Failed to stage changes")?;
         }
         Ok(())
     }

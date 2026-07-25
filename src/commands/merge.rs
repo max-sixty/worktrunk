@@ -347,7 +347,6 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             options.target_branch = Some(&target_branch);
             options.hooks = commit_hooks;
             options.stage_mode = stage_mode;
-            options.warn_about_untracked = stage_mode == super::commit::StageMode::All;
             options.show_no_squash_note = true;
             options.guidance = guidance.clone();
 

@@ -62,8 +62,6 @@ pub fn step_commit(
     options.hooks = hooks;
     options.stage_mode = stage_mode;
     options.show_no_squash_note = false;
-    // Only warn about untracked if we're staging all
-    options.warn_about_untracked = stage_mode == StageMode::All;
 
     let mut announcer = HookAnnouncer::new(ctx.repo, false);
     let outcome = options.commit(&mut announcer)?;
@@ -86,12 +84,9 @@ fn preview_commit(stage: Option<StageMode>, dry_run: bool, yes: bool) -> anyhow:
     // run would send. --show-prompt skips this — it's the cheap "what's already staged"
     // path. StageMode::None has nothing to stage, so we use the existing index as-is.
     let temp_index = if dry_run {
-        let add_args: Option<&[&str]> = match stage.unwrap_or(env.resolved().commit.stage()) {
-            StageMode::All => Some(&["add", "-A"]),
-            StageMode::Tracked => Some(&["add", "-u"]),
-            StageMode::None => None,
-        };
-        add_args
+        stage
+            .unwrap_or(env.resolved().commit.stage())
+            .add_args()
             .map(|args| stage_to_temp_index(&env.repo, args))
             .transpose()?
     } else {

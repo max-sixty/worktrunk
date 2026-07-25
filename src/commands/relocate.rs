@@ -305,7 +305,7 @@ pub fn validate_candidates(
                 // Stage all changes. `stage` refuses an unmerged index first —
                 // `git add -A` over an unresolved conflict would otherwise
                 // commit the `<<<<<<<` markers.
-                worktree.stage(StageMode::All, "relocate")?;
+                worktree.stage(StageMode::All)?;
                 // Commit using shared pipeline
                 let project_id = repo.project_identifier().ok();
                 let commit_config = config.commit_generation(project_id.as_deref());

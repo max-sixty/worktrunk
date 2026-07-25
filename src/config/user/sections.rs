@@ -29,6 +29,23 @@ pub enum StageMode {
     None,
 }
 
+impl StageMode {
+    /// The `git` invocation this mode stages with, or `None` when it stages nothing.
+    ///
+    /// One home for the mapping, so a new variant can't be handled at one call
+    /// site and forgotten at the other: staging the real index
+    /// ([`WorkingTree::stage`](crate::git::WorkingTree::stage)) and mirroring the
+    /// mode into a throwaway index for `wt step commit --dry-run` both read it
+    /// from here.
+    pub fn add_args(self) -> Option<&'static [&'static str]> {
+        match self {
+            StageMode::All => Some(&["add", "-A"]),
+            StageMode::Tracked => Some(&["add", "-u"]),
+            StageMode::None => None,
+        }
+    }
+}
+
 /// Configuration for commit message generation
 ///
 /// The command is a shell string executed via `sh -c`. Environment variables
