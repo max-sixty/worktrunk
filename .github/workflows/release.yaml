@@ -220,7 +220,7 @@ jobs:
       # Records what the release actually ships. The step above gates the
       # overwrite; this one answers the question the logs never could — a
       # signing request can complete while the signed file never reaches the
-      # release, which is how v0.69.0 and v0.69.1 shipped unsigned.
+      # release, which is how v0.69.1 shipped unsigned.
       - name: Report whether the shipped Windows artifact is signed
         if: contains(matrix.targets, 'x86_64-pc-windows-msvc')
         continue-on-error: true

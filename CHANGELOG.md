@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.69.2
+
+### Improved
+
+- **`wt remove` resolves every fsmonitor daemon in one `lsof` call**: The end-of-command sweep forked one `lsof` per `git fsmonitor--daemon` on the machine — with `core.fsmonitor` enabled globally that is one daemon per repo ever touched, routinely over a hundred — and the spawn cost compounds under load rather than staying fixed per call. All daemons now resolve in a single call: 108 spawns to 1 on a live machine. ([#3581](https://github.com/max-sixty/worktrunk/pull/3581))
+
+### Documentation
+
+- **Troubleshooting no longer suggests disabling `core.fsmonitor` globally**: the guidance for a wedged daemon keeps to the targeted fixes — kill the daemon serving that worktree, or let the next `wt list` respawn the live ones. ([#3581](https://github.com/max-sixty/worktrunk/pull/3581))
+
+### Internal
+
+- **The Windows zip ships the signed binary**: SignPath names its download after the GitHub artifact, so the signed zip landed beside the unsigned build as `worktrunk-x86_64-pc-windows-msvc.zip.zip` while the checksum step and the release upload both kept reading the original — so v0.69.1 shipped an unsigned binary under a green run and a completed signing request. (v0.69.0's unsigned binary was the separate upload bug fixed in [#3566](https://github.com/max-sixty/worktrunk/pull/3566), where the request failed outright.) The signed file now replaces the built one only after it verifies, and a final step reads the shipped zip and reports any executable without a certificate. Signing remains non-blocking on a self-signed test certificate pending SignPath's OSS review, so Windows will not show a trusted publisher yet. ([#3590](https://github.com/max-sixty/worktrunk/pull/3590))
+
 ## 0.69.1
 
 ### Improved

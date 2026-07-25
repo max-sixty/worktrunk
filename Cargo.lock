@@ -4497,7 +4497,7 @@ dependencies = [
 
 [[package]]
 name = "worktrunk"
-version = "0.69.1"
+version = "0.69.2"
 dependencies = [
  "ansi-str",
  "ansi-to-html",
