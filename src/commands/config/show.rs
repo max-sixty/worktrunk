@@ -228,7 +228,14 @@ pub(super) fn is_plugin_installed() -> bool {
         .is_some()
 }
 
-/// Check if the statusline is configured in Claude Code settings
+/// Whether Claude Code's statusline runs worktrunk's.
+///
+/// The question is which subcommand the configured command invokes, so it's
+/// asked of the adjacent tokens `list statusline` — the binary answers the
+/// same whether it's `wt`, `git-wt`, or an absolute path. Matching on the
+/// binary alone accepted any command that merely spelled `wt ` somewhere
+/// (`newt status`), which reported a foreign statusline as worktrunk's and
+/// left `install-statusline` refusing to install.
 pub(super) fn is_statusline_configured() -> bool {
     let Some(config_dir) = claude_config_dir() else {
         return false;
@@ -246,7 +253,10 @@ pub(super) fn is_statusline_configured() -> bool {
     json.get("statusLine")
         .and_then(|s| s.get("command"))
         .and_then(|c| c.as_str())
-        .is_some_and(|cmd| cmd.contains("wt "))
+        .is_some_and(|cmd| {
+            let tokens: Vec<&str> = cmd.split_whitespace().collect();
+            tokens.windows(2).any(|pair| pair == ["list", "statusline"])
+        })
 }
 
 /// Get the git version string (e.g., "2.47.1")

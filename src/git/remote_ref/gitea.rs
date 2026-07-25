@@ -55,7 +55,8 @@ struct TeaApiPrResponse {
     html_url: String,
 }
 
-/// Error response from Gitea API.
+/// Gitea's `APIError` body, which the API returns in place of the resource
+/// whenever the request fails.
 #[derive(Debug, Deserialize)]
 struct TeaApiErrorResponse {
     #[serde(default)]
@@ -117,25 +118,11 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
         run_context: "Failed to run tea api",
     })?;
 
+    // `tea api` never reads the HTTP status — it copies the response body to
+    // stdout and exits 0 — so a non-zero exit means `tea` itself failed (no
+    // login configured, unresolvable endpoint, transport error), and its own
+    // stderr names which.
     if !output.status.success() {
-        if let Ok(error_response) = serde_json::from_slice::<TeaApiErrorResponse>(&output.stdout) {
-            let message_lower = error_response.message.to_ascii_lowercase();
-            if message_lower.contains("404") || message_lower.contains("not found") {
-                bail!(
-                    "Gitea PR #{} not found on {}/{}",
-                    pr_number,
-                    parsed.owner(),
-                    parsed.repo()
-                );
-            }
-            if message_lower.contains("401") || message_lower.contains("unauthorized") {
-                bail!("Gitea CLI not authenticated; run tea login add");
-            }
-            if message_lower.contains("403") || message_lower.contains("forbidden") {
-                bail!("Gitea API access forbidden for PR #{}", pr_number);
-            }
-        }
-
         return Err(cli_api_error(
             RefType::Pr,
             format!("tea api failed for PR #{}", pr_number),
@@ -143,13 +130,32 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
         ));
     }
 
-    let response: TeaApiPrResponse = serde_json::from_slice(&output.stdout).with_context(|| {
-        format!(
-            "Failed to parse Gitea API response for PR #{}. \
-             This may indicate a Gitea API change.",
-            pr_number
-        )
-    })?;
+    // A 404, 401, or 403 therefore arrives here, as a successful spawn
+    // carrying Gitea's `APIError` body instead of the PR. The response shape
+    // is what separates them, and it's the only thing that can: the status
+    // code never reaches us, and Gitea's message doesn't spell it either.
+    let response: TeaApiPrResponse = match serde_json::from_slice(&output.stdout) {
+        Ok(response) => response,
+        Err(parse_error) => {
+            let api_error = serde_json::from_slice::<TeaApiErrorResponse>(&output.stdout)
+                .ok()
+                .filter(|e| !e.message.trim().is_empty());
+            if let Some(api_error) = api_error {
+                bail!(
+                    "Gitea API error for PR #{} on {}/{}: {}",
+                    pr_number,
+                    parsed.owner(),
+                    parsed.repo(),
+                    api_error.message.trim()
+                );
+            }
+            return Err(anyhow::Error::from(parse_error).context(format!(
+                "Failed to parse Gitea API response for PR #{}. \
+                 This may indicate a Gitea API change.",
+                pr_number
+            )));
+        }
+    };
 
     // Check head.repo before extract_source_branch so deleted-source PRs hit
     // the specific "source repository was deleted" message instead of falling

@@ -159,15 +159,11 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
-          # actions/upload-artifact always wraps the upload in its own
-          # storage zip unless archive: false — since the file we're
-          # uploading is already a zip, the default produced a zip-of-a-zip
-          # that SignPath saw as "the artifact", so the configured
-          # <pe-file> paths never matched (confirmed via a real
-          # signing-request failure: "Expected path to match exactly 1
-          # item, but found 0", processing unsigned-windows-zip.zip).
-          # archive: false uploads the file as-is; the artifact name then
-          # becomes the file's own name, so `name:` here is ignored.
+          # The file is already a zip, and upload-artifact wraps its uploads
+          # in a storage zip unless told not to — SignPath would then look
+          # for the PE files one level too deep. archive: false also makes
+          # the artifact take the file's own name (ignoring `name:`), which
+          # is what the signing step's output directory has to work around.
           archive: false
           path: target/distrib/worktrunk-x86_64-pc-windows-msvc.zip
       - name: Submit SignPath signing request
@@ -183,14 +179,12 @@ jobs:
           github-artifact-id: '${{ steps.upload-unsigned-windows-artifact.outputs.artifact-id }}'
           wait-for-completion: true
           # A scratch directory, not target/distrib: SignPath names the
-          # download after the GitHub artifact, which is already
-          # worktrunk-x86_64-pc-windows-msvc.zip, so writing it alongside the
-          # unsigned build would land it at …zip.zip and leave the unsigned
-          # original in place (how v0.69.1 shipped unsigned). The next step
-          # takes whatever lands here, so SignPath's naming doesn't matter.
+          # download after the artifact, so it would land beside the build as
+          # …zip.zip and leave the unsigned original in place — how v0.69.1
+          # shipped unsigned. The next step takes whatever lands here.
           output-artifact-directory: 'target/signpath'
-          # Without this, the action extracts the returned zip's contents as
-          # loose files instead of saving back the signed zip.
+          # Without this the action unpacks the returned zip into loose files
+          # instead of saving it back whole.
           skip-decompress: true
       - name: Replace the Windows artifact with the signed one
         if: contains(matrix.targets, 'x86_64-pc-windows-msvc') && steps.signpath.outcome == 'success'
@@ -209,6 +203,10 @@ jobs:
           # shipping a corrupt one never is.
           python .github/verify-windows-signature.py "${signed[0]}"
           mv "${signed[0]}" target/distrib/worktrunk-x86_64-pc-windows-msvc.zip
+      # Deliberately not continue-on-error, unlike the signing steps: shipping
+      # unsigned is tolerable while the certificate is a test one, shipping a
+      # checksum that doesn't match the zip is not. That is also why this
+      # doesn't fold into the step above.
       - name: Recompute checksum for signed Windows artifact
         if: contains(matrix.targets, 'x86_64-pc-windows-msvc')
         shell: bash

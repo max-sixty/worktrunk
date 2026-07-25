@@ -1,15 +1,12 @@
 """Report whether every executable in the Windows release zip is signed.
 
-The signing chain is silent when it breaks, and it broke two different ways in
-a row under a green run: v0.69.0's signing request failed outright, and
-v0.69.1's completed while the signed file never reached the release. This reads
-the shipped zip itself, so nothing but the published bytes can satisfy it.
+The signing chain breaks silently — v0.69.0 and v0.69.1 both shipped unsigned
+under a green run, two different ways — so this reads the zip itself and
+nothing but the published bytes can satisfy it.
 
-Reports rather than blocks — the caller runs it with continue-on-error, since
-SignPath is on a self-signed test certificate while the project's OSS
-application is under review and publishing must not depend on it. For the same
-reason this checks that a certificate is present, not that it chains to a
-trusted root.
+It checks that a certificate is present, not that it chains to a trusted root:
+SignPath is on a self-signed test certificate pending the project's OSS
+application, which is also why the caller runs this with continue-on-error.
 
 Usage: python .github/verify-windows-signature.py <zip>
 """

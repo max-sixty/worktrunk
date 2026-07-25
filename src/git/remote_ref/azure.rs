@@ -10,6 +10,7 @@ use super::{CliApiRequest, PlatformData, RemoteRefInfo, RemoteRefProvider, cli_a
 use crate::git::canonical_url_path_segment;
 use crate::git::url::GitRemoteUrl;
 use crate::git::{RefType, Repository};
+use crate::shell_exec::Cmd;
 
 /// Azure DevOps Pull Request provider.
 #[derive(Debug, Clone, Copy)]
@@ -204,6 +205,31 @@ fn parse_web_url(web_url: Option<&str>) -> Option<(String, String)> {
     }
 }
 
+/// One entry of `az extension list --output json`.
+#[derive(Debug, Deserialize)]
+struct AzExtension {
+    name: String,
+}
+
+/// Whether the `azure-devops` extension is installed.
+///
+/// `az extension list --output json` answers with a name/version array, so no
+/// prose is involved. An `az` that can't answer — spawn failure, non-zero
+/// exit, output that won't parse — leaves the question open, and an open
+/// question counts as installed: the caller then falls through to `az`'s own
+/// error rather than blaming an extension we never confirmed was missing.
+fn azure_devops_extension_installed(repo_root: &std::path::Path) -> bool {
+    Cmd::new("az")
+        .args(["extension", "list", "--output", "json"])
+        .current_dir(repo_root)
+        .env("AZURE_CORE_NO_COLOR", "true")
+        .run()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| serde_json::from_slice::<Vec<AzExtension>>(&output.stdout).ok())
+        .is_none_or(|extensions| extensions.iter().any(|e| e.name == "azure-devops"))
+}
+
 fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
     let repo_root = repo.repo_path()?;
     let pr_id = pr_number.to_string();
@@ -236,12 +262,21 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
     })?;
 
     if !output.status.success() {
-        // `az` reports failures only as prose on stderr — no exit-code or JSON
-        // error channel to branch on. Rather than guess at the cause from
-        // English substrings, surface what `az` said: its own text names the
-        // remedy ("Please run 'az login' …", the missing-extension prompt) more
-        // reliably than a paraphrase keyed on a word that can occur anywhere in
-        // an org, project, or repo name.
+        // The whole `az repos` command group ships in the azure-devops
+        // extension, so "is the extension installed?" is a precondition of this
+        // call rather than one guess among many — and `az extension list`
+        // answers it in JSON. Asking it here, on the failure path only, keeps
+        // the install command out of the happy path's cost.
+        if !azure_devops_extension_installed(repo_root) {
+            bail!(
+                "Azure DevOps CLI extension not installed; run az extension add --name azure-devops"
+            );
+        }
+        // Everything else `az` reports is prose on stderr — no exit code, no
+        // JSON error channel. Rather than guess at the cause from English
+        // substrings, surface what `az` said: its own text names the remedy
+        // ("Please run 'az login' …") more reliably than a paraphrase keyed on
+        // a word that can occur anywhere in an org, project, or repo name.
         return Err(cli_api_error(
             RefType::Pr,
             format!("az repos pr show failed for PR #{}", pr_number),
