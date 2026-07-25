@@ -304,7 +304,7 @@ This expands during `--help-page` generation to:
 - The subcommand's help reference is formatted as a nested `### Command reference`
 
 **Use cases:**
-- `wt config create` — Shows the actual config file templates (via `include_str!`)
+- `wt list statusline` — Surfaces output formats that would otherwise be terminal-only
 - `wt config state marker` — Shows per-key examples not in the parent
 
 All AUTO-GENERATED markers use a consistent format with START and END tags:

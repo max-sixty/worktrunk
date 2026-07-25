@@ -1397,10 +1397,10 @@ $ wt merge --no-commit --no-rebase
 `wt merge` runs these steps:
 
 1. **Commit** — Pre-commit hooks run, then uncommitted changes are committed. Post-commit hooks run in background. Skipped when squashing (the default) — changes are staged during the squash step instead. With `--no-squash`, this is the only commit step.
-2. **Squash** — Combines all commits since target into one (like GitHub's "Squash and merge"). Use `--stage` to control what gets staged: `all` (default), `tracked`, or `none`. A backup ref is saved to `refs/wt-backup/<branch>`. With `--no-squash`, individual commits are preserved.
-3. **Rebase** — Rebases onto target if behind. Skipped if already up-to-date. Conflicts abort immediately. With `--no-rebase`, the graph produced by earlier commit/squash steps is preserved and the target must be able to fast-forward to its tip.
+2. **Squash** — Combines all commits since target into one (like GitHub's "Squash and merge"). Use `--stage` to control what gets staged: `all` (default), `tracked`, or `none`. Working-tree changes swept into the squash are backed up first to `refs/wt-backup/<branch>`. With `--no-squash`, individual commits are preserved.
+3. **Rebase** — Rebases onto target, skipping when nothing needs replaying ([`wt step rebase`](@/step.md#wt-step-rebase) gives the conditions). A conflict stops the merge with the rebase left open in the worktree, to resolve or abort. With `--no-rebase`, the graph produced by earlier commit/squash steps is preserved and the target must be able to fast-forward to its tip.
 4. **Pre-merge hooks** — Hooks run after rebase, before merge. Failures abort. See [`wt hook`](@/hook.md).
-5. **Merge** — Fast-forward merge to the target branch. With `--no-ff`, a merge commit is created instead — semi-linear history after the default rebase, while explicit `--no-rebase` preserves the graph produced by earlier steps before adding the merge commit. Non-fast-forward merges are rejected.
+5. **Merge** — Fast-forward merge to the target branch ([`wt step push`](@/step.md#wt-step-push)). With `--no-ff`, a merge commit is created instead — semi-linear history after the default rebase, while explicit `--no-rebase` preserves the graph produced by earlier steps before adding the merge commit. Non-fast-forward merges are rejected.
 6. **Pre-remove hooks** — Hooks run before removing worktree. Failures abort.
 7. **Cleanup** — Removes the worktree and branch. Use `--no-remove` to keep the worktree. When already on the target branch or in the primary worktree, the worktree is preserved.
 8. **Post-remove + post-merge hooks** — Run in background after cleanup.
@@ -1476,8 +1476,8 @@ $ wt step push
 
 - [`commit`](#wt-step-commit) — Stage and commit with [LLM-generated message](@/llm-commits.md)
 - [`squash`](#wt-step-squash) — Squash all branch commits into one with [LLM-generated message](@/llm-commits.md)
-- `rebase` — Rebase onto target branch
-- `push` — Fast-forward target to current branch
+- [`rebase`](#wt-step-rebase) — Rebase onto target branch
+- [`push`](#wt-step-push) — Fast-forward target to current branch
 - [`diff`](#wt-step-diff) — Show all changes since branching (committed, staged, unstaged, untracked)
 - [`copy-ignored`](#wt-step-copy-ignored) — Copy gitignored files between worktrees
 - [`eval`](#wt-step-eval) — [experimental] Evaluate a template expression
@@ -1495,6 +1495,8 @@ $ wt step push
 - [Aliases](@/extending.md#aliases) — Custom command templates run as `wt <name>`
 <!-- subdoc: commit -->
 <!-- subdoc: squash -->
+<!-- subdoc: rebase -->
+<!-- subdoc: push -->
 <!-- subdoc: diff -->
 <!-- subdoc: copy-ignored -->
 <!-- subdoc: eval -->

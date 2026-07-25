@@ -151,18 +151,39 @@ Three sections are printed: the rendered prompt, the shell command that would in
 
     /// Rebase onto target
     #[command(
-        after_long_help = r#"Rebases the current branch onto the target branch. Conflicts abort immediately; use `git rebase --abort` to recover.
+        after_long_help = r#"A rebase puts the branch's commits on top of the target, which is what [`wt step push`](#wt-step-push) needs — a push fast-forwards only if the target is an ancestor of the branch. `wt merge` runs this step as part of its pipeline; on its own it brings a branch up to date with a target that has moved, without merging into it.
+
+The target is any commit: a branch, a tag, a SHA.
 
 ## Examples
 
 ```console
 $ wt step rebase            # Rebase onto default branch
 $ wt step rebase develop    # Rebase onto develop
+$ wt step rebase v1.2.0     # Rebase onto a tag
 ```
+
+## Outcomes
+
+The first matching row wins:
+
+| Branch and target | Result |
+|-------------------|--------|
+| The target is already an ancestor of the branch, with no merge commit in between | Nothing runs — `Already up to date` |
+| The branch is an ancestor of the target, so it has no commits of its own | `Fast-forwarded to <target>` |
+| Otherwise | The branch's commits replay onto the target's tip — refused outright if the two share no history |
+
+A branch that merged the target into itself still rebases: the target is its ancestor, but the merge commit in between keeps the first row from applying.
+
+When the target's local ref lags its upstream, the rows are measured against that upstream, which the result then names in place of the argument. [`wt merge`](@/merge.md) covers why.
+
+## Conflicts
+
+A conflicting commit leaves the rebase open rather than undoing it. The worktree keeps git's conflict markers, and the ways out are `git rebase --continue` once the conflict is resolved, `git rebase --skip`, or `git rebase --abort`. Until the rebase is settled, `wt step rebase`, `wt step squash`, `wt step push`, and `wt merge` refuse to run — as they do while any other git operation is open, a conflicted `git merge` included.
 "#
     )]
     Rebase {
-        /// Target branch
+        /// Target branch, tag, or commit
         ///
         /// Defaults to default branch.
         #[arg(add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
@@ -177,16 +198,23 @@ $ wt step rebase develop    # Rebase onto develop
 
     /// Fast-forward target to current branch
     #[command(
-        after_long_help = r#"Updates the local target branch to include current commits.
+        after_long_help = r#"Despite the name, no commits leave the repository. The target branch's ref moves forward locally, and a worktree holding that branch is updated along with it. Publishing is a separate `git push` to the remote afterward.
+
+The target is a branch, and must already be an ancestor of the current branch. One that has moved ahead is refused, and there is no force variant — [`wt step rebase`](#wt-step-rebase) puts the branch back on top of it first.
 
 ## Examples
 
 ```console
 $ wt step push             # Fast-forward main to current branch
 $ wt step push develop     # Fast-forward develop instead
+$ wt step push --no-ff     # Merge commit instead of a fast-forward
 ```
 
-Similar to `git push . HEAD:<target>`, but uses `receive.denyCurrentBranch=updateInstead` internally.
+## Target worktree
+
+When the target branch has a worktree of its own, that worktree's files move to the new commits too. A fast-forward does both at once, pushing into this repository with `receive.denyCurrentBranch=updateInstead`; `--no-ff` moves the ref first and syncs the worktree after, warning rather than failing if that sync doesn't apply. Uncommitted changes in that worktree are stashed for the duration and restored afterward; one touching a file the push also changes is refused instead, naming the file.
+
+A worktree that is still registered but whose directory is gone is refused as well, since nothing can be synced into it — `git worktree prune` clears the registration.
 "#
     )]
     Push {

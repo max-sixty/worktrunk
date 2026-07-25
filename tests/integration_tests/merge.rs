@@ -3455,6 +3455,34 @@ fn stop_feature_mid_rebase(repo: &mut TestRepo) -> PathBuf {
     feature_wt
 }
 
+/// Leave `feature` stopped mid-rebase with one commit already replayed.
+///
+/// [`stop_feature_mid_rebase`] conflicts on the first pick, which leaves the
+/// detached HEAD *at* main — so a push from there carries nothing and reports
+/// up to date. Only once a pick has landed does the detached HEAD hold commits
+/// a fast-forward would move the target onto.
+fn stop_feature_mid_rebase_after_one_pick(repo: &mut TestRepo) -> PathBuf {
+    let feature_wt = repo.add_worktree("feature");
+    repo.commit_in_worktree(&feature_wt, "clean.txt", "feature\n", "Replays cleanly");
+    repo.commit_in_worktree(&feature_wt, "conflict.txt", "feature\n", "Feature edit");
+    fs::write(repo.root_path().join("conflict.txt"), "main\n").unwrap();
+    repo.run_git(&["add", "conflict.txt"]);
+    repo.run_git(&["commit", "-m", "Main edit"]);
+
+    let rebase = repo
+        .git_command()
+        .current_dir(&feature_wt)
+        .args(["rebase", "main"])
+        .run()
+        .unwrap();
+    assert!(
+        !rebase.status.success(),
+        "rebase should have stopped on the second pick"
+    );
+
+    feature_wt
+}
+
 /// Leave `feature` stopped in a conflicted merge, which keeps HEAD on the branch.
 fn stop_feature_mid_merge(repo: &mut TestRepo) -> PathBuf {
     let feature_wt = feature_conflicting_with_main(repo);
@@ -3608,6 +3636,33 @@ fn test_merge_refuses_unmerged_paths(mut repo: TestRepo) {
     );
 }
 
+/// `wt step push` stages nothing, so the index gate above cannot speak for it —
+/// the hazard is HEAD itself. Mid-rebase the detached HEAD is a linear extension
+/// of the target, so the fast-forward check passes and the push moves the target
+/// branch onto a half-replayed history whose worktree still holds conflict
+/// markers, leaving the rebase open behind it.
+#[rstest]
+fn test_step_push_refuses_mid_rebase(mut repo: TestRepo) {
+    let feature_wt = stop_feature_mid_rebase_after_one_pick(&mut repo);
+    // The primary worktree is on main, so its HEAD is main's tip.
+    let main_before = repo.head_sha();
+    assert_ne!(
+        repo.head_sha_in(&feature_wt),
+        main_before,
+        "the detached HEAD has to carry a replayed commit, or the push is a no-op"
+    );
+
+    assert_cmd_snapshot!(
+        "step_push_refuses_mid_rebase",
+        make_snapshot_cmd(&repo, "step", &["push", "main"], Some(&feature_wt))
+    );
+    assert_eq!(
+        repo.head_sha(),
+        main_before,
+        "main must not move while the rebase is open"
+    );
+}
+
 /// The early refusal runs *before* the pre-commit hooks, so that a doomed
 /// commit runs no project commands — which leaves a window the early refusal
 /// structurally cannot see: a hook is arbitrary project code, free to leave an
@@ -3690,6 +3745,39 @@ fn test_step_rebase_up_to_date_json(mut repo: TestRepo) {
     let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_eq!(parsed["outcome"], "up_to_date");
     assert_eq!(parsed["target"], "main");
+}
+
+/// An annotated-tag target is peeled before the up-to-date check.
+///
+/// `git merge-base` resolves an annotated tag to the commit it points at, so
+/// comparing it against an unpeeled `rev-parse` never matches: the branch was
+/// reported as needing a rebase, and `wt step rebase <tag>` replayed nothing
+/// while printing "Rebased onto <tag>" and emitting `"outcome": "rebased"`.
+/// The lightweight tag is the single-factor control — same graph, same commit,
+/// and it always took the `up_to_date` path. `test_step_rebase_accepts_tag`
+/// cannot stand in for this: its `git tag v1.0` is lightweight, so its ref
+/// resolves straight to a commit and it passed under the old code too.
+#[rstest]
+fn test_step_rebase_annotated_tag_is_peeled(mut repo: TestRepo) {
+    repo.run_git(&["tag", "-a", "v1.0.0", "-m", "release"]);
+    repo.run_git(&["tag", "v1.0.0-lw"]);
+    let feature_wt = repo.add_worktree_with_commit("feature", "f.txt", "x", "feat: x");
+
+    for tag in ["v1.0.0", "v1.0.0-lw"] {
+        let output = repo
+            .wt_command()
+            .args(["step", "rebase", tag, "--format=json"])
+            .current_dir(&feature_wt)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+        assert_eq!(
+            parsed["outcome"], "up_to_date",
+            "{tag}: branch already sits on the tagged commit, so nothing should replay"
+        );
+        assert_eq!(parsed["target"], tag);
+    }
 }
 
 /// `step rebase --format=json` reports `fast_forwarded` when target advanced cleanly.

@@ -1502,15 +1502,23 @@ impl Repository {
 
     /// Fail when the worktree is already partway through a git operation.
     ///
-    /// A precondition for the commit-replaying commands (`wt step rebase`,
-    /// `wt merge`). Mid-rebase, HEAD is detached on a linear extension of the
-    /// target, so `is_rebased_onto` — and every
-    /// ancestry check like it — reads as "already up to date"; without this
+    /// A precondition for every command that rewrites or moves commits:
+    /// `wt step rebase`, `wt step squash`, `wt step push`, and `wt merge`.
+    /// Mid-rebase, HEAD is detached on a linear extension of the target, so
+    /// `is_rebased_onto` — and every ancestry check like it, including the
+    /// push's fast-forward check — reads as "already up to date"; without this
     /// gate a caller reports success over a tree that still holds conflict
-    /// markers. The other states are gated for the same reason rather than
-    /// their own symptom: a rebase started from any of them either compounds
-    /// the half-finished operation or dies inside git with its own plumbing
-    /// error, and neither tells the user what to do next.
+    /// markers, or moves the target branch onto one. The other states are gated
+    /// for the same reason rather than their own symptom: an operation started
+    /// from any of them either compounds the half-finished one or dies inside
+    /// git with its own plumbing error, and neither tells the user what to do
+    /// next.
+    ///
+    /// Unresolved conflicts are a separate question, and this is the wrong
+    /// place to ask it: a conflicted `git stash pop` leaves an unmerged index
+    /// with no state file for this check to read. The commands that stage on
+    /// the user's behalf ask the index instead, via
+    /// [`WorkingTree::ensure_no_unmerged_paths`].
     ///
     /// The refusal names no operation, so nothing here has to track what git
     /// calls each state or how to leave it; `git status` answers both.
