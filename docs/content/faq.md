@@ -177,7 +177,7 @@ Worktrunk can delete **worktrees** and **branches**. Both have safeguards.
 
 `wt remove` mirrors `git worktree remove`: it refuses to remove worktrees with uncommitted changes (staged, modified, or untracked files). The `--force` flag removes the worktree anyway, discarding all of those changes.
 
-For worktrees containing precious ignored data (databases, caches, large assets), use `git worktree lock`:
+To protect a worktree from removal entirely (say it holds a local database), lock it:
 
 {{ terminal(cmd="git worktree lock ../myproject.feature --reason __WT_QUOT__Contains local database__WT_QUOT__") }}
 
