@@ -512,18 +512,22 @@ impl<'a> WorkingTree<'a> {
     /// Fail when the index still holds unresolved conflicts.
     ///
     /// A precondition for the commands that stage on the user's behalf
-    /// (`wt step commit`, `wt step squash`, `wt step relocate --commit`).
-    /// `git add -A` collapses an
-    /// unmerged path's three stages into one entry, so it resolves the
+    /// (`wt step commit`, `wt step squash`, `wt merge`,
+    /// `wt step relocate --commit`). `git add -A` collapses
+    /// an unmerged path's three stages into one entry, so it resolves the
     /// conflict as far as the index is concerned while the file on disk still
     /// holds `<<<<<<<` markers — and it takes git's own refusal to commit
     /// with it. Asking before staging is what keeps the markers out of a
     /// commit.
     ///
-    /// Callers use this to refuse *early* — ahead of hooks, approval prompts,
-    /// and the LLM call, none of which is worth running for a commit that
-    /// cannot happen. The staging itself is guarded by [`stage`](Self::stage),
-    /// which runs the same check with nothing between it and the `git add`.
+    /// `action` names the command the user typed, so each entry point gates in
+    /// its own name rather than in the name of a step it delegates to.
+    ///
+    /// Every one of those gates refuses *early* — ahead of hooks, approval
+    /// prompts, and the LLM call, none of which is worth running for a commit
+    /// that cannot happen. The staging itself is guarded by
+    /// [`stage`](Self::stage), which runs the same check with nothing between
+    /// it and the `git add`.
     pub fn ensure_no_unmerged_paths(&self, action: &str) -> anyhow::Result<()> {
         let files = self.unmerged_paths()?;
         if files.is_empty() {

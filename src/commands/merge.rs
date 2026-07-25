@@ -167,10 +167,16 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let env = CommandEnv::for_action(config)?;
     let repo = &env.repo;
     let config = &env.config;
+    // Cache current worktree for multiple queries
+    let current_wt = repo.current_worktree();
     // Ahead of the branch check: mid-rebase and mid-bisect both detach HEAD, so
     // an unguarded merge blames the detached HEAD and points at `git switch`,
     // which abandons the operation instead of finishing it.
     repo.ensure_no_operation_in_progress("merge")?;
+    // Merge stages on the user's behalf through the commit and squash steps, so
+    // it takes their index gate here: in its own name, and ahead of the
+    // approval prompts rather than partway through the flow.
+    current_wt.ensure_no_unmerged_paths("merge")?;
     // Merge requires being on a branch (can't merge from detached HEAD)
     let current_branch = env.require_branch("merge")?.to_string();
 
@@ -186,9 +192,6 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         verify,
     } = flags.resolve(&resolved.merge);
     let stage_mode = stage.unwrap_or(resolved.commit.stage());
-
-    // Cache current worktree for multiple queries
-    let current_wt = repo.current_worktree();
 
     // Validate --no-commit: requires clean working tree
     if !commit {

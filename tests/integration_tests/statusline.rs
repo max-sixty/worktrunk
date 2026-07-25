@@ -493,6 +493,21 @@ fn test_statusline_detached_head(mut repo: TestRepo) {
     );
 }
 
+/// With no default branch to compare against, the statusline is the branch
+/// name alone — every other segment describes a relation to that branch.
+///
+/// Two branches, neither named main/master/develop/trunk, and no remote:
+/// nothing is left for `default_branch()` to infer from.
+#[rstest]
+fn test_statusline_without_default_branch() {
+    let repo = TestRepo::with_initial_commit();
+    repo.run_git(&["branch", "-m", "main", "alpha"]);
+    repo.run_git(&["branch", "beta"]);
+
+    let output = run_statusline(&repo, &[], None);
+    assert_snapshot!(output, @"[0m alpha");
+}
+
 // --- URL Display Tests ---
 
 #[rstest]
