@@ -485,9 +485,11 @@ fn colorize_status_symbols(text: &str) -> String {
     result = replace_dim(result, "↻", warning);
     result = replace_dim(result, "✗", warning);
 
-    // Worktree state: Prunable/Locked (yellow), BranchWorktreeMismatch (dim yellow)
+    // Worktree state: Prunable/Locked/DuplicateBranch (yellow),
+    // BranchWorktreeMismatch (dim yellow)
     result = replace_dim(result, "⊟", warning);
     result = replace_dim(result, "⊞", warning);
+    result = replace_dim(result, "⧉", warning);
     result = replace_dim(result, "⚑", warning.dimmed());
 
     // CI legend samples: replace dimmed `#` followed by a color name

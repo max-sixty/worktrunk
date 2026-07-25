@@ -74,7 +74,8 @@ impl Divergence {
 /// - For worktrees: whether the path matches the template, or has issues
 /// - For branches (without worktree): shows / to distinguish from worktrees
 ///
-/// Priority order for worktrees: Prunable > Locked > BranchWorktreeMismatch
+/// Priority order for worktrees: Prunable > Locked > DuplicateBranch >
+/// BranchWorktreeMismatch
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr)]
 pub enum WorktreeState {
     #[strum(serialize = "")]
@@ -83,6 +84,8 @@ pub enum WorktreeState {
     None,
     /// Branch-worktree mismatch: path doesn't match what the template would generate
     BranchWorktreeMismatch,
+    /// The branch is checked out in more than one worktree
+    DuplicateBranch,
     /// Prunable (worktree directory missing)
     Prunable,
     /// Locked (protected from removal)
@@ -96,6 +99,7 @@ impl std::fmt::Display for WorktreeState {
         match self {
             Self::None => Ok(()),
             Self::BranchWorktreeMismatch => write!(f, "⚑"),
+            Self::DuplicateBranch => write!(f, "⧉"),
             Self::Prunable => write!(f, "⊟"),
             Self::Locked => write!(f, "⊞"),
             Self::Branch => write!(f, "/"),
@@ -520,6 +524,7 @@ mod tests {
     fn test_worktree_state_display() {
         assert_eq!(format!("{}", WorktreeState::None), "");
         assert_eq!(format!("{}", WorktreeState::BranchWorktreeMismatch), "⚑");
+        assert_eq!(format!("{}", WorktreeState::DuplicateBranch), "⧉");
         assert_eq!(format!("{}", WorktreeState::Prunable), "⊟");
         assert_eq!(format!("{}", WorktreeState::Locked), "⊞");
         assert_eq!(format!("{}", WorktreeState::Branch), "/");

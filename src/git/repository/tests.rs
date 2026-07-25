@@ -1160,10 +1160,11 @@ fn prewarm_still_caches_preload_when_worktree_config_disabled() {
 
 #[test]
 fn test_worktree_paths_for_branch_detects_duplicates() {
-    use super::worktrees::worktree_paths_for_branch;
+    use super::worktrees::{duplicated_branches, worktree_paths_for_branch};
 
     // Two worktrees on `feature` — the state `git worktree add --force`
     // produces. Porcelain retains every entry; only resolution collapses it.
+    // The detached worktree has no branch to duplicate.
     let output = "worktree /path/to/main
 HEAD abcd1234
 branch refs/heads/main
@@ -1175,6 +1176,10 @@ branch refs/heads/feature
 worktree /path/to/feature-dup
 HEAD efgh5678
 branch refs/heads/feature
+
+worktree /path/to/detached
+HEAD efgh5678
+detached
 
 ";
     let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
@@ -1195,6 +1200,13 @@ branch refs/heads/feature
     );
     // A branch with no worktree yields nothing.
     assert!(worktree_paths_for_branch(&worktrees, "absent").is_empty());
+
+    // The set form `wt list` uses to flag rows names only the branch that
+    // repeats — a single-worktree branch and a detached head can't duplicate.
+    assert_eq!(
+        duplicated_branches(&worktrees),
+        std::collections::HashSet::from(["feature"])
+    );
 }
 
 #[test]

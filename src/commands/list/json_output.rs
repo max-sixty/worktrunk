@@ -214,7 +214,8 @@ pub struct JsonRemote {
 /// Worktree-specific state
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct JsonWorktree {
-    /// Worktree state: "branch_worktree_mismatch", "prunable", "locked" (absent when normal)
+    /// Worktree state: "branch_worktree_mismatch", "duplicate_branch",
+    /// "prunable", "locked" (absent when normal)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<&'static str>,
 
@@ -455,6 +456,7 @@ fn worktree_state_to_json(
         Some(WorktreeState::BranchWorktreeMismatch) => {
             return (Some("branch_worktree_mismatch"), None);
         }
+        Some(WorktreeState::DuplicateBranch) => return (Some("duplicate_branch"), None),
         Some(WorktreeState::Prunable) => return (Some("prunable"), data.prunable.clone()),
         Some(WorktreeState::Locked) => return (Some("locked"), data.locked.clone()),
     }
@@ -825,6 +827,7 @@ mod tests {
             has_working_tree_conflicts: None,
             git_operation: Some(None),
             branch_worktree_mismatch: false,
+            duplicate_branch: false,
         }
     }
 

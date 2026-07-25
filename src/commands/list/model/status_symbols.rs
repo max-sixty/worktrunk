@@ -22,7 +22,7 @@
 //! | 0 | `STAGED`            | `+`                  | Are there staged changes?             |
 //! | 1 | `MODIFIED`          | `!`                  | Are there unstaged modifications?     |
 //! | 2 | `UNTRACKED`         | `?`                  | Are there untracked files?            |
-//! | 3 | `WORKTREE_STATE`    | `✘ ↻ ⊟ ⊞ ⚑ /`      | Operation / worktree attribute        |
+//! | 3 | `WORKTREE_STATE`    | `✘ ↻ ⊟ ⊞ ⧉ ⚑ /`     | Operation / worktree attribute        |
 //! | 4 | `MAIN_STATE`        | `^ _ ⊂ ✗ – ↕ ↑ ↓`    | Relationship to the default branch    |
 //! | 5 | `UPSTREAM_DIVERGENCE` | \| ⇅ ⇡ ⇣           | Relationship to the tracked remote    |
 //! | 6 | `USER_MARKER`       | emoji / text         | User-defined annotation               |
@@ -55,12 +55,13 @@
 //!
 //! # Gate 2: Worktree state (position 3)
 //!
-//! **Renders:** at most one of `✘ ↻ ⊟ ⊞ ⚑ /`, priority
-//! `✘ > ↻ > ⊟ > ⊞ > ⚑ > /`. The operation family (`✘↻`) comes from live
-//! task data; the attribute family (`⊟⊞⚑/`) is metadata, always known.
+//! **Renders:** at most one of `✘ ↻ ⊟ ⊞ ⧉ ⚑ /`, priority
+//! `✘ > ↻ > ⊟ > ⊞ > ⧉ > ⚑ > /`. The operation family (`✘↻`) comes from live
+//! task data; the attribute family (`⊟⊞⧉⚑/`) is metadata, always known.
 //!
 //! **Inputs:** `data.has_conflicts`, `data.git_operation`, plus metadata
-//! (`locked`, `prunable`, `branch_worktree_mismatch`, `ItemKind::Branch`).
+//! (`locked`, `prunable`, `duplicate_branch`, `branch_worktree_mismatch`,
+//! `ItemKind::Branch`).
 //!
 //! **Rule — short-circuit on priority:** a higher-priority signal, once known
 //! to be positive, resolves the gate immediately without waiting for
@@ -72,7 +73,7 @@
 //!    `↻`, whichever operation it is.
 //! 3. `has_conflicts == Some(false)` and `git_operation == Some(None)` and
 //!    metadata says prunable → `⊟`.
-//! 4. …continuing down through `⊞`, `⚑`, `/`, nothing.
+//! 4. …continuing down through `⊞`, `⧉`, `⚑`, `/`, nothing.
 //!
 //! Until both `has_conflicts` and `git_operation` are known, we cannot rule
 //! out `✘/↻`, so the position renders `·` even if metadata would otherwise
@@ -264,7 +265,7 @@ impl PositionMask {
     pub(crate) const STAGED: usize = 0; // + (staged changes)
     pub(crate) const MODIFIED: usize = 1; // ! (modified files)
     pub(crate) const UNTRACKED: usize = 2; // ? (untracked files)
-    pub(crate) const WORKTREE_STATE: usize = 3; // Worktree: ✘↻/⚑⊟⊞
+    pub(crate) const WORKTREE_STATE: usize = 3; // Worktree: ✘↻/⚑⧉⊟⊞
     pub(crate) const MAIN_STATE: usize = 4; // Main relationship: ^_⊂✗↕↑↓
     pub(crate) const UPSTREAM_DIVERGENCE: usize = 5; // Remote: |⇅⇡⇣
     pub(crate) const USER_MARKER: usize = 6;
@@ -276,7 +277,7 @@ impl PositionMask {
             1, // STAGED: + (1 char)
             1, // MODIFIED: ! (1 char)
             1, // UNTRACKED: ? (1 char)
-            1, // WORKTREE_STATE: ✘↻/⊟⊞⚑ (1 char, priority: conflicts > in-progress operation > prunable > locked > branch_worktree_mismatch > branch)
+            1, // WORKTREE_STATE: ✘↻/⊟⊞⧉⚑ (1 char, priority: conflicts > in-progress operation > prunable > locked > duplicate_branch > branch_worktree_mismatch > branch)
             1, // MAIN_STATE: ^_⊂✗–↕↑↓ (1 char, priority: is_main > orphan > empty > integrated > would_conflict > same_commit > diverged > ahead > behind)
             1, // UPSTREAM_DIVERGENCE: |⇡⇣⇅ (1 char)
             2, // USER_MARKER: single emoji or two chars (allocate 2)
@@ -353,7 +354,7 @@ impl WorkingTreeStatus {
 /// Symbols are categorized to enable vertical alignment in table output.
 /// Display order (left to right):
 /// - Working tree: +, !, ? (staged, modified, untracked - NOT mutually exclusive)
-/// - Worktree state: ✘, ↻, /, ⚑, ⊟, ⊞ (operations + location)
+/// - Worktree state: ✘, ↻, /, ⚑, ⧉, ⊟, ⊞ (operations + location)
 /// - Main state: ^, ✗, _, ⊂, ↕, ↑, ↓ (relationship to default branch - single-stroke vertical arrows)
 /// - Upstream divergence: |, ⇅, ⇡, ⇣ (relationship to remote - vertical arrows)
 /// - User marker: custom labels, emoji
@@ -361,11 +362,12 @@ impl WorkingTreeStatus {
 /// ## Mutual Exclusivity
 ///
 /// **Worktree state (operations take priority over location):**
-/// Priority: ✘ > ↻ > ⊟ > ⊞ > ⚑ > /
+/// Priority: ✘ > ↻ > ⊟ > ⊞ > ⧉ > ⚑ > /
 /// - ✘: Actual conflicts (must resolve)
 /// - ↻: A git operation is in progress (rebase, merge, cherry-pick, revert, bisect)
 /// - ⊟: Prunable (directory missing)
 /// - ⊞: Locked worktree
+/// - ⧉: Branch checked out in another worktree too
 /// - ⚑: Branch-worktree mismatch (informational, dim yellow)
 /// - /: Branch without worktree
 ///
@@ -547,7 +549,7 @@ impl StatusSymbols {
         };
 
         // Gate 2 — worktree state (position 3). Operation family (`✘↻`)
-        // takes priority over metadata family (`⚑⊟⊞/`). The gate is
+        // takes priority over metadata family (`⚑⧉⊟⊞/`). The gate is
         // `Loading` iff `operation_state` is still `None` — even when
         // `worktree_state` metadata would yield `⊟`, we cannot safely show
         // it without ruling out a pending operation signal. Once

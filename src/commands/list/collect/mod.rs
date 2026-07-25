@@ -1132,6 +1132,11 @@ pub fn collect(
     // (paths from git worktree list may differ based on symlinks or working directory)
     let main_worktree_canonical = canonicalize(&main_worktree.path).ok();
 
+    // Branches living in more than one worktree. Every row on such a branch
+    // is flagged, including the one `wt` resolves to: that choice is git's
+    // listing order, so no row is the legitimate one.
+    let duplicated = worktrunk::git::duplicated_branches(worktrees);
+
     // URL template already fetched in parallel join (layout needs to know if column is needed)
     // Initialize worktree items with identity fields and None for computed fields
     let mut all_items: Vec<ListItem> = sorted_worktrees
@@ -1158,6 +1163,10 @@ pub fn collect(
             let mut worktree_data =
                 WorktreeData::from_worktree(wt, is_main, is_current, is_previous);
             worktree_data.branch_worktree_mismatch = branch_worktree_mismatch;
+            worktree_data.duplicate_branch = wt
+                .branch
+                .as_deref()
+                .is_some_and(|branch| duplicated.contains(branch));
 
             // URL expanded post-skeleton to minimize time-to-skeleton
             ListItem {
