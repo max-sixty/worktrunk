@@ -3589,6 +3589,25 @@ fn test_step_commit_refuses_unmerged_paths(mut repo: TestRepo) {
     );
 }
 
+/// `wt merge` stages through the commit and squash steps, so it needs the same
+/// index gate — under its own name. Delegating the refusal to the step would
+/// answer `wt merge` with "Cannot squash".
+#[rstest]
+fn test_merge_refuses_unmerged_paths(mut repo: TestRepo) {
+    let feature_wt = stop_feature_on_conflicted_stash_pop(&mut repo);
+    let head_before = repo.head_sha_in(&feature_wt);
+
+    assert_cmd_snapshot!(
+        "merge_refuses_unmerged_paths",
+        make_snapshot_cmd(&repo, "merge", &["--yes"], Some(&feature_wt))
+    );
+    assert_eq!(
+        repo.head_sha_in(&feature_wt),
+        head_before,
+        "the refusal must leave HEAD alone; merging here would commit the conflict markers"
+    );
+}
+
 // =============================================================================
 // JSON output tests
 // =============================================================================
