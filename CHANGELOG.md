@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.69.1
+
+### Improved
+
+- **`wt switch` statusline dims the dev-server URL until its port answers**: The Claude Code statusline's dev-server URL now dims until something answers on its port, matching the `wt list` cell it already copied in every other respect. ([#3561](https://github.com/max-sixty/worktrunk/pull/3561))
+
+### Fixed
+
+- **`wt step rebase` and `wt merge` refuse to run mid-operation**: With a git operation already in progress (a conflicted rebase stop, or a killed `git`), `wt step rebase <target>` reported `Already up to date` and exited 0 over a conflicted, mid-replay tree — it asked "already rebased?" before consulting the worktree's operation state — and `wt merge` failed with a detached-HEAD error whose suggested `git switch` would have discarded the in-progress rebase. Both commit-replaying commands now detect an open operation up front and refuse with a clear message. ([#3558](https://github.com/max-sixty/worktrunk/pull/3558))
+
+- **Shell-integration install/uninstall correctness**: `wt config shell` now validates the integration command name and rejects malformed values (empty, leading `-`, or shell-unsafe characters) with a clear error rather than writing a broken rc line; recognizes manually-added or older-form integration lines on `install`, reporting already-configured instead of appending a duplicate; and, on `uninstall`, scans for worktrunk-managed wrapper files and rc lines by content marker, so integration installed under an alternate binary name (`git-wt`, …) is cleaned up regardless of the name it was installed under — while a user's own file that merely mentions `wt config shell init` is left untouched. ([#2864](https://github.com/max-sixty/worktrunk/pull/2864))
+
+- **`wt switch` picker reflects a mid-session removal after a deleted-CWD recovery**: When the picker recovered from a deleted working directory, accepting a row reused the startup-time repository snapshot — so an in-picker `alt-x` removal of a worktree or branch during that recovered session wasn't observed on accept. The accept path now rebuilds the repository. ([#3557](https://github.com/max-sixty/worktrunk/pull/3557))
+
+### Internal
+
+- **Windows code-signing upload no longer double-zips**: The unsigned Windows artifact was uploaded wrapped in an artifact-storage zip around the already-zipped binary, so SignPath couldn't locate `wt.exe` inside it and the (non-blocking) signing request failed. The upload now sets `archive: false`, submitting the real zip to SignPath. ([#3566](https://github.com/max-sixty/worktrunk/pull/3566))
+
+- **crates.io publishing via trusted publishing (OIDC)**: The release workflow mints a short-lived crates.io credential per run via `rust-lang/crates-io-auth-action` instead of a stored `CARGO_REGISTRY_TOKEN`. ([#3564](https://github.com/max-sixty/worktrunk/pull/3564))
+
 ## 0.69.0
 
 ### Improved
@@ -34,7 +54,7 @@
 
 ### Internal
 
-- **Windows release binaries are submitted to SignPath for code signing**: Submitted for signing under a test certificate for now, while the project's OSS-program application is under review, and non-blocking so a signing failure can't hold up publishing to crates.io, Homebrew, winget, or AUR. ([#3553](https://github.com/max-sixty/worktrunk/pull/3553), [#3556](https://github.com/max-sixty/worktrunk/pull/3556), [#3566](https://github.com/max-sixty/worktrunk/pull/3566))
+- **Windows release binaries are submitted to SignPath for code signing**: Submitted for signing under a test certificate for now, while the project's OSS-program application is under review, and non-blocking so a signing failure can't hold up publishing to crates.io, Homebrew, winget, or AUR. ([#3553](https://github.com/max-sixty/worktrunk/pull/3553), [#3556](https://github.com/max-sixty/worktrunk/pull/3556))
 
 - **`wt list` runs its merge analysis in a read-only object database**: When the git object store is read-only, `wt list` and `wt list statusline` redirect their object-writing merge/conflict probes into a temporary object database layered over the real one, so the full analysis still runs. Mutating commands keep the persistent store and fail loudly on a read-only one. ([#3535](https://github.com/max-sixty/worktrunk/pull/3535))
 

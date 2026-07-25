@@ -22,7 +22,7 @@
 //! | 0 | `STAGED`            | `+`                  | Are there staged changes?             |
 //! | 1 | `MODIFIED`          | `!`                  | Are there unstaged modifications?     |
 //! | 2 | `UNTRACKED`         | `?`                  | Are there untracked files?            |
-//! | 3 | `WORKTREE_STATE`    | `✘ ⤴ ⤵ ⊟ ⊞ ⚑ /`      | Operation / worktree attribute        |
+//! | 3 | `WORKTREE_STATE`    | `✘ ↻ ⊟ ⊞ ⚑ /`      | Operation / worktree attribute        |
 //! | 4 | `MAIN_STATE`        | `^ _ ⊂ ✗ – ↕ ↑ ↓`    | Relationship to the default branch    |
 //! | 5 | `UPSTREAM_DIVERGENCE` | \| ⇅ ⇡ ⇣           | Relationship to the tracked remote    |
 //! | 6 | `USER_MARKER`       | emoji / text         | User-defined annotation               |
@@ -55,8 +55,8 @@
 //!
 //! # Gate 2: Worktree state (position 3)
 //!
-//! **Renders:** at most one of `✘ ⤴ ⤵ ⊟ ⊞ ⚑ /`, priority
-//! `✘ > ⤴ > ⤵ > ⊟ > ⊞ > ⚑ > /`. The operation family (`✘⤴⤵`) comes from live
+//! **Renders:** at most one of `✘ ↻ ⊟ ⊞ ⚑ /`, priority
+//! `✘ > ↻ > ⊟ > ⊞ > ⚑ > /`. The operation family (`✘↻`) comes from live
 //! task data; the attribute family (`⊟⊞⚑/`) is metadata, always known.
 //!
 //! **Inputs:** `data.has_conflicts`, `data.git_operation`, plus metadata
@@ -68,14 +68,14 @@
 //! row of the priority table is the answer:
 //!
 //! 1. `has_conflicts == Some(true)` → `✘`.
-//! 2. `has_conflicts == Some(false)` and `git_operation == Some(Rebase)` → `⤴`.
-//! 3. `has_conflicts == Some(false)` and `git_operation == Some(Merge)` → `⤵`.
-//! 4. `has_conflicts == Some(false)` and `git_operation == Some(None)` and
+//! 2. `has_conflicts == Some(false)` and `git_operation == Some(Some(_))` →
+//!    `↻`, whichever operation it is.
+//! 3. `has_conflicts == Some(false)` and `git_operation == Some(None)` and
 //!    metadata says prunable → `⊟`.
-//! 5. …continuing down through `⊞`, `⚑`, `/`, nothing.
+//! 4. …continuing down through `⊞`, `⚑`, `/`, nothing.
 //!
 //! Until both `has_conflicts` and `git_operation` are known, we cannot rule
-//! out `✘/⤴/⤵`, so the position renders `·` even if metadata would otherwise
+//! out `✘/↻`, so the position renders `·` even if metadata would otherwise
 //! produce `⊟` or `⊞`.
 //!
 //! **Exception — items with no working tree:** branches and prunable
@@ -264,7 +264,7 @@ impl PositionMask {
     pub(crate) const STAGED: usize = 0; // + (staged changes)
     pub(crate) const MODIFIED: usize = 1; // ! (modified files)
     pub(crate) const UNTRACKED: usize = 2; // ? (untracked files)
-    pub(crate) const WORKTREE_STATE: usize = 3; // Worktree: ✘⤴⤵/⚑⊟⊞
+    pub(crate) const WORKTREE_STATE: usize = 3; // Worktree: ✘↻/⚑⊟⊞
     pub(crate) const MAIN_STATE: usize = 4; // Main relationship: ^_⊂✗↕↑↓
     pub(crate) const UPSTREAM_DIVERGENCE: usize = 5; // Remote: |⇅⇡⇣
     pub(crate) const USER_MARKER: usize = 6;
@@ -276,7 +276,7 @@ impl PositionMask {
             1, // STAGED: + (1 char)
             1, // MODIFIED: ! (1 char)
             1, // UNTRACKED: ? (1 char)
-            1, // WORKTREE_STATE: ✘⤴⤵/⊟⊞⚑ (1 char, priority: conflicts > rebase > merge > prunable > locked > branch_worktree_mismatch > branch)
+            1, // WORKTREE_STATE: ✘↻/⊟⊞⚑ (1 char, priority: conflicts > in-progress operation > prunable > locked > branch_worktree_mismatch > branch)
             1, // MAIN_STATE: ^_⊂✗–↕↑↓ (1 char, priority: is_main > orphan > empty > integrated > would_conflict > same_commit > diverged > ahead > behind)
             1, // UPSTREAM_DIVERGENCE: |⇡⇣⇅ (1 char)
             2, // USER_MARKER: single emoji or two chars (allocate 2)
@@ -353,7 +353,7 @@ impl WorkingTreeStatus {
 /// Symbols are categorized to enable vertical alignment in table output.
 /// Display order (left to right):
 /// - Working tree: +, !, ? (staged, modified, untracked - NOT mutually exclusive)
-/// - Worktree state: ✘, ⤴, ⤵, /, ⚑, ⊟, ⊞ (operations + location)
+/// - Worktree state: ✘, ↻, /, ⚑, ⊟, ⊞ (operations + location)
 /// - Main state: ^, ✗, _, ⊂, ↕, ↑, ↓ (relationship to default branch - single-stroke vertical arrows)
 /// - Upstream divergence: |, ⇅, ⇡, ⇣ (relationship to remote - vertical arrows)
 /// - User marker: custom labels, emoji
@@ -361,10 +361,9 @@ impl WorkingTreeStatus {
 /// ## Mutual Exclusivity
 ///
 /// **Worktree state (operations take priority over location):**
-/// Priority: ✘ > ⤴ > ⤵ > ⊟ > ⊞ > ⚑ > /
+/// Priority: ✘ > ↻ > ⊟ > ⊞ > ⚑ > /
 /// - ✘: Actual conflicts (must resolve)
-/// - ⤴: Rebase in progress
-/// - ⤵: Merge in progress
+/// - ↻: A git operation is in progress (rebase, merge, cherry-pick, revert, bisect)
 /// - ⊟: Prunable (directory missing)
 /// - ⊞: Locked worktree
 /// - ⚑: Branch-worktree mismatch (informational, dim yellow)
@@ -398,7 +397,7 @@ pub struct StatusSymbols {
     pub(crate) main_state: Option<MainState>,
 
     /// Gate 2 output — operation family (position 3). `None` = loading (we
-    /// can't rule out `✘⤴⤵`); `Some(OperationState::None)` = resolved to
+    /// can't rule out `✘↻`); `Some(OperationState::None)` = resolved to
     /// nothing (fall through to `worktree_state`).
     pub(crate) operation_state: Option<OperationState>,
 
@@ -547,7 +546,7 @@ impl StatusSymbols {
             None => SlotState::Loading,
         };
 
-        // Gate 2 — worktree state (position 3). Operation family (`✘⤴⤵`)
+        // Gate 2 — worktree state (position 3). Operation family (`✘↻`)
         // takes priority over metadata family (`⚑⊟⊞/`). The gate is
         // `Loading` iff `operation_state` is still `None` — even when
         // `worktree_state` metadata would yield `⊟`, we cannot safely show
@@ -615,6 +614,7 @@ pub(crate) enum SlotState {
 #[cfg(test)]
 mod tests {
     use insta::assert_snapshot;
+    use worktrunk::git::InProgressOperation;
 
     use super::*;
 
@@ -706,7 +706,7 @@ mod tests {
         assert!(!is_empty(&symbols));
 
         let symbols = StatusSymbols {
-            operation_state: Some(OperationState::Rebase),
+            operation_state: Some(OperationState::InProgress(InProgressOperation::Rebase)),
             ..Default::default()
         };
         assert!(!is_empty(&symbols));

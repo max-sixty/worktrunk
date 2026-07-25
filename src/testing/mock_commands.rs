@@ -216,6 +216,24 @@ impl MockConfig {
     }
 }
 
+/// Every invocation of mock command `name`, in call order, one entry per
+/// spawn with the arguments space-joined.
+///
+/// Lets a test assert on the *number of spawns*, not just the response —
+/// the property under test wherever a command is batched (one `lsof` for N
+/// PIDs) rather than called in a loop. Returns empty when the command was
+/// never invoked, so a "was not called" assertion reads naturally.
+///
+/// `log_dir` is the directory passed to the command as `MOCK_CALL_LOG_DIR`.
+/// It must be OUTSIDE the repo under test: mocks spawned by hooks would
+/// otherwise dirty the working tree mid-run and change the behavior being
+/// measured.
+pub fn mock_calls(log_dir: &Path, name: &str) -> Vec<String> {
+    fs::read_to_string(log_dir.join(format!("{}.calls", name)))
+        .map(|s| s.lines().map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
 /// Create mock binary in bin_dir with the given name.
 /// Uses symlinks on Unix (instant, works across filesystems).
 /// Uses hard links on Windows (symlinks require admin privileges).

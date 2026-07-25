@@ -117,7 +117,7 @@ done
 
 Sockets listed as bare `fsmonitor--daemon.ipc` (no resolved path) belong to deleted worktrees. Any `wt remove` cleans these up: it terminates the removed worktree's own daemon and sweeps daemons whose worktree no longer exists, including ones orphaned by `git worktree remove` or `rm -rf` (mechanism details: [What can Worktrunk delete?](https://worktrunk.dev/faq/#what-can-worktrunk-delete)).
 
-The residual case both paths deliberately leave is a wedged daemon on a *live* worktree that is never removed: `git status` in that worktree blocks on the unresponsive IPC, but the daemon still serves a real worktree, so reaping it implicitly is out of scope. Terminate it manually: kill the daemon whose socket path matches the worktree, or `pkill -9 -f 'git fsmonitor--daemon'` and let the next `wt list` respawn the live ones. Disabling fsmonitor globally (`git config --global core.fsmonitor false`) avoids the class of problem entirely at the cost of some `git status` speed on large repos.
+The residual case both paths deliberately leave is a wedged daemon on a *live* worktree that is never removed: `git status` in that worktree blocks on the unresponsive IPC, but the daemon still serves a real worktree, so reaping it implicitly is out of scope. Terminate it manually: kill the daemon whose socket path matches the worktree, or `pkill -9 -f 'git fsmonitor--daemon'` and let the next `wt list` respawn the live ones.
 
 ## PowerShell on Windows
 

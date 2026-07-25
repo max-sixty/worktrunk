@@ -462,6 +462,14 @@ pub(super) static WORKTRUNK_USER_CONFIG_PRELOAD: OnceLock<UserConfig> = OnceLock
 ///
 /// This should be called once at program startup from main().
 /// If not called, defaults to "." (current directory).
+///
+/// `-C` sets this path without chdir'ing the process, so it is the base for the
+/// two things git gets from its own chdir: the repository [`Repository::current`]
+/// discovers, and every path the user supplies, which resolves through
+/// [`resolve_input_path`]. The process cwd answers a different question — where
+/// the user's shell physically is (the `cd` target after a switch, the
+/// cwd-removed recovery check) — so `std::env::current_dir()` substitutes for
+/// neither.
 pub fn set_base_path(path: PathBuf) {
     BASE_PATH.set(path).ok();
 }
@@ -469,6 +477,34 @@ pub fn set_base_path(path: PathBuf) {
 /// Get the base path for repository operations.
 fn base_path() -> &'static PathBuf {
     BASE_PATH.get().unwrap_or(&DEFAULT_BASE_PATH)
+}
+
+/// Resolve a path the user supplied, against the directory wt was pointed at.
+///
+/// Git resolves the paths in its command line against its own `-C`, because it
+/// chdir's there first. wt's `-C` sets [`set_base_path`] instead, so the same
+/// semantics come from joining onto that path. An absolute path passes through,
+/// as does every path when `-C` was not given — the process cwd already resolves
+/// those, and joining `.` onto them would surface as a stray `./` in output.
+///
+/// This is the one resolution point for those paths, so they cannot drift
+/// apart: worktree path arguments (`wt switch ../repo.feature`), `--config`,
+/// `WORKTRUNK_CONFIG_PATH`, `WORKTRUNK_SYSTEM_CONFIG_PATH`, and the trace file
+/// of `wt config state logs profile`. The rule is "the user named a file for wt
+/// to open" — three neighbours look similar and are deliberately outside it:
+///
+/// - Paths wt derives itself (a worktree root from `git worktree list`, an XDG
+///   config directory) are already absolute.
+/// - `WORKTRUNK_PROJECT_CONFIG_PATH` resolves from the worktree root, its
+///   documented base, because the project config is per-worktree.
+/// - `WORKTRUNK_BIN` and `XDG_CONFIG_DIRS` are never opened by wt: the first is
+///   expanded by the generated shell wrapper, and the XDG spec already requires
+///   the second to be absolute.
+pub fn resolve_input_path(path: impl AsRef<Path>) -> PathBuf {
+    match BASE_PATH.get() {
+        Some(base) => base.join(path),
+        None => path.as_ref().to_path_buf(),
+    }
 }
 
 /// Repository state for git operations.

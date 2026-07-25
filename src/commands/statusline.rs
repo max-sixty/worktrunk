@@ -6,17 +6,25 @@
 //!
 //! This command reuses the data collection infrastructure from `wt list`,
 //! avoiding duplication of git operations.
+//!
+//! Which worktree gets described has one resolution point, in [`run`]:
+//! `--format=claude-code` takes the directory Claude Code names on stdin,
+//! since that's the session's directory rather than wt's; every other caller
+//! (and claude-code mode with no stdin) gets [`Repository::current_worktree`].
+//! That accessor resolves against the repository's discovery path, so `-C`
+//! selects the worktree — `std::env::current_dir()` would not, because `-C`
+//! sets the discovery path without chdir'ing the process.
 
 use std::collections::HashMap;
 use std::env;
 use std::io::{self, IsTerminal, Read};
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 use dunce::canonicalize;
 
 use ansi_str::AnsiStr;
 use anyhow::{Context, Result};
-use worktrunk::git::Repository;
+use worktrunk::git::{Repository, WorkingTree};
 use worktrunk::styling::{
     fix_dim_after_color_reset, terminal_width_for_statusline, truncate_visible,
 };
@@ -728,37 +736,42 @@ pub fn run(format: StatuslineFormat) -> Result<()> {
 
     let claude_code = matches!(format, StatuslineFormat::ClaudeCode);
 
-    // Get context - either from stdin (claude-code mode) or current directory
-    let (cwd, model_name, context_used_percentage, rate_limits) = if claude_code {
+    // Get context from stdin (claude-code mode only)
+    let (workspace_dir, model_name, context_used_percentage, rate_limits) = if claude_code {
         let ctx = ClaudeCodeContext::from_stdin();
-        let current_dir = ctx
-            .as_ref()
-            .map(|c| c.current_dir.clone())
-            .unwrap_or_else(|| env::current_dir().unwrap_or_default().display().to_string());
+        let dir = ctx.as_ref().map(|c| PathBuf::from(&c.current_dir));
         let model = ctx.as_ref().and_then(|c| c.model_name.clone());
         let context_pct = ctx.as_ref().and_then(|c| c.context_used_percentage);
         let limits = ctx.map(|c| c.rate_limits).unwrap_or_default();
-        (
-            Path::new(&current_dir).to_path_buf(),
-            model,
-            context_pct,
-            limits,
-        )
+        (dir, model, context_pct, limits)
     } else {
-        (
-            env::current_dir().context("Failed to get current directory")?,
-            None,
-            None,
-            Vec::new(),
-        )
+        (None, None, None, Vec::new())
     };
+
+    let repo = Repository::current().ok();
+
+    // The worktree this statusline describes. Claude Code names its session's
+    // directory on stdin, which wins; every other caller is described by the
+    // directory `wt` itself was pointed at, which is `current_worktree()` and
+    // not `env::current_dir()` — `-C` sets the discovery path without chdir'ing
+    // the process, so reading the process cwd would silently drop the flag.
+    let worktree = repo.as_ref().map(|repo| match &workspace_dir {
+        Some(dir) => repo.worktree_at(dir),
+        None => repo.current_worktree(),
+    });
 
     // Build segments with priorities
     let mut segments: Vec<StatuslineSegment> = Vec::new();
 
     // Directory (claude-code mode only) - priority 0
     let dir_str = if claude_code {
-        let formatted = format_directory_fish_style(&cwd);
+        // Without stdin the directory falls back to the worktree above, so it
+        // honours `-C` too; the process cwd is the last resort for a path that
+        // isn't in a repo at all.
+        let dir = workspace_dir
+            .or_else(|| worktree.as_ref().map(|wt| wt.path().to_path_buf()))
+            .unwrap_or_else(|| env::current_dir().unwrap_or_default());
+        let formatted = format_directory_fish_style(&dir);
         // Only push non-empty directory segments (empty can happen if cwd is ".")
         if !formatted.is_empty() {
             segments.push(StatuslineSegment::new(
@@ -772,10 +785,10 @@ pub fn run(format: StatuslineFormat) -> Result<()> {
     };
 
     // Git status segments
-    if let Ok(repo) = Repository::current()
-        && repo.worktree_at(&cwd).git_dir().is_ok()
+    if let Some(worktree) = &worktree
+        && worktree.git_dir().is_ok()
     {
-        let git_segments = git_status_segments(&repo, &cwd)?;
+        let git_segments = git_status_segments(worktree)?;
 
         // In claude-code mode, skip branch segment if directory matches worktrunk template
         let git_segments = if let Some(ref dir) = dir_str {
@@ -840,8 +853,6 @@ pub fn run(format: StatuslineFormat) -> Result<()> {
 ///
 /// Outputs the current worktree as JSON, using the same structure as `wt list --format=json`.
 fn run_json() -> Result<()> {
-    let cwd = env::current_dir().context("Failed to get current directory")?;
-
     let repo = Repository::current().context("Not in a git repository")?;
 
     // Warnings are suppressed on this surface, so an unset (or invalid) key
@@ -889,15 +900,17 @@ fn run_json() -> Result<()> {
         }
     };
 
-    // Verify we're in a worktree
-    if repo.worktree_at(&cwd).git_dir().is_err() {
+    // Verify the directory this command operates on (`-C`, else the process
+    // cwd) is in a worktree
+    if repo.current_worktree().git_dir().is_err() {
         // Not in a worktree - emit an empty result (consistent with wt list)
         return print_empty();
     }
 
     // Get current worktree info
     // Use git rev-parse --show-toplevel (via current_worktree().root()) to correctly identify
-    // the worktree containing cwd, rather than prefix matching which fails for nested worktrees.
+    // the worktree containing that directory, rather than prefix matching which fails for
+    // nested worktrees.
     let worktrees = repo.list_worktrees()?;
     let worktree_root = repo.current_worktree().root()?;
     let current_worktree = worktrees.iter().find(|wt| {
@@ -992,14 +1005,17 @@ fn filter_redundant_branch(segments: Vec<StatuslineSegment>, dir: &str) -> Vec<S
 /// Get git status as prioritized segments for the current worktree.
 ///
 /// CI status and the dev-server URL render as clickable OSC 8 hyperlinks.
-fn git_status_segments(repo: &Repository, cwd: &Path) -> Result<Vec<StatuslineSegment>> {
+fn git_status_segments(worktree: &WorkingTree) -> Result<Vec<StatuslineSegment>> {
     use super::list::columns::ColumnKind;
 
+    let repo = worktree.repo();
+
     // Get current worktree info
-    // Use git rev-parse --show-toplevel (via worktree_at().root()) to correctly identify
-    // the worktree containing cwd, rather than prefix matching which fails for nested worktrees.
+    // Use git rev-parse --show-toplevel (via WorkingTree::root()) to correctly identify
+    // the worktree containing the path, rather than prefix matching which fails for
+    // nested worktrees.
     let worktrees = repo.list_worktrees()?;
-    let worktree_root = repo.worktree_at(cwd).root()?;
+    let worktree_root = worktree.root()?;
     let current_worktree = worktrees.iter().find(|wt| {
         canonicalize(&wt.path)
             .map(|p| p == worktree_root)
@@ -1008,7 +1024,7 @@ fn git_status_segments(repo: &Repository, cwd: &Path) -> Result<Vec<StatuslineSe
 
     let Some(wt) = current_worktree else {
         // Not in a worktree - just show branch name as a segment
-        if let Ok(Some(branch)) = repo.current_worktree().branch() {
+        if let Ok(Some(branch)) = worktree.branch() {
             return Ok(vec![StatuslineSegment::from_column(
                 branch.to_string(),
                 ColumnKind::Branch,

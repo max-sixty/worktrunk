@@ -34,8 +34,10 @@ fn has_initialized_submodules_from_status(status: &str) -> bool {
 /// for, so a table here would only be a second copy to keep current with git.
 ///
 /// Structured rather than a display string so [`Rebase`](Self::Rebase) can be
-/// recognized without matching on user-visible text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// recognized without matching on user-visible text. The `strum` name is the
+/// `wt list --format=json` value for the operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum InProgressOperation {
     Merge,
     /// Rebase, from either backend. `git am` shares the am backend's
@@ -486,6 +488,46 @@ impl<'a> WorkingTree<'a> {
         }
 
         Ok(None)
+    }
+
+    /// Paths the index still records as unmerged.
+    ///
+    /// A conflict git could not resolve leaves the path at stages 1–3 of the
+    /// index, which is what makes `git commit` refuse. Reading the index
+    /// rather than the state files answers a different question from
+    /// [`operation_in_progress`](Self::operation_in_progress): a conflicted
+    /// `git stash pop` leaves unmerged paths behind with no operation open at
+    /// all.
+    pub fn unmerged_paths(&self) -> anyhow::Result<Vec<String>> {
+        let output = self
+            .run_command(&["diff", "--name-only", "--diff-filter=U", "-z"])
+            .context("Failed to list unmerged paths")?;
+        Ok(output
+            .split('\0')
+            .filter(|path| !path.is_empty())
+            .map(str::to_string)
+            .collect())
+    }
+
+    /// Fail when the index still holds unresolved conflicts.
+    ///
+    /// A precondition for the commands that stage on the user's behalf
+    /// (`wt step commit`, `wt step squash`). `git add -A` collapses an
+    /// unmerged path's three stages into one entry, so it resolves the
+    /// conflict as far as the index is concerned while the file on disk still
+    /// holds `<<<<<<<` markers — and it takes git's own refusal to commit
+    /// with it. Asking before staging is what keeps the markers out of a
+    /// commit.
+    pub fn ensure_no_unmerged_paths(&self, action: &str) -> anyhow::Result<()> {
+        let files = self.unmerged_paths()?;
+        if files.is_empty() {
+            return Ok(());
+        }
+        Err(crate::git::GitError::UnmergedPaths {
+            action: action.to_string(),
+            files,
+        }
+        .into())
     }
 
     /// Check if this is a linked worktree (vs the main worktree).

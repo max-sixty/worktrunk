@@ -9,6 +9,7 @@ use std::sync::OnceLock;
 use etcetera::base_strategy::{BaseStrategy, choose_base_strategy};
 
 use crate::config::ConfigError;
+use crate::git::resolve_input_path;
 
 /// Override for user config path, set via --config CLI flag
 static CONFIG_PATH: OnceLock<PathBuf> = OnceLock::new();
@@ -33,15 +34,18 @@ pub fn is_config_path_explicit() -> bool {
 /// 1. CLI --config flag (set via `set_config_path`)
 /// 2. WORKTRUNK_CONFIG_PATH environment variable
 /// 3. Platform-specific default location (via `default_config_path`)
+///
+/// The first two are supplied by the user, so a relative one resolves against
+/// `-C` (see [`resolve_input_path`]). The third is an absolute XDG location.
 pub fn config_path() -> Option<PathBuf> {
     // Priority 1: CLI --config flag
     if let Some(path) = CONFIG_PATH.get() {
-        return Some(path.clone());
+        return Some(resolve_input_path(path));
     }
 
     // Priority 2: Environment variable (also used by tests for isolation)
     if let Ok(path) = std::env::var("WORKTRUNK_CONFIG_PATH") {
-        return Some(PathBuf::from(path));
+        return Some(resolve_input_path(path));
     }
 
     // Priority 3: Platform-specific default location
@@ -104,7 +108,7 @@ pub fn default_config_path() -> Option<PathBuf> {
 pub fn system_config_path() -> Option<PathBuf> {
     // Priority 1: Explicit environment variable override
     if let Ok(path) = std::env::var("WORKTRUNK_SYSTEM_CONFIG_PATH") {
-        let path = PathBuf::from(path);
+        let path = resolve_input_path(path);
         if path.exists() {
             return Some(path);
         }
@@ -131,7 +135,7 @@ pub fn system_config_path() -> Option<PathBuf> {
 /// path matches where the tool actually looks.
 pub fn default_system_config_path() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("WORKTRUNK_SYSTEM_CONFIG_PATH") {
-        return Some(PathBuf::from(path));
+        return Some(resolve_input_path(path));
     }
 
     system_config_dirs()

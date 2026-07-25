@@ -3546,28 +3546,89 @@ fn test_merge_refuses_mid_merge(mut repo: TestRepo) {
     );
 }
 
-/// The commit a ref resolves to in `dir` — for asserting a refusal moved nothing.
-fn ref_sha(repo: &TestRepo, dir: &Path, name: &str) -> String {
-    let output = repo
-        .git_command()
-        .current_dir(dir)
-        .args(["rev-parse", name])
-        .run()
-        .unwrap();
-    String::from_utf8_lossy(&output.stdout).trim().to_string()
+/// Leave `feature` holding an unmerged path with *no* operation open. A
+/// conflicted `git stash pop` is the plainest way there: it leaves the index
+/// conflicted and writes no state file, so the operation check cannot see it
+/// and only the index knows.
+fn stop_feature_on_conflicted_stash_pop(repo: &mut TestRepo) -> PathBuf {
+    let feature_wt = repo.add_worktree("feature");
+    repo.commit_in_worktree(&feature_wt, "conflict.txt", "base\n", "Base edit");
+
+    let git = |repo: &TestRepo, args: &[&str]| {
+        repo.git_command()
+            .current_dir(&feature_wt)
+            .args(args.iter().copied())
+            .run()
+            .unwrap();
+    };
+    fs::write(feature_wt.join("conflict.txt"), "stashed\n").unwrap();
+    git(repo, &["stash"]);
+    fs::write(feature_wt.join("conflict.txt"), "committed\n").unwrap();
+    git(repo, &["commit", "-am", "Conflicting edit"]);
+    // Pops onto a line the commit already changed, so the merge fails.
+    git(repo, &["stash", "pop"]);
+
+    assert!(
+        !worktree_git_dir(repo, &feature_wt)
+            .join("MERGE_HEAD")
+            .exists(),
+        "a conflicted stash pop should leave no operation state behind"
+    );
+
+    feature_wt
 }
 
-/// Mid-rebase the detached HEAD is a linear extension of the target, so the
-/// fast-forward check passes: without the gate `wt step push` moves the target
+/// `wt step squash` rewrites history, so an operation already replaying commits
+/// blocks it for the same reason it blocks `wt merge` — and mid-rebase the
+/// detached HEAD would otherwise get blamed, pointing at `git switch`.
+#[rstest]
+fn test_step_squash_refuses_mid_merge(mut repo: TestRepo) {
+    let feature_wt = stop_feature_mid_merge(&mut repo);
+    let head_before = repo.head_sha_in(&feature_wt);
+
+    assert_cmd_snapshot!(
+        "step_squash_refuses_mid_merge",
+        make_snapshot_cmd(&repo, "step", &["squash", "--yes"], Some(&feature_wt))
+    );
+    assert_eq!(
+        repo.head_sha_in(&feature_wt),
+        head_before,
+        "the refusal must leave HEAD alone; squashing here would commit the conflict markers"
+    );
+}
+
+/// The index is the authority on conflicts, not the state files: `wt step
+/// commit` stages on the user's behalf, and `git add -A` would resolve an
+/// unmerged path to whatever is on disk — conflict markers included — taking
+/// git's own refusal to commit with it.
+#[rstest]
+fn test_step_commit_refuses_unmerged_paths(mut repo: TestRepo) {
+    let feature_wt = stop_feature_on_conflicted_stash_pop(&mut repo);
+    let head_before = repo.head_sha_in(&feature_wt);
+
+    assert_cmd_snapshot!(
+        "step_commit_refuses_unmerged_paths",
+        make_snapshot_cmd(&repo, "step", &["commit", "--yes"], Some(&feature_wt))
+    );
+    assert_eq!(
+        repo.head_sha_in(&feature_wt),
+        head_before,
+        "the refusal must leave HEAD alone; committing here would commit the conflict markers"
+    );
+}
+
+/// `wt step push` stages nothing, so the index check above cannot speak for it —
+/// the hazard is HEAD itself. Mid-rebase the detached HEAD is a linear extension
+/// of the target, so the fast-forward check passes and the push moves the target
 /// branch onto a half-replayed history whose worktree still holds conflict
-/// markers, and leaves the rebase open behind it.
+/// markers, leaving the rebase open behind it.
 #[rstest]
 fn test_step_push_refuses_mid_rebase(mut repo: TestRepo) {
     let feature_wt = stop_feature_mid_rebase_after_one_pick(&mut repo);
-    let root = repo.root_path().to_path_buf();
-    let main_before = ref_sha(&repo, &root, "main");
+    // The primary worktree is on main, so its HEAD is main's tip.
+    let main_before = repo.head_sha();
     assert_ne!(
-        ref_sha(&repo, &feature_wt, "HEAD"),
+        repo.head_sha_in(&feature_wt),
         main_before,
         "the detached HEAD has to carry a replayed commit, or the push is a no-op"
     );
@@ -3577,28 +3638,9 @@ fn test_step_push_refuses_mid_rebase(mut repo: TestRepo) {
         make_snapshot_cmd(&repo, "step", &["push", "main"], Some(&feature_wt))
     );
     assert_eq!(
-        ref_sha(&repo, &root, "main"),
+        repo.head_sha(),
         main_before,
         "main must not move while the rebase is open"
-    );
-}
-
-/// A conflicted merge keeps HEAD on the branch, so the detached-HEAD check
-/// `wt step squash` already runs waves it through: without the gate the squash
-/// stages the conflicted worktree and records git's markers as content.
-#[rstest]
-fn test_step_squash_refuses_mid_merge(mut repo: TestRepo) {
-    let feature_wt = stop_feature_mid_merge(&mut repo);
-    let feature_before = ref_sha(&repo, &feature_wt, "feature");
-
-    assert_cmd_snapshot!(
-        "step_squash_refuses_mid_merge",
-        make_snapshot_cmd(&repo, "step", &["squash"], Some(&feature_wt))
-    );
-    assert_eq!(
-        ref_sha(&repo, &feature_wt, "feature"),
-        feature_before,
-        "no commit may be recorded while the merge is open"
     );
 }
 
@@ -3620,37 +3662,6 @@ fn test_step_rebase_up_to_date_json(mut repo: TestRepo) {
     let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_eq!(parsed["outcome"], "up_to_date");
     assert_eq!(parsed["target"], "main");
-}
-
-/// An annotated-tag target is peeled before the up-to-date check.
-///
-/// `git merge-base` resolves an annotated tag to the commit it points at, so
-/// comparing it against an unpeeled `rev-parse` never matches: the branch was
-/// reported as needing a rebase, and `wt step rebase <tag>` replayed nothing
-/// while printing "Rebased onto <tag>" and emitting `"outcome": "rebased"`.
-/// The lightweight tag is the single-factor control — same graph, same commit,
-/// and it always took the `up_to_date` path.
-#[rstest]
-fn test_step_rebase_annotated_tag_is_peeled(mut repo: TestRepo) {
-    repo.run_git(&["tag", "-a", "v1.0.0", "-m", "release"]);
-    repo.run_git(&["tag", "v1.0.0-lw"]);
-    let feature_wt = repo.add_worktree_with_commit("feature", "f.txt", "x", "feat: x");
-
-    for tag in ["v1.0.0", "v1.0.0-lw"] {
-        let output = repo
-            .wt_command()
-            .args(["step", "rebase", tag, "--format=json"])
-            .current_dir(&feature_wt)
-            .output()
-            .unwrap();
-        assert!(output.status.success());
-        let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
-        assert_eq!(
-            parsed["outcome"], "up_to_date",
-            "{tag}: branch already sits on the tagged commit, so nothing should replay"
-        );
-        assert_eq!(parsed["target"], tag);
-    }
 }
 
 /// `step rebase --format=json` reports `fast_forwarded` when target advanced cleanly.

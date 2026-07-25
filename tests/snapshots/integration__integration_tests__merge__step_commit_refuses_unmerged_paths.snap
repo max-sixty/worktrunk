@@ -4,7 +4,7 @@ info:
   program: wt
   args:
     - step
-    - squash
+    - commit
     - "--yes"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
@@ -49,4 +49,5 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mCannot squash: a git operation is already in progress[39m
+[31m✗[39m [31mCannot commit: 1 path with unresolved conflicts[39m
+[107m [0m conflict.txt

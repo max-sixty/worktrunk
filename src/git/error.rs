@@ -415,6 +415,21 @@ pub enum GitError {
         /// The action the user asked for ("merge", "rebase").
         action: String,
     },
+    /// The index still holds unresolved conflicts, so a command that stages on
+    /// the user's behalf (`wt step commit`, `wt step squash`) refuses to run.
+    ///
+    /// Offers no remedy for the same reason as
+    /// [`OperationInProgress`](Self::OperationInProgress) — resolving a
+    /// conflict is git's own workflow, and whatever left the conflict behind
+    /// names it better than a fixed line could. The paths are worth carrying:
+    /// they are the one thing the user needs and git isn't being asked.
+    UnmergedPaths {
+        /// The action the user asked for ("commit", "squash").
+        action: String,
+        /// Paths the index records as unmerged, one per line in the gutter.
+        /// Never empty — an empty set is not an error.
+        files: Vec<String>,
+    },
     UncommittedChanges {
         action: Option<String>,
         /// Branch name (for multi-worktree operations)
@@ -644,6 +659,12 @@ impl GitError {
 
             GitError::OperationInProgress { action } => {
                 cformat!("Cannot {action}: a git operation is already in progress")
+            }
+
+            GitError::UnmergedPaths { action, files } => {
+                let count = files.len();
+                let paths = if count == 1 { "path" } else { "paths" };
+                cformat!("Cannot {action}: {count} {paths} with unresolved conflicts")
             }
 
             GitError::UncommittedChanges { action, branch, .. } => match (action, branch) {
@@ -880,6 +901,12 @@ impl GitError {
             GitError::OperationInProgress { .. } => {
                 let title = self.title();
                 write!(f, "{}", error_message(&title))
+            }
+
+            GitError::UnmergedPaths { files, .. } => {
+                let title = self.title();
+                write!(f, "{}", error_message(&title))?;
+                write!(f, "\n{}", format_with_gutter(&files.join("\n"), None))
             }
 
             GitError::UncommittedChanges {

@@ -50,7 +50,7 @@ filterset = "test(/readme_sync/)"
 
 [package]
 name = "worktrunk"
-version = "0.69.0"
+version = "0.69.1"
 edition = "2024"
 rust-version = "1.96"
 build = "build.rs"
@@ -143,6 +143,13 @@ test = false
 name = "integration"
 path = "tests/integration.rs"
 required-features = ["cli", "syntax-highlighting"]
+
+# Deliberately a second binary rather than another module under `integration`:
+# it latches process-wide cancellation state, which would take out any test
+# running beside it in the same process. See the file's module docs.
+[[test]]
+name = "cancel_background"
+path = "tests/cancel_background.rs"
 
 [dependencies]
 anyhow = "1.0.102"

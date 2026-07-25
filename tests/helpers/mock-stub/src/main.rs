@@ -76,10 +76,39 @@ fn config_dir() -> PathBuf {
     PathBuf::from(env::var_os("MOCK_CONFIG_DIR").expect("mock: MOCK_CONFIG_DIR not set"))
 }
 
+/// Append this invocation's argv to `<MOCK_CALL_LOG_DIR>/<command>.calls` so
+/// a test can assert *how many times* and *with what arguments* a command was
+/// spawned, not just what it returned. Needed wherever the spawn count is the
+/// behavior under test — e.g. the fsmonitor sweep resolving every daemon in
+/// one batched `lsof` rather than one call per PID.
+///
+/// Opt-in, and deliberately NOT written next to the JSON config. Tests
+/// routinely place `MOCK_CONFIG_DIR` inside the repo under test
+/// (`<repo>/.bin`), so logging there would create an untracked file mid-run
+/// and change what the command being tested observes — a hook-spawned mock
+/// dirties the working tree, and `wt merge` then stashes. Observability must
+/// not perturb the system under test, so the log goes wherever the test says
+/// and nowhere by default.
+///
+/// One line per invocation, arguments space-joined. Best-effort: a log-write
+/// failure must not change what the mock returns, or a test would fail on the
+/// logging rather than on its actual assertion.
+fn log_invocation(cmd_name: &str, args: &[String]) {
+    let Some(dir) = env::var_os("MOCK_CALL_LOG_DIR") else {
+        return;
+    };
+    let path = PathBuf::from(dir).join(format!("{}.calls", cmd_name));
+    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(f, "{}", args.join(" "));
+    }
+}
+
 fn main() {
     let cmd_name = command_name();
     let config_dir = config_dir();
     let config_path = config_dir.join(format!("{}.json", cmd_name));
+
+    log_invocation(&cmd_name, &env::args().skip(1).collect::<Vec<_>>());
 
     let content = fs::read_to_string(&config_path).unwrap_or_else(|e| {
         eprintln!("mock: failed to read {}: {}", config_path.display(), e);
