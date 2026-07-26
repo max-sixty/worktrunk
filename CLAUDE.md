@@ -60,6 +60,8 @@ Never risk data loss without explicit user consent. A failed command that preser
 - **Time-of-check vs time-of-use** — be conservative when there's a gap between the safety check and the operation. `wt merge` verifies clean before rebasing, but files could appear before cleanup — don't force-remove during cleanup.
 - **Replace files, never truncate them** — `fs::write` truncates before it writes, so a crash mid-write leaves the file empty. Every write to a file worktrunk can't put back (rc files, shell wrappers, `config.toml`, `approvals.toml`, another tool's `settings.json`) goes through `utils::write_atomically`, which renames a sibling temp file over the target; the spec on that function covers symlinks, mode, and what a rename costs. Regenerable content (the cache, the `-vv` diagnostic report) keeps the plain write.
 
+These stop where git's own protections stop: `wt merge` and `wt step push` overwrite an ignored file in the destination worktree whose path the incoming commits track, exactly as a `git merge` run there would. Matching git is deliberate — the spec in `src/commands/worktree/push.rs` says why.
+
 Full inventory: FAQ [What files does Worktrunk create?](docs/content/faq.md#what-files-does-worktrunk-create) and [What can Worktrunk delete?](docs/content/faq.md#what-can-worktrunk-delete). Review new code that changes this surface against those sections.
 
 ## Command Execution Principles

@@ -62,6 +62,11 @@ pub trait RepositoryCliExt {
     /// The caller has already established that `target_worktree` exists on disk
     /// (`MergeContext::prepare` refuses a registered-but-missing worktree), so
     /// the status read here is free to fail if the directory is gone.
+    ///
+    /// Ignored files are deliberately out of scope — they're absent from the
+    /// `git status --porcelain` read this works from, and matching git there is
+    /// the decision, not an oversight. The module spec in
+    /// `commands/worktree/push.rs` says why.
     fn prepare_target_worktree(
         &self,
         target_worktree: Option<&PathBuf>,
