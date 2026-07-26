@@ -1127,12 +1127,23 @@ pub fn step_prune(
     // candidate "(different hooks on branch)" annotation in the skip hint
     // can compare each candidate's own `.config/wt.toml` against this
     // baseline. Byte-equal is approximate (whitespace differences flag too)
-    // but the result drives a hint, not behavior.
-    let invoking_project_bytes = repo
-        .project_config_path()
+    // but the result drives a hint, not behavior. When the git-config source
+    // (worktrunk.config.*) is active the baseline is None: git config is
+    // branch-independent, so per-branch file differences cannot change the
+    // selected hooks and the annotation would be noise.
+    let git_source_active = repo
+        .project_config()
         .ok()
         .flatten()
-        .and_then(|p| std::fs::read(p).ok());
+        .is_some_and(|c| c.source == worktrunk::config::ProjectConfigSource::GitConfig);
+    let invoking_project_bytes = if git_source_active {
+        None
+    } else {
+        repo.project_config_path()
+            .ok()
+            .flatten()
+            .and_then(|p| std::fs::read(p).ok())
+    };
     let mut skipped_approval: Vec<SkippedApproval> = Vec::new();
 
     let check_lock = RwLock::new(());

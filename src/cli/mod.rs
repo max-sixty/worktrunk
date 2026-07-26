@@ -2517,7 +2517,9 @@ Selection is all-or-nothing. When any `worktrunk.config.*` key exists, those key
 
 Values are strings, one per key. Settings that need other TOML types (such as the `step.copy-ignored.exclude` array) cannot be expressed here. Hooks and aliases defined this way go through the same approval prompt as file-based project config.
 
-To list every active key with its scope and origin file:
+Use the canonical key spellings from the sections above. Deprecated spellings may still deserialize, but git-sourced configuration does not run file migration or emit deprecation guidance — `wt config update` has nothing to rewrite here. Per-worktree git config (`extensions.worktreeConfig`) is not supported: keys are read from the shared git dir, so a `config.worktree` value is never consumed. Setting `WORKTRUNK_PROJECT_CONFIG_PATH` — even to an empty value — disables this source entirely; the override names the project config source outright.
+
+To list the matching git keys with their scope and origin file (inside a linked worktree this can also show worktree-scoped keys, which worktrunk does not read):
 
 ```console
 $ git config --show-scope --show-origin --get-regexp '^worktrunk\.config\.'
