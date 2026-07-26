@@ -117,6 +117,98 @@ fn test_config_show_git_config_source(mut repo: TestRepo, temp_home: TempDir) {
     });
 }
 
+/// `wt config show` renders the schema violation when a git-source value
+/// cannot satisfy its field — the same "Invalid config" treatment the file
+/// branch gives a bad `.config/wt.toml`.
+#[rstest]
+fn test_config_show_invalid_git_source_value(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    write_user_config(&temp_home);
+    repo.run_git(&[
+        "config",
+        "worktrunk.config.step.copy-ignored.exclude",
+        "target",
+    ]);
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Colliding key paths (one key names a value where another needs a table)
+/// surface as an error in `wt config show` rather than a silent overwrite.
+#[rstest]
+fn test_config_show_conflicting_git_source_keys(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    write_user_config(&temp_home);
+    repo.run_git(&["config", "worktrunk.config.list", "oops"]);
+    repo.run_git(&[
+        "config",
+        "worktrunk.config.list.url",
+        "http://localhost:3000",
+    ]);
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// `wt step prune` runs with the git-config source active; the per-branch
+/// hooks annotation baseline is suppressed (git config is
+/// branch-independent), and the command completes normally.
+#[rstest]
+fn test_step_prune_dry_run_with_git_source(repo: TestRepo, temp_home: TempDir) {
+    write_user_config(&temp_home);
+    repo.run_git(&["config", "worktrunk.config.post-start", "npm install"]);
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["step", "prune", "--dry-run"])
+        .current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// At a bare root with no worktrees and no git keys, there is genuinely no
+/// project config: operations that require one report that plainly instead
+/// of pretending a worktree problem.
+#[rstest]
+fn test_bare_root_without_keys_has_no_project_config(_repo: TestRepo) {
+    let bare = crate::common::BareRepoTest::new();
+
+    let mut cmd = bare.wt_command();
+    cmd.args(["config", "approvals", "clear", "--stale"])
+        .current_dir(bare.bare_repo_path());
+
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(
+        stderr.contains("No project config found"),
+        "unexpected error:\n{stderr}"
+    );
+}
+
 /// Git resolves scope precedence before worktrunk reads the keys: a local
 /// key overrides its global twin, and global-only keys still merge in.
 #[rstest]
