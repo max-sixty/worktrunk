@@ -1104,6 +1104,13 @@ impl TestRepo {
                 "XDG_CONFIG_HOME".to_string(),
                 self.home_path().join(".config").display().to_string(),
             ),
+            // Suppress the in-place TTY spinners (`Progress`, `Watchdog`). A
+            // PTY capture keeps every redraw frame the terminal would have
+            // erased, so an operation that load pushes past a startup delay
+            // adds frames — with their elapsed seconds — to the snapshot. Only
+            // the PTY path needs this: `configure_cli_command()` pipes stdout
+            // and stderr, so the TTY half of the gate is already false there.
+            ("WORKTRUNK_TEST_SPINNERS".to_string(), "0".to_string()),
             ("WORKTRUNK_TEST_EPOCH".to_string(), TEST_EPOCH.to_string()),
             (
                 "WORKTRUNK_CONFIG_PATH".to_string(),

@@ -794,6 +794,10 @@ const STANDARD_TEST_ENV: &[(&str, &str)] = &[
     // Suppress delayed-stream progress output so git worktree add doesn't
     // produce extra lines when the system is under load (>400ms threshold).
     ("WORKTRUNK_TEST_DELAYED_STREAM_MS", "-1"),
+    // Same, for the in-place TTY spinners: a PTY capture keeps every redraw
+    // frame a terminal would have erased, so a command that load pushes past a
+    // startup delay adds frames — with their elapsed seconds — to the snapshot.
+    ("WORKTRUNK_TEST_SPINNERS", "0"),
 ];
 
 /// Build standard test env vars with config and approvals paths

@@ -250,6 +250,12 @@ Two traps:
 - **Give each half its own wait.** Sleeping once and then asserting both "X happened" and "Y didn't" makes the presence half flaky. Poll for X, then hold the window for Y.
 - **Structural absence needs no window at all.** When the event is gated on a condition the test never sets up, it can't fire regardless of timing. Drop the sleep: poll the positive precondition and the absence holds by construction. A watchdog whose escalation is gated on `command.is_some()` can't escalate with no command, so the test polls for the first render and asserts `!escalated` with no window.
 
+### Time-thresholded output: suppress it at the source
+
+Output that appears only once an operation runs past a threshold is a function of machine load, not of behavior: the `Progress` and `Watchdog` spinners (`src/progress.rs`), `Cmd::delayed_stream`'s progress line, the picker's placeholder reveal. A PTY test captures the raw byte stream, so it keeps every in-place redraw frame a terminal would have erased, elapsed-second counter and all — frames that show up when the whole suite runs together and not when the test runs alone.
+
+Each threshold has an env override the PTY env builders pin (`WORKTRUNK_TEST_SPINNERS=0`, `WORKTRUNK_TEST_DELAYED_STREAM_MS=-1`, `WORKTRUNK_PLACEHOLDER_REVEAL_MS=0`), so the output is present or absent by construction rather than by timing; a new builder or a new threshold needs the same. Filtering the frames out of the capture afterwards is the weaker fix: the filter has to model cursor movement, and a block that redraws with a cursor-up spans lines a line-scoped filter can't follow.
+
 ## No Retries
 
 Tests run once. Worktrunk configures no nextest `retries` and writes no retry loops: a test that passes only on a second attempt is a bug report, and retrying it discards the report while leaving the bug. A green suite has to mean the code is green, not that the run's flakes stayed under a retry budget. Fix the flake at its root:

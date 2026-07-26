@@ -1532,6 +1532,10 @@ impl NestedBareRepoTest {
                 "XDG_CONFIG_HOME".to_string(),
                 home.join(".config").display().to_string(),
             ),
+            // Suppress the in-place TTY spinners; a PTY capture keeps every
+            // redraw frame a terminal would have erased. Mirrors
+            // `TestRepo::test_env_vars`, which explains why.
+            ("WORKTRUNK_TEST_SPINNERS".to_string(), "0".to_string()),
             ("WORKTRUNK_TEST_EPOCH".to_string(), TEST_EPOCH.to_string()),
             (
                 "WORKTRUNK_CONFIG_PATH".to_string(),
