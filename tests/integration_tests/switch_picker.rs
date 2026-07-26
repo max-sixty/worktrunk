@@ -53,12 +53,12 @@ const READY_TIMEOUT: Duration = Duration::from_secs(30);
 const STABILIZE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Maximum time to wait for the picker child to exit after the terminating
-/// keystroke (Enter to switch, Escape to abort) before force-killing it. A clean
-/// switch or abort exits in well under a second, but under heavy CI parallelism
-/// the final git work (or skim's Windows terminal teardown) can lag; killing a
-/// still-finishing child reports exit 1 on Windows, turning a successful-but-slow
-/// switch into a spurious failure. Generous like `READY_TIMEOUT`/`STABILIZE_TIMEOUT`
-/// for the same reason — fast polling means the common case still returns at once.
+/// keystroke (Enter to switch, Escape to abort). A clean switch or abort exits in
+/// well under a second, but under heavy CI parallelism the final git work (or
+/// skim's Windows terminal teardown) can lag. Generous like
+/// `READY_TIMEOUT`/`STABILIZE_TIMEOUT` for the same reason — fast polling means
+/// the common case still returns at once. Reaching it is a hang, and
+/// [`wait_for_exit`] panics rather than reporting an exit code for it.
 const CHILD_EXIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How long the PTY must stay silent after the child exits before its final
@@ -326,21 +326,57 @@ fn abort_and_exit_code(
     }
     drop(writer);
 
+    // Teardown bytes are discarded rather than parsed, so this waits with a
+    // sink parser — the caller's frame was captured before the Escape.
+    let mut sink = vt100::Parser::new(TERM_ROWS, TERM_COLS, 0);
+    wait_for_exit(&mut child, &rx, &mut sink, "Escape")
+}
+
+/// Wait for the picker child to exit, then drain its final output into `parser`
+/// and return its exit code.
+///
+/// A child still running after [`CHILD_EXIT_TIMEOUT`] is hung, and the harness
+/// must not turn that into an exit code: `Child::kill` on Windows is
+/// `TerminateProcess(proc, 1)`, so a killed hang and a wt that failed on its own
+/// both report 1 — the ambiguity that had a *correct* picker-create reported as a
+/// mysterious Windows "self-exit 1" (#3427). Panic on the hang instead, so every
+/// exit code a caller asserts on is one the child chose.
+///
+/// `terminator` names the keystroke that should have ended the session, for the
+/// panic message.
+fn wait_for_exit(
+    child: &mut Box<dyn portable_pty::Child + Send + Sync>,
+    rx: &mpsc::Receiver<Vec<u8>>,
+    parser: &mut vt100::Parser,
+    terminator: &str,
+) -> i32 {
     let start = Instant::now();
-    // Generous like the keystroke-driven helpers: a slow-but-successful exit that
-    // gets killed reports exit 1 on Windows — see `CHILD_EXIT_TIMEOUT`.
-    let timeout = CHILD_EXIT_TIMEOUT;
-    loop {
-        while rx.try_recv().is_ok() {} // discard chunks
+    let mut exited = false;
+    while start.elapsed() < CHILD_EXIT_TIMEOUT {
         if child.try_wait().unwrap().is_some() {
+            exited = true;
             break;
         }
-        if start.elapsed() >= timeout {
-            let _ = child.kill();
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(POLL_INTERVAL);
     }
+
+    if !exited {
+        let _ = child.kill();
+        let _ = child.wait();
+        drain_until_quiet(rx, parser);
+        panic!(
+            "Picker child did not exit within {CHILD_EXIT_TIMEOUT:?} of {terminator}.\n\
+             Screen content:\n{}",
+            screen_text(parser)
+        );
+    }
+
+    // Drain to quiet, not once: `try_wait` reports the child reaped, but its
+    // final writes can still be in the PTY (and in the reader thread) at that
+    // moment, so a single non-blocking sweep drops the tail — which is exactly
+    // where a failing run's explanation lives (wt's error line, the last
+    // warning). Without this the captured frame reads as a silent exit.
+    drain_until_quiet(rx, parser);
 
     child.wait().unwrap().exit_code() as i32
 }
@@ -392,41 +428,7 @@ fn exec_in_pty_with_input_expectations(
     // The picker exits on Accept/Escape.
     drop(writer);
 
-    // Poll for process exit (fast polling, long timeout for CI)
-    let start = std::time::Instant::now();
-    let mut exited = false;
-    while start.elapsed() < CHILD_EXIT_TIMEOUT {
-        if child.try_wait().unwrap().is_some() {
-            exited = true;
-            break;
-        }
-        std::thread::sleep(POLL_INTERVAL);
-    }
-
-    // A picker that hasn't exited by now is hung, and killing it would report
-    // its exit code as 1 on Windows (`TerminateProcess(proc, 1)`) — an exit code
-    // indistinguishable from wt's own failure exit. Panic instead, so every exit
-    // code a caller asserts on is one the child chose, and a hang reports as a
-    // hang with the frame that explains it.
-    if !exited {
-        let _ = child.kill();
-        let _ = child.wait();
-        drain_until_quiet(&rx, &mut parser);
-        panic!(
-            "Picker child did not exit within {CHILD_EXIT_TIMEOUT:?} of the last input.\n\
-             Screen content:\n{}",
-            screen_text(&parser)
-        );
-    }
-
-    // Drain to quiet, not once: `try_wait` reports the child reaped, but its
-    // final writes can still be in the PTY (and in the reader thread) at that
-    // moment, so a single non-blocking sweep drops the tail — which is exactly
-    // where a failing run's explanation lives (wt's error line, the last
-    // warning). Without this the captured frame reads as a silent exit.
-    drain_until_quiet(&rx, &mut parser);
-
-    let exit_code = child.wait().unwrap().exit_code() as i32;
+    let exit_code = wait_for_exit(&mut child, &rx, &mut parser, "the last input");
 
     PtyResult { parser, exit_code }
 }
@@ -2906,19 +2908,9 @@ fn drive_alt_x_then_switch(
     send(&writer, b"\r");
     drop(writer);
 
-    // Let the switch finish and the process exit on its own; the kill is a
-    // hung-child backstop. The wait is generous because a slow-but-successful
-    // exit that gets killed reports exit 1 on Windows — see `CHILD_EXIT_TIMEOUT`.
-    let start = Instant::now();
-    while start.elapsed() < CHILD_EXIT_TIMEOUT {
-        if child.try_wait().unwrap().is_some() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    let _ = child.kill();
-    drain(&rx, &mut parser);
-    let exit_code = child.wait().unwrap().exit_code() as i32;
+    // Let the switch finish and the process exit on its own — a hang panics
+    // rather than being killed into an exit code (see `wait_for_exit`).
+    let exit_code = wait_for_exit(&mut child, &rx, &mut parser, "Enter");
 
     (row2.to_string(), parser.screen().contents(), exit_code)
 }

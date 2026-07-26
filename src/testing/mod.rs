@@ -737,7 +737,7 @@ pub fn directive_files() -> (PathBuf, PathBuf, TempDir) {
 /// `tempfile` retries a name collision only when it surfaces as
 /// `AlreadyExists`, and on Windows `create_new` against a name already held by
 /// a *directory* — or by a file in delete-pending state — returns
-/// `PermissionDenied` instead, which it returns to the caller as-is. A full
+/// `PermissionDenied` instead, which it hands straight back. A full
 /// suite run leaves the shared temp directory full of `.tmpXXXXXX` entries
 /// (every `TestRepo` creates one), and under that load the call failed ~1% of
 /// the time on Windows CI: `failed to create cd temp file: … Os { code: 5 …
