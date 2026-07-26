@@ -239,7 +239,7 @@ fn test_exec_directive_write_failure_names_the_file(#[from(repo_with_remote)] mu
         "an unwritable exec directive file must fail the command.\nstderr:\n{stderr}"
     );
     assert!(
-        stderr.contains("Failed to write the command to the exec directive file"),
+        stderr.contains("Failed to write the command to the directive file"),
         "the error must name the write and the file.\nstderr:\n{stderr}"
     );
 }

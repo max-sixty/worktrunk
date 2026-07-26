@@ -752,8 +752,7 @@ fn directive_temp_dir() -> TempDir {
 /// return it. wt appends to the exec file rather than creating it, so it has to
 /// exist before wt runs.
 fn create_empty(path: PathBuf) -> PathBuf {
-    std::fs::File::create(&path)
-        .unwrap_or_else(|err| panic!("failed to create {}: {err}", path.display()));
+    std::fs::File::create(&path).expect("failed to create a directive file in its own temp dir");
     path
 }
 
