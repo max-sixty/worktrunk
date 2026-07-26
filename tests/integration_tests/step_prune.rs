@@ -1460,6 +1460,78 @@ fn test_prune_fallback_config_race_canary(mut repo: TestRepo) {
     let _ = std::fs::remove_file(&staged_path);
 }
 
+/// A `Prunable` candidate (stale worktree entry, integrated branch) whose
+/// preparation fails at removal time is skipped silently and the run
+/// continues: `try_remove` treats a preparation error as "not selected", not
+/// a command failure. Preparing a stale entry prunes its metadata — the
+/// mutation that keeps `Prunable` candidates planning under the write lock
+/// rather than on the scan — so a `git` shim failing `worktree prune` is the
+/// deterministic trigger. Unix-only for the same `CreateProcess` reason as
+/// the canary shim above.
+#[cfg(unix)]
+#[rstest]
+fn test_prune_skips_prunable_candidate_whose_preparation_fails(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Integrated branch whose worktree directory is deleted out-of-band → a
+    // stale (prunable) worktree entry, prune's `Prunable` check source.
+    repo.add_worktree("stale-merged");
+    std::fs::remove_dir_all(repo.worktree_path("stale-merged")).unwrap();
+
+    let mut cmd = repo.wt_command();
+    let git_wrapper_dir = repo.home_path().join("git-wrapper");
+    std::fs::create_dir_all(&git_wrapper_dir).unwrap();
+    write_failing_worktree_prune_wrapper(&git_wrapper_dir, &which::which("git").unwrap());
+    prepend_path(&mut cmd, &git_wrapper_dir);
+    let prune_failed_marker = repo.home_path().join("worktree-prune-failed");
+    cmd.env("WT_TEST_WORKTREE_PRUNE_FAILED", &prune_failed_marker);
+
+    let output = cmd
+        .args(["step", "prune", "--yes", "--min-age=0s"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "a failing candidate preparation must skip the candidate, not fail \
+         the run.\nstderr:\n{stderr}"
+    );
+    assert!(
+        prune_failed_marker.exists(),
+        "the shim never fired — the candidate's preparation was not exercised"
+    );
+    let branches = repo.git_output(&["branch", "--format=%(refname:short)"]);
+    assert!(
+        branches.lines().any(|branch| branch == "stale-merged"),
+        "the skipped candidate's branch must survive; branches:\n{branches}"
+    );
+}
+
+/// A `git` shim that fails every `git worktree prune` and passes everything
+/// else through to the real git.
+#[cfg(unix)]
+fn write_failing_worktree_prune_wrapper(dir: &std::path::Path, real_git: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
+    let script = format!(
+        r#"#!/bin/sh
+if [ "$1" = "worktree" ] && [ "$2" = "prune" ]; then
+  : > "$WT_TEST_WORKTREE_PRUNE_FAILED"
+  echo "shim: worktree prune disabled" >&2
+  exit 1
+fi
+exec {real_git} "$@"
+"#
+    );
+    let path = dir.join("git");
+    std::fs::write(&path, script).unwrap();
+    let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&path, permissions).unwrap();
+}
+
 #[cfg(unix)]
 fn prepend_path(cmd: &mut std::process::Command, dir: &std::path::Path) {
     let (path_var_name, current_path) = std::env::vars_os()
