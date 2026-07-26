@@ -496,12 +496,43 @@ fn config_show_output(repo: &Repository) -> Option<String> {
         ));
     }
 
-    // Project config
-    if let Ok(Some(project_config_path)) = repo.project_config_path() {
-        output.push_str(&format!(
-            "\n{}",
-            format_config_section(&project_config_path, ConfigFileKind::Project)
-        ));
+    // Project config. When the experimental git-config source
+    // (worktrunk.config.*, #3454) is active, it — not the file — is the
+    // project config, and this report must say so: diagnose output is
+    // routinely pasted into public bug reports, so it names the source, the
+    // key names, and the superseded file, but never the values — this source
+    // exists specifically for private, machine-specific configuration.
+    match repo.worktrunk_config_git_pairs() {
+        Ok(pairs) if !pairs.is_empty() => {
+            output.push_str(&format!(
+                "\n{}: {}\n",
+                ConfigFileKind::Project.label(),
+                worktrunk::config::GIT_CONFIG_SOURCE_LABEL
+            ));
+            for (key, _) in &pairs {
+                output.push_str(&format!("{}{key}\n", worktrunk::config::GIT_CONFIG_PREFIX));
+            }
+            if let Some(superseded) = worktrunk::config::superseded_project_file_label(repo) {
+                output.push_str(&format!("(superseded file: {superseded})\n"));
+            }
+            output.push_str(&format!(
+                "(values omitted; to inspect them, run {})\n",
+                worktrunk::config::GIT_CONFIG_LIST_COMMAND
+            ));
+        }
+        // A failed bulk-config read: note it rather than silently showing
+        // the file as active. Diagnose is best-effort and must not abort.
+        Err(e) => {
+            output.push_str(&format!("\n(git config read failed: {e})\n"));
+        }
+        Ok(_) => {
+            if let Ok(Some(project_config_path)) = repo.project_config_path() {
+                output.push_str(&format!(
+                    "\n{}",
+                    format_config_section(&project_config_path, ConfigFileKind::Project)
+                ));
+            }
+        }
     }
 
     if output.is_empty() {

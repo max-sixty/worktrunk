@@ -785,9 +785,10 @@ fn render_aliases_help_section(
 /// Callers (`augment_help`, `wt config alias show` with no name) latch
 /// `suppress_warnings()` before reaching here so the standard `UserConfig::load()`
 /// stays quiet: no deprecation warnings, no `.new` file writes, no
-/// approved-commands copy. Project config is parsed directly from TOML rather
-/// than via `ProjectConfig::load` because the `aliases` table has no deprecated
-/// forms — skipping the migration avoids the unrelated warnings entirely.
+/// approved-commands copy. Project config goes through `ProjectConfig::load`
+/// so this listing reflects the same source selection as execution — in
+/// particular the git-config source (`worktrunk.config.*`), whose aliases
+/// must appear here exactly when dispatch would run them.
 ///
 /// Tolerates missing or unloadable config: this is a discovery surface, not
 /// an execution surface, so we'd rather show the built-in commands than
@@ -823,17 +824,14 @@ pub(crate) fn load_aliases_for_listing() -> Vec<(String, CommandConfig, HookSour
     entries
 }
 
-/// Parse `.config/wt.toml` directly, extracting just `aliases`, without
-/// triggering `ProjectConfig::load`'s deprecation warning and hint-writing
-/// side effects. See `load_aliases_for_listing` for why.
+/// Load project aliases through the standard source selector, tolerating
+/// discovery-time errors. Callers latch `suppress_warnings()` (see
+/// `load_aliases_for_listing`), which keeps `ProjectConfig::load` quiet.
 fn load_project_aliases_silent(repo: &Repository) -> Option<BTreeMap<String, CommandConfig>> {
-    let path = repo.project_config_path().ok().flatten()?;
-    if !path.exists() {
-        return None;
-    }
-    let contents = std::fs::read_to_string(&path).ok()?;
-    let config: ProjectConfig = toml::from_str(&contents).ok()?;
-    Some(config.aliases)
+    ProjectConfig::load(repo, false)
+        .ok()
+        .flatten()
+        .map(|config| config.aliases)
 }
 
 #[cfg(test)]

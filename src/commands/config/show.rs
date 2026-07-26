@@ -799,8 +799,11 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
     // Experimental git-config source (#3454), mirroring `ProjectConfig::load`:
     // any `worktrunk.config.*` keys in the merged effective git config are the
     // project config, and the file (when one resolves) is superseded. Rendered
-    // first so the section reports the source that actually runs.
-    let git_pairs = repo.worktrunk_config_git_pairs().unwrap_or_default();
+    // first so the section reports the source that actually runs. A failed
+    // read propagates rather than defaulting to empty — swallowing it would
+    // render the file as active while actual execution errors on the same
+    // read, and diagnostics must not disagree with execution.
+    let git_pairs = repo.worktrunk_config_git_pairs()?;
     if !git_pairs.is_empty() {
         let source = format!("@ {}", worktrunk::config::GIT_CONFIG_SOURCE_LABEL);
         write_heading_and_identifier(out, &repo, &source)?;
