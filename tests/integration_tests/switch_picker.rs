@@ -32,7 +32,7 @@ use insta::assert_snapshot;
 use portable_pty::CommandBuilder;
 use rstest::rstest;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -2525,20 +2525,6 @@ fn test_switch_picker_create_validates_templates_before_worktree(mut repo: TestR
     );
 }
 
-/// Helper to create temporary directive files for PTY tests.
-/// Returns (cd_path, exec_path, guards) — guards keep the temp files alive.
-fn directive_files_for_pty() -> (PathBuf, PathBuf, (tempfile::TempPath, tempfile::TempPath)) {
-    let cd = tempfile::NamedTempFile::new().expect("failed to create cd temp file");
-    let exec = tempfile::NamedTempFile::new().expect("failed to create exec temp file");
-    let cd_path = cd.path().to_path_buf();
-    let exec_path = exec.path().to_path_buf();
-    (
-        cd_path,
-        exec_path,
-        (cd.into_temp_path(), exec.into_temp_path()),
-    )
-}
-
 #[rstest]
 fn test_switch_picker_emits_cd_directive_by_default(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
@@ -2547,7 +2533,7 @@ fn test_switch_picker_emits_cd_directive_by_default(mut repo: TestRepo) {
     // Create a worktree to switch to
     repo.add_worktree("target-branch");
 
-    let (cd_path, exec_path, _guard) = directive_files_for_pty();
+    let (cd_path, exec_path, _guard) = worktrunk::testing::directive_files();
 
     let mut env_vars = repo.test_env_vars();
     env_vars.push((
@@ -2604,7 +2590,7 @@ fn test_switch_picker_no_cd_switches_without_cd_directive(mut repo: TestRepo) {
     // Create a worktree to switch to
     repo.add_worktree("target-branch");
 
-    let (cd_path, exec_path, _guard) = directive_files_for_pty();
+    let (cd_path, exec_path, _guard) = worktrunk::testing::directive_files();
 
     let mut env_vars = repo.test_env_vars();
     env_vars.push((
@@ -2668,7 +2654,7 @@ fn test_switch_picker_runs_execute_command(mut repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
     repo.add_worktree("target-branch");
 
-    let (cd_path, exec_path, _guard) = directive_files_for_pty();
+    let (cd_path, exec_path, _guard) = worktrunk::testing::directive_files();
 
     let mut env_vars = repo.test_env_vars();
     env_vars.push((
@@ -2724,7 +2710,7 @@ fn test_switch_picker_execute_base_resolves_to_source(mut repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
     repo.add_worktree("target-branch");
 
-    let (cd_path, exec_path, _guard) = directive_files_for_pty();
+    let (cd_path, exec_path, _guard) = worktrunk::testing::directive_files();
 
     let mut env_vars = repo.test_env_vars();
     env_vars.push((

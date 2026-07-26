@@ -414,9 +414,8 @@ pub fn change_directory(path: impl AsRef<Path>) -> anyhow::Result<()> {
         }
         DirectiveMode::Legacy { file } => {
             let directive_path = to_logical_path(path);
-            append_line(&file, &escape_legacy_cd(&directive_path)).with_context(|| {
-                format!("Failed to write the directive file {}", file.display())
-            })
+            append_line(&file, &escape_legacy_cd(&directive_path))
+                .with_context(|| format!("Failed to write the directive file {}", file.display()))
         }
     }
 }

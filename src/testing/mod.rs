@@ -715,24 +715,46 @@ pub trait TestRepoBase {
     }
 }
 
-/// Create a pair of temporary files for directive output (cd + exec).
+/// Create a pair of temporary files for directive output (cd + exec), in a
+/// directory of their own.
 ///
 /// The shell wrapper creates temp files and sets `WORKTRUNK_DIRECTIVE_CD_FILE`
 /// and `WORKTRUNK_DIRECTIVE_EXEC_FILE` before running wt. Use
 /// `configure_directive_files()` to set these on a Command for testing.
 ///
-/// Returns `(cd_path, exec_path, guards)`. The guards must be kept alive for
-/// the duration of the test — when dropped the temp files are cleaned up.
-pub fn directive_files() -> (PathBuf, PathBuf, (tempfile::TempPath, tempfile::TempPath)) {
-    let cd = tempfile::NamedTempFile::new().expect("failed to create cd temp file");
-    let exec = tempfile::NamedTempFile::new().expect("failed to create exec temp file");
-    let cd_path = cd.path().to_path_buf();
-    let exec_path = exec.path().to_path_buf();
-    (
-        cd_path,
-        exec_path,
-        (cd.into_temp_path(), exec.into_temp_path()),
-    )
+/// Returns `(cd_path, exec_path, guard)`. The guard must be kept alive for the
+/// duration of the test — dropping it removes the directory and both files.
+pub fn directive_files() -> (PathBuf, PathBuf, TempDir) {
+    let dir = directive_temp_dir();
+    let cd_path = create_empty(dir.path().join("cd"));
+    let exec_path = create_empty(dir.path().join("exec"));
+    (cd_path, exec_path, dir)
+}
+
+/// A private directory for a test's directive files.
+///
+/// Why not `NamedTempFile::new()` (which is what these helpers used to call):
+/// `tempfile` retries a name collision only when it surfaces as
+/// `AlreadyExists`, and on Windows `create_new` against a name already held by
+/// a *directory* — or by a file in delete-pending state — returns
+/// `PermissionDenied` instead, which it returns to the caller as-is. A full
+/// suite run leaves the shared temp directory full of `.tmpXXXXXX` entries
+/// (every `TestRepo` creates one), and under that load the call failed ~1% of
+/// the time on Windows CI: `failed to create cd temp file: … Os { code: 5 …
+/// "Access is denied." }`. `TempDir::new` isn't exposed to it — a directory
+/// collision surfaces as `AlreadyExists`, which `tempfile` retries — and the
+/// files inside carry fixed names, which nothing else can collide with.
+fn directive_temp_dir() -> TempDir {
+    TempDir::new().expect("failed to create directive temp dir")
+}
+
+/// Create `path` as an empty file, as the shell wrapper's `mktemp` would, and
+/// return it. wt appends to the exec file rather than creating it, so it has to
+/// exist before wt runs.
+fn create_empty(path: PathBuf) -> PathBuf {
+    std::fs::File::create(&path)
+        .unwrap_or_else(|err| panic!("failed to create {}: {err}", path.display()));
+    path
 }
 
 /// Configure a Command to use the new split directive-file protocol.
@@ -752,14 +774,15 @@ pub fn configure_directive_cd_only(cmd: &mut Command, cd_path: &Path) {
     cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", cd_path);
 }
 
-/// Create a temporary file for legacy single-file directive output.
+/// Create a temporary file for legacy single-file directive output, in a
+/// directory of its own (see [`directive_temp_dir`]).
 ///
 /// Used to test the legacy fallback path where an old shell wrapper sets
 /// `WORKTRUNK_DIRECTIVE_FILE`. Returns `(path, guard)`.
-pub fn legacy_directive_file() -> (PathBuf, tempfile::TempPath) {
-    let file = tempfile::NamedTempFile::new().expect("failed to create temp file");
-    let path = file.path().to_path_buf();
-    (path, file.into_temp_path())
+pub fn legacy_directive_file() -> (PathBuf, TempDir) {
+    let dir = directive_temp_dir();
+    let path = create_empty(dir.path().join("directive"));
+    (path, dir)
 }
 
 /// Configure a Command to use the legacy single-file directive protocol.
