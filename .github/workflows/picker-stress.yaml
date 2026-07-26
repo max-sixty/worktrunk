@@ -1,0 +1,70 @@
+# TEMPORARY: Windows reproducer for the switch-picker directive flake.
+#
+# `test_switch_picker_runs_execute_command` failed the advisory
+# `affected tests (windows)` leg while the required `test (windows)` leg passed
+# on the same SHA — nondeterminism that reproduces on no other platform. This
+# job runs the picker's Enter-path tests in a loop under CPU contention so the
+# failure lands in one job's log, with the screen frame the assertions now dump.
+#
+# Delete this file once the flake is understood and fixed.
+name: picker stress (temporary)
+
+on:
+  push:
+    branches:
+      - fix-picker-execute-windows-flake
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: Loop iterations
+        default: "60"
+
+permissions:
+  contents: read
+
+jobs:
+  stress:
+    name: picker stress (windows)
+    runs-on: windows-2022
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v7
+
+    - uses: ./.github/actions/test-setup
+      with:
+        save-cache: "false"
+
+    - name: "Use fast D: drive for temp files (Windows)"
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force -Path "D:\tmp" | Out-Null
+        echo "TEMP=D:\tmp" >> $env:GITHUB_ENV
+        echo "TMP=D:\tmp" >> $env:GITHUB_ENV
+
+    - name: 🔨 Build the test binaries
+      run: cargo nextest run --features shell-integration-tests --no-run
+
+    - name: 🔁 Stress the picker Enter path
+      shell: bash
+      env:
+        ITERATIONS: ${{ github.event.inputs.iterations || '60' }}
+      run: |
+        filter='test(/test_switch_picker_(emits_cd_directive_by_default|no_cd_switches_without_cd_directive|runs_execute_command|execute_base_resolves_to_source|pre_switch_hook_requires_approval)/)'
+        # Contention: the flake showed up on the leg running 4204 tests, not on
+        # an idle runner. Keep every core busy for the whole loop.
+        for _ in 1 2 3 4; do (while :; do :; done) & done
+        hogs=$(jobs -p)
+        fails=0
+        for i in $(seq 1 "$ITERATIONS"); do
+          echo "::group::iteration $i"
+          if ! cargo nextest run --features shell-integration-tests -E "$filter" --no-fail-fast; then
+            fails=$((fails + 1))
+            echo "::warning::iteration $i failed (total $fails)"
+          fi
+          echo "::endgroup::"
+        done
+        kill $hogs 2>/dev/null || true
+        echo "failures: $fails / $ITERATIONS"
+        # Report as a failure so the run is easy to spot, but only after every
+        # iteration has run — the point is the sample, not the first red.
+        test "$fails" -eq 0

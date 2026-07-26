@@ -61,6 +61,15 @@ const STABILIZE_TIMEOUT: Duration = Duration::from_secs(30);
 /// for the same reason — fast polling means the common case still returns at once.
 const CHILD_EXIT_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// How long the PTY must stay silent after the child exits before its final
+/// frame counts as complete. Long enough that a loaded runner's last flush lands
+/// in the parser; short enough to add no meaningful cost per test.
+const POST_EXIT_QUIET: Duration = Duration::from_millis(250);
+
+/// Ceiling on the post-exit drain, in case something else on the PTY keeps
+/// writing (a detached background hook shares the terminal).
+const POST_EXIT_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// How long screen must be unchanged to consider it "stable".
 /// Must be long enough for preview content to load (preview commands run async).
 /// 500ms balances reliability (allows preview to complete) with speed.
@@ -368,13 +377,6 @@ fn exec_in_pty_with_input_expectations(
         mut parser,
     } = boot_picker_pty(command, args, working_dir, env_vars);
 
-    // Helper to drain available output from the channel (non-blocking)
-    let drain_output = |rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser| {
-        while let Ok(chunk) = rx.try_recv() {
-            parser.process(&chunk);
-        }
-    };
-
     // Send each input and wait for screen to stabilize after each
     for (input, expected_content) in inputs {
         send_input_awaiting_content(&writer, &rx, &mut parser, input, *expected_content);
@@ -382,27 +384,73 @@ fn exec_in_pty_with_input_expectations(
 
     // Release the main thread's writer handle. The reader thread holds the
     // other Arc clone until the PTY drains, so this no longer drives stdin EOF.
-    // The picker exits on Accept/Escape, or the kill below.
+    // The picker exits on Accept/Escape.
     drop(writer);
 
     // Poll for process exit (fast polling, long timeout for CI)
     let start = std::time::Instant::now();
-    let timeout = CHILD_EXIT_TIMEOUT;
-    while start.elapsed() < timeout {
+    let mut exited = false;
+    while start.elapsed() < CHILD_EXIT_TIMEOUT {
         if child.try_wait().unwrap().is_some() {
+            exited = true;
             break;
         }
-        std::thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(POLL_INTERVAL);
     }
-    let _ = child.kill(); // Kill if still running after timeout
 
-    // Drain any remaining output
-    drain_output(&rx, &mut parser);
+    // A picker that hasn't exited by now is hung, and killing it would report
+    // its exit code as 1 on Windows (`TerminateProcess(proc, 1)`) — an exit code
+    // indistinguishable from wt's own failure exit. Panic instead, so every exit
+    // code a caller asserts on is one the child chose, and a hang reports as a
+    // hang with the frame that explains it.
+    if !exited {
+        let _ = child.kill();
+        let _ = child.wait();
+        drain_until_quiet(&rx, &mut parser);
+        panic!(
+            "Picker child did not exit within {CHILD_EXIT_TIMEOUT:?} of the last input.\n\
+             Screen content:\n{}",
+            PtyResult {
+                parser,
+                exit_code: 0
+            }
+            .screen()
+        );
+    }
 
-    let exit_status = child.wait().unwrap();
-    let exit_code = exit_status.exit_code() as i32;
+    // Drain to quiet, not once: `try_wait` reports the child reaped, but its
+    // final writes can still be in the PTY (and in the reader thread) at that
+    // moment, so a single non-blocking sweep drops the tail — which is exactly
+    // where a failing run's explanation lives (wt's error line, the last
+    // warning). Without this the captured frame reads as a silent exit.
+    drain_until_quiet(&rx, &mut parser);
+
+    let exit_code = child.wait().unwrap().exit_code() as i32;
 
     PtyResult { parser, exit_code }
+}
+
+/// Drain the PTY into `parser` until the child's output goes quiet — nothing new
+/// for [`POST_EXIT_QUIET`], or [`POST_EXIT_DRAIN_TIMEOUT`] elapsed.
+///
+/// Used after the child exits, where the goal is a complete final frame rather
+/// than a stable one. The bound keeps a still-chatty PTY (a detached background
+/// hook writing to the same terminal) from holding the test.
+fn drain_until_quiet(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser) {
+    let start = Instant::now();
+    let mut last_chunk = Instant::now();
+    while start.elapsed() < POST_EXIT_DRAIN_TIMEOUT && last_chunk.elapsed() < POST_EXIT_QUIET {
+        match rx.recv_timeout(POLL_INTERVAL) {
+            Ok(chunk) => {
+                parser.process(&chunk);
+                last_chunk = Instant::now();
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            // Reader thread hit PTY EOF and dropped its sender: nothing more is
+            // coming, and the channel is already empty.
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
 }
 
 /// Execute a command in a PTY, capture screen state, then abort with Escape.
@@ -2530,8 +2578,10 @@ fn test_switch_picker_emits_cd_directive_by_default(mut repo: TestRepo) {
     );
 
     assert_eq!(
-        result.exit_code, 0,
-        "Expected exit code 0 for successful switch"
+        result.exit_code,
+        0,
+        "Expected exit code 0 for successful switch.\nScreen:\n{}",
+        result.screen()
     );
 
     // Verify CD file DOES contain a path (default behavior)
@@ -2580,14 +2630,14 @@ fn test_switch_picker_no_cd_switches_without_cd_directive(mut repo: TestRepo) {
         ],
     );
 
+    let screen = result.screen();
     assert_eq!(
         result.exit_code, 0,
-        "Expected exit code 0 for --no-cd switch"
+        "Expected exit code 0 for --no-cd switch.\nScreen:\n{screen}"
     );
 
     // The structured result reaches stdout only after execute_switch — the
     // old print-only path emitted a bare branch name and never reached it.
-    let screen = result.screen();
     assert!(
         screen.contains("\"action\""),
         "Expected --format=json switch result on screen.\nScreen:\n{}",
@@ -2643,8 +2693,10 @@ fn test_switch_picker_runs_execute_command(mut repo: TestRepo) {
     );
 
     assert_eq!(
-        result.exit_code, 0,
-        "Expected exit code 0 for picker switch with --execute"
+        result.exit_code,
+        0,
+        "Expected exit code 0 for picker switch with --execute.\nScreen:\n{}",
+        result.screen()
     );
 
     let exec_contents = std::fs::read_to_string(&exec_path).unwrap_or_default();
@@ -2693,9 +2745,11 @@ fn test_switch_picker_execute_base_resolves_to_source(mut repo: TestRepo) {
     );
 
     assert_eq!(
-        result.exit_code, 0,
+        result.exit_code,
+        0,
         "picker `-x '{{{{ base }}}}'` should succeed, not error on an undefined \
-         value after the switch"
+         value after the switch.\nScreen:\n{}",
+        result.screen()
     );
 
     let exec_contents = std::fs::read_to_string(&exec_path).unwrap_or_default();
