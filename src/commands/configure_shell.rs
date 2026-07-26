@@ -132,9 +132,15 @@ const WRAPPER_MARKER: &str = "worktrunk shell integration for";
 /// The header every fish completion file worktrunk has shipped opens with.
 const COMPLETION_MARKER: &str = "# worktrunk completions for";
 
-/// Whether a whole file is one worktrunk generated, and so is worktrunk's to
-/// delete — by `uninstall`, and by the install-time cleanup of the legacy fish
-/// `conf.d` wrapper.
+/// Whether a whole file is one worktrunk generated, and so is `uninstall`'s to
+/// delete.
+///
+/// This is the one place ownership is read out of a file's contents, because
+/// it's the one place worktrunk doesn't know the name. `uninstall` takes no
+/// `--cmd`, so it lists the shell-owned directories and has to tell worktrunk's
+/// `{cmd}.fish` from the user's own files sitting beside it. Wherever the
+/// command name *is* known — install, and the legacy-location cleanups that
+/// accompany it — the path names the file worktrunk owns and nothing reads it.
 ///
 /// The answer is independent of the binary name embedded in the file, so a
 /// wrapper installed as `wt.fish`, `git-wt.fish`, or `git-wt.nu` is recognized
@@ -145,10 +151,10 @@ const COMPLETION_MARKER: &str = "# worktrunk completions for";
 /// (per the rc-file line detector, keeping one definition of "an integration
 /// line").
 ///
-/// Both callers walk directories the user owns, so the question is asked of
-/// every line rather than of the file as a blob. A user's own `wt.fish` that
-/// runs `wt config shell init` amid other code — or merely mentions it in a
-/// comment — survives; a whole-file substring test would delete it.
+/// The directories walked are the user's, so the question is asked of every
+/// line rather than of the file as a blob. A user's own `wt.fish` that runs
+/// `wt config shell init` amid other code — or merely mentions it in a comment
+/// — survives; a whole-file substring test would delete it.
 fn is_worktrunk_managed_content(content: &str) -> bool {
     if content.contains(WRAPPER_MARKER) {
         return true;
@@ -160,21 +166,18 @@ fn is_worktrunk_managed_content(content: &str) -> bool {
             .all(shell::is_shell_integration_line_for_uninstall_any_cmd)
 }
 
-/// Check if a Nushell wrapper file is worktrunk-managed.
+/// Take back the fish wrapper's legacy `conf.d` location after installing to
+/// `functions/`.
 ///
-/// The Nushell wrapper is a complete autoload file (not a `source` line), so it
-/// carries no `config shell init` marker — the header comment is the whole
-/// signal that the file is ours to remove during stranded-file cleanup
-/// (issue #2878).
-fn is_worktrunk_managed_nushell(content: &str) -> bool {
-    content.contains(&format!("{WRAPPER_MARKER} nushell"))
-}
-
-/// Clean up legacy fish conf.d file after installing to functions/
+/// Fish integration used to install to `~/.config/fish/conf.d/{cmd}.fish`,
+/// which loads before Homebrew's PATH setup in `config.fish` (issue #566);
+/// installs now write `functions/{cmd}.fish`, autoloaded on first use.
 ///
-/// Previously, fish shell integration was installed to `~/.config/fish/conf.d/{cmd}.fish`.
-/// This caused issues with Homebrew PATH setup (see issue #566). We now install to
-/// `functions/{cmd}.fish` instead. This function removes the legacy file if it exists.
+/// The path names the command being installed, so it's worktrunk's and the file
+/// goes whole — the contents are never read. Leaving it would also break the
+/// install it accompanies: `conf.d` is sourced at startup, so a `function
+/// {cmd}` defined there is already loaded by the time fish would autoload
+/// `functions/{cmd}.fish`, and the stale wrapper wins every time.
 ///
 /// Returns the paths of files that were cleaned up, each paired with `Shell::Fish`.
 fn cleanup_legacy_fish_conf_d(configured: &[ConfigureResult], cmd: &str) -> Vec<(Shell, PathBuf)> {
@@ -195,16 +198,6 @@ fn cleanup_legacy_fish_conf_d(configured: &[ConfigureResult], cmd: &str) -> Vec<
     };
 
     if !legacy_path.exists() {
-        return cleaned;
-    }
-
-    // Only remove if the file contains worktrunk integration markers
-    // to avoid deleting user's custom wt.fish that isn't from worktrunk
-    let Ok(content) = fs::read_to_string(&legacy_path) else {
-        return cleaned;
-    };
-
-    if !is_worktrunk_managed_content(&content) {
         return cleaned;
     }
 
@@ -231,9 +224,13 @@ fn cleanup_legacy_fish_conf_d(configured: &[ConfigureResult], cmd: &str) -> Vec<
 ///
 /// Older worktrunk installed the wrapper under `<config-dir>/vendor/autoload`,
 /// which Nushell never autoloads (issue #2878). After installing to the correct
-/// vendor-autoload dir (`<data-dir>/vendor/autoload`), this removes any
-/// worktrunk-managed wrapper left at the other candidate paths so a stale,
-/// never-loaded copy isn't left behind.
+/// vendor-autoload dir (`<data-dir>/vendor/autoload`), this removes the wrapper
+/// left at the other candidate paths so a stale, never-loaded copy isn't left
+/// behind.
+///
+/// Every path considered is one worktrunk itself computes for this command name
+/// (`config_paths`), so — as with the fish `conf.d` cleanup — the path settles
+/// ownership and the file is removed whole, unread.
 ///
 /// Returns the paths removed, each paired with `Shell::Nushell`.
 fn cleanup_stranded_nushell(configured: &[ConfigureResult], cmd: &str) -> Vec<(Shell, PathBuf)> {
@@ -252,14 +249,6 @@ fn cleanup_stranded_nushell(configured: &[ConfigureResult], cmd: &str) -> Vec<(S
 
     for path in candidates {
         if &path == canonical || !path.exists() {
-            continue;
-        }
-        // Only remove files that are clearly worktrunk's, to avoid deleting a
-        // user's own `wt.nu`.
-        let Ok(content) = fs::read_to_string(&path) else {
-            continue;
-        };
-        if !is_worktrunk_managed_nushell(&content) {
             continue;
         }
         match fs::remove_file(&path) {
@@ -1633,12 +1622,12 @@ mod tests {
             assert!(is_worktrunk_managed_content(content), "{content}");
         }
 
-        // Not ours: both callers walk directories the user owns, so a file that
-        // only mentions the command must survive — as must a user's own file
-        // that runs the init line amid other code, which a per-line any-match
-        // would delete whole. The second and third also carry the init command
-        // and a `| source` somewhere, which is all a whole-file substring test
-        // asks before deleting.
+        // Not ours: the uninstall scan walks directories the user owns and has
+        // only the contents to go on, so a file that merely mentions the command
+        // must survive — as must a user's own file that runs the init line amid
+        // other code, which a per-line any-match would delete whole. The second
+        // and third also carry the init command and a `| source` somewhere,
+        // which is all a whole-file substring test asks before deleting.
         for content in [
             "function notes\n    echo run wt config shell init fish to set up\nend\n",
             "# reminder: wt config shell init fish\nfunction helpers\n    cat ~/.aliases | source\nend\n",

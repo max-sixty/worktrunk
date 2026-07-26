@@ -3610,6 +3610,41 @@ fn test_switch_pr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
+/// A 404 is the one GitHub failure worded by us rather than forwarded from
+/// `gh`, because it answers about an owner/repo we chose — so the message has to
+/// name where that choice came from. With `gh repo set-default` configured, that
+/// is the default, and the remedy is to check it rather than the remotes.
+#[rstest]
+fn test_switch_pr_not_found_gh_default(#[from(repo_with_remote)] repo: TestRepo) {
+    set_github_remote_url(&repo);
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    copy_mock_binary(&mock_bin, "gh");
+
+    MockConfig::new("gh")
+        .version("gh version 2.0.0 (mock)")
+        .command(
+            "repo set-default --view",
+            MockResponse::output("owner/other-repo\n"),
+        )
+        .command(
+            "api",
+            MockResponse::output(r#"{"message":"Not Found","status":"404"}"#)
+                .with_stderr("gh: Not Found (HTTP 404)")
+                .with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:9999"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_not_found_gh_default", cmd);
+    });
+}
+
 /// Regression: when the GitHub remote is *non-primary* (origin is GitLab,
 /// `upstream` is GitHub), `wt switch pr:N` must derive owner/repo from the
 /// GitHub remote, not the primary. The mock answers only the upstream's API
@@ -6404,12 +6439,15 @@ fn test_switch_mr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
     // Copy mock-stub binary as "glab"
     copy_mock_binary(&mock_bin, "glab");
 
-    // Configure glab api to return 404 error (JSON on stdout like real GitLab API)
+    // Configure glab api to return 404 error (JSON on stdout, human-readable on
+    // stderr — glab formats the API's own message as `glab: <message> (HTTP N)`)
     MockConfig::new("glab")
         .version("glab version 1.40.0 (mock)")
         .command(
             "api",
-            MockResponse::output(r#"{"message":"404 Not found"}"#).with_exit_code(1),
+            MockResponse::output(r#"{"message":"404 Not found"}"#)
+                .with_stderr("glab: 404 Not found (HTTP 404)")
+                .with_exit_code(1),
         )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
@@ -6430,12 +6468,15 @@ fn test_switch_mr_not_authenticated(#[from(repo_with_remote)] repo: TestRepo) {
 
     copy_mock_binary(&mock_bin, "glab");
 
-    // Configure glab api to return 401 error (JSON on stdout like real GitLab API)
+    // Configure glab api to return 401 error (JSON on stdout, human-readable on
+    // stderr — the shape a real `glab api` produces for a rejected token)
     MockConfig::new("glab")
         .version("glab version 1.40.0 (mock)")
         .command(
             "api",
-            MockResponse::output(r#"{"message":"401 Unauthorized"}"#).with_exit_code(1),
+            MockResponse::output(r#"{"message":"401 Unauthorized"}"#)
+                .with_stderr("glab: 401 Unauthorized (HTTP 401)")
+                .with_exit_code(1),
         )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
