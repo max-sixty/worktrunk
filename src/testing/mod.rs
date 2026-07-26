@@ -271,19 +271,22 @@ pub fn allow_network_transports(cmd: &mut Command) {
     cmd.env_remove("GIT_ALLOW_PROTOCOL");
 }
 
-/// Static environment variables shared by all test isolation helpers.
+/// Determinism knobs every isolated wt subprocess needs, whatever it's
+/// attached to.
 ///
-/// These are used by both `configure_cli_command()` (for Command-based tests)
-/// and `TestRepo::test_env_vars()` (for PTY tests). Adding a variable here
-/// ensures consistency across both test infrastructure paths.
+/// A test child's environment is three layers, each with one home: this
+/// baseline, the fixture's paths ([`pty_env_vars`]), and whatever the child's
+/// transport needs — [`configure_cli_command`] for a piped child,
+/// [`PTY_TEST_ENV_VARS`] for one on a terminal. A knob both transports need
+/// belongs here, so adding it once reaches every path.
 ///
-/// NOTE: Path-dependent variables (HOME, WORKTRUNK_CONFIG_PATH, GIT_CONFIG_*)
-/// are NOT included here because they depend on the TestRepo instance.
+/// `TERM` is transport-level rather than baseline, which is why it's absent
+/// here: a piped child gets `TERM=alacritty` so hyperlink detection has
+/// something to key on, while a PTY child needs a `TERM` with real terminfo —
+/// macOS CI carries no alacritty entry, and skim fails without one.
 pub const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
     ("CLICOLOR_FORCE", "1"),
-    // Deny network git transports (see GIT_ALLOWED_PROTOCOLS). Host-independent,
-    // so it belongs here rather than in each builder's path-dependent block —
-    // which is what reaches the hand-rolled PTY env builders too.
+    // Deny network git transports (see GIT_ALLOWED_PROTOCOLS)
     ("GIT_ALLOW_PROTOCOL", GIT_ALLOWED_PROTOCOLS),
     // Terminal width for PTY tests. configure_cli_command() overrides to 500 for longer paths.
     ("COLUMNS", "150"),
@@ -318,10 +321,83 @@ pub const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
     ("WORKTRUNK_TEST_POWERSHELL_ENV", "0"),
 ];
 
-// NOTE: TERM is intentionally NOT in STATIC_TEST_ENV_VARS because:
-// - configure_cli_command() sets TERM=alacritty for hyperlink detection testing
-// - PTY tests (especially skim-based picker tests) need a TERM with valid terminfo
-// - macOS CI doesn't have alacritty terminfo, causing skim to fail
+/// Determinism knobs for a child whose stderr is a terminal, layered over
+/// [`STATIC_TEST_ENV_VARS`].
+///
+/// Output that appears only once an operation runs past a threshold is a
+/// function of machine load rather than of behavior, and a PTY test captures
+/// the raw byte stream — so it keeps every in-place redraw frame a terminal
+/// would have erased, elapsed-second counter and all. These pin such output to
+/// one state, off, so a snapshot records what the command did rather than how
+/// fast the machine was. A piped child needs none of them: the TTY half of
+/// each gate is already false there, which is why they'd only add noise to the
+/// `env:` block every `assert_cmd_snapshot!` records.
+pub const PTY_TEST_ENV_VARS: &[(&str, &str)] = &[
+    // The `Progress` and `Watchdog` spinners (src/progress.rs). Gates the
+    // render, not the counters.
+    ("WORKTRUNK_TEST_SPINNERS", "0"),
+];
+
+/// The paths an isolated wt subprocess is pointed at — everything in its
+/// environment that varies per fixture. See [`pty_env_vars`].
+pub struct TestEnvPaths<'a> {
+    /// `GIT_CONFIG_GLOBAL`.
+    pub git_config: &'a Path,
+    /// `HOME`, with `XDG_CONFIG_HOME` beneath it.
+    pub home: &'a Path,
+    /// `WORKTRUNK_CONFIG_PATH`.
+    pub wt_config: &'a Path,
+    /// `WORKTRUNK_APPROVALS_PATH`.
+    pub approvals: &'a Path,
+}
+
+/// Every environment variable a PTY-spawned wt subprocess needs: the
+/// [`STATIC_TEST_ENV_VARS`] and [`PTY_TEST_ENV_VARS`] baselines, plus `paths`.
+///
+/// A PTY child is spawned through `portable_pty::CommandBuilder`, which takes
+/// variables one at a time rather than a configured [`Command`] — so its
+/// environment has to exist as a value, which is what separates this from
+/// [`configure_cli_command`]. Every fixture that spawns one builds it here, so
+/// a new variable reaches all of them.
+pub fn pty_env_vars(paths: TestEnvPaths<'_>) -> Vec<(String, String)> {
+    let mut vars: Vec<(String, String)> = STATIC_TEST_ENV_VARS
+        .iter()
+        .chain(PTY_TEST_ENV_VARS)
+        .map(|&(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+
+    vars.extend(
+        [
+            ("GIT_CONFIG_GLOBAL", paths.git_config.display().to_string()),
+            ("GIT_CONFIG_SYSTEM", NULL_DEVICE.to_string()),
+            ("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z".to_string()),
+            ("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z".to_string()),
+            // Prevent git from prompting for credentials when running under a TTY
+            ("GIT_TERMINAL_PROMPT", "0".to_string()),
+            ("HOME", paths.home.display().to_string()),
+            (
+                "XDG_CONFIG_HOME",
+                paths.home.join(".config").display().to_string(),
+            ),
+            ("WORKTRUNK_TEST_EPOCH", TEST_EPOCH.to_string()),
+            (
+                "WORKTRUNK_CONFIG_PATH",
+                paths.wt_config.display().to_string(),
+            ),
+            (
+                "WORKTRUNK_SYSTEM_CONFIG_PATH",
+                DEFAULT_ISOLATED_SYSTEM_CONFIG.to_string(),
+            ),
+            (
+                "WORKTRUNK_APPROVALS_PATH",
+                paths.approvals.display().to_string(),
+            ),
+        ]
+        .map(|(key, value)| (key.to_string(), value)),
+    );
+
+    vars
+}
 
 /// Null device path, platform-appropriate.
 /// Use this for GIT_CONFIG_SYSTEM to disable system config in tests.
@@ -1064,69 +1140,19 @@ impl TestRepo {
         configure_git_cmd(cmd, &self.git_config_path);
     }
 
-    /// Get standard test environment variables as a vector.
+    /// This repo's environment for a PTY-spawned wt subprocess.
     ///
-    /// This is useful for PTY tests and other cases where you need environment variables
-    /// as a vector rather than setting them on a Command.
-    ///
-    /// ## Related: `configure_cli_command()`
-    ///
-    /// Command-based tests use `configure_cli_command()`. Both functions share common
-    /// variables via `STATIC_TEST_ENV_VARS`. See that function's docs for differences.
+    /// Thin wrapper over [`pty_env_vars`], which documents the layering and is
+    /// where a new variable goes. Command-based tests use
+    /// [`configure_cli_command`] instead.
     #[cfg_attr(windows, allow(dead_code))] // Used only by unix PTY tests
     pub fn test_env_vars(&self) -> Vec<(String, String)> {
-        // Start with shared static env vars
-        let mut vars: Vec<(String, String)> = STATIC_TEST_ENV_VARS
-            .iter()
-            .map(|&(k, v)| (k.to_string(), v.to_string()))
-            .collect();
-
-        // Add path-dependent variables specific to this TestRepo
-        vars.extend([
-            (
-                "GIT_CONFIG_GLOBAL".to_string(),
-                self.git_config_path.display().to_string(),
-            ),
-            ("GIT_CONFIG_SYSTEM".to_string(), NULL_DEVICE.to_string()),
-            (
-                "GIT_AUTHOR_DATE".to_string(),
-                "2025-01-01T00:00:00Z".to_string(),
-            ),
-            (
-                "GIT_COMMITTER_DATE".to_string(),
-                "2025-01-01T00:00:00Z".to_string(),
-            ),
-            // Prevent git from prompting for credentials when running under a TTY
-            ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
-            // Use test-specific home directory for isolation
-            ("HOME".to_string(), self.home_path().display().to_string()),
-            (
-                "XDG_CONFIG_HOME".to_string(),
-                self.home_path().join(".config").display().to_string(),
-            ),
-            // Suppress the in-place TTY spinners (`Progress`, `Watchdog`). A
-            // PTY capture keeps every redraw frame the terminal would have
-            // erased, so an operation that load pushes past a startup delay
-            // adds frames — with their elapsed seconds — to the snapshot. Only
-            // the PTY path needs this: `configure_cli_command()` pipes stdout
-            // and stderr, so the TTY half of the gate is already false there.
-            ("WORKTRUNK_TEST_SPINNERS".to_string(), "0".to_string()),
-            ("WORKTRUNK_TEST_EPOCH".to_string(), TEST_EPOCH.to_string()),
-            (
-                "WORKTRUNK_CONFIG_PATH".to_string(),
-                self.test_config_path().display().to_string(),
-            ),
-            (
-                "WORKTRUNK_SYSTEM_CONFIG_PATH".to_string(),
-                "/etc/xdg/worktrunk/config.toml".to_string(),
-            ),
-            (
-                "WORKTRUNK_APPROVALS_PATH".to_string(),
-                self.test_approvals_path().display().to_string(),
-            ),
-        ]);
-
-        vars
+        pty_env_vars(TestEnvPaths {
+            git_config: &self.git_config_path,
+            home: self.home_path(),
+            wt_config: self.test_config_path(),
+            approvals: self.test_approvals_path(),
+        })
     }
 
     /// Configure shell integration for test environment.

@@ -101,6 +101,17 @@ call `.current_dir(...)` explicitly.
 | `wt_command()` | `Command` | Running wt without a TestRepo (free function) |
 | `repo.git_command()` | `Cmd` | Running git commands (use `.run()` not `.output()`) |
 
+### Where a new environment variable goes
+
+A test child's environment is three layers, each with one home in
+`src/testing/mod.rs`: `STATIC_TEST_ENV_VARS` for a determinism knob every child
+needs, `PTY_TEST_ENV_VARS` for one only a terminal triggers, and `pty_env_vars`
+for a path that varies per fixture. `configure_cli_command` and
+`configure_pty_command` apply them by transport, so a variable added to the
+right layer reaches every test that spawns `wt`. A per-builder copy reaches only
+the tests that happen to use that builder, and the ones it misses fail later,
+somewhere else.
+
 ## Config Isolation for In-Process Unit Tests
 
 `repo.wt_command()` / `wt_command()` isolate *subprocess* tests (above). An
@@ -254,7 +265,7 @@ Two traps:
 
 Output that appears only once an operation runs past a threshold is a function of machine load, not of behavior: the `Progress` and `Watchdog` spinners (`src/progress.rs`), `Cmd::delayed_stream`'s progress line, the picker's placeholder reveal. A PTY test captures the raw byte stream, so it keeps every in-place redraw frame a terminal would have erased, elapsed-second counter and all — frames that show up when the whole suite runs together and not when the test runs alone.
 
-Each threshold has an env override the PTY env builders pin (`WORKTRUNK_TEST_SPINNERS=0`, `WORKTRUNK_TEST_DELAYED_STREAM_MS=-1`, `WORKTRUNK_PLACEHOLDER_REVEAL_MS=0`), so the output is present or absent by construction rather than by timing; a new builder or a new threshold needs the same. Filtering the frames out of the capture afterwards is the weaker fix: the filter has to model cursor movement, and a block that redraws with a cursor-up spans lines a line-scoped filter can't follow.
+Each threshold has an env override pinning it, so the output is present or absent by construction rather than by timing. A new one goes in the baseline that matches its scope — `PTY_TEST_ENV_VARS` when only a terminal triggers it (`WORKTRUNK_TEST_SPINNERS=0`), `STATIC_TEST_ENV_VARS` when a pipe does too (`WORKTRUNK_TEST_DELAYED_STREAM_MS=-1`) — and reaches every PTY child from there, rather than being added per builder. Filtering the frames out of the capture afterwards is the weaker fix: the filter has to model cursor movement, and a block that redraws with a cursor-up spans lines a line-scoped filter can't follow.
 
 ## No Retries
 
@@ -401,17 +412,13 @@ The PTY approach is specifically for **user-facing output documentation**. It's 
 
 ## Coverage in PTY Tests
 
-PTY tests use `cmd.env_clear()` for isolation. To enable coverage, pass through LLVM env vars:
+`configure_pty_command` clears the child's environment, so an instrumented
+binary would lose the LLVM vars that tell it where to write coverage data. It
+passes them back through, which is one more reason every PTY test starts there:
 
 ```rust
-// Standard setup (most PTY tests)
 crate::common::configure_pty_command(&mut cmd);
-
-// Custom env setup (shell tests needing USER, SHELL, ZDOTDIR)
-cmd.env_clear();
-cmd.env("HOME", ...);
-// ... custom env ...
-crate::common::pass_coverage_env_to_pty_cmd(&mut cmd);
+// ... test-specific env (USER, SHELL, ZDOTDIR, the fixture's paths) ...
 ```
 
 ## No Global State Mutations in Tests

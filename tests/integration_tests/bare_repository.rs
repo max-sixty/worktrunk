@@ -1498,64 +1498,22 @@ impl NestedBareRepoTest {
             .env_remove("CLICOLOR_FORCE");
     }
 
-    /// Get test environment variables as a vector for PTY tests.
+    /// This fixture's environment for a PTY-spawned wt subprocess, built from
+    /// the same layers as `TestRepo::test_env_vars`.
     #[cfg(all(unix, feature = "shell-integration-tests"))]
     fn test_env_vars(&self) -> Vec<(String, String)> {
-        use crate::common::{NULL_DEVICE, STATIC_TEST_ENV_VARS, TEST_EPOCH};
-
-        let mut vars: Vec<(String, String)> = STATIC_TEST_ENV_VARS
-            .iter()
-            .map(|&(k, v)| (k.to_string(), v.to_string()))
-            .collect();
+        use crate::common::{TestEnvPaths, pty_env_vars};
 
         // HOME and XDG_CONFIG_HOME are needed for config lookups in env_clear'd PTY
         let home = self.temp_dir.path().join("home");
         std::fs::create_dir_all(&home).ok();
 
-        vars.extend([
-            (
-                "GIT_CONFIG_GLOBAL".to_string(),
-                self.git_config_path.display().to_string(),
-            ),
-            ("GIT_CONFIG_SYSTEM".to_string(), NULL_DEVICE.to_string()),
-            (
-                "GIT_AUTHOR_DATE".to_string(),
-                "2025-01-01T00:00:00Z".to_string(),
-            ),
-            (
-                "GIT_COMMITTER_DATE".to_string(),
-                "2025-01-01T00:00:00Z".to_string(),
-            ),
-            ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
-            ("HOME".to_string(), home.display().to_string()),
-            (
-                "XDG_CONFIG_HOME".to_string(),
-                home.join(".config").display().to_string(),
-            ),
-            // Suppress the in-place TTY spinners; a PTY capture keeps every
-            // redraw frame a terminal would have erased. Mirrors
-            // `TestRepo::test_env_vars`, which explains why.
-            ("WORKTRUNK_TEST_SPINNERS".to_string(), "0".to_string()),
-            ("WORKTRUNK_TEST_EPOCH".to_string(), TEST_EPOCH.to_string()),
-            (
-                "WORKTRUNK_CONFIG_PATH".to_string(),
-                self.test_config_path.display().to_string(),
-            ),
-            (
-                "WORKTRUNK_SYSTEM_CONFIG_PATH".to_string(),
-                "/etc/xdg/worktrunk/config.toml".to_string(),
-            ),
-            (
-                "WORKTRUNK_APPROVALS_PATH".to_string(),
-                self.temp_dir
-                    .path()
-                    .join("test-approvals.toml")
-                    .display()
-                    .to_string(),
-            ),
-        ]);
-
-        vars
+        pty_env_vars(TestEnvPaths {
+            git_config: &self.git_config_path,
+            home: &home,
+            wt_config: &self.test_config_path,
+            approvals: &self.temp_dir.path().join("test-approvals.toml"),
+        })
     }
 }
 

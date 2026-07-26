@@ -2184,20 +2184,11 @@ mod pty_tests {
         configure_pty_command(&mut cmd);
         cmd.env("HOME", temp_home.path());
         cmd.env("XDG_CONFIG_HOME", temp_home.path().join(".config"));
-        // Treat shells as not installed by default; the test exercises the
-        // single-zsh path. Mirrors the STATIC_TEST_ENV_VARS values used by
-        // Command-based tests, applied explicitly here because
-        // configure_pty_command intentionally keeps the PTY env minimal.
-        cmd.env("WORKTRUNK_TEST_BASH_INSTALLED", "0");
-        cmd.env("WORKTRUNK_TEST_ZSH_INSTALLED", "0");
-        cmd.env("WORKTRUNK_TEST_FISH_INSTALLED", "0");
-        cmd.env("WORKTRUNK_TEST_POWERSHELL_INSTALLED", "0");
-        cmd.env("WORKTRUNK_TEST_NUSHELL_ENV", "0");
-        // Disable the process-tree shell walk so detection keys on SHELL:
-        // the real ancestry here is the test harness and whatever shell runs
-        // it (zsh on a dev box, bash on CI), which would flip the zsh-only
-        // compinit/restart output between environments.
-        cmd.env("WORKTRUNK_TEST_PARENT_SHELL", "");
+        // Detection keys on SHELL alone, which puts the test on the single-zsh
+        // path: the baseline's "not installed" and empty-parent-shell defaults
+        // rule out the host's process ancestry — the test harness and whatever
+        // shell ran it, zsh on a dev box and bash on CI, flipping the zsh-only
+        // compinit/restart output between them.
         cmd.env("SHELL", "/bin/zsh");
         // Skip the compinit probe and force the advisory to appear. The probe spawns
         // `zsh -ic` which triggers global zshrc configs that can produce "insecure
@@ -2314,14 +2305,6 @@ mod pty_tests {
         configure_pty_command(&mut cmd);
         cmd.env("HOME", temp_home.path());
         cmd.env("XDG_CONFIG_HOME", temp_home.path().join(".config"));
-        cmd.env("WORKTRUNK_TEST_BASH_INSTALLED", "0");
-        cmd.env("WORKTRUNK_TEST_ZSH_INSTALLED", "0");
-        cmd.env("WORKTRUNK_TEST_FISH_INSTALLED", "0");
-        cmd.env("WORKTRUNK_TEST_POWERSHELL_INSTALLED", "0");
-        cmd.env("WORKTRUNK_TEST_NUSHELL_ENV", "0");
-        // Disable the process-tree shell walk so detection keys on SHELL
-        // (see exec_install_in_pty).
-        cmd.env("WORKTRUNK_TEST_PARENT_SHELL", "");
         cmd.env("SHELL", "/bin/zsh");
 
         let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["n\n"], "[y/N");

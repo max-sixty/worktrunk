@@ -371,57 +371,8 @@ fn exec_in_pty_shell(
     let shell_binary = shell_binary(shell);
     let mut cmd = CommandBuilder::new(shell_binary);
 
-    // Clear inherited environment for test isolation
-    cmd.env_clear();
-
-    // Set minimal required environment for shells to function
-    let home_dir = home::home_dir().unwrap().to_string_lossy().to_string();
-    cmd.env("HOME", &home_dir);
-
-    // Windows-specific env vars required for processes to run
-    #[cfg(windows)]
-    {
-        // USERPROFILE is Windows equivalent of HOME
-        cmd.env("USERPROFILE", &home_dir);
-
-        // SystemRoot is critical - many DLLs and system components need this
-        if let Ok(val) = std::env::var("SystemRoot") {
-            cmd.env("SystemRoot", &val);
-            cmd.env("windir", &val); // Alias used by some programs
-        }
-
-        // SystemDrive (usually C:)
-        if let Ok(val) = std::env::var("SystemDrive") {
-            cmd.env("SystemDrive", val);
-        }
-
-        // TEMP/TMP directories
-        if let Ok(val) = std::env::var("TEMP") {
-            cmd.env("TEMP", &val);
-            cmd.env("TMP", val);
-        }
-
-        // COMSPEC (cmd.exe path) - needed by some programs
-        if let Ok(val) = std::env::var("COMSPEC") {
-            cmd.env("COMSPEC", val);
-        }
-
-        // PSModulePath for PowerShell
-        if let Ok(val) = std::env::var("PSModulePath") {
-            cmd.env("PSModulePath", val);
-        }
-    }
-
-    // Use platform-appropriate default PATH
-    #[cfg(unix)]
-    let default_path = "/usr/bin:/bin";
-    #[cfg(windows)]
-    let default_path = std::env::var("PATH").unwrap_or_default();
-
-    cmd.env(
-        "PATH",
-        std::env::var("PATH").unwrap_or_else(|_| default_path.to_string()),
-    );
+    // Isolated environment (env_clear, HOME, PATH, determinism baselines, coverage)
+    crate::common::configure_pty_command(&mut cmd);
     cmd.env("USER", "testuser");
     cmd.env("SHELL", shell_binary);
 
@@ -555,18 +506,8 @@ fn exec_bash_truly_interactive(
     cmd.arg("--noprofile");
     cmd.arg("-i");
 
-    // Clear inherited environment for test isolation
-    cmd.env_clear();
-
-    // Set minimal required environment for shells to function
-    cmd.env(
-        "HOME",
-        home::home_dir().unwrap().to_string_lossy().to_string(),
-    );
-    cmd.env(
-        "PATH",
-        std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string()),
-    );
+    // Isolated environment (env_clear, HOME, PATH, determinism baselines, coverage)
+    crate::common::configure_pty_command(&mut cmd);
     cmd.env("USER", "testuser");
     cmd.env("SHELL", "bash");
 
@@ -578,9 +519,6 @@ fn exec_bash_truly_interactive(
     for (key, value) in env_vars {
         cmd.env(key, value);
     }
-
-    // Pass through LLVM coverage env vars for subprocess coverage collection
-    crate::common::pass_coverage_env_to_pty_cmd(&mut cmd);
 
     let mut child = pair.slave.spawn_command(cmd).unwrap();
     drop(pair.slave); // Close slave in parent
@@ -763,7 +701,6 @@ fn exec_through_wrapper_with_env(
     let approvals_path = repo.test_approvals_path().to_string_lossy().to_string();
 
     let mut env_vars = build_test_env_vars(&config_path, &approvals_path);
-    env_vars.push(("CLICOLOR_FORCE", "1"));
     // Add extra env vars (these can override defaults if needed)
     env_vars.extend(extra_env.iter().copied());
 
@@ -776,46 +713,29 @@ fn exec_through_wrapper_with_env(
     }
 }
 
-/// Standard test environment variables (static parts that don't depend on test state)
+/// Build the per-test half of a shell-wrapper PTY environment.
 ///
-/// These are used by tests that build custom scripts and call `exec_in_pty_interactive` directly.
-/// For tests using `exec_through_wrapper*`, these are already applied.
-const STANDARD_TEST_ENV: &[(&str, &str)] = &[
-    ("TERM", "xterm"),
-    ("GIT_AUTHOR_NAME", "Test User"),
-    ("GIT_AUTHOR_EMAIL", "test@example.com"),
-    ("GIT_COMMITTER_NAME", "Test User"),
-    ("GIT_COMMITTER_EMAIL", "test@example.com"),
-    ("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z"),
-    ("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z"),
-    ("LANG", "C"),
-    ("LC_ALL", "C"),
-    ("WORKTRUNK_TEST_EPOCH", "1735776000"),
-    // Suppress delayed-stream progress output so git worktree add doesn't
-    // produce extra lines when the system is under load (>400ms threshold).
-    ("WORKTRUNK_TEST_DELAYED_STREAM_MS", "-1"),
-    // Same, for the in-place TTY spinners: a PTY capture keeps every redraw
-    // frame a terminal would have erased, so a command that load pushes past a
-    // startup delay adds frames — with their elapsed seconds — to the snapshot.
-    ("WORKTRUNK_TEST_SPINNERS", "0"),
-];
-
-/// Build standard test env vars with config and approvals paths
-///
-/// Returns a Vec containing STANDARD_TEST_ENV plus WORKTRUNK_CONFIG_PATH and
-/// WORKTRUNK_APPROVALS_PATH. The caller must keep both path strings alive for
-/// the duration of the returned Vec's use.
+/// The determinism baselines come from [`crate::common::configure_pty_command`],
+/// which `exec_in_pty_shell` applies first; these are what it can't supply —
+/// the paths pointing wt at this test's fixture, a git identity for the
+/// commits the scripts make, and a `TERM` with real terminfo. The caller must
+/// keep both path strings alive for the duration of the returned Vec's use.
 #[cfg(test)]
 fn build_test_env_vars<'a>(
     config_path: &'a str,
     approvals_path: &'a str,
 ) -> Vec<(&'a str, &'a str)> {
-    let mut env_vars: Vec<(&str, &str)> = vec![
+    vec![
         ("WORKTRUNK_CONFIG_PATH", config_path),
         ("WORKTRUNK_APPROVALS_PATH", approvals_path),
-    ];
-    env_vars.extend_from_slice(STANDARD_TEST_ENV);
-    env_vars
+        ("TERM", "xterm"),
+        ("GIT_AUTHOR_NAME", "Test User"),
+        ("GIT_AUTHOR_EMAIL", "test@example.com"),
+        ("GIT_COMMITTER_NAME", "Test User"),
+        ("GIT_COMMITTER_EMAIL", "test@example.com"),
+        ("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z"),
+        ("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z"),
+    ]
 }
 
 // =============================================================================
@@ -2753,21 +2673,10 @@ fi
         cmd.cwd(repo.root_path());
 
         // Set environment
-        cmd.env_clear();
-        cmd.env(
-            "HOME",
-            home::home_dir().unwrap().to_string_lossy().to_string(),
-        );
-        cmd.env(
-            "PATH",
-            std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string()),
-        );
+        crate::common::configure_pty_command(&mut cmd);
         for (key, value) in repo.test_env_vars() {
             cmd.env(key, value);
         }
-
-        // Pass through LLVM coverage env vars for subprocess coverage collection
-        crate::common::pass_coverage_env_to_pty_cmd(&mut cmd);
 
         let mut child = pair.slave.spawn_command(cmd).unwrap();
         drop(pair.slave);
