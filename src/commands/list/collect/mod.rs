@@ -597,7 +597,6 @@ pub enum ShowConfig {
     Resolved {
         show_branches: bool,
         show_remotes: bool,
-        command_timeout: Option<std::time::Duration>,
         /// Wall-clock deadline for the collect phase. `None` uses the default
         /// [`DRAIN_TIMEOUT`](results::DRAIN_TIMEOUT) and shows a warning on timeout.
         collect_deadline: Option<std::time::Instant>,
@@ -612,7 +611,7 @@ pub enum ShowConfig {
     },
     /// Raw CLI flags; config resolution deferred to collect's parallel phase
     /// so project_identifier runs concurrently with other git operations.
-    /// Timeouts are resolved from config internally.
+    /// The collect deadline is resolved from config internally.
     DeferredToParallel {
         cli_branches: bool,
         cli_remotes: bool,
@@ -908,7 +907,6 @@ pub fn collect(
         show_branches,
         show_remotes,
         show_full,
-        command_timeout,
         collect_deadline,
         list_width,
         progressive_handler,
@@ -917,7 +915,6 @@ pub fn collect(
         ShowConfig::Resolved {
             show_branches,
             show_remotes,
-            command_timeout,
             collect_deadline,
             list_width,
             progressive_handler,
@@ -930,7 +927,6 @@ pub fn collect(
             // opts out of the untracked-inclusive working diff — the last tuple
             // field — so the two `show_full`-shaped values aren't the same bucket.
             true,
-            command_timeout,
             collect_deadline,
             list_width,
             progressive_handler,
@@ -945,19 +941,16 @@ pub fn collect(
             let show_branches = cli_branches || config.list.branches();
             let show_remotes = cli_remotes || config.list.remotes();
             let show_full = cli_full || config.list.full();
-            // Resolve timeouts from merged config (--full disables both)
-            let (command_timeout, collect_deadline) = if show_full {
-                (None, None)
+            // Resolve the collect budget from merged config (--full disables it)
+            let collect_deadline = if show_full {
+                None
             } else {
-                let task_timeout = config.list.task_timeout();
-                let deadline = config.list.timeout().map(|d| std::time::Instant::now() + d);
-                (task_timeout, deadline)
+                config.list.timeout().map(|d| std::time::Instant::now() + d)
             };
             (
                 show_branches,
                 show_remotes,
                 show_full,
-                command_timeout,
                 collect_deadline,
                 None,
                 None,
@@ -1592,15 +1585,6 @@ pub fn collect(
             if let Some(snap_arc) = snap.as_ref() {
                 let snap_for_primer = std::sync::Arc::clone(snap_arc);
                 s.spawn(move |_| {
-                    // Honor `list.task-timeout-ms` for the primer's git
-                    // commands — these are the same `for-each-ref
-                    // %(ahead-behind)` / `rev-list` invocations that
-                    // used to run inside `UpstreamTask`, where the
-                    // worker loop sets the per-thread timeout. Without
-                    // this, `wt list` could sit at the skeleton on a
-                    // pathologically slow git until the (untimed) batch
-                    // returned.
-                    worktrunk::shell_exec::set_command_timeout(command_timeout);
                     let all_locals = snap_for_primer.local_branches();
                     let filtered_locals: Vec<LocalBranch>;
                     let candidates: &[LocalBranch] = if show_branches {
@@ -1780,7 +1764,6 @@ pub fn collect(
         // when the picker is open. See `COLLECT_POOL`.
         COLLECT_POOL.install(|| {
             all_work_items.into_par_iter().for_each(|item| {
-                worktrunk::shell_exec::set_command_timeout(command_timeout);
                 let result = item.execute();
                 let _ = tx_worker.send(result);
             });
