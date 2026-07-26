@@ -775,7 +775,7 @@ pub fn configure_directive_cd_only(cmd: &mut Command, cd_path: &Path) {
 }
 
 /// Create a temporary file for legacy single-file directive output, in a
-/// directory of its own (see [`directive_temp_dir`]).
+/// directory of its own (see `directive_temp_dir` for why).
 ///
 /// Used to test the legacy fallback path where an old shell wrapper sets
 /// `WORKTRUNK_DIRECTIVE_FILE`. Returns `(path, guard)`.
