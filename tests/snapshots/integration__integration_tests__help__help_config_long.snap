@@ -612,7 +612,10 @@ Selection is all-or-nothing. When any [2mworktrunk.config.*[0m key exists, tho
 
 Values are strings, one per key. Settings that need other TOML types (such as the [2mstep.copy-ignored.exclude[0m array) cannot be expressed here. Hooks and aliases defined this way go through the same approval prompt as file-based project config.
 
-To list every active key with its scope and origin file:
+Use the canonical key spellings from the sections above. Deprecated spellings may still deserialize, but git-sourced configuration does not run file migration or emit deprecation guidance — [2mwt config update[0m has nothing to rewrite here. Per-worktree git config ([2mextensions.worktreeConfig[0m) is not supported: keys are read from the shared git dir, so a [2mconfig.worktree[0m value is never consumed. Setting [2mWORKTRUNK_PROJECT_CONFIG_PATH[0m — even to an empty value — disables this source entirely; the override 
+names the project config source outright.
+
+To list the matching git keys with their scope and origin file (inside a linked worktree this can also show worktree-scoped keys, which worktrunk does not read):
 
 [107m [0m [2m[0m[2m[34mgit[0m[2m config [0m[2m[36m--show-scope[0m[2m [0m[2m[36m--show-origin[0m[2m [0m[2m[36m--get-regexp[0m[2m [0m[2m[32m'^worktrunk\.config\.'[0m
 

@@ -4,9 +4,12 @@
 //!
 //! Lets a repo carry private, uncommitted project configuration in git config
 //! under the `worktrunk.config.*` namespace. `.git/config` is never
-//! transmitted by clone or fetch, so these keys cannot arrive from a remote —
-//! they are user-authored by construction, and shared across every linked
-//! worktree because the local scope lives in the common git dir.
+//! transmitted by clone or fetch, so the source is typically local-only — but
+//! not by construction: `include`/`includeIf` can pull in files that
+//! originate remotely (a cloned dotfiles repo, for instance), which is
+//! exactly why commands from this source keep the full approval gate. The
+//! keys are shared across every linked worktree because the local scope
+//! lives in the common git dir.
 //!
 //! # Key decisions
 //!
@@ -38,6 +41,16 @@
 //!   through the ordinary project-command approval flow. Git config can
 //!   carry remotely-authored content via `include`/`includeIf` (e.g. a
 //!   cloned dotfiles repo), so source alone is not a trust signal.
+//! - **No migration layer.** Deprecated spellings that deserialize via serde
+//!   aliases (`pre-create`/`post-create`) or live fields (`[ci]`) still work
+//!   here, but the file-migration rewrites and their deprecation warnings do
+//!   not run — `wt config update` has nothing to rewrite in git config, and
+//!   migration-only forms work in the file but not in this namespace. Docs
+//!   recommend canonical spellings.
+//! - **No worktree scope.** The bulk config read runs from the common git
+//!   dir, so `config.worktree` values (`extensions.worktreeConfig`) are
+//!   never consumed. The diagnostic command, run inside a linked worktree,
+//!   can therefore list matching keys this source ignores.
 //!
 //! # Invariants
 //!
@@ -46,6 +59,10 @@
 //!   provenance everywhere the cached config flows.
 //! - The supersession warning fires exactly when selection actually ignores a
 //!   resolvable file — no keys → no warning; no file → no warning.
+//! - A `WORKTRUNK_PROJECT_CONFIG_PATH` override (any value, including empty)
+//!   disables this source entirely, enforced in the sole accessor
+//!   (`Repository::worktrunk_config_git_pairs`) so every consumer inherits
+//!   the deferral by construction.
 
 use std::sync::OnceLock;
 
@@ -171,11 +188,20 @@ pub(crate) fn warn_superseded_project_file(repo: &crate::git::Repository) {
         return;
     }
 
+    // Peek the latch before resolving the label (which can spawn `git show`
+    // in the bare/parked layout), but SET it only on emit: setting up front
+    // would consume it on the no-file path, and a later
+    // `wt config create --project` in the same invocation would then have
+    // its born-superseded warning silently suppressed.
+    static WARNED: OnceLock<()> = OnceLock::new();
+    if WARNED.get().is_some() {
+        return;
+    }
+
     let Some(superseded) = superseded_project_file_label(repo) else {
         return;
     };
 
-    static WARNED: OnceLock<()> = OnceLock::new();
     if WARNED.set(()).is_err() {
         return;
     }
@@ -222,8 +248,7 @@ mod tests {
 
     #[test]
     fn test_top_level_hook_maps_to_flattened_key() {
-        let config =
-            project_config_from_git(&pairs(&[("post-start", "pnpm install")])).unwrap();
+        let config = project_config_from_git(&pairs(&[("post-start", "pnpm install")])).unwrap();
         assert_eq!(config.source, ProjectConfigSource::GitConfig);
         // `post-start` deserializes into the `post_create` field (serde
         // rename — the field kept its pre-rename name).
@@ -238,7 +263,10 @@ mod tests {
         let config = project_config_from_git(&pairs(&[
             ("list.url", "http://localhost:{{ branch | hash_port }}"),
             ("forge.platform", "github"),
-            ("commit.generation.template-append", "use conventional commits"),
+            (
+                "commit.generation.template-append",
+                "use conventional commits",
+            ),
         ]))
         .unwrap();
         assert_eq!(
@@ -254,8 +282,7 @@ mod tests {
 
     #[test]
     fn test_alias_maps_to_aliases_table() {
-        let config =
-            project_config_from_git(&pairs(&[("aliases.deploy", "make deploy")])).unwrap();
+        let config = project_config_from_git(&pairs(&[("aliases.deploy", "make deploy")])).unwrap();
         let alias = config.aliases.get("deploy").expect("alias present");
         let commands: Vec<_> = alias.commands().collect();
         assert_eq!(commands[0].template, "make deploy");
