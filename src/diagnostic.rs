@@ -520,10 +520,16 @@ fn config_show_output(repo: &Repository) -> Option<String> {
                 worktrunk::config::GIT_CONFIG_LIST_COMMAND
             ));
         }
-        // No keys — or a failed bulk read (corrupt config): fall through to
-        // the file section. Diagnose is best-effort, and the file section's
-        // own "(read failed: …)" reporting covers the broken-config story.
-        _ => {
+        // A failed bulk-config read: note it rather than silently showing
+        // the file as active. Diagnose is best-effort and must not abort.
+        // The line is effectively untestable (a config corrupted after the
+        // command started but before this report renders) — an honest
+        // coverage gap, kept because falling through would misattribute the
+        // active source in the very report meant to diagnose the failure.
+        Err(e) => {
+            output.push_str(&format!("\n(git config read failed: {e})\n"));
+        }
+        Ok(_) => {
             if let Ok(Some(project_config_path)) = repo.project_config_path() {
                 output.push_str(&format!(
                     "\n{}",
