@@ -138,6 +138,17 @@ approvals.approve_command(project, command, &approvals_path).unwrap();
 </good>
 </example>
 
+Git needs the same care. An in-process `Repository::run_command()` spawns git
+with the test process's environment, so it reads the developer's real
+`~/.gitconfig` and none of `configure_git_env`'s variables — no
+`GIT_CONFIG_GLOBAL`, no `GIT_ALLOW_PROTOCOL`. The repo's own config is the one
+layer such a command still reads, so every `TestRepo` constructor appends
+`LOCAL_TEST_CONFIG` (identity, `commit.gpgsign`, and the `protocol.allow`
+transport deny) to it. `TestRepo::assemble` is the single call site; a new
+constructor routes through it and inherits the settings, and the bare
+fixtures (`BareRepoTest`, `NestedBareRepoTest`) get them by composing over
+`TestRepo`.
+
 `approvals_path()` panics when `WORKTRUNK_APPROVALS_PATH` is unset, but
 `#[cfg(test)]` makes that guard fire only for `worktrunk` lib-crate tests. A
 bin-crate test (anything under `src/commands/`) links the lib in non-test
