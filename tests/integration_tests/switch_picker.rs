@@ -94,6 +94,23 @@ const CURSOR_REISSUE_INTERVAL: Duration = Duration::from_secs(1);
 const LIST_WIDTH: u16 = 59;
 const PREVIEW_START_COL: u16 = 60;
 
+/// Full screen content as rows of text.
+///
+/// Trailing whitespace is trimmed from each row because `vt100::rows()` pads
+/// rows to the full column width with spaces. This padding is terminal buffer
+/// fill, not meaningful content, and varies across platforms. Trailing empty
+/// lines are also removed (unwritten terminal rows become empty after trim).
+fn screen_text(parser: &vt100::Parser) -> String {
+    parser
+        .screen()
+        .rows(0, TERM_COLS)
+        .map(|row| row.trim_end().to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim_end()
+        .to_string()
+}
+
 /// Result of executing a command in a PTY, holding the parsed terminal state.
 struct PtyResult {
     parser: vt100::Parser,
@@ -101,21 +118,9 @@ struct PtyResult {
 }
 
 impl PtyResult {
-    /// Full screen content as rows of text.
-    ///
-    /// Trailing whitespace is trimmed from each row because `vt100::rows()` pads
-    /// rows to the full column width with spaces. This padding is terminal buffer
-    /// fill, not meaningful content, and varies across platforms. Trailing empty
-    /// lines are also removed (unwritten terminal rows become empty after trim).
+    /// Full screen content as rows of text — see [`screen_text`].
     fn screen(&self) -> String {
-        self.parser
-            .screen()
-            .rows(0, TERM_COLS)
-            .map(|row| row.trim_end().to_string())
-            .collect::<Vec<_>>()
-            .join("\n")
-            .trim_end()
-            .to_string()
+        screen_text(&self.parser)
     }
 
     /// List and preview panel content, split at the skim border column.
@@ -410,11 +415,7 @@ fn exec_in_pty_with_input_expectations(
         panic!(
             "Picker child did not exit within {CHILD_EXIT_TIMEOUT:?} of the last input.\n\
              Screen content:\n{}",
-            PtyResult {
-                parser,
-                exit_code: 0
-            }
-            .screen()
+            screen_text(&parser)
         );
     }
 
@@ -2692,14 +2693,15 @@ fn test_switch_picker_runs_execute_command(mut repo: TestRepo) {
         ],
     );
 
+    let exec_contents = std::fs::read_to_string(&exec_path).unwrap_or_default();
     assert_eq!(
         result.exit_code,
         0,
-        "Expected exit code 0 for picker switch with --execute.\nScreen:\n{}",
+        "Expected exit code 0 for picker switch with --execute.\n\
+         EXEC file: {exec_contents:?}\nScreen:\n{}",
         result.screen()
     );
 
-    let exec_contents = std::fs::read_to_string(&exec_path).unwrap_or_default();
     assert!(
         exec_contents.contains("picker-exec-ran"),
         "EXEC file should contain the --execute command after a picker switch, got: {}",
