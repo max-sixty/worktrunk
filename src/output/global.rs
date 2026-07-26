@@ -55,6 +55,7 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
+use anyhow::Context as _;
 use color_print::cformat;
 use std::sync::{Mutex, OnceLock};
 
@@ -386,7 +387,13 @@ fn escape_legacy_cd(path: &Path) -> String {
 /// a shell `cd '...'` command to the legacy file (legacy compat). In
 /// interactive mode (no wrapper), just buffers the target so that a later
 /// `execute()` can use it as the child's working directory.
-pub fn change_directory(path: impl AsRef<Path>) -> io::Result<()> {
+///
+/// A write failure names the directive file. The raw `io::Error` doesn't —
+/// `wt` would report a switch as `✗ No such file or directory (os error 2)`,
+/// which reads like the *worktree* is missing and names nothing to check. The
+/// wrapper creates these files, so a failure here is about the wrapper's temp
+/// file, not about anything the user typed.
+pub fn change_directory(path: impl AsRef<Path>) -> anyhow::Result<()> {
     let path = path.as_ref();
     let mode = {
         let mut guard = state().lock().expect("OUTPUT_STATE lock poisoned");
@@ -398,11 +405,18 @@ pub fn change_directory(path: impl AsRef<Path>) -> io::Result<()> {
         DirectiveMode::Interactive => Ok(()),
         DirectiveMode::NewProtocol { cd_file, .. } => {
             let directive_path = to_logical_path(path);
-            write_cd_path(&cd_file, &directive_path)
+            write_cd_path(&cd_file, &directive_path).with_context(|| {
+                format!(
+                    "Failed to write the cd directive file {}",
+                    cd_file.display()
+                )
+            })
         }
         DirectiveMode::Legacy { file } => {
             let directive_path = to_logical_path(path);
-            append_line(&file, &escape_legacy_cd(&directive_path))
+            append_line(&file, &escape_legacy_cd(&directive_path)).with_context(|| {
+                format!("Failed to write the directive file {}", file.display())
+            })
         }
     }
 }
@@ -438,6 +452,11 @@ pub fn was_cwd_removed() -> bool {
 ///   land here when running inside an alias or hook body, where `Cmd` scrubbed
 ///   the EXEC var to keep arbitrary shell from reaching the parent session.
 /// - Legacy: appends the command to the single legacy directive file.
+///
+/// A failed append names the directive file, for the reason
+/// [`change_directory`] does: this runs last, after the operation the user
+/// asked for has already landed, so a bare `✗ No such file or directory (os
+/// error 2)` reads as if the *command* were missing.
 pub fn execute(command: impl Into<String>) -> anyhow::Result<()> {
     let command = command.into();
 
@@ -451,20 +470,24 @@ pub fn execute(command: impl Into<String>) -> anyhow::Result<()> {
         DirectiveMode::NewProtocol {
             exec_file: Some(file),
             ..
-        } => {
-            append_line(&file, &command)?;
-            Ok(())
-        }
+        } => append_line(&file, &command).with_context(|| {
+            format!(
+                "Failed to write the command to the exec directive file {}",
+                file.display()
+            )
+        }),
         DirectiveMode::NewProtocol {
             exec_file: None, ..
         } => {
             warn_exec_scrubbed_once(&command);
             Ok(())
         }
-        DirectiveMode::Legacy { file } => {
-            append_line(&file, &command)?;
-            Ok(())
-        }
+        DirectiveMode::Legacy { file } => append_line(&file, &command).with_context(|| {
+            format!(
+                "Failed to write the command to the directive file {}",
+                file.display()
+            )
+        }),
     }
 }
 
