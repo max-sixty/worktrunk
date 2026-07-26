@@ -7255,3 +7255,87 @@ cd = false
     // Without any cd flags, config should be respected (no cd directive)
     snapshot_switch("switch_no_cd_config_default", &repo, &["no-cd-config-test"]);
 }
+
+/// A worktree's own path names it, including the single-component spelling —
+/// `wt switch solo` where `solo/` is a worktree but no branch is called that.
+///
+/// Path resolution runs through `-C`, so the assertion is on the directory the
+/// switch resolved to rather than on the process cwd.
+#[rstest]
+fn switch_by_relative_worktree_path(mut repo: TestRepo) {
+    let nested = repo.root_path().join("solo");
+    let worktree_path = repo.add_worktree_at_path("solo-branch", &nested);
+
+    for spelling in ["solo", "./solo", worktree_path.to_str().unwrap()] {
+        let output = repo
+            .wt_command()
+            .args(["switch", spelling, "--no-cd"])
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "switch {spelling} should resolve the worktree: {stderr}"
+        );
+        assert!(
+            stderr.contains("solo-branch"),
+            "switch {spelling} should name the branch checked out there: {stderr}"
+        );
+    }
+}
+
+/// The tilde form worktrunk prints paths in is a form it also accepts, so a
+/// path copied out of wt's output works when the shell can't expand it.
+#[cfg(unix)]
+#[rstest]
+fn switch_by_tilde_worktree_path(mut repo: TestRepo, temp_home: TempDir) {
+    let worktree_path = repo.add_worktree("feature");
+    // Re-home the process at the worktree's parent so the worktree is under
+    // `~`, which is what makes the tilde spelling reachable at all.
+    let home = worktree_path.parent().unwrap().to_path_buf();
+    drop(temp_home);
+
+    let mut cmd = repo.wt_command();
+    set_temp_home_env(&mut cmd, &home);
+    let output = cmd
+        .args([
+            "switch",
+            &format!("~/{}", worktree_path.file_name().unwrap().to_str().unwrap()),
+            "--no-cd",
+        ])
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success() && stderr.contains("feature"),
+        "a tilde-form worktree path should resolve: {stderr}"
+    );
+}
+
+/// `--base` names a branch, so a worktree's path stands for the branch checked
+/// out there — the same rule as a merge or rebase target.
+#[rstest]
+fn switch_base_accepts_worktree_path(mut repo: TestRepo) {
+    let base_path = repo.add_worktree("base-branch");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "derived",
+            "--base",
+            base_path.to_str().unwrap(),
+            "--no-cd",
+        ])
+        .output()
+        .unwrap();
+
+    let raw = String::from_utf8_lossy(&output.stderr);
+    let stderr = raw.ansi_strip();
+    assert!(
+        output.status.success() && stderr.contains("from base-branch"),
+        "--base should resolve the worktree path to its branch: {stderr}"
+    );
+}

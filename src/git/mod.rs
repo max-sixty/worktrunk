@@ -81,8 +81,8 @@ pub use remove::{
 pub use repository::sha_cache;
 pub use repository::{
     Branch, BranchDiffSpec, CommitMessageDetail, InProgressOperation, IntegrationTargets,
-    RefSnapshot, Repository, ResolvedWorktree, TempIndex, WorkingTree, resolve_input_path,
-    select_comparison_base, set_base_path,
+    RefSnapshot, Repository, ResolvedWorktree, TempIndex, WorkingTree, duplicated_branches,
+    resolve_input_path, select_comparison_base, set_base_path,
 };
 pub use url::parse_owner_repo;
 pub use url::{GitRemoteUrl, GitRepoInfo, GitRepoProvider};

@@ -23,7 +23,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use anyhow::Context;
+use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::config::UserConfig;
 use worktrunk::git::{ErrorExt, Repository, WorktreeInfo, format_unresolved_conflicts};
@@ -153,18 +153,42 @@ pub fn gather_candidates(
         .cloned()
         .collect();
 
-    // Filter to requested branches if any were specified
+    // Filter to the requested worktrees, if any. Each argument is a selector, so
+    // it resolves the same way everywhere else. Every way an argument can fail to
+    // land on a relocatable worktree is an error: dropping it instead leaves an
+    // empty candidate list, which renders as "all worktrees are at expected
+    // paths" — a success message for work that never happened.
     let worktrees: Vec<_> = if filter_branches.is_empty() {
         worktrees
     } else {
-        worktrees
-            .into_iter()
-            .filter(|wt| {
-                wt.branch
-                    .as_ref()
-                    .is_some_and(|b| filter_branches.iter().any(|arg| arg == b))
-            })
-            .collect()
+        let mut selected: Vec<WorktreeInfo> = Vec::new();
+        for arg in filter_branches {
+            let path = repo.require_worktree(arg)?;
+            let Some(wt) = worktrees.iter().find(|wt| paths_match(&path, &wt.path)) else {
+                // Resolved, but pruned out above: its directory is gone, so
+                // there is nothing to move.
+                bail!(
+                    "{}",
+                    cformat!(
+                        "Cannot relocate worktree @ {} — its directory is gone; run <bold>wt step prune</> to clear the entry",
+                        format_path_for_display(&path)
+                    )
+                );
+            };
+            if wt.branch.is_none() {
+                bail!(
+                    "{}",
+                    cformat!(
+                        "Cannot relocate detached worktree @ {} — the <bold>worktree-path</> template needs a branch name",
+                        format_path_for_display(&path)
+                    )
+                );
+            }
+            if !selected.iter().any(|s| paths_match(&s.path, &wt.path)) {
+                selected.push(wt.clone());
+            }
+        }
+        selected
     };
 
     // Find mismatched worktrees

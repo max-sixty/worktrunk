@@ -95,7 +95,9 @@
 //! which means empty penalties don't apply in progressive mode.
 //!
 //! Exceptions that we can compute instantly from items:
-//! - `path`: true only if any worktree has `branch_worktree_mismatch` (computed from items)
+//! - `path`: true only if some worktree's path carries information the branch
+//!   column doesn't — `branch_worktree_mismatch` or `duplicate_branch` (computed
+//!   from items)
 //! - `branch_diff`/`ci_status`: false if their required task is skipped
 //!
 //! Other columns (status, working_diff, ahead_behind, upstream) require expensive git operations,
@@ -295,7 +297,7 @@ pub struct ColumnDataFlags {
     pub upstream: bool,
     pub url: bool,
     pub ci_status: bool,
-    pub path: bool, // True if any worktree has branch_worktree_mismatch
+    pub path: bool, // True if a worktree is off-template or shares its branch
 }
 
 /// Layout metadata including position mask for Status column
@@ -664,7 +666,7 @@ fn estimate_url_width(url_template: Option<&str>, hyperlinks_supported: bool) ->
 fn build_estimated_widths(
     max_branch: usize,
     tasks: &HashSet<TaskKind>,
-    has_branch_worktree_mismatch: bool,
+    path_is_informative: bool,
     url_width: usize,
     max_pr_number: Option<u64>,
     custom_widths: Vec<usize>,
@@ -695,7 +697,7 @@ fn build_estimated_widths(
     // before the data arrives, so empty penalties don't apply properly.
     //
     // Exceptions that we can compute instantly from items:
-    // - path: true only if any worktree has branch_worktree_mismatch
+    // - path: true only if a worktree is off-template or shares its branch
     // - branch_diff/ci_status: false if their task isn't in the run plan
     let data_flags = ColumnDataFlags {
         status: true,
@@ -705,7 +707,7 @@ fn build_estimated_widths(
         upstream: true,
         url: tasks.contains(&TaskKind::UrlStatus),
         ci_status: tasks.contains(&TaskKind::CiStatus),
-        path: has_branch_worktree_mismatch,
+        path: path_is_informative,
     };
 
     // URL width estimated from template + longest branch (or fallback)
@@ -1106,12 +1108,13 @@ pub fn calculate_layout_with_width(
         .unwrap_or(0);
     let max_path_width = fit_header(ColumnKind::Path.header(), path_data_width);
 
-    // Check if any worktree has a branch-worktree mismatch.
-    // Path column is only useful when there's a mismatch; otherwise it's redundant with branch.
-    let has_branch_worktree_mismatch = items
+    // The Path column is redundant with Branch unless a path says something the
+    // branch name doesn't: the worktree sits off-template, or two worktrees share
+    // the branch and the path is the only thing telling their rows apart.
+    let path_is_informative = items
         .iter()
         .filter_map(|item| item.worktree_data())
-        .any(|data| data.branch_worktree_mismatch);
+        .any(|data| data.branch_worktree_mismatch || data.duplicate_branch);
 
     // Estimate URL width from template (heuristic, no expansion needed)
     let url_width = estimate_url_width(url_template, supports_hyperlinks(Stream::Stdout));
@@ -1140,7 +1143,7 @@ pub fn calculate_layout_with_width(
     let metadata = build_estimated_widths(
         max_branch,
         tasks,
-        has_branch_worktree_mismatch,
+        path_is_informative,
         url_width,
         max_pr_number,
         custom_widths,
@@ -1414,7 +1417,7 @@ mod tests {
     fn test_pre_allocated_width_estimates() {
         // Test that build_estimated_widths() returns correct pre-allocated estimates
         // Full run plan means all tasks are computed (equivalent to --full)
-        // has_branch_worktree_mismatch=true to test the path flag is passed through
+        // path_is_informative=true to test the path flag is passed through
         // url_width=0 since we're not testing URL column here
         let metadata = build_estimated_widths(20, &full_run_tasks(), true, 0, None, Vec::new());
         let widths = metadata.widths;
@@ -1554,6 +1557,7 @@ mod tests {
                 is_current: false,
                 is_previous: false,
                 branch_worktree_mismatch: false,
+                duplicate_branch: false,
             })),
         };
 
@@ -1670,6 +1674,7 @@ mod tests {
                 is_current: false,
                 is_previous: false,
                 branch_worktree_mismatch: false,
+                duplicate_branch: false,
             })),
         };
 
@@ -1798,6 +1803,7 @@ mod tests {
                 is_current: false,
                 is_previous: false,
                 branch_worktree_mismatch: false,
+                duplicate_branch: false,
             })),
         }
     }
@@ -2264,6 +2270,7 @@ mod tests {
                 is_current: false,
                 is_previous: false,
                 branch_worktree_mismatch: false,
+                duplicate_branch: false,
             })),
         }
     }
@@ -2420,6 +2427,7 @@ mod tests {
                     is_current,
                     is_previous: false,
                     branch_worktree_mismatch: false,
+                    duplicate_branch: false,
                 })),
             }
         };

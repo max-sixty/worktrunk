@@ -536,18 +536,8 @@ pub fn capture_progressive_output(
 
 /// Configure PTY command with test environment variables
 fn configure_pty_environment(cmd: &mut CommandBuilder, repo: &TestRepo) {
-    // Clear environment
-    cmd.env_clear();
-
-    // Basic environment
-    cmd.env(
-        "HOME",
-        home::home_dir().unwrap().to_string_lossy().to_string(),
-    );
-    cmd.env(
-        "PATH",
-        std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string()),
-    );
+    // Isolated environment (env_clear, HOME, PATH, determinism baselines, coverage)
+    super::configure_pty_command(cmd);
 
     // Test environment (from TestRepo::test_env_vars)
     for (key, value) in repo.test_env_vars() {
@@ -558,20 +548,6 @@ fn configure_pty_environment(cmd: &mut CommandBuilder, repo: &TestRepo) {
     // loading indicator see it on every render — otherwise fast runs finish
     // before the deferred tick fires and dots never appear.
     cmd.env("WORKTRUNK_PLACEHOLDER_REVEAL_MS", "0");
-
-    // Pass through LLVM coverage profiling environment for subprocess coverage collection.
-    // When running under cargo-llvm-cov, spawned binaries need LLVM_PROFILE_FILE to record
-    // their coverage data; otherwise, point it at a temp-dir default so an
-    // instrumented child can't write `default_*.profraw` into the repo root.
-    cmd.env(
-        "LLVM_PROFILE_FILE",
-        worktrunk::testing::default_llvm_profile_file(),
-    );
-    for key in worktrunk::testing::COVERAGE_ENV_VARS {
-        if let Ok(val) = std::env::var(key) {
-            cmd.env(key, val);
-        }
-    }
 }
 
 #[cfg(test)]

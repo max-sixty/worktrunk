@@ -40,7 +40,7 @@ worktree requires typing the branch name three times: `git worktree add -b feat
 
 ## Worktrunk makes git worktrees as easy as branches
 
-Worktrees are addressed by branch name; paths are computed from a configurable template.
+Worktrees are addressed by branch name; paths are computed from a configurable template. Commands that take a branch also accept the path of the worktree it is checked out in.
 
 > Start with the core commands
 

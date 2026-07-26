@@ -1371,3 +1371,66 @@ fn test_relocate_preserves_subdir(repo: TestRepo) {
         "CD file should contain relocated subdirectory path {expected_str}, got: {cd_content}"
     );
 }
+
+/// An argument naming no worktree is an error. Matching it against branch names
+/// alone left a typo filtering everything out, and the empty result rendered as
+/// "All worktrees are at expected paths" — a success message for a no-op.
+#[rstest]
+fn step_relocate_rejects_unknown_worktree(repo: TestRepo) {
+    let output = repo
+        .wt_command()
+        .args(["step", "relocate", "--dry-run", "no-such-worktree"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "an unknown argument should fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No branch or worktree named"),
+        "expected an unmatched-selector error, got: {stderr}"
+    );
+}
+
+/// A detached worktree can be named by path but has no expected path to move
+/// to — the `worktree-path` template is written over the branch name. Naming
+/// one is an error rather than an empty filter reported as success.
+#[rstest]
+fn step_relocate_rejects_detached_worktree(mut repo: TestRepo) {
+    repo.add_worktree("feature-detached");
+    repo.detach_head_in_worktree("feature-detached");
+
+    let output = repo
+        .wt_command()
+        .args(["step", "relocate", "--dry-run", "../repo.feature-detached"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "a detached worktree should fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("detached"),
+        "expected a detached-worktree error, got: {stderr}"
+    );
+}
+
+/// A worktree whose directory is gone still resolves by branch, but git has
+/// marked it prunable and there is nothing left to move. Naming one is an error
+/// rather than an empty filter reported as success.
+#[rstest]
+fn step_relocate_rejects_prunable_worktree(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-gone");
+    fs::remove_dir_all(&worktree_path).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "relocate", "--dry-run", "feature-gone"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "a prunable worktree should fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("directory is gone"),
+        "expected a prunable-worktree error, got: {stderr}"
+    );
+}

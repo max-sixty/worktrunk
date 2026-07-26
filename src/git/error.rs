@@ -592,6 +592,16 @@ pub enum GitError {
     WorktreeNotFound {
         branch: String,
     },
+    /// A worktree selector matched neither a branch nor a worktree path.
+    ///
+    /// Distinct from [`GitError::WorktreeNotFound`], which means the branch
+    /// exists and simply has no checkout — there, suggesting `wt switch` to
+    /// create one is right. Here wt cannot tell whether the user meant a branch
+    /// or a path, and `wt switch <a-path-that-matched-nothing>` would only fail
+    /// again, so the message asks for neither.
+    WorktreeSelectorNotFound {
+        selector: String,
+    },
     /// --create flag used with pr:/mr: syntax (conflict - branch already exists)
     RefCreateConflict {
         ref_type: RefType,
@@ -837,6 +847,10 @@ impl GitError {
 
             GitError::WorktreeNotFound { branch } => {
                 cformat!("Branch <bold>{branch}</> has no worktree")
+            }
+
+            GitError::WorktreeSelectorNotFound { selector } => {
+                cformat!("No branch or worktree named <bold>{selector}</>")
             }
 
             GitError::RefCreateConflict {
@@ -1373,6 +1387,18 @@ impl GitError {
                     error_message(&title),
                     hint_message(cformat!(
                         "To create a worktree, run <underline>{switch_cmd}</>"
+                    ))
+                )
+            }
+
+            GitError::WorktreeSelectorNotFound { .. } => {
+                let title = self.title();
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(&title),
+                    hint_message(cformat!(
+                        "To see branches and worktree paths, run <underline>wt list --branches</>"
                     ))
                 )
             }

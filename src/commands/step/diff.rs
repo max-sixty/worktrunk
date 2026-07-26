@@ -20,15 +20,7 @@ pub fn step_diff(
     extra_args: &[String],
 ) -> anyhow::Result<()> {
     let repo = match branch {
-        Some(b) => {
-            let worktree_path =
-                Repository::current()?
-                    .worktree_for_branch(b)?
-                    .ok_or_else(|| worktrunk::git::GitError::WorktreeNotFound {
-                        branch: b.to_string(),
-                    })?;
-            Repository::at(&worktree_path)?
-        }
+        Some(b) => Repository::at(&Repository::current()?.require_worktree(b)?)?,
         None => Repository::current()?,
     };
     let wt = repo.current_worktree();

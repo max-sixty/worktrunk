@@ -517,6 +517,28 @@ impl Repository {
         }
     }
 
+    /// The branch checked out at `target`, when `target` is a worktree path.
+    ///
+    /// The path arm of a merge or rebase target: `wt merge ../repo.main` names
+    /// the same branch as `wt merge main`. Refs win, so this runs only once the
+    /// caller's own ref lookup has failed, and only for a target the user typed
+    /// — a default branch that resolved from the cache is not a path.
+    ///
+    /// `resolved` is `target` after shortcut expansion; an expansion means the
+    /// literal token was a symbol rather than a path.
+    fn target_branch_at_path(
+        &self,
+        target: Option<&str>,
+        resolved: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let Some(target) = target.filter(|t| *t == resolved) else {
+            return Ok(None);
+        };
+        Ok(self
+            .worktree_at_input_path(target)?
+            .and_then(|(_, branch)| branch))
+    }
+
     /// Resolve and validate a target that must be a branch.
     ///
     /// Use this for commands that update a branch ref (merge, push).
@@ -530,6 +552,9 @@ impl Repository {
     pub fn require_target_branch(&self, target: Option<&str>) -> anyhow::Result<String> {
         let branch = self.resolve_target_branch(target)?;
         if !self.branch(&branch).exists()? {
+            if let Some(from_path) = self.target_branch_at_path(target, &branch)? {
+                return Ok(from_path);
+            }
             if target.is_none() {
                 if self.is_unborn_branch(&branch) {
                     return Err(GitError::UnbornDefaultBranch { branch }.into());
@@ -559,6 +584,9 @@ impl Repository {
     pub fn require_target_ref(&self, target: Option<&str>) -> anyhow::Result<String> {
         let reference = self.resolve_target_branch(target)?;
         if !self.ref_exists(&reference)? {
+            if let Some(from_path) = self.target_branch_at_path(target, &reference)? {
+                return Ok(from_path);
+            }
             if target.is_none() {
                 if self.is_unborn_branch(&reference) {
                     return Err(GitError::UnbornDefaultBranch { branch: reference }.into());

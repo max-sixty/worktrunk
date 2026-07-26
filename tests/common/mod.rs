@@ -407,15 +407,34 @@ pub fn open_pty_with_size(rows: u16, cols: u16) -> portable_pty::PtyPair {
 
 /// Configure a PTY CommandBuilder with isolated environment for testing.
 ///
-/// This is the PTY equivalent of `configure_cli_command()`. It:
+/// The PTY equivalent of `configure_cli_command()`, and the one place a PTY
+/// child's isolation is set up:
 /// 1. Clears all inherited environment variables
-/// 2. Sets minimal required vars (HOME, PATH)
-/// 3. Passes through LLVM coverage profiling vars so subprocess coverage works
+/// 2. Sets the minimal vars a shell or binary needs to run (HOME, PATH, and
+///    the Windows equivalents)
+/// 3. Applies the `STATIC_TEST_ENV_VARS` and `PTY_TEST_ENV_VARS` determinism
+///    baselines
+/// 4. Passes through LLVM coverage profiling vars so subprocess coverage works
 ///
-/// Call this early in PTY test setup, then add any test-specific env vars after.
+/// It supplies no fixture paths, having no fixture to read them from; a caller
+/// with one adds `TestRepo::test_env_vars()` on top, which carries the
+/// baselines again at the same values. `HOME` points at the developer's real
+/// home, since a shell needs a plausible one to start in — a caller that
+/// wants the fixture's overrides it.
 pub fn configure_pty_command(cmd: &mut portable_pty::CommandBuilder) {
     // Clear inherited environment for test isolation
     cmd.env_clear();
+
+    for &(key, value) in worktrunk::testing::STATIC_TEST_ENV_VARS
+        .iter()
+        .chain(worktrunk::testing::PTY_TEST_ENV_VARS)
+    {
+        cmd.env(key, value);
+    }
+    cmd.env(
+        "WORKTRUNK_TEST_EPOCH",
+        worktrunk::testing::TEST_EPOCH.to_string(),
+    );
 
     // Minimal environment for shells/binaries to function
     let home_dir = home::home_dir().unwrap().to_string_lossy().to_string();
@@ -474,8 +493,10 @@ pub fn configure_pty_command(cmd: &mut portable_pty::CommandBuilder) {
 /// [`worktrunk::testing::default_llvm_profile_file`] for the
 /// inherit-or-temp-dir resolution.
 ///
-/// Use `configure_pty_command()` for the full setup, or call this directly if you
-/// need custom env_clear handling (e.g., shell-specific env vars).
+/// [`configure_pty_command`] calls this, so a test that spawns `wt` through it
+/// needs nothing further. It stays separate for the one spawn that isn't a wt
+/// child at all — the ConPTY smoke test, which runs PowerShell against a
+/// deliberately bare environment.
 pub fn pass_coverage_env_to_pty_cmd(cmd: &mut portable_pty::CommandBuilder) {
     cmd.env(
         "LLVM_PROFILE_FILE",
@@ -490,11 +511,11 @@ pub fn pass_coverage_env_to_pty_cmd(cmd: &mut portable_pty::CommandBuilder) {
 
 /// Create a CommandBuilder for running a shell in PTY tests.
 ///
-/// Handles all shell-specific setup:
-/// - env_clear + HOME + PATH (with optional bin_dir prefix)
+/// [`configure_pty_command`] for the isolated environment, plus the
+/// shell-specific parts on top:
+/// - `bin_dir` prepended to PATH, for tests that shadow a binary with a mock
 /// - Shell-specific env vars (ZDOTDIR for zsh)
 /// - Shell-specific isolation flags (--norc, --no-rcs, --no-config)
-/// - Coverage passthrough
 ///
 /// Returns a CommandBuilder ready for `.arg("-c")` and `.arg(&script)`.
 #[cfg(unix)]
@@ -503,22 +524,18 @@ pub fn shell_command(
     bin_dir: Option<&std::path::Path>,
 ) -> portable_pty::CommandBuilder {
     let mut cmd = portable_pty::CommandBuilder::new(shell);
-    cmd.env_clear();
+    configure_pty_command(&mut cmd);
 
-    cmd.env(
-        "HOME",
-        home::home_dir().unwrap().to_string_lossy().to_string(),
-    );
-
-    let path = match bin_dir {
-        Some(dir) => format!(
-            "{}:{}",
-            dir.display(),
-            std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string())
-        ),
-        None => std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string()),
-    };
-    cmd.env("PATH", path);
+    if let Some(dir) = bin_dir {
+        cmd.env(
+            "PATH",
+            format!(
+                "{}:{}",
+                dir.display(),
+                std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string())
+            ),
+        );
+    }
 
     // Shell-specific setup
     match shell {
@@ -540,7 +557,6 @@ pub fn shell_command(
         _ => {}
     }
 
-    pass_coverage_env_to_pty_cmd(&mut cmd);
     cmd
 }
 

@@ -666,32 +666,6 @@ pub fn shell_escape_for(mode: ShellEscapeMode, s: &str) -> String {
     }
 }
 
-// ============================================================================
-// Thread-Local Command Timeout
-// ============================================================================
-
-use std::cell::Cell;
-
-thread_local! {
-    /// Per-thread ceiling for commands run via `run()`, set from
-    /// `[list] task-timeout-ms` on each Rayon collect worker so a pathologically
-    /// slow git can't hold up the first paint of `wt list` or the `wt switch`
-    /// picker. Unset by default. See [`set_command_timeout`].
-    static COMMAND_TIMEOUT: Cell<Option<Duration>> = const { Cell::new(None) };
-}
-
-/// Set the command timeout for the current thread.
-///
-/// When set, every command executed via `run()` on this thread is killed if it
-/// exceeds the specified duration; a command carrying its own [`Cmd::timeout`]
-/// is bound by whichever of the two is tighter. `None` disables it.
-///
-/// This is typically called at the start of a Rayon worker task to apply timeout
-/// to all git operations within that task.
-pub fn set_command_timeout(timeout: Option<Duration>) {
-    COMMAND_TIMEOUT.with(|t| t.set(timeout));
-}
-
 /// Maximum lines of the bounded subprocess preview per stream. Exceeded
 /// content is elided with a `… (N more lines, M bytes elided)` marker; the
 /// full output is still written to `subprocess.log` via
@@ -1318,9 +1292,6 @@ impl Cmd {
 
     /// Set a timeout for command execution (only applies to `.run()`).
     ///
-    /// Under a thread-local timeout ([`set_command_timeout`]) the tighter of the
-    /// two bounds the command, so this cannot widen a caller's budget.
-    ///
     /// Note: Timeout is not supported by `.stream()` since streaming commands
     /// are interactive and should not be time-limited.
     ///
@@ -1529,14 +1500,6 @@ impl Cmd {
         let mut cmd = self.direct_command();
         self.apply_common_settings(&mut cmd);
 
-        // Both timeouts are ceilings rather than a precedence chain: one bounds
-        // this command, the other bounds every command on the thread, so a
-        // command carrying both is bound by the tighter of the two.
-        let effective_timeout = match (self.timeout, COMMAND_TIMEOUT.with(|t| t.get())) {
-            (Some(own), Some(per_thread)) => Some(own.min(per_thread)),
-            (own, per_thread) => own.or(per_thread),
-        };
-
         // Execute with or without stdin. Every branch produces a single
         // `Result<Output>` so spawn/write failures resolve the trace through
         // `record_captured` rather than `?`-ing past it (which would leave the
@@ -1566,7 +1529,7 @@ impl Cmd {
                 }
                 Err(e) => Err(e),
             }
-        } else if let Some(timeout_duration) = effective_timeout {
+        } else if let Some(timeout_duration) = self.timeout {
             // Timeout handling uses the existing impl
             run_with_timeout_impl(&mut cmd, timeout_duration)
         } else {
@@ -2575,76 +2538,6 @@ mod tests {
         let output = result.unwrap();
         assert!(output.status.success());
         assert!(String::from_utf8_lossy(&output.stdout).contains("hello from stdin"));
-    }
-
-    #[test]
-    fn test_thread_local_timeout_setting() {
-        // Initially no timeout (or whatever was set by previous test)
-        let initial = COMMAND_TIMEOUT.with(|t| t.get());
-
-        // Set a timeout
-        set_command_timeout(Some(Duration::from_millis(100)));
-        let after_set = COMMAND_TIMEOUT.with(|t| t.get());
-        assert_eq!(after_set, Some(Duration::from_millis(100)));
-
-        // Clear the timeout
-        set_command_timeout(initial);
-        let after_clear = COMMAND_TIMEOUT.with(|t| t.get());
-        assert_eq!(after_clear, initial);
-    }
-
-    #[test]
-    fn test_cmd_uses_thread_local_timeout() {
-        // Set no timeout (ensure fast completion)
-        set_command_timeout(None);
-
-        let result = Cmd::new("echo").arg("thread local test").run();
-        assert!(result.is_ok());
-
-        // Clean up
-        set_command_timeout(None);
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn test_cmd_thread_local_timeout_kills_slow_command() {
-        // Set a short thread-local timeout
-        set_command_timeout(Some(Duration::from_millis(50)));
-
-        // Command that would take too long
-        let result = Cmd::new("sleep").arg("10").run();
-
-        // Should be killed by the thread-local timeout
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
-
-        // Clean up
-        set_command_timeout(None);
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn test_cmd_timeout_cannot_widen_the_thread_local_budget() {
-        // `wt list` gives each collect task a budget via the thread-local, and a
-        // command inside one can carry a longer `.timeout()` of its own (the
-        // 10s bound on remote default-branch detection). The tighter budget has
-        // to win, or one command spends the whole task's allowance.
-        set_command_timeout(Some(Duration::from_millis(50)));
-
-        let start = std::time::Instant::now();
-        let result = Cmd::new("sleep")
-            .arg("10")
-            .timeout(Duration::from_secs(30))
-            .run();
-        let elapsed = start.elapsed();
-
-        set_command_timeout(None);
-
-        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
-        assert!(
-            elapsed < Duration::from_secs(5),
-            "the explicit timeout widened the thread-local budget: {elapsed:?}"
-        );
     }
 
     // ========================================================================

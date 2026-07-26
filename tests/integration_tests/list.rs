@@ -149,6 +149,86 @@ fn test_list_detached_head_in_worktree(mut repo: TestRepo) {
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
+/// Adds a second worktree on `branch` via `git worktree add --force`, which
+/// bypasses git's "already used by worktree" guard. Worktrunk never creates
+/// this state itself.
+fn force_duplicate_worktree(repo: &TestRepo, branch: &str) -> std::path::PathBuf {
+    let dup_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join(format!("repo.{branch}-dup"));
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "--force",
+        dup_path.to_str().unwrap(),
+        branch,
+    ]);
+    dup_path
+}
+
+/// A branch checked out in two worktrees flags both rows with `⚑`, the same
+/// irregular-mapping flag an off-template path earns, and the Path column
+/// earns its place: the branch name no longer identifies the row. Before
+/// this, only the off-template duplicate was flagged, and the worktree `wt`
+/// actually resolves to showed nothing.
+#[rstest]
+fn test_list_duplicate_branch(mut repo: TestRepo) {
+    repo.add_worktree("feature");
+    force_duplicate_worktree(&repo, "feature");
+
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
+}
+
+/// Both JSON schemas report the duplicate: schema 1 through the single
+/// `worktree.state` value, schema 2 through its own orthogonal flag.
+#[rstest]
+fn test_list_duplicate_branch_json(mut repo: TestRepo) {
+    repo.add_worktree("feature");
+    force_duplicate_worktree(&repo, "feature");
+
+    repo.write_test_config("[list]\njson-schema = 1\n");
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let items: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let flagged: Vec<_> = items
+        .iter()
+        .filter(|item| item["worktree"]["state"] == "duplicate_branch")
+        .collect();
+    assert_eq!(flagged.len(), 2, "both rows carry the state: {items:#?}");
+    assert!(
+        flagged.iter().all(|item| item["branch"] == "feature"),
+        "only the duplicated branch is flagged: {items:#?}"
+    );
+
+    repo.write_test_config("[list]\njson-schema = 2\n");
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let items = json["items"].as_array().unwrap();
+    let flagged: Vec<_> = items
+        .iter()
+        .filter(|item| item["worktree"]["duplicate_branch"] == true)
+        .collect();
+    assert_eq!(flagged.len(), 2, "both rows carry the flag: {items:#?}");
+    assert!(
+        items
+            .iter()
+            .filter(|item| item["branch"] == "main")
+            .all(|item| item["worktree"]["duplicate_branch"] == false),
+        "the unduplicated branch stays clear: {items:#?}"
+    );
+}
+
 #[rstest]
 fn test_list_locked_worktree(mut repo: TestRepo) {
     repo.add_worktree("locked-feature");

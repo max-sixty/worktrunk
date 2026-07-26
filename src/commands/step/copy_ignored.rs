@@ -44,14 +44,7 @@ pub fn step_copy_ignored(
 
     // Resolve source and destination worktree paths
     let (source_path, source_context) = match from {
-        Some(branch) => {
-            let path = repo.worktree_for_branch(branch)?.ok_or_else(|| {
-                worktrunk::git::GitError::WorktreeNotFound {
-                    branch: branch.to_string(),
-                }
-            })?;
-            (path, branch.to_string())
-        }
+        Some(branch) => (repo.require_worktree(branch)?, branch.to_string()),
         None => {
             // Default source is the primary worktree (main worktree for normal repos,
             // default branch worktree for bare repos).
@@ -69,11 +62,7 @@ pub fn step_copy_ignored(
     };
 
     let dest_path = match to {
-        Some(branch) => repo.worktree_for_branch(branch)?.ok_or_else(|| {
-            worktrunk::git::GitError::WorktreeNotFound {
-                branch: branch.to_string(),
-            }
-        })?,
+        Some(branch) => repo.require_worktree(branch)?,
         None => repo.current_worktree().root()?,
     };
 

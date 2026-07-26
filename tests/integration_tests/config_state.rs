@@ -3178,3 +3178,43 @@ fn test_format_rejected_on_write_action_writes_verbose_diagnostic(repo: TestRepo
         "diagnostic should be written for post-dispatch clap errors"
     );
 }
+
+/// `--branch` takes a selector, so `@` means the current branch rather than a
+/// state key literally named `@` — the state commands share one vocabulary with
+/// the rest of wt instead of storing whatever token was typed.
+#[rstest]
+fn state_branch_flag_resolves_selectors(mut repo: TestRepo) {
+    let worktree = repo.add_worktree("feature");
+
+    let set = repo
+        .wt_command()
+        .current_dir(&worktree)
+        .args(["config", "state", "marker", "set", "wip", "--branch", "@"])
+        .output()
+        .unwrap();
+    assert!(
+        set.status.success(),
+        "setting a marker via @ should succeed: {}",
+        String::from_utf8_lossy(&set.stderr)
+    );
+
+    // Read it back from elsewhere, naming the same branch by its worktree path.
+    let get = repo
+        .wt_command()
+        .args([
+            "config",
+            "state",
+            "marker",
+            "get",
+            "--branch",
+            worktree.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&get.stdout).trim(),
+        "wip",
+        "the marker set via @ should read back via the worktree's path: {}",
+        String::from_utf8_lossy(&get.stderr)
+    );
+}

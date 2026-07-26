@@ -241,7 +241,6 @@ fn boot_picker_pty(
 
     // Isolated environment with coverage passthrough
     crate::common::configure_pty_command(&mut cmd);
-    cmd.env("CLICOLOR_FORCE", "1");
     cmd.env("TERM", "xterm-256color");
 
     // Test-specific environment variables
@@ -2783,7 +2782,6 @@ fn drive_alt_x_then_switch(
     }
     cmd.cwd(working_dir);
     crate::common::configure_pty_command(&mut cmd);
-    cmd.env("CLICOLOR_FORCE", "1");
     cmd.env("TERM", "xterm-256color");
     for (key, value) in env_vars {
         cmd.env(key, value);
@@ -3301,7 +3299,6 @@ fn test_switch_picker_alt_x_morphs_removed_worktree_in_place(mut repo: TestRepo)
     cmd.arg("switch");
     cmd.cwd(repo.root_path());
     crate::common::configure_pty_command(&mut cmd);
-    cmd.env("CLICOLOR_FORCE", "1");
     cmd.env("TERM", "xterm-256color");
     for (key, value) in &env_vars {
         cmd.env(key, value);
@@ -3413,7 +3410,6 @@ fn test_switch_picker_alt_x_keeps_current_worktree(mut repo: TestRepo) {
     cmd.arg("switch");
     cmd.cwd(&wt_path); // launched from inside the worktree → it's the current one
     crate::common::configure_pty_command(&mut cmd);
-    cmd.env("CLICOLOR_FORCE", "1");
     cmd.env("TERM", "xterm-256color");
     for (key, value) in &env_vars {
         cmd.env(key, value);

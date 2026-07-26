@@ -37,7 +37,7 @@ Load relevant skills before starting; reload when scope changes mid-session. Pro
 
 ## Worktree Model
 
-- Worktrees are **addressed by branch name**, not filesystem path.
+- Worktrees are **addressed by branch name**, with a worktree's own path as an alias — resolved branch-first by `Repository::resolve_worktree`, the one canonicalizer every worktree-naming argument routes through. A path is not a second addressing scheme: it names what a branch cannot (a detached worktree, one of two checkouts of a branch). So document arguments as taking a branch, state the path alias once rather than per argument, and give a new argument the canonicalizer rather than its own rule.
 - Each worktree maps to **exactly one branch**.
 - **Never retarget an existing worktree** to a different branch; create/switch/remove instead. (Sole exception: `wt step promote`, experimental, exchanges branches between two worktrees.)
 
@@ -59,6 +59,8 @@ Never risk data loss without explicit user consent. A failed command that preser
 - **Favor the failing variant on races** — `git reset --keep` (fails if tracked files were modified) over `--hard`; `git checkout --merge` over `--force`. If no safer variant exists, document the risk inline.
 - **Time-of-check vs time-of-use** — be conservative when there's a gap between the safety check and the operation. `wt merge` verifies clean before rebasing, but files could appear before cleanup — don't force-remove during cleanup.
 - **Replace files, never truncate them** — `fs::write` truncates before it writes, so a crash mid-write leaves the file empty. Every write to a file worktrunk can't put back (rc files, shell wrappers, `config.toml`, `approvals.toml`, another tool's `settings.json`) goes through `utils::write_atomically`, which renames a sibling temp file over the target; the spec on that function covers symlinks, mode, and what a rename costs. Regenerable content (the cache, the `-vv` diagnostic report) keeps the plain write.
+
+These stop where git's own protections stop: `wt merge` and `wt step push` overwrite an ignored file in the destination worktree whose path the incoming commits track, exactly as a `git merge` run there would. Matching git is deliberate — the spec in `src/commands/worktree/push.rs` says why.
 
 Full inventory: FAQ [What files does Worktrunk create?](docs/content/faq.md#what-files-does-worktrunk-create) and [What can Worktrunk delete?](docs/content/faq.md#what-can-worktrunk-delete). Review new code that changes this surface against those sections.
 

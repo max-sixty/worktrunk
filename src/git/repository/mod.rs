@@ -166,6 +166,7 @@ pub use integration::{BranchDiffSpec, IntegrationTargets, select_comparison_base
 pub use ref_snapshot::RefSnapshot;
 pub(super) use working_tree::path_to_logging_context;
 pub use working_tree::{InProgressOperation, TempIndex, WorkingTree};
+pub use worktrees::duplicated_branches;
 
 // ============================================================================
 // Repository Cache
@@ -487,6 +488,9 @@ fn base_path() -> &'static PathBuf {
 /// as does every path when `-C` was not given — the process cwd already resolves
 /// those, and joining `.` onto them would surface as a stray `./` in output.
 ///
+/// A leading `~` expands first (see [`crate::path::expand_tilde`]), so the tilde form wt
+/// prints its own paths in is a form wt also accepts.
+///
 /// This is the one resolution point for those paths, so they cannot drift
 /// apart: worktree path arguments (`wt switch ../repo.feature`), `--config`,
 /// `WORKTRUNK_CONFIG_PATH`, `WORKTRUNK_SYSTEM_CONFIG_PATH`, and the trace file
@@ -501,9 +505,10 @@ fn base_path() -> &'static PathBuf {
 ///   expanded by the generated shell wrapper, and the XDG spec already requires
 ///   the second to be absolute.
 pub fn resolve_input_path(path: impl AsRef<Path>) -> PathBuf {
+    let path = crate::path::expand_tilde(path.as_ref());
     match BASE_PATH.get() {
         Some(base) => base.join(path),
-        None => path.as_ref().to_path_buf(),
+        None => path.into_owned(),
     }
 }
 

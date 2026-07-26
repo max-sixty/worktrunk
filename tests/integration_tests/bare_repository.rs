@@ -1459,16 +1459,21 @@ impl NestedBareRepoTest {
             .env_remove("CLICOLOR_FORCE");
     }
 
-    /// Get test environment variables as a vector for PTY tests.
+    /// This fixture's environment for a PTY-spawned wt subprocess, built from
+    /// the same layers as `TestRepo::test_env_vars`.
     #[cfg(all(unix, feature = "shell-integration-tests"))]
     fn test_env_vars(&self) -> Vec<(String, String)> {
-        let mut vars = self.repo.test_env_vars();
-        for (key, value) in &mut vars {
-            if key == "WORKTRUNK_CONFIG_PATH" {
-                *value = self.test_config_path.display().to_string();
-            }
-        }
-        vars
+        use crate::common::{TestEnvPaths, pty_env_vars};
+
+        // HOME and XDG_CONFIG_HOME are needed for config lookups in env_clear'd PTY
+        let home = self.temp_dir.path().join("home");
+        std::fs::create_dir_all(&home).ok();
+
+        pty_env_vars(TestEnvPaths {
+            home: &home,
+            wt_config: &self.test_config_path,
+            approvals: &self.temp_dir.path().join("test-approvals.toml"),
+        })
     }
 }
 

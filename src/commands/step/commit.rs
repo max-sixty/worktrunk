@@ -40,7 +40,7 @@ pub fn step_commit(
     let _ = crate::output::prompt_commit_generation(&mut config);
 
     let env = match branch {
-        Some(ref b) => CommandEnv::for_branch(config, b)?,
+        Some(ref b) => CommandEnv::for_selector(config, b)?,
         None => CommandEnv::for_action(config)?,
     };
     let ctx = env.context(yes);

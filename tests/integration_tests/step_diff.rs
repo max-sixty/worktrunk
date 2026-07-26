@@ -225,3 +225,62 @@ fn git_status(repo: &TestRepo, dir: &Path) -> String {
         .unwrap();
     String::from_utf8_lossy(&output.stdout).to_string()
 }
+
+/// `--branch` and the target both take a selector: a worktree's path names the
+/// worktree to diff, and names the branch to diff against.
+#[rstest]
+fn step_diff_accepts_worktree_paths(mut repo: TestRepo) {
+    let feature_path = setup_feature_with_commit(&mut repo);
+    let other_path = repo.add_worktree("other");
+
+    let by_branch = repo
+        .wt_command()
+        .args(["step", "diff", "--branch", "feature"])
+        .output()
+        .unwrap();
+    let by_path = repo
+        .wt_command()
+        .args(["step", "diff", "--branch", feature_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(by_branch.status.success() && by_path.status.success());
+    assert_eq!(
+        by_branch.stdout, by_path.stdout,
+        "the branch and its worktree's path should name the same worktree"
+    );
+
+    // And the positional target, which is a ref rather than a worktree.
+    let target_by_path = repo
+        .wt_command()
+        .current_dir(&feature_path)
+        .args(["step", "diff", other_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        target_by_path.status.success(),
+        "a worktree path should name the branch checked out there: {}",
+        String::from_utf8_lossy(&target_by_path.stderr)
+    );
+}
+
+/// `@` resolves to the current branch, the same as everywhere else in wt.
+#[rstest]
+fn step_diff_branch_flag_accepts_shortcut(mut repo: TestRepo) {
+    let feature_path = setup_feature_with_commit(&mut repo);
+
+    let output = repo
+        .wt_command()
+        .current_dir(&feature_path)
+        .args(["step", "diff", "--branch", "@"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "--branch @ should resolve to the current worktree: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("feature.txt"),
+        "the diff should be the current worktree's"
+    );
+}
