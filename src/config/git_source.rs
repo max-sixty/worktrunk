@@ -90,14 +90,12 @@ pub const GIT_CONFIG_LIST_COMMAND: &str =
 /// document string.
 ///
 /// Fails when a key path is malformed (empty segment) or when two keys
-/// collide (one names a value where another needs a table).
+/// collide (one names a value where another needs a table). Serializing the
+/// built table cannot fail in practice — it holds only string leaves and
+/// nested tables — so that arm is a plain error passthrough.
 pub fn render_git_source_toml(pairs: &[(String, String)]) -> Result<String, ConfigError> {
     let table = pairs_to_table(pairs)?;
-    toml::to_string(&table).map_err(|e| {
-        ConfigError(format!(
-            "Failed to render {GIT_CONFIG_SOURCE_LABEL} as TOML: {e}"
-        ))
-    })
+    toml::to_string(&table).map_err(|e| ConfigError(format!("{GIT_CONFIG_SOURCE_LABEL}: {e}")))
 }
 
 /// Parse `worktrunk.config.*` pairs into a [`ProjectConfig`] tagged with
@@ -327,5 +325,24 @@ mod tests {
     fn test_file_source_is_the_default() {
         let config: ProjectConfig = toml::from_str("post-start = \"x\"").unwrap();
         assert_eq!(config.source, ProjectConfigSource::File);
+    }
+
+    #[test]
+    fn test_superseded_warning_latch_short_circuits_repeat_calls() {
+        // A first successful emit sets the process latch; later calls return
+        // at the peek without re-resolving the label. Output is not asserted
+        // (a parallel test may legitimately have latched warning
+        // suppression); this exercises the latch path itself.
+        let test = crate::testing::TestRepo::with_initial_commit();
+        std::fs::create_dir_all(test.root_path().join(".config")).unwrap();
+        std::fs::write(
+            test.root_path().join(".config/wt.toml"),
+            "pre-merge = \"cargo test\"\n",
+        )
+        .unwrap();
+        test.run_git(&["config", "worktrunk.config.post-start", "echo hi"]);
+        let repo = crate::git::Repository::at(test.root_path()).unwrap();
+        warn_superseded_project_file(&repo);
+        warn_superseded_project_file(&repo);
     }
 }
