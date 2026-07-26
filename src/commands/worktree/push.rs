@@ -11,10 +11,14 @@
 //! a dirty tree is autostashed and restored. Ignored files fall outside that
 //! report, so a push overwrites one whose path the incoming commits track.
 //!
-//! That is git's own line, not an oversight — a `git merge` run in that
-//! worktree refuses the untracked collision and overwrites the ignored one.
-//! Matching git is the decision; don't add an ignored-file probe to make `wt`
-//! stricter than the tool it wraps.
+//! That is git's own line, not an oversight, and it holds at the mechanisms
+//! actually used: the fast-forward hands the checkout to
+//! `receive.denyCurrentBranch=updateInstead`, `--no-ff` syncs with
+//! `read-tree -m -u`, and both run git's unpack-trees checks, which refuse to
+//! clobber an untracked file and silently overwrite an ignored one — the same
+//! split a `git merge` there would produce. Matching git is the decision;
+//! don't add an ignored-file probe to make `wt` stricter than the tool it
+//! wraps.
 
 use std::path::PathBuf;
 
