@@ -1250,6 +1250,52 @@ fn test_prune_pre_remove_needs_approval(mut repo: TestRepo) {
     );
 }
 
+/// With the git-config source (`worktrunk.config.*`) supplying the hooks, the
+/// `(different hooks on branch)` annotation must not appear: git config is
+/// branch-independent, so a candidate's committed `.config/wt.toml` cannot
+/// change which hooks run. Pins the guard on the `differs` computation — with
+/// the baseline merely `None`, a candidate that has a committed file would
+/// compare `Some(_) != None` and flag exactly this case.
+#[rstest]
+fn test_prune_skip_hint_no_branch_annotation_under_git_source(mut repo: TestRepo) {
+    // Committed project file so the candidate worktree carries one; hooks
+    // come from git config (unapproved → the candidate is skipped with the
+    // hint this test inspects).
+    repo.write_project_config(r#"pre-merge = "cargo test""#);
+    repo.commit("Add project config");
+    let wt_path = repo.add_worktree("merged");
+    repo.commit("Advance default branch");
+    repo.run_git(&[
+        "config",
+        "worktrunk.config.pre-remove",
+        "echo ran > prune-git-source-marker.txt",
+    ]);
+
+    let output = repo
+        .wt_command()
+        .args(["step", "prune", "--foreground", "--min-age=0s"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "prune should skip the unapproved candidate, not abort; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("(approval required)"),
+        "git-config pre-remove is unapproved, so the candidate skips; stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("(different hooks on branch)"),
+        "branch-independent git-config hooks must not be annotated as differing; stderr:\n{stderr}"
+    );
+    assert!(
+        wt_path.exists(),
+        "the worktree must not be removed when its hooks aren't approved"
+    );
+}
+
 /// An unmerged worktree is outside prune's removal set, so the `pre-remove` it
 /// would run is never part of the approval gate.
 #[rstest]

@@ -1126,9 +1126,10 @@ pub fn step_prune(
     // can compare each candidate's own `.config/wt.toml` against this
     // baseline. Byte-equal is approximate (whitespace differences flag too)
     // but the result drives a hint, not behavior. When the git-config source
-    // (worktrunk.config.*) is active the baseline is None: git config is
-    // branch-independent, so per-branch file differences cannot change the
-    // selected hooks and the annotation would be noise.
+    // (worktrunk.config.*) is active the annotation is suppressed at the
+    // `differs` computation — git config is branch-independent, so
+    // per-branch file differences cannot change the selected hooks — and the
+    // baseline isn't loaded (it would go unread).
     let git_source_active = repo
         .project_config()
         .ok()
@@ -1299,11 +1300,17 @@ pub fn step_prune(
                         info_message(cformat!("Skipped <bold>{label}</> (approval required)"))
                             .to_string();
                     let _ = job_tx.send(RemovalJob::PrintSkip(line));
-                    let differs = path.as_deref().is_some_and(|wt_path| {
-                        let candidate_bytes =
-                            std::fs::read(wt_path.join(".config").join("wt.toml")).ok();
-                        candidate_bytes != invoking_project_bytes
-                    });
+                    // The guard, not the baseline, suppresses the annotation
+                    // under the git-config source: with the baseline `None`, a
+                    // candidate that has a committed `.config/wt.toml` would
+                    // compare `Some(_) != None` and flag the exact case where
+                    // hooks are identical across branches.
+                    let differs = !git_source_active
+                        && path.as_deref().is_some_and(|wt_path| {
+                            let candidate_bytes =
+                                std::fs::read(wt_path.join(".config").join("wt.toml")).ok();
+                            candidate_bytes != invoking_project_bytes
+                        });
                     skipped_approval.push(SkippedApproval { path, differs });
                     continue;
                 }
