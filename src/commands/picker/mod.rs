@@ -2808,6 +2808,7 @@ pub mod tests {
             branch_name: Some("feature".to_string()),
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
+            integration_reason: None,
             force_worktree: false,
             removed_commit: None,
         };
@@ -2902,6 +2903,7 @@ pub mod tests {
             branch_name: None,
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
+            integration_reason: None,
             force_worktree: false,
             removed_commit: None,
         };
@@ -2992,6 +2994,7 @@ pub mod tests {
             branch_name: Some("feature".to_string()),
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
+            integration_reason: None,
             force_worktree: false,
             removed_commit: None,
         };
@@ -3679,6 +3682,7 @@ pub mod tests {
             branch_name: Some("feature".to_string()),
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
+            integration_reason: None,
             force_worktree: false,
             removed_commit: None,
         };
@@ -3694,6 +3698,7 @@ pub mod tests {
             branch_name: None,
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
+            integration_reason: None,
             force_worktree: false,
             removed_commit: None,
         };
@@ -4041,6 +4046,7 @@ pub mod tests {
             branch_name: Some(branch.to_string()),
             deletion_mode: mode,
             target_branch: Some("main".to_string()),
+            integration_reason: None,
             force_worktree: false,
             removed_commit: None,
         };
@@ -4138,6 +4144,7 @@ pub mod tests {
             branch_name: Some("x".to_string()),
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
+            integration_reason: None,
             force_worktree: false,
             removed_commit: None,
         };
@@ -4196,6 +4203,7 @@ pub mod tests {
             branch_name: Some("feature".to_string()),
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
+            integration_reason: None,
             force_worktree: false,
             removed_commit: None,
         };
@@ -4241,6 +4249,7 @@ pub mod tests {
             branch_name: Some("feature".to_string()),
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
+            integration_reason: None,
             force_worktree: false,
             removed_commit: None,
         };

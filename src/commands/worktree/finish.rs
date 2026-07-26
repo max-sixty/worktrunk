@@ -32,7 +32,9 @@ use crate::commands::command_executor::CommandContext;
 use crate::commands::context::CommandEnv;
 use crate::commands::hook_plan::{ApprovedHookPlan, register_planned};
 use crate::commands::hooks::HookAnnouncer;
-use crate::commands::repository_ext::{check_not_default_branch, is_primary_worktree};
+use crate::commands::repository_ext::{
+    check_not_default_branch, compute_integration_reason, is_primary_worktree,
+};
 use crate::commands::template_vars::TemplateVars;
 use crate::output::{
     BackgroundFallbackMode, handle_remove_output, post_hook_display_path, pre_hook_display_path,
@@ -132,13 +134,21 @@ pub fn finish_after_merge(
         // No config snapshot: `pre-remove` / `post-remove` were selected and
         // frozen into `plan` at the gate (anchored at `feature_path`), so the
         // executor needs no config — it runs only the frozen `plan`.
+        let (integration_reason, effective_target) = compute_integration_reason(
+            repo,
+            &repo.capture_refs()?,
+            Some(current_branch),
+            Some(target_branch),
+            BranchDeletionMode::SafeDelete,
+        );
         let remove_result = RemoveResult::RemovedWorktree {
             main_path: destination_path.clone(),
             worktree_path: worktree_root,
             changed_directory: true,
             branch_name: Some(current_branch.to_string()),
             deletion_mode: BranchDeletionMode::SafeDelete,
-            target_branch: Some(target_branch.to_string()),
+            target_branch: effective_target.or_else(|| Some(target_branch.to_string())),
+            integration_reason,
             force_worktree: false,
             removed_commit: feature_commit.clone(),
         };

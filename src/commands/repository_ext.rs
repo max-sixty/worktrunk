@@ -287,11 +287,23 @@ impl RepositoryCliExt for Repository {
             primary_path
         };
 
-        // Resolve target branch for integration reason display
+        // Resolve target branch and integration verdict for display and
+        // retention prediction. The actual branch deletion re-decides against
+        // fresh refs (`delete_branch_if_safe`'s CAS), so this is display-only.
         let default_branch = self.default_branch();
         let target_branch = match (&default_branch, &branch_name) {
             (Some(db), Some(bn)) if db == bn => None,
             _ => default_branch,
+        };
+        let (integration_reason, target_branch) = match compute_integration_reason(
+            self,
+            snapshot,
+            branch_name.as_deref(),
+            target_branch.as_deref(),
+            deletion_mode,
+        ) {
+            (reason, Some(effective_target)) => (reason, Some(effective_target)),
+            (reason, None) => (reason, target_branch),
         };
 
         // Capture commit SHA before removal for post-remove hook template variables.
@@ -312,6 +324,7 @@ impl RepositoryCliExt for Repository {
             branch_name,
             deletion_mode,
             target_branch,
+            integration_reason,
             force_worktree,
             removed_commit,
         })

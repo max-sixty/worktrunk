@@ -6,9 +6,10 @@
 //      parallel on the rayon pool. Dominated by the merge-tree/merge-base
 //      probes, whose results persist in `.git/wt/cache/` (sha_cache), so the
 //      first scan after new commits is cold and later scans are warm.
-//   2. The removals — each integrated candidate runs the full removal chain
-//      (pre-remove re-checks, fsmonitor stop, rename-to-trash, branch CAS
-//      delete) serially under the write side of the scan lock.
+//   2. The removals — each integrated candidate runs the removal chain
+//      (final clean check, fsmonitor stop, rename-to-trash, branch CAS
+//      delete) serially under the write side of the scan lock, reusing the
+//      removal plan its scan check computed.
 //
 // The fixture is `wt_perf::create_prune_repo_at`: squash-merged candidates
 // (integrated by content — the expensive probe path, the post-PR-squash shape

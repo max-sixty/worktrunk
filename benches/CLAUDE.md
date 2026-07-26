@@ -215,9 +215,9 @@ because its ~15 GiB fixture must never build on a hosted CI runner):
 
 | Variant | Expected | What it measures |
 |---------|----------|------------------|
-| `prune_e2e/dry_run_probe_cold` | ~160 ms | full parallel scan, probes re-run (`.git/wt/cache/` cleared; git's own caches stay warm — the "first prune after fetching main" shape) |
-| `prune_e2e/dry_run_warm` | ~90 ms | steady-state re-scan, probes hit sha_cache |
-| `prune_e2e/live` | ~620 ms | probe-cold scan + serial removal of the 8 candidates (~60 ms each, under the scan write lock) |
+| `prune_e2e/dry_run_probe_cold` | ~150 ms | full parallel scan, probes re-run (`.git/wt/cache/` cleared; git's own caches stay warm — the "first prune after fetching main" shape) |
+| `prune_e2e/dry_run_warm` | ~60 ms | steady-state re-scan, probes hit sha_cache |
+| `prune_e2e/live` | ~600 ms | probe-cold scan + serial removal of the 8 candidates (worktree candidates ~100 ms each — mostly the fsmonitor-daemon stop — branch-only ~25 ms, under the scan write lock, reusing scan-time plans) |
 | `prune_real_repo/dry_run_warm` | ~0.25–0.8 s | steady-state scan of 72 items (36 worktrees + 36 branches) at 331k-commit scale |
 | `prune_real_repo/dry_run_probe_cold` | ~0.6–1 s | the same 72-item scan with probes re-running at real cost (statuses stay stat-warm) |
 | `first_output/remove` | ~86 ms | single-target validation up to first output (`benches/time_to_first_output.rs`) |
@@ -232,10 +232,12 @@ alone; a live one consumes the candidates). Expected one-shots on the
   `git status` at ~4.5 s per fresh worktree; the probes are `merge-base
   --is-ancestor` ~40 ms and `merge-tree --write-tree` ~130 ms (vs 4–25 ms
   synthetic, where shallow history walks bottom out at subprocess-spawn cost)
-- **live ~12 s wall** — all 24 removals serialize under the scan write lock
-  inside the `prune-scan` window: each of the 12 worktree candidates takes
-  ~0.5–1.7 s (pre-remove re-checks plus drain waits), branch-only candidates
-  ~50 ms
+- **live ~12 s wall** (measured before the removal chain was trimmed to one
+  clean check + daemon stop + rename + CAS delete; re-measure on the next
+  fixture rebuild) — all 24 removals serialize under the scan write lock
+  inside the `prune-scan` window: each of the 12 worktree candidates took
+  ~0.5–1.7 s, dominated by re-validation statuses running after the fsmonitor
+  daemon stop, branch-only candidates ~50 ms
 
 This is the "prune takes many seconds" experience users report: worktree
 count × stat-cold statuses bounds the scan, and removals extend it serially.
