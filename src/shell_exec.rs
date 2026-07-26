@@ -673,18 +673,18 @@ pub fn shell_escape_for(mode: ShellEscapeMode, s: &str) -> String {
 use std::cell::Cell;
 
 thread_local! {
-    /// Thread-local command timeout. When set, all commands executed via `run()` on this
-    /// thread will be killed if they exceed this duration.
-    ///
-    /// This is used by `wt switch` interactive picker to make the TUI responsive faster on large repos.
-    /// The timeout is set per-worker-thread in Rayon's thread pool.
+    /// Per-thread ceiling for commands run via `run()`, set from
+    /// `[list] task-timeout-ms` on each Rayon collect worker so a pathologically
+    /// slow git can't hold up the first paint of `wt list` or the `wt switch`
+    /// picker. Unset by default. See [`set_command_timeout`].
     static COMMAND_TIMEOUT: Cell<Option<Duration>> = const { Cell::new(None) };
 }
 
 /// Set the command timeout for the current thread.
 ///
-/// When set, all commands executed via `run()` on this thread will be killed if they
-/// exceed the specified duration. Set to `None` to disable timeout.
+/// When set, every command executed via `run()` on this thread is killed if it
+/// exceeds the specified duration; a command carrying its own [`Cmd::timeout`]
+/// is bound by whichever of the two is tighter. `None` disables it.
 ///
 /// This is typically called at the start of a Rayon worker task to apply timeout
 /// to all git operations within that task.
@@ -1318,6 +1318,9 @@ impl Cmd {
 
     /// Set a timeout for command execution (only applies to `.run()`).
     ///
+    /// Under a thread-local timeout ([`set_command_timeout`]) the tighter of the
+    /// two bounds the command, so this cannot widen a caller's budget.
+    ///
     /// Note: Timeout is not supported by `.stream()` since streaming commands
     /// are interactive and should not be time-limited.
     ///
@@ -1526,8 +1529,13 @@ impl Cmd {
         let mut cmd = self.direct_command();
         self.apply_common_settings(&mut cmd);
 
-        // Determine effective timeout: explicit > thread-local > none
-        let effective_timeout = self.timeout.or_else(|| COMMAND_TIMEOUT.with(|t| t.get()));
+        // Both timeouts are ceilings rather than a precedence chain: one bounds
+        // this command, the other bounds every command on the thread, so a
+        // command carrying both is bound by the tighter of the two.
+        let effective_timeout = match (self.timeout, COMMAND_TIMEOUT.with(|t| t.get())) {
+            (Some(own), Some(per_thread)) => Some(own.min(per_thread)),
+            (own, per_thread) => own.or(per_thread),
+        };
 
         // Execute with or without stdin. Every branch produces a single
         // `Result<Output>` so spawn/write failures resolve the trace through
@@ -2614,6 +2622,31 @@ mod tests {
         set_command_timeout(None);
     }
 
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_timeout_cannot_widen_the_thread_local_budget() {
+        // `wt list` gives each collect task a budget via the thread-local, and a
+        // command inside one can carry a longer `.timeout()` of its own (the
+        // 10s bound on remote default-branch detection). The tighter budget has
+        // to win, or one command spends the whole task's allowance.
+        set_command_timeout(Some(Duration::from_millis(50)));
+
+        let start = std::time::Instant::now();
+        let result = Cmd::new("sleep")
+            .arg("10")
+            .timeout(Duration::from_secs(30))
+            .run();
+        let elapsed = start.elapsed();
+
+        set_command_timeout(None);
+
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "the explicit timeout widened the thread-local budget: {elapsed:?}"
+        );
+    }
+
     // ========================================================================
     // Cmd::stream() tests
     // ========================================================================
@@ -2691,10 +2724,13 @@ mod tests {
 
     #[test]
     fn test_cmd_run_file_current_dir_is_errored() {
-        let file = tempfile::NamedTempFile::new().unwrap();
+        // Any existing non-directory path will do, and the test binary is one,
+        // so this creates nothing in the system temp directory — a shared
+        // namespace where Windows can deny a fresh temp name outright ("Access
+        // is denied.") rather than report a collision tempfile would retry.
         let err = Cmd::new("sh")
             .args(["-c", "true"])
-            .current_dir(file.path())
+            .current_dir(std::env::current_exe().unwrap())
             .run()
             .unwrap_err();
         assert_eq!(err.kind(), ErrorKind::NotADirectory);
