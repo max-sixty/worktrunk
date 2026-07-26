@@ -190,8 +190,7 @@ json-schema = 2    # JSON output schema: 2 (envelope) or 1 (bare array, the curr
 
 columns = ["branch", "status", "ci", "path"]   # Columns to show, in order — built-ins or custom headers (omit for the default set)
 
-task-timeout-ms = 0   # Kill individual git commands after N ms; 0 disables
-timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disables
+timeout-ms = 0     # Wall-clock budget for the entire collect phase; 0 disables
 ```
 
 `columns` selects and orders the columns to render; omit it for the default set.

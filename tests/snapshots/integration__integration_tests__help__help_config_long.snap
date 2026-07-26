@@ -8,6 +8,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_ALLOW_PROTOCOL: file
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
@@ -218,8 +219,7 @@ Persistent flag values for [2mwt list[0m. Override on command line as needed.
 [107m [0m 
 [107m [0m [2mcolumns = [[0m[2m[32m"branch"[0m[2m, [0m[2m[32m"status"[0m[2m, [0m[2m[32m"ci"[0m[2m, [0m[2m[32m"path"[0m[2m]   [0m[2m# Columns to show, in order — built-ins or custom headers (omit for the default set)[0m
 [107m [0m 
-[107m [0m [2mtask-timeout-ms = [0m[2m[33m0[0m[2m   [0m[2m# Kill individual git commands after N ms; 0 disables[0m
-[107m [0m [2mtimeout-ms = [0m[2m[33m0[0m[2m        [0m[2m# Wall-clock budget for the entire collect phase; 0 disables[0m
+[107m [0m [2mtimeout-ms = [0m[2m[33m0[0m[2m     [0m[2m# Wall-clock budget for the entire collect phase; 0 disables[0m
 
 [2mcolumns[0m selects and orders the columns to render; omit it for the default set.
 It is meant to drive a per-invocation alias

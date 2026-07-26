@@ -70,6 +70,20 @@ mod imp {
     /// finishes.
     const WATCHDOG_ESCALATE_DELAY: Duration = Duration::from_secs(10);
 
+    /// Whether either spinner renders at all — the shared half of both `start`
+    /// gates, checked alongside the TTY (and, for [`Watchdog`], verbosity).
+    ///
+    /// A terminal *erases* an in-place redraw, so a frame never survives into
+    /// what the user is left with. A PTY test capturing the raw byte stream
+    /// keeps every frame instead, and whether any were drawn at all depends on
+    /// whether load pushed the operation past a startup delay above — with the
+    /// elapsed seconds baked into the bytes. So the test PTY environments set
+    /// `WORKTRUNK_TEST_SPINNERS=0` and capture only the output that persists.
+    /// Counters are unaffected: this gates the render, not the accounting.
+    fn spinners_enabled() -> bool {
+        !matches!(std::env::var("WORKTRUNK_TEST_SPINNERS").as_deref(), Ok("0"))
+    }
+
     /// Shared state between the spinner and its ticker thread. `rendered` flips
     /// true once the ticker has actually drawn a line, so `Drop` clears the line
     /// only when there's something to clear — a sub-startup-delay operation that
@@ -103,14 +117,15 @@ mod imp {
     }
 
     impl Progress {
-        /// Start a progress reporter, enabling the spinner iff stderr is a TTY.
+        /// Start a progress reporter, enabling the spinner iff stderr is a TTY
+        /// and `spinners_enabled`.
         ///
         /// `verb` is the present-participle label shown to the user (e.g.
         /// `"Copying"`, `"Removing"`). Spawns a background ticker thread when a
         /// TTY is detected. When stderr is not a TTY, returns a disabled
         /// reporter that still counts but renders nothing.
         pub fn start(verb: &'static str) -> Self {
-            Self::start_with(verb, std::io::stderr().is_terminal())
+            Self::start_with(verb, std::io::stderr().is_terminal() && spinners_enabled())
         }
 
         /// Dispatch helper that picks the enabled or disabled branch from an
@@ -326,11 +341,13 @@ mod imp {
         /// command runs past the escalation delay, so a slow or stuck command
         /// is debuggable.
         ///
-        /// Enabled only when stderr is a TTY and verbosity is 0 — under
-        /// `-v`/`-vv` the structured diagnostics take over, and a non-TTY (piped)
-        /// context renders nothing.
+        /// Enabled only when stderr is a TTY, verbosity is 0, and
+        /// `spinners_enabled` — under `-v`/`-vv` the structured diagnostics
+        /// take over, and a non-TTY (piped) context renders nothing.
         pub fn start(waiting_for: &str, command: Option<&str>) -> Self {
-            let enabled = std::io::stderr().is_terminal() && crate::styling::verbosity() == 0;
+            let enabled = std::io::stderr().is_terminal()
+                && crate::styling::verbosity() == 0
+                && spinners_enabled();
             Self::start_with(waiting_for, command, enabled)
         }
 
