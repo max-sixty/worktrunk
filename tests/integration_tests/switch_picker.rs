@@ -2566,14 +2566,16 @@ fn test_switch_picker_emits_cd_directive_by_default(mut repo: TestRepo) {
         repo.root_path(),
         &env_vars,
         &[
-            // Gate on the preview-pane text that's emitted only once skim's
-            // selection has moved to target-branch. Under heavy macOS load
-            // skim's matcher (and the row redraw it drives) can lag the typed
-            // query, but the preview pane tracks the selection cursor — and
-            // Enter acts on the cursor, not on which rows are painted. Gating
-            // on the preview text rides that lag instead of racing it
-            // (#2334/#2729/#2767).
-            ("target", Some("target-branch has no uncommitted changes")),
+            // Cursor-navigation select, gated on the list-pane `>` pointer: the
+            // picker sorts the current worktree first, so one Down lands on
+            // `target-branch`. Typing a query instead would tie the selection to
+            // skim's matcher, whose filtered item list is swapped in during a
+            // *render* while `Accept` reads the cursor's slot directly — so a
+            // query gate can only ever assert what was painted, not what Enter
+            // will act on. The pointer comes from the same render state as the
+            // accept (see `wait_for_cursor_on_row`), and an async row refresh
+            // that resets the cursor is absorbed by the re-issued arrow.
+            ("\x1b[B", Some("target-branch")),
             ("\r", None), // Enter to switch
         ],
     );
@@ -2624,9 +2626,9 @@ fn test_switch_picker_no_cd_switches_without_cd_directive(mut repo: TestRepo) {
         repo.root_path(),
         &env_vars,
         &[
-            // Preview-pane gate: see test_switch_picker_emits_cd_directive_by_default
-            // for the rationale (matcher-driven row redraw can lag the cursor).
-            ("target", Some("target-branch has no uncommitted changes")),
+            // Cursor-navigation select: see test_switch_picker_emits_cd_directive_by_default
+            // for why the `>` pointer is the gate rather than a typed query.
+            ("\x1b[B", Some("target-branch")),
             ("\r", None), // Enter to switch
         ],
     );
@@ -2687,8 +2689,8 @@ fn test_switch_picker_runs_execute_command(mut repo: TestRepo) {
         repo.root_path(),
         &env_vars,
         &[
-            // Preview-pane gate: see test_switch_picker_emits_cd_directive_by_default.
-            ("target", Some("target-branch has no uncommitted changes")),
+            // Cursor-navigation select: see test_switch_picker_emits_cd_directive_by_default.
+            ("\x1b[B", Some("target-branch")),
             ("\r", None), // Enter to switch
         ],
     );
@@ -2741,7 +2743,8 @@ fn test_switch_picker_execute_base_resolves_to_source(mut repo: TestRepo) {
         repo.root_path(),
         &env_vars,
         &[
-            ("target", Some("target-branch has no uncommitted changes")),
+            // Cursor-navigation select: see test_switch_picker_emits_cd_directive_by_default.
+            ("\x1b[B", Some("target-branch")),
             ("\r", None), // Enter to switch
         ],
     );
@@ -2794,8 +2797,8 @@ fn test_switch_picker_pre_switch_hook_requires_approval(mut repo: TestRepo) {
         repo.root_path(),
         &env_vars,
         &[
-            // Preview-pane gate: see test_switch_picker_emits_cd_directive_by_default.
-            ("target", Some("target-branch has no uncommitted changes")),
+            // Cursor-navigation select: see test_switch_picker_emits_cd_directive_by_default.
+            ("\x1b[B", Some("target-branch")),
             ("\r", Some("needs approval")), // Enter; wait for the approval prompt
             // Decline. The line terminator is CR, not LF: once skim releases the
             // terminal, the approval prompt's `read_line` runs in the OS line
