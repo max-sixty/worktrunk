@@ -105,39 +105,44 @@ struct FixtureWorktrees {
 /// The template is built by real git once per target directory, then copied
 /// per test ([`copy_standard_fixture`]): building per test would cost
 /// ~300 ms under nextest's process-per-test model, copying costs ~20 ms.
-/// Concurrent first-time builders (parallel nextest processes on a fresh
-/// target) race benignly: each builds into a private sibling directory and
-/// renames it into place; the first rename wins and losers discard their
-/// build. `cargo clean` removes the template with everything else.
+/// `cargo clean` removes the template with everything else.
 fn standard_fixture_template() -> PathBuf {
     let mut base = std::env::current_exe().expect("failed to get test executable path");
     base.pop(); // test binary name
     base.pop(); // deps/
     let fixtures = base.join("wt-test-fixtures");
     let dir = fixtures.join(format!("standard-v{STANDARD_FIXTURE_VERSION}"));
-    if dir.exists() {
-        return dir;
-    }
-
-    let build = fixtures.join(format!(
-        ".build-standard-v{STANDARD_FIXTURE_VERSION}-{}",
-        std::process::id()
-    ));
-    if build.exists() {
-        std::fs::remove_dir_all(&build).unwrap();
-    }
-    std::fs::create_dir_all(&build).unwrap();
-    build_standard_fixture(&build);
-
-    match std::fs::rename(&build, &dir) {
-        Ok(()) => {}
-        Err(_) if dir.exists() => {
-            // Another process won the race; use its template.
-            std::fs::remove_dir_all(&build).ok();
-        }
-        Err(e) => panic!("failed to move standard fixture template into place: {e}"),
+    if !dir.exists() {
+        claim_template(&fixtures, &dir, build_standard_fixture);
     }
     dir
+}
+
+/// Build into a private scratch directory under `parent`, then rename it to
+/// `dir` — the atomic claim that makes concurrent cold-cache builders race
+/// benignly. `TempDir::new_in` names the scratch uniquely per call, so
+/// builders can't collide on it whether they're separate nextest processes
+/// or threads of one `cargo test` process; the first rename into place wins
+/// and losers discard their build.
+fn claim_template(parent: &Path, dir: &Path, build: impl FnOnce(&Path)) {
+    std::fs::create_dir_all(parent).unwrap();
+    let scratch = TempDir::new_in(parent).expect("create template build dir");
+    build(scratch.path());
+
+    // Disarm auto-cleanup: from here the scratch either becomes `dir` or is
+    // removed explicitly on losing the race.
+    let scratch = scratch.keep();
+    match std::fs::rename(&scratch, dir) {
+        Ok(()) => {}
+        Err(_) if dir.exists() => {
+            // Another builder won the race; use its template.
+            std::fs::remove_dir_all(&scratch).ok();
+        }
+        Err(e) => panic!(
+            "failed to move template into place at {}: {e}",
+            dir.display()
+        ),
+    }
 }
 
 /// Build the standard fixture at `root`: `repo/` on `main` with one commit,
@@ -3293,6 +3298,49 @@ mod tests {
         assert!(
             !stderr.contains("127.0.0.1"),
             "git walked to the wire instead of refusing the transport: {stderr}"
+        );
+    }
+
+    /// Both outcomes of the template claim: an uncontested build renames the
+    /// scratch into place, and a builder that loses the race — the final dir
+    /// appears while it builds, the exact timing two cold-cache builders
+    /// produce — keeps the winner's template and removes its own scratch.
+    #[test]
+    fn test_claim_template_winner_and_loser() {
+        let parent = TempDir::new().unwrap();
+        let dir = parent.path().join("template-v1");
+
+        claim_template(parent.path(), &dir, |scratch| {
+            std::fs::write(scratch.join("marker"), "winner").unwrap();
+        });
+        assert_eq!(
+            std::fs::read_to_string(dir.join("marker")).unwrap(),
+            "winner"
+        );
+
+        // Losing builder: `dir` exists by the time it renames.
+        let dir2 = parent.path().join("template-v2");
+        claim_template(parent.path(), &dir2, |scratch| {
+            std::fs::create_dir(&dir2).unwrap();
+            std::fs::write(dir2.join("marker"), "winner").unwrap();
+            std::fs::write(scratch.join("marker"), "loser").unwrap();
+        });
+        assert_eq!(
+            std::fs::read_to_string(dir2.join("marker")).unwrap(),
+            "winner"
+        );
+
+        // Only the two templates remain — both scratch dirs are gone.
+        let entries: Vec<_> = std::fs::read_dir(parent.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        let mut sorted = entries.clone();
+        sorted.sort();
+        assert_eq!(
+            sorted,
+            ["template-v1", "template-v2"],
+            "scratch dirs must not linger"
         );
     }
 
