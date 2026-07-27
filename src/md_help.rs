@@ -485,7 +485,8 @@ fn colorize_status_symbols(text: &str) -> String {
     result = replace_dim(result, "↻", warning);
     result = replace_dim(result, "✗", warning);
 
-    // Worktree state: Prunable/Locked (yellow), BranchWorktreeMismatch (dim yellow)
+    // Worktree state: Prunable/Locked (yellow), the irregular-mapping flag
+    // (dim yellow)
     result = replace_dim(result, "⊟", warning);
     result = replace_dim(result, "⊞", warning);
     result = replace_dim(result, "⚑", warning.dimmed());

@@ -8,6 +8,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_ALLOW_PROTOCOL: file
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
@@ -24,6 +25,7 @@ info:
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -38,7 +40,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
 
 [1m[32mArguments:[0m
   [36m[BRANCH][0m
-          Branch name, shortcut, or PR/MR URL[0m
+          Branch, worktree path, shortcut, or PR/MR URL[0m
           
           Opens interactive picker if omitted. Shortcuts: [1m^[0m (default branch), [1m-[0m (previous), [1m@[0m (current), [1mpr:{N}[0m (GitHub PR), [1mmr:{N}[0m (GitLab MR)[0m
 
@@ -152,6 +154,10 @@ If the branch already has a worktree, [2mwt switch[0m changes directories to i
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m feature               # New branch and worktree[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m fix [0m[2m[36m--base[0m[2m release    # New branch from release[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m temp [0m[2m[36m--no-hooks[0m[2m       # Skip hooks[0m
+
+[1m[32mNaming a worktree[0m
+
+Worktrees are addressed by branch name, and every argument that takes one also accepts the path of the worktree itself — resolved after the branch, so a directory never shadows a branch sharing its name. A path names what a branch cannot: a detached worktree, or one of two checkouts of the same branch. Relative paths resolve against [2m-C[0m and a leading [2m~[0m against the home directory, so a path worktrunk printed can be pasted back.
 
 [1m[32mShortcuts[0m
 

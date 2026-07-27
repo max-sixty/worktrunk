@@ -128,6 +128,17 @@ call `.current_dir(...)` explicitly.
 | `wt_command()` | `Command` | Running wt without a TestRepo (free function) |
 | `repo.git_command()` | `Cmd` | Running git commands (use `.run()` not `.output()`) |
 
+### Where a new environment variable goes
+
+A test child's environment is three layers, each with one home in
+`src/testing/mod.rs`: `STATIC_TEST_ENV_VARS` for a determinism knob every child
+needs, `PTY_TEST_ENV_VARS` for one only a terminal triggers, and `pty_env_vars`
+for a path that varies per fixture. `configure_cli_command` and
+`configure_pty_command` apply them by transport, so a variable added to the
+right layer reaches every test that spawns `wt`. A per-builder copy reaches only
+the tests that happen to use that builder, and the ones it misses fail later,
+somewhere else.
+
 ## Config Isolation for In-Process Unit Tests
 
 `repo.wt_command()` / `wt_command()` isolate *subprocess* tests (above). An
@@ -277,12 +288,21 @@ Two traps:
 - **Give each half its own wait.** Sleeping once and then asserting both "X happened" and "Y didn't" makes the presence half flaky. Poll for X, then hold the window for Y.
 - **Structural absence needs no window at all.** When the event is gated on a condition the test never sets up, it can't fire regardless of timing. Drop the sleep: poll the positive precondition and the absence holds by construction. A watchdog whose escalation is gated on `command.is_some()` can't escalate with no command, so the test polls for the first render and asserts `!escalated` with no window.
 
+### Time-thresholded output: suppress it at the source
+
+Output that appears only once an operation runs past a threshold is a function of machine load, not of behavior: the `Progress` and `Watchdog` spinners (`src/progress.rs`), `Cmd::delayed_stream`'s progress line, the picker's placeholder reveal. A PTY test captures the raw byte stream, so it keeps every in-place redraw frame a terminal would have erased, elapsed-second counter and all — frames that show up when the whole suite runs together and not when the test runs alone.
+
+Each threshold has an env override pinning it, so the output is present or absent by construction rather than by timing. A new one goes in the baseline that matches its scope — `PTY_TEST_ENV_VARS` when only a terminal triggers it (`WORKTRUNK_TEST_SPINNERS=0`), `STATIC_TEST_ENV_VARS` when a pipe does too (`WORKTRUNK_TEST_DELAYED_STREAM_MS=-1`) — and reaches every PTY child from there, rather than being added per builder. Filtering the frames out of the capture afterwards is the weaker fix: the filter has to model cursor movement, and a block that redraws with a cursor-up spans lines a line-scoped filter can't follow.
+
 ## No Retries
 
 Tests run once. Worktrunk configures no nextest `retries` and writes no retry loops: a test that passes only on a second attempt is a bug report, and retrying it discards the report while leaving the bug. A green suite has to mean the code is green, not that the run's flakes stayed under a retry budget. Fix the flake at its root:
 
 - A racy assertion is a timing bug. Make it deterministic, per Timing Tests above: poll for the event, or drive it causally through a callback.
 - Resource pressure is a concurrency bug. Windows process creation intermittently fails with STATUS_DLL_INIT_FAILED (exit `-1073741502`) when many tests spawn git/wt children at once. Bound how many heavy tests run together; that removes the pressure instead of retrying past it.
+- A shared namespace is a collision bug. **Never `NamedTempFile::new()`** for a file a test needs by name: `tempfile` retries a name collision only when it surfaces as `AlreadyExists`, and on Windows `create_new` against a name already held by a *directory* — or by a file in delete-pending state — comes back `PermissionDenied`, which it hands straight back to the caller. A full suite run leaves the temp directory full of `.tmpXXXXXX` entries (every `TestRepo` makes one), and under that load the call fails ~1% of the time with `Access is denied.` — a panic that has nothing to do with what the test asserts. Take a `TempDir` and give the files fixed names inside it (`worktrunk::testing::directive_files` is the pattern); a directory collision surfaces as `AlreadyExists`, which tempfile retries.
+
+**Reproducing a Windows-only flake** means reproducing its *neighbours*, not starving it: run the suspect tests in a loop on a Windows runner with a full `cargo nextest run` going alongside. Pinning the CPU instead models the wrong thing whenever the failing run's own timing was normal (compare its duration against the same test passing — nextest prints it, and the `test` job uploads `junit.xml` with every test's time). Measured both ways on the same five tests: 80 iterations under a concurrent full suite reproduced a 1-in-100 Windows failure that no local run had ever shown, while pinning all four cores with busy loops instead just pushed nearly every iteration past the 30s waits — artificial failures that say nothing about the flake.
 
 ## Testing with --execute Commands
 
@@ -422,17 +442,13 @@ The PTY approach is specifically for **user-facing output documentation**. It's 
 
 ## Coverage in PTY Tests
 
-PTY tests use `cmd.env_clear()` for isolation. To enable coverage, pass through LLVM env vars:
+`configure_pty_command` clears the child's environment, so an instrumented
+binary would lose the LLVM vars that tell it where to write coverage data. It
+passes them back through, which is one more reason every PTY test starts there:
 
 ```rust
-// Standard setup (most PTY tests)
 crate::common::configure_pty_command(&mut cmd);
-
-// Custom env setup (shell tests needing USER, SHELL, ZDOTDIR)
-cmd.env_clear();
-cmd.env("HOME", ...);
-// ... custom env ...
-crate::common::pass_coverage_env_to_pty_cmd(&mut cmd);
+// ... test-specific env (USER, SHELL, ZDOTDIR, the fixture's paths) ...
 ```
 
 ## No Global State Mutations in Tests

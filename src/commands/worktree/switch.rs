@@ -22,7 +22,7 @@ use worktrunk::git::remote_ref::{
 };
 use worktrunk::git::{
     GitError, GitRemoteUrl, RefContext, RefType, Repository, SwitchSuggestionCtx,
-    current_or_recover, resolve_input_path,
+    current_or_recover,
 };
 use worktrunk::shell_exec::{ShellEscapeMode, directive_shell_escape_mode, shell_escape_for};
 use worktrunk::styling::{
@@ -507,6 +507,13 @@ fn resolve_base_ref(
         if remotes.len() == 1 {
             return Ok((format!("{}/{}", remotes[0], resolved), None));
         }
+        // Neither a ref nor a branch on a remote: the base may be named by the
+        // path of the worktree it is checked out in, as targets elsewhere are.
+        if resolved == base
+            && let Some((_, Some(branch))) = repo.worktree_at_input_path(base)?
+        {
+            return Ok((branch, None));
+        }
     }
 
     Ok((resolved, None))
@@ -851,26 +858,21 @@ fn plan_switch(
         None => {}
     }
 
-    // Phase 2b: Path-based fallback for detached worktrees.
-    // If the argument looks like a path (not a branch name), try to find a worktree there.
-    if !create {
-        let candidate = Path::new(branch);
-        // Absolute, or relative with directory separators (e.g. "../repo.feature");
-        // a single-component name is ambiguous with a branch name (already tried in
-        // Phase 2), so it stays branch-only. A relative path resolves against `-C`,
-        // like git's own path arguments — see `resolve_input_path`.
-        let looks_like_path = candidate.is_absolute() || candidate.components().count() > 1;
-        let abs_path = looks_like_path.then(|| resolve_input_path(candidate));
-        if let Some(abs_path) = abs_path
-            && let Some((path, wt_branch)) = repo.worktree_at_path(&abs_path)?
-        {
-            let canonical = canonicalize(&path).unwrap_or_else(|_| path.clone());
-            return Ok(SwitchPlan::Existing {
-                path: canonical,
-                branch: wt_branch,
-                new_previous,
-            });
-        }
+    // Phase 2b: the argument as the worktree's own path — the way to name a
+    // detached worktree, which has no branch. Not under `--create`, where the
+    // argument is the name of a branch that does not exist yet, and not when
+    // Phase 1 rewrote the argument (a shortcut, `pr:`/`mr:`, a stripped remote
+    // prefix), which is exactly when the literal token would be a nonsense path.
+    if !create
+        && target.branch == branch
+        && let Some((path, wt_branch)) = repo.worktree_at_input_path(branch)?
+    {
+        let canonical = canonicalize(&path).unwrap_or_else(|_| path.clone());
+        return Ok(SwitchPlan::Existing {
+            path: canonical,
+            branch: wt_branch,
+            new_previous,
+        });
     }
 
     // Phase 3: Compute expected path (only needed for create)

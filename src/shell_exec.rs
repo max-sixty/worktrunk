@@ -666,32 +666,6 @@ pub fn shell_escape_for(mode: ShellEscapeMode, s: &str) -> String {
     }
 }
 
-// ============================================================================
-// Thread-Local Command Timeout
-// ============================================================================
-
-use std::cell::Cell;
-
-thread_local! {
-    /// Thread-local command timeout. When set, all commands executed via `run()` on this
-    /// thread will be killed if they exceed this duration.
-    ///
-    /// This is used by `wt switch` interactive picker to make the TUI responsive faster on large repos.
-    /// The timeout is set per-worker-thread in Rayon's thread pool.
-    static COMMAND_TIMEOUT: Cell<Option<Duration>> = const { Cell::new(None) };
-}
-
-/// Set the command timeout for the current thread.
-///
-/// When set, all commands executed via `run()` on this thread will be killed if they
-/// exceed the specified duration. Set to `None` to disable timeout.
-///
-/// This is typically called at the start of a Rayon worker task to apply timeout
-/// to all git operations within that task.
-pub fn set_command_timeout(timeout: Option<Duration>) {
-    COMMAND_TIMEOUT.with(|t| t.set(timeout));
-}
-
 /// Maximum lines of the bounded subprocess preview per stream. Exceeded
 /// content is elided with a `… (N more lines, M bytes elided)` marker; the
 /// full output is still written to `subprocess.log` via
@@ -1526,9 +1500,6 @@ impl Cmd {
         let mut cmd = self.direct_command();
         self.apply_common_settings(&mut cmd);
 
-        // Determine effective timeout: explicit > thread-local > none
-        let effective_timeout = self.timeout.or_else(|| COMMAND_TIMEOUT.with(|t| t.get()));
-
         // Execute with or without stdin. Every branch produces a single
         // `Result<Output>` so spawn/write failures resolve the trace through
         // `record_captured` rather than `?`-ing past it (which would leave the
@@ -1558,7 +1529,7 @@ impl Cmd {
                 }
                 Err(e) => Err(e),
             }
-        } else if let Some(timeout_duration) = effective_timeout {
+        } else if let Some(timeout_duration) = self.timeout {
             // Timeout handling uses the existing impl
             run_with_timeout_impl(&mut cmd, timeout_duration)
         } else {
@@ -2569,51 +2540,6 @@ mod tests {
         assert!(String::from_utf8_lossy(&output.stdout).contains("hello from stdin"));
     }
 
-    #[test]
-    fn test_thread_local_timeout_setting() {
-        // Initially no timeout (or whatever was set by previous test)
-        let initial = COMMAND_TIMEOUT.with(|t| t.get());
-
-        // Set a timeout
-        set_command_timeout(Some(Duration::from_millis(100)));
-        let after_set = COMMAND_TIMEOUT.with(|t| t.get());
-        assert_eq!(after_set, Some(Duration::from_millis(100)));
-
-        // Clear the timeout
-        set_command_timeout(initial);
-        let after_clear = COMMAND_TIMEOUT.with(|t| t.get());
-        assert_eq!(after_clear, initial);
-    }
-
-    #[test]
-    fn test_cmd_uses_thread_local_timeout() {
-        // Set no timeout (ensure fast completion)
-        set_command_timeout(None);
-
-        let result = Cmd::new("echo").arg("thread local test").run();
-        assert!(result.is_ok());
-
-        // Clean up
-        set_command_timeout(None);
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn test_cmd_thread_local_timeout_kills_slow_command() {
-        // Set a short thread-local timeout
-        set_command_timeout(Some(Duration::from_millis(50)));
-
-        // Command that would take too long
-        let result = Cmd::new("sleep").arg("10").run();
-
-        // Should be killed by the thread-local timeout
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
-
-        // Clean up
-        set_command_timeout(None);
-    }
-
     // ========================================================================
     // Cmd::stream() tests
     // ========================================================================
@@ -2691,10 +2617,13 @@ mod tests {
 
     #[test]
     fn test_cmd_run_file_current_dir_is_errored() {
-        let file = tempfile::NamedTempFile::new().unwrap();
+        // Any existing non-directory path will do, and the test binary is one,
+        // so this creates nothing in the system temp directory — a shared
+        // namespace where Windows can deny a fresh temp name outright ("Access
+        // is denied.") rather than report a collision tempfile would retry.
         let err = Cmd::new("sh")
             .args(["-c", "true"])
-            .current_dir(file.path())
+            .current_dir(std::env::current_exe().unwrap())
             .run()
             .unwrap_err();
         assert_eq!(err.kind(), ErrorKind::NotADirectory);

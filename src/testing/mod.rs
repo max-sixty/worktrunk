@@ -271,19 +271,22 @@ pub fn allow_network_transports(cmd: &mut Command) {
     cmd.env_remove("GIT_ALLOW_PROTOCOL");
 }
 
-/// Static environment variables shared by all test isolation helpers.
+/// Determinism knobs every isolated wt subprocess needs, whatever it's
+/// attached to.
 ///
-/// These are used by both `configure_cli_command()` (for Command-based tests)
-/// and `TestRepo::test_env_vars()` (for PTY tests). Adding a variable here
-/// ensures consistency across both test infrastructure paths.
+/// A test child's environment is three layers, each with one home: this
+/// baseline, the fixture's paths ([`pty_env_vars`]), and whatever the child's
+/// transport needs — [`configure_cli_command`] for a piped child,
+/// [`PTY_TEST_ENV_VARS`] for one on a terminal. A knob both transports need
+/// belongs here, so adding it once reaches every path.
 ///
-/// NOTE: Path-dependent variables (HOME, WORKTRUNK_CONFIG_PATH, GIT_CONFIG_*)
-/// are NOT included here because they depend on the TestRepo instance.
+/// `TERM` is transport-level rather than baseline, which is why it's absent
+/// here: a piped child gets `TERM=alacritty` so hyperlink detection has
+/// something to key on, while a PTY child needs a `TERM` with real terminfo —
+/// macOS CI carries no alacritty entry, and skim fails without one.
 pub const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
     ("CLICOLOR_FORCE", "1"),
-    // Deny network git transports (see GIT_ALLOWED_PROTOCOLS). Host-independent,
-    // so it belongs here rather than in each builder's path-dependent block —
-    // which is what reaches the hand-rolled PTY env builders too.
+    // Deny network git transports (see GIT_ALLOWED_PROTOCOLS)
     ("GIT_ALLOW_PROTOCOL", GIT_ALLOWED_PROTOCOLS),
     // Terminal width for PTY tests. configure_cli_command() overrides to 500 for longer paths.
     ("COLUMNS", "150"),
@@ -318,10 +321,83 @@ pub const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
     ("WORKTRUNK_TEST_POWERSHELL_ENV", "0"),
 ];
 
-// NOTE: TERM is intentionally NOT in STATIC_TEST_ENV_VARS because:
-// - configure_cli_command() sets TERM=alacritty for hyperlink detection testing
-// - PTY tests (especially skim-based picker tests) need a TERM with valid terminfo
-// - macOS CI doesn't have alacritty terminfo, causing skim to fail
+/// Determinism knobs for a child whose stderr is a terminal, layered over
+/// [`STATIC_TEST_ENV_VARS`].
+///
+/// Output that appears only once an operation runs past a threshold is a
+/// function of machine load rather than of behavior, and a PTY test captures
+/// the raw byte stream — so it keeps every in-place redraw frame a terminal
+/// would have erased, elapsed-second counter and all. These pin such output to
+/// one state, off, so a snapshot records what the command did rather than how
+/// fast the machine was. A piped child needs none of them: the TTY half of
+/// each gate is already false there, which is why they'd only add noise to the
+/// `env:` block every `assert_cmd_snapshot!` records.
+pub const PTY_TEST_ENV_VARS: &[(&str, &str)] = &[
+    // The `Progress` and `Watchdog` spinners (src/progress.rs). Gates the
+    // render, not the counters.
+    ("WORKTRUNK_TEST_SPINNERS", "0"),
+];
+
+/// The paths an isolated wt subprocess is pointed at — everything in its
+/// environment that varies per fixture. See [`pty_env_vars`].
+pub struct TestEnvPaths<'a> {
+    /// `GIT_CONFIG_GLOBAL`.
+    pub git_config: &'a Path,
+    /// `HOME`, with `XDG_CONFIG_HOME` beneath it.
+    pub home: &'a Path,
+    /// `WORKTRUNK_CONFIG_PATH`.
+    pub wt_config: &'a Path,
+    /// `WORKTRUNK_APPROVALS_PATH`.
+    pub approvals: &'a Path,
+}
+
+/// Every environment variable a PTY-spawned wt subprocess needs: the
+/// [`STATIC_TEST_ENV_VARS`] and [`PTY_TEST_ENV_VARS`] baselines, plus `paths`.
+///
+/// A PTY child is spawned through `portable_pty::CommandBuilder`, which takes
+/// variables one at a time rather than a configured [`Command`] — so its
+/// environment has to exist as a value, which is what separates this from
+/// [`configure_cli_command`]. Every fixture that spawns one builds it here, so
+/// a new variable reaches all of them.
+pub fn pty_env_vars(paths: TestEnvPaths<'_>) -> Vec<(String, String)> {
+    let mut vars: Vec<(String, String)> = STATIC_TEST_ENV_VARS
+        .iter()
+        .chain(PTY_TEST_ENV_VARS)
+        .map(|&(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+
+    vars.extend(
+        [
+            ("GIT_CONFIG_GLOBAL", paths.git_config.display().to_string()),
+            ("GIT_CONFIG_SYSTEM", NULL_DEVICE.to_string()),
+            ("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z".to_string()),
+            ("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z".to_string()),
+            // Prevent git from prompting for credentials when running under a TTY
+            ("GIT_TERMINAL_PROMPT", "0".to_string()),
+            ("HOME", paths.home.display().to_string()),
+            (
+                "XDG_CONFIG_HOME",
+                paths.home.join(".config").display().to_string(),
+            ),
+            ("WORKTRUNK_TEST_EPOCH", TEST_EPOCH.to_string()),
+            (
+                "WORKTRUNK_CONFIG_PATH",
+                paths.wt_config.display().to_string(),
+            ),
+            (
+                "WORKTRUNK_SYSTEM_CONFIG_PATH",
+                DEFAULT_ISOLATED_SYSTEM_CONFIG.to_string(),
+            ),
+            (
+                "WORKTRUNK_APPROVALS_PATH",
+                paths.approvals.display().to_string(),
+            ),
+        ]
+        .map(|(key, value)| (key.to_string(), value)),
+    );
+
+    vars
+}
 
 /// Null device path, platform-appropriate.
 /// Use this for GIT_CONFIG_SYSTEM to disable system config in tests.
@@ -715,24 +791,45 @@ pub trait TestRepoBase {
     }
 }
 
-/// Create a pair of temporary files for directive output (cd + exec).
+/// Create a pair of temporary files for directive output (cd + exec), in a
+/// directory of their own.
 ///
 /// The shell wrapper creates temp files and sets `WORKTRUNK_DIRECTIVE_CD_FILE`
 /// and `WORKTRUNK_DIRECTIVE_EXEC_FILE` before running wt. Use
 /// `configure_directive_files()` to set these on a Command for testing.
 ///
-/// Returns `(cd_path, exec_path, guards)`. The guards must be kept alive for
-/// the duration of the test — when dropped the temp files are cleaned up.
-pub fn directive_files() -> (PathBuf, PathBuf, (tempfile::TempPath, tempfile::TempPath)) {
-    let cd = tempfile::NamedTempFile::new().expect("failed to create cd temp file");
-    let exec = tempfile::NamedTempFile::new().expect("failed to create exec temp file");
-    let cd_path = cd.path().to_path_buf();
-    let exec_path = exec.path().to_path_buf();
-    (
-        cd_path,
-        exec_path,
-        (cd.into_temp_path(), exec.into_temp_path()),
-    )
+/// Returns `(cd_path, exec_path, guard)`. The guard must be kept alive for the
+/// duration of the test — dropping it removes the directory and both files.
+pub fn directive_files() -> (PathBuf, PathBuf, TempDir) {
+    let dir = directive_temp_dir();
+    let cd_path = create_empty(dir.path().join("cd"));
+    let exec_path = create_empty(dir.path().join("exec"));
+    (cd_path, exec_path, dir)
+}
+
+/// A private directory for a test's directive files.
+///
+/// Why not `NamedTempFile::new()` (which is what these helpers used to call):
+/// `tempfile` retries a name collision only when it surfaces as
+/// `AlreadyExists`, and on Windows `create_new` against a name already held by
+/// a *directory* — or by a file in delete-pending state — returns
+/// `PermissionDenied` instead, which it hands straight back. A full
+/// suite run leaves the shared temp directory full of `.tmpXXXXXX` entries
+/// (every `TestRepo` creates one), and under that load the call failed ~1% of
+/// the time on Windows CI: `failed to create cd temp file: … Os { code: 5 …
+/// "Access is denied." }`. `TempDir::new` isn't exposed to it — a directory
+/// collision surfaces as `AlreadyExists`, which `tempfile` retries — and the
+/// files inside carry fixed names, which nothing else can collide with.
+fn directive_temp_dir() -> TempDir {
+    TempDir::new().expect("failed to create directive temp dir")
+}
+
+/// Create `path` as an empty file, as the shell wrapper's `mktemp` would, and
+/// return it. wt appends to the exec file rather than creating it, so it has to
+/// exist before wt runs.
+fn create_empty(path: PathBuf) -> PathBuf {
+    std::fs::File::create(&path).expect("failed to create a directive file in its own temp dir");
+    path
 }
 
 /// Configure a Command to use the new split directive-file protocol.
@@ -752,14 +849,15 @@ pub fn configure_directive_cd_only(cmd: &mut Command, cd_path: &Path) {
     cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", cd_path);
 }
 
-/// Create a temporary file for legacy single-file directive output.
+/// Create a temporary file for legacy single-file directive output, in a
+/// directory of its own (see `directive_temp_dir` for why).
 ///
 /// Used to test the legacy fallback path where an old shell wrapper sets
 /// `WORKTRUNK_DIRECTIVE_FILE`. Returns `(path, guard)`.
-pub fn legacy_directive_file() -> (PathBuf, tempfile::TempPath) {
-    let file = tempfile::NamedTempFile::new().expect("failed to create temp file");
-    let path = file.path().to_path_buf();
-    (path, file.into_temp_path())
+pub fn legacy_directive_file() -> (PathBuf, TempDir) {
+    let dir = directive_temp_dir();
+    let path = create_empty(dir.path().join("directive"));
+    (path, dir)
 }
 
 /// Configure a Command to use the legacy single-file directive protocol.
@@ -1064,62 +1162,19 @@ impl TestRepo {
         configure_git_cmd(cmd, &self.git_config_path);
     }
 
-    /// Get standard test environment variables as a vector.
+    /// This repo's environment for a PTY-spawned wt subprocess.
     ///
-    /// This is useful for PTY tests and other cases where you need environment variables
-    /// as a vector rather than setting them on a Command.
-    ///
-    /// ## Related: `configure_cli_command()`
-    ///
-    /// Command-based tests use `configure_cli_command()`. Both functions share common
-    /// variables via `STATIC_TEST_ENV_VARS`. See that function's docs for differences.
+    /// Thin wrapper over [`pty_env_vars`], which documents the layering and is
+    /// where a new variable goes. Command-based tests use
+    /// [`configure_cli_command`] instead.
     #[cfg_attr(windows, allow(dead_code))] // Used only by unix PTY tests
     pub fn test_env_vars(&self) -> Vec<(String, String)> {
-        // Start with shared static env vars
-        let mut vars: Vec<(String, String)> = STATIC_TEST_ENV_VARS
-            .iter()
-            .map(|&(k, v)| (k.to_string(), v.to_string()))
-            .collect();
-
-        // Add path-dependent variables specific to this TestRepo
-        vars.extend([
-            (
-                "GIT_CONFIG_GLOBAL".to_string(),
-                self.git_config_path.display().to_string(),
-            ),
-            ("GIT_CONFIG_SYSTEM".to_string(), NULL_DEVICE.to_string()),
-            (
-                "GIT_AUTHOR_DATE".to_string(),
-                "2025-01-01T00:00:00Z".to_string(),
-            ),
-            (
-                "GIT_COMMITTER_DATE".to_string(),
-                "2025-01-01T00:00:00Z".to_string(),
-            ),
-            // Prevent git from prompting for credentials when running under a TTY
-            ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
-            // Use test-specific home directory for isolation
-            ("HOME".to_string(), self.home_path().display().to_string()),
-            (
-                "XDG_CONFIG_HOME".to_string(),
-                self.home_path().join(".config").display().to_string(),
-            ),
-            ("WORKTRUNK_TEST_EPOCH".to_string(), TEST_EPOCH.to_string()),
-            (
-                "WORKTRUNK_CONFIG_PATH".to_string(),
-                self.test_config_path().display().to_string(),
-            ),
-            (
-                "WORKTRUNK_SYSTEM_CONFIG_PATH".to_string(),
-                "/etc/xdg/worktrunk/config.toml".to_string(),
-            ),
-            (
-                "WORKTRUNK_APPROVALS_PATH".to_string(),
-                self.test_approvals_path().display().to_string(),
-            ),
-        ]);
-
-        vars
+        pty_env_vars(TestEnvPaths {
+            git_config: &self.git_config_path,
+            home: self.home_path(),
+            wt_config: self.test_config_path(),
+            approvals: self.test_approvals_path(),
+        })
     }
 
     /// Configure shell integration for test environment.

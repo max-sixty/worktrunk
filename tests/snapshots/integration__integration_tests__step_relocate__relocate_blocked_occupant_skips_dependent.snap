@@ -1,18 +1,17 @@
 ---
-source: tests/integration_tests/merge.rs
+source: tests/integration_tests/step_relocate.rs
 info:
   program: wt
   args:
     - step
-    - commit
-    - "--branch"
-    - nonexistent
+    - relocate
+    - alpha
+    - beta
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
-    GIT_ALLOW_PROTOCOL: file
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
@@ -46,10 +45,13 @@ info:
     WORKTRUNK_TEST_ZSH_INSTALLED: "0"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: false
-exit_code: 1
+success: true
+exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mNo branch or worktree named [1mnonexistent[22m[39m
-[2m↳[22m [2mTo see branches and worktree paths, run [4mwt list --branches[24m[22m
+[33m▲[39m [33mSkipping [1mbeta[22m (target blocked: _REPO_.beta)[39m
+[2m↳[22m [2mTo backup blocking paths, use [4m--clobber[24m[22m
+[33m▲[39m [33mSkipping [1malpha[22m (blocked by [1mbeta[22m, which can't be relocated)[39m
+
+[2m○[22m Relocated 0 worktrees, skipped 2 worktrees

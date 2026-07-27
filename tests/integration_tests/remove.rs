@@ -2545,8 +2545,8 @@ fn test_remove_detached_worktree_by_path(mut repo: TestRepo) {
 }
 
 /// Verify that detached worktrees can be removed by relative path.
-/// This tests `resolve_worktree_arg`'s path resolution, which here runs from a
-/// cwd inside the repo.
+/// This tests `Repository::resolve_worktree`'s path resolution, which here runs
+/// from a cwd inside the repo.
 #[rstest]
 fn test_remove_detached_worktree_by_relative_path(mut repo: TestRepo) {
     repo.add_worktree("feature-detached");

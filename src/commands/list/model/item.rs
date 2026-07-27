@@ -21,13 +21,19 @@ use crate::commands::list::layout::format_url_cell;
 ///
 /// Used by `refresh_status_symbols` to resolve the worktree-state position
 /// (Gate 2) from metadata alone. The decision priority is:
-/// `prunable` > `locked` > `branch_worktree_mismatch` > `None` — the yellow
-/// actionable states outrank the informational (dim yellow) mismatch flag.
+/// `prunable` > `locked` > `duplicate_branch` > `branch_worktree_mismatch` >
+/// `None` — the yellow actionable states outrank the informational (dim
+/// yellow) `⚑`. The last two both render `⚑`, so their order decides only
+/// which cause the JSON `worktree.state` names; a duplicate wins because a
+/// force-added worktree lands off-template as a side effect of being
+/// force-added, not as the fact worth reporting.
 fn metadata_worktree_state(data: &WorktreeData) -> WorktreeState {
     if data.is_prunable() {
         WorktreeState::Prunable
     } else if data.locked.is_some() {
         WorktreeState::Locked
+    } else if data.duplicate_branch {
+        WorktreeState::DuplicateBranch
     } else if data.branch_worktree_mismatch {
         WorktreeState::BranchWorktreeMismatch
     } else {
@@ -66,6 +72,12 @@ pub struct WorktreeData {
     /// Whether the worktree is at an unexpected location (branch-worktree mismatch).
     /// Only true when: has branch name, not main worktree, and path differs from template.
     pub branch_worktree_mismatch: bool,
+    /// Whether another worktree has the same branch checked out. Only
+    /// `git worktree add --force` produces this state; worktrunk assumes a
+    /// branch ⇔ worktree bijection and resolves the branch to whichever
+    /// worktree git lists first (see `worktree_for_branch`), so every
+    /// worktree on the branch carries the flag, resolved one included.
+    pub duplicate_branch: bool,
 }
 
 impl WorktreeData {
@@ -854,7 +866,9 @@ mod tests {
     use super::*;
 
     /// The yellow actionable states outrank the informational (dim yellow)
-    /// mismatch flag, so a demoted `⚑` can never mask `⊟` or `⊞`.
+    /// `⚑`, so a demoted flag can never mask `⊟` or `⊞`. A force-added
+    /// duplicate lands off-template too, so the two `⚑` states routinely
+    /// co-occur and their order picks the cause the JSON reports.
     #[test]
     fn test_metadata_worktree_state_priority() {
         let mismatched = WorktreeData {
@@ -866,15 +880,24 @@ mod tests {
             WorktreeState::BranchWorktreeMismatch
         );
 
+        let duplicate = WorktreeData {
+            duplicate_branch: true,
+            ..mismatched.clone()
+        };
+        assert_eq!(
+            metadata_worktree_state(&duplicate),
+            WorktreeState::DuplicateBranch
+        );
+
         let prunable = WorktreeData {
             prunable: Some("gone".to_string()),
-            ..mismatched.clone()
+            ..duplicate.clone()
         };
         assert_eq!(metadata_worktree_state(&prunable), WorktreeState::Prunable);
 
         let locked = WorktreeData {
             locked: Some("pinned".to_string()),
-            ..mismatched.clone()
+            ..duplicate.clone()
         };
         assert_eq!(metadata_worktree_state(&locked), WorktreeState::Locked);
     }

@@ -8,6 +8,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "80"
+    GIT_ALLOW_PROTOCOL: file
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
@@ -271,18 +272,23 @@ maps to a boolean in the [2mworking_tree[0m object:
 An in-progress git operation, a worktree-location attribute, or a branch with no
  worktree. One symbol shows, highest priority first ([2m✘ > ↻ > ⊟ > ⊞ > ⚑ > /[0m):
 
- Symbol             JSON                               Meaning                  
- ────── ───────────────────────────── ───────────────────────────────────────── 
- [31m✘[0m      [2moperation_state[0m [2m"conflicts"[0m   Merge conflicts                           
- [33m↻[0m      [2moperation_state[0m [2m"rebase"[0m,     A git operation is in progress;           
-        [2m"merge"[0m, [2m"cherry_pick"[0m,       [2mgit status[0m names it                       
-        [2m"revert"[0m, [2m"bisect"[0m                                                      
- [33m⊟[0m      [2mworktree.state[0m [2m"prunable"[0m     Prunable (worktree directory missing)     
- [33m⊞[0m      [2mworktree.state[0m [2m"locked"[0m       Locked worktree                           
- [2m[33m⚑[0m      [2mworktree.state[0m                Branch name doesn't match the worktree    
-        [2m"branch_worktree_mismatch"[0m    path                                      
- [2m/[0m      [2mkind[0m [2m"branch"[0m                 Branch without a worktree (no [2mworktree[0m    
-                                      object)                                   
+ Symb              JSON                               Meaning                   
+  ol                                                                            
+ ──── ────────────────────────────── ────────────────────────────────────────── 
+ [31m✘[0m    [2moperation_state[0m [2m"conflicts"[0m    Merge conflicts                            
+ [33m↻[0m    [2moperation_state[0m [2m"rebase"[0m,      A git operation is in progress; [2mgit status[0m 
+      [2m"merge"[0m, [2m"cherry_pick"[0m,        names it                                   
+      [2m"revert"[0m, [2m"bisect"[0m                                                        
+ [33m⊟[0m    [2mworktree.state[0m [2m"prunable"[0m      Prunable (worktree directory missing)      
+ [33m⊞[0m    [2mworktree.state[0m [2m"locked"[0m        Locked worktree                            
+ [2m[33m⚑[0m    [2mworktree.state[0m                 Branch checked out in more than one        
+      [2m"duplicate_branch"[0m             worktree, so [2mwt[0m resolves it to whichever   
+                                     git lists first; every worktree on the     
+                                     branch is flagged                          
+ [2m[33m⚑[0m    [2mworktree.state[0m                 Branch name doesn't match the worktree     
+      [2m"branch_worktree_mismatch"[0m     path                                       
+ [2m/[0m    [2mkind[0m [2m"branch"[0m                  Branch without a worktree (no [2mworktree[0m     
+                                     object)                                    
 
 [32mDefault branch[0m
 
@@ -363,6 +369,7 @@ One envelope object. Items carry independent facts; rendered strings
 [107m [0m [2m "worktree": {"path": "/home/user/repo.feature", "main": false, "current":
 [107m [0m true,[0m
 [107m [0m [2m "previous": false, "detached": false, "branch_mismatch": false,[0m
+[107m [0m [2m                   "duplicate_branch": false,[0m
 [107m [0m [2m "changes": {"staged": false, "modified": true, "untracked": false,[0m
 [107m [0m [2m "renamed": false, "deleted": false, "conflicted": false,[0m
 [107m [0m [2m                               "diff": {"added": 10, "deleted": 2}}},[0m
@@ -398,10 +405,10 @@ Item fields:
  [2mhead[0m    [2m{sha, short_sha, subject, committed_at}[0m; null for unborn branches.     
          [2mcommitted_at[0m is RFC 3339 UTC                                           
  [2mworktre[0m [2m{path, main, current, previous, detached, locked, prunable, branch_mis[0m 
- [2me[0m       [2mmatch, operation, changes}[0m; absent on branch-only rows. [2mlocked[0m/        
-         [2mprunable[0m are [2m{reason}[0m objects and can co-occur; [2moperation[0m is [2m"rebase"[0m  
-         or [2m"merge"[0m; [2mchanges[0m holds the five working-tree flags plus [2mconflicted[0m  
-         and [2mdiff {added, deleted}[0m                                              
+ [2me[0m       [2mmatch, duplicate_branch, operation, changes}[0m; absent on branch-only    
+         rows. [2mlocked[0m/[2mprunable[0m are [2m{reason}[0m objects and can co-occur; [2moperation[0m 
+         is [2m"rebase"[0m or [2m"merge"[0m; [2mchanges[0m holds the five working-tree flags plus 
+         [2mconflicted[0m and [2mdiff {added, deleted}[0m                                   
  [2mdefault[0m Relation to the default branch:                                        
  [2m_branch[0m [2m{ahead, behind, diff, orphan, integration, merge_conflicts}[0m; absent on 
          the default branch itself. [2mintegration.reason[0m is one of [2msame_commit[0m,   
@@ -568,8 +575,8 @@ Present only for worktree-kind items. [2mstate[0m is the worktree-location att
 
   Field    Type                            Description                          
  ──────── ─────── ───────────────────────────────────────────────────────────── 
- [2mstate[0m    string  [2m"branch_worktree_mismatch"[0m, [2m"prunable"[0m, or [2m"locked"[0m (absent   
-                  when normal)                                                  
+ [2mstate[0m    string  [2m"branch_worktree_mismatch"[0m, [2m"duplicate_branch"[0m, [2m"prunable"[0m,   
+                  or [2m"locked"[0m (absent when normal)                              
  [2mreason[0m   string  Reason for locked/prunable state                              
  [2mdetached[0m boolean HEAD is detached                                              
 

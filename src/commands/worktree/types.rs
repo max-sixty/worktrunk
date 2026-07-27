@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use worktrunk::git::{BranchDeletionMode, RefType};
+use worktrunk::git::{BranchDeletionMode, IntegrationReason, RefType};
 
 /// Flags indicating which merge operations occurred
 #[derive(Debug, Clone, Copy)]
@@ -159,6 +159,10 @@ pub enum RemoveResult {
         branch_name: Option<String>,
         deletion_mode: BranchDeletionMode,
         target_branch: Option<String>,
+        /// Integration verdict at planning time, for display and retention
+        /// prediction. The deletion itself re-decides against fresh refs via
+        /// `delete_branch_if_safe`'s atomic CAS, so this is never a safety input.
+        integration_reason: Option<IntegrationReason>,
         /// Force git worktree removal even with untracked files.
         force_worktree: bool,
         /// Commit SHA of the removed worktree's HEAD, captured before removal.
@@ -273,6 +277,7 @@ mod tests {
             branch_name: Some("feature".to_string()),
             deletion_mode: BranchDeletionMode::default(),
             target_branch: None,
+            integration_reason: None,
             force_worktree: false,
             removed_commit: None,
         };
@@ -334,6 +339,7 @@ mod tests {
             branch_name: Some("feature".to_string()),
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
+            integration_reason: None,
             force_worktree: false,
             removed_commit: Some("abc1234567890".to_string()),
         };
@@ -345,6 +351,7 @@ mod tests {
                 branch_name,
                 deletion_mode,
                 target_branch,
+                integration_reason: _,
                 force_worktree,
                 removed_commit,
             } => {
@@ -426,6 +433,7 @@ mod tests {
             branch_name: None, // Detached HEAD
             deletion_mode: BranchDeletionMode::ForceDelete,
             target_branch: None,
+            integration_reason: None,
             force_worktree: true,
             removed_commit: None, // Detached HEAD may not have meaningful commit
         };

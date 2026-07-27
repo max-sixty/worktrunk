@@ -10,6 +10,7 @@ info:
     CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_ALLOW_PROTOCOL: file
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
@@ -36,6 +37,7 @@ info:
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -70,6 +72,7 @@ exit_code: 0
         "previous": false,
         "detached": false,
         "branch_mismatch": false,
+        "duplicate_branch": false,
         "changes": {
           "staged": false,
           "modified": false,
@@ -110,6 +113,7 @@ exit_code: 0
         "previous": false,
         "detached": false,
         "branch_mismatch": false,
+        "duplicate_branch": false,
         "changes": {
           "staged": false,
           "modified": false,
@@ -154,6 +158,7 @@ exit_code: 0
         "previous": false,
         "detached": false,
         "branch_mismatch": false,
+        "duplicate_branch": false,
         "changes": {
           "staged": false,
           "modified": false,
@@ -198,6 +203,7 @@ exit_code: 0
         "previous": false,
         "detached": false,
         "branch_mismatch": false,
+        "duplicate_branch": false,
         "changes": {
           "staged": false,
           "modified": false,
@@ -242,6 +248,7 @@ exit_code: 0
         "previous": false,
         "detached": false,
         "branch_mismatch": false,
+        "duplicate_branch": false,
         "changes": {
           "staged": false,
           "modified": false,
@@ -292,6 +299,7 @@ exit_code: 0
           "reason": "Testing"
         },
         "branch_mismatch": false,
+        "duplicate_branch": false,
         "changes": {
           "staged": false,
           "modified": false,

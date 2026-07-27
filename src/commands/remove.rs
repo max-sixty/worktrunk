@@ -17,7 +17,7 @@ use super::hook_plan::{ApprovedHookPlan, HookPlanBuilder};
 use super::hooks::HookAnnouncer;
 use super::repository_ext::RepositoryCliExt;
 use super::worktree::RemoveResult;
-use super::{RemoveTarget, flag_pair, resolve_worktree_arg};
+use super::{RemoveTarget, flag_pair};
 
 /// Validated removal plans, categorized for ordered execution.
 ///
@@ -92,7 +92,7 @@ fn validate_remove_targets(
     };
 
     for branch_name in &branches {
-        let resolved = match resolve_worktree_arg(repo, branch_name) {
+        let resolved = match repo.resolve_worktree(branch_name) {
             Ok(r) => r,
             Err(e) => {
                 plans.record_error(e);

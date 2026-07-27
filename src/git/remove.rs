@@ -8,21 +8,25 @@
 //!
 //! # What happens during removal
 //!
-//! 1. **fsmonitor daemon stopped** (best effort). [`stop_fsmonitor_daemon`]
+//! 1. **Clean check** (skipped with [`RemoveOptions::force_worktree`]). The
+//!    final dirty-worktree gate, immediately before the mutation. It runs
+//!    while the fsmonitor daemon is still up, so the daemon serves the status
+//!    instead of the stop below forcing a full re-stat.
+//! 2. **fsmonitor daemon stopped** (best effort). [`stop_fsmonitor_daemon`]
 //!    runs against the target worktree before its path disappears: it sends
 //!    the graceful `git fsmonitor--daemon stop` IPC request, then verifies the
 //!    daemon is actually gone and force-kills it by PID if it has wedged.
 //!    Without this, a daemon that has stopped answering its socket leaks
 //!    forever once its worktree is removed.
-//! 2. **Fast-path trash staging.** The worktree directory is renamed into
+//! 3. **Fast-path trash staging.** The worktree directory is renamed into
 //!    `<git-common-dir>/wt/trash/<name>-<timestamp>/`. Same-filesystem renames
 //!    are instant metadata operations, so the user's workspace clears
 //!    immediately. The caller is responsible for eventually removing the
 //!    staged path — either synchronously or via a background process.
-//! 3. **Fallback removal.** If the rename fails (cross-filesystem, permission
+//! 4. **Fallback removal.** If the rename fails (cross-filesystem, permission
 //!    denied, Windows file locks), the code falls back to `git worktree remove`
 //!    (optionally with `--force`), which deletes files directly.
-//! 4. **Branch deletion** (optional). When a branch name is supplied, the
+//! 5. **Branch deletion** (optional). When a branch name is supplied, the
 //!    branch is deleted according to the requested [`BranchDeletionMode`]:
 //!    - [`Keep`](BranchDeletionMode::Keep): never delete.
 //!    - [`SafeDelete`](BranchDeletionMode::SafeDelete): delete only if
@@ -282,11 +286,12 @@ pub struct RemoveOptions {
     /// Only consulted when `deletion_mode` is [`BranchDeletionMode::SafeDelete`].
     /// `None` falls back to `HEAD`.
     pub target_branch: Option<String>,
-    /// Pass `--force` to the `git worktree remove` fallback.
+    /// Skip the clean check and pass `--force` to the `git worktree remove`
+    /// fallback.
     ///
-    /// Does not affect the fast path — trash staging is unconditional and
-    /// always preserves data (the renamed directory can be recovered from
-    /// `<git-common-dir>/wt/trash/` until the caller deletes it).
+    /// Trash staging itself is unconditional and always preserves data (the
+    /// renamed directory can be recovered from `<git-common-dir>/wt/trash/`
+    /// until the caller deletes it).
     pub force_worktree: bool,
 }
 
@@ -329,8 +334,22 @@ pub fn remove_worktree_with_cleanup(
     worktree_path: &Path,
     options: RemoveOptions,
 ) -> anyhow::Result<RemovalOutput> {
-    // Stop the fsmonitor daemon, force-killing a wedged one. Must happen while
-    // the worktree path still exists (the IPC socket lives under its git dir).
+    // Final clean check, immediately before the rename. Runs while the
+    // fsmonitor daemon is still up (it serves this status; stopping it first
+    // would force a full re-stat) — the one dirty-worktree gate on this path.
+    if !options.force_worktree {
+        repo.worktree_at(worktree_path).ensure_clean(
+            "remove worktree",
+            options.branch.as_deref(),
+            true,
+        )?;
+    }
+
+    // Stop the fsmonitor daemon, force-killing a wedged one. Must happen after
+    // the clean check (above) and before the rename: on Windows the daemon
+    // holds a handle on the worktree that would fail the rename, and git's
+    // graceful stop resolves the daemon by worktree path, unreachable once
+    // the path moves.
     stop_fsmonitor_daemon(&repo.worktree_at(worktree_path));
 
     // Fast path: rename into .git/wt/trash/ (instant on same filesystem),

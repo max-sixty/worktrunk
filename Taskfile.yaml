@@ -408,7 +408,14 @@ tasks:
           echo "  ✓ jq (required for codex)"
         else
           echo "  ✗ jq (required for codex)"
-          AVAILABLE=("${AVAILABLE[@]/codex}")
+          # Drop codex from the list. String substitution (${AVAILABLE[@]/codex})
+          # would rewrite the element to "" rather than remove it, leaving an
+          # empty tool name to iterate over later — rebuild the array instead.
+          FILTERED=()
+          for tool in "${AVAILABLE[@]}"; do
+            [ "$tool" = codex ] || FILTERED+=("$tool")
+          done
+          AVAILABLE=("${FILTERED[@]}")
         fi
         echo ""
 

@@ -3,6 +3,22 @@
 //! Push changes to target branch with safety checks. Both fast-forward push and
 //! `--no-ff` merge share common scaffolding (target resolution, fast-forward check,
 //! stash guard, progress/success output) extracted into [`MergeContext`].
+//!
+//! # Destination-worktree safety follows git
+//!
+//! The checks cover what `git status --porcelain` reports: a modified or
+//! untracked file at a path the push range changes is refused, and the rest of
+//! a dirty tree is autostashed and restored. Ignored files fall outside that
+//! report, so a push overwrites one whose path the incoming commits track.
+//!
+//! That is git's own line, not an oversight, and it holds at the mechanisms
+//! actually used: the fast-forward hands the checkout to
+//! `receive.denyCurrentBranch=updateInstead`, `--no-ff` syncs with
+//! `read-tree -m -u`, and both run git's unpack-trees checks, which refuse to
+//! clobber an untracked file and silently overwrite an ignored one — the same
+//! split a `git merge` there would produce. Matching git is the decision;
+//! don't add an ignored-file probe to make `wt` stricter than the tool it
+//! wraps.
 
 use std::path::PathBuf;
 

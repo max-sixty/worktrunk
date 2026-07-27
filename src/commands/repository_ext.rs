@@ -62,6 +62,11 @@ pub trait RepositoryCliExt {
     /// The caller has already established that `target_worktree` exists on disk
     /// (`MergeContext::prepare` refuses a registered-but-missing worktree), so
     /// the status read here is free to fail if the directory is gone.
+    ///
+    /// Ignored files are deliberately out of scope — they're absent from the
+    /// `git status --porcelain` read this works from, and matching git there is
+    /// the decision, not an oversight. The module spec in
+    /// `commands/worktree/push.rs` says why.
     fn prepare_target_worktree(
         &self,
         target_worktree: Option<&PathBuf>,
@@ -287,11 +292,23 @@ impl RepositoryCliExt for Repository {
             primary_path
         };
 
-        // Resolve target branch for integration reason display
+        // Resolve target branch and integration verdict for display and
+        // retention prediction. The actual branch deletion re-decides against
+        // fresh refs (`delete_branch_if_safe`'s CAS), so this is display-only.
         let default_branch = self.default_branch();
         let target_branch = match (&default_branch, &branch_name) {
             (Some(db), Some(bn)) if db == bn => None,
             _ => default_branch,
+        };
+        let (integration_reason, target_branch) = match compute_integration_reason(
+            self,
+            snapshot,
+            branch_name.as_deref(),
+            target_branch.as_deref(),
+            deletion_mode,
+        ) {
+            (reason, Some(effective_target)) => (reason, Some(effective_target)),
+            (reason, None) => (reason, target_branch),
         };
 
         // Capture commit SHA before removal for post-remove hook template variables.
@@ -312,6 +329,7 @@ impl RepositoryCliExt for Repository {
             branch_name,
             deletion_mode,
             target_branch,
+            integration_reason,
             force_worktree,
             removed_commit,
         })
