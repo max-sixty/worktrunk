@@ -10,12 +10,13 @@ docs = "wt step tether -C docs -- zola serve -p {{ branch | hash_port }}"
 
 [post-merge]
 clippy = "pre-commit run clippy --all-files || true"
-# Warms the cache the pre-merge `insta` gate reuses, so the flags must match
-# that line: cargo fingerprints RUSTFLAGS alongside the feature set, and a
-# mismatch in either leaves the gate rebuilding from scratch. The clippy step
-# above type-checks benches and the `git-wt` binary under `--all-targets
-# --all-features`, so this step builds only what the gate runs.
-build = "RUSTFLAGS='-D warnings' cargo test --no-run --locked --features shell-integration-tests"
+# Warms the cache the pre-merge `insta` gate reuses, so RUSTFLAGS and the
+# feature set must match that line: cargo fingerprints both, and a mismatch in
+# either leaves the gate rebuilding artifacts it can't reuse. Target selection
+# isn't a fingerprint input, so `--all-targets` rides along free and keeps the
+# benches compiling. `--all-features` doesn't: it adds the `git-wt` binary,
+# whose unit tests are a byte-identical duplicate of `wt`'s.
+build = "RUSTFLAGS='-D warnings' cargo test --no-run --locked --all-targets --features shell-integration-tests"
 install = "cargo install --path ."
 sync = 'if [ "{{ target }}" = "main" ]; then git pull && git push; fi'
 
