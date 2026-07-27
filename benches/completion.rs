@@ -23,15 +23,7 @@ fn bench_completion_switch(c: &mut Criterion) {
 
     // Without worktrees: all branches are candidates
     group.bench_function("branches_only", |b| {
-        let config = RepoConfig {
-            commits_on_main: 1,
-            files: 1,
-            branches: 50,
-            commits_per_branch: 0,
-            worktrees: 0,
-            worktree_commits_ahead: 0,
-            worktree_uncommitted_files: 0,
-        };
+        let config = RepoConfig::branches(50, 0);
         let temp = create_repo(&config);
         let repo = temp.path().join("repo");
         b.iter(|| run_completion(binary, &repo, &["wt", "switch", ""]));
@@ -40,13 +32,8 @@ fn bench_completion_switch(c: &mut Criterion) {
     // With worktrees: filters out branches that already have worktrees
     group.bench_function("with_worktrees", |b| {
         let config = RepoConfig {
-            commits_on_main: 1,
-            files: 1,
-            branches: 50,
-            commits_per_branch: 0,
             worktrees: 10,
-            worktree_commits_ahead: 0,
-            worktree_uncommitted_files: 0,
+            ..RepoConfig::branches(50, 0)
         };
         let temp = create_repo(&config);
         let repo = temp.path().join("repo");

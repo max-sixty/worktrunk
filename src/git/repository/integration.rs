@@ -727,6 +727,47 @@ impl Repository {
         self.rev_parse_commit(r)
     }
 
+    /// The target's upstream, when the current branch's history extends past
+    /// the local `target_branch` ref into it — the #3519 stale-local-target
+    /// topology.
+    ///
+    /// The rewrite steps (`wt step squash`, `wt step rebase`, and `wt merge`
+    /// through them) measure "the branch's own commits" as
+    /// `merge-base(target, HEAD)..HEAD`. When the local target ref lags its
+    /// upstream (e.g. the primary checkout's `main` left behind `origin/main`)
+    /// and the branch was built on the newer upstream tip, that span sweeps in
+    /// commits the upstream already contains — folding (squash) or replaying
+    /// (rebase) them would duplicate published history under new SHAs. Callers
+    /// measure against the returned upstream instead, which keeps the span to
+    /// the branch's own commits; `wt merge`'s final fast-forward then carries
+    /// the local target through the upstream commits by their real SHAs.
+    ///
+    /// Detected locally, with no fetch (worktrunk is local-first): returns
+    /// `Some(upstream)` (short name, e.g. `origin/main`) when the target branch
+    /// has a configured upstream and `merge-base(HEAD, upstream)` is not an
+    /// ancestor of the local `target` ref — i.e. the local-target span would
+    /// reach commits the upstream already has. `None` — measure against the
+    /// local target as usual — for a legitimately-diverged local target whose
+    /// span holds only the branch's own commits (the fork point is still an
+    /// ancestor of the local target), an orphan branch with no shared history,
+    /// a non-branch target (an explicit `origin/main` has no upstream of its
+    /// own), or a target with no upstream at all.
+    pub fn span_upstream(&self, target_branch: &str) -> anyhow::Result<Option<String>> {
+        // `upstream()` already excludes a `[gone]` upstream, so a `Some` value
+        // is a live remote-tracking ref that `merge_base` resolves locally — no
+        // fetch, and no separate existence check.
+        let Some(upstream) = self.branch(target_branch).upstream()? else {
+            return Ok(None);
+        };
+        let target_sha = self.resolve_to_commit_sha(target_branch)?;
+        match self.merge_base("HEAD", &upstream)? {
+            Some(fork_point) if !self.is_ancestor_by_sha(&fork_point, &target_sha)? => {
+                Ok(Some(upstream))
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// Check if a branch is integrated into a target.
     ///
     /// Combines [`compute_integration_lazy()`] and [`check_integration()`], and
@@ -1210,6 +1251,90 @@ mod merge_tree_cache_tests {
         assert!(
             repo.cache.merge_tree.contains_key(&(main_sha, feature_sha)),
             "the shared entry must be keyed (target, branch)"
+        );
+    }
+}
+
+#[cfg(test)]
+mod read_only_object_store_tests {
+    use super::*;
+    use crate::testing::TestRepo;
+
+    /// A cleanly-mergeable but diverged topology: `main` and `feature` touch
+    /// different files off a shared base, so `merge-tree --write-tree` must
+    /// write a genuinely new tree (not a fast-forward that reuses an existing
+    /// one). Returns `(main_sha, feature_sha)`.
+    fn diverged_repo() -> (TestRepo, String, String) {
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&["checkout", "-b", "feature"]);
+        std::fs::write(test.root_path().join("feature.txt"), "feature\n").unwrap();
+        test.run_git(&["add", "feature.txt"]);
+        test.run_git(&["commit", "-m", "feature"]);
+        test.run_git(&["checkout", "main"]);
+        std::fs::write(test.root_path().join("main.txt"), "main\n").unwrap();
+        test.run_git(&["add", "main.txt"]);
+        test.run_git(&["commit", "-m", "main"]);
+        let main_sha = test.git_output(&["rev-parse", "main"]);
+        let feature_sha = test.git_output(&["rev-parse", "feature"]);
+        (test, main_sha, feature_sha)
+    }
+
+    /// A writable object database must never redirect — the normal path is
+    /// left byte-for-byte unchanged.
+    #[test]
+    fn writable_object_database_is_not_redirected() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        assert!(
+            repo.redirect_objects_if_read_only().is_none(),
+            "a writable object database must not trigger a redirect"
+        );
+    }
+
+    /// The safety property behind scoping the redirect to observational
+    /// commands: a redirected merge tree is computed correctly but written only
+    /// to the throwaway store, so it is *not* in the real object database. A
+    /// mutating command that redirected would therefore lose its commit — which
+    /// is why mutating commands keep the persistent path and fail loudly on a
+    /// read-only store instead.
+    #[test]
+    fn redirected_object_writes_stay_out_of_the_real_database() {
+        let (test, main_sha, feature_sha) = diverged_repo();
+        let merge_tree = |repo: &Repository| {
+            repo.run_command(&["merge-tree", "--write-tree", &main_sha, &feature_sha])
+                .unwrap()
+                .lines()
+                .next()
+                .unwrap()
+                .trim()
+                .to_string()
+        };
+
+        // Redirected clone: the merge tree lands in the temporary store only.
+        let redirected = Repository::at(test.root_path())
+            .unwrap()
+            .with_temporary_object_directory()
+            .unwrap();
+        let ephemeral_tree = merge_tree(&redirected);
+
+        // A separate, non-redirected repository reads the real database
+        // directly; the redirected tree is absent there.
+        let real = Repository::at(test.root_path()).unwrap();
+        assert!(
+            !real
+                .run_command_check(&["cat-file", "-e", &ephemeral_tree])
+                .unwrap(),
+            "a redirected merge tree must not be written to the real object database"
+        );
+
+        // The persistent path yields the same content-addressed tree, this time
+        // materialized in the real database.
+        let persistent_tree = merge_tree(&real);
+        assert_eq!(persistent_tree, ephemeral_tree);
+        assert!(
+            real.run_command_check(&["cat-file", "-e", &persistent_tree])
+                .unwrap(),
+            "the persistent path must materialize its merge tree in the real database"
         );
     }
 }

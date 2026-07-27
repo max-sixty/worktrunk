@@ -13,9 +13,9 @@
 //! The list is a single forge call (`gh pr list` / `glab mr list`) run on a
 //! dedicated thread that holds a clone of skim's item channel. The picker
 //! frame paints instantly from local worktree data; PR rows appear when the
-//! call returns (~1s). The thread's sender drop is part of the picker's
-//! EOF contract — skim's reader sees end-of-stream only once every sender
-//! drops — see [`super::handle_picker`].
+//! call returns (~1s). The thread's sender is the last one standing — the
+//! handler's is consumed at the skeleton send — so its drop is what shows
+//! skim's reader end-of-stream; see [`super::handle_picker`].
 //!
 //! # Alignment
 //!

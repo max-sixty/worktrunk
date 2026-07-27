@@ -26,8 +26,8 @@ $ wt step push
 
 - [`commit`](#wt-step-commit) — Stage and commit with [LLM-generated message](https://worktrunk.dev/llm-commits/)
 - [`squash`](#wt-step-squash) — Squash all branch commits into one with [LLM-generated message](https://worktrunk.dev/llm-commits/)
-- `rebase` — Rebase onto target branch
-- `push` — Fast-forward target to current branch
+- [`rebase`](#wt-step-rebase) — Rebase onto target branch
+- [`push`](#wt-step-push) — Fast-forward target to current branch
 - [`diff`](#wt-step-diff) — Show all changes since branching (committed, staged, unstaged, untracked)
 - [`copy-ignored`](#wt-step-copy-ignored) — Copy gitignored files between worktrees
 - [`eval`](#wt-step-eval) — [experimental] Evaluate a template expression
@@ -259,6 +259,155 @@ Automation:
           Output format
 
           JSON prints structured result to stdout after the squash completes.
+
+          [default: text]
+          [possible values: text, json]
+
+Global Options:
+  -C <path>
+          Working directory for this command
+
+      --config <path>
+          User config file path
+
+      --config-set <toml>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
+  -v, --verbose...
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
+          apply the same level everywhere — including shell completion, which no flag can reach
+
+  -y, --yes
+          Skip approval prompts
+```
+
+## wt step rebase
+
+Rebase onto target.
+
+A rebase puts the branch's commits on top of the target, which is what [`wt step push`](#wt-step-push) needs — a push fast-forwards only if the target is an ancestor of the branch. `wt merge` runs this step as part of its pipeline; on its own it brings a branch up to date with a target that has moved, without merging into it.
+
+The target is any commit: a branch, a tag, a SHA.
+
+### Examples
+
+```bash
+$ wt step rebase            # Rebase onto default branch
+$ wt step rebase develop    # Rebase onto develop
+$ wt step rebase v1.2.0     # Rebase onto a tag
+```
+
+### Outcomes
+
+The first matching row wins:
+
+| Branch and target | Result |
+|-------------------|--------|
+| The target is already an ancestor of the branch, with no merge commit in between | Nothing runs — `Already up to date` |
+| The branch is an ancestor of the target, so it has no commits of its own | `Fast-forwarded to <target>` |
+| Otherwise | The branch's commits replay onto the target's tip — refused outright if the two share no history |
+
+A branch that merged the target into itself still rebases: the target is its ancestor, but the merge commit in between keeps the first row from applying.
+
+When the target's local ref lags its upstream, the rows are measured against that upstream, which the result then names in place of the argument. [`wt merge`](https://worktrunk.dev/merge/) covers why.
+
+### Conflicts
+
+A conflicting commit leaves the rebase open rather than undoing it. The worktree keeps git's conflict markers, and the ways out are `git rebase --continue` once the conflict is resolved, `git rebase --skip`, or `git rebase --abort`. Until the rebase is settled, `wt step rebase`, `wt step squash`, `wt step push`, and `wt merge` refuse to run — as they do while any other git operation is open, a conflicted `git merge` included.
+
+### Command reference
+
+```
+wt step rebase - Rebase onto target
+
+Usage: wt step rebase [OPTIONS] [TARGET]
+
+Arguments:
+  [TARGET]
+          Target branch, tag, or commit
+
+          Defaults to default branch.
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+Automation:
+      --format <FORMAT>
+          Output format
+
+          JSON prints structured result to stdout after the rebase completes.
+
+          [default: text]
+          [possible values: text, json]
+
+Global Options:
+  -C <path>
+          Working directory for this command
+
+      --config <path>
+          User config file path
+
+      --config-set <toml>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
+  -v, --verbose...
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
+          apply the same level everywhere — including shell completion, which no flag can reach
+
+  -y, --yes
+          Skip approval prompts
+```
+
+## wt step push
+
+Fast-forward target to current branch.
+
+Despite the name, no commits leave the repository. The target branch's ref moves forward locally, and a worktree holding that branch is updated along with it. Publishing is a separate `git push` to the remote afterward.
+
+The target is a branch, and must already be an ancestor of the current branch. One that has moved ahead is refused, and there is no force variant — [`wt step rebase`](#wt-step-rebase) puts the branch back on top of it first.
+
+### Examples
+
+```bash
+$ wt step push             # Fast-forward main to current branch
+$ wt step push develop     # Fast-forward develop instead
+$ wt step push --no-ff     # Merge commit instead of a fast-forward
+```
+
+### Target worktree
+
+When the target branch has a worktree of its own, that worktree's files move to the new commits too. A fast-forward does both at once, pushing into this repository with `receive.denyCurrentBranch=updateInstead`; `--no-ff` moves the ref first and syncs the worktree after, warning rather than failing if that sync doesn't apply. Uncommitted changes in that worktree are stashed for the duration and restored afterward; one touching a file the push also changes is refused instead, naming the file.
+
+A worktree that is still registered but whose directory is gone is refused as well, since nothing can be synced into it — `git worktree prune` clears the registration.
+
+### Command reference
+
+```
+wt step push - Fast-forward target to current branch
+
+Usage: wt step push [OPTIONS] [TARGET]
+
+Arguments:
+  [TARGET]
+          Target branch
+
+          Defaults to default branch.
+
+Options:
+      --no-ff
+          Create a merge commit (no fast-forward)
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+Automation:
+      --format <FORMAT>
+          Output format
+
+          JSON prints structured result to stdout after the push completes.
 
           [default: text]
           [possible values: text, json]

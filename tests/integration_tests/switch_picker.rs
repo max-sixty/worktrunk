@@ -32,7 +32,7 @@ use insta::assert_snapshot;
 use portable_pty::CommandBuilder;
 use rstest::rstest;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -53,13 +53,22 @@ const READY_TIMEOUT: Duration = Duration::from_secs(30);
 const STABILIZE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Maximum time to wait for the picker child to exit after the terminating
-/// keystroke (Enter to switch, Escape to abort) before force-killing it. A clean
-/// switch or abort exits in well under a second, but under heavy CI parallelism
-/// the final git work (or skim's Windows terminal teardown) can lag; killing a
-/// still-finishing child reports exit 1 on Windows, turning a successful-but-slow
-/// switch into a spurious failure. Generous like `READY_TIMEOUT`/`STABILIZE_TIMEOUT`
-/// for the same reason — fast polling means the common case still returns at once.
+/// keystroke (Enter to switch, Escape to abort). A clean switch or abort exits in
+/// well under a second, but under heavy CI parallelism the final git work (or
+/// skim's Windows terminal teardown) can lag. Generous like
+/// `READY_TIMEOUT`/`STABILIZE_TIMEOUT` for the same reason — fast polling means
+/// the common case still returns at once. Reaching it is a hang, and
+/// [`wait_for_exit`] panics rather than reporting an exit code for it.
 const CHILD_EXIT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long the PTY must stay silent after the child exits before its final
+/// frame counts as complete. Long enough that a loaded runner's last flush lands
+/// in the parser; short enough to add no meaningful cost per test.
+const POST_EXIT_QUIET: Duration = Duration::from_millis(250);
+
+/// Ceiling on the post-exit drain, in case something else on the PTY keeps
+/// writing (a detached background hook shares the terminal).
+const POST_EXIT_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// How long screen must be unchanged to consider it "stable".
 /// Must be long enough for preview content to load (preview commands run async).
@@ -85,6 +94,23 @@ const CURSOR_REISSUE_INTERVAL: Duration = Duration::from_secs(1);
 const LIST_WIDTH: u16 = 59;
 const PREVIEW_START_COL: u16 = 60;
 
+/// Full screen content as rows of text.
+///
+/// Trailing whitespace is trimmed from each row because `vt100::rows()` pads
+/// rows to the full column width with spaces. This padding is terminal buffer
+/// fill, not meaningful content, and varies across platforms. Trailing empty
+/// lines are also removed (unwritten terminal rows become empty after trim).
+fn screen_text(parser: &vt100::Parser) -> String {
+    parser
+        .screen()
+        .rows(0, TERM_COLS)
+        .map(|row| row.trim_end().to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim_end()
+        .to_string()
+}
+
 /// Result of executing a command in a PTY, holding the parsed terminal state.
 struct PtyResult {
     parser: vt100::Parser,
@@ -92,21 +118,9 @@ struct PtyResult {
 }
 
 impl PtyResult {
-    /// Full screen content as rows of text.
-    ///
-    /// Trailing whitespace is trimmed from each row because `vt100::rows()` pads
-    /// rows to the full column width with spaces. This padding is terminal buffer
-    /// fill, not meaningful content, and varies across platforms. Trailing empty
-    /// lines are also removed (unwritten terminal rows become empty after trim).
+    /// Full screen content as rows of text — see [`screen_text`].
     fn screen(&self) -> String {
-        self.parser
-            .screen()
-            .rows(0, TERM_COLS)
-            .map(|row| row.trim_end().to_string())
-            .collect::<Vec<_>>()
-            .join("\n")
-            .trim_end()
-            .to_string()
+        screen_text(&self.parser)
     }
 
     /// List and preview panel content, split at the skim border column.
@@ -241,7 +255,6 @@ fn boot_picker_pty(
 
     // Isolated environment with coverage passthrough
     crate::common::configure_pty_command(&mut cmd);
-    cmd.env("CLICOLOR_FORCE", "1");
     cmd.env("TERM", "xterm-256color");
 
     // Test-specific environment variables
@@ -312,21 +325,57 @@ fn abort_and_exit_code(
     }
     drop(writer);
 
+    // Teardown bytes are discarded rather than parsed, so this waits with a
+    // sink parser — the caller's frame was captured before the Escape.
+    let mut sink = vt100::Parser::new(TERM_ROWS, TERM_COLS, 0);
+    wait_for_exit(&mut child, &rx, &mut sink, "Escape")
+}
+
+/// Wait for the picker child to exit, then drain its final output into `parser`
+/// and return its exit code.
+///
+/// A child still running after [`CHILD_EXIT_TIMEOUT`] is hung, and the harness
+/// must not turn that into an exit code: `Child::kill` on Windows is
+/// `TerminateProcess(proc, 1)`, so a killed hang and a wt that failed on its own
+/// both report 1 — the ambiguity that had a *correct* picker-create reported as a
+/// mysterious Windows "self-exit 1" (#3427). Panic on the hang instead, so every
+/// exit code a caller asserts on is one the child chose.
+///
+/// `terminator` names the keystroke that should have ended the session, for the
+/// panic message.
+fn wait_for_exit(
+    child: &mut Box<dyn portable_pty::Child + Send + Sync>,
+    rx: &mpsc::Receiver<Vec<u8>>,
+    parser: &mut vt100::Parser,
+    terminator: &str,
+) -> i32 {
     let start = Instant::now();
-    // Generous like the keystroke-driven helpers: a slow-but-successful exit that
-    // gets killed reports exit 1 on Windows — see `CHILD_EXIT_TIMEOUT`.
-    let timeout = CHILD_EXIT_TIMEOUT;
-    loop {
-        while rx.try_recv().is_ok() {} // discard chunks
+    let mut exited = false;
+    while start.elapsed() < CHILD_EXIT_TIMEOUT {
         if child.try_wait().unwrap().is_some() {
+            exited = true;
             break;
         }
-        if start.elapsed() >= timeout {
-            let _ = child.kill();
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(POLL_INTERVAL);
     }
+
+    if !exited {
+        let _ = child.kill();
+        let _ = child.wait();
+        drain_until_quiet(rx, parser);
+        panic!(
+            "Picker child did not exit within {CHILD_EXIT_TIMEOUT:?} of {terminator}.\n\
+             Screen content:\n{}",
+            screen_text(parser)
+        );
+    }
+
+    // Drain to quiet, not once: `try_wait` reports the child reaped, but its
+    // final writes can still be in the PTY (and in the reader thread) at that
+    // moment, so a single non-blocking sweep drops the tail — which is exactly
+    // where a failing run's explanation lives (wt's error line, the last
+    // warning). Without this the captured frame reads as a silent exit.
+    drain_until_quiet(rx, parser);
 
     child.wait().unwrap().exit_code() as i32
 }
@@ -368,13 +417,6 @@ fn exec_in_pty_with_input_expectations(
         mut parser,
     } = boot_picker_pty(command, args, working_dir, env_vars);
 
-    // Helper to drain available output from the channel (non-blocking)
-    let drain_output = |rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser| {
-        while let Ok(chunk) = rx.try_recv() {
-            parser.process(&chunk);
-        }
-    };
-
     // Send each input and wait for screen to stabilize after each
     for (input, expected_content) in inputs {
         send_input_awaiting_content(&writer, &rx, &mut parser, input, *expected_content);
@@ -382,27 +424,35 @@ fn exec_in_pty_with_input_expectations(
 
     // Release the main thread's writer handle. The reader thread holds the
     // other Arc clone until the PTY drains, so this no longer drives stdin EOF.
-    // The picker exits on Accept/Escape, or the kill below.
+    // The picker exits on Accept/Escape.
     drop(writer);
 
-    // Poll for process exit (fast polling, long timeout for CI)
-    let start = std::time::Instant::now();
-    let timeout = CHILD_EXIT_TIMEOUT;
-    while start.elapsed() < timeout {
-        if child.try_wait().unwrap().is_some() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    let _ = child.kill(); // Kill if still running after timeout
-
-    // Drain any remaining output
-    drain_output(&rx, &mut parser);
-
-    let exit_status = child.wait().unwrap();
-    let exit_code = exit_status.exit_code() as i32;
+    let exit_code = wait_for_exit(&mut child, &rx, &mut parser, "the last input");
 
     PtyResult { parser, exit_code }
+}
+
+/// Drain the PTY into `parser` until the child's output goes quiet — nothing new
+/// for [`POST_EXIT_QUIET`], or [`POST_EXIT_DRAIN_TIMEOUT`] elapsed.
+///
+/// Used after the child exits, where the goal is a complete final frame rather
+/// than a stable one. The bound keeps a still-chatty PTY (a detached background
+/// hook writing to the same terminal) from holding the test.
+fn drain_until_quiet(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser) {
+    let start = Instant::now();
+    let mut last_chunk = Instant::now();
+    while start.elapsed() < POST_EXIT_DRAIN_TIMEOUT && last_chunk.elapsed() < POST_EXIT_QUIET {
+        match rx.recv_timeout(POLL_INTERVAL) {
+            Ok(chunk) => {
+                parser.process(&chunk);
+                last_chunk = Instant::now();
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            // Reader thread hit PTY EOF and dropped its sender: nothing more is
+            // coming, and the channel is already empty.
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
 }
 
 /// Execute a command in a PTY, capture screen state, then abort with Escape.
@@ -1054,10 +1104,11 @@ fn test_switch_picker_scrollbar_on_overflow(mut repo: TestRepo) {
 
     // Far more branches than the ~24 item rows the 30-row terminal can show, so
     // the list is guaranteed to overflow and skim paints the scrollbar.
-    for i in 0..50 {
-        let name = format!("scroll-{i:02}");
-        repo.run_git(&["branch", name.as_str()]);
-    }
+    repo.create_branches(
+        &(0..50)
+            .map(|i| format!("scroll-{i:02}"))
+            .collect::<Vec<_>>(),
+    );
 
     let env_vars = repo.test_env_vars();
     let result = exec_in_pty_capture_before_abort(
@@ -1468,8 +1519,30 @@ fn seed_ci_status(repo: &TestRepo, branch: &str, status_json: &str) {
 }
 
 /// Install a mock forge CLI (`gh`/`glab`) that answers the `--prs` list call
-/// from a canned JSON file, and return env vars (mock on PATH + MOCK_CONFIG_DIR)
-/// for a `wt switch --prs` PTY run. No network is touched. `list_delay_ms`
+/// from a canned JSON file with a caller-supplied response shape, and return env
+/// vars (mock on PATH + MOCK_CONFIG_DIR) for a `wt switch --prs` PTY run. No
+/// network is touched. The `list.json` file the response reads from is written
+/// here, so `list_response` should be built with `MockResponse::file("list.json")`.
+fn mock_forge_env_with(
+    repo: &TestRepo,
+    cli: &str,
+    list_cmd: &str,
+    list_json: &str,
+    list_response: MockResponse,
+) -> Vec<(String, String)> {
+    let mock_bin = repo.root_path().join("mock-bin");
+    std::fs::create_dir_all(&mock_bin).unwrap();
+    std::fs::write(mock_bin.join("list.json"), list_json).unwrap();
+    MockConfig::new(cli)
+        .version(&format!("{cli} version 1.0.0 (mock)"))
+        .command(list_cmd, list_response)
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    forge_mock_env_vars(repo, &mock_bin)
+}
+
+/// [`mock_forge_env_with`] with a fixed-delay list response. `list_delay_ms`
 /// sleeps the list call (0 = instant) so a test can observe the picker's
 /// in-flight loading marker before the rows land.
 fn mock_forge_env(
@@ -1479,19 +1552,13 @@ fn mock_forge_env(
     list_json: &str,
     list_delay_ms: u64,
 ) -> Vec<(String, String)> {
-    let mock_bin = repo.root_path().join("mock-bin");
-    std::fs::create_dir_all(&mock_bin).unwrap();
-    std::fs::write(mock_bin.join("list.json"), list_json).unwrap();
-    MockConfig::new(cli)
-        .version(&format!("{cli} version 1.0.0 (mock)"))
-        .command(
-            list_cmd,
-            MockResponse::file("list.json").with_delay_ms(list_delay_ms),
-        )
-        .command("_default", MockResponse::exit(1))
-        .write(&mock_bin);
-
-    forge_mock_env_vars(repo, &mock_bin)
+    mock_forge_env_with(
+        repo,
+        cli,
+        list_cmd,
+        list_json,
+        MockResponse::file("list.json").with_delay_ms(list_delay_ms),
+    )
 }
 
 /// Env vars (mock-bin on PATH + `MOCK_CONFIG_DIR`) for a PTY `wt` run that should
@@ -1821,13 +1888,14 @@ fn test_switch_picker_preview_auto_refreshes_when_compute_lands(mut repo: TestRe
 }
 
 /// `wt switch --prs` shows a dim "↳ Loading open PRs…" marker on the header row
-/// while the forge call is in flight. A delayed mock holds the PR list long
-/// enough to observe the marker on the real screen before the rows land. The
-/// picker captures and aborts at stabilize time — well before the delay
-/// elapses — and the `--prs` thread is detached on exit (not joined), so the
-/// test never pays the full delay. The marker's *clearing* once rows arrive is
-/// covered by the `header_loading_marker_shows_until_cleared` unit test and the
-/// negative assertion in `test_switch_picker_prs_github_list`.
+/// while the forge call is in flight. The mock holds the PR list until `wt`
+/// exits (`hold_until_parent_exit`), so the marker is on the real screen for
+/// exactly the picker's lifetime and the presence assertion never races boot
+/// latency. The picker captures and aborts at stabilize time, and the `--prs`
+/// thread is detached on exit (not joined), so the test finishes in about a
+/// second. The marker's *clearing* once rows arrive is covered by the
+/// `header_loading_marker_shows_until_cleared` unit test and the negative
+/// assertion in `test_switch_picker_prs_github_list`.
 #[rstest]
 fn test_switch_picker_prs_shows_loading_marker(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
@@ -1838,9 +1906,35 @@ fn test_switch_picker_prs_shows_loading_marker(mut repo: TestRepo) {
         "https://github.com/owner/test-repo.git",
     ]);
     let pr_json = r#"[{"number":42,"title":"Retry the flaky network test","headRefName":"fix/flaky","author":{"login":"octocat"},"isDraft":false,"url":"https://github.com/owner/test-repo/pull/42","body":""}]"#;
-    // 3s delay >> the ~1s capture, so the marker is still on screen when the
-    // helper snapshots and aborts.
-    let env_vars = mock_forge_env(&repo, "gh", "pr list", pr_json, 3000);
+    // Hold the loading marker on screen for exactly the picker's lifetime — no
+    // fixed delay to outguess boot latency. `hold_until_parent_exit` makes the
+    // mocked `gh pr list` block until `wt` exits (it polls for its stdout pipe's
+    // read end to close), so the transient "Loading open PRs" frame is present
+    // for the entire window the helper could observe it, on any hardware. A
+    // fixed `delay_ms` can't guarantee this: a 3s hold flaked on a loaded
+    // Windows runner because `boot_picker_pty`'s skim-ready wait plus its initial
+    // `wait_for_stable`, and the async worktree-column churn, ate the whole 3s
+    // window, so by the time `send_input_awaiting_content` first polled for the
+    // marker the mock had already returned and the rows had streamed in — the
+    // marker was gone and the wait timed out at STABILIZE_TIMEOUT (30s). Bumping
+    // the delay only widens the margin; tying release to parent death removes the
+    // race outright.
+    //
+    // The picker still exits in well under a second: `exec_in_pty_capture_before_abort`
+    // snapshots and sends Escape the instant the marker settles, and abort does
+    // *not* join the background `--prs` fetch thread — the interactive teardown
+    // ends it with `drop(prs_handle)` (see `run_picker` in
+    // `src/commands/picker/mod.rs`: "don't join — the forge call may still be in
+    // flight, and process exit terminates the thread"). When `wt` exits it closes
+    // the mock's stdout pipe, the mock's next write fails with `BrokenPipe`, and
+    // the mock exits — no orphaned sleeper left behind.
+    let env_vars = mock_forge_env_with(
+        &repo,
+        "gh",
+        "pr list",
+        pr_json,
+        MockResponse::file("list.json").hold_until_parent_exit(),
+    );
 
     let result = exec_in_pty_capture_before_abort(
         wt_bin().to_str().unwrap(),
@@ -2432,20 +2526,6 @@ fn test_switch_picker_create_validates_templates_before_worktree(mut repo: TestR
     );
 }
 
-/// Helper to create temporary directive files for PTY tests.
-/// Returns (cd_path, exec_path, guards) — guards keep the temp files alive.
-fn directive_files_for_pty() -> (PathBuf, PathBuf, (tempfile::TempPath, tempfile::TempPath)) {
-    let cd = tempfile::NamedTempFile::new().expect("failed to create cd temp file");
-    let exec = tempfile::NamedTempFile::new().expect("failed to create exec temp file");
-    let cd_path = cd.path().to_path_buf();
-    let exec_path = exec.path().to_path_buf();
-    (
-        cd_path,
-        exec_path,
-        (cd.into_temp_path(), exec.into_temp_path()),
-    )
-}
-
 #[rstest]
 fn test_switch_picker_emits_cd_directive_by_default(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
@@ -2454,7 +2534,7 @@ fn test_switch_picker_emits_cd_directive_by_default(mut repo: TestRepo) {
     // Create a worktree to switch to
     repo.add_worktree("target-branch");
 
-    let (cd_path, exec_path, _guard) = directive_files_for_pty();
+    let (cd_path, exec_path, _guard) = worktrunk::testing::directive_files();
 
     let mut env_vars = repo.test_env_vars();
     env_vars.push((
@@ -2473,21 +2553,25 @@ fn test_switch_picker_emits_cd_directive_by_default(mut repo: TestRepo) {
         repo.root_path(),
         &env_vars,
         &[
-            // Gate on the preview-pane text that's emitted only once skim's
-            // selection has moved to target-branch. Under heavy macOS load
-            // skim's matcher (and the row redraw it drives) can lag the typed
-            // query, but the preview pane tracks the selection cursor — and
-            // Enter acts on the cursor, not on which rows are painted. Gating
-            // on the preview text rides that lag instead of racing it
-            // (#2334/#2729/#2767).
-            ("target", Some("target-branch has no uncommitted changes")),
+            // Cursor-navigation select, gated on the list-pane `>` pointer: the
+            // picker sorts the current worktree first, so one Down lands on
+            // `target-branch`. Typing a query instead would tie the selection to
+            // skim's matcher, whose filtered item list is swapped in during a
+            // *render* while `Accept` reads the cursor's slot directly — so a
+            // query gate can only ever assert what was painted, not what Enter
+            // will act on. The pointer comes from the same render state as the
+            // accept (see `wait_for_cursor_on_row`), and an async row refresh
+            // that resets the cursor is absorbed by the re-issued arrow.
+            ("\x1b[B", Some("target-branch")),
             ("\r", None), // Enter to switch
         ],
     );
 
     assert_eq!(
-        result.exit_code, 0,
-        "Expected exit code 0 for successful switch"
+        result.exit_code,
+        0,
+        "Expected exit code 0 for successful switch.\nScreen:\n{}",
+        result.screen()
     );
 
     // Verify CD file DOES contain a path (default behavior)
@@ -2507,7 +2591,7 @@ fn test_switch_picker_no_cd_switches_without_cd_directive(mut repo: TestRepo) {
     // Create a worktree to switch to
     repo.add_worktree("target-branch");
 
-    let (cd_path, exec_path, _guard) = directive_files_for_pty();
+    let (cd_path, exec_path, _guard) = worktrunk::testing::directive_files();
 
     let mut env_vars = repo.test_env_vars();
     env_vars.push((
@@ -2529,21 +2613,21 @@ fn test_switch_picker_no_cd_switches_without_cd_directive(mut repo: TestRepo) {
         repo.root_path(),
         &env_vars,
         &[
-            // Preview-pane gate: see test_switch_picker_emits_cd_directive_by_default
-            // for the rationale (matcher-driven row redraw can lag the cursor).
-            ("target", Some("target-branch has no uncommitted changes")),
+            // Cursor-navigation select: see test_switch_picker_emits_cd_directive_by_default
+            // for why the `>` pointer is the gate rather than a typed query.
+            ("\x1b[B", Some("target-branch")),
             ("\r", None), // Enter to switch
         ],
     );
 
+    let screen = result.screen();
     assert_eq!(
         result.exit_code, 0,
-        "Expected exit code 0 for --no-cd switch"
+        "Expected exit code 0 for --no-cd switch.\nScreen:\n{screen}"
     );
 
     // The structured result reaches stdout only after execute_switch — the
     // old print-only path emitted a bare branch name and never reached it.
-    let screen = result.screen();
     assert!(
         screen.contains("\"action\""),
         "Expected --format=json switch result on screen.\nScreen:\n{}",
@@ -2571,7 +2655,7 @@ fn test_switch_picker_runs_execute_command(mut repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
     repo.add_worktree("target-branch");
 
-    let (cd_path, exec_path, _guard) = directive_files_for_pty();
+    let (cd_path, exec_path, _guard) = worktrunk::testing::directive_files();
 
     let mut env_vars = repo.test_env_vars();
     env_vars.push((
@@ -2592,18 +2676,21 @@ fn test_switch_picker_runs_execute_command(mut repo: TestRepo) {
         repo.root_path(),
         &env_vars,
         &[
-            // Preview-pane gate: see test_switch_picker_emits_cd_directive_by_default.
-            ("target", Some("target-branch has no uncommitted changes")),
+            // Cursor-navigation select: see test_switch_picker_emits_cd_directive_by_default.
+            ("\x1b[B", Some("target-branch")),
             ("\r", None), // Enter to switch
         ],
     );
 
+    let exec_contents = std::fs::read_to_string(&exec_path).unwrap_or_default();
     assert_eq!(
-        result.exit_code, 0,
-        "Expected exit code 0 for picker switch with --execute"
+        result.exit_code,
+        0,
+        "Expected exit code 0 for picker switch with --execute.\n\
+         EXEC file: {exec_contents:?}\nScreen:\n{}",
+        result.screen()
     );
 
-    let exec_contents = std::fs::read_to_string(&exec_path).unwrap_or_default();
     assert!(
         exec_contents.contains("picker-exec-ran"),
         "EXEC file should contain the --execute command after a picker switch, got: {}",
@@ -2624,7 +2711,7 @@ fn test_switch_picker_execute_base_resolves_to_source(mut repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
     repo.add_worktree("target-branch");
 
-    let (cd_path, exec_path, _guard) = directive_files_for_pty();
+    let (cd_path, exec_path, _guard) = worktrunk::testing::directive_files();
 
     let mut env_vars = repo.test_env_vars();
     env_vars.push((
@@ -2643,15 +2730,18 @@ fn test_switch_picker_execute_base_resolves_to_source(mut repo: TestRepo) {
         repo.root_path(),
         &env_vars,
         &[
-            ("target", Some("target-branch has no uncommitted changes")),
+            // Cursor-navigation select: see test_switch_picker_emits_cd_directive_by_default.
+            ("\x1b[B", Some("target-branch")),
             ("\r", None), // Enter to switch
         ],
     );
 
     assert_eq!(
-        result.exit_code, 0,
+        result.exit_code,
+        0,
         "picker `-x '{{{{ base }}}}'` should succeed, not error on an undefined \
-         value after the switch"
+         value after the switch.\nScreen:\n{}",
+        result.screen()
     );
 
     let exec_contents = std::fs::read_to_string(&exec_path).unwrap_or_default();
@@ -2694,8 +2784,8 @@ fn test_switch_picker_pre_switch_hook_requires_approval(mut repo: TestRepo) {
         repo.root_path(),
         &env_vars,
         &[
-            // Preview-pane gate: see test_switch_picker_emits_cd_directive_by_default.
-            ("target", Some("target-branch has no uncommitted changes")),
+            // Cursor-navigation select: see test_switch_picker_emits_cd_directive_by_default.
+            ("\x1b[B", Some("target-branch")),
             ("\r", Some("needs approval")), // Enter; wait for the approval prompt
             // Decline. The line terminator is CR, not LF: once skim releases the
             // terminal, the approval prompt's `read_line` runs in the OS line
@@ -2739,7 +2829,6 @@ fn drive_alt_x_then_switch(
     }
     cmd.cwd(working_dir);
     crate::common::configure_pty_command(&mut cmd);
-    cmd.env("CLICOLOR_FORCE", "1");
     cmd.env("TERM", "xterm-256color");
     for (key, value) in env_vars {
         cmd.env(key, value);
@@ -2817,19 +2906,9 @@ fn drive_alt_x_then_switch(
     send(&writer, b"\r");
     drop(writer);
 
-    // Let the switch finish and the process exit on its own; the kill is a
-    // hung-child backstop. The wait is generous because a slow-but-successful
-    // exit that gets killed reports exit 1 on Windows — see `CHILD_EXIT_TIMEOUT`.
-    let start = Instant::now();
-    while start.elapsed() < CHILD_EXIT_TIMEOUT {
-        if child.try_wait().unwrap().is_some() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    let _ = child.kill();
-    drain(&rx, &mut parser);
-    let exit_code = child.wait().unwrap().exit_code() as i32;
+    // Let the switch finish and the process exit on its own — a hang panics
+    // rather than being killed into an exit code (see `wait_for_exit`).
+    let exit_code = wait_for_exit(&mut child, &rx, &mut parser, "Enter");
 
     (row2.to_string(), parser.screen().contents(), exit_code)
 }
@@ -3257,7 +3336,6 @@ fn test_switch_picker_alt_x_morphs_removed_worktree_in_place(mut repo: TestRepo)
     cmd.arg("switch");
     cmd.cwd(repo.root_path());
     crate::common::configure_pty_command(&mut cmd);
-    cmd.env("CLICOLOR_FORCE", "1");
     cmd.env("TERM", "xterm-256color");
     for (key, value) in &env_vars {
         cmd.env(key, value);
@@ -3369,7 +3447,6 @@ fn test_switch_picker_alt_x_keeps_current_worktree(mut repo: TestRepo) {
     cmd.arg("switch");
     cmd.cwd(&wt_path); // launched from inside the worktree → it's the current one
     crate::common::configure_pty_command(&mut cmd);
-    cmd.env("CLICOLOR_FORCE", "1");
     cmd.env("TERM", "xterm-256color");
     for (key, value) in &env_vars {
         cmd.env(key, value);

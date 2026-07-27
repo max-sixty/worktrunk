@@ -32,14 +32,22 @@
 //! exit surfaces as `WorktrunkError::ChildProcessExited { signal: Some(_) }` —
 //! the structured channel that loop callers (`for-each`, hook/alias pipelines)
 //! use to abort their loops on Ctrl-C rather than continuing to the next
-//! iteration. See `git/interrupt_exit_code` for the consumer side.
+//! iteration. See `git/interrupt_signal` for the consumer side.
 //!
 //! Concurrent foreground children (`output/concurrent.rs`) and detached
 //! background children (`commands/process.rs::spawn_detached_*`) have separate
 //! spawn paths; both isolate-by-default for the same `killpg` reason. They
 //! never share wt's pgroup because they don't drive the tty (concurrent uses
 //! piped stdio, detached escapes the PTY entirely).
+//!
+//! ## Cancelling background children
+//!
+//! `wt` exiting ends its own threads but not the children they spawned, which
+//! keep running as orphans. [`cancel_background_commands`] lets the foreground
+//! thread stop that work — both what is running and what has yet to start —
+//! once nobody is left to read its results.
 
+use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
 use std::fs::Metadata;
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
@@ -58,7 +66,160 @@ use crate::trace::CommandTrace;
 
 /// Semaphore to limit concurrent command execution.
 /// Prevents resource exhaustion when spawning many parallel git commands.
+///
+/// Only background threads consume permits. The foreground thread runs
+/// commands one at a time, so it can't contribute to fan-out — and it is what
+/// the user is waiting on: were it to queue here, background work that
+/// saturates the permits (per-row preview diffs in the picker, each holding a
+/// permit for seconds on a large repo) would stall the accept path of
+/// `wt switch` until the pool drained. The cap is deliberately approximate:
+/// a work-stealing pool (rayon) can run a capped closure on the foreground
+/// thread, briefly exceeding the limit.
 static CMD_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
+
+/// The thread that entered `main()`, captured by [`init_startup`]. Commands
+/// on this thread bypass [`CMD_SEMAPHORE`] (see there). Unset when `wt` runs
+/// as a library (unit tests), where every thread is capped.
+static FOREGROUND_THREAD: OnceLock<std::thread::ThreadId> = OnceLock::new();
+
+fn is_foreground_thread() -> bool {
+    FOREGROUND_THREAD.get() == Some(&std::thread::current().id())
+}
+
+/// PIDs of capture-mode commands currently running on background threads, so
+/// the foreground thread can cancel them once nobody will read their results.
+///
+/// A background thread dies with the process, but the `git` child it spawned
+/// does not — it keeps running, orphaned, against a repo `wt` has already
+/// left. The picker is where this bites: accepting a row abandons one preview
+/// diff per worktree, each able to churn disk for seconds on a large repo,
+/// filling an in-memory cache that no longer exists.
+///
+/// Only cancellable threads register ([`is_cancellable_thread`]): the
+/// foreground thread is the one that cancels, and is never itself inside a
+/// tracked command while doing so, so the work the user is actually waiting
+/// on is never a target; an [`uninterruptible`] thread finishes what it
+/// started.
+static BACKGROUND_PIDS: Mutex<BTreeSet<u32>> = Mutex::new(BTreeSet::new());
+
+/// Deregisters a background command's PID however the command finishes.
+///
+/// The child is reaped inside the `wait` this guard outlives, so for the few
+/// instructions between that reap and this `drop` a freed PID is still listed,
+/// and a sweep landing in that window would signal whatever the kernel handed
+/// the number to next. Signalling by PID can't close this — the reap and the
+/// deregistration are not one operation — and deregistering before the wait
+/// instead is not a fix but a removal: the wait *is* the command's lifetime,
+/// so nothing would ever be cancellable. Accepted rather than mitigated:
+/// PID allocation is incremental up to `pid_max`, which makes reuse inside a
+/// microsecond window require wrapping the entire PID space first.
+struct BackgroundPid(u32);
+
+impl Drop for BackgroundPid {
+    fn drop(&mut self) {
+        BACKGROUND_PIDS.lock().unwrap().remove(&self.0);
+    }
+}
+
+std::thread_local! {
+    /// Whether this thread is running work cancellation must not touch. See
+    /// [`uninterruptible`].
+    static UNINTERRUPTIBLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run `f` with this thread's commands exempt from cancellation, for work the
+/// user has already asked for rather than work done on spec.
+///
+/// Cancelling is safe for a preview because its only effect is a cache entry
+/// nobody will read. It is not safe for a mutation: the picker runs an `alt-x`
+/// worktree removal on a background thread so the UI stays live, and a SIGTERM
+/// landing between `git worktree remove` and the branch delete would leave the
+/// user half-removed. Such a thread finishes what it started; only its result
+/// is discardable, not its effects.
+pub fn uninterruptible<T>(f: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            UNINTERRUPTIBLE.with(|flag| flag.set(self.0));
+        }
+    }
+
+    let _restore = Restore(UNINTERRUPTIBLE.with(|flag| flag.replace(true)));
+    f()
+}
+
+/// Whether this thread's commands are subject to cancellation: background (the
+/// foreground thread is the one doing the cancelling, and goes on to run the
+/// switch itself) and not marked [`uninterruptible`].
+fn is_cancellable_thread() -> bool {
+    !is_foreground_thread() && !UNINTERRUPTIBLE.with(std::cell::Cell::get)
+}
+
+/// Register a freshly spawned child as cancellable for as long as the returned
+/// guard lives. Returns `None` when this thread's commands aren't subject to
+/// cancellation (see [`is_cancellable_thread`]).
+fn track_if_cancellable(child: &std::process::Child) -> Option<BackgroundPid> {
+    is_cancellable_thread().then(|| {
+        let pid = child.id();
+        BACKGROUND_PIDS.lock().unwrap().insert(pid);
+        let guard = BackgroundPid(pid);
+        // Re-read after publishing the PID, closing the window between this
+        // command's pre-spawn check and its registration. Either the sweep
+        // takes the set lock after the insert and signals this PID itself, or
+        // it ran first — in which case the store it followed is visible here
+        // and the signal it couldn't deliver is delivered now. A child spawned
+        // into that window is exactly the orphan the sweep exists to prevent.
+        if BACKGROUND_CANCELLED.load(Ordering::SeqCst) {
+            signal_background_pid(pid);
+        }
+        guard
+    })
+}
+
+/// Set once the foreground thread has cancelled background work, so commands
+/// that haven't spawned yet never do.
+///
+/// Cancellation has to be a state, not a one-shot sweep over
+/// [`BACKGROUND_PIDS`]. A task that already cleared its caller's own
+/// supersede check and then parked on [`CMD_SEMAPHORE`] holds no PID for a
+/// sweep to find, and would spawn the moment a permit frees — precisely the
+/// permits the sweep just freed by signalling everything holding one.
+static BACKGROUND_CANCELLED: AtomicBool = AtomicBool::new(false);
+
+/// Whether the calling thread's commands have been cancelled.
+fn background_cancelled() -> bool {
+    is_cancellable_thread() && BACKGROUND_CANCELLED.load(Ordering::SeqCst)
+}
+
+fn cancelled_error() -> std::io::Error {
+    std::io::Error::new(ErrorKind::Interrupted, "background command cancelled")
+}
+
+/// Abandon background work: nothing further spawns, and whatever is already
+/// running is signalled rather than left to finish as an orphan.
+///
+/// Callers see either as an ordinary command failure, which every background
+/// caller already treats as "no result".
+pub fn cancel_background_commands() {
+    BACKGROUND_CANCELLED.store(true, Ordering::SeqCst);
+    for &pid in BACKGROUND_PIDS.lock().unwrap().iter() {
+        signal_background_pid(pid);
+    }
+}
+
+/// SIGTERM rather than SIGKILL: git's lockfile handlers run on the former, so
+/// a diff interrupted mid-index-refresh cleans up after itself instead of
+/// stranding an `index.lock` in a worktree the user is about to work in.
+#[cfg(unix)]
+fn signal_background_pid(pid: u32) {
+    forward_signal_to_pid(pid as i32, signal_hook::consts::SIGTERM);
+}
+
+/// Windows has no signal to deliver to an unrelated PID, so a command already
+/// running there runs to completion; the latch still stops everything that
+/// hasn't spawned, which is the bulk of a large fan-out.
+#[cfg(windows)]
+fn signal_background_pid(_pid: u32) {}
 
 /// The working directory at `wt` startup. Captured once so relative `GIT_*`
 /// path variables inherited from a parent `git` process can be resolved to
@@ -83,14 +244,17 @@ pub const INHERITED_GIT_PATH_VARS: &[&str] = &[
     "GIT_OBJECT_DIRECTORY",
 ];
 
-/// Record the current working directory at `wt` startup so relative `GIT_*`
-/// path variables inherited from a parent process can later be resolved to
-/// absolute paths by [`Cmd`]'s env setup.
+/// Record process-startup facts: the current working directory (so relative
+/// `GIT_*` path variables inherited from a parent process can later be
+/// resolved to absolute paths by [`Cmd`]'s env setup) and the calling thread
+/// (the foreground thread, exempt from the command semaphore —
+/// see `CMD_SEMAPHORE`).
 ///
-/// Call once during `wt` startup, before any code changes the process's
-/// working directory. Subsequent calls are no-ops.
-pub fn init_startup_cwd() {
+/// Call once from `main()`, before any code changes the process's working
+/// directory and before spawning threads. Subsequent calls are no-ops.
+pub fn init_startup() {
     STARTUP_CWD.get_or_init(|| std::env::current_dir().ok());
+    FOREGROUND_THREAD.get_or_init(|| std::thread::current().id());
 }
 
 fn startup_cwd() -> Option<&'static PathBuf> {
@@ -502,32 +666,6 @@ pub fn shell_escape_for(mode: ShellEscapeMode, s: &str) -> String {
     }
 }
 
-// ============================================================================
-// Thread-Local Command Timeout
-// ============================================================================
-
-use std::cell::Cell;
-
-thread_local! {
-    /// Thread-local command timeout. When set, all commands executed via `run()` on this
-    /// thread will be killed if they exceed this duration.
-    ///
-    /// This is used by `wt switch` interactive picker to make the TUI responsive faster on large repos.
-    /// The timeout is set per-worker-thread in Rayon's thread pool.
-    static COMMAND_TIMEOUT: Cell<Option<Duration>> = const { Cell::new(None) };
-}
-
-/// Set the command timeout for the current thread.
-///
-/// When set, all commands executed via `run()` on this thread will be killed if they
-/// exceed the specified duration. Set to `None` to disable timeout.
-///
-/// This is typically called at the start of a Rayon worker task to apply timeout
-/// to all git operations within that task.
-pub fn set_command_timeout(timeout: Option<Duration>) {
-    COMMAND_TIMEOUT.with(|t| t.set(timeout));
-}
-
 /// Maximum lines of the bounded subprocess preview per stream. Exceeded
 /// content is elided with a `… (N more lines, M bytes elided)` marker; the
 /// full output is still written to `subprocess.log` via
@@ -689,17 +827,40 @@ fn format_stream_bounded(bytes: &[u8], prefix: &str) -> Vec<String> {
 /// Implementation of timeout-based command execution.
 ///
 /// Spawns reader threads to drain stdout/stderr concurrently (preventing deadlock when
-/// output exceeds the OS pipe buffer), then waits with timeout. On timeout, kills the
-/// child; scoped threads see EOF and join automatically before the function returns.
+/// output exceeds the OS pipe buffer), then waits with timeout. On timeout, tears down
+/// the child's whole process tree; scoped threads see EOF and join automatically before
+/// the function returns.
+///
+/// **The teardown reaches the tree, not just the child, because otherwise the timeout
+/// doesn't bound anything.** A grandchild inherits the child's stderr pipe, so a
+/// surviving one holds the write end open and `read_to_end` blocks until it exits —
+/// making this function return `TimedOut` only after the *grandchild's* full runtime.
+/// The case that matters is the one this timeout exists for: `git ls-remote` against an
+/// unreachable host spawns `git-remote-https`, which sits in `connect()` for ~127 s per
+/// address on Linux and does not notice that git died. So the child is spawned into its
+/// own process group and [`kill_timed_out_tree`] signals the group.
+///
+/// Isolating the group costs the kernel's tty broadcast: a Ctrl-C no longer reaches a
+/// timed child directly, so the user waits out the remaining timeout instead of
+/// interrupting it. That is bounded by the timeout the caller chose (seconds), whereas
+/// the orphan the alternative leaves behind — kill the child, stop waiting on the
+/// readers — holds a pipe for as long as its own operation takes, once per spawn.
 fn run_with_timeout_impl(
     cmd: &mut Command,
     timeout: std::time::Duration,
 ) -> std::io::Result<std::process::Output> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+
     let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
+    let _tracked = track_if_cancellable(&child);
 
     let mut child_stdout = child.stdout.take();
     let mut child_stderr = child.stderr.take();
@@ -733,6 +894,7 @@ fn run_with_timeout_impl(
                 })
             }
             None => {
+                kill_timed_out_tree(child.id());
                 let _ = child.kill();
                 let _ = child.wait();
                 Err(std::io::Error::new(
@@ -742,6 +904,29 @@ fn run_with_timeout_impl(
             }
         }
     })
+}
+
+/// Tear down the process tree of a child that outlived its timeout.
+///
+/// `run_with_timeout_impl` made the child its own process-group leader, so its
+/// pid is the pgid and the TERM → KILL escalation reaches every member. SIGTERM
+/// first for the same reason [`signal_background_pid`] uses it: git's lockfile
+/// handlers run on TERM, so an interrupted git cleans up after itself.
+#[cfg(unix)]
+fn kill_timed_out_tree(pid: u32) {
+    forward_signal_with_escalation(pid as i32, signal_hook::consts::SIGTERM);
+}
+
+/// `taskkill /T` walks the child tree Windows has no process group for; `/F`
+/// forces. Best-effort — the pid may already be gone, or have left children
+/// that detached from it.
+#[cfg(windows)]
+fn kill_timed_out_tree(pid: u32) {
+    let _ = Command::new("taskkill")
+        .args(["/T", "/F", "/PID", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 // ============================================================================
@@ -1109,6 +1294,10 @@ impl Cmd {
     ///
     /// Note: Timeout is not supported by `.stream()` since streaming commands
     /// are interactive and should not be time-limited.
+    ///
+    /// A timed command runs in its own process group so expiry can tear down
+    /// its whole tree, which also means Ctrl-C no longer reaches it — see
+    /// `run_with_timeout_impl` for both halves of that.
     pub fn timeout(mut self, duration: std::time::Duration) -> Self {
         self.timeout = Some(duration);
         self
@@ -1286,11 +1475,21 @@ impl Cmd {
         let external_log = ExternalCommandLog::new(self.external_label.clone(), cmd_str.clone());
         self.log_run_start(&cmd_str);
 
-        // Acquire semaphore to limit concurrent commands
-        let _guard = semaphore().acquire();
+        // Limit concurrent commands (background threads only; see CMD_SEMAPHORE)
+        let _guard = (!is_foreground_thread()).then(|| semaphore().acquire());
 
         let mut trace = CommandTrace::new(self.context.as_deref(), &cmd_str)
             .reads_stdin(self.stdin_data.is_some());
+
+        // Checked after the permit, not before: a command can be cancelled
+        // while parked on the semaphore, and that is the common case in a
+        // large fan-out.
+        if background_cancelled() {
+            let e = cancelled_error();
+            trace.fail(&e);
+            external_log.record(None);
+            return Err(e);
+        }
 
         if let Err(e) = self.check_spawn_preconditions() {
             trace.fail(&e);
@@ -1300,9 +1499,6 @@ impl Cmd {
 
         let mut cmd = self.direct_command();
         self.apply_common_settings(&mut cmd);
-
-        // Determine effective timeout: explicit > thread-local > none
-        let effective_timeout = self.timeout.or_else(|| COMMAND_TIMEOUT.with(|t| t.get()));
 
         // Execute with or without stdin. Every branch produces a single
         // `Result<Output>` so spawn/write failures resolve the trace through
@@ -1317,6 +1513,7 @@ impl Cmd {
 
             match cmd.spawn() {
                 Ok(mut child) => {
+                    let _tracked = track_if_cancellable(&child);
                     // Write stdin data in an inner scope so the handle DROPS
                     // (closing the pipe) before `wait_with_output` — otherwise a
                     // child that reads stdin to EOF (e.g. `git … --stdin`) blocks
@@ -1332,12 +1529,25 @@ impl Cmd {
                 }
                 Err(e) => Err(e),
             }
-        } else if let Some(timeout_duration) = effective_timeout {
+        } else if let Some(timeout_duration) = self.timeout {
             // Timeout handling uses the existing impl
             run_with_timeout_impl(&mut cmd, timeout_duration)
         } else {
-            // Simple case: just run and capture output
-            cmd.output()
+            // Simple case: run and capture output. Spawned explicitly rather
+            // than via `cmd.output()` — which matches these stdio defaults —
+            // because `output()` hands back only the finished result, never
+            // the running child, and a background command has to be
+            // registered as cancellable while it runs (see BACKGROUND_PIDS).
+            cmd.stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            match cmd.spawn() {
+                Ok(child) => {
+                    let _tracked = track_if_cancellable(&child);
+                    child.wait_with_output()
+                }
+                Err(e) => Err(e),
+            }
         };
 
         record_captured(&mut trace, self.stdin_data.as_deref(), &result);
@@ -1369,9 +1579,10 @@ impl Cmd {
     ///
     /// `stdin_bytes` on the source feeds the pipeline's input (the sink's
     /// stdin always comes from the source). Timeouts and `external()` logging
-    /// are not supported on either side. The pipeline consumes one semaphore
-    /// permit even though it runs two processes concurrently — acquiring two
-    /// would deadlock under `concurrency = 1`.
+    /// are not supported on either side. On a background thread the pipeline
+    /// consumes one semaphore permit even though it runs two processes
+    /// concurrently — acquiring two would deadlock under `concurrency = 1`;
+    /// the foreground thread is exempt (see `CMD_SEMAPHORE`).
     pub fn pipe_into(
         mut self,
         next: Cmd,
@@ -1407,7 +1618,20 @@ impl Cmd {
         self.log_run_start(&first_cmd_str);
         next.log_run_start(&second_cmd_str);
 
-        let _guard = semaphore().acquire();
+        let _guard = (!is_foreground_thread()).then(|| semaphore().acquire());
+
+        // Cancelled, possibly while parked on the semaphore above (see
+        // `background_cancelled`). Nothing has spawned, so neither half runs.
+        if background_cancelled() {
+            let e = cancelled_error();
+            CommandTrace::record_failed(
+                self.context.as_deref(),
+                &first_cmd_str,
+                self.stdin_data.is_some(),
+                &e,
+            );
+            return Err(e);
+        }
 
         // Validate both commands before spawning either. Nothing has spawned
         // yet, so a precondition failure emits a one-shot failed record rather
@@ -1454,6 +1678,7 @@ impl Cmd {
                 return Err(e);
             }
         };
+        let _first_tracked = track_if_cancellable(&first_child);
         let first_stdout = first_child
             .stdout
             .take()
@@ -1493,6 +1718,7 @@ impl Cmd {
                 return Err(e);
             }
         };
+        let _second_tracked = track_if_cancellable(&second_child);
 
         // `first`'s stderr must be drained concurrently with `second`'s
         // execution; otherwise pathological stderr volume (~64 KiB pipe
@@ -1723,7 +1949,7 @@ impl Cmd {
         // success and a signal then landed before `handle.close()` ran, the
         // signal arrived too late to have killed anything — the contract on
         // `signal: Some(_)` is "this child was killed by the signal" and
-        // `interrupt_exit_code` callers in pipeline loops break on it.
+        // `interrupt_signal` callers in pipeline loops break on it.
         #[cfg(unix)]
         if let Some(sig) = seen_signal
             && !status.success()
@@ -1973,6 +2199,19 @@ pub fn forward_signal_with_escalation(pgid: i32, sig: i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The only test allowed to set `FOREGROUND_THREAD` (a process-wide
+    /// set-once): with it unset, `is_foreground_thread()` is false everywhere,
+    /// which is the state every other test runs under.
+    #[test]
+    fn test_foreground_thread_exempt_after_init() {
+        assert!(!is_foreground_thread());
+        init_startup();
+        assert!(is_foreground_thread());
+        // Threads other than the initializing one stay capped.
+        let from_spawned = std::thread::spawn(is_foreground_thread).join().unwrap();
+        assert!(!from_spawned);
+    }
 
     #[test]
     fn test_powershell_escape() {
@@ -2252,6 +2491,31 @@ mod tests {
         assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
     }
 
+    /// The timeout has to bound wall-clock, not just signal the direct child.
+    /// A grandchild inherits the child's stderr pipe, so one that survives the
+    /// kill holds the write end open and the output readers block on it — which
+    /// used to make `run()` return `TimedOut` only once the *grandchild* exited
+    /// (30 s here, ~127 s for the `git-remote-https` case this bound exists
+    /// for). `; :` keeps the shell from `exec`ing sleep, so there really is a
+    /// grandchild to leave behind.
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_timeout_bounds_wall_clock_with_surviving_grandchild() {
+        let start = std::time::Instant::now();
+        let err = Cmd::new("sh")
+            .args(["-c", "sleep 30; :"])
+            .timeout(Duration::from_millis(200))
+            .run()
+            .unwrap_err();
+        let elapsed = start.elapsed();
+
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "timeout waited on the grandchild: {elapsed:?}"
+        );
+    }
+
     #[test]
     fn test_cmd_without_timeout_completes() {
         let result = Cmd::new("echo").arg("no timeout").run();
@@ -2274,51 +2538,6 @@ mod tests {
         let output = result.unwrap();
         assert!(output.status.success());
         assert!(String::from_utf8_lossy(&output.stdout).contains("hello from stdin"));
-    }
-
-    #[test]
-    fn test_thread_local_timeout_setting() {
-        // Initially no timeout (or whatever was set by previous test)
-        let initial = COMMAND_TIMEOUT.with(|t| t.get());
-
-        // Set a timeout
-        set_command_timeout(Some(Duration::from_millis(100)));
-        let after_set = COMMAND_TIMEOUT.with(|t| t.get());
-        assert_eq!(after_set, Some(Duration::from_millis(100)));
-
-        // Clear the timeout
-        set_command_timeout(initial);
-        let after_clear = COMMAND_TIMEOUT.with(|t| t.get());
-        assert_eq!(after_clear, initial);
-    }
-
-    #[test]
-    fn test_cmd_uses_thread_local_timeout() {
-        // Set no timeout (ensure fast completion)
-        set_command_timeout(None);
-
-        let result = Cmd::new("echo").arg("thread local test").run();
-        assert!(result.is_ok());
-
-        // Clean up
-        set_command_timeout(None);
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn test_cmd_thread_local_timeout_kills_slow_command() {
-        // Set a short thread-local timeout
-        set_command_timeout(Some(Duration::from_millis(50)));
-
-        // Command that would take too long
-        let result = Cmd::new("sleep").arg("10").run();
-
-        // Should be killed by the thread-local timeout
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
-
-        // Clean up
-        set_command_timeout(None);
     }
 
     // ========================================================================
@@ -2398,10 +2617,13 @@ mod tests {
 
     #[test]
     fn test_cmd_run_file_current_dir_is_errored() {
-        let file = tempfile::NamedTempFile::new().unwrap();
+        // Any existing non-directory path will do, and the test binary is one,
+        // so this creates nothing in the system temp directory — a shared
+        // namespace where Windows can deny a fresh temp name outright ("Access
+        // is denied.") rather than report a collision tempfile would retry.
         let err = Cmd::new("sh")
             .args(["-c", "true"])
-            .current_dir(file.path())
+            .current_dir(std::env::current_exe().unwrap())
             .run()
             .unwrap_err();
         assert_eq!(err.kind(), ErrorKind::NotADirectory);
@@ -2622,6 +2844,22 @@ mod tests {
             .env_remove("SOME_NONEXISTENT_VAR")
             .stream();
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_background_pid_deregisters_on_drop() {
+        // Not a live PID: this exercises the registry bookkeeping only, and
+        // nothing in this test signals anything.
+        let pid = u32::MAX;
+        {
+            BACKGROUND_PIDS.lock().unwrap().insert(pid);
+            let _guard = BackgroundPid(pid);
+            assert!(BACKGROUND_PIDS.lock().unwrap().contains(&pid));
+        }
+        assert!(
+            !BACKGROUND_PIDS.lock().unwrap().contains(&pid),
+            "the guard should deregister its PID once the command finishes"
+        );
     }
 
     #[test]

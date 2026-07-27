@@ -389,6 +389,7 @@ fn repo_path_error_when_is_bare_fails() {
         discovery_path: PathBuf::from("/nonexistent/repo"),
         git_common_dir: PathBuf::from("/nonexistent/.git"),
         cache: Arc::new(RepoCache::default()),
+        temporary_object_directory: None,
     };
 
     let err = repo.repo_path().unwrap_err();
@@ -431,6 +432,7 @@ fn repo_path_ignores_non_local_core_worktree() {
         discovery_path: tmp.path().to_path_buf(),
         git_common_dir: git_dir.clone(),
         cache: Arc::new(cache),
+        temporary_object_directory: None,
     };
 
     // Should fall through to parent(git_common_dir), ignoring the bulk value.
@@ -621,6 +623,7 @@ fn extract_failed_command_from_command_error() {
         stderr: "fatal: invalid reference: foo".into(),
         stdout: String::new(),
         exit_code: Some(128),
+        signal: None,
     };
     let err: anyhow::Error = Err::<(), _>(inner)
         .context("creating worktree")
@@ -650,6 +653,7 @@ fn is_builtin_fsmonitor_enabled_variants() {
             discovery_path: PathBuf::from("/nonexistent/repo"),
             git_common_dir: PathBuf::from("/nonexistent/.git"),
             cache: Arc::new(cache),
+            temporary_object_directory: None,
         }
     }
 
@@ -974,16 +978,7 @@ fn build_worktree_config_bare_layout() -> (tempfile::TempDir, std::path::PathBuf
         "[init]\n\tdefaultBranch = main\n[user]\n\tname = test\n\temail = test@test\n",
     )
     .unwrap();
-    let git = || {
-        Cmd::new("git")
-            .env("GIT_CONFIG_GLOBAL", &gitconfig)
-            .env("GIT_CONFIG_SYSTEM", "/dev/null")
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .env("LC_ALL", "C")
-            .env("LANG", "C")
-            .env("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z")
-            .env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z")
-    };
+    let git = || crate::testing::configure_git_env(Cmd::new("git"), &gitconfig);
 
     let path_str = |p: &std::path::Path| p.to_str().unwrap().to_owned();
 
@@ -1150,10 +1145,7 @@ fn prewarm_still_caches_preload_when_worktree_config_disabled() {
     let gitconfig = tmp.path().join("test-gitconfig");
     std::fs::write(&gitconfig, "[init]\n\tdefaultBranch = main\n").unwrap();
 
-    let out = Cmd::new("git")
-        .env("GIT_CONFIG_GLOBAL", &gitconfig)
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .env("LC_ALL", "C")
+    let out = crate::testing::configure_git_env(Cmd::new("git"), &gitconfig)
         .args(["init", "-b", "main", root.to_str().unwrap()])
         .run()
         .unwrap();
@@ -1164,4 +1156,260 @@ fn prewarm_still_caches_preload_when_worktree_config_disabled() {
         super::GIT_CONFIG_PRELOAD.get(&root).is_some(),
         "prewarm should preload normal repos (no extensions.worktreeConfig)"
     );
+}
+
+/// A worktree answers to its branch and to its own path, and the branch wins.
+///
+/// Both spellings reaching the same worktree is the point of routing every
+/// worktree argument through one canonicalizer; branch-first is what keeps a
+/// directory from shadowing a branch that shares its name.
+#[test]
+fn resolve_worktree_accepts_branch_and_path() {
+    use crate::git::ResolvedWorktree;
+    use crate::testing::TestRepo;
+    use dunce::canonicalize;
+
+    let mut test = TestRepo::with_initial_commit();
+    let worktree_path = test.add_worktree("feature");
+
+    // A relative path resolves against `-C`, which only a spawned `wt` has —
+    // `switch::switch_by_relative_worktree_path` covers that spelling.
+    for selector in ["feature", worktree_path.to_str().unwrap()] {
+        let resolved = test.repo.resolve_worktree(selector).unwrap();
+        let ResolvedWorktree::Worktree { path, branch } = resolved else {
+            panic!("{selector} should resolve to a worktree");
+        };
+        assert_eq!(canonicalize(&path).unwrap(), worktree_path);
+        assert_eq!(branch.as_deref(), Some("feature"));
+    }
+}
+
+/// A directory whose name matches a branch does not shadow it: `wt switch docs`
+/// means the branch even when `docs/` is also a worktree.
+#[test]
+fn resolve_worktree_prefers_branch_over_same_named_directory() {
+    use crate::git::ResolvedWorktree;
+    use crate::testing::TestRepo;
+    use dunce::canonicalize;
+
+    let mut test = TestRepo::with_initial_commit();
+    let branch_worktree = test.add_worktree("docs");
+    // A second worktree literally at `<repo>/docs`, on a different branch.
+    let nested = test.root_path().join("docs");
+    test.add_worktree_at_path("docs-nested", &nested);
+
+    let ResolvedWorktree::Worktree { path, branch } = test.repo.resolve_worktree("docs").unwrap()
+    else {
+        panic!("docs should resolve to a worktree");
+    };
+    assert_eq!(branch.as_deref(), Some("docs"));
+    assert_eq!(canonicalize(&path).unwrap(), branch_worktree);
+}
+
+/// A detached worktree has no branch to be named by, so its path is the only
+/// selector that reaches it.
+#[test]
+fn resolve_worktree_reaches_detached_worktree_by_path() {
+    use crate::git::ResolvedWorktree;
+    use crate::testing::TestRepo;
+    use dunce::canonicalize;
+
+    let mut test = TestRepo::with_initial_commit();
+    let worktree_path = test.add_worktree("feature");
+    test.detach_head_in_worktree("feature");
+
+    let ResolvedWorktree::Worktree { path, branch } = test
+        .repo
+        .resolve_worktree(worktree_path.to_str().unwrap())
+        .unwrap()
+    else {
+        panic!("a detached worktree should resolve by path");
+    };
+    assert_eq!(canonicalize(&path).unwrap(), worktree_path);
+    assert_eq!(branch, None);
+
+    // And it is the one case `require_selected_branch` refuses.
+    let err = test
+        .repo
+        .require_selected_branch(worktree_path.to_str().unwrap(), "promote")
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("detached"),
+        "expected a detached-HEAD error, got: {err}"
+    );
+}
+
+/// `-` and `^` expand to a branch, so the literal token never reaches the path
+/// lookup — a directory named `-` cannot hijack `wt switch -`.
+#[test]
+fn resolve_worktree_does_not_treat_shortcuts_as_paths() {
+    use crate::git::ResolvedWorktree;
+    use crate::testing::TestRepo;
+
+    let mut test = TestRepo::with_initial_commit();
+    let default_branch = test.repo.default_branch().unwrap();
+    // A worktree literally at `<repo>/^`, which `^` must not resolve to.
+    let decoy = test.root_path().join("^");
+    test.add_worktree_at_path("decoy", &decoy);
+
+    let resolved = test.repo.resolve_worktree("^").unwrap();
+    let branch = match resolved {
+        ResolvedWorktree::Worktree { branch, .. } => branch,
+        ResolvedWorktree::BranchOnly { branch } => Some(branch),
+    };
+    assert_eq!(branch.as_deref(), Some(default_branch.as_str()));
+}
+
+/// A name matching neither a branch nor a worktree path is branch-only, which
+/// is what lets `wt remove` still delete a worktree-less branch.
+#[test]
+fn resolve_worktree_falls_through_to_branch_only() {
+    use crate::git::ResolvedWorktree;
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::with_initial_commit();
+
+    let resolved = test.repo.resolve_worktree("../nowhere").unwrap();
+    let ResolvedWorktree::BranchOnly { branch } = resolved else {
+        panic!("an unmatched selector should resolve to branch-only");
+    };
+    assert_eq!(branch, "../nowhere");
+
+    // A selector matching nothing names neither, so the error claims neither —
+    // suggesting `wt switch ../nowhere` to create a worktree would only fail.
+    let err = test.repo.require_worktree("../nowhere").unwrap_err();
+    assert!(
+        err.to_string().contains("No branch or worktree named"),
+        "expected an unmatched-selector error, got: {err}"
+    );
+}
+
+/// A branch that exists without a checkout is the one case where offering to
+/// create a worktree is right, so it keeps the distinct message and hint.
+#[test]
+fn require_worktree_distinguishes_a_branch_with_no_checkout() {
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::with_initial_commit();
+    test.run_git(&["branch", "worktreeless"]);
+
+    let err = test.repo.require_worktree("worktreeless").unwrap_err();
+    let rendered = format!("{err}");
+    assert!(
+        rendered.contains("has no worktree"),
+        "expected the branch-without-worktree error, got: {rendered}"
+    );
+}
+
+#[test]
+fn test_worktree_paths_for_branch_detects_duplicates() {
+    use super::worktrees::{duplicated_branches, worktree_paths_for_branch};
+
+    // Two worktrees on `feature` — the state `git worktree add --force`
+    // produces. Porcelain retains every entry; only resolution collapses it.
+    // The detached worktree has no branch to duplicate.
+    let output = "worktree /path/to/main
+HEAD abcd1234
+branch refs/heads/main
+
+worktree /path/to/feature
+HEAD efgh5678
+branch refs/heads/feature
+
+worktree /path/to/feature-dup
+HEAD efgh5678
+branch refs/heads/feature
+
+worktree /path/to/detached
+HEAD efgh5678
+detached
+
+";
+    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+
+    // The duplicated branch yields both paths, in git's listing order — the
+    // first is what resolution uses, the rest are what the warning surfaces.
+    assert_eq!(
+        worktree_paths_for_branch(&worktrees, "feature"),
+        vec![
+            PathBuf::from("/path/to/feature"),
+            PathBuf::from("/path/to/feature-dup"),
+        ]
+    );
+    // A branch with a single worktree is unambiguous (len 1, no warning).
+    assert_eq!(
+        worktree_paths_for_branch(&worktrees, "main"),
+        vec![PathBuf::from("/path/to/main")]
+    );
+    // A branch with no worktree yields nothing.
+    assert!(worktree_paths_for_branch(&worktrees, "absent").is_empty());
+
+    // The set form `wt list` uses to flag rows names only the branch that
+    // repeats — a single-worktree branch and a detached head can't duplicate.
+    assert_eq!(
+        duplicated_branches(&worktrees),
+        std::collections::HashSet::from(["feature"])
+    );
+}
+
+#[test]
+fn test_worktree_for_branch_dedups_duplicate_warning() {
+    // `git worktree add --force` puts one branch in two worktrees. Resolving it
+    // twice in a single process must warn only once — this drives both sides of
+    // the once-per-branch dedup guard (emit on the first, skip on the second)
+    // while confirming resolution is stable.
+    use super::Repository;
+    use super::canonicalize;
+    use crate::shell_exec::Cmd;
+    use std::path::Path;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let root = canonicalize(tmp.path()).unwrap().join("repo");
+    std::fs::create_dir_all(&root).unwrap();
+    let gitconfig = tmp.path().join("test-gitconfig");
+    std::fs::write(
+        &gitconfig,
+        "[user]\n\tname = t\n\temail = t@example.com\n[init]\n\tdefaultBranch = main\n",
+    )
+    .unwrap();
+    let git = |args: &[&str], dir: &Path| {
+        let out = Cmd::new("git")
+            .env("GIT_CONFIG_GLOBAL", &gitconfig)
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .env("LC_ALL", "C")
+            .args(args.iter().copied())
+            .current_dir(dir)
+            .run()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?} failed");
+    };
+
+    git(&["init", "-b", "main", "."], &root);
+    std::fs::write(root.join("f"), "x").unwrap();
+    git(&["add", "."], &root);
+    git(&["commit", "-m", "init"], &root);
+    git(&["branch", "dup-feature"], &root);
+
+    let wt1 = tmp.path().join("wt1");
+    let wt2 = tmp.path().join("wt2");
+    git(
+        &["worktree", "add", wt1.to_str().unwrap(), "dup-feature"],
+        &root,
+    );
+    git(
+        &[
+            "worktree",
+            "add",
+            "--force",
+            wt2.to_str().unwrap(),
+            "dup-feature",
+        ],
+        &root,
+    );
+
+    let repo = Repository::at(&root).unwrap();
+    let first = repo.worktree_for_branch("dup-feature").unwrap();
+    let second = repo.worktree_for_branch("dup-feature").unwrap();
+    assert!(first.is_some(), "an ambiguous branch still resolves");
+    assert_eq!(first, second, "resolution is stable across the dedup guard");
 }

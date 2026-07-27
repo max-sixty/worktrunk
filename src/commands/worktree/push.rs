@@ -3,6 +3,22 @@
 //! Push changes to target branch with safety checks. Both fast-forward push and
 //! `--no-ff` merge share common scaffolding (target resolution, fast-forward check,
 //! stash guard, progress/success output) extracted into [`MergeContext`].
+//!
+//! # Destination-worktree safety follows git
+//!
+//! The checks cover what `git status --porcelain` reports: a modified or
+//! untracked file at a path the push range changes is refused, and the rest of
+//! a dirty tree is autostashed and restored. Ignored files fall outside that
+//! report, so a push overwrites one whose path the incoming commits track.
+//!
+//! That is git's own line, not an oversight, and it holds at the mechanisms
+//! actually used: the fast-forward hands the checkout to
+//! `receive.denyCurrentBranch=updateInstead`, `--no-ff` syncs with
+//! `read-tree -m -u`, and both run git's unpack-trees checks, which refuse to
+//! clobber an untracked file and silently overwrite an ignored one — the same
+//! split a `git merge` there would produce. Matching git is the decision;
+//! don't add an ignored-file probe to make `wt` stricter than the tool it
+//! wraps.
 
 use std::path::PathBuf;
 
@@ -85,8 +101,32 @@ impl MergeContext {
     fn prepare(target: Option<&str>, operations: Option<MergeOperations>) -> anyhow::Result<Self> {
         let repo = Repository::current()?;
 
+        // Refuse before reading ancestry: mid-rebase HEAD is detached partway
+        // through the replay, and it *is* a linear extension of the target, so
+        // the fast-forward check below passes and the push carries the target
+        // branch onto a half-replayed history whose worktree still holds
+        // conflict markers — leaving the rebase open behind it.
+        repo.ensure_no_operation_in_progress("push")?;
+
         let target_branch = repo.require_target_branch(target)?;
         let target_worktree_path = repo.worktree_for_branch(&target_branch)?;
+
+        // A registered worktree whose directory is gone can't receive the
+        // update, and the two strategies disagreed about that: the
+        // fast-forward pushes with `receive.denyCurrentBranch=updateInstead`,
+        // whose receive-pack cd's into the directory and dies in git plumbing
+        // (`exec 'update-index': cd to '…' failed`), while `--no-ff` moves the
+        // ref with plumbing of its own and skipped the sync. Refusing gives
+        // one answer, and names the `git worktree prune` that clears the
+        // registration.
+        if let Some(path) = &target_worktree_path
+            && !path.exists()
+        {
+            return Err(GitError::WorktreeMissing {
+                branch: target_branch,
+            }
+            .into());
+        }
 
         // Snapshot target SHA early for TOCTOU safety (used by both strategies
         // for the fast-forward check; --no-ff also uses it for update-ref).
@@ -124,6 +164,13 @@ impl MergeContext {
         let stash_guard =
             repo.prepare_target_worktree(target_worktree_path.as_ref(), &target_branch)?;
 
+        // TODO(#3519 follow-up): when `target_branch` was behind its upstream
+        // (see `Repository::span_upstream`), this count mixes the carried
+        // fast-forwarded upstream commits in with the branch's own squash
+        // commit, so the success line ("Merged to main (N commits, ...)")
+        // overstates what the branch itself contributed. Splitting them needs
+        // a carried-count threaded through `MergeContext`; deferred as
+        // cosmetic.
         let commit_count = repo.count_commits(&target_branch, "HEAD")?;
 
         let stats_summary = if commit_count > 0 {
@@ -434,9 +481,7 @@ pub fn handle_no_ff_merge(
     // safety). Note: `reset --keep` can't be used here because after
     // `update-ref`, HEAD already equals the merge commit, making it a no-op.
     // The merge is already done (ref updated), so treat sync failure as a warning.
-    if let Some(wt_path) = &ctx.target_worktree_path
-        && wt_path.exists()
-    {
+    if let Some(wt_path) = &ctx.target_worktree_path {
         let target_wt = ctx.repo.worktree_at(wt_path);
         if let Err(e) =
             target_wt.run_command(&["read-tree", "-m", "-u", &ctx.target_tip, &merge_sha])

@@ -507,6 +507,13 @@ fn resolve_base_ref(
         if remotes.len() == 1 {
             return Ok((format!("{}/{}", remotes[0], resolved), None));
         }
+        // Neither a ref nor a branch on a remote: the base may be named by the
+        // path of the worktree it is checked out in, as targets elsewhere are.
+        if resolved == base
+            && let Some((_, Some(branch))) = repo.worktree_at_input_path(base)?
+        {
+            return Ok((branch, None));
+        }
     }
 
     Ok((resolved, None))
@@ -851,29 +858,21 @@ fn plan_switch(
         None => {}
     }
 
-    // Phase 2b: Path-based fallback for detached worktrees.
-    // If the argument looks like a path (not a branch name), try to find a worktree there.
-    if !create {
-        let candidate = Path::new(branch);
-        let abs_path = if candidate.is_absolute() {
-            Some(candidate.to_path_buf())
-        } else if candidate.components().count() > 1 {
-            // Relative path with directory separators (e.g., "../repo.feature").
-            // Single-component names are ambiguous with branch names (already tried in Phase 2).
-            std::env::current_dir().ok().map(|cwd| cwd.join(candidate))
-        } else {
-            None
-        };
-        if let Some(abs_path) = abs_path
-            && let Some((path, wt_branch)) = repo.worktree_at_path(&abs_path)?
-        {
-            let canonical = canonicalize(&path).unwrap_or_else(|_| path.clone());
-            return Ok(SwitchPlan::Existing {
-                path: canonical,
-                branch: wt_branch,
-                new_previous,
-            });
-        }
+    // Phase 2b: the argument as the worktree's own path — the way to name a
+    // detached worktree, which has no branch. Not under `--create`, where the
+    // argument is the name of a branch that does not exist yet, and not when
+    // Phase 1 rewrote the argument (a shortcut, `pr:`/`mr:`, a stripped remote
+    // prefix), which is exactly when the literal token would be a nonsense path.
+    if !create
+        && target.branch == branch
+        && let Some((path, wt_branch)) = repo.worktree_at_input_path(branch)?
+    {
+        let canonical = canonicalize(&path).unwrap_or_else(|_| path.clone());
+        return Ok(SwitchPlan::Existing {
+            path: canonical,
+            branch: wt_branch,
+            new_previous,
+        });
     }
 
     // Phase 3: Compute expected path (only needed for create)
@@ -1481,6 +1480,14 @@ fn spawn_switch_background_hooks(
     hooks_display_path: Option<&Path>,
     hook_plan: &ApprovedHookPlan,
 ) -> anyhow::Result<()> {
+    // The common case (no project hooks configured): nothing to render or
+    // announce, so skip building the destination-rooted `Repository` — it
+    // would only be discarded by `HookAnnouncer::flush`'s own no-op-when-empty
+    // check below.
+    if hook_plan.is_empty() {
+        return Ok(());
+    }
+
     // Background hooks run in the new/destination worktree. `hook_repo` roots
     // the *render* context there; the command set is the frozen `hook_plan`
     // (selected at the gate from the invoking worktree's config), so no

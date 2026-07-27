@@ -567,6 +567,40 @@ fn test_logs_profile_from_file(repo: TestRepo) {
     assert!(stdout.contains("PERFORMANCE PROFILE"), "stdout: {stdout}");
 }
 
+/// A relative trace path resolves against `-C`, the way git resolves the path
+/// arguments in its own command line.
+///
+/// Run from outside the repo, so the process cwd and the `-C` directory
+/// disagree: the trace is only reachable from the latter.
+#[rstest]
+fn test_logs_profile_from_file_honors_directory_flag(repo: TestRepo) {
+    std::fs::write(repo.root_path().join("captured.log"), PROFILE_FIXTURE_TRACE).unwrap();
+    let outside = repo.root_path().parent().unwrap().to_path_buf();
+    let root = repo.root_path().to_string_lossy().to_string();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args([
+        "-C",
+        &root,
+        "config",
+        "state",
+        "logs",
+        "profile",
+        "captured.log",
+    ]);
+    cmd.current_dir(&outside);
+    let output = cmd.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "profile should read the trace named relative to -C: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("PERFORMANCE PROFILE"), "stdout: {stdout}");
+}
+
 /// A missing path argument fails, naming the file it could not read.
 #[rstest]
 fn test_logs_profile_file_missing(repo: TestRepo) {
@@ -3142,5 +3176,45 @@ fn test_format_rejected_on_write_action_writes_verbose_diagnostic(repo: TestRepo
     assert!(
         diagnostic_path.exists(),
         "diagnostic should be written for post-dispatch clap errors"
+    );
+}
+
+/// `--branch` takes a selector, so `@` means the current branch rather than a
+/// state key literally named `@` — the state commands share one vocabulary with
+/// the rest of wt instead of storing whatever token was typed.
+#[rstest]
+fn state_branch_flag_resolves_selectors(mut repo: TestRepo) {
+    let worktree = repo.add_worktree("feature");
+
+    let set = repo
+        .wt_command()
+        .current_dir(&worktree)
+        .args(["config", "state", "marker", "set", "wip", "--branch", "@"])
+        .output()
+        .unwrap();
+    assert!(
+        set.status.success(),
+        "setting a marker via @ should succeed: {}",
+        String::from_utf8_lossy(&set.stderr)
+    );
+
+    // Read it back from elsewhere, naming the same branch by its worktree path.
+    let get = repo
+        .wt_command()
+        .args([
+            "config",
+            "state",
+            "marker",
+            "get",
+            "--branch",
+            worktree.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&get.stdout).trim(),
+        "wip",
+        "the marker set via @ should read back via the worktree's path: {}",
+        String::from_utf8_lossy(&get.stderr)
     );
 }

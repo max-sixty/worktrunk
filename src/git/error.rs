@@ -153,18 +153,17 @@ pub trait ErrorExt {
     /// [`WorktrunkError`] variants that carry an exit code.
     fn exit_code(&self) -> Option<i32>;
 
-    /// If the error is signal-derived, return the equivalent shell exit
-    /// code (`128 + signal`).
+    /// If the error is signal-derived, return the terminating signal.
     ///
     /// Implements the Ctrl-C cancellation policy: command loops call this
-    /// on every per-iteration failure and, when it returns `Some`, abort
-    /// the loop rather than continuing. The returned code preserves the
-    /// standard `128 + sig` shell convention (130 for SIGINT, 143 for
-    /// SIGTERM).
+    /// on every per-iteration failure and, when it returns `Some(signal)`,
+    /// propagate [`WorktrunkError::Interrupted`] — which exits `128 + signal`
+    /// per the shell convention (130 SIGINT, 143 SIGTERM) — rather than
+    /// continuing.
     ///
     /// See the "Signal Handling" section of the project `CLAUDE.md` for
     /// the rationale and the full list of loops that apply this policy.
-    fn interrupt_exit_code(&self) -> Option<i32>;
+    fn interrupt_signal(&self) -> Option<i32>;
 }
 
 /// Information about a failed command, for display in error messages.
@@ -213,7 +212,21 @@ pub struct CommandError {
     pub stdout: String,
     /// Process exit code; `None` if the child was killed by a signal.
     pub exit_code: Option<i32>,
+    /// Terminating signal (Unix), e.g. `Some(2)` for SIGINT — `None` when the
+    /// child exited normally or on non-Unix. Capture mode (`Cmd::run`) reads
+    /// the raw `ExitStatus`, so a Ctrl-C/SIGTERM delivered to the child (which
+    /// shares the foreground process group) surfaces here; `interrupt_signal`
+    /// recovers SIGINT/SIGTERM before higher-level classification runs, while
+    /// other signals (a crash, an external kill) stay on the visible error
+    /// path.
+    pub signal: Option<i32>,
 }
+
+/// POSIX signal numbers, defined locally so the interrupt classification
+/// compiles on Windows too (where [`CommandError::signal`] is always `None`);
+/// the `nix`/`signal-hook` crates that export these are unix-gated.
+const SIGINT: i32 = 2;
+const SIGTERM: i32 = 15;
 
 impl CommandError {
     /// Build from the captured `Output` of a non-zero exit.
@@ -224,12 +237,17 @@ impl CommandError {
     ) -> Self {
         let stderr = String::from_utf8_lossy(&output.stderr).replace('\r', "\n");
         let stdout = String::from_utf8_lossy(&output.stdout).replace('\r', "\n");
+        #[cfg(unix)]
+        let signal = std::os::unix::process::ExitStatusExt::signal(&output.status);
+        #[cfg(not(unix))]
+        let signal = None;
         Self {
             program: program.into(),
             args: args.iter().map(|s| s.as_ref().to_string()).collect(),
             stderr,
             stdout,
             exit_code: output.status.code(),
+            signal,
         }
     }
 
@@ -266,9 +284,10 @@ impl CommandError {
 
 impl std::fmt::Display for CommandError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.exit_code {
-            Some(code) => write!(f, "{} failed (exit {})", self.command_string(), code),
-            None => write!(f, "{} failed", self.command_string()),
+        match (self.exit_code, self.signal) {
+            (Some(code), _) => write!(f, "{} failed (exit {})", self.command_string(), code),
+            (None, Some(sig)) => write!(f, "{} failed (signal {})", self.command_string(), sig),
+            (None, None) => write!(f, "{} failed", self.command_string()),
         }
     }
 }
@@ -384,6 +403,32 @@ pub enum GitError {
     // Git state errors
     DetachedHead {
         action: Option<String>,
+    },
+    /// The worktree is partway through a git operation, so a command that
+    /// rewrites or moves commits (`wt merge`, `wt step rebase`,
+    /// `wt step squash`, `wt step push`) refuses to start.
+    ///
+    /// Carries no operation and offers no remedy: `git status` names which
+    /// operation is open and how to finish it, so restating either here only
+    /// adds a line that can drift from what git accepts.
+    OperationInProgress {
+        /// The action the user asked for ("merge", "rebase").
+        action: String,
+    },
+    /// The index still holds unresolved conflicts, so a command that stages on
+    /// the user's behalf (`wt step commit`, `wt step squash`) refuses to run.
+    ///
+    /// Offers no remedy for the same reason as
+    /// [`OperationInProgress`](Self::OperationInProgress) — resolving a
+    /// conflict is git's own workflow, and whatever left the conflict behind
+    /// names it better than a fixed line could. The paths are worth carrying:
+    /// they are the one thing the user needs and git isn't being asked.
+    UnmergedPaths {
+        /// The action the user asked for ("commit", "squash").
+        action: String,
+        /// Paths the index records as unmerged, one per line in the gutter.
+        /// Never empty — an empty set is not an error.
+        files: Vec<String>,
     },
     UncommittedChanges {
         action: Option<String>,
@@ -512,6 +557,16 @@ pub enum GitError {
         target_branch: String,
         error: String,
     },
+    /// `wt merge` requires the local target ref to fast-forward to the merge
+    /// result. When the target has both fallen behind its upstream and grown
+    /// its own commits — diverged — while the branch is based past it on the
+    /// upstream side, no fast-forward exists in any mode: the target's own
+    /// commits first need reconciling with the upstream (#3519). Detected
+    /// locally, with no fetch, before any rewrite or approval prompt.
+    MergeTargetDivergedFromUpstream {
+        target_branch: String,
+        upstream: String,
+    },
 
     // Validation/other errors
     NotInteractive,
@@ -536,6 +591,16 @@ pub enum GitError {
     },
     WorktreeNotFound {
         branch: String,
+    },
+    /// A worktree selector matched neither a branch nor a worktree path.
+    ///
+    /// Distinct from [`GitError::WorktreeNotFound`], which means the branch
+    /// exists and simply has no checkout — there, suggesting `wt switch` to
+    /// create one is right. Here wt cannot tell whether the user meant a branch
+    /// or a path, and `wt switch <a-path-that-matched-nothing>` would only fail
+    /// again, so the message asks for neither.
+    WorktreeSelectorNotFound {
+        selector: String,
     },
     /// --create flag used with pr:/mr: syntax (conflict - branch already exists)
     RefCreateConflict {
@@ -585,6 +650,15 @@ pub enum GitError {
 
 impl std::error::Error for GitError {}
 
+/// `"1 path with unresolved conflicts"` — the shared tail of every message
+/// about an unmerged index. [`GitError::UnmergedPaths`] refuses outright;
+/// `wt step relocate` warns and skips instead, because a conflict blocks only
+/// one of the many worktrees it walks. The phrase is shared, not the error type.
+pub fn format_unresolved_conflicts(count: usize) -> String {
+    let paths = if count == 1 { "path" } else { "paths" };
+    format!("{count} {paths} with unresolved conflicts")
+}
+
 impl GitError {
     /// Styled title for this variant (first line, with inline `<bold>`
     /// highlights on entity names like branch and path).
@@ -601,6 +675,17 @@ impl GitError {
                 Some(action) => cformat!("Cannot {action}: not on a branch (detached HEAD)"),
                 None => "Not on a branch (detached HEAD)".to_string(),
             },
+
+            GitError::OperationInProgress { action } => {
+                cformat!("Cannot {action}: a git operation is already in progress")
+            }
+
+            GitError::UnmergedPaths { action, files } => {
+                format!(
+                    "Cannot {action}: {}",
+                    format_unresolved_conflicts(files.len())
+                )
+            }
 
             GitError::UncommittedChanges { action, branch, .. } => match (action, branch) {
                 (Some(action), Some(b)) => {
@@ -726,6 +811,13 @@ impl GitError {
                 cformat!("Can't push to local <bold>{target_branch}</> branch")
             }
 
+            GitError::MergeTargetDivergedFromUpstream {
+                target_branch,
+                upstream,
+            } => cformat!(
+                "Local <bold>{target_branch}</> has diverged from <bold>{upstream}</> — can't fast-forward to a branch based on <bold>{upstream}</>"
+            ),
+
             GitError::NotInteractive => {
                 "Cannot prompt for approval in non-interactive environment".to_string()
             }
@@ -755,6 +847,10 @@ impl GitError {
 
             GitError::WorktreeNotFound { branch } => {
                 cformat!("Branch <bold>{branch}</> has no worktree")
+            }
+
+            GitError::WorktreeSelectorNotFound { selector } => {
+                cformat!("No branch or worktree named <bold>{selector}</>")
             }
 
             GitError::RefCreateConflict {
@@ -824,6 +920,17 @@ impl GitError {
                         "To switch to a branch, run <underline>git switch <<branch>></>"
                     ))
                 )
+            }
+
+            GitError::OperationInProgress { .. } => {
+                let title = self.title();
+                write!(f, "{}", error_message(&title))
+            }
+
+            GitError::UnmergedPaths { files, .. } => {
+                let title = self.title();
+                write!(f, "{}", error_message(&title))?;
+                write!(f, "\n{}", format_with_gutter(&files.join("\n"), None))
             }
 
             GitError::UncommittedChanges {
@@ -1062,6 +1169,14 @@ impl GitError {
                         hint_message(cformat!("Remaining in directory: <underline>{listing}</>"))
                     )?;
                 }
+                // Fragile by necessity: matches git's English, which is
+                // localized and could be reworded. The text is `git worktree
+                // remove`'s own stderr — the failure never passes through a
+                // Rust `io::Error`, and git offers no porcelain or exit code
+                // that separates ENOTEMPTY from the rest. `remaining_entries`
+                // is not a substitute either: a permission-denied failure also
+                // leaves entries behind, and this hint is only right for
+                // ENOTEMPTY. A miss costs one hint.
                 if error.contains("not empty") {
                     write!(
                         f,
@@ -1156,21 +1271,18 @@ impl GitError {
                 }
             }
 
+            // Git's own stderr carries the way out — `--continue`, `--skip`,
+            // `--abort` — so it is forwarded in the gutter rather than
+            // paraphrased. Nothing stands in for it when it is empty: the
+            // rebase is still on disk, and `git status` names the remedy in
+            // git's words for whichever operation is actually open.
             GitError::RebaseConflict { git_output, .. } => {
                 let title = self.title();
                 write!(f, "{}", error_message(&title))?;
                 if !git_output.is_empty() {
-                    write!(f, "\n{}", format_with_gutter(git_output, None))
-                } else {
-                    write!(
-                        f,
-                        "\n{}\n{}",
-                        hint_message(cformat!(
-                            "To continue after resolving conflicts, run <underline>git rebase --continue</>"
-                        )),
-                        hint_message(cformat!("To abort, run <underline>git rebase --abort</>"))
-                    )
+                    write!(f, "\n{}", format_with_gutter(git_output, None))?;
                 }
+                Ok(())
             }
 
             GitError::NotRebased { target_branch } => {
@@ -1189,6 +1301,21 @@ impl GitError {
             GitError::PushFailed { error, .. } => {
                 let title = self.title();
                 write!(f, "{}", format_error_block(error_message(&title), error))
+            }
+
+            GitError::MergeTargetDivergedFromUpstream {
+                target_branch,
+                upstream,
+            } => {
+                let title = self.title();
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(&title),
+                    hint_message(cformat!(
+                        "Reconcile <underline>{target_branch}</> with <underline>{upstream}</> (rebase or merge its local commits), or specify a different target"
+                    ))
+                )
             }
 
             GitError::NotInteractive => {
@@ -1260,6 +1387,18 @@ impl GitError {
                     error_message(&title),
                     hint_message(cformat!(
                         "To create a worktree, run <underline>{switch_cmd}</>"
+                    ))
+                )
+            }
+
+            GitError::WorktreeSelectorNotFound { .. } => {
+                let title = self.title();
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(&title),
+                    hint_message(cformat!(
+                        "To see branches and worktree paths, run <underline>wt list --branches</>"
                     ))
                 )
             }
@@ -1382,6 +1521,15 @@ pub enum WorktrunkError {
     CommandNotApproved,
     /// Error already displayed, just exit with given code (silent error)
     AlreadyDisplayed { exit_code: i32 },
+    /// A signal killed the foreground child and the command aborted.
+    ///
+    /// Exits `128 + signal` and renders once, at exit, following the shell
+    /// convention for a killed job: nothing for SIGINT (the terminal already
+    /// echoed `^C`), `Terminated` for SIGTERM. wt traps signals to forward
+    /// them to children, so the shell never sees wt die and won't print that
+    /// line itself. `hint` carries an optional recovery line (e.g. a rebase
+    /// left in progress) rendered under the message.
+    Interrupted { signal: i32, hint: Option<String> },
 }
 
 impl std::fmt::Display for WorktrunkError {
@@ -1400,6 +1548,11 @@ impl std::fmt::Display for WorktrunkError {
             // on_skip callback handles the printing for CommandNotApproved;
             // AlreadyDisplayed has already shown its error via output functions.
             WorktrunkError::CommandNotApproved | WorktrunkError::AlreadyDisplayed { .. } => Ok(()),
+            WorktrunkError::Interrupted { signal, .. } => match *signal {
+                SIGINT => Ok(()),
+                SIGTERM => f.write_str("Terminated"),
+                sig => write!(f, "Killed by signal {sig}"),
+            },
         }
     }
 }
@@ -1411,6 +1564,7 @@ impl WorktrunkError {
             WorktrunkError::ChildProcessExited { code, .. } => Some(*code),
             WorktrunkError::HookCommandFailed { exit_code, .. } => *exit_code,
             WorktrunkError::AlreadyDisplayed { exit_code } => Some(*exit_code),
+            WorktrunkError::Interrupted { signal, .. } => Some(128 + signal),
             WorktrunkError::CommandNotApproved => None,
         }
     }
@@ -1440,6 +1594,25 @@ impl Diagnostic for WorktrunkError {
             // Silent — caller already handled display; render is empty.
             WorktrunkError::CommandNotApproved | WorktrunkError::AlreadyDisplayed { .. } => {
                 String::new()
+            }
+            WorktrunkError::Interrupted { signal, hint } => {
+                // Shell convention for a killed job: silent for SIGINT (the
+                // terminal already echoed ^C), "Terminated" for SIGTERM, the
+                // signal number otherwise (reachable only from stream mode,
+                // where any signal classifies as an interrupt).
+                let message = match *signal {
+                    SIGINT => None,
+                    SIGTERM => Some("Terminated".to_string()),
+                    sig => Some(format!("Killed by signal {sig}")),
+                };
+                let mut parts = Vec::new();
+                if let Some(message) = message {
+                    parts.push(error_message(message).to_string());
+                }
+                if let Some(hint) = hint {
+                    parts.push(hint_message(hint).to_string());
+                }
+                parts.join("\n")
             }
         }
     }
@@ -1477,15 +1650,36 @@ impl ErrorExt for anyhow::Error {
             .and_then(WorktrunkError::exit_code)
     }
 
-    fn interrupt_exit_code(&self) -> Option<i32> {
-        if let Some(WorktrunkError::ChildProcessExited {
-            signal: Some(sig), ..
-        }) = self.downcast_ref::<WorktrunkError>()
-        {
-            Some(128 + sig)
-        } else {
-            None
+    fn interrupt_signal(&self) -> Option<i32> {
+        // Stream mode (`Cmd::stream`) reports a signal kill as a typed
+        // `ChildProcessExited { signal }`. An error that already classified
+        // as `Interrupted` stays one, so loops that re-check errors bubbling
+        // through them can't demote it.
+        match self.downcast_ref::<WorktrunkError>() {
+            Some(WorktrunkError::ChildProcessExited {
+                signal: Some(sig), ..
+            }) => return Some(*sig),
+            Some(WorktrunkError::Interrupted { signal, .. }) => return Some(*signal),
+            _ => {}
         }
+        // Capture mode (`Cmd::run`) reports it as a `CommandError` carrying the
+        // raw `status.signal()`. Walk the chain so `.context(...)` layers (e.g.
+        // `run_command`'s "Failed to execute: git …") don't hide it. Only
+        // SIGINT/SIGTERM classify as interrupts here: capture children get no
+        // signal forwarding or escalation (unlike stream mode, where a
+        // SIGKILL death can be wt's own escalation of a second Ctrl-C,
+        // normalized upstream to the originating signal), so any other signal
+        // means the child fell over on its own — and because its captured
+        // output was never displayed, a silent interrupt exit would discard
+        // the evidence. Those fall through to the caller's visible error path.
+        if let Some(CommandError {
+            signal: Some(sig @ (SIGINT | SIGTERM)),
+            ..
+        }) = CommandError::find_in(self)
+        {
+            return Some(*sig);
+        }
+        None
     }
 }
 
@@ -1745,15 +1939,15 @@ mod tests {
     }
 
     #[test]
-    fn test_interrupt_exit_code() {
-        // Signal-derived child exit → 128 + sig
+    fn test_interrupt_signal() {
+        // Signal-derived child exit → the signal
         let err: anyhow::Error = WorktrunkError::ChildProcessExited {
             code: 130,
             message: "terminated by signal 2".into(),
             signal: Some(2),
         }
         .into();
-        assert_eq!(err.interrupt_exit_code(), Some(130));
+        assert_eq!(err.interrupt_signal(), Some(2));
 
         let err: anyhow::Error = WorktrunkError::ChildProcessExited {
             code: 143,
@@ -1761,7 +1955,16 @@ mod tests {
             signal: Some(15),
         }
         .into();
-        assert_eq!(err.interrupt_exit_code(), Some(143));
+        assert_eq!(err.interrupt_signal(), Some(15));
+
+        // An already-classified interrupt stays one (idempotence for loops
+        // that re-check errors bubbling through them).
+        let err: anyhow::Error = WorktrunkError::Interrupted {
+            signal: 15,
+            hint: None,
+        }
+        .into();
+        assert_eq!(err.interrupt_signal(), Some(15));
 
         // Ordinary non-zero exit → not an interrupt
         let err: anyhow::Error = WorktrunkError::ChildProcessExited {
@@ -1770,24 +1973,45 @@ mod tests {
             signal: None,
         }
         .into();
-        assert_eq!(err.interrupt_exit_code(), None);
+        assert_eq!(err.interrupt_signal(), None);
 
         // Other WorktrunkError variants → not an interrupt
         assert_eq!(
             anyhow::Error::from(WorktrunkError::AlreadyDisplayed { exit_code: 130 })
-                .interrupt_exit_code(),
+                .interrupt_signal(),
             None,
         );
         assert_eq!(
-            anyhow::Error::from(WorktrunkError::CommandNotApproved).interrupt_exit_code(),
+            anyhow::Error::from(WorktrunkError::CommandNotApproved).interrupt_signal(),
             None,
         );
 
         // Plain anyhow error → not an interrupt
         assert_eq!(
-            anyhow::anyhow!("some unrelated failure").interrupt_exit_code(),
+            anyhow::anyhow!("some unrelated failure").interrupt_signal(),
             None,
         );
+    }
+
+    #[test]
+    fn interrupt_signal_capture_mode_narrows_to_sigint_sigterm() {
+        // Capture mode has no signal forwarding or escalation, so SIGINT and
+        // SIGTERM are the only signals a user interrupt can deliver; anything
+        // else (a crash, an OOM kill) must stay on the visible error path
+        // rather than exiting silently and discarding the captured output.
+        let cases = [(2, Some(2)), (15, Some(15)), (9, None), (11, None)];
+        for (sig, expected) in cases {
+            let err: anyhow::Error = CommandError {
+                program: "git".into(),
+                args: vec!["rebase".into()],
+                stderr: String::new(),
+                stdout: String::new(),
+                exit_code: None,
+                signal: Some(sig),
+            }
+            .into();
+            assert_eq!(err.interrupt_signal(), expected, "signal {sig}");
+        }
     }
 
     #[test]
@@ -2292,11 +2516,7 @@ mod tests {
             target_branch: "main".into(),
             git_output: "".into(),
         };
-        assert_snapshot!(err.render(), @"
-        [31m✗[39m [31mRebase onto [1mmain[22m incomplete[39m
-        [2m↳[22m [2mTo continue after resolving conflicts, run [4mgit rebase --continue[24m[22m
-        [2m↳[22m [2mTo abort, run [4mgit rebase --abort[24m[22m
-        ");
+        assert_snapshot!(err.render(), @"[31m✗[39m [31mRebase onto [1mmain[22m incomplete[39m");
     }
 
     #[test]
@@ -2396,6 +2616,7 @@ mod tests {
             stderr: "fatal: not a git repository\n".into(),
             stdout: String::new(),
             exit_code: Some(128),
+            signal: None,
         }
     }
 
@@ -2418,6 +2639,7 @@ mod tests {
             stderr: String::new(),
             stdout: String::new(),
             exit_code: Some(1),
+            signal: None,
         };
         assert_eq!(err.command_string(), "git");
         assert_eq!(err.to_string(), "git failed (exit 1)");
@@ -2431,6 +2653,7 @@ mod tests {
             stderr: "warning: line 1\nfatal: line 2\n\n".into(),
             stdout: "  trailing-stdout-error\n".into(),
             exit_code: Some(1),
+            signal: None,
         };
         // Both streams are trimmed, then joined with `\n`.
         assert_eq!(
@@ -2447,6 +2670,7 @@ mod tests {
             stderr: "   ".into(),
             stdout: "actual error on stdout".into(),
             exit_code: Some(1),
+            signal: None,
         };
         assert_eq!(err.combined_output(), "actual error on stdout");
     }
@@ -2481,13 +2705,25 @@ mod tests {
     }
 
     #[test]
-    fn command_error_signal_kill_omits_exit_code() {
+    fn command_error_signal_kill_shows_signal_not_exit_code() {
+        // A signal-killed child has no exit code; the summary names the
+        // signal instead so the surfaced error says what happened. Matters
+        // for non-interrupt signals (SIGSEGV, SIGKILL), which reach the
+        // visible error path rather than the silent interrupt exit.
         let err = CommandError {
             program: "git".into(),
             args: vec!["fetch".into()],
             stderr: String::new(),
             stdout: String::new(),
             exit_code: None,
+            signal: Some(11),
+        };
+        assert_eq!(err.to_string(), "git fetch failed (signal 11)");
+
+        // No exit code and no signal (e.g. hand-built in tests): bare summary.
+        let err = CommandError {
+            signal: None,
+            ..err
         };
         assert_eq!(err.to_string(), "git fetch failed");
     }
@@ -2514,5 +2750,79 @@ mod tests {
     fn command_error_find_in_returns_none_for_unrelated_error() {
         let err = anyhow::anyhow!("some other failure");
         assert!(CommandError::find_in(&err).is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn from_failed_output_preserves_signal_and_interrupt_signal_recovers_it() {
+        use std::os::unix::process::ExitStatusExt;
+
+        // Capture mode (`Cmd::run`) returns the raw `Output`; a child killed by
+        // SIGINT has wait status == signal number, so `.code()` is None and
+        // `.signal()` is Some(2). Before this the signal was dropped, so
+        // `interrupt_signal()` returned None even for a signal-killed child —
+        // the classification bug that surfaced a rebase interrupt as a conflict.
+        let output = std::process::Output {
+            status: std::process::ExitStatus::from_raw(2),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        };
+        let err = CommandError::from_failed_output("git", &["rebase"], &output);
+        assert_eq!(err.signal, Some(2));
+        assert_eq!(err.exit_code, None);
+
+        // The signal must survive `.context(...)` wrapping (run_command adds a
+        // "Failed to execute: git …" layer).
+        let wrapped: anyhow::Error = Err::<(), _>(err)
+            .context("Failed to execute: git rebase")
+            .unwrap_err();
+        assert_eq!(wrapped.interrupt_signal(), Some(2));
+    }
+
+    #[test]
+    fn interrupted_renders_by_signal_and_exits_128_plus_signal() {
+        // SIGINT: silent — the terminal already echoed ^C.
+        let sigint = WorktrunkError::Interrupted {
+            signal: 2,
+            hint: None,
+        };
+        assert_eq!(sigint.render(), "");
+        assert_eq!(sigint.to_string(), "");
+        assert_eq!(sigint.exit_code(), Some(130));
+
+        // SIGTERM: the line the shell would print if wt weren't trapping
+        // the signal.
+        let sigterm = WorktrunkError::Interrupted {
+            signal: 15,
+            hint: None,
+        };
+        assert_snapshot!(sigterm.render(), @"[31m✗[39m [31mTerminated[39m");
+        assert_eq!(sigterm.to_string(), "Terminated");
+        assert_eq!(sigterm.exit_code(), Some(143));
+
+        // Any other signal (stream mode counts all): named by number.
+        let sigkill = WorktrunkError::Interrupted {
+            signal: 9,
+            hint: None,
+        };
+        assert_snapshot!(sigkill.render(), @"[31m✗[39m [31mKilled by signal 9[39m");
+        assert_eq!(sigkill.to_string(), "Killed by signal 9");
+        assert_eq!(sigkill.exit_code(), Some(137));
+
+        // A hint renders under the message; with a silent SIGINT it stands
+        // alone under the user's own ^C.
+        let sigterm_hint = WorktrunkError::Interrupted {
+            signal: 15,
+            hint: Some("Rebase left in progress".to_string()),
+        };
+        assert_snapshot!(sigterm_hint.render(), @"
+        [31m✗[39m [31mTerminated[39m
+        [2m↳[22m [2mRebase left in progress[22m
+        ");
+        let sigint_hint = WorktrunkError::Interrupted {
+            signal: 2,
+            hint: Some("Rebase left in progress".to_string()),
+        };
+        assert_snapshot!(sigint_hint.render(), @"[2m↳[22m [2mRebase left in progress[22m");
     }
 }

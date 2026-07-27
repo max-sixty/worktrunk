@@ -76,7 +76,7 @@ use crate::commands::picker::preview_cache;
 use anyhow::Context;
 use color_print::cformat;
 use path_slash::PathExt as _;
-use worktrunk::git::{BranchRef, Repository, sha_cache};
+use worktrunk::git::{BranchRef, Repository, resolve_input_path, sha_cache};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
     eprintln, format_heading, format_with_gutter, hint_message, info_message, println,
@@ -656,6 +656,8 @@ pub fn handle_logs_profile(file: Option<PathBuf>, format: SwitchFormat) -> anyho
             (buf, "stdin".to_string())
         }
         Some(p) => {
+            // A relative trace path resolves against `-C` — see `resolve_input_path`.
+            let p = resolve_input_path(p);
             let content = std::fs::read_to_string(&p)
                 .with_context(|| format!("Failed to read trace {}", format_path_for_display(&p)))?;
             (content, format_path_for_display(&p).to_string())
@@ -721,7 +723,7 @@ pub fn handle_state_get(
         },
         "marker" => {
             let branch_name = match branch {
-                Some(b) => b,
+                Some(b) => repo.require_selected_branch(&b, "get marker")?,
                 None => repo.require_current_branch("get marker for current branch")?,
             };
             if format == SwitchFormat::Json {
@@ -754,7 +756,7 @@ pub fn handle_state_get(
         }
         "ci-status" => {
             let branch_name = match branch {
-                Some(b) => b,
+                Some(b) => repo.require_selected_branch(&b, "get ci-status")?,
                 None => repo.require_current_branch("get ci-status for current branch")?,
             };
 
@@ -857,7 +859,7 @@ pub fn handle_state_set(key: &str, value: String, branch: Option<String>) -> any
         }
         "marker" => {
             let branch_name = match branch {
-                Some(b) => b,
+                Some(b) => repo.require_selected_branch(&b, "set marker")?,
                 None => repo.require_current_branch("set marker for current branch")?,
             };
 
@@ -915,7 +917,7 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
             } else {
                 // Clear CI status for specific branch
                 let branch_name = match branch {
-                    Some(b) => b,
+                    Some(b) => repo.require_selected_branch(&b, "clear ci-status")?,
                     None => repo.require_current_branch("clear ci-status for current branch")?,
                 };
                 if CachedCiStatus::clear_one(&repo, &branch_name)? {
@@ -947,7 +949,7 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
                 }
             } else {
                 let branch_name = match branch {
-                    Some(b) => b,
+                    Some(b) => repo.require_selected_branch(&b, "clear marker")?,
                     None => repo.require_current_branch("clear marker for current branch")?,
                 };
 
@@ -1636,7 +1638,7 @@ pub fn handle_vars_get(key: &str, branch: Option<String>) -> anyhow::Result<()> 
     validate_vars_key(key)?;
     let repo = Repository::current()?;
     let branch_name = match branch {
-        Some(b) => b,
+        Some(b) => repo.require_selected_branch(&b, "get variable")?,
         None => repo.require_current_branch("get variable for current branch")?,
     };
 
@@ -1652,7 +1654,7 @@ pub fn handle_vars_set(key: &str, value: &str, branch: Option<String>) -> anyhow
     validate_vars_key(key)?;
     let repo = Repository::current()?;
     let branch_name = match branch {
-        Some(b) => b,
+        Some(b) => repo.require_selected_branch(&b, "set variable")?,
         None => repo.require_current_branch("set variable for current branch")?,
     };
 
@@ -1670,7 +1672,7 @@ pub fn handle_vars_set(key: &str, value: &str, branch: Option<String>) -> anyhow
 pub fn handle_vars_list(branch: Option<String>, format: SwitchFormat) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let branch_name = match branch {
-        Some(b) => b,
+        Some(b) => repo.require_selected_branch(&b, "list variables")?,
         None => repo.require_current_branch("list variables for current branch")?,
     };
 
@@ -1703,7 +1705,7 @@ pub fn handle_vars_clear(
 ) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let branch_name = match branch {
-        Some(b) => b,
+        Some(b) => repo.require_selected_branch(&b, "clear variable")?,
         None => repo.require_current_branch("clear variable for current branch")?,
     };
 

@@ -79,6 +79,7 @@ pub struct MockResponse {
     stderr: Option<String>,
     exit_code: i32,
     delay_ms: u64,
+    hold_until_parent_exit: bool,
 }
 
 impl MockResponse {
@@ -90,6 +91,7 @@ impl MockResponse {
             stderr: None,
             exit_code: 0,
             delay_ms: 0,
+            hold_until_parent_exit: false,
         }
     }
 
@@ -101,6 +103,7 @@ impl MockResponse {
             stderr: None,
             exit_code: 0,
             delay_ms: 0,
+            hold_until_parent_exit: false,
         }
     }
 
@@ -112,6 +115,7 @@ impl MockResponse {
             stderr: Some(text.to_string()),
             exit_code: 0,
             delay_ms: 0,
+            hold_until_parent_exit: false,
         }
     }
 
@@ -123,6 +127,7 @@ impl MockResponse {
             stderr: None,
             exit_code: code,
             delay_ms: 0,
+            hold_until_parent_exit: false,
         }
     }
 
@@ -145,6 +150,16 @@ impl MockResponse {
         self
     }
 
+    /// Hold the response until the parent `wt` process exits, then exit without
+    /// output. Pins a transient in-flight frame (e.g. the picker's
+    /// `Loading open PRs…` marker) on screen for exactly the picker's lifetime,
+    /// so a presence assertion never races boot latency. Overrides any delay or
+    /// response body. See the `hold_until_parent_exit` docs in `mock-stub`.
+    pub fn hold_until_parent_exit(mut self) -> Self {
+        self.hold_until_parent_exit = true;
+        self
+    }
+
     fn to_json(&self) -> serde_json::Value {
         let mut obj = serde_json::Map::new();
         if let Some(f) = &self.file {
@@ -163,6 +178,9 @@ impl MockResponse {
         }
         if self.delay_ms != 0 {
             obj.insert("delay_ms".to_string(), json!(self.delay_ms));
+        }
+        if self.hold_until_parent_exit {
+            obj.insert("hold_until_parent_exit".to_string(), json!(true));
         }
         serde_json::Value::Object(obj)
     }
@@ -214,6 +232,24 @@ impl MockConfig {
         // Copy mock binary
         copy_mock_binary(bin_dir, &self.name);
     }
+}
+
+/// Every invocation of mock command `name`, in call order, one entry per
+/// spawn with the arguments space-joined.
+///
+/// Lets a test assert on the *number of spawns*, not just the response —
+/// the property under test wherever a command is batched (one `lsof` for N
+/// PIDs) rather than called in a loop. Returns empty when the command was
+/// never invoked, so a "was not called" assertion reads naturally.
+///
+/// `log_dir` is the directory passed to the command as `MOCK_CALL_LOG_DIR`.
+/// It must be OUTSIDE the repo under test: mocks spawned by hooks would
+/// otherwise dirty the working tree mid-run and change the behavior being
+/// measured.
+pub fn mock_calls(log_dir: &Path, name: &str) -> Vec<String> {
+    fs::read_to_string(log_dir.join(format!("{}.calls", name)))
+        .map(|s| s.lines().map(str::to_string).collect())
+        .unwrap_or_default()
 }
 
 /// Create mock binary in bin_dir with the given name.

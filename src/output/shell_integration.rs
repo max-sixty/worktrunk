@@ -70,8 +70,8 @@ use worktrunk::styling::{
 };
 
 use crate::commands::configure_shell::{
-    ConfigAction, UninstallScanResult, handle_configure_shell, prompt_for_install,
-    scan_shell_configs,
+    ConfigAction, UninstallScanResult, format_matched_lines, handle_configure_shell,
+    prompt_for_install, scan_shell_configs,
 };
 
 /// Git config key tracking how many times the shell-integration install hint
@@ -505,18 +505,21 @@ pub fn print_shell_uninstall_result(scan_result: &UninstallScanResult, explicit_
     let completion_count = scan_result.completion_results.len();
     let total_changes = shell_count + completion_count;
 
-    // Show shell extension results
+    // Show shell extension results, each with the rc-file lines it took. With
+    // --yes there is no confirmation, so this is the only place the user sees
+    // which of their lines went.
     for result in &scan_result.results {
         let shell = result.shell;
         let path = format_path_for_display(&result.path);
         let what = shell_extension_label(shell);
 
         eprintln!(
-            "{}",
+            "{}{}",
             success_message(cformat!(
                 "{} {what} for <bold>{shell}</> @ <bold>{path}</>",
                 result.action.description(),
-            ))
+            )),
+            format_matched_lines(&result.matched_lines),
         );
     }
 

@@ -346,7 +346,7 @@ pub fn detect_zsh_compinit() -> Option<bool> {
     let probe_cmd =
         r#"(( $+functions[compdef] )) && echo __WT_COMPINIT_YES__ || echo __WT_COMPINIT_NO__"#;
 
-    tracing::debug!(command = %probe_cmd, "$ zsh -ic '{}' (probe)", probe_cmd);
+    tracing::debug!(command = %probe_cmd, "$ zsh +m -ic '{}' (probe)", probe_cmd);
 
     let mut cmd = Command::new("zsh");
     // `+m` disables job control so the interactive probe doesn't grab wt's

@@ -610,7 +610,7 @@ fn handle_config_shell_command(action: ConfigShellCommand, yes: bool) -> anyhow:
         }
         ConfigShellCommand::Uninstall { shell, dry_run } => {
             let explicit_shell = shell.is_some();
-            handle_unconfigure_shell(shell, yes, dry_run, &binary_name())
+            handle_unconfigure_shell(shell, yes, dry_run)
                 .map_err(|e| anyhow::anyhow!("{}", e))
                 .map(|result| {
                     if !dry_run {
@@ -1065,18 +1065,19 @@ fn print_help_to_stderr() {
 }
 
 fn main() {
-    // Capture the startup working directory before anything else. This is
-    // used by shell_exec to resolve relative `GIT_*` path variables inherited
-    // from a parent `git` (e.g. when invoked via `git wt ...` with
-    // `alias.wt = "!wt"`) against a stable reference, rather than against
-    // each child command's `current_dir`. See issue #1914.
+    // Capture startup state before anything else: the working directory
+    // (used by shell_exec to resolve relative `GIT_*` path variables
+    // inherited from a parent `git` — e.g. when invoked via `git wt ...`
+    // with `alias.wt = "!wt"` — against a stable reference, rather than
+    // against each child command's `current_dir`; see issue #1914) and the
+    // foreground thread (exempt from the command semaphore).
     //
     // `[wt-trace]` spans before the logger is registered would silently
-    // no-op, so the prelude up to `init_logging` — `init_startup_cwd`,
+    // no-op, so the prelude up to `init_logging` — `init_startup`,
     // `init_rayon_thread_pool`, `force_color_output`, `parse_cli` — isn't
     // attributed. If startup itself becomes the suspect, capture it as
     // wall-clock minus the sum of post-init spans.
-    worktrunk::shell_exec::init_startup_cwd();
+    worktrunk::shell_exec::init_startup();
 
     init_rayon_thread_pool();
 
@@ -1174,6 +1175,7 @@ mod tests {
             stderr: "warning: unable to access '.git/config': Permission denied\nfatal: unknown error occurred while reading the configuration files".into(),
             stdout: String::new(),
             exit_code: Some(128),
+            signal: None,
         }
     }
 
@@ -1246,6 +1248,7 @@ mod tests {
             stderr: String::new(),
             stdout: String::new(),
             exit_code: None,
+            signal: None,
         };
         let err: anyhow::Error = Err::<(), _>(empty).context("syncing remotes").unwrap_err();
         let out = format_command_error(&err);
@@ -1282,6 +1285,7 @@ mod tests {
             stderr: String::new(),
             stdout: String::new(),
             exit_code: None,
+            signal: None,
         };
         let err: anyhow::Error = empty.into();
         assert_eq!(err.display_message(), "git fetch failed");

@@ -9,7 +9,7 @@ use worktrunk::git::{Repository, parse_owner_repo};
 
 use super::{
     CiBranchName, CiSource, CiStatus, MAX_PRS_TO_FETCH, PrRef, PrStatus, branch_owner_repo,
-    is_retriable_error, non_interactive_cmd, output_error_text, parse_json, retriable_pr_error,
+    is_retriable_error, non_interactive_cmd, output_error_text, parse_json,
 };
 
 /// Run `tea api <path>` from the worktree root.
@@ -26,6 +26,27 @@ fn tea_api(repo: &Repository, path: &str) -> Option<Output> {
         .ok()
 }
 
+/// The error text of a `tea api` call, or `None` when the response carries the
+/// resource.
+///
+/// Neither failure shape is an exit code. `tea api` never reads the HTTP status
+/// — it copies the response body to stdout and exits 0 — so a non-zero exit
+/// means `tea` itself failed (transport error, no login configured) and its
+/// stderr names which, while every HTTP error arrives as a successful spawn
+/// carrying Gitea's `APIError` body in place of the resource. Branching on the
+/// exit code alone would let that body through as data: every field of
+/// [`GiteaCombinedStatus`] defaults, so a 500 would deserialize as "no
+/// statuses" and paint a blank CI cell.
+fn tea_api_error(output: &Output) -> Option<String> {
+    if !output.status.success() {
+        return Some(output_error_text(output));
+    }
+    serde_json::from_slice::<GiteaApiError>(&output.stdout)
+        .ok()
+        .map(|error| error.message)
+        .filter(|message| !message.trim().is_empty())
+}
+
 /// Fetch the combined CI status for a commit SHA.
 ///
 /// Returns `Some(CiStatus::Error)` for retriable failures (rate limit, network),
@@ -38,11 +59,10 @@ fn fetch_combined_status(
 ) -> Option<CiStatus> {
     let path = format!("repos/{owner}/{repo_name}/commits/{sha}/status");
     let output = tea_api(repo, &path)?;
-    if !output.status.success() {
+    if let Some(error) = tea_api_error(&output) {
         // The PR-status warning from `retriable_pr_error` is the wrong shape
-        // here (this returns just CiStatus); reuse `output_error_text` so
-        // both stdout and stderr are sniffed.
-        return is_retriable_error(&output_error_text(&output)).then_some(CiStatus::Error);
+        // here (this returns just CiStatus).
+        return is_retriable_error(&error).then_some(CiStatus::Error);
     }
     let combined: GiteaCombinedStatus = parse_json(&output.stdout, "tea api commit status", sha)?;
     if combined.total_count == 0 {
@@ -73,8 +93,8 @@ pub(super) fn detect_gitea_pr(
     let path =
         format!("repos/{query_owner}/{query_repo}/pulls?state=open&limit={MAX_PRS_TO_FETCH}");
     let output = tea_api(repo, &path)?;
-    if !output.status.success() {
-        return retriable_pr_error(&output);
+    if let Some(error) = tea_api_error(&output) {
+        return is_retriable_error(&error).then(PrStatus::error);
     }
 
     let prs: Vec<GiteaPr> = parse_json(&output.stdout, "tea api pulls", &branch.full_name)?;
@@ -173,6 +193,15 @@ fn parse_gitea_status_state(state: &str) -> Option<CiStatus> {
     }
 }
 
+/// Gitea's `APIError` body, which the API returns in place of the resource
+/// whenever a request fails. `message` carries no `#[serde(default)]` so the
+/// shape only matches a real error body — the success shapes here (a PR array,
+/// a combined status) have no `message` field.
+#[derive(Debug, Deserialize)]
+struct GiteaApiError {
+    message: String,
+}
+
 /// Combined commit status from `GET /repos/{owner}/{repo}/commits/{ref}/status`.
 #[derive(Debug, Deserialize)]
 struct GiteaCombinedStatus {
@@ -256,6 +285,33 @@ mod tests {
         assert_eq!(pr(Some(0)).comment_count(), None);
         assert_eq!(pr(None).comment_count(), None);
         assert_eq!(pr(Some(2)).comment_count(), Some(2));
+    }
+
+    /// `tea_api_error` reads the response shape, since the exit code carries
+    /// nothing: a PR array and a combined status are data, an `APIError` body
+    /// is the failure. Gitea blanks the message of a 500 for a non-admin token,
+    /// which leaves nothing to sniff — that falls through to the data path,
+    /// where the parse decides.
+    #[test]
+    fn test_tea_api_error_reads_the_response_shape() {
+        // `ExitStatus::default()` is success on every platform, so these all
+        // exercise the exit-0 path — the one the exit code can't classify.
+        let response = |stdout: &str| Output {
+            status: Default::default(),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: Vec::new(),
+        };
+
+        assert_eq!(tea_api_error(&response("[]")), None);
+        assert_eq!(
+            tea_api_error(&response(r#"{"state":"success","total_count":2}"#)),
+            None
+        );
+        assert_eq!(
+            tea_api_error(&response(r#"{"message":"token does not have scope"}"#)),
+            Some("token does not have scope".to_string())
+        );
+        assert_eq!(tea_api_error(&response(r#"{"message":"  "}"#)), None);
     }
 
     #[test]

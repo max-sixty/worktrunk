@@ -49,7 +49,7 @@ pub use error::{
     // distinct from their short single-line `Display`
     Diagnostic,
     // Extension methods on `anyhow::Error` (render_diagnostic,
-    // display_message, exit_code, interrupt_exit_code). Bring into scope
+    // display_message, exit_code, interrupt_signal). Bring into scope
     // to call them via method syntax.
     ErrorExt,
     // Structured command failure info
@@ -66,6 +66,8 @@ pub use error::{
     WorktrunkError,
     // Wrap a HookCommandFailed-bearing error with a --no-hooks hint
     add_hook_skip_hint,
+    // Shared phrasing for an unmerged index ("1 path with unresolved conflicts")
+    format_unresolved_conflicts,
     // Render a single error via Diagnostic if it implements one
     try_render_diagnostic,
 };
@@ -78,8 +80,9 @@ pub use remove::{
 };
 pub use repository::sha_cache;
 pub use repository::{
-    Branch, BranchDiffSpec, CommitMessageDetail, IntegrationTargets, RefSnapshot, Repository,
-    ResolvedWorktree, TempIndex, WorkingTree, select_comparison_base, set_base_path,
+    Branch, BranchDiffSpec, CommitMessageDetail, InProgressOperation, IntegrationTargets,
+    RefSnapshot, Repository, ResolvedWorktree, TempIndex, WorkingTree, duplicated_branches,
+    resolve_input_path, select_comparison_base, set_base_path,
 };
 pub use url::parse_owner_repo;
 pub use url::{GitRemoteUrl, GitRepoInfo, GitRepoProvider};

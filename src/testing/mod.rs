@@ -17,6 +17,8 @@
 //! - [`TestRepo::bare()`] — bare repository (`git init --bare`). No working tree.
 //! - [`TestRepo::at(path)`](TestRepo::at) — repo at a caller-specified path.
 //!   For tests needing multiple repos in a shared directory.
+//! - [`TestRepo::bare_at(path)`](TestRepo::bare_at) — bare repo at a
+//!   caller-specified path (e.g. the `project/.git` clone layout).
 //! - [`TestRepo::standard()`] — copies pre-built fixture with remote + worktrees.
 //!   For integration tests (used by the `repo()` rstest fixture).
 //! - [`TestRepo::empty()`] — `git init` with no commits, no branches.
@@ -80,11 +82,17 @@ pub fn workspace_bin(name: &str) -> PathBuf {
 }
 use tempfile::TempDir;
 
-/// Path to the standard fixture (relative to crate root).
-/// Contains repo/, repo.feature-a/, repo.feature-b/, repo.feature-c/, origin_git/.
-fn standard_fixture_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/standard")
-}
+/// Bump when [`build_standard_fixture`] changes, so stale templates under
+/// `target/` are abandoned rather than reused.
+const STANDARD_FIXTURE_VERSION: u32 = 1;
+
+/// Timestamp for the template's commits, author and committer alike.
+///
+/// The `-08:00` offset looks arbitrary but is load-bearing: commit SHAs
+/// derive from it, and the fixture's SHAs (`05a4a45`, `1b87d47`, ...) appear
+/// in ~170 committed snapshots. This value reproduces them exactly; the
+/// guard is `test_standard_fixture_template_reproduces_pinned_shas`.
+const STANDARD_FIXTURE_COMMIT_DATE: &str = "2025-01-01T00:00:00-08:00";
 
 /// Worktree info returned from fixture copy.
 struct FixtureWorktrees {
@@ -92,12 +100,114 @@ struct FixtureWorktrees {
     remote: PathBuf,
 }
 
-/// Copy the standard fixture to create a new test repo with worktrees and remote.
+/// Get-or-create the standard fixture template under `target/<profile>/`.
 ///
-/// The fixture contains:
-/// - Main repo on `main` branch with one commit
-/// - Remote (origin) bare repository
-/// - Three feature worktrees (feature-a, feature-b, feature-c) each with one commit
+/// The template is built by real git once per target directory, then copied
+/// per test ([`copy_standard_fixture`]): building per test would cost
+/// ~300 ms under nextest's process-per-test model, copying costs ~20 ms.
+/// `cargo clean` removes the template with everything else.
+fn standard_fixture_template() -> PathBuf {
+    let mut base = std::env::current_exe().expect("failed to get test executable path");
+    base.pop(); // test binary name
+    base.pop(); // deps/
+    let fixtures = base.join("wt-test-fixtures");
+    let dir = fixtures.join(format!("standard-v{STANDARD_FIXTURE_VERSION}"));
+    if !dir.exists() {
+        claim_template(&fixtures, &dir, build_standard_fixture);
+    }
+    dir
+}
+
+/// Build into a private scratch directory under `parent`, then rename it to
+/// `dir` — the atomic claim that makes concurrent cold-cache builders race
+/// benignly. `TempDir::new_in` names the scratch uniquely per call, so
+/// builders can't collide on it whether they're separate nextest processes
+/// or threads of one `cargo test` process; the first rename into place wins
+/// and losers discard their build.
+fn claim_template(parent: &Path, dir: &Path, build: impl FnOnce(&Path)) {
+    std::fs::create_dir_all(parent).unwrap();
+    let scratch = TempDir::new_in(parent).expect("create template build dir");
+    build(scratch.path());
+
+    // Disarm auto-cleanup: from here the scratch either becomes `dir` or is
+    // removed explicitly on losing the race.
+    let scratch = scratch.keep();
+    match std::fs::rename(&scratch, dir) {
+        Ok(()) => {}
+        Err(_) if dir.exists() => {
+            // Another builder won the race; use its template.
+            std::fs::remove_dir_all(&scratch).ok();
+        }
+        Err(e) => panic!(
+            "failed to move template into place at {}: {e}",
+            dir.display()
+        ),
+    }
+}
+
+/// Build the standard fixture at `root`: `repo/` on `main` with one commit,
+/// a bare `origin.git` remote (init + push, so the template records no
+/// back-pointing remote), and three feature worktrees with one commit each.
+fn build_standard_fixture(root: &Path) {
+    let git = |dir: &Path| {
+        configure_git_env(Cmd::new("git"), test_gitconfig_path())
+            .env("GIT_AUTHOR_DATE", STANDARD_FIXTURE_COMMIT_DATE)
+            .env("GIT_COMMITTER_DATE", STANDARD_FIXTURE_COMMIT_DATE)
+            .current_dir(dir)
+    };
+    let run = |cmd: Cmd, what: &str| {
+        let output = cmd.run().unwrap();
+        check_git_status(&output, what);
+    };
+
+    let repo = root.join("repo");
+    run(git(root).args(["init", "-q", "-b", "main", "repo"]), "init");
+    std::fs::write(repo.join("file.txt"), "initial content\n").unwrap();
+    std::fs::write(repo.join(".gitattributes"), "* text=auto eol=lf\n").unwrap();
+    run(git(&repo).args(["add", "-A"]), "add -A");
+    run(
+        git(&repo).args(["commit", "-q", "-m", "Initial commit"]),
+        "commit",
+    );
+
+    run(
+        git(root).args(["init", "-q", "--bare", "-b", "main", "origin.git"]),
+        "init --bare origin.git",
+    );
+    run(
+        git(&repo).args(["remote", "add", "origin", "../origin.git"]),
+        "remote add",
+    );
+    run(
+        git(&repo).args(["push", "-q", "-u", "origin", "main"]),
+        "push -u origin main",
+    );
+
+    for branch in ["feature-a", "feature-b", "feature-c"] {
+        let worktree = root.join(format!("repo.{branch}"));
+        run(
+            git(&repo).args([
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                branch,
+                &format!("../repo.{branch}"),
+            ]),
+            "worktree add",
+        );
+        let file = format!("{branch}.txt");
+        std::fs::write(worktree.join(&file), format!("{branch} content\n")).unwrap();
+        run(git(&worktree).args(["add", &file]), "add");
+        run(
+            git(&worktree).args(["commit", "-q", "-m", &format!("Add {branch} file")]),
+            "commit",
+        );
+    }
+}
+
+/// Copy the standard fixture template to create a new test repo with
+/// worktrees and remote.
 ///
 /// Pure Rust recursive copy - 2.5x faster than spawning cp/robocopy.
 /// Benchmarked at 21ms vs 53ms per fixture copy on macOS.
@@ -118,53 +228,15 @@ fn copy_standard_fixture(dest: &Path) -> FixtureWorktrees {
         }
     }
 
-    let fixture = standard_fixture_path();
-    copy_dir_recursive(&fixture, dest);
-
-    // Verify essential directories exist after copy
-    let essential = ["repo/_git", "origin_git", "repo.feature-a/_git"];
-    for path in essential {
-        let full_path = dest.join(path);
-        assert!(
-            full_path.exists(),
-            "Essential fixture path missing after copy: {:?}",
-            full_path
-        );
-    }
-
-    // Rename _git to .git in all locations
-    let renames = [
-        ("repo/_git", "repo/.git"),
-        ("origin_git", "origin.git"),
-        ("repo.feature-a/_git", "repo.feature-a/.git"),
-        ("repo.feature-b/_git", "repo.feature-b/.git"),
-        ("repo.feature-c/_git", "repo.feature-c/.git"),
-    ];
-    for (from, to) in renames {
-        let from_path = dest.join(from);
-        let to_path = dest.join(to);
-        if from_path.exists() {
-            std::fs::rename(&from_path, &to_path).unwrap_or_else(|e| {
-                panic!("Failed to rename {:?} to {:?}: {}", from_path, to_path, e)
-            });
-        }
-    }
-
-    // Verify origin.git is a valid bare repository
-    let origin_git = dest.join("origin.git");
-    assert!(
-        origin_git.join("HEAD").exists(),
-        "origin.git is not a valid git repository (missing HEAD): {:?}",
-        origin_git
-    );
+    copy_dir_recursive(&standard_fixture_template(), dest);
 
     // Canonicalize dest for worktrees map (on macOS /var -> /private/var)
     let canonical_dest = canonicalize(dest).unwrap();
 
-    // Fix gitdir files: the fixture uses _git which we rename to .git, and
-    // each copied repo needs links that point at its own tempdir. Use absolute
-    // paths, matching `git worktree add`, so `git worktree list` does not
-    // interpret fixture-relative paths from the wrong base on some Git builds.
+    // The template's worktree links are absolute paths into the template;
+    // point each copy's links at its own location. Use absolute paths,
+    // matching `git worktree add`, so `git worktree list` does not interpret
+    // relative paths from the wrong base on some Git builds.
     for wt in ["feature-a", "feature-b", "feature-c"] {
         let worktree_path = canonical_dest.join(format!("repo.{wt}"));
         let worktree_gitdir = worktree_path.join(".git").to_slash_lossy().into_owned();
@@ -176,24 +248,16 @@ fn copy_standard_fixture(dest: &Path) -> FixtureWorktrees {
             .to_slash_lossy()
             .into_owned();
 
-        let gitdir_path = dest.join(format!("repo.{wt}/.git"));
-        if gitdir_path.exists() {
-            std::fs::write(&gitdir_path, format!("gitdir: {main_worktree_gitdir}\n")).unwrap();
-        }
-
-        // Fix main repo's worktree gitdir reference
-        let main_gitdir = dest.join(format!("repo/.git/worktrees/repo.{wt}/gitdir"));
-        if main_gitdir.exists() {
-            std::fs::write(&main_gitdir, format!("{worktree_gitdir}\n")).unwrap();
-        }
-    }
-
-    // Fix remote URL in config (origin_git -> origin.git)
-    let config_path = dest.join("repo/.git/config");
-    if config_path.exists() {
-        let content = std::fs::read_to_string(&config_path).unwrap();
-        let fixed = content.replace("origin_git", "origin.git");
-        std::fs::write(&config_path, fixed).unwrap();
+        std::fs::write(
+            dest.join(format!("repo.{wt}/.git")),
+            format!("gitdir: {main_worktree_gitdir}\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            dest.join(format!("repo/.git/worktrees/repo.{wt}/gitdir")),
+            format!("{worktree_gitdir}\n"),
+        )
+        .unwrap();
     }
 
     // Build worktrees map using canonical paths
@@ -207,17 +271,67 @@ fn copy_standard_fixture(dest: &Path) -> FixtureWorktrees {
     FixtureWorktrees { worktrees, remote }
 }
 
-/// Write a gitconfig file for tests.
-fn write_test_gitconfig(path: &Path) {
-    std::fs::write(
-        path,
-        "[user]\n\tname = Test User\n\temail = test@example.com\n\
-         [advice]\n\tmergeConflict = false\n\tresolveConflict = false\n\
-         [init]\n\tdefaultBranch = main\n\
-         [commit]\n\tgpgsign = false\n\
-         [rerere]\n\tenabled = true\n",
-    )
-    .unwrap();
+/// The gitconfig that harness-built commands point `GIT_CONFIG_GLOBAL` at
+/// (see [`configure_git_env`]). The content is identical for every test, so
+/// one file per process serves them all — created lazily like
+/// `isolated_test_cwd`, reaped by the OS after the process exits. Settings
+/// that must also hold for git spawned in-process go in `LOCAL_TEST_CONFIG`
+/// instead.
+pub fn test_gitconfig_path() -> &'static Path {
+    static GITCONFIG: std::sync::LazyLock<(TempDir, PathBuf)> = std::sync::LazyLock::new(|| {
+        let dir = TempDir::new().expect("create test gitconfig dir");
+        let path = dir.path().join("test-gitconfig");
+        std::fs::write(
+            &path,
+            "[user]\n\tname = Test User\n\temail = test@example.com\n\
+             [advice]\n\tmergeConflict = false\n\tresolveConflict = false\n\
+             [init]\n\tdefaultBranch = main\n\
+             [commit]\n\tgpgsign = false\n\
+             [rerere]\n\tenabled = true\n",
+        )
+        .expect("write test gitconfig");
+        (dir, path)
+    });
+    &GITCONFIG.1
+}
+
+/// Settings written into every test repo's own config by
+/// [`write_local_test_config`].
+///
+/// A unit test driving the library in-process — `Repository::run_command` and
+/// everything layered on it — gets a `git` carrying the *test process's*
+/// environment, so none of [`configure_git_env`]'s isolation applies: no
+/// `GIT_CONFIG_GLOBAL`, meaning the developer's own `~/.gitconfig`, and no
+/// `GIT_ALLOW_PROTOCOL`. The repo's own config is the one layer such a command
+/// still reads, so whatever must hold for it lives here.
+///
+/// `protocol.allow = never` with a `file` exception is the config spelling of
+/// `GIT_ALLOW_PROTOCOL=file` (see [`GIT_ALLOWED_PROTOCOLS`] for why the suite
+/// stays off the wire). Identity and `commit.gpgsign` make an in-process commit
+/// work, and work the same way, on a machine that signs commits by default.
+const LOCAL_TEST_CONFIG: &str = r#"[user]
+	name = Test User
+	email = test@example.com
+[commit]
+	gpgsign = false
+[protocol]
+	allow = never
+[protocol "file"]
+	allow = always
+"#;
+
+/// Append [`LOCAL_TEST_CONFIG`] to `repo`'s own config file.
+///
+/// Linked worktrees share the common dir's config, so this reaches every
+/// worktree a test later adds.
+fn write_local_test_config(repo: &Repository) {
+    let path = repo.git_common_dir().join("config");
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap_or_else(|e| panic!("failed to open {} for append: {e}", path.display()));
+    std::io::Write::write_all(&mut file, LOCAL_TEST_CONFIG.as_bytes())
+        .unwrap_or_else(|e| panic!("failed to write {}: {e}", path.display()));
 }
 
 /// Canonicalize a path without Windows verbatim prefix (`\\?\`).
@@ -243,16 +357,52 @@ pub const TEST_EPOCH: u64 = 1735776000;
 /// Generous to avoid flakiness under CI load; exponential backoff means fast tests when things work.
 const BG_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// Static environment variables shared by all test isolation helpers.
+/// Value for `GIT_ALLOW_PROTOCOL` on every git process a test spawns, whether
+/// directly or as a child of `wt`: local paths and `file://` only. A git a test
+/// starts in-process carries none of this environment and is denied by
+/// [`LOCAL_TEST_CONFIG`] instead; between them the suite cannot reach the wire.
 ///
-/// These are used by both `configure_cli_command()` (for Command-based tests)
-/// and `TestRepo::test_env_vars()` (for PTY tests). Adding a variable here
-/// ensures consistency across both test infrastructure paths.
+/// Tests point remotes at real hosts (`https://github.com/test-owner/…`) to
+/// drive forge detection, and `Repository::default_branch()` is allowed to
+/// fall through to `git ls-remote` when neither the worktrunk cache nor
+/// `origin/HEAD` resolves. So a test that never meant to do network work
+/// makes an unbounded connect to whatever host the URL names. Nothing in that
+/// path has a timeout: an unanswered SYN costs ~127 s per address on Linux
+/// (`tcp_syn_retries=6`) and a host with several A/AAAA records is tried in
+/// turn, which is how a 2-second test reaches nextest's 180 s limit.
 ///
-/// NOTE: Path-dependent variables (HOME, WORKTRUNK_CONFIG_PATH, GIT_CONFIG_*)
-/// are NOT included here because they depend on the TestRepo instance.
+/// Denying the transport turns that into an immediate `transport 'https' not
+/// allowed`; detection then falls back to local inference, leaving output
+/// unchanged. The adjacent `GIT_TERMINAL_PROMPT=0` doesn't subsume this: it
+/// only suppresses the credential prompt the host's 401 triggers, so the
+/// request has already gone out by the time it applies.
+const GIT_ALLOWED_PROTOCOLS: &str = "file";
+
+/// Restore git's default protocol set on a command built by
+/// [`configure_git_cmd`], for a caller whose job is to fetch a fixture from
+/// upstream — the real-repo benchmark clone. Grep for this to enumerate
+/// everything that may reach the wire; tests are not among them.
+pub fn allow_network_transports(cmd: &mut Command) {
+    cmd.env_remove("GIT_ALLOW_PROTOCOL");
+}
+
+/// Determinism knobs every isolated wt subprocess needs, whatever it's
+/// attached to.
+///
+/// A test child's environment is three layers, each with one home: this
+/// baseline, the fixture's paths ([`pty_env_vars`]), and whatever the child's
+/// transport needs — [`configure_cli_command`] for a piped child,
+/// [`PTY_TEST_ENV_VARS`] for one on a terminal. A knob both transports need
+/// belongs here, so adding it once reaches every path.
+///
+/// `TERM` is transport-level rather than baseline, which is why it's absent
+/// here: a piped child gets `TERM=alacritty` so hyperlink detection has
+/// something to key on, while a PTY child needs a `TERM` with real terminfo —
+/// macOS CI carries no alacritty entry, and skim fails without one.
 pub const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
     ("CLICOLOR_FORCE", "1"),
+    // Deny network git transports (see GIT_ALLOWED_PROTOCOLS)
+    ("GIT_ALLOW_PROTOCOL", GIT_ALLOWED_PROTOCOLS),
     // Terminal width for PTY tests. configure_cli_command() overrides to 500 for longer paths.
     ("COLUMNS", "150"),
     // Deterministic locale settings
@@ -286,10 +436,83 @@ pub const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
     ("WORKTRUNK_TEST_POWERSHELL_ENV", "0"),
 ];
 
-// NOTE: TERM is intentionally NOT in STATIC_TEST_ENV_VARS because:
-// - configure_cli_command() sets TERM=alacritty for hyperlink detection testing
-// - PTY tests (especially skim-based picker tests) need a TERM with valid terminfo
-// - macOS CI doesn't have alacritty terminfo, causing skim to fail
+/// Determinism knobs for a child whose stderr is a terminal, layered over
+/// [`STATIC_TEST_ENV_VARS`].
+///
+/// Output that appears only once an operation runs past a threshold is a
+/// function of machine load rather than of behavior, and a PTY test captures
+/// the raw byte stream — so it keeps every in-place redraw frame a terminal
+/// would have erased, elapsed-second counter and all. These pin such output to
+/// one state, off, so a snapshot records what the command did rather than how
+/// fast the machine was. A piped child needs none of them: the TTY half of
+/// each gate is already false there, which is why they'd only add noise to the
+/// `env:` block every `assert_cmd_snapshot!` records.
+pub const PTY_TEST_ENV_VARS: &[(&str, &str)] = &[
+    // The `Progress` and `Watchdog` spinners (src/progress.rs). Gates the
+    // render, not the counters.
+    ("WORKTRUNK_TEST_SPINNERS", "0"),
+];
+
+/// The paths an isolated wt subprocess is pointed at — everything in its
+/// environment that varies per fixture. See [`pty_env_vars`].
+pub struct TestEnvPaths<'a> {
+    /// `HOME`, with `XDG_CONFIG_HOME` beneath it.
+    pub home: &'a Path,
+    /// `WORKTRUNK_CONFIG_PATH`.
+    pub wt_config: &'a Path,
+    /// `WORKTRUNK_APPROVALS_PATH`.
+    pub approvals: &'a Path,
+}
+
+/// Every environment variable a PTY-spawned wt subprocess needs: the
+/// [`STATIC_TEST_ENV_VARS`] and [`PTY_TEST_ENV_VARS`] baselines, plus `paths`.
+///
+/// A PTY child is spawned through `portable_pty::CommandBuilder`, which takes
+/// variables one at a time rather than a configured [`Command`] — so its
+/// environment has to exist as a value, which is what separates this from
+/// [`configure_cli_command`]. Every fixture that spawns one builds it here, so
+/// a new variable reaches all of them.
+pub fn pty_env_vars(paths: TestEnvPaths<'_>) -> Vec<(String, String)> {
+    // Baselines, then the git isolation set ([`git_test_env`] — its
+    // LC_ALL/LANG/GIT_ALLOW_PROTOCOL repeat STATIC_TEST_ENV_VARS entries
+    // with identical values; the later pair wins, harmlessly), then the
+    // fixture's paths.
+    let mut vars: Vec<(String, String)> = STATIC_TEST_ENV_VARS
+        .iter()
+        .chain(PTY_TEST_ENV_VARS)
+        .map(|&(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    vars.extend(
+        git_test_env(test_gitconfig_path())
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v)),
+    );
+
+    vars.extend(
+        [
+            ("HOME", paths.home.display().to_string()),
+            (
+                "XDG_CONFIG_HOME",
+                paths.home.join(".config").display().to_string(),
+            ),
+            (
+                "WORKTRUNK_CONFIG_PATH",
+                paths.wt_config.display().to_string(),
+            ),
+            (
+                "WORKTRUNK_SYSTEM_CONFIG_PATH",
+                DEFAULT_ISOLATED_SYSTEM_CONFIG.to_string(),
+            ),
+            (
+                "WORKTRUNK_APPROVALS_PATH",
+                paths.approvals.display().to_string(),
+            ),
+        ]
+        .map(|(key, value)| (key.to_string(), value)),
+    );
+
+    vars
+}
 
 /// Null device path, platform-appropriate.
 /// Use this for GIT_CONFIG_SYSTEM to disable system config in tests.
@@ -352,7 +575,7 @@ fn default_llvm_profile_file_with(inherited: Option<std::ffi::OsString>) -> std:
 /// Prepare a subprocess to run with a clean wt environment.
 ///
 /// Strips every `GIT_*` and `WORKTRUNK_*` from the parent env, plus
-/// `NO_COLOR` / `SHELL` / `PSModulePath`, then points the three
+/// `NO_COLOR` / `FORCE_HYPERLINK` / `SHELL` / `PSModulePath`, then points the three
 /// `WORKTRUNK_*_PATH` env vars at known locations:
 ///
 /// - `WORKTRUNK_CONFIG_PATH` ← `user_config` (or [`DEFAULT_ISOLATED_USER_CONFIG`])
@@ -392,6 +615,10 @@ where
         }
     }
     cmd.env_remove("NO_COLOR");
+    // Overrides the OSC 8 probe, so an inherited value changes whether `wt
+    // list` links its CI cell and shortens its URL cell to `:port`. The
+    // statusline links unconditionally and is unaffected.
+    cmd.env_remove("FORCE_HYPERLINK");
     cmd.env_remove("SHELL");
     // PSModulePath being inherited triggers false PowerShell detection on
     // CI environments where PowerShell Core is installed but not in use.
@@ -579,13 +806,30 @@ pub fn configure_cli_command(cmd: &mut Command) {
     // callers get the same defense; nothing extra needed here.
 }
 
+/// The environment for a directly-spawned test `git`: isolated config,
+/// deterministic timestamps and locale, no terminal prompts, no network
+/// transports (`GIT_ALLOWED_PROTOCOLS`).
+///
+/// Single home for these settings — [`configure_git_cmd`] (Command),
+/// [`configure_git_env`] (`Cmd`), and [`pty_env_vars`] (PTY) all
+/// consume it, so the three spellings cannot drift.
+pub fn git_test_env(git_config_path: &Path) -> [(&'static str, String); 9] {
+    [
+        ("GIT_CONFIG_GLOBAL", git_config_path.display().to_string()),
+        ("GIT_CONFIG_SYSTEM", NULL_DEVICE.to_string()),
+        ("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z".to_string()),
+        ("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z".to_string()),
+        ("LC_ALL", "C".to_string()),
+        ("LANG", "C".to_string()),
+        ("WORKTRUNK_TEST_EPOCH", TEST_EPOCH.to_string()),
+        ("GIT_TERMINAL_PROMPT", "0".to_string()),
+        ("GIT_ALLOW_PROTOCOL", GIT_ALLOWED_PROTOCOLS.to_string()),
+    ]
+}
+
 /// Configure a git command with isolated environment for testing.
 ///
-/// Sets environment variables for:
-/// - Isolated git config (using provided path or /dev/null)
-/// - Deterministic commit timestamps
-/// - Consistent locale settings
-/// - No terminal prompts
+/// Applies [`git_test_env`].
 ///
 /// # Arguments
 /// * `cmd` - The git Command to configure
@@ -596,14 +840,9 @@ pub fn configure_git_cmd(cmd: &mut Command, git_config_path: &Path) {
     // test that spawns `git` from an unprepared parent shouldn't be vulnerable
     // to an inherited relative `GIT_DIR` redirecting discovery.
     scrub_git_path_vars(cmd);
-    cmd.env("GIT_CONFIG_GLOBAL", git_config_path);
-    cmd.env("GIT_CONFIG_SYSTEM", NULL_DEVICE);
-    cmd.env("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z");
-    cmd.env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z");
-    cmd.env("LC_ALL", "C");
-    cmd.env("LANG", "C");
-    cmd.env("WORKTRUNK_TEST_EPOCH", TEST_EPOCH.to_string());
-    cmd.env("GIT_TERMINAL_PROMPT", "0");
+    for (key, value) in git_test_env(git_config_path) {
+        cmd.env(key, value);
+    }
 }
 
 /// Configure a `Cmd`-based git command with isolated environment for testing.
@@ -615,14 +854,9 @@ pub fn configure_git_env(cmd: Cmd, git_config_path: &Path) -> Cmd {
     let cmd = INHERITED_GIT_PATH_VARS
         .iter()
         .fold(cmd, |acc, var| acc.env_remove(var));
-    cmd.env("GIT_CONFIG_GLOBAL", git_config_path)
-        .env("GIT_CONFIG_SYSTEM", NULL_DEVICE)
-        .env("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z")
-        .env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z")
-        .env("LC_ALL", "C")
-        .env("LANG", "C")
-        .env("WORKTRUNK_TEST_EPOCH", TEST_EPOCH.to_string())
-        .env("GIT_TERMINAL_PROMPT", "0")
+    git_test_env(git_config_path)
+        .into_iter()
+        .fold(cmd, |acc, (key, value)| acc.env(key, value))
 }
 
 /// Shared interface for test repository fixtures.
@@ -676,24 +910,45 @@ pub trait TestRepoBase {
     }
 }
 
-/// Create a pair of temporary files for directive output (cd + exec).
+/// Create a pair of temporary files for directive output (cd + exec), in a
+/// directory of their own.
 ///
 /// The shell wrapper creates temp files and sets `WORKTRUNK_DIRECTIVE_CD_FILE`
 /// and `WORKTRUNK_DIRECTIVE_EXEC_FILE` before running wt. Use
 /// `configure_directive_files()` to set these on a Command for testing.
 ///
-/// Returns `(cd_path, exec_path, guards)`. The guards must be kept alive for
-/// the duration of the test — when dropped the temp files are cleaned up.
-pub fn directive_files() -> (PathBuf, PathBuf, (tempfile::TempPath, tempfile::TempPath)) {
-    let cd = tempfile::NamedTempFile::new().expect("failed to create cd temp file");
-    let exec = tempfile::NamedTempFile::new().expect("failed to create exec temp file");
-    let cd_path = cd.path().to_path_buf();
-    let exec_path = exec.path().to_path_buf();
-    (
-        cd_path,
-        exec_path,
-        (cd.into_temp_path(), exec.into_temp_path()),
-    )
+/// Returns `(cd_path, exec_path, guard)`. The guard must be kept alive for the
+/// duration of the test — dropping it removes the directory and both files.
+pub fn directive_files() -> (PathBuf, PathBuf, TempDir) {
+    let dir = directive_temp_dir();
+    let cd_path = create_empty(dir.path().join("cd"));
+    let exec_path = create_empty(dir.path().join("exec"));
+    (cd_path, exec_path, dir)
+}
+
+/// A private directory for a test's directive files.
+///
+/// Why not `NamedTempFile::new()` (which is what these helpers used to call):
+/// `tempfile` retries a name collision only when it surfaces as
+/// `AlreadyExists`, and on Windows `create_new` against a name already held by
+/// a *directory* — or by a file in delete-pending state — returns
+/// `PermissionDenied` instead, which it hands straight back. A full
+/// suite run leaves the shared temp directory full of `.tmpXXXXXX` entries
+/// (every `TestRepo` creates one), and under that load the call failed ~1% of
+/// the time on Windows CI: `failed to create cd temp file: … Os { code: 5 …
+/// "Access is denied." }`. `TempDir::new` isn't exposed to it — a directory
+/// collision surfaces as `AlreadyExists`, which `tempfile` retries — and the
+/// files inside carry fixed names, which nothing else can collide with.
+fn directive_temp_dir() -> TempDir {
+    TempDir::new().expect("failed to create directive temp dir")
+}
+
+/// Create `path` as an empty file, as the shell wrapper's `mktemp` would, and
+/// return it. wt appends to the exec file rather than creating it, so it has to
+/// exist before wt runs.
+fn create_empty(path: PathBuf) -> PathBuf {
+    std::fs::File::create(&path).expect("failed to create a directive file in its own temp dir");
+    path
 }
 
 /// Configure a Command to use the new split directive-file protocol.
@@ -713,14 +968,15 @@ pub fn configure_directive_cd_only(cmd: &mut Command, cd_path: &Path) {
     cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", cd_path);
 }
 
-/// Create a temporary file for legacy single-file directive output.
+/// Create a temporary file for legacy single-file directive output, in a
+/// directory of its own (see `directive_temp_dir` for why).
 ///
 /// Used to test the legacy fallback path where an old shell wrapper sets
 /// `WORKTRUNK_DIRECTIVE_FILE`. Returns `(path, guard)`.
-pub fn legacy_directive_file() -> (PathBuf, tempfile::TempPath) {
-    let file = tempfile::NamedTempFile::new().expect("failed to create temp file");
-    let path = file.path().to_path_buf();
-    (path, file.into_temp_path())
+pub fn legacy_directive_file() -> (PathBuf, TempDir) {
+    let dir = directive_temp_dir();
+    let path = create_empty(dir.path().join("directive"));
+    (path, dir)
 }
 
 /// Configure a Command to use the legacy single-file directive protocol.
@@ -789,6 +1045,23 @@ pub fn check_git_status(output: &std::process::Output, cmd_desc: &str) {
     }
 }
 
+/// The isolated per-test config files a [`TestRepo`] carries, both rooted in
+/// one temp directory. (The test gitconfig is not here: its content is
+/// per-process constant, so it lives at [`test_gitconfig_path`].)
+struct TestConfigPaths {
+    wt: PathBuf,
+    approvals: PathBuf,
+}
+
+impl TestConfigPaths {
+    fn in_dir(dir: &Path) -> Self {
+        Self {
+            wt: dir.join("test-config.toml"),
+            approvals: dir.join("test-approvals.toml"),
+        }
+    }
+}
+
 pub struct TestRepo {
     temp_dir: TempDir, // Must keep to ensure cleanup on drop
     root: PathBuf,
@@ -800,8 +1073,6 @@ pub struct TestRepo {
     test_config_path: PathBuf,
     /// Isolated approvals file for this test (prevents pollution of user's approvals)
     test_approvals_path: PathBuf,
-    /// Git config file with test settings (advice disabled, etc.)
-    git_config_path: PathBuf,
     /// Path to mock bin directory for gh/glab commands
     mock_bin_path: Option<PathBuf>,
     /// Whether Claude CLI should be treated as installed
@@ -827,16 +1098,7 @@ impl TestRepo {
     /// commands), use [`standard()`](Self::standard) instead.
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
-        let repo = Self::init_repo(&["init", "-b", "main"]);
-        // Also set identity in local config so unit tests that commit via
-        // repo.run_command() work without GIT_CONFIG_GLOBAL.
-        repo.repo
-            .run_command(&["config", "user.name", "Test User"])
-            .unwrap();
-        repo.repo
-            .run_command(&["config", "user.email", "test@example.com"])
-            .unwrap();
-        repo
+        Self::init_repo(&["init", "-b", "main"])
     }
 
     /// Create a repo with one initial commit on `main`.
@@ -875,8 +1137,8 @@ impl TestRepo {
     /// - Remote (origin) bare repository
     /// - Three feature worktrees (feature-a, feature-b, feature-c) each with one commit
     ///
-    /// Uses a pre-started fixture for fast initialization - copies the fixture
-    /// from `tests/fixtures/standard/` instead of running git commands.
+    /// Copies the once-per-target-dir template ([`standard_fixture_template`])
+    /// instead of running git commands, for fast initialization.
     ///
     /// Also sets up mock gh/glab commands that appear authenticated to prevent
     /// CI status hints from appearing in test output.
@@ -886,33 +1148,12 @@ impl TestRepo {
         // Copy from standard fixture (includes worktrees and remote)
         let fixture = copy_standard_fixture(temp_dir.path());
 
-        // Canonicalize to resolve symlinks (important on macOS where /var is symlink to /private/var)
-        let root = canonicalize(&temp_dir.path().join("repo")).unwrap();
+        let paths = TestConfigPaths::in_dir(temp_dir.path());
+        let root = temp_dir.path().join("repo");
 
-        // Create isolated config path for this test
-        let test_config_path = temp_dir.path().join("test-config.toml");
-        let test_approvals_path = temp_dir.path().join("test-approvals.toml");
-        let git_config_path = temp_dir.path().join("test-gitconfig");
-
-        // Write gitconfig for tests
-        write_test_gitconfig(&git_config_path);
-
-        let mut repo = Self {
-            temp_dir,
-            root: root.clone(),
-            repo: Repository::at(&root).unwrap(),
-            worktrees: fixture.worktrees,
-            remote: Some(fixture.remote),
-            test_config_path,
-            test_approvals_path,
-            git_config_path,
-            mock_bin_path: None,
-            claude_installed: false,
-            codex_installed: false,
-            opencode_installed: false,
-            gemini_installed: false,
-            detect_clis_via_path: false,
-        };
+        let mut repo = Self::assemble(temp_dir, &root, paths);
+        repo.worktrees = fixture.worktrees;
+        repo.remote = Some(fixture.remote);
 
         // Mock gh/glab as authenticated to prevent CI hints in test output
         repo.setup_mock_gh();
@@ -929,43 +1170,33 @@ impl TestRepo {
     /// Use for tests that need multiple repos in a shared directory
     /// (e.g., sibling worktrees, multi-repo recovery tests).
     pub fn at(path: &Path) -> Self {
+        Self::at_with(path, &["init", "-b", "main", "--quiet"])
+    }
+
+    /// [`at()`](Self::at) for a bare repository (`git init --bare`).
+    ///
+    /// Use for caller-shaped bare layouts, e.g. the `git clone --bare <url>
+    /// project/.git` pattern where the bare dir sits inside a project
+    /// directory the test owns.
+    pub fn bare_at(path: &Path) -> Self {
+        Self::at_with(path, &["init", "--bare", "--quiet"])
+    }
+
+    /// Shared initializer for [`at()`](Self::at) and [`bare_at()`](Self::bare_at):
+    /// runs `git init` with the given arguments at a caller-managed path.
+    fn at_with(path: &Path, git_args: &[&str]) -> Self {
         std::fs::create_dir_all(path).unwrap();
 
         let config_dir = TempDir::new().unwrap();
-        let test_config_path = config_dir.path().join("test-config.toml");
-        let test_approvals_path = config_dir.path().join("test-approvals.toml");
-        let git_config_path = config_dir.path().join("test-gitconfig");
-        write_test_gitconfig(&git_config_path);
+        let paths = TestConfigPaths::in_dir(config_dir.path());
 
-        configure_git_env(Cmd::new("git"), &git_config_path)
-            .args(["init", "-b", "main", "--quiet"])
+        configure_git_env(Cmd::new("git"), test_gitconfig_path())
+            .args(git_args.iter().copied())
             .current_dir(path)
             .run()
             .unwrap();
 
-        let root = canonicalize(path).unwrap();
-        let repo = Repository::at(&root).unwrap();
-        repo.run_command(&["config", "user.name", "Test User"])
-            .unwrap();
-        repo.run_command(&["config", "user.email", "test@example.com"])
-            .unwrap();
-
-        Self {
-            temp_dir: config_dir,
-            root: root.clone(),
-            repo,
-            worktrees: HashMap::new(),
-            remote: None,
-            test_config_path,
-            test_approvals_path,
-            git_config_path,
-            mock_bin_path: None,
-            claude_installed: false,
-            codex_installed: false,
-            opencode_installed: false,
-            gemini_installed: false,
-            detect_clis_via_path: false,
-        }
+        Self::assemble(config_dir, path, paths)
     }
 
     /// Create an empty test repository (no commits, no branches).
@@ -976,38 +1207,44 @@ impl TestRepo {
         Self::init_repo(&["init", "-q"])
     }
 
-    /// Shared initializer for `new()` and `empty()`.
-    ///
-    /// Creates a tempdir, writes gitconfig, runs `git init` with the given
-    /// arguments, and returns a `TestRepo` with no commits and no identity
-    /// in local config. Callers add identity or other setup as needed.
+    /// Shared initializer for `new()`, `bare()`, and `empty()`: makes a tempdir
+    /// and runs `git init` with the given arguments inside it.
     fn init_repo(git_args: &[&str]) -> Self {
         let temp_dir = TempDir::new().unwrap();
         let root = temp_dir.path().join("repo");
         std::fs::create_dir(&root).unwrap();
 
-        let test_config_path = temp_dir.path().join("test-config.toml");
-        let test_approvals_path = temp_dir.path().join("test-approvals.toml");
-        let git_config_path = temp_dir.path().join("test-gitconfig");
-        write_test_gitconfig(&git_config_path);
+        let paths = TestConfigPaths::in_dir(temp_dir.path());
 
-        configure_git_env(Cmd::new("git"), &git_config_path)
+        configure_git_env(Cmd::new("git"), test_gitconfig_path())
             .args(git_args.iter().copied())
             .current_dir(&root)
             .run()
             .unwrap();
 
-        let root = canonicalize(&root).unwrap();
+        Self::assemble(temp_dir, &root, paths)
+    }
+
+    /// Assemble a `TestRepo` around a git repo that already exists at `root`.
+    ///
+    /// Every constructor lands here, which is what lets
+    /// [`write_local_test_config`] be unconditional: a repo built by a future
+    /// constructor carries those settings by construction rather than by
+    /// remembering to ask for them.
+    fn assemble(temp_dir: TempDir, root: &Path, paths: TestConfigPaths) -> Self {
+        // Canonicalize to resolve symlinks (on macOS /var is a symlink to /private/var)
+        let root = canonicalize(root).unwrap();
+        let repo = Repository::at(&root).unwrap();
+        write_local_test_config(&repo);
 
         Self {
             temp_dir,
-            root: root.clone(),
-            repo: Repository::at(&root).unwrap(),
+            root,
+            repo,
             worktrees: HashMap::new(),
             remote: None,
-            test_config_path,
-            test_approvals_path,
-            git_config_path,
+            test_config_path: paths.wt,
+            test_approvals_path: paths.approvals,
             mock_bin_path: None,
             claude_installed: false,
             codex_installed: false,
@@ -1022,65 +1259,21 @@ impl TestRepo {
     /// This sets environment variables only for the specific command,
     /// ensuring thread-safety and test isolation.
     pub fn configure_git_cmd(&self, cmd: &mut Command) {
-        configure_git_cmd(cmd, &self.git_config_path);
+        configure_git_cmd(cmd, test_gitconfig_path());
     }
 
-    /// Get standard test environment variables as a vector.
+    /// This repo's environment for a PTY-spawned wt subprocess.
     ///
-    /// This is useful for PTY tests and other cases where you need environment variables
-    /// as a vector rather than setting them on a Command.
-    ///
-    /// ## Related: `configure_cli_command()`
-    ///
-    /// Command-based tests use `configure_cli_command()`. Both functions share common
-    /// variables via `STATIC_TEST_ENV_VARS`. See that function's docs for differences.
+    /// Thin wrapper over [`pty_env_vars`], which documents the layering and is
+    /// where a new variable goes. Command-based tests use
+    /// [`configure_cli_command`] instead.
     #[cfg_attr(windows, allow(dead_code))] // Used only by unix PTY tests
     pub fn test_env_vars(&self) -> Vec<(String, String)> {
-        // Start with shared static env vars
-        let mut vars: Vec<(String, String)> = STATIC_TEST_ENV_VARS
-            .iter()
-            .map(|&(k, v)| (k.to_string(), v.to_string()))
-            .collect();
-
-        // Add path-dependent variables specific to this TestRepo
-        vars.extend([
-            (
-                "GIT_CONFIG_GLOBAL".to_string(),
-                self.git_config_path.display().to_string(),
-            ),
-            ("GIT_CONFIG_SYSTEM".to_string(), NULL_DEVICE.to_string()),
-            (
-                "GIT_AUTHOR_DATE".to_string(),
-                "2025-01-01T00:00:00Z".to_string(),
-            ),
-            (
-                "GIT_COMMITTER_DATE".to_string(),
-                "2025-01-01T00:00:00Z".to_string(),
-            ),
-            // Prevent git from prompting for credentials when running under a TTY
-            ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
-            // Use test-specific home directory for isolation
-            ("HOME".to_string(), self.home_path().display().to_string()),
-            (
-                "XDG_CONFIG_HOME".to_string(),
-                self.home_path().join(".config").display().to_string(),
-            ),
-            ("WORKTRUNK_TEST_EPOCH".to_string(), TEST_EPOCH.to_string()),
-            (
-                "WORKTRUNK_CONFIG_PATH".to_string(),
-                self.test_config_path().display().to_string(),
-            ),
-            (
-                "WORKTRUNK_SYSTEM_CONFIG_PATH".to_string(),
-                "/etc/xdg/worktrunk/config.toml".to_string(),
-            ),
-            (
-                "WORKTRUNK_APPROVALS_PATH".to_string(),
-                self.test_approvals_path().display().to_string(),
-            ),
-        ]);
-
-        vars
+        pty_env_vars(TestEnvPaths {
+            home: self.home_path(),
+            wt_config: self.test_config_path(),
+            approvals: self.test_approvals_path(),
+        })
     }
 
     /// Configure shell integration for test environment.
@@ -1111,7 +1304,7 @@ impl TestRepo {
     /// ```
     #[must_use]
     pub fn git_command(&self) -> Cmd {
-        configure_git_env(Cmd::new("git"), &self.git_config_path).current_dir(&self.root)
+        configure_git_env(Cmd::new("git"), test_gitconfig_path()).current_dir(&self.root)
     }
 
     /// Run a git command in the repo root, panicking on failure.
@@ -1120,6 +1313,29 @@ impl TestRepo {
     pub fn run_git(&self, args: &[&str]) {
         let output = self.git_command().args(args.iter().copied()).run().unwrap();
         check_git_status(&output, &args.join(" "));
+    }
+
+    /// Create many branches at `HEAD` in a single `git update-ref --stdin`
+    /// spawn, panicking on failure.
+    ///
+    /// A fixture that needs N branches to cross a threshold cares about the
+    /// ref count, not about how the refs got there. Looping `git branch`
+    /// turns that into N process spawns, and integration tests run at full
+    /// core parallelism — so a fixture loop is multiplied by every other test
+    /// running beside it. One spawn keeps the fixture's cost proportional to
+    /// what it is actually setting up.
+    pub fn create_branches(&self, names: &[String]) {
+        let stdin: String = names
+            .iter()
+            .map(|n| format!("create refs/heads/{n} HEAD\n"))
+            .collect();
+        let output = self
+            .git_command()
+            .args(["update-ref", "--stdin"])
+            .stdin_bytes(stdin)
+            .run()
+            .unwrap();
+        check_git_status(&output, "update-ref --stdin");
     }
 
     /// Run a git command in a specific directory, panicking on failure.
@@ -1252,8 +1468,7 @@ impl TestRepo {
     /// ```text
     /// home_path()/
     /// ├── repo/              # The git repository (root_path())
-    /// ├── test-config.toml   # WORKTRUNK_CONFIG_PATH target
-    /// └── test-gitconfig     # GIT_CONFIG_GLOBAL target
+    /// └── test-config.toml   # WORKTRUNK_CONFIG_PATH target
     /// ```
     pub fn home_path(&self) -> &Path {
         self.temp_dir.path()
@@ -1291,7 +1506,7 @@ impl TestRepo {
     /// Get the project identifier (canonical path) for this test repo.
     ///
     /// Returns the full canonical path of the repository. The standard fixture uses a local
-    /// path remote (`../origin_git`) which doesn't parse as a proper git URL, causing
+    /// path remote (`../origin.git`) which doesn't parse as a proper git URL, causing
     /// worktrunk to fall back to the full canonical path.
     ///
     /// Use with TOML literal strings (single quotes) to avoid backslash escaping:
@@ -1767,6 +1982,27 @@ impl TestRepo {
             .expect("call setup_mock_ci_tools_unauthenticated() first");
         MockConfig::new("tea")
             .version("tea version development (mock)")
+            .write(mock_bin);
+    }
+
+    /// Add a mock `az` (installed and authenticated) whose `az extension list`
+    /// reports `extensions_json` to the existing mock bin.
+    ///
+    /// Call this after `setup_mock_ci_tools_unauthenticated()` to make
+    /// `wt config show --full` against an Azure DevOps remote deterministic —
+    /// the Azure diagnostics rows depend on `az`'s state and on whether the
+    /// `azure-devops` extension is among the installed ones.
+    pub fn setup_mock_az_with_extensions(&mut self, extensions_json: &str) {
+        let mock_bin = self
+            .mock_bin_path
+            .as_ref()
+            .expect("call setup_mock_ci_tools_unauthenticated() first");
+        std::fs::write(mock_bin.join("az_extensions.json"), extensions_json).unwrap();
+        MockConfig::new("az")
+            .version("azure-cli 2.60.0 (mock)")
+            .command("account show", MockResponse::exit(0))
+            .command("extension list", MockResponse::file("az_extensions.json"))
+            .command("_default", MockResponse::exit(1))
             .write(mock_bin);
     }
 
@@ -2456,7 +2692,7 @@ impl TestRepo {
 
 impl TestRepoBase for TestRepo {
     fn git_config_path(&self) -> &Path {
-        &self.git_config_path
+        test_gitconfig_path()
     }
 }
 
@@ -2465,12 +2701,17 @@ impl TestRepoBase for TestRepo {
 /// Bare repositories are useful for testing scenarios where you need worktrees
 /// for the default branch (which isn't possible with normal repos since the
 /// main worktree already has it checked out).
+///
+/// A thin composition over [`TestRepo::bare()`], so construction routes
+/// through `TestRepo::assemble` and inherits everything it guarantees
+/// (canonicalized root, `LOCAL_TEST_CONFIG`). What it adds is the bare
+/// fixture style: worktrees created *inside* the repo directory (via the
+/// `worktree-path` template), and `wt` commands that keep the terminal's
+/// plain output (`configure_wt_cmd` strips `CLICOLOR_FORCE`, sets no temp
+/// home, and leaves the working directory to the caller) — the style the
+/// bare-repo snapshot suite is written against.
 pub struct BareRepoTest {
-    temp_dir: tempfile::TempDir,
-    bare_repo_path: PathBuf,
-    test_config_path: PathBuf,
-    test_approvals_path: PathBuf,
-    git_config_path: PathBuf,
+    repo: TestRepo,
 }
 
 impl BareRepoTest {
@@ -2480,71 +2721,39 @@ impl BareRepoTest {
     /// to be created as subdirectories (e.g., `repo/main`, `repo/feature`).
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        // Bare repo without .git suffix - worktrees go inside as subdirectories
-        let bare_repo_path = temp_dir.path().join("repo");
-        let test_config_path = temp_dir.path().join("test-config.toml");
-        let test_approvals_path = temp_dir.path().join("test-approvals.toml");
-        let git_config_path = temp_dir.path().join("test-gitconfig");
-
-        write_test_gitconfig(&git_config_path);
-
-        let mut test = Self {
-            temp_dir,
-            bare_repo_path,
-            test_config_path,
-            test_approvals_path,
-            git_config_path,
-        };
-
-        // Create bare repository
-        let output = configure_git_env(Cmd::new("git"), &test.git_config_path)
-            .args(["init", "--bare", "--initial-branch", "main"])
-            .arg(test.bare_repo_path.to_str().unwrap())
-            .run()
-            .unwrap();
-
-        if !output.status.success() {
-            panic!(
-                "Failed to init bare repo:\nstdout: {}\nstderr: {}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-
-        // Canonicalize path (using dunce to avoid \\?\ prefix on Windows)
-        test.bare_repo_path = canonicalize(&test.bare_repo_path).unwrap();
-
-        // Write config with template for worktrees inside bare repo
+        let repo = TestRepo::bare();
         // Template {{ branch }} creates worktrees as subdirectories: repo/main, repo/feature
-        std::fs::write(&test.test_config_path, "worktree-path = \"{{ branch }}\"\n").unwrap();
-
-        test
+        std::fs::write(
+            repo.test_config_path(),
+            "worktree-path = \"{{ branch }}\"\n",
+        )
+        .unwrap();
+        Self { repo }
     }
 
     /// Get the path to the bare repository.
     pub fn bare_repo_path(&self) -> &Path {
-        &self.bare_repo_path
+        self.repo.path()
     }
 
     /// Get the path to the test config file.
     pub fn config_path(&self) -> &Path {
-        &self.test_config_path
+        self.repo.test_config_path()
     }
 
     /// Get the temp directory path.
     pub fn temp_path(&self) -> &Path {
-        self.temp_dir.path()
+        self.repo.home_path()
     }
 
     /// Create a worktree from the bare repository.
     ///
     /// Worktrees are created inside the bare repo directory: repo/main, repo/feature
     pub fn create_worktree(&self, branch: &str, worktree_name: &str) -> PathBuf {
-        let worktree_path = self.bare_repo_path.join(worktree_name);
+        let worktree_path = self.repo.path().join(worktree_name);
 
         let output = self
-            .git_command(&self.bare_repo_path)
+            .git_command(self.repo.path())
             .args([
                 "worktree",
                 "add",
@@ -2569,12 +2778,12 @@ impl BareRepoTest {
     /// Configure a wt command with test environment.
     pub fn configure_wt_cmd(&self, cmd: &mut Command) {
         self.configure_git_cmd(cmd);
-        cmd.env("WORKTRUNK_CONFIG_PATH", &self.test_config_path)
+        cmd.env("WORKTRUNK_CONFIG_PATH", self.repo.test_config_path())
             .env(
                 "WORKTRUNK_SYSTEM_CONFIG_PATH",
                 "/etc/xdg/worktrunk/config.toml",
             )
-            .env("WORKTRUNK_APPROVALS_PATH", &self.test_approvals_path)
+            .env("WORKTRUNK_APPROVALS_PATH", self.repo.test_approvals_path())
             .env_remove("NO_COLOR")
             .env_remove("CLICOLOR_FORCE");
     }
@@ -2589,7 +2798,7 @@ impl BareRepoTest {
 
 impl TestRepoBase for BareRepoTest {
     fn git_config_path(&self) -> &Path {
-        &self.git_config_path
+        test_gitconfig_path()
     }
 }
 
@@ -3030,6 +3239,168 @@ fn is_leap_year(year: i64) -> bool {
 mod tests {
     use super::*;
 
+    /// A harness-built `git` reaches local paths and nothing else, so no test
+    /// can make an unbounded connect to whatever host a fixture URL names
+    /// (see [`GIT_ALLOWED_PROTOCOLS`]).
+    #[test]
+    fn test_harness_git_allows_local_paths_only() {
+        let repo = TestRepo::with_initial_commit();
+        let ls_remote = |url: &str| {
+            repo.git_command()
+                .args(["ls-remote", "--symref", url, "HEAD"])
+                .run()
+                .unwrap()
+        };
+
+        let local = ls_remote(&path_slash::PathExt::to_slash_lossy(repo.root_path()));
+        let local_stderr = String::from_utf8_lossy(&local.stderr);
+        assert!(
+            local.status.success(),
+            "local-path remote must still resolve: {local_stderr}"
+        );
+
+        let remote = ls_remote("https://github.com/test-owner/test-repo.git");
+        let stderr = String::from_utf8_lossy(&remote.stderr);
+        assert!(
+            stderr.contains("transport 'https' not allowed"),
+            "https transport must be refused, got: {stderr}"
+        );
+
+        // The opt-out has to clear the var, not narrow it: a value that still
+        // named a protocol list would silently keep the fixture clone offline,
+        // and the daily benchmark run is the only thing that would notice.
+        let mut opted_out = Command::new("git");
+        configure_git_cmd(&mut opted_out, Path::new(NULL_DEVICE));
+        allow_network_transports(&mut opted_out);
+        assert!(
+            opted_out
+                .get_envs()
+                .any(|(k, v)| k == "GIT_ALLOW_PROTOCOL" && v.is_none())
+        );
+    }
+
+    /// The env deny above rides on `Cmd`s the harness builds. A unit test that
+    /// drives the library directly — `Repository::run_command` and everything
+    /// layered on it — spawns git with the *test process's* environment, which
+    /// carries no `GIT_ALLOW_PROTOCOL`, so that deny has to be in the repo's
+    /// own config to reach it (see [`LOCAL_TEST_CONFIG`]).
+    ///
+    /// That environment includes the host locale, so the assertions can't
+    /// match git's message text (`transport 'https' not allowed` translates —
+    /// e.g. `Übertragungsart 'https' nicht erlaubt`). What is locale-stable is
+    /// the URL: a refusal never names the host, while a real connect attempt
+    /// interpolates it verbatim (`konnte nicht auf 'https://127.0.0.1:1/…'
+    /// zugreifen: Failed to connect…`) — port 1 keeps that pre-fix path
+    /// offline and instant.
+    #[test]
+    fn test_in_process_git_allows_local_paths_only() {
+        let repo = TestRepo::with_initial_commit();
+        let ls_remote = |url: &str| {
+            repo.repo
+                .current_worktree()
+                .run_command_output(&["ls-remote", "--symref", url, "HEAD"])
+                .unwrap()
+        };
+
+        // `protocol.allow = never` would take local remotes down with the
+        // network ones without the `file` exception beside it.
+        let local = ls_remote(&path_slash::PathExt::to_slash_lossy(repo.root_path()));
+        let local_stderr = String::from_utf8_lossy(&local.stderr);
+        assert!(
+            local.status.success(),
+            "local-path remote must still resolve: {local_stderr}"
+        );
+
+        let remote = ls_remote("https://127.0.0.1:1/test-owner/test-repo.git");
+        let stderr = String::from_utf8_lossy(&remote.stderr);
+        assert!(
+            !remote.status.success(),
+            "https transport must be refused in-process"
+        );
+        assert!(
+            !stderr.contains("127.0.0.1"),
+            "git walked to the wire instead of refusing the transport: {stderr}"
+        );
+    }
+
+    /// Both outcomes of the template claim: an uncontested build renames the
+    /// scratch into place, and a builder that loses the race — the final dir
+    /// appears while it builds, the exact timing two cold-cache builders
+    /// produce — keeps the winner's template and removes its own scratch.
+    #[test]
+    fn test_claim_template_winner_and_loser() {
+        let parent = TempDir::new().unwrap();
+        let dir = parent.path().join("template-v1");
+
+        claim_template(parent.path(), &dir, |scratch| {
+            std::fs::write(scratch.join("marker"), "winner").unwrap();
+        });
+        assert_eq!(
+            std::fs::read_to_string(dir.join("marker")).unwrap(),
+            "winner"
+        );
+
+        // Losing builder: `dir` exists by the time it renames.
+        let dir2 = parent.path().join("template-v2");
+        claim_template(parent.path(), &dir2, |scratch| {
+            std::fs::create_dir(&dir2).unwrap();
+            std::fs::write(dir2.join("marker"), "winner").unwrap();
+            std::fs::write(scratch.join("marker"), "loser").unwrap();
+        });
+        assert_eq!(
+            std::fs::read_to_string(dir2.join("marker")).unwrap(),
+            "winner"
+        );
+
+        // Only the two templates remain — both scratch dirs are gone.
+        let entries: Vec<_> = std::fs::read_dir(parent.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        let mut sorted = entries.clone();
+        sorted.sort();
+        assert_eq!(
+            sorted,
+            ["template-v1", "template-v2"],
+            "scratch dirs must not linger"
+        );
+    }
+
+    /// The template must reproduce the exact commits the committed snapshots
+    /// were recorded against: ~170 snapshots embed these SHAs in short form
+    /// (via `wt list` output and mock CI payloads). If this fails after
+    /// editing [`build_standard_fixture`], the fixture's history changed:
+    /// bump [`STANDARD_FIXTURE_VERSION`], update these SHAs, and regenerate
+    /// the affected snapshots.
+    #[test]
+    fn test_standard_fixture_template_reproduces_pinned_shas() {
+        let repo = standard_fixture_template().join("repo");
+        let rev_parse = |rev: &str| {
+            let output = configure_git_env(Cmd::new("git"), test_gitconfig_path())
+                .args(["rev-parse", rev])
+                .current_dir(&repo)
+                .run()
+                .unwrap();
+            String::from_utf8(output.stdout).unwrap().trim().to_string()
+        };
+        assert_eq!(
+            rev_parse("main"),
+            "05a4a45d0b981dad5c27db59dca482836d59f89e"
+        );
+        assert_eq!(
+            rev_parse("feature-a"),
+            "1b87d4731ea707905d15a726e193531c20affa14"
+        );
+        assert_eq!(
+            rev_parse("feature-b"),
+            "f62940fcec424585adf98625e722fdf990810614"
+        );
+        assert_eq!(
+            rev_parse("feature-c"),
+            "345c7c93ad7c3d8f5b08380898d78e024019599c"
+        );
+    }
+
     #[test]
     fn test_unix_to_iso8601() {
         // 2025-01-01T00:00:00Z
@@ -3099,11 +3470,12 @@ mod tests {
             .collect();
 
         // Scrubbed: GIT_*, WORKTRUNK_* (overwritten path vars also appear here),
-        // NO_COLOR, SHELL, PSModulePath.
+        // NO_COLOR, FORCE_HYPERLINK, SHELL, PSModulePath.
         assert_eq!(removed.get("GIT_DIR"), Some(&None));
         assert_eq!(removed.get("GIT_AUTHOR_DATE"), Some(&None));
         assert_eq!(removed.get("WORKTRUNK_HISTORY"), Some(&None));
         assert_eq!(removed.get("NO_COLOR"), Some(&None));
+        assert_eq!(removed.get("FORCE_HYPERLINK"), Some(&None));
 
         // Not scrubbed: vars that don't match either prefix.
         assert!(!removed.contains_key("PATH"));

@@ -210,6 +210,66 @@ fn test_switch_directive_file(#[from(repo_with_remote)] mut repo: TestRepo) {
     });
 }
 
+/// A failed EXEC-directive write names the file and the write.
+///
+/// This write is the last thing a `--switch --execute` does, after the switch
+/// has already landed and after `◎ Executing (--execute):`, so the bare
+/// `io::Error` it used to propagate (`✗ No such file or directory (os error 2)`)
+/// read as if the *command* were missing. The paths come from the shell wrapper,
+/// so the message has to point there.
+#[rstest]
+fn test_exec_directive_write_failure_names_the_file(#[from(repo_with_remote)] mut repo: TestRepo) {
+    let _feature_wt = repo.add_worktree("feature");
+    let (cd_path, exec_path, _guard) = directive_files();
+    // A path under a directory that doesn't exist: the open fails, and nothing
+    // about it depends on platform or timing.
+    let unwritable_exec = exec_path.parent().unwrap().join("no-such-dir").join("exec");
+
+    let mut cmd = repo.wt_command();
+    configure_directive_files(&mut cmd, &cd_path, &unwritable_exec);
+    let output = cmd
+        .args(["switch", "feature", "--execute", "echo hi"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "an unwritable exec directive file must fail the command.\nstderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("Failed to write the command to the directive file"),
+        "the error must name the write and the file.\nstderr:\n{stderr}"
+    );
+}
+
+/// A failed CD-directive write names the file too, for the same reason.
+#[rstest]
+fn test_cd_directive_write_failure_names_the_file(#[from(repo_with_remote)] mut repo: TestRepo) {
+    let _feature_wt = repo.add_worktree("feature");
+    let (cd_path, exec_path, _guard) = directive_files();
+    let unwritable_cd = cd_path.parent().unwrap().join("no-such-dir").join("cd");
+
+    let mut cmd = repo.wt_command();
+    configure_directive_files(&mut cmd, &unwritable_cd, &exec_path);
+    let output = cmd
+        .args(["switch", "feature"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "an unwritable cd directive file must fail the command.\nstderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("Failed to write the cd directive file"),
+        "the error must name the write and the file.\nstderr:\n{stderr}"
+    );
+}
+
 #[rstest]
 fn test_merge_directive_file(mut repo_with_remote_and_feature: TestRepo) {
     let repo = &mut repo_with_remote_and_feature;

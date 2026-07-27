@@ -55,6 +55,7 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
+use anyhow::Context as _;
 use color_print::cformat;
 use std::sync::{Mutex, OnceLock};
 
@@ -333,7 +334,23 @@ fn warn_exec_scrubbed_once(command: &str) {
 }
 
 /// Append a line to a directive file.
-fn append_line(path: &Path, line: &str) -> io::Result<()> {
+///
+/// `what` names the payload for the failure message ("the command", "the cd
+/// command"). The raw `io::Error` names neither the file nor what didn't get
+/// written, and this write runs *last* — after the operation the user asked for
+/// has already landed — so `✗ No such file or directory (os error 2)` on its own
+/// reads as if the command or the worktree were the thing that's missing. These
+/// files belong to the shell wrapper, so the message has to point there.
+fn append_line(path: &Path, line: &str, what: &str) -> anyhow::Result<()> {
+    append_line_io(path, line).with_context(|| {
+        format!(
+            "Failed to write {what} to the directive file {}",
+            path.display()
+        )
+    })
+}
+
+fn append_line_io(path: &Path, line: &str) -> io::Result<()> {
     let mut file = OpenOptions::new().append(true).open(path)?;
     writeln!(file, "{}", line)?;
     file.flush()
@@ -344,7 +361,14 @@ fn append_line(path: &Path, line: &str) -> io::Result<()> {
 /// write semantics mean the last writer wins, which matches how overlapping
 /// `change_directory()` calls should resolve (hook emits a cd after switch
 /// emits its own → hook wins).
-fn write_cd_path(file: &Path, path: &Path) -> io::Result<()> {
+///
+/// A failure names the file, for the reason [`append_line`] does.
+fn write_cd_path(file: &Path, path: &Path) -> anyhow::Result<()> {
+    write_cd_path_io(file, path)
+        .with_context(|| format!("Failed to write the cd directive file {}", file.display()))
+}
+
+fn write_cd_path_io(file: &Path, path: &Path) -> io::Result<()> {
     let mut f = OpenOptions::new()
         .write(true)
         .create(true)
@@ -386,7 +410,9 @@ fn escape_legacy_cd(path: &Path) -> String {
 /// a shell `cd '...'` command to the legacy file (legacy compat). In
 /// interactive mode (no wrapper), just buffers the target so that a later
 /// `execute()` can use it as the child's working directory.
-pub fn change_directory(path: impl AsRef<Path>) -> io::Result<()> {
+///
+/// A write failure names the file it couldn't write — see [`append_line`].
+pub fn change_directory(path: impl AsRef<Path>) -> anyhow::Result<()> {
     let path = path.as_ref();
     let mode = {
         let mut guard = state().lock().expect("OUTPUT_STATE lock poisoned");
@@ -397,12 +423,11 @@ pub fn change_directory(path: impl AsRef<Path>) -> io::Result<()> {
     match mode {
         DirectiveMode::Interactive => Ok(()),
         DirectiveMode::NewProtocol { cd_file, .. } => {
-            let directive_path = to_logical_path(path);
-            write_cd_path(&cd_file, &directive_path)
+            write_cd_path(&cd_file, &to_logical_path(path))
         }
         DirectiveMode::Legacy { file } => {
-            let directive_path = to_logical_path(path);
-            append_line(&file, &escape_legacy_cd(&directive_path))
+            let directive = escape_legacy_cd(&to_logical_path(path));
+            append_line(&file, &directive, "the cd command")
         }
     }
 }
@@ -438,6 +463,8 @@ pub fn was_cwd_removed() -> bool {
 ///   land here when running inside an alias or hook body, where `Cmd` scrubbed
 ///   the EXEC var to keep arbitrary shell from reaching the parent session.
 /// - Legacy: appends the command to the single legacy directive file.
+///
+/// A failed append names the file it couldn't write — see [`append_line`].
 pub fn execute(command: impl Into<String>) -> anyhow::Result<()> {
     let command = command.into();
 
@@ -451,20 +478,14 @@ pub fn execute(command: impl Into<String>) -> anyhow::Result<()> {
         DirectiveMode::NewProtocol {
             exec_file: Some(file),
             ..
-        } => {
-            append_line(&file, &command)?;
-            Ok(())
-        }
+        } => append_line(&file, &command, "the command"),
         DirectiveMode::NewProtocol {
             exec_file: None, ..
         } => {
             warn_exec_scrubbed_once(&command);
             Ok(())
         }
-        DirectiveMode::Legacy { file } => {
-            append_line(&file, &command)?;
-            Ok(())
-        }
+        DirectiveMode::Legacy { file } => append_line(&file, &command, "the command"),
     }
 }
 

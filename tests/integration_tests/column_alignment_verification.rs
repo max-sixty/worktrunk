@@ -168,9 +168,6 @@ fn verify_table_alignment(output: &str) -> Result<(), String> {
     println!("Header positions: {:?}", header_positions);
     println!();
 
-    // Collect all column boundaries for each row
-    let mut all_row_boundaries: Vec<Vec<ColumnBoundary>> = Vec::new();
-
     // Verify each data row
     let mut errors = Vec::new();
     for (idx, row) in stripped_lines.iter().skip(1).enumerate() {
@@ -185,7 +182,6 @@ fn verify_table_alignment(output: &str) -> Result<(), String> {
         // Find column boundaries in this row
         let boundaries = find_column_boundaries(row);
         println!("  Boundaries: {:?}", boundaries);
-        all_row_boundaries.push(boundaries.clone());
 
         // CRITICAL CHECK: Verify that each column starts at the EXACT same position as in the header
         // This is the key test for the alignment bug
@@ -260,30 +256,6 @@ fn verify_table_alignment(output: &str) -> Result<(), String> {
         }
 
         println!();
-    }
-
-    // Additional check: verify that ALL rows have the same column start positions
-    // by comparing boundaries across rows
-    if all_row_boundaries.len() > 1 {
-        println!("=== Cross-row alignment check ===");
-        let first_row_boundary_starts: Vec<usize> =
-            all_row_boundaries[0].iter().map(|b| b.start).collect();
-
-        for boundaries in all_row_boundaries.iter().skip(1) {
-            let this_row_starts: Vec<usize> = boundaries.iter().map(|b| b.start).collect();
-
-            // Check that boundaries align (allowing for sparse columns)
-            for &expected_start in first_row_boundary_starts.iter() {
-                // Find if this row has a boundary at or near this position
-                let matching_boundary = this_row_starts.iter().find(|&&s| s == expected_start);
-
-                if matching_boundary.is_none() {
-                    // This is OK if the column is empty (sparse column)
-                    // But we should at least have the same number of boundaries or fewer
-                    continue;
-                }
-            }
-        }
     }
 
     if !errors.is_empty() {

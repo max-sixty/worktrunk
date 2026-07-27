@@ -21,13 +21,16 @@ Workflows check `user.login == 'worktrunk-bot'` directly.
 Only the repo owner (`@max-sixty`, admin) can merge to `main`.
 `worktrunk-bot` has `write` role only. Enforced by a "Merge access" ruleset
 (restrict updates, admin bypass in exempt mode). Required status checks:
-`test (linux)`, `test (macos)`, `test (windows)`.
+`test (linux)`, `test (macos)`, `test (windows)`, `fast-checks`.
 
 ## Environment protection
 
-`CARGO_REGISTRY_TOKEN` and `AUR_SSH_PRIVATE_KEY` are in a protected GitHub
-Environment (`release`) requiring deployment approval from `@max-sixty`,
-restricted to `v*` tags.
+`AUR_SSH_PRIVATE_KEY` is in a protected GitHub Environment (`release`) requiring
+deployment approval from `@max-sixty`, restricted to `v*` tags.
+
+crates.io publishing holds no stored token — it uses Trusted Publishing.
+crates.io mints a short-lived one only for an OIDC claim from `release.yaml`
+running in that same `release` environment.
 
 ## Build environment
 

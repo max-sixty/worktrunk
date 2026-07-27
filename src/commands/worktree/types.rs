@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use worktrunk::git::{BranchDeletionMode, RefType};
+use worktrunk::git::{BranchDeletionMode, IntegrationReason, RefType};
 
 /// Flags indicating which merge operations occurred
 #[derive(Debug, Clone, Copy)]
@@ -143,6 +143,32 @@ impl SwitchPlan {
     }
 }
 
+/// A surviving checkout of the branch a removal would otherwise have deleted.
+///
+/// Present only when the branch is checked out in more than one worktree, which
+/// takes a deliberate `git worktree add --force`. Its presence is what retains
+/// the branch: `deletion_mode` is forced to [`BranchDeletionMode::Keep`], since
+/// deleting a ref another worktree still holds leaves that worktree at a null
+/// OID with an unresolvable `HEAD`.
+pub struct SharedBranchCheckout {
+    /// The surviving worktree, named in the output so the retention reads as a
+    /// consequence of something the user can see rather than a refusal.
+    pub path: PathBuf,
+    /// The removal asked to force-delete the branch (`-D`) and was refused.
+    /// Everywhere else `-D` is the override that wins, so a `-D` that doesn't
+    /// delete is unexpected and says so at warning volume.
+    pub refused_force_delete: bool,
+}
+
+impl SharedBranchCheckout {
+    pub fn new(path: &Path, requested: &BranchDeletionMode) -> Self {
+        Self {
+            path: path.to_path_buf(),
+            refused_force_delete: requested.is_force(),
+        }
+    }
+}
+
 /// Result of a worktree remove operation
 pub enum RemoveResult {
     /// Removed worktree and changed directory (if needed)
@@ -159,18 +185,20 @@ pub enum RemoveResult {
         branch_name: Option<String>,
         deletion_mode: BranchDeletionMode,
         target_branch: Option<String>,
+        /// Integration verdict at planning time, for display and retention
+        /// prediction. The deletion itself re-decides against fresh refs via
+        /// `delete_branch_if_safe`'s atomic CAS, so this is never a safety input.
+        integration_reason: Option<IntegrationReason>,
         /// Force git worktree removal even with untracked files.
         force_worktree: bool,
         /// Commit SHA of the removed worktree's HEAD, captured before removal.
         /// Used for post-remove hook template variables so they reference the
         /// removed worktree's state, not the execution context.
         removed_commit: Option<String>,
-        /// Path of another worktree that also has `branch_name` checked out
-        /// (via `git worktree add --force`). When `Some`, the branch is
-        /// retained regardless of `deletion_mode` — deleting a ref still
-        /// checked out elsewhere would orphan that worktree at a null OID — and
-        /// the path is surfaced so the user knows why the branch survived.
-        branch_checked_out_at: Option<PathBuf>,
+        /// A surviving checkout of `branch_name`, when one exists. `Some`
+        /// retains the branch and forces `deletion_mode` to `Keep`; see
+        /// [`SharedBranchCheckout`].
+        branch_checked_out_at: Option<SharedBranchCheckout>,
     },
     /// Branch exists but has no worktree - attempt branch deletion only.
     ///
@@ -189,14 +217,11 @@ pub enum RemoveResult {
         /// worktree-local `pre-remove` hook, so the integration decision can
         /// be made during preparation.
         integration_reason: Option<worktrunk::git::IntegrationReason>,
-        /// Path of a still-intact worktree that also has `branch_name` checked
-        /// out (via `git worktree add --force`). Only set on a pruned
-        /// branch-only removal: the target's directory was gone, but a sibling
-        /// checkout survives, so the branch is retained (`deletion_mode` is
-        /// forced to `Keep`) — deleting a ref still checked out elsewhere would
-        /// orphan that worktree at a null OID. The path is surfaced so the user
-        /// knows why the branch survived.
-        branch_checked_out_at: Option<PathBuf>,
+        /// A surviving checkout of `branch_name`, when one exists. Only reachable
+        /// on a pruned removal — the target's directory was gone, but a sibling
+        /// checkout of the same branch survives the fallback to branch-only
+        /// deletion. See [`SharedBranchCheckout`].
+        branch_checked_out_at: Option<SharedBranchCheckout>,
     },
 }
 
@@ -251,7 +276,7 @@ impl RemoveResult {
                 "branch": branch_name,
                 "path": worktree_path,
                 "branch_deleted": !deletion_mode.should_keep(),
-                "branch_checked_out_at": branch_checked_out_at,
+                "branch_checked_out_at": branch_checked_out_at.as_ref().map(|c| &c.path),
             }),
             RemoveResult::BranchOnly {
                 branch_name,
@@ -264,7 +289,7 @@ impl RemoveResult {
                 "branch": branch_name,
                 "pruned": pruned,
                 "branch_deleted": !deletion_mode.should_keep(),
-                "branch_checked_out_at": branch_checked_out_at,
+                "branch_checked_out_at": branch_checked_out_at.as_ref().map(|c| &c.path),
             }),
         }
     }
@@ -291,6 +316,7 @@ mod tests {
             branch_name: Some("feature".to_string()),
             deletion_mode: BranchDeletionMode::default(),
             target_branch: None,
+            integration_reason: None,
             force_worktree: false,
             removed_commit: None,
             branch_checked_out_at: None,
@@ -354,6 +380,7 @@ mod tests {
             branch_name: Some("feature".to_string()),
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
+            integration_reason: None,
             force_worktree: false,
             removed_commit: Some("abc1234567890".to_string()),
             branch_checked_out_at: None,
@@ -366,6 +393,7 @@ mod tests {
                 branch_name,
                 deletion_mode,
                 target_branch,
+                integration_reason: _,
                 force_worktree,
                 removed_commit,
                 branch_checked_out_at,
@@ -455,6 +483,7 @@ mod tests {
             branch_name: None, // Detached HEAD
             deletion_mode: BranchDeletionMode::ForceDelete,
             target_branch: None,
+            integration_reason: None,
             force_worktree: true,
             removed_commit: None, // Detached HEAD may not have meaningful commit
             branch_checked_out_at: None,

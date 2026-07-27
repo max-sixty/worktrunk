@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::worktree::RemoveResult;
+use super::worktree::{RemoveResult, SharedBranchCheckout};
 use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::git::{
@@ -58,6 +58,15 @@ pub trait RepositoryCliExt {
     ) -> anyhow::Result<RemoveResult>;
 
     /// Prepare the target worktree for push by auto-stashing non-overlapping changes when safe.
+    ///
+    /// The caller has already established that `target_worktree` exists on disk
+    /// (`MergeContext::prepare` refuses a registered-but-missing worktree), so
+    /// the status read here is free to fail if the directory is gone.
+    ///
+    /// Ignored files are deliberately out of scope — they're absent from the
+    /// `git status --porcelain` read this works from, and matching git there is
+    /// the decision, not an oversight. The module spec in
+    /// `commands/worktree/push.rs` says why.
     fn prepare_target_worktree(
         &self,
         target_worktree: Option<&PathBuf>,
@@ -123,8 +132,13 @@ impl RepositoryCliExt for Repository {
                 is_current: bool,
             },
             BranchOnly {
+                /// Path of the stale worktree entry this fell back from, when
+                /// the fallback was a prune. `None` when the branch never had a
+                /// worktree, which is also the only case with no sibling to
+                /// check — a branch whose worktree exists resolves to
+                /// `Worktree` above.
+                pruned_from: Option<PathBuf>,
                 branch: String,
-                pruned: bool,
             },
         }
 
@@ -139,8 +153,8 @@ impl RepositoryCliExt for Repository {
                             // Directory missing - prune and continue
                             self.prune_worktrees()?;
                             Resolved::BranchOnly {
+                                pruned_from: Some(wt.path.clone()),
                                 branch: branch.to_string(),
-                                pruned: true,
                             }
                         } else if wt.locked.is_some() {
                             return Err(GitError::WorktreeLocked {
@@ -179,8 +193,8 @@ impl RepositoryCliExt for Repository {
                             .into());
                         }
                         Resolved::BranchOnly {
+                            pruned_from: None,
                             branch: branch.to_string(),
-                            pruned: false,
                         }
                     }
                 }
@@ -206,8 +220,8 @@ impl RepositoryCliExt for Repository {
                 {
                     self.prune_worktrees()?;
                     Resolved::BranchOnly {
+                        pruned_from: Some(wt.path.clone()),
                         branch: branch.to_string(),
-                        pruned: true,
                     }
                 } else {
                     if wt.locked.is_some() {
@@ -253,30 +267,25 @@ impl RepositoryCliExt for Repository {
         // worktree-level checks. Branch-only removals have no pre-remove hook,
         // so their integration decision can be computed here.
         let (worktree_path, branch_name, is_current) = match resolved {
-            Resolved::BranchOnly { branch, pruned } => {
-                // A pruned branch-only removal can still orphan a survivor: when
-                // the same branch is checked out in another worktree whose
-                // directory is intact (a `git worktree add --force` duplicate),
-                // deleting the ref would leave that worktree pointing at a null
-                // OID. Detect a live sibling checkout and retain the branch —
-                // the same protection Phase 5 applies to worktree removals,
-                // extended to the missing-directory fallback (the target's own
-                // entry, whose directory is gone, is excluded by `path.exists()`).
-                let sibling = pruned
-                    .then(|| {
-                        worktrees.iter().find(|wt| {
-                            wt.branch.as_deref() == Some(branch.as_str()) && wt.path.exists()
-                        })
-                    })
-                    .flatten();
-                if let Some(sibling) = sibling {
+            Resolved::BranchOnly {
+                pruned_from,
+                branch,
+            } => {
+                // The missing-directory fallback reaches the same ref deletion a
+                // worktree removal does, so it needs the same guard: a sibling
+                // checkout whose directory is intact would be orphaned by it.
+                let shared = pruned_from.as_deref().and_then(|target| {
+                    live_sibling_checkout(worktrees, &branch, target)
+                        .map(|sibling| SharedBranchCheckout::new(&sibling.path, &deletion_mode))
+                });
+                if let Some(shared) = shared {
                     return Ok(RemoveResult::BranchOnly {
                         branch_name: branch,
                         deletion_mode: BranchDeletionMode::Keep,
-                        pruned,
+                        pruned: true,
                         target_branch: None,
                         integration_reason: None,
-                        branch_checked_out_at: Some(sibling.path.clone()),
+                        branch_checked_out_at: Some(shared),
                     });
                 }
                 let default_branch = self.default_branch();
@@ -291,7 +300,7 @@ impl RepositoryCliExt for Repository {
                 return Ok(RemoveResult::BranchOnly {
                     branch_name: branch,
                     deletion_mode,
-                    pruned,
+                    pruned: pruned_from.is_some(),
                     target_branch,
                     integration_reason,
                     branch_checked_out_at: None,
@@ -324,36 +333,40 @@ impl RepositoryCliExt for Repository {
             primary_path
         };
 
-        // A branch checked out in more than one worktree (only possible via
-        // `git worktree add --force`, which worktrunk never does itself) must
-        // not be deleted when we remove one of its worktrees: the ref is still
-        // live in the sibling, and deleting it would orphan that worktree at a
-        // null OID (`git update-ref -d` bypasses git's checked-out-elsewhere
-        // guard). Detect a sibling checkout and retain the branch regardless of
-        // the requested deletion mode.
         let branch_checked_out_at = branch_name.as_deref().and_then(|branch| {
-            worktrees
-                .iter()
-                .find(|wt| {
-                    wt.branch.as_deref() == Some(branch)
-                        && !worktrunk::path::paths_match(&wt.path, &worktree_path)
-                })
-                .map(|wt| wt.path.clone())
+            live_sibling_checkout(worktrees, branch, &worktree_path)
+                .map(|sibling| SharedBranchCheckout::new(&sibling.path, &deletion_mode))
         });
 
-        // Resolve target branch for integration reason display. When the branch
-        // is retained because it's checked out elsewhere, force `Keep` (the
-        // single chokepoint every deletion path honors) and drop the target so
-        // no integration check or misleading branch-deletion messaging runs.
-        let (deletion_mode, target_branch) = if branch_checked_out_at.is_some() {
-            (BranchDeletionMode::Keep, None)
+        // Resolve target branch and integration verdict for display and
+        // retention prediction. The actual branch deletion re-decides against
+        // fresh refs (`delete_branch_if_safe`'s CAS), so this is display-only.
+        //
+        // A retained shared branch skips all of it: forcing `Keep` — the single
+        // chokepoint every deletion path honors — settles the outcome, so an
+        // integration verdict would only be computed to be ignored, and
+        // reporting one alongside a branch that survives reads as a
+        // contradiction.
+        let (deletion_mode, target_branch, integration_reason) = if branch_checked_out_at.is_some()
+        {
+            (BranchDeletionMode::Keep, None, None)
         } else {
             let default_branch = self.default_branch();
             let target_branch = match (&default_branch, &branch_name) {
                 (Some(db), Some(bn)) if db == bn => None,
                 _ => default_branch,
             };
-            (deletion_mode, target_branch)
+            let (integration_reason, target_branch) = match compute_integration_reason(
+                self,
+                snapshot,
+                branch_name.as_deref(),
+                target_branch.as_deref(),
+                deletion_mode,
+            ) {
+                (reason, Some(effective_target)) => (reason, Some(effective_target)),
+                (reason, None) => (reason, target_branch),
+            };
+            (deletion_mode, target_branch, integration_reason)
         };
 
         // Capture commit SHA before removal for post-remove hook template variables.
@@ -374,6 +387,7 @@ impl RepositoryCliExt for Repository {
             branch_name,
             deletion_mode,
             target_branch,
+            integration_reason,
             force_worktree,
             removed_commit,
             branch_checked_out_at,
@@ -388,11 +402,6 @@ impl RepositoryCliExt for Repository {
         let Some(wt_path) = target_worktree else {
             return Ok(None);
         };
-
-        // Skip if target worktree directory is missing (prunable worktree)
-        if !wt_path.exists() {
-            return Ok(None);
-        }
 
         let wt = self.worktree_at(wt_path);
         if !wt.is_dirty()? {
@@ -478,8 +487,18 @@ impl RepositoryCliExt for Repository {
         let Some(merge_base) = self.merge_base("HEAD", target)? else {
             return Ok(false);
         };
+        // `merge_base` peels an annotated tag to the commit it points at; a bare
+        // `rev-parse` returns the tag object's own SHA. Comparing the two forms
+        // never matches, so an annotated-tag target would always be reported as
+        // needing a rebase — and `wt step rebase <annotated-tag>` would replay
+        // nothing while announcing "Rebased onto <tag>". Peel both sides.
         let target_sha = self
-            .run_command(&["rev-parse", "--verify", "--end-of-options", target])?
+            .run_command(&[
+                "rev-parse",
+                "--verify",
+                "--end-of-options",
+                &format!("{target}^{{commit}}"),
+            ])?
             .trim()
             .to_string();
 
@@ -552,6 +571,33 @@ pub(crate) fn compute_integration_reason(
 ///
 /// The default branch is the integration target — checking it against itself is
 /// tautological (same logic as `wt list`'s `is_main` guard in `check_integration_state`).
+/// The worktree, other than the one being removed, whose checkout of `branch`
+/// deleting the ref would orphan.
+///
+/// A branch reaches two worktrees only through `git worktree add --force`,
+/// which worktrunk never runs itself. Once it has, the ref is live in both, and
+/// worktrunk deletes branches with `git update-ref -d` — git's compare-and-swap
+/// primitive, which unlike `git branch -d` does not refuse a ref that is
+/// checked out somewhere. Deleting it leaves the other checkout at a null OID
+/// with an unresolvable `HEAD`, so every removal that could delete a branch
+/// asks this first.
+///
+/// Only a live directory counts. A sibling entry whose directory is already
+/// gone is stale metadata awaiting `git worktree prune`, not a checkout with
+/// anything to lose — retaining a branch for it would strand the branch and
+/// point the user at a directory that isn't there.
+pub(crate) fn live_sibling_checkout<'a>(
+    worktrees: &'a [WorktreeInfo],
+    branch: &str,
+    removing: &Path,
+) -> Option<&'a WorktreeInfo> {
+    worktrees.iter().find(|wt| {
+        wt.branch.as_deref() == Some(branch)
+            && !worktrunk::path::paths_match(&wt.path, removing)
+            && wt.path.exists()
+    })
+}
+
 pub(crate) fn check_not_default_branch(
     repo: &Repository,
     branch: &str,

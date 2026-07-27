@@ -48,7 +48,8 @@ use crate::enhance_clap_error;
 /// for project-config aliases.
 ///
 /// On success (child exit code 0), returns `Ok(())`. On non-zero exit, returns
-/// `WorktrunkError::AlreadyDisplayed` with the child's exit code so `main`
+/// `WorktrunkError::AlreadyDisplayed` with the child's exit code (or
+/// `Interrupted` for a signal kill) so `main`
 /// can propagate it without printing an extra error line. When the command
 /// isn't found on PATH, returns `AlreadyDisplayed` via `enhance_clap_error`
 /// with clap's standard exit code 2.
@@ -150,15 +151,19 @@ fn run_custom(path: &Path, args: &[OsString], working_dir: Option<&Path>) -> Res
         return Ok(());
     }
 
-    // Propagate the exact exit code — including signal codes on Unix — so
-    // `wt foo` behaves like running `wt-foo` directly. We use
-    // `AlreadyDisplayed` (not `ChildProcessExited`) because the custom
-    // command has already reported its own failure to the user; `wt` should
-    // just forward the exit code without adding a second error line.
+    // Propagate the exact exit status so `wt foo` behaves like running
+    // `wt-foo` directly. A signal kill surfaces as `Interrupted` (exit
+    // `128 + sig`, rendered per shell convention — a signal-killed child
+    // usually never got to report anything, and wt's own survival suppresses
+    // the shell's "Terminated" line). A plain non-zero exit surfaces as
+    // `AlreadyDisplayed` (not `ChildProcessExited`): the custom command
+    // already reported its own failure, so `wt` just forwards the code
+    // without adding a second error line.
     #[cfg(unix)]
     if let Some(sig) = std::os::unix::process::ExitStatusExt::signal(&status) {
-        return Err(WorktrunkError::AlreadyDisplayed {
-            exit_code: 128 + sig,
+        return Err(WorktrunkError::Interrupted {
+            signal: sig,
+            hint: None,
         }
         .into());
     }
@@ -252,14 +257,17 @@ mod tests {
         let sh = Path::new("/bin/sh");
         let args = [OsString::from("-c"), OsString::from("kill -TERM $$")];
 
+        use worktrunk::git::ErrorExt;
+
         let err = run_custom(sh, &args, None).expect_err("child killed by SIGTERM");
         let wt_err = err
             .downcast_ref::<WorktrunkError>()
-            .expect("signal should surface as WorktrunkError::AlreadyDisplayed");
+            .expect("signal should surface as WorktrunkError::Interrupted");
         match wt_err {
-            WorktrunkError::AlreadyDisplayed { exit_code } => {
-                // SIGTERM = 15, and the shell-style convention is 128 + signal.
-                assert_eq!(*exit_code, 128 + 15);
+            WorktrunkError::Interrupted { signal, hint: None } => {
+                assert_eq!(*signal, 15);
+                // The shell-style convention is 128 + signal.
+                assert_eq!(err.exit_code(), Some(143));
             }
             other => panic!("unexpected WorktrunkError variant: {other:?}"),
         }

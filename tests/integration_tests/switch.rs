@@ -1704,7 +1704,8 @@ fn test_switch_worktree_by_symlinked_path(mut repo: TestRepo) {
 }
 
 /// Switch to a detached worktree by relative path (#1661).
-/// Relative paths with directory separators (e.g., "../repo.feature") are resolved against CWD.
+/// Relative paths with directory separators (e.g., "../repo.feature") resolve
+/// against the directory wt was pointed at, which here is the process cwd.
 #[rstest]
 fn test_switch_detached_worktree_by_relative_path(mut repo: TestRepo) {
     repo.add_worktree("feature-detached");
@@ -1717,6 +1718,40 @@ fn test_switch_detached_worktree_by_relative_path(mut repo: TestRepo) {
         "switch_detached_worktree_by_relative_path",
         &repo,
         &[relative_path],
+    );
+}
+
+/// A relative path resolves against `-C`, not the process cwd — git's own rule
+/// for path arguments under `-C`.
+///
+/// The test above reaches the worktree from a cwd inside the repo, the route
+/// that works under either rule. Running from outside the repo is what tells
+/// the two resolution bases apart: `../repo.feature-detached` names the
+/// worktree only when it is resolved from the `-C` directory.
+#[rstest]
+fn test_switch_detached_worktree_by_relative_path_honors_directory_flag(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-detached");
+    repo.detach_head_in_worktree("feature-detached");
+
+    let outside = repo.root_path().parent().unwrap().to_path_buf();
+    let root = repo.root_path().to_string_lossy().to_string();
+    let (cd_path, exec_path, _guard) = directive_files();
+    let mut cmd = repo.wt_command();
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    cmd.current_dir(&outside)
+        .args(["-C", &root, "switch", "../repo.feature-detached"]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "switch should resolve the relative path against -C:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(&cd_path).unwrap().trim(),
+        worktree_path.to_string_lossy(),
+        "switch should land in the worktree the path names relative to -C"
     );
 }
 
@@ -3575,6 +3610,41 @@ fn test_switch_pr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
+/// A 404 is the one GitHub failure worded by us rather than forwarded from
+/// `gh`, because it answers about an owner/repo we chose — so the message has to
+/// name where that choice came from. With `gh repo set-default` configured, that
+/// is the default, and the remedy is to check it rather than the remotes.
+#[rstest]
+fn test_switch_pr_not_found_gh_default(#[from(repo_with_remote)] repo: TestRepo) {
+    set_github_remote_url(&repo);
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    copy_mock_binary(&mock_bin, "gh");
+
+    MockConfig::new("gh")
+        .version("gh version 2.0.0 (mock)")
+        .command(
+            "repo set-default --view",
+            MockResponse::output("owner/other-repo\n"),
+        )
+        .command(
+            "api",
+            MockResponse::output(r#"{"message":"Not Found","status":"404"}"#)
+                .with_stderr("gh: Not Found (HTTP 404)")
+                .with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:9999"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_not_found_gh_default", cmd);
+    });
+}
+
 /// Regression: when the GitHub remote is *non-primary* (origin is GitLab,
 /// `upstream` is GitHub), `wt switch pr:N` must derive owner/repo from the
 /// GitHub remote, not the primary. The mock answers only the upstream's API
@@ -4882,6 +4952,11 @@ fn test_switch_pr_gitea_fork(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
+/// A missing PR reaches the user as Gitea's own message.
+///
+/// `tea api` exits 0 for every HTTP response, so the 404 arrives as a
+/// successful spawn whose stdout carries Gitea's `APIError` body rather than
+/// the PR — the shape, not the exit code, is what says the request failed.
 #[rstest]
 fn test_switch_pr_gitea_not_found(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&[
@@ -4900,7 +4975,9 @@ fn test_switch_pr_gitea_not_found(#[from(repo_with_remote)] repo: TestRepo) {
         .version("tea version development (mock)")
         .command(
             "api",
-            MockResponse::output(r#"{"message":"404 Not found"}"#).with_exit_code(1),
+            MockResponse::output(
+                r#"{"errors":null,"message":"pull request does not exist [index: 9999]","url":"https://gitea.example.com/api/swagger"}"#,
+            ),
         )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
@@ -5237,10 +5314,10 @@ fn test_switch_pr_gitea_invalid_json(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
-/// Gitea API returns a 5xx-style generic error (non-404/401/403) — exercises
-/// the generic `cli_api_error` fallback in `gitea::fetch_pr_info`.
+/// `tea` itself failing — never reaching the API — is the one case that
+/// exits non-zero, and it surfaces `tea`'s own stderr via `cli_api_error`.
 #[rstest]
-fn test_switch_pr_gitea_server_error(#[from(repo_with_remote)] repo: TestRepo) {
+fn test_switch_pr_gitea_request_failed(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&[
         "remote",
         "set-url",
@@ -5256,9 +5333,10 @@ fn test_switch_pr_gitea_server_error(#[from(repo_with_remote)] repo: TestRepo) {
         .version("tea version development (mock)")
         .command(
             "api",
-            MockResponse::output(r#"{"message":"500 Internal Server Error"}"#)
-                .with_stderr("tea: server error\n")
-                .with_exit_code(1),
+            MockResponse::stderr(
+                "Error: request failed: Get \"https://gitea.example.com/api/v1/repos/owner/test-repo/pulls/101\": dial tcp: connection refused\n",
+            )
+            .with_exit_code(1),
         )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
@@ -5267,7 +5345,7 @@ fn test_switch_pr_gitea_server_error(#[from(repo_with_remote)] repo: TestRepo) {
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
-        assert_cmd_snapshot!("switch_pr_gitea_server_error", cmd);
+        assert_cmd_snapshot!("switch_pr_gitea_request_failed", cmd);
     });
 }
 
@@ -5349,8 +5427,8 @@ fn test_switch_pr_gitea_deleted_fork(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
-/// Gitea CLI returning 401/Unauthorized hits the dedicated bail message
-/// (covers the auth-error branch in `gitea::fetch_pr_info`).
+/// An unauthenticated request reaches the user as Gitea's own message, which
+/// names the remedy a paraphrase would have restated.
 #[rstest]
 fn test_switch_pr_gitea_unauthorized(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&[
@@ -5368,7 +5446,9 @@ fn test_switch_pr_gitea_unauthorized(#[from(repo_with_remote)] repo: TestRepo) {
         .version("tea version development (mock)")
         .command(
             "api",
-            MockResponse::output(r#"{"message":"401 Unauthorized"}"#).with_exit_code(1),
+            MockResponse::output(
+                r#"{"errors":null,"message":"token is required","url":"https://gitea.example.com/api/swagger"}"#,
+            ),
         )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
@@ -5381,8 +5461,9 @@ fn test_switch_pr_gitea_unauthorized(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
-/// Gitea CLI returning 403/Forbidden hits the dedicated bail message
-/// (covers the forbidden branch in `gitea::fetch_pr_info`).
+/// A PR the token can see but not read reaches the user as Gitea's own
+/// message — the same path as the 404 and 401, which is the point: `tea`
+/// hands over one body shape for every failed request.
 #[rstest]
 fn test_switch_pr_gitea_forbidden(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&[
@@ -5400,7 +5481,9 @@ fn test_switch_pr_gitea_forbidden(#[from(repo_with_remote)] repo: TestRepo) {
         .version("tea version development (mock)")
         .command(
             "api",
-            MockResponse::output(r#"{"message":"403 Forbidden"}"#).with_exit_code(1),
+            MockResponse::output(
+                r#"{"errors":null,"message":"user does not have permission to read this repository","url":"https://gitea.example.com/api/swagger"}"#,
+            ),
         )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
@@ -5422,6 +5505,13 @@ fn test_switch_pr_gitea_forbidden(#[from(repo_with_remote)] repo: TestRepo) {
 // matches and the ambiguous fallback is skipped — the runtime calls only the
 // mock `az`, not real `gh`.
 // ============================================================================
+
+/// `az extension list --output json` with the azure-devops extension present.
+///
+/// Every `az repos pr show` failure asks this, so an az failure that is *not*
+/// a missing extension has to answer it — otherwise the test proves nothing
+/// about which of the two errors the user sees.
+const AZ_EXTENSION_INSTALLED: &str = r#"[{"name": "azure-devops", "version": "1.0.0"}]"#;
 
 /// Helper to set up mock `az` for Azure DevOps PR tests with a custom
 /// `az repos pr show` response.
@@ -5763,8 +5853,12 @@ fn test_switch_pr_azure_fork(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
-/// `az repos pr show` reporting "does not exist" hits the dedicated
-/// not-found bail in `azure::fetch_pr_info`.
+/// A missing PR reaches the user as the `TF401174` line `az` printed.
+///
+/// Once the extension question is settled, `azure::fetch_pr_info` classifies
+/// nothing: `az` has no error channel but prose on stderr, so worktrunk
+/// reports that prose rather than guessing a cause from it. Each azure error
+/// test below pins the tool's own words surviving to the terminal.
 #[rstest]
 fn test_switch_pr_azure_not_found(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&[
@@ -5786,6 +5880,10 @@ fn test_switch_pr_azure_not_found(#[from(repo_with_remote)] repo: TestRepo) {
                 "TF401174: The requested pull request was not found, or it does not exist.\n",
             )
             .with_exit_code(1),
+        )
+        .command(
+            "extension list",
+            MockResponse::output(AZ_EXTENSION_INSTALLED),
         )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
@@ -5883,8 +5981,12 @@ fn test_switch_pr_azure_invalid_json(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
-/// `az repos pr show` failing with a generic (non-auth, non-not-found) error
-/// exercises the `cli_api_error` fallback in `azure::fetch_pr_info`.
+/// An `az` that can't answer the extension question still reports its own
+/// error, not a missing extension.
+///
+/// Here `az extension list` fails alongside the generic `az repos pr show`
+/// failure, so the check comes back unanswered — and an unanswered check must
+/// not turn into an accusation the user would act on.
 #[rstest]
 fn test_switch_pr_azure_server_error(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&[
@@ -5904,6 +6006,7 @@ fn test_switch_pr_azure_server_error(#[from(repo_with_remote)] repo: TestRepo) {
             "repos pr show",
             MockResponse::stderr("az: TF400898: An internal error occurred.\n").with_exit_code(1),
         )
+        .command("extension list", MockResponse::exit(1))
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
 
@@ -5915,7 +6018,8 @@ fn test_switch_pr_azure_server_error(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
-/// `az repos pr show` reporting a login error hits the dedicated auth bail.
+/// An unauthenticated `az` reaches the user as its own "run 'az login'" line,
+/// which already names the remedy a paraphrase would have restated.
 #[rstest]
 fn test_switch_pr_azure_auth_error(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&[
@@ -5935,6 +6039,10 @@ fn test_switch_pr_azure_auth_error(#[from(repo_with_remote)] repo: TestRepo) {
             "repos pr show",
             MockResponse::stderr("Please run 'az login' to setup account.\n").with_exit_code(1),
         )
+        .command(
+            "extension list",
+            MockResponse::output(AZ_EXTENSION_INSTALLED),
+        )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
 
@@ -5946,8 +6054,12 @@ fn test_switch_pr_azure_auth_error(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
-/// `az repos pr show` failing because the `azure-devops` extension is missing
-/// hits the dedicated extension-install bail.
+/// A missing `azure-devops` extension reaches the user as the install command,
+/// which `az` names the need for but never spells out.
+///
+/// The whole `repos` command group lives in that extension, so `az extension
+/// list` decides this from JSON — `az`'s "is misspelled or not recognized"
+/// prose is never consulted, and never reaches the user.
 #[rstest]
 fn test_switch_pr_azure_extension_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&[
@@ -5971,6 +6083,7 @@ fn test_switch_pr_azure_extension_not_installed(#[from(repo_with_remote)] repo: 
             )
             .with_exit_code(2),
         )
+        .command("extension list", MockResponse::output("[]"))
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
 
@@ -6326,12 +6439,15 @@ fn test_switch_mr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
     // Copy mock-stub binary as "glab"
     copy_mock_binary(&mock_bin, "glab");
 
-    // Configure glab api to return 404 error (JSON on stdout like real GitLab API)
+    // Configure glab api to return 404 error (JSON on stdout, human-readable on
+    // stderr — glab formats the API's own message as `glab: <message> (HTTP N)`)
     MockConfig::new("glab")
         .version("glab version 1.40.0 (mock)")
         .command(
             "api",
-            MockResponse::output(r#"{"message":"404 Not found"}"#).with_exit_code(1),
+            MockResponse::output(r#"{"message":"404 Not found"}"#)
+                .with_stderr("glab: 404 Not found (HTTP 404)")
+                .with_exit_code(1),
         )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
@@ -6352,12 +6468,15 @@ fn test_switch_mr_not_authenticated(#[from(repo_with_remote)] repo: TestRepo) {
 
     copy_mock_binary(&mock_bin, "glab");
 
-    // Configure glab api to return 401 error (JSON on stdout like real GitLab API)
+    // Configure glab api to return 401 error (JSON on stdout, human-readable on
+    // stderr — the shape a real `glab api` produces for a rejected token)
     MockConfig::new("glab")
         .version("glab version 1.40.0 (mock)")
         .command(
             "api",
-            MockResponse::output(r#"{"message":"401 Unauthorized"}"#).with_exit_code(1),
+            MockResponse::output(r#"{"message":"401 Unauthorized"}"#)
+                .with_stderr("glab: 401 Unauthorized (HTTP 401)")
+                .with_exit_code(1),
         )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
@@ -7135,4 +7254,88 @@ cd = false
 
     // Without any cd flags, config should be respected (no cd directive)
     snapshot_switch("switch_no_cd_config_default", &repo, &["no-cd-config-test"]);
+}
+
+/// A worktree's own path names it, including the single-component spelling —
+/// `wt switch solo` where `solo/` is a worktree but no branch is called that.
+///
+/// Path resolution runs through `-C`, so the assertion is on the directory the
+/// switch resolved to rather than on the process cwd.
+#[rstest]
+fn switch_by_relative_worktree_path(mut repo: TestRepo) {
+    let nested = repo.root_path().join("solo");
+    let worktree_path = repo.add_worktree_at_path("solo-branch", &nested);
+
+    for spelling in ["solo", "./solo", worktree_path.to_str().unwrap()] {
+        let output = repo
+            .wt_command()
+            .args(["switch", spelling, "--no-cd"])
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "switch {spelling} should resolve the worktree: {stderr}"
+        );
+        assert!(
+            stderr.contains("solo-branch"),
+            "switch {spelling} should name the branch checked out there: {stderr}"
+        );
+    }
+}
+
+/// The tilde form worktrunk prints paths in is a form it also accepts, so a
+/// path copied out of wt's output works when the shell can't expand it.
+#[cfg(unix)]
+#[rstest]
+fn switch_by_tilde_worktree_path(mut repo: TestRepo, temp_home: TempDir) {
+    let worktree_path = repo.add_worktree("feature");
+    // Re-home the process at the worktree's parent so the worktree is under
+    // `~`, which is what makes the tilde spelling reachable at all.
+    let home = worktree_path.parent().unwrap().to_path_buf();
+    drop(temp_home);
+
+    let mut cmd = repo.wt_command();
+    set_temp_home_env(&mut cmd, &home);
+    let output = cmd
+        .args([
+            "switch",
+            &format!("~/{}", worktree_path.file_name().unwrap().to_str().unwrap()),
+            "--no-cd",
+        ])
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success() && stderr.contains("feature"),
+        "a tilde-form worktree path should resolve: {stderr}"
+    );
+}
+
+/// `--base` names a branch, so a worktree's path stands for the branch checked
+/// out there — the same rule as a merge or rebase target.
+#[rstest]
+fn switch_base_accepts_worktree_path(mut repo: TestRepo) {
+    let base_path = repo.add_worktree("base-branch");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "derived",
+            "--base",
+            base_path.to_str().unwrap(),
+            "--no-cd",
+        ])
+        .output()
+        .unwrap();
+
+    let raw = String::from_utf8_lossy(&output.stderr);
+    let stderr = raw.ansi_strip();
+    assert!(
+        output.status.success() && stderr.contains("from base-branch"),
+        "--base should resolve the worktree path to its branch: {stderr}"
+    );
 }

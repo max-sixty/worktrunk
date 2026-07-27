@@ -1560,6 +1560,58 @@ fn test_config_show_full_gitea_remote(mut repo: TestRepo, temp_home: TempDir) {
     });
 }
 
+/// `wt config show --full` against an Azure DevOps remote reports the `az` CLI
+/// row plus the `azure-devops` extension, which the whole `az repos` command
+/// group ships in: without it CI status stays blank however well `az` is
+/// authenticated, and only the user can install it.
+#[rstest]
+#[case::missing("[]", "config_show_full_azure_extension_missing")]
+#[case::installed(
+    r#"[{"name": "azure-devops", "version": "1.0.0"}]"#,
+    "config_show_full_azure_extension_installed"
+)]
+fn test_config_show_full_azure_remote(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+    #[case] extensions_json: &str,
+    #[case] snapshot_name: &str,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_az_with_extensions(extensions_json);
+
+    // The fixture already has an `origin`; point it at an Azure DevOps host.
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://dev.azure.com/myorg/myproject/_git/test-repo",
+    ]);
+
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        "worktree-path = \"../{{ repo }}.{{ branch }}\"",
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"));
+        cmd.arg("config")
+            .arg("show")
+            .arg("--full")
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(snapshot_name, cmd);
+    });
+}
+
 #[rstest]
 fn test_config_show_github_remote(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
@@ -3726,6 +3778,41 @@ approved-commands = ["npm install", "npm test"]
     assert!(approvals.contains("npm test"));
 }
 
+/// A relative `--config` resolves against `-C`, the way git resolves the path
+/// options in its own command line.
+///
+/// Run from outside the repo, so the process cwd and the `-C` directory
+/// disagree: the file is only reachable from the latter.
+#[rstest]
+fn test_explicit_config_path_honors_directory_flag(repo: TestRepo) {
+    fs::write(
+        repo.root_path().join("side-config.toml"),
+        "[list]\nfull = true\n",
+    )
+    .unwrap();
+    let outside = repo.root_path().parent().unwrap().to_path_buf();
+    let root = repo.root_path().to_string_lossy().to_string();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args([
+        "-C",
+        &root,
+        "--config",
+        "side-config.toml",
+        "config",
+        "show",
+    ])
+    .current_dir(&outside);
+    let output = cmd.output().unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("full = true"),
+        "config show should report the config named relative to -C:\n{stdout}"
+    );
+}
+
 /// Test that explicitly specified --config path that doesn't exist shows a warning
 #[rstest]
 fn test_explicit_config_path_not_found_shows_warning(repo: TestRepo) {
@@ -4275,6 +4362,27 @@ fn test_plugin_layout_is_consolidated() {
          hooks.json:\n{hooks}"
     );
 
+    // The WorktreeCreate hook pipes `wt … --format=json | jq -er .path`. Without
+    // `set -o pipefail` the pipeline's exit status is jq's, and `jq -er .path`
+    // on the empty stdout of a failed `wt` exits 0 on jq 1.6 — so a `wt` failure
+    // (e.g. an existing-branch collision after the branch/worktree were already
+    // created) is swallowed and Claude Code reports the misleading "hook
+    // succeeded but returned no worktree path" instead of wt's real error
+    // (#3545). pipefail makes the pipeline surface wt's nonzero exit regardless
+    // of jq version. The wrapper must be `bash -c` (dash rejects `set -o
+    // pipefail` fatally; some login shells are fish, which has no shell options)
+    // — see skills/wt-switch-create/rationale.md, "The hooks.json pipefail wrapper".
+    let worktree_create_cmd = hooks_json["hooks"]["WorktreeCreate"][0]["hooks"][0]["command"]
+        .as_str()
+        .expect("WorktreeCreate hook must define a command");
+    assert!(
+        worktree_create_cmd.contains("set -o pipefail"),
+        "WorktreeCreate hook pipes `wt … | jq -er .path`; without `set -o pipefail` a \
+         failed wt with empty stdout is swallowed (jq 1.6 exits 0 on empty input) and \
+         Claude Code reports \"hook succeeded but returned no worktree path\" instead \
+         of wt's real error (#3545). command:\n{worktree_create_cmd}"
+    );
+
     // The product description must not drift across tools. Byte-identical is
     // schema-impossible (Codex omits the activity clause, Gemini says
     // "extension"), but every manifest shares the canonical opening sentence.
@@ -4396,6 +4504,38 @@ fn test_plugins_claude_install_statusline_already_configured(repo: TestRepo, tem
         set_temp_home_env(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// A foreign statusline that happens to spell `wt ` is still foreign, so
+/// install proceeds instead of reporting the statusline as already configured.
+#[rstest]
+fn test_plugins_claude_install_statusline_foreign_command(repo: TestRepo, temp_home: TempDir) {
+    let claude_dir = temp_home.path().join(".claude");
+    fs::create_dir_all(&claude_dir).unwrap();
+    fs::write(
+        claude_dir.join("settings.json"),
+        r#"{"statusLine":{"type":"command","command":"newt status --short"}}"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["config", "plugins", "claude", "install-statusline", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+
+        let settings_path = temp_home.path().join(".claude/settings.json");
+        let content = fs::read_to_string(&settings_path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(
+            parsed["statusLine"]["command"],
+            "wt list statusline --format=claude-code"
+        );
     });
 }
 

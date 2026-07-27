@@ -23,35 +23,22 @@ pub fn execute_shell_script(repo: &TestRepo, shell: &str, script: &str) -> Strin
 
     let mut cmd = CommandBuilder::new(shell_binary(shell));
 
-    // Clear inherited environment for test isolation
-    cmd.env_clear();
+    // Isolated environment (env_clear, PATH, determinism baselines, coverage)
+    super::configure_pty_command(&mut cmd);
+    cmd.env("USER", "testuser");
+    cmd.env("SHELL", shell_binary(shell));
 
-    // Set minimal required environment for shells to function
-    cmd.env("HOME", repo.home_path().to_string_lossy().to_string());
+    // The repo's own environment: git config, worktrunk config, and a HOME
+    // under the test's temp dir rather than the developer's
+    for (key, value) in repo.test_env_vars() {
+        cmd.env(key, value);
+    }
     // Windows: Also set USERPROFILE for PowerShell and Git Bash
     #[cfg(windows)]
     cmd.env(
         "USERPROFILE",
         repo.home_path().to_string_lossy().to_string(),
     );
-
-    // Use platform-appropriate PATH
-    #[cfg(unix)]
-    let default_path = "/usr/bin:/bin";
-    #[cfg(windows)]
-    let default_path = std::env::var("PATH").unwrap_or_default();
-
-    cmd.env(
-        "PATH",
-        std::env::var("PATH").unwrap_or_else(|_| default_path.to_string()),
-    );
-    cmd.env("USER", "testuser");
-    cmd.env("SHELL", shell_binary(shell));
-
-    // Add repo's test environment (git config, worktrunk config, etc.)
-    for (key, value) in repo.test_env_vars() {
-        cmd.env(key, value);
-    }
 
     // Add shell-specific no-config flags
     match shell {
@@ -94,9 +81,6 @@ pub fn execute_shell_script(repo: &TestRepo, shell: &str, script: &str) -> Strin
         }
     }
     cmd.cwd(repo.root_path());
-
-    // Pass through LLVM coverage env vars for subprocess coverage collection
-    super::pass_coverage_env_to_pty_cmd(&mut cmd);
 
     let mut child = pair.slave.spawn_command(cmd).unwrap();
     drop(pair.slave); // Close slave in parent

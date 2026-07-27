@@ -12,6 +12,7 @@ use color_print::cformat;
 use worktrunk::config::{
     ProjectConfig, UserConfig, default_system_config_path, require_config_path, system_config_path,
 };
+use worktrunk::git::remote_ref::azure::azure_devops_extension_installed;
 use worktrunk::git::{CiPlatform, ErrorExt, Repository};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{FileDetectionResult, Shell, scan_for_detection_details};
@@ -228,7 +229,14 @@ pub(super) fn is_plugin_installed() -> bool {
         .is_some()
 }
 
-/// Check if the statusline is configured in Claude Code settings
+/// Whether Claude Code's statusline runs worktrunk's.
+///
+/// The question is which subcommand the configured command invokes, so it's
+/// asked of the adjacent tokens `list statusline` — the binary answers the
+/// same whether it's `wt`, `git-wt`, or an absolute path. Matching on the
+/// binary alone accepted any command that merely spelled `wt ` somewhere
+/// (`newt status`), which reported a foreign statusline as worktrunk's and
+/// left `install-statusline` refusing to install.
 pub(super) fn is_statusline_configured() -> bool {
     let Some(config_dir) = claude_config_dir() else {
         return false;
@@ -246,7 +254,10 @@ pub(super) fn is_statusline_configured() -> bool {
     json.get("statusLine")
         .and_then(|s| s.get("command"))
         .and_then(|c| c.as_str())
-        .is_some_and(|cmd| cmd.contains("wt "))
+        .is_some_and(|cmd| {
+            let tokens: Vec<&str> = cmd.split_whitespace().collect();
+            tokens.windows(2).any(|pair| pair == ["list", "statusline"])
+        })
 }
 
 /// Get the git version string (e.g., "2.47.1")
@@ -560,6 +571,18 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
                 ci_tools.az_installed,
                 ci_tools.az_authenticated,
             )?;
+            // The whole `az repos` command group ships in the azure-devops
+            // extension, so an `az` without it reports no CI status however
+            // well it's authenticated — and only the user can install it.
+            if ci_tools.az_installed && !azure_devops_extension_installed(repo.repo_path()?) {
+                writeln!(
+                    out,
+                    "{}",
+                    warning_message(cformat!(
+                        "<bold>azure-devops</> extension not installed; run <bold>az extension add --name azure-devops</>"
+                    ))
+                )?;
+            }
         }
         None => {
             writeln!(

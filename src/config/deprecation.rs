@@ -484,6 +484,9 @@ pub enum DeprecationKind {
     NoCd,
     /// `timeout-ms` under `[switch.picker]` (removed — picker renders progressively).
     SwitchPickerTimeout,
+    /// `task-timeout-ms` under `[list]` (removed — `[list] timeout-ms` bounds
+    /// the collect phase).
+    ListTaskTimeout,
     /// `[list] json-schema` unset while the default is scheduled to switch to
     /// schema 2 — `wt config update` writes the upcoming `json-schema = 2`.
     /// Warns at the JSON-emitting surface (`resolve_json_schema`), not at
@@ -643,6 +646,17 @@ const DEPRECATION_RULES: &[DeprecationRule] = &[
     DeprecationRule::Structural(|doc| {
         if for_each_config_table_mut(doc, |_, table| remove_switch_picker_timeout_in(table)) {
             vec![DeprecationKind::SwitchPickerTimeout]
+        } else {
+            Vec::new()
+        }
+    }),
+    // list.task-timeout-ms — removed; `[list] timeout-ms` bounds the collect
+    // phase, and the drain has its own fallback bound.
+    DeprecationRule::Structural(|doc| {
+        if for_each_config_table_mut(doc, |_, table| {
+            remove_section_key_in(table, "list", "task-timeout-ms")
+        }) {
+            vec![DeprecationKind::ListTaskTimeout]
         } else {
             Vec::new()
         }
@@ -1203,6 +1217,21 @@ fn remove_switch_picker_timeout_in(table: &mut toml_edit::Table) -> bool {
     }
 }
 
+/// Remove `key` from a top-level `section` in a table (top-level or project).
+/// An emptied section is left in place — it round-trips harmlessly.
+///
+/// A section can be written as a section table (`[list]`) or inline
+/// (`list = { … }`); `toml_edit` surfaces these as different node types, so
+/// each shape gets its own branch — matching the inline-aware `no-cd`/`no-ff`
+/// rules and the two-level [`remove_switch_picker_timeout_in`].
+fn remove_section_key_in(table: &mut toml_edit::Table, section: &str, key: &str) -> bool {
+    match table.get_mut(section) {
+        Some(toml_edit::Item::Table(t)) => t.remove(key).is_some(),
+        Some(toml_edit::Item::Value(toml_edit::Value::InlineTable(it))) => it.remove(key).is_some(),
+        _ => false,
+    }
+}
+
 fn migrate_content_from_doc(content: &str, mut doc: toml_edit::DocumentMut) -> String {
     if migrate_content_doc(&mut doc) {
         doc.to_string()
@@ -1674,6 +1703,15 @@ fn format_warning_lines<'a>(
                     "{}",
                     warning_message(cformat!(
                         "{label}: <bold>switch.picker.timeout-ms</> is no longer used — the picker now renders progressively"
+                    ))
+                );
+            }
+            DeprecationKind::ListTaskTimeout => {
+                let _ = writeln!(
+                    out,
+                    "{}",
+                    warning_message(cformat!(
+                        "{label}: <bold>list.task-timeout-ms</> is no longer used — <bold>list.timeout-ms</> bounds the collect phase"
                     ))
                 );
             }
@@ -3265,6 +3303,10 @@ json-schema = 1
             // timeout-ms under an inline `switch` is stripped like the section form
             "switch = { picker = { timeout-ms = 500 } }\n",
             "[select]\ntimeout-ms = 500\n",
+            // list.task-timeout-ms, section and inline forms (project-scoped so
+            // the appended `[list]` below isn't a duplicate table)
+            "[projects.\"github.com/u/r\".list]\ntask-timeout-ms = 500\n",
+            "[projects.\"github.com/u/r\"]\nlist = { task-timeout-ms = 500 }\n",
             "worktree-path = \"../{{ repo_root }}.{{ branch }}\"\n",
             "[projects.\"github.com/u/r\"]\napproved-commands = [\"npm test\"]\n",
         ];
@@ -4299,6 +4341,104 @@ pager = "delta"
         assert!(
             output.contains("no longer used"),
             "Should explain deprecation reason: {output}"
+        );
+    }
+
+    #[test]
+    fn test_detect_list_task_timeout_top_level() {
+        let content = r#"
+[list]
+branches = true
+task-timeout-ms = 500
+"#;
+        let deprecations = detect_deprecations(content, ConfigFileKind::User);
+        assert!(has_kind(&deprecations, |k| matches!(
+            k,
+            DeprecationKind::ListTaskTimeout
+        )));
+    }
+
+    #[test]
+    fn test_detect_list_task_timeout_project_level() {
+        let content = r#"
+[projects."github.com/user/repo".list]
+task-timeout-ms = 300
+"#;
+        let deprecations = detect_deprecations(content, ConfigFileKind::User);
+        assert!(has_kind(&deprecations, |k| matches!(
+            k,
+            DeprecationKind::ListTaskTimeout
+        )));
+    }
+
+    #[test]
+    fn test_detect_list_task_timeout_absent() {
+        let content = r#"
+[list]
+timeout-ms = 500
+"#;
+        let deprecations = detect_deprecations(content, ConfigFileKind::User);
+        assert!(!has_kind(&deprecations, |k| matches!(
+            k,
+            DeprecationKind::ListTaskTimeout
+        )));
+    }
+
+    #[test]
+    fn test_migrate_list_task_timeout_removes_key() {
+        let content = r#"
+[list]
+branches = true
+task-timeout-ms = 500
+timeout-ms = 2000
+"#;
+        let result = migrate_content(content);
+        assert!(
+            !result.contains("task-timeout-ms"),
+            "Should strip task-timeout-ms: {result}"
+        );
+        assert!(
+            result.contains("timeout-ms = 2000") && result.contains("branches"),
+            "Should preserve sibling keys: {result}"
+        );
+    }
+
+    #[test]
+    fn test_migrate_list_task_timeout_inline_table() {
+        let content = r#"
+list = { branches = true, task-timeout-ms = 500 }
+"#;
+        let result = migrate_content(content);
+        assert!(!result.contains("task-timeout-ms"));
+        assert!(result.contains("branches"));
+    }
+
+    #[test]
+    fn test_migrate_list_task_timeout_noop_when_absent() {
+        let content = r#"
+[list]
+timeout-ms = 500
+"#;
+        let result = migrate_content(content);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_format_deprecation_warnings_list_task_timeout() {
+        let info = DeprecationInfo {
+            config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
+            deprecations: vec![DeprecationKind::ListTaskTimeout],
+            kind: ConfigFileKind::User,
+            main_worktree_path: None,
+        };
+        let output = format_deprecation_warnings(&info);
+        assert!(
+            output.contains("list.task-timeout-ms"),
+            "Should mention the field: {output}"
+        );
+        assert!(
+            output.contains("list.timeout-ms"),
+            "Should point at the surviving budget: {output}"
         );
     }
 

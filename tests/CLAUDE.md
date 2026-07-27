@@ -16,9 +16,11 @@ A target-filtered run (`--lib`, `--test integration`, …) on a fresh `target/` 
 
 **Shell/PTY tests** (`shell-integration-tests` feature): approval prompts, picker, progressive rendering, shell wrappers.
 
+**The gate runs one platform, so `#[cfg(unix)]` hides dead code from it.** A helper, const, or import whose every use sits behind `#[cfg(unix)]` is live locally and dead on Windows, where `-D warnings` fails `test (windows)` with "never used". Gate the item with the same predicate as its uses. Cross-compiling to check locally doesn't work: the C build scripts (tree-sitter, libmimalloc-sys) fail before the Rust lint runs.
+
 ## Coverage Investigation
 
-`task coverage` runs the suite and writes an HTML report to `target/llvm-cov/html/index.html`. Both CI (`code-coverage` job) and local `task coverage` pass `--features shell-integration-tests`, so code behind that flag is compiled and measured.
+`task coverage` runs the suite and writes an HTML report to `target/llvm-cov/html/index.html`. Both CI (the `coverage` workflow) and local `task coverage` pass `--features shell-integration-tests`, so code behind that flag is compiled and measured.
 
 When `codecov/patch` fails, investigate before declaring ready (the merge gate itself is in the root `CLAUDE.md` → Coverage):
 
@@ -27,9 +29,38 @@ task coverage
 cargo llvm-cov report --show-missing-lines | grep <file>   # authoritative miss list; matches codecov line-for-line
 ```
 
-For each uncovered function, either write a test (integration tests via `assert_cmd_snapshot!` do capture subprocess coverage) or document why it's intentionally untested. If codecov's compare API must be queried directly, `coverage.head` is a `LineType` enum: `0=hit`, `1=miss`, `2=partial`.
+For each uncovered function, either write a test (integration tests via `assert_cmd_snapshot!` do capture subprocess coverage) or document why it's intentionally untested.
 
-**Renames and moves:** `git mv` can trigger codecov/patch failures on pre-existing uncovered lines — codecov treats changed lines in renamed files as part of the patch. If the lines are unchanged and predate the rename it's a false positive; verify against `main` under the old path.
+**Querying codecov directly** serves two cases the local report can't: disputing a posted check, and running in CI, where `task coverage` isn't installed. Prefer measuring everywhere else.
+
+```bash
+API=https://api.codecov.io/api/v2/github/max-sixty/repos/worktrunk
+# Full SHAs throughout; an abbreviation 404s. `?pullid=N` compares the PR's
+# *current* head, so name both SHAs to ask about an earlier commit.
+curl -sL "$API/compare/?base=<base-sha>&head=<head-sha>" > /tmp/codecov.json
+
+# Patch coverage per file. `.name` is an object, and the files carrying patch
+# lines are the ones with `has_diff`:
+jq '.files[] | select(.has_diff) | {name: .name.head, patch: .totals.patch}' /tmp/codecov.json
+
+# The missed patch lines in one file. `.coverage.head` is a LineType enum
+# (0=hit, 1=miss, 2=partial), and `.added` keeps context lines inside a hunk
+# from reading as patch misses:
+jq '.files[] | select(.name.head == "<path>") | .lines[]
+    | select(.is_diff and .added and .coverage.head == 1) | {line: .number.head, code: .value}' /tmp/codecov.json
+
+# Whole-file line coverage at one commit. No trailing slash after the path —
+# the route swallows it and answers 404 "coverage info not found":
+curl -sL "$API/file_report/<path>?sha=<sha>"
+```
+
+Per-file `.totals.patch` (equivalently `.totals.head.diff`, `[files, lines, hits, misses, …]`) holds that file's patch numbers, and the posted percentage aggregates them over the files in the PR's own diff. The top-level `totals.base.diff` is a different quantity: the base's coverage of those lines. Commit messages arrive with raw newlines in them, so the JSON is strictly invalid — `jq` copes, Python needs `json.loads(…, strict=False)`.
+
+**A compare listing files the PR never touched** means the merge-base has no report, so codecov walked back to the newest ancestor that does and diffed from there. The posted patch check still scopes to the PR's own diff; it's the API object that widens. Every main commit uploads from the `coverage` workflow, so this points at a failed or missing run on the base commit.
+
+**`skim` fails with E0554 (`#![feature]` on stable):** the local `cargo-llvm-cov` predates 0.7.0, which stopped putting the coverage flags in global `RUSTFLAGS` and started instrumenting only workspace crates. Older versions leak `--cfg=coverage` into every dependency, and `skim` gates a nightly feature on it. Install the version the `code-coverage` job pins rather than working around it (`--no-cfg-coverage` also avoids it; `--no-rustc-wrapper` reinstates it).
+
+**Moved and re-indented lines:** codecov counts every line the diff touches as part of the patch, including one the change only relocated — a `git mv`, or a body re-indented because it moved inside a new wrapper. Pre-existing uncovered lines then count against a patch that changed no behavior. Verify against `main` (under the old path, for a rename): if the lines are identical there, the misses predate the change, and the fix is to say so to the user rather than undo the move.
 
 **"N functions have mismatched data" warning:** `cargo llvm-cov` merges profiles from multiple compilation targets with minor codegen differences (typically 5–20 functions). Expected, harmless, no suppression flag exists ([LLVM #97574](https://github.com/llvm/llvm-project/issues/97574)).
 
@@ -43,6 +74,7 @@ be isolated from the host environment to prevent:
 - **Directive leakage**: Test commands writing to the user's shell directive file
 - **Config pollution**: Tests reading/writing the user's real config
 - **Git interference**: Host GIT_* environment variables affecting test behavior
+- **Network access**: a fixture's `https://` remote URL becoming a real connect, with no timeout bounding it (`GIT_ALLOWED_PROTOCOLS` in `src/testing/mod.rs`)
 
 ### With a TestRepo fixture (most tests)
 
@@ -96,6 +128,18 @@ call `.current_dir(...)` explicitly.
 | `wt_command()` | `Command` | Running wt without a TestRepo (free function) |
 | `repo.git_command()` | `Cmd` | Running git commands (use `.run()` not `.output()`) |
 
+### Where a new environment variable goes
+
+A test child's environment is four layers, each with one home in
+`src/testing/mod.rs`: `STATIC_TEST_ENV_VARS` for a determinism knob every child
+needs, `git_test_env` for git isolation (config, timestamps, the transport
+deny), `PTY_TEST_ENV_VARS` for a knob only a terminal triggers, and
+`pty_env_vars` for a path that varies per fixture. `configure_cli_command` and
+`configure_pty_command` apply them by transport, so a variable added to the
+right layer reaches every test that spawns `wt`. A per-builder copy reaches only
+the tests that happen to use that builder, and the ones it misses fail later,
+somewhere else.
+
 ## Config Isolation for In-Process Unit Tests
 
 `repo.wt_command()` / `wt_command()` isolate *subprocess* tests (above). An
@@ -132,6 +176,17 @@ approvals.approve_command(project, command, &approvals_path).unwrap();
 
 </good>
 </example>
+
+Git needs the same care. An in-process `Repository::run_command()` spawns git
+with the test process's environment, so it reads the developer's real
+`~/.gitconfig` and none of `configure_git_env`'s variables — no
+`GIT_CONFIG_GLOBAL`, no `GIT_ALLOW_PROTOCOL`. The repo's own config is the one
+layer such a command still reads, so every `TestRepo` constructor appends
+`LOCAL_TEST_CONFIG` (identity, `commit.gpgsign`, and the `protocol.allow`
+transport deny) to it. `TestRepo::assemble` is the single call site; a new
+constructor routes through it and inherits the settings, and the bare
+fixtures (`BareRepoTest`, `NestedBareRepoTest`) get them by composing over
+`TestRepo`.
 
 `approvals_path()` panics when `WORKTRUNK_APPROVALS_PATH` is unset, but
 `#[cfg(test)]` makes that guard fire only for `worktrunk` lib-crate tests. A
@@ -245,12 +300,21 @@ Two traps:
 - **Give each half its own wait.** Sleeping once and then asserting both "X happened" and "Y didn't" makes the presence half flaky. Poll for X, then hold the window for Y.
 - **Structural absence needs no window at all.** When the event is gated on a condition the test never sets up, it can't fire regardless of timing. Drop the sleep: poll the positive precondition and the absence holds by construction. A watchdog whose escalation is gated on `command.is_some()` can't escalate with no command, so the test polls for the first render and asserts `!escalated` with no window.
 
+### Time-thresholded output: suppress it at the source
+
+Output that appears only once an operation runs past a threshold is a function of machine load, not of behavior: the `Progress` and `Watchdog` spinners (`src/progress.rs`), `Cmd::delayed_stream`'s progress line, the picker's placeholder reveal. A PTY test captures the raw byte stream, so it keeps every in-place redraw frame a terminal would have erased, elapsed-second counter and all — frames that show up when the whole suite runs together and not when the test runs alone.
+
+Each threshold has an env override pinning it, so the output is present or absent by construction rather than by timing. A new one goes in the baseline that matches its scope — `PTY_TEST_ENV_VARS` when only a terminal triggers it (`WORKTRUNK_TEST_SPINNERS=0`), `STATIC_TEST_ENV_VARS` when a pipe does too (`WORKTRUNK_TEST_DELAYED_STREAM_MS=-1`) — and reaches every PTY child from there, rather than being added per builder. Filtering the frames out of the capture afterwards is the weaker fix: the filter has to model cursor movement, and a block that redraws with a cursor-up spans lines a line-scoped filter can't follow.
+
 ## No Retries
 
 Tests run once. Worktrunk configures no nextest `retries` and writes no retry loops: a test that passes only on a second attempt is a bug report, and retrying it discards the report while leaving the bug. A green suite has to mean the code is green, not that the run's flakes stayed under a retry budget. Fix the flake at its root:
 
 - A racy assertion is a timing bug. Make it deterministic, per Timing Tests above: poll for the event, or drive it causally through a callback.
 - Resource pressure is a concurrency bug. Windows process creation intermittently fails with STATUS_DLL_INIT_FAILED (exit `-1073741502`) when many tests spawn git/wt children at once. Bound how many heavy tests run together; that removes the pressure instead of retrying past it.
+- A shared namespace is a collision bug. **Never `NamedTempFile::new()`** for a file a test needs by name: `tempfile` retries a name collision only when it surfaces as `AlreadyExists`, and on Windows `create_new` against a name already held by a *directory* — or by a file in delete-pending state — comes back `PermissionDenied`, which it hands straight back to the caller. A full suite run leaves the temp directory full of `.tmpXXXXXX` entries (every `TestRepo` makes one), and under that load the call fails ~1% of the time with `Access is denied.` — a panic that has nothing to do with what the test asserts. Take a `TempDir` and give the files fixed names inside it (`worktrunk::testing::directive_files` is the pattern); a directory collision surfaces as `AlreadyExists`, which tempfile retries.
+
+**Reproducing a Windows-only flake** means reproducing its *neighbours*, not starving it: run the suspect tests in a loop on a Windows runner with a full `cargo nextest run` going alongside. Pinning the CPU instead models the wrong thing whenever the failing run's own timing was normal (compare its duration against the same test passing — nextest prints it, and the `test` job uploads `junit.xml` with every test's time). Measured both ways on the same five tests: 80 iterations under a concurrent full suite reproduced a 1-in-100 Windows failure that no local run had ever shown, while pinning all four cores with busy loops instead just pushed nearly every iteration past the 30s waits — artificial failures that say nothing about the flake.
 
 ## Testing with --execute Commands
 
@@ -390,17 +454,13 @@ The PTY approach is specifically for **user-facing output documentation**. It's 
 
 ## Coverage in PTY Tests
 
-PTY tests use `cmd.env_clear()` for isolation. To enable coverage, pass through LLVM env vars:
+`configure_pty_command` clears the child's environment, so an instrumented
+binary would lose the LLVM vars that tell it where to write coverage data. It
+passes them back through, which is one more reason every PTY test starts there:
 
 ```rust
-// Standard setup (most PTY tests)
 crate::common::configure_pty_command(&mut cmd);
-
-// Custom env setup (shell tests needing USER, SHELL, ZDOTDIR)
-cmd.env_clear();
-cmd.env("HOME", ...);
-// ... custom env ...
-crate::common::pass_coverage_env_to_pty_cmd(&mut cmd);
+// ... test-specific env (USER, SHELL, ZDOTDIR, the fixture's paths) ...
 ```
 
 ## No Global State Mutations in Tests

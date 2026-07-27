@@ -29,6 +29,23 @@ pub enum StageMode {
     None,
 }
 
+impl StageMode {
+    /// The `git` invocation this mode stages with, or `None` when it stages nothing.
+    ///
+    /// One home for the mapping, so a new variant can't be handled at one call
+    /// site and forgotten at the other: staging the real index
+    /// ([`WorkingTree::stage`](crate::git::WorkingTree::stage)) and mirroring the
+    /// mode into a throwaway index for `wt step commit --dry-run` both read it
+    /// from here.
+    pub fn add_args(self) -> Option<&'static [&'static str]> {
+        match self {
+            StageMode::All => Some(&["add", "-A"]),
+            StageMode::Tracked => Some(&["add", "-u"]),
+            StageMode::None => None,
+        }
+    }
+}
+
 /// Configuration for commit message generation
 ///
 /// The command is a shell string executed via `sh -c`. Environment variables
@@ -184,13 +201,6 @@ pub struct ListConfig {
     #[serde(rename = "json-schema", skip_serializing_if = "Option::is_none")]
     pub json_schema: Option<u8>,
 
-    /// Per-task timeout in milliseconds.
-    /// Kills individual git commands that exceed this duration. Applies to both
-    /// `wt list` and the `wt switch` picker. Set to 0 to explicitly disable
-    /// (useful to override a global setting). Disabled when --full is used.
-    #[serde(rename = "task-timeout-ms", skip_serializing_if = "Option::is_none")]
-    pub task_timeout_ms: Option<u64>,
-
     /// Wall-clock budget for the entire collect phase in milliseconds.
     /// Tasks that complete within the budget contribute data; tasks still
     /// running when it expires are abandoned silently. Set to 0 to disable.
@@ -248,14 +258,6 @@ impl ListConfig {
         self.summary.unwrap_or(false)
     }
 
-    /// Per-task command timeout (default: None — no per-command timeout).
-    /// Returns `None` when disabled (task_timeout_ms = 0 or unset).
-    pub fn task_timeout(&self) -> Option<std::time::Duration> {
-        self.task_timeout_ms
-            .filter(|&ms| ms > 0)
-            .map(std::time::Duration::from_millis)
-    }
-
     /// Wall-clock budget for the collect phase (default: None — no budget).
     /// Returns `None` when disabled (timeout_ms = 0 or unset).
     pub fn timeout(&self) -> Option<std::time::Duration> {
@@ -292,7 +294,6 @@ impl Merge for ListConfig {
             remotes: other.remotes.or(self.remotes),
             summary: other.summary.or(self.summary),
             json_schema: other.json_schema.or(self.json_schema),
-            task_timeout_ms: other.task_timeout_ms.or(self.task_timeout_ms),
             timeout_ms: other.timeout_ms.or(self.timeout_ms),
             columns,
             custom_columns,

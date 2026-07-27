@@ -20,7 +20,6 @@
 //! convenience.
 
 use std::collections::BTreeMap;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -29,6 +28,7 @@ use super::ConfigError;
 
 use crate::config::deprecation::normalize_template_vars;
 use crate::path::format_path_for_display;
+use crate::utils::write_atomically;
 
 /// Approved commands, stored in `approvals.toml`.
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -202,7 +202,8 @@ impl Approvals {
             output
         };
 
-        write_approvals_file(path, &output)?;
+        write_atomically(path, &output)
+            .map_err(|e| ConfigError(format!("Failed to write approvals file: {e}")))?;
 
         Ok(())
     }
@@ -212,28 +213,6 @@ fn save_parent(path: &Path) -> &Path {
     path.parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."))
-}
-
-fn write_approvals_file(path: &Path, output: &str) -> Result<(), ConfigError> {
-    let parent = save_parent(path);
-    let mut temp = tempfile::Builder::new()
-        .prefix(".approvals.")
-        .suffix(".tmp")
-        .tempfile_in(parent)
-        .map_err(|e| ConfigError(format!("Failed to create temporary approvals file: {e}")))?;
-
-    temp.write_all(output.as_bytes())
-        .map_err(|e| ConfigError(format!("Failed to write temporary approvals file: {e}")))?;
-    temp.flush()
-        .map_err(|e| ConfigError(format!("Failed to flush temporary approvals file: {e}")))?;
-    temp.as_file()
-        .sync_all()
-        .map_err(|e| ConfigError(format!("Failed to sync temporary approvals file: {e}")))?;
-
-    temp.persist(path)
-        .map_err(|e| ConfigError(format!("Failed to replace approvals file: {}", e.error)))?;
-
-    Ok(())
 }
 
 // =========================================================================
@@ -691,9 +670,8 @@ mod tests {
         );
         let err = replacement.save_to(&path).unwrap_err();
         assert!(
-            err.to_string()
-                .contains("Failed to create temporary approvals file"),
-            "Expected temporary file creation error, got: {}",
+            err.to_string().contains("Failed to write approvals file"),
+            "Expected a write error, got: {}",
             err
         );
 

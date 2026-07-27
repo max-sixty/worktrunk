@@ -3406,6 +3406,327 @@ fn test_step_rebase_already_up_to_date(mut repo: TestRepo) {
     ));
 }
 
+/// Give `feature` and main conflicting edits to the same path, so replaying
+/// either onto the other stops. Both branches add the path, so it is an add/add
+/// conflict on the first pick.
+fn feature_conflicting_with_main(repo: &mut TestRepo) -> PathBuf {
+    let feature_wt = repo.add_worktree("feature");
+    repo.commit_in_worktree(&feature_wt, "conflict.txt", "feature\n", "Feature edit");
+    fs::write(repo.root_path().join("conflict.txt"), "main\n").unwrap();
+    repo.run_git(&["add", "conflict.txt"]);
+    repo.run_git(&["commit", "-m", "Main edit"]);
+
+    feature_wt
+}
+
+/// A worktree's own git dir, where git records in-progress operation state.
+fn worktree_git_dir(repo: &TestRepo, worktree: &Path) -> PathBuf {
+    let output = repo
+        .git_command()
+        .current_dir(worktree)
+        .args(["rev-parse", "--absolute-git-dir"])
+        .run()
+        .unwrap();
+    PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Leave `feature` stopped partway through a conflicted rebase onto main, which
+/// detaches HEAD.
+fn stop_feature_mid_rebase(repo: &mut TestRepo) -> PathBuf {
+    let feature_wt = feature_conflicting_with_main(repo);
+
+    let rebase = repo
+        .git_command()
+        .current_dir(&feature_wt)
+        .args(["rebase", "main"])
+        .run()
+        .unwrap();
+    assert!(
+        !rebase.status.success(),
+        "rebase should have stopped on the conflict"
+    );
+    assert!(
+        worktree_git_dir(repo, &feature_wt)
+            .join("rebase-merge")
+            .exists(),
+        "rebase state should be on disk"
+    );
+
+    feature_wt
+}
+
+/// Leave `feature` stopped mid-rebase with one commit already replayed.
+///
+/// [`stop_feature_mid_rebase`] conflicts on the first pick, which leaves the
+/// detached HEAD *at* main — so a push from there carries nothing and reports
+/// up to date. Only once a pick has landed does the detached HEAD hold commits
+/// a fast-forward would move the target onto.
+fn stop_feature_mid_rebase_after_one_pick(repo: &mut TestRepo) -> PathBuf {
+    let feature_wt = repo.add_worktree("feature");
+    repo.commit_in_worktree(&feature_wt, "clean.txt", "feature\n", "Replays cleanly");
+    repo.commit_in_worktree(&feature_wt, "conflict.txt", "feature\n", "Feature edit");
+    fs::write(repo.root_path().join("conflict.txt"), "main\n").unwrap();
+    repo.run_git(&["add", "conflict.txt"]);
+    repo.run_git(&["commit", "-m", "Main edit"]);
+
+    let rebase = repo
+        .git_command()
+        .current_dir(&feature_wt)
+        .args(["rebase", "main"])
+        .run()
+        .unwrap();
+    assert!(
+        !rebase.status.success(),
+        "rebase should have stopped on the second pick"
+    );
+
+    feature_wt
+}
+
+/// Leave `feature` stopped in a conflicted merge, which keeps HEAD on the branch.
+fn stop_feature_mid_merge(repo: &mut TestRepo) -> PathBuf {
+    let feature_wt = feature_conflicting_with_main(repo);
+
+    let merge = repo
+        .git_command()
+        .current_dir(&feature_wt)
+        .args(["merge", "main"])
+        .run()
+        .unwrap();
+    assert!(
+        !merge.status.success(),
+        "merge should have stopped on the conflict"
+    );
+    assert!(
+        worktree_git_dir(repo, &feature_wt)
+            .join("MERGE_HEAD")
+            .exists(),
+        "merge state should be on disk"
+    );
+
+    feature_wt
+}
+
+/// Mid-rebase, HEAD is detached on a linear extension of the target, so the
+/// ancestry check alone reads as up to date. `wt step rebase` has to refuse
+/// rather than report success over a tree that still holds conflict markers.
+#[rstest]
+fn test_step_rebase_refuses_mid_rebase(mut repo: TestRepo) {
+    let feature_wt = stop_feature_mid_rebase(&mut repo);
+
+    assert_cmd_snapshot!(
+        "step_rebase_refuses_mid_rebase",
+        make_snapshot_cmd(&repo, "step", &["rebase", "main"], Some(&feature_wt))
+    );
+}
+
+/// From the same state `wt merge` names the open rebase instead of blaming the
+/// detached HEAD, whose `git switch` hint would abandon the rebase rather than
+/// finish it.
+#[rstest]
+fn test_merge_refuses_mid_rebase(mut repo: TestRepo) {
+    let feature_wt = stop_feature_mid_rebase(&mut repo);
+
+    assert_cmd_snapshot!(
+        "merge_refuses_mid_rebase",
+        make_snapshot_cmd(&repo, "merge", &[], Some(&feature_wt))
+    );
+}
+
+/// The gate covers every operation git can leave open, not just rebase. A
+/// conflicted merge keeps HEAD on the branch, so the detached-HEAD check waves
+/// it through and `wt merge` would otherwise try to commit the conflict markers.
+#[rstest]
+fn test_merge_refuses_mid_merge(mut repo: TestRepo) {
+    let feature_wt = stop_feature_mid_merge(&mut repo);
+
+    assert_cmd_snapshot!(
+        "merge_refuses_mid_merge",
+        make_snapshot_cmd(&repo, "merge", &[], Some(&feature_wt))
+    );
+}
+
+/// Leave `feature` holding an unmerged path with *no* operation open. A
+/// conflicted `git stash pop` is the plainest way there: it leaves the index
+/// conflicted and writes no state file, so the operation check cannot see it
+/// and only the index knows.
+fn stop_feature_on_conflicted_stash_pop(repo: &mut TestRepo) -> PathBuf {
+    let feature_wt = repo.add_worktree("feature");
+    repo.commit_in_worktree(&feature_wt, "conflict.txt", "base\n", "Base edit");
+
+    let git = |repo: &TestRepo, args: &[&str]| {
+        repo.git_command()
+            .current_dir(&feature_wt)
+            .args(args.iter().copied())
+            .run()
+            .unwrap();
+    };
+    fs::write(feature_wt.join("conflict.txt"), "stashed\n").unwrap();
+    git(repo, &["stash"]);
+    fs::write(feature_wt.join("conflict.txt"), "committed\n").unwrap();
+    git(repo, &["commit", "-am", "Conflicting edit"]);
+    // Pops onto a line the commit already changed, so the merge fails.
+    git(repo, &["stash", "pop"]);
+
+    assert!(
+        !worktree_git_dir(repo, &feature_wt)
+            .join("MERGE_HEAD")
+            .exists(),
+        "a conflicted stash pop should leave no operation state behind"
+    );
+
+    feature_wt
+}
+
+/// `wt step squash` rewrites history, so an operation already replaying commits
+/// blocks it for the same reason it blocks `wt merge` — and mid-rebase the
+/// detached HEAD would otherwise get blamed, pointing at `git switch`.
+#[rstest]
+fn test_step_squash_refuses_mid_merge(mut repo: TestRepo) {
+    let feature_wt = stop_feature_mid_merge(&mut repo);
+    let head_before = repo.head_sha_in(&feature_wt);
+
+    assert_cmd_snapshot!(
+        "step_squash_refuses_mid_merge",
+        make_snapshot_cmd(&repo, "step", &["squash", "--yes"], Some(&feature_wt))
+    );
+    assert_eq!(
+        repo.head_sha_in(&feature_wt),
+        head_before,
+        "the refusal must leave HEAD alone; squashing here would commit the conflict markers"
+    );
+}
+
+/// The index is the authority on conflicts, not the state files: `wt step
+/// commit` stages on the user's behalf, and `git add -A` would resolve an
+/// unmerged path to whatever is on disk — conflict markers included — taking
+/// git's own refusal to commit with it.
+#[rstest]
+fn test_step_commit_refuses_unmerged_paths(mut repo: TestRepo) {
+    let feature_wt = stop_feature_on_conflicted_stash_pop(&mut repo);
+    let head_before = repo.head_sha_in(&feature_wt);
+
+    assert_cmd_snapshot!(
+        "step_commit_refuses_unmerged_paths",
+        make_snapshot_cmd(&repo, "step", &["commit", "--yes"], Some(&feature_wt))
+    );
+    assert_eq!(
+        repo.head_sha_in(&feature_wt),
+        head_before,
+        "the refusal must leave HEAD alone; committing here would commit the conflict markers"
+    );
+}
+
+/// `wt merge` stages through the commit and squash steps, so it needs the same
+/// index gate — under its own name. Delegating the refusal to the step would
+/// answer `wt merge` with "Cannot squash".
+#[rstest]
+fn test_merge_refuses_unmerged_paths(mut repo: TestRepo) {
+    let feature_wt = stop_feature_on_conflicted_stash_pop(&mut repo);
+    let head_before = repo.head_sha_in(&feature_wt);
+
+    assert_cmd_snapshot!(
+        "merge_refuses_unmerged_paths",
+        make_snapshot_cmd(&repo, "merge", &["--yes"], Some(&feature_wt))
+    );
+    assert_eq!(
+        repo.head_sha_in(&feature_wt),
+        head_before,
+        "the refusal must leave HEAD alone; merging here would commit the conflict markers"
+    );
+}
+
+/// `wt step push` stages nothing, so the index gate above cannot speak for it —
+/// the hazard is HEAD itself. Mid-rebase the detached HEAD is a linear extension
+/// of the target, so the fast-forward check passes and the push moves the target
+/// branch onto a half-replayed history whose worktree still holds conflict
+/// markers, leaving the rebase open behind it.
+#[rstest]
+fn test_step_push_refuses_mid_rebase(mut repo: TestRepo) {
+    let feature_wt = stop_feature_mid_rebase_after_one_pick(&mut repo);
+    // The primary worktree is on main, so its HEAD is main's tip.
+    let main_before = repo.head_sha();
+    assert_ne!(
+        repo.head_sha_in(&feature_wt),
+        main_before,
+        "the detached HEAD has to carry a replayed commit, or the push is a no-op"
+    );
+
+    assert_cmd_snapshot!(
+        "step_push_refuses_mid_rebase",
+        make_snapshot_cmd(&repo, "step", &["push", "main"], Some(&feature_wt))
+    );
+    assert_eq!(
+        repo.head_sha(),
+        main_before,
+        "main must not move while the rebase is open"
+    );
+}
+
+/// The early refusal runs *before* the pre-commit hooks, so that a doomed
+/// commit runs no project commands — which leaves a window the early refusal
+/// structurally cannot see: a hook is arbitrary project code, free to leave an
+/// unmerged index behind after that check has passed. `git add -A` would then
+/// collapse it and commit the markers. Only the check inside
+/// `WorkingTree::stage`, with nothing between it and the `git add`, catches
+/// this.
+#[rstest]
+fn test_step_commit_refuses_hook_created_conflict(mut repo: TestRepo) {
+    // A pre-commit hook that conflicts the index. `|| true` so the hook
+    // succeeds and the commit proceeds to staging; output suppressed to keep
+    // git's own wording out of the snapshot.
+    repo.write_project_config(r#"pre-commit = "git merge side >/dev/null 2>&1 || true""#);
+    repo.run_git(&["add", ".config/wt.toml"]);
+    repo.run_git(&["commit", "-m", "Add project config"]);
+
+    fs::write(repo.root_path().join("conflict.txt"), "base\n").unwrap();
+    repo.run_git(&["add", "conflict.txt"]);
+    repo.run_git(&["commit", "-m", "Base edit"]);
+    repo.run_git(&["checkout", "-b", "side"]);
+    fs::write(repo.root_path().join("conflict.txt"), "side\n").unwrap();
+    repo.run_git(&["commit", "-am", "Conflicting edit on side"]);
+    repo.run_git(&["checkout", "main"]);
+
+    let feature_wt = repo.add_worktree("feature");
+    repo.commit_in_worktree(&feature_wt, "conflict.txt", "theirs\n", "Conflicting edit");
+    // Something for the commit to do, so it reaches the staging step.
+    fs::write(feature_wt.join("other.txt"), "new\n").unwrap();
+
+    let head_before = repo.head_sha_in(&feature_wt);
+    let unmerged_before = repo
+        .git_command()
+        .args(["diff", "--name-only", "--diff-filter=U"])
+        .current_dir(&feature_wt)
+        .run()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&unmerged_before.stdout)
+            .trim()
+            .is_empty(),
+        "the index must be clean when the early refusal runs — the hook is what conflicts it"
+    );
+
+    assert_cmd_snapshot!(
+        "step_commit_refuses_hook_created_conflict",
+        make_snapshot_cmd(&repo, "step", &["commit", "--yes"], Some(&feature_wt))
+    );
+    assert_eq!(
+        repo.head_sha_in(&feature_wt),
+        head_before,
+        "the refusal must leave HEAD alone; committing here would commit the conflict markers"
+    );
+    let committed = repo
+        .git_command()
+        .args(["show", "HEAD:conflict.txt"])
+        .current_dir(&feature_wt)
+        .run()
+        .unwrap();
+    assert!(
+        !String::from_utf8_lossy(&committed.stdout).contains("<<<<<<<"),
+        "no commit may carry conflict markers"
+    );
+}
+
 // =============================================================================
 // JSON output tests
 // =============================================================================
@@ -3424,6 +3745,39 @@ fn test_step_rebase_up_to_date_json(mut repo: TestRepo) {
     let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_eq!(parsed["outcome"], "up_to_date");
     assert_eq!(parsed["target"], "main");
+}
+
+/// An annotated-tag target is peeled before the up-to-date check.
+///
+/// `git merge-base` resolves an annotated tag to the commit it points at, so
+/// comparing it against an unpeeled `rev-parse` never matches: the branch was
+/// reported as needing a rebase, and `wt step rebase <tag>` replayed nothing
+/// while printing "Rebased onto <tag>" and emitting `"outcome": "rebased"`.
+/// The lightweight tag is the single-factor control — same graph, same commit,
+/// and it always took the `up_to_date` path. `test_step_rebase_accepts_tag`
+/// cannot stand in for this: its `git tag v1.0` is lightweight, so its ref
+/// resolves straight to a commit and it passed under the old code too.
+#[rstest]
+fn test_step_rebase_annotated_tag_is_peeled(mut repo: TestRepo) {
+    repo.run_git(&["tag", "-a", "v1.0.0", "-m", "release"]);
+    repo.run_git(&["tag", "v1.0.0-lw"]);
+    let feature_wt = repo.add_worktree_with_commit("feature", "f.txt", "x", "feat: x");
+
+    for tag in ["v1.0.0", "v1.0.0-lw"] {
+        let output = repo
+            .wt_command()
+            .args(["step", "rebase", tag, "--format=json"])
+            .current_dir(&feature_wt)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+        assert_eq!(
+            parsed["outcome"], "up_to_date",
+            "{tag}: branch already sits on the tagged commit, so nothing should replay"
+        );
+        assert_eq!(parsed["target"], tag);
+    }
 }
 
 /// `step rebase --format=json` reports `fast_forwarded` when target advanced cleanly.
@@ -4400,6 +4754,291 @@ fn test_merge_removes_branch_when_local_main_diverged_from_upstream(
     );
 }
 
+/// Set up the #3519 stale-local-default topology: origin/main advanced by two
+/// commits (stand-ins for already-merged PRs) that the primary has fetched but
+/// not fast-forwarded into its local main.
+fn setup_stale_local_main(repo: &TestRepo) {
+    let remote_path = repo.remote_path().unwrap().to_path_buf();
+    let github_sim = repo.home_path().join("github-sim");
+    repo.run_git_in(
+        repo.home_path(),
+        &["clone", remote_path.to_str().unwrap(), "github-sim"],
+    );
+    for (file, msg) in [
+        ("upstream-1.txt", "Upstream PR 1 (already merged)"),
+        ("upstream-2.txt", "Upstream PR 2 (already merged)"),
+    ] {
+        fs::write(github_sim.join(file), "upstream").unwrap();
+        repo.run_git_in(&github_sim, &["add", file]);
+        repo.run_git_in(&github_sim, &["commit", "-m", msg]);
+    }
+    repo.run_git_in(&github_sim, &["push", "origin", "main"]);
+
+    // Fetch so origin/main is known locally, but leave local main stale —
+    // behind origin/main by the two upstream commits.
+    repo.run_git(&["fetch", "origin"]);
+    assert!(
+        !repo
+            .git_command()
+            .args(["merge-base", "--is-ancestor", "origin/main", "main"])
+            .run()
+            .unwrap()
+            .status
+            .success(),
+        "setup: local main should be behind origin/main"
+    );
+}
+
+/// Add a `feature` worktree branched from `base`, with commits for the given
+/// (file, message) pairs.
+fn add_feature_worktree(
+    repo: &TestRepo,
+    base: &str,
+    commits: &[(&str, &str)],
+) -> std::path::PathBuf {
+    let feature_wt = repo.root_path().parent().unwrap().join("repo.feature");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "feature",
+        feature_wt.to_str().unwrap(),
+        base,
+    ]);
+    for (file, msg) in commits {
+        fs::write(feature_wt.join(file), "feature").unwrap();
+        repo.run_git_in(&feature_wt, &["add", file]);
+        repo.run_git_in(&feature_wt, &["commit", "-m", msg]);
+    }
+    feature_wt
+}
+
+/// #3519: `wt merge` from a branch based on origin/main, with the primary's
+/// local main left behind it, measures the squash against the *upstream* — so
+/// only the branch's own commits fold — and the final fast-forward carries
+/// local main through the upstream commits by their real SHAs.
+///
+/// Contrast with `test_merge_removes_branch_when_local_main_diverged_from_upstream`:
+/// there the feature forks from the *shared base*, so the span is only the
+/// feature's own commit and the merge proceeds against the local ref unchanged.
+#[rstest]
+fn test_merge_carries_stale_local_main_through_upstream(#[from(repo_with_remote)] repo: TestRepo) {
+    setup_stale_local_main(&repo);
+    let upstream_tip = repo.git_output(&["rev-parse", "origin/main"]);
+    // Two feature commits so the squash step actually rewrites (one commit
+    // takes the AlreadySingleCommit early-out).
+    let feature_wt = add_feature_worktree(
+        &repo,
+        "origin/main",
+        &[
+            ("feature-1.txt", "feature commit one"),
+            ("feature-2.txt", "feature commit two"),
+        ],
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["merge", "main", "--yes", "--no-hooks", "--no-remove"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "merge must carry a stale local main through its upstream\nstderr:\n{stderr}",
+    );
+    assert!(
+        stderr.contains("2 commits behind"),
+        "merge should announce the carry\nstderr:\n{stderr}",
+    );
+
+    // The squash folded only the branch's own commits: the merged tip sits
+    // directly on the origin/main tip and its message names no upstream PR.
+    assert_eq!(
+        repo.git_output(&["rev-parse", "main^"]),
+        upstream_tip,
+        "squash commit must sit on the origin/main tip",
+    );
+    let tip_message = repo.git_output(&["log", "-1", "--format=%B", "main"]);
+    assert!(
+        tip_message.contains("feature commit one") && !tip_message.contains("Upstream PR"),
+        "squash must fold only the branch's own commits\nmessage:\n{tip_message}",
+    );
+    // The upstream commits arrived by their real SHAs — main descends from
+    // origin/main instead of duplicating its content.
+    assert!(
+        repo.git_command()
+            .args(["merge-base", "--is-ancestor", "origin/main", "main"])
+            .run()
+            .unwrap()
+            .status
+            .success(),
+        "origin/main must be an ancestor of the merged main",
+    );
+}
+
+/// #3519 (standalone step): `wt step squash` measures against the target's
+/// upstream when the local target ref is stale, folding only the branch's own
+/// commits — and never touches the target ref at all.
+#[rstest]
+fn test_step_squash_measures_against_upstream_when_local_main_stale(
+    #[from(repo_with_remote)] repo: TestRepo,
+) {
+    setup_stale_local_main(&repo);
+    let stale_main = repo.git_output(&["rev-parse", "main"]);
+    let upstream_tip = repo.git_output(&["rev-parse", "origin/main"]);
+    let feature_wt = add_feature_worktree(
+        &repo,
+        "origin/main",
+        &[
+            ("feature-1.txt", "feature commit one"),
+            ("feature-2.txt", "feature commit two"),
+        ],
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["step", "squash", "main", "--yes", "--no-hooks"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "step squash must succeed against the upstream span\nstderr:\n{stderr}",
+    );
+
+    // Only the branch's own commits folded: the squash sits on the origin/main
+    // tip, and no upstream commit was swept into it.
+    assert_eq!(
+        repo.git_output(&["rev-parse", "feature^"]),
+        upstream_tip,
+        "squash commit must sit on the origin/main tip",
+    );
+    let tip_message = repo.git_output(&["log", "-1", "--format=%B", "feature"]);
+    assert!(
+        tip_message.contains("feature commit two") && !tip_message.contains("Upstream PR"),
+        "squash must fold only the branch's own commits\nmessage:\n{tip_message}",
+    );
+    // A standalone squash rewrites the branch only — the target ref is not its
+    // business.
+    assert_eq!(
+        repo.git_output(&["rev-parse", "main"]),
+        stale_main,
+        "step squash must never move the target ref",
+    );
+}
+
+/// #3519 (standalone step): `wt step rebase` with a stale local target rebases
+/// onto the target's *upstream*, replaying only the branch's own commits.
+/// Rebasing onto the stale local ref would replay the upstream commits too,
+/// duplicating them under new SHAs.
+#[rstest]
+fn test_step_rebase_targets_upstream_when_local_main_stale(
+    #[from(repo_with_remote)] repo: TestRepo,
+) {
+    setup_stale_local_main(&repo);
+    let stale_main = repo.git_output(&["rev-parse", "main"]);
+    // A branch forked from the *old* local main tip that then merged
+    // origin/main — non-linear history whose local-main span contains the
+    // upstream commits, so the rebase step actually rewrites.
+    let feature_wt = add_feature_worktree(
+        &repo,
+        "main",
+        &[("feature.txt", "the one real feature commit")],
+    );
+    repo.run_git_in(&feature_wt, &["merge", "--no-edit", "origin/main"]);
+
+    let output = repo
+        .wt_command()
+        .args(["step", "rebase", "main"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "step rebase must succeed onto the upstream\nstderr:\n{stderr}",
+    );
+    assert!(
+        stderr.contains("origin/main"),
+        "rebase should name the upstream it targeted\nstderr:\n{stderr}",
+    );
+
+    // The upstream commits stay by their real SHAs (origin/main is an
+    // ancestor), the merge commit is linearized away, and the local target ref
+    // is untouched.
+    assert!(
+        repo.git_command()
+            .args(["merge-base", "--is-ancestor", "origin/main", "feature"])
+            .run()
+            .unwrap()
+            .status
+            .success(),
+        "origin/main must be an ancestor of the rebased branch",
+    );
+    assert_eq!(
+        repo.git_output(&["rev-list", "--merges", "--count", "feature"]),
+        "0",
+        "rebase must linearize the branch",
+    );
+    assert_eq!(
+        repo.git_output(&["rev-parse", "main"]),
+        stale_main,
+        "step rebase must never move the target ref",
+    );
+}
+
+/// #3519: a local target that has *diverged* from its upstream — its own
+/// commits and behind — can never fast-forward to a branch based on the
+/// upstream. The merge refuses up front, mutating nothing.
+#[rstest]
+fn test_merge_refuses_diverged_target_when_branch_based_on_upstream(
+    #[from(repo_with_remote)] repo: TestRepo,
+) {
+    setup_stale_local_main(&repo);
+    // Give local main its own commit so it diverges from origin/main.
+    fs::write(repo.root_path().join("local-only.txt"), "local").unwrap();
+    repo.run_git(&["add", "local-only.txt"]);
+    repo.run_git(&["commit", "-m", "local-only commit on main"]);
+    let diverged_main = repo.git_output(&["rev-parse", "main"]);
+    let feature_wt = add_feature_worktree(
+        &repo,
+        "origin/main",
+        &[("feature.txt", "the one real feature commit")],
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["merge", "main", "--yes", "--no-hooks"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "merge must refuse a diverged local target\nstderr:\n{stderr}",
+    );
+    assert!(
+        stderr.contains("has diverged"),
+        "error should explain the divergence\nstderr:\n{stderr}",
+    );
+    assert_eq!(
+        repo.git_output(&["rev-parse", "main"]),
+        diverged_main,
+        "local main must not be mutated by a refused merge",
+    );
+    assert!(
+        repo.git_command()
+            .args(["rev-parse", "--verify", "--quiet", "refs/heads/feature"])
+            .run()
+            .unwrap()
+            .status
+            .success(),
+        "feature branch must survive a refused merge",
+    );
+}
+
 /// Approval-boundary TOCTOU regression: a `post-merge` command that enters the
 /// invoking worktree's `.config/wt.toml` only via the rebase — after the gate
 /// froze the plan — must not run.
@@ -4468,5 +5107,66 @@ fn test_post_merge_hook_from_rebased_in_config_does_not_run(merge_scenario: (Tes
         !injected.exists(),
         "a post-merge that entered the invoking worktree's config only via the \
          rebase must not run — it was never in the frozen plan"
+    );
+}
+
+/// `wt merge` reaches the same branch deletion `wt remove` does, so it needs the
+/// same shared-branch guard.
+///
+/// This is the likeliest way to meet a `--force` duplicate: the branch has just
+/// been merged, so it's integrated and nothing else would decline the delete —
+/// and deleting it strands the duplicate at a null OID with an unresolvable
+/// `HEAD`. A branch reaches two worktrees only through `git worktree add
+/// --force`, which worktrunk never runs itself.
+#[rstest]
+fn test_merge_retains_branch_checked_out_in_another_worktree(mut repo: TestRepo) {
+    let feature_wt = repo.add_feature();
+
+    let dup = repo.root_path().parent().unwrap().join("repo.feature-dup");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "--force",
+        dup.to_str().unwrap(),
+        "feature",
+    ]);
+
+    let output = repo
+        .wt_command()
+        .args(["merge", "main", "--yes", "--no-hooks"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "merge should succeed:\n{stderr}");
+
+    wait_for_worktree_removed(&feature_wt);
+
+    let branch_exists = repo
+        .git_command()
+        .args(["show-ref", "--verify", "--quiet", "refs/heads/feature"])
+        .run()
+        .unwrap()
+        .status
+        .success();
+    assert!(
+        branch_exists,
+        "branch must be retained while the duplicate still has it checked out:\n{stderr}",
+    );
+
+    assert!(
+        repo.git_command()
+            .args(["rev-parse", "--verify", "HEAD"])
+            .current_dir(&dup)
+            .run()
+            .unwrap()
+            .status
+            .success(),
+        "the duplicate must resolve HEAD to a commit, not a deleted branch:\n{stderr}",
+    );
+
+    assert!(
+        stderr.contains("retained") && stderr.contains("still checked out"),
+        "output should explain the branch was retained:\n{stderr}",
     );
 }

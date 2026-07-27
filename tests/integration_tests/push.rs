@@ -322,6 +322,52 @@ fn test_push_no_ff_with_submodule_recurse_config(mut repo: TestRepo) {
     );
 }
 
+/// A registered target worktree whose directory is gone stops both strategies.
+///
+/// The fast-forward pushes with `receive.denyCurrentBranch=updateInstead`, whose
+/// receive-pack cd's into that directory and died in git plumbing
+/// (`exec 'update-index': cd to '…' failed`) with the ref untouched. `--no-ff`
+/// updates the ref with plumbing of its own and skipped the sync, so it
+/// succeeded over the same broken registration — one command, two answers.
+#[rstest]
+fn test_push_target_worktree_missing(mut repo: TestRepo) {
+    let main_wt = repo.add_main_worktree();
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "test.txt", "test content", "Add test file");
+    let main_before = main_sha(&repo);
+
+    std::fs::remove_dir_all(&main_wt).unwrap();
+
+    snapshot_push(
+        "push_target_worktree_missing",
+        &repo,
+        &["main"],
+        Some(&feature_wt),
+    );
+    snapshot_push(
+        "push_target_worktree_missing_no_ff",
+        &repo,
+        &["--no-ff", "main"],
+        Some(&feature_wt),
+    );
+    assert_eq!(
+        main_sha(&repo),
+        main_before,
+        "neither strategy may move the ref it cannot sync"
+    );
+}
+
+/// The commit `main` resolves to, read from the repo root.
+fn main_sha(repo: &TestRepo) -> String {
+    let output = repo
+        .git_command()
+        .current_dir(repo.root_path())
+        .args(["rev-parse", "main"])
+        .run()
+        .unwrap();
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
 #[rstest]
 fn test_push_no_remote(#[from(repo_with_feature_worktree)] repo: TestRepo) {
     // Note: repo_with_feature_worktree doesn't call setup_remote(), so this tests the "no remote" error case
@@ -329,4 +375,32 @@ fn test_push_no_remote(#[from(repo_with_feature_worktree)] repo: TestRepo) {
 
     // Try to push without specifying target (should fail - no remote to get default branch)
     snapshot_push("push_no_remote", &repo, &[], Some(feature_wt));
+}
+
+/// A push target can be named by the worktree it is checked out in, the same as
+/// a rebase or diff target — `require_target_branch`'s path fallback, where
+/// `require_target_ref`'s is covered by `wt step diff`.
+#[rstest]
+fn push_target_accepts_worktree_path(mut repo: TestRepo) {
+    let main_wt = repo.add_main_worktree();
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "test.txt", "test content", "Add test file");
+
+    let output = repo
+        .wt_command()
+        .current_dir(&feature_wt)
+        .args(["step", "push", main_wt.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "a worktree path should name the branch checked out there: {stderr}"
+    );
+    assert_eq!(
+        repo.git_output(&["rev-parse", "main"]),
+        repo.git_output(&["rev-parse", "feature"]),
+        "main should have fast-forwarded to feature"
+    );
 }

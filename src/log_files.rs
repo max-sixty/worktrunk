@@ -116,10 +116,10 @@ pub(crate) static SUBPROCESS: LogSink = LogSink {
     filename: "subprocess.log",
 };
 
-/// Initialize both log sinks.
+/// Initialize all log sinks.
 ///
 /// Called once early in `main` when `-vv` or finer is active. Outside a git
-/// repo both sinks stay inactive and all writes become no-ops. Run *before*
+/// repo the sinks stay inactive and all writes become no-ops. Run *before*
 /// the tracing subscriber is installed so the `Repository::current()` call
 /// here doesn't emit records to a half-built pipeline.
 pub(crate) fn init() {

@@ -493,32 +493,30 @@ impl AltXRemover {
         let render_tx = Arc::clone(&self.render_tx);
         let stashed_warnings = Arc::clone(&self.stashed_warnings);
         let header_flash = Arc::clone(&self.header_flash);
-        let _ = std::thread::Builder::new()
-            .name(format!("picker-remove-{selected_output}"))
-            .spawn(move || {
-                if let Err(e) = Self::do_removal(&repo, &result, &approvals) {
-                    tracing::warn!(selected_output = %selected_output, error = %e, "picker: removal of '{selected_output}' errored: {e:#}");
-                }
-                // A removal that keeps its branch never reaches here — that's the
-                // morph path (`morph_and_remove_in_background`). So a surviving
-                // target means the removal itself failed: put the row back.
-                if removal_target_still_present(&repo, &result)
-                    && let Some((item, pos)) = removed
-                {
-                    restore_failed_removal(
-                        &items,
-                        &header_flash,
-                        &render_tx,
-                        &stashed_warnings,
-                        DroppedRow {
-                            item,
-                            pos,
-                            label: removal_label,
-                            noun: removal_noun,
-                        },
-                    );
-                }
-            });
+        spawn_removal(format!("picker-remove-{selected_output}"), move || {
+            if let Err(e) = Self::do_removal(&repo, &result, &approvals) {
+                tracing::warn!(selected_output = %selected_output, error = %e, "picker: removal of '{selected_output}' errored: {e:#}");
+            }
+            // A removal that keeps its branch never reaches here — that's the
+            // morph path (`morph_and_remove_in_background`). So a surviving
+            // target means the removal itself failed: put the row back.
+            if removal_target_still_present(&repo, &result)
+                && let Some((item, pos)) = removed
+            {
+                restore_failed_removal(
+                    &items,
+                    &header_flash,
+                    &render_tx,
+                    &stashed_warnings,
+                    DroppedRow {
+                        item,
+                        pos,
+                        label: removal_label,
+                        noun: removal_noun,
+                    },
+                );
+            }
+        });
     }
 
     /// Flash a one-line message in the header for a beat (see the free
@@ -672,18 +670,16 @@ impl AltXRemover {
             branch_token: branch.clone(),
             worktree_token: selected_output.clone(),
         };
-        let _ = std::thread::Builder::new()
-            .name(format!("picker-morph-{branch}"))
-            .spawn(move || {
-                if let Err(e) = Self::do_removal(&repo, &result, &approvals) {
-                    tracing::warn!(branch = %branch, error = %e, "picker: removal of '{branch}' worktree errored: {e:#}");
-                }
-                // Only the worktree removal can realistically fail here; if it did,
-                // the worktree dir survives — undo the morph and say so.
-                if removal_target_still_present(&repo, &result) {
-                    revert_morph(revert, &header_flash, &stashed_warnings, &render_tx);
-                }
-            });
+        spawn_removal(format!("picker-morph-{branch}"), move || {
+            if let Err(e) = Self::do_removal(&repo, &result, &approvals) {
+                tracing::warn!(branch = %branch, error = %e, "picker: removal of '{branch}' worktree errored: {e:#}");
+            }
+            // Only the worktree removal can realistically fail here; if it did,
+            // the worktree dir survives — undo the morph and say so.
+            if removal_target_still_present(&repo, &result) {
+                revert_morph(revert, &header_flash, &stashed_warnings, &render_tx);
+            }
+        });
 
         RemovalEffect::Morphed
     }
@@ -1381,7 +1377,6 @@ struct PipelineFactory {
     header_flash: Arc<items::HeaderFlash>,
     preview_dims: (usize, usize),
     skim_list_width: usize,
-    command_timeout: Option<std::time::Duration>,
     llm_command: Option<String>,
     summary_hint: Option<String>,
     show_branches: bool,
@@ -1403,10 +1398,12 @@ struct SpawnedPipeline {
 impl PipelineFactory {
     /// Build a fresh handler + item channel, start the `picker-collect` thread
     /// (and the `picker-prs` thread when `--prs` is active), and hand back the
-    /// receiver skim reads. The handler holds the only non-thread `tx` clone, so
-    /// once the spawned threads finish the channel closes and skim's reader sees
-    /// EOF — the "background work done → picker idle" contract, which a refresh
-    /// relies on to end its `reload`.
+    /// receiver skim reads. Every sender drops as soon as its batch is sent —
+    /// the handler's at the skeleton send, the `--prs` thread's when its rows
+    /// land — so skim's reader sees EOF once the last batch is in, which is
+    /// what ends a refresh's `reload`. Collect keeps grinding past that point
+    /// (CI fetches, summaries) through in-place row updates that never touch
+    /// the channel.
     /// `rebuild_repo` controls the worktree/branch inventory source. A refresh
     /// (`alt-r`) passes `true` to rebuild a fresh `Repository`, re-enumerating
     /// after an in-picker removal, and to run `PreviewOrchestrator::refresh` —
@@ -1481,7 +1478,7 @@ impl PipelineFactory {
 
         let handler: Arc<progressive_handler::PickerHandler> =
             Arc::new(progressive_handler::PickerHandler {
-                tx: tx.clone(),
+                tx: Mutex::new(Some(tx.clone())),
                 render_tx: Arc::clone(&self.render_tx),
                 last_render_poke: Mutex::new(Instant::now()),
                 shared_items: Arc::clone(&self.shared_items),
@@ -1509,7 +1506,6 @@ impl PipelineFactory {
         let bg_repo = spawn_repo.clone();
         let show_branches = self.show_branches;
         let show_remotes = self.show_remotes;
-        let command_timeout = self.command_timeout;
         let skim_list_width = self.skim_list_width;
         let collect_handle = std::thread::Builder::new()
             .name("picker-collect".into())
@@ -1519,7 +1515,6 @@ impl PipelineFactory {
                     collect::ShowConfig::Resolved {
                         show_branches,
                         show_remotes,
-                        command_timeout,
                         collect_deadline: None,
                         list_width: Some(skim_list_width),
                         progressive_handler: Some(bg_handler),
@@ -1577,8 +1572,9 @@ impl PipelineFactory {
             None
         };
 
-        // Drop the local `tx` so the handler's clone (and the threads' clones)
-        // are the only senders left — their drop is what signals EOF to skim.
+        // Drop the local `tx` so the handler's clone (consumed at the skeleton
+        // send) and the `--prs` thread's clone are the only senders left —
+        // their release is what signals EOF to skim.
         drop(tx);
 
         Ok(SpawnedPipeline {
@@ -1727,10 +1723,6 @@ pub fn handle_picker(
     // the same live status. `--prs` rows carry their own number from the explicit
     // `--prs` forge call.
 
-    // Per-task command timeout (bounds any single git invocation) from
-    // shared `[list]` config. Still applies in progressive mode.
-    let command_timeout = config.list.task_timeout();
-
     // Progressive rendering means the picker never blocks waiting for
     // collect — so there's no UI-freeze budget to bound. The drain runs
     // until its results channel closes or the fallback DRAIN_TIMEOUT
@@ -1873,7 +1865,6 @@ summary = true
         header_flash: Arc::new(items::HeaderFlash::default()),
         preview_dims,
         skim_list_width,
-        command_timeout,
         llm_command,
         summary_hint,
         show_branches,
@@ -2052,11 +2043,12 @@ summary = true
     install_remove_keybinding(&mut options.keymap, alt_x_remover);
     worktrunk::trace::instant("Picker skim options built");
 
-    // Spawn the collect pipeline (and the `--prs` thread when active). The
-    // handler holds the only non-thread `tx` clone; when the bg threads exit,
-    // `tx` drops, skim's reader sees EOF, and the picker goes idle. The initial
-    // spawn reuses the startup-primed inventory (`false`); every alt-r refresh
-    // re-runs `factory.spawn(true)` to re-enumerate — see `PipelineFactory`.
+    // Spawn the collect pipeline (and the `--prs` thread when active). Each
+    // sender drops with its one batch sent (skeleton, PR rows), so skim's
+    // reader sees EOF as soon as the last batch lands — see
+    // `PipelineFactory::spawn`. The initial spawn reuses the startup-primed
+    // inventory (`false`); every alt-r refresh re-runs `factory.spawn(true)`
+    // to re-enumerate.
     let SpawnedPipeline {
         rx,
         handler,
@@ -2118,8 +2110,9 @@ summary = true
     //
     // Don't join `collect_handle` after skim exits: drain may still be running
     // network tasks, and joining would block exit for up to DRAIN_TIMEOUT
-    // (120s). Process exit terminates the bg thread; its git subprocesses
-    // are read-only.
+    // (120s). Process exit terminates the bg thread; everything it started is
+    // read-only, and the cancellation below stops the subprocesses it spawned,
+    // which process exit does not.
     let output = run_skim(options, rx, &render_tx);
     drop(collect_handle);
     // Same rationale as `collect_handle`: don't join — the forge call may still be
@@ -2132,6 +2125,23 @@ summary = true
     // may still be in flight; we capture whatever has landed by now and let
     // the rest fall on the floor with the bg thread.
     drain_stashed_warnings(&stashed_warnings);
+
+    // The picker is over, so its background work has no consumer left: the
+    // preview cache dies with the process and skim will never repaint again.
+    // Uncancelled, a preview diff per worktree runs to completion against a
+    // repo the user has already left — `wt`'s exit ends the pool's threads,
+    // not the git children they spawned. Applies equally to accept and abort.
+    //
+    // After the drain, not before: a `--prs` forge call killed mid-flight
+    // fails like any other, and stashes that failure as a warning. Cancelling
+    // first would drain a spurious "couldn't fetch PRs" onto the user.
+    //
+    // Not everything running here is discardable — an `alt-x` removal is
+    // dispatched to its own thread and can still be mid-`git worktree remove`
+    // if the user pressed Enter straight after. Removal threads are spawned
+    // through `spawn_removal`, which marks them `uninterruptible` and lets
+    // them run to completion; this reaches only speculative work.
+    worktrunk::shell_exec::cancel_background_commands();
 
     // `run_skim` returns Err only on a genuine TUI init / event-loop failure;
     // a user cancel is `Ok` with `is_abort` set. Surface a real failure.
@@ -2158,12 +2168,7 @@ summary = true
         let query = out.query.trim().to_string();
         let identifier = resolve_identifier(&action, query, selected_name)?;
 
-        // Load config — reuse the recovered repo if we recovered earlier.
-        let repo = if is_recovered {
-            repo.clone()
-        } else {
-            Repository::current().context("Failed to switch worktree")?
-        };
+        let repo = switch_pipeline_repo(&repo, is_recovered)?;
         // Clone user config out — `SwitchPipeline` takes `&mut UserConfig` (the
         // bare-repo path-fix offer and the shell-integration offer record onto
         // it). Project config is loaded on demand inside the pipeline.
@@ -2387,6 +2392,21 @@ fn install_remove_keybinding(keymap: &mut skim::binds::KeyMap, remover: AltXRemo
     keymap.insert(key, vec![cb]);
 }
 
+/// Run a removal's git work on a named background thread, exempt from
+/// background-command cancellation: a removal is work the user asked for, and
+/// a SIGTERM landing between `git worktree remove` and the branch delete would
+/// leave them half-removed. Every removal dispatch goes through here so the
+/// exemption is carried by the spawn path itself rather than remembered at
+/// each call site.
+fn spawn_removal<F>(name: String, work: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    let _ = std::thread::Builder::new()
+        .name(name)
+        .spawn(move || worktrunk::shell_exec::uninterruptible(work));
+}
+
 /// Run a row shortcut's OS action on a named background thread, logging any
 /// failure — the picker owns the terminal, so an error can't be shown inline.
 fn spawn_shortcut<F>(name: &str, action: F)
@@ -2483,13 +2503,33 @@ fn resolve_identifier(
     }
 }
 
+/// Select the `Repository` the accept path's `SwitchPipeline` runs against.
+///
+/// Extracted from the picker's accept handler for testability.
+///
+/// Rebuilds fresh rather than reuse `repo` (whose `OnceCell` worktree/branch
+/// caches were primed at picker startup and never invalidated, same
+/// discipline `spawn`'s `rebuild_repo` doc explains): an in-picker alt-x/alt-r
+/// during this session can have removed or added worktrees/branches since.
+/// `Repository::current()` re-discovers from cwd, which fails after a
+/// deleted-CWD recovery, so the recovered arm rebuilds via `Repository::at`
+/// on the already-recovered discovery path instead of reusing the stale
+/// startup snapshot.
+fn switch_pipeline_repo(repo: &Repository, is_recovered: bool) -> anyhow::Result<Repository> {
+    if is_recovered {
+        Repository::at(repo.discovery_path()).context("Failed to switch worktree")
+    } else {
+        Repository::current().context("Failed to switch worktree")
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::items::{LocalCheckout, LocalContent, PickerRow, worktree_output_token};
     use super::{
         AltXRemover, PickerAction, PickerRemovalTarget, RemovalEffect, drain_stashed_warnings,
         install_preview_tab_keybindings, install_shortcut_keybindings, picker_item_identifier,
-        resolve_identifier, resolve_shortcut_branch, resolve_shortcut_url,
+        resolve_identifier, resolve_shortcut_branch, resolve_shortcut_url, switch_pipeline_repo,
     };
     use crate::commands::list::model::{BranchScope, ItemKind, ListItem, WorktreeData};
     use crate::commands::worktree::RemoveResult;
@@ -2655,6 +2695,47 @@ pub mod tests {
         assert!(result.unwrap_err().to_string().contains("no branch name"));
     }
 
+    /// `is_recovered=true` must rebuild rather than reuse `repo`: a worktree
+    /// added after `repo`'s `OnceCell` list is primed must be visible through
+    /// the returned `Repository`, and not through the stale one — proving the
+    /// fix actually observes post-mutation state instead of just "not
+    /// panicking".
+    #[test]
+    fn test_switch_pipeline_repo_recovered_rebuilds_fresh() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let stale_repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        // Prime the worktree-list cache before the mutation, same as the
+        // picker priming its startup repo.
+        assert!(stale_repo.worktree_for_branch("feature").unwrap().is_none());
+
+        stale_repo
+            .run_command(&[
+                "worktree",
+                "add",
+                "-b",
+                "feature",
+                test.path()
+                    .parent()
+                    .unwrap()
+                    .join("feature")
+                    .to_str()
+                    .unwrap(),
+            ])
+            .unwrap();
+
+        let fresh_repo = switch_pipeline_repo(&stale_repo, true).unwrap();
+        assert!(
+            fresh_repo.worktree_for_branch("feature").unwrap().is_some(),
+            "recovered arm must rebuild fresh so a worktree added after the \
+             startup snapshot was primed is visible"
+        );
+        assert!(
+            stale_repo.worktree_for_branch("feature").unwrap().is_none(),
+            "the startup repo's own cache stays stale, confirming the fix \
+             rebuilds rather than mutates in place"
+        );
+    }
+
     /// `from_signal` rejects tokens that carry no usable target: a blank or
     /// whitespace-only signal, and a bare `worktree-path:` prefix with no path
     /// after it. A non-empty branch token and a prefixed path both parse.
@@ -2719,6 +2800,7 @@ pub mod tests {
             branch_name: Some("feature".to_string()),
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
+            integration_reason: None,
             force_worktree: false,
             removed_commit: None,
             branch_checked_out_at: None,
@@ -2816,6 +2898,7 @@ pub mod tests {
             branch_name: None,
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
+            integration_reason: None,
             force_worktree: false,
             removed_commit: None,
             branch_checked_out_at: None,
@@ -2907,6 +2990,7 @@ pub mod tests {
             branch_name: Some("feature".to_string()),
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
+            integration_reason: None,
             force_worktree: false,
             removed_commit: None,
             branch_checked_out_at: None,
@@ -3074,7 +3158,6 @@ pub mod tests {
             header_flash: Arc::new(super::items::HeaderFlash::default()),
             preview_dims: (80, 24),
             skim_list_width: 80,
-            command_timeout: None,
             llm_command: None,
             summary_hint: None,
             show_branches: false,
@@ -3595,6 +3678,7 @@ pub mod tests {
             branch_name: Some("feature".to_string()),
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
+            integration_reason: None,
             force_worktree: false,
             removed_commit: None,
             branch_checked_out_at: None,
@@ -3611,6 +3695,7 @@ pub mod tests {
             branch_name: None,
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
+            integration_reason: None,
             force_worktree: false,
             removed_commit: None,
             branch_checked_out_at: None,
@@ -3960,6 +4045,7 @@ pub mod tests {
             branch_name: Some(branch.to_string()),
             deletion_mode: mode,
             target_branch: Some("main".to_string()),
+            integration_reason: None,
             force_worktree: false,
             removed_commit: None,
             branch_checked_out_at: None,
@@ -4058,6 +4144,7 @@ pub mod tests {
             branch_name: Some("x".to_string()),
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
+            integration_reason: None,
             force_worktree: false,
             removed_commit: None,
             branch_checked_out_at: None,
@@ -4120,6 +4207,7 @@ pub mod tests {
             branch_name: Some("feature".to_string()),
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
+            integration_reason: None,
             force_worktree: false,
             removed_commit: None,
             branch_checked_out_at: None,
@@ -4166,6 +4254,7 @@ pub mod tests {
             branch_name: Some("feature".to_string()),
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
+            integration_reason: None,
             force_worktree: false,
             removed_commit: None,
             branch_checked_out_at: None,

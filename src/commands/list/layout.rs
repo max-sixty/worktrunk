@@ -95,7 +95,9 @@
 //! which means empty penalties don't apply in progressive mode.
 //!
 //! Exceptions that we can compute instantly from items:
-//! - `path`: true only if any worktree has `branch_worktree_mismatch` (computed from items)
+//! - `path`: true only if some worktree's path carries information the branch
+//!   column doesn't — `branch_worktree_mismatch` or `duplicate_branch` (computed
+//!   from items)
 //! - `branch_diff`/`ci_status`: false if their required task is skipped
 //!
 //! Other columns (status, working_diff, ahead_behind, upstream) require expensive git operations,
@@ -160,7 +162,7 @@
 //! // Allocate columns in priority order, building pending list
 //! for candidate in candidates {
 //!     if candidate.spec.kind == ColumnKind::Message {
-//!         // Special handling: flexible width (min 20, preferred 50)
+//!         // Special handling: flexible width (min 10, max 100)
 //!     } else if let Some(ideal) = candidate.spec.kind.ideal(...) {
 //!         if let allocated = try_allocate(&mut remaining, ideal.width, ...) {
 //!             pending.push(PendingColumn { spec: candidate.spec, width: allocated, format: ideal.format });
@@ -295,7 +297,7 @@ pub struct ColumnDataFlags {
     pub upstream: bool,
     pub url: bool,
     pub ci_status: bool,
-    pub path: bool, // True if any worktree has branch_worktree_mismatch
+    pub path: bool, // True if a worktree is off-template or shares its branch
 }
 
 /// Layout metadata including position mask for Status column
@@ -599,6 +601,34 @@ struct PendingColumn<'a> {
     format: ColumnFormat,
 }
 
+/// Format the dev-server URL, optionally as an OSC 8 hyperlink.
+///
+/// A linked cell shows just the port (e.g. `:3000`) — the URL rides inside the
+/// escape sequence, so the cell costs the port's width rather than the whole
+/// URL's. Without links, or when the URL carries no parseable port, there is
+/// nowhere to hide the URL, so it renders in full and stays copyable.
+///
+/// `wt list` passes the terminal probe, because there the answer changes what
+/// the reader gets: [`estimate_url_width`] reserves a column wide enough for the
+/// full URL, so an unlinked cell can print it (the two have to agree on when a
+/// cell collapses to `:port`, hence the adjacency). The statusline passes
+/// `true`. It has no column to reserve — it fits a fixed-width line by dropping
+/// its worst-priority segment, and the URL is the worst — so an unlinked cell
+/// would grow past the budget and be dropped entirely, trading a port for
+/// nothing. A terminal that doesn't implement OSC 8 discards the escape and
+/// renders the same `:3000`, so emitting it unconditionally costs that reader
+/// nothing.
+pub(crate) fn format_url_cell(url: &str, include_link: bool) -> String {
+    if include_link && let Some(port) = parse_port_from_url(url) {
+        return format!(
+            "{}:{port}{}",
+            osc8::Hyperlink::new(url),
+            osc8::Hyperlink::END
+        );
+    }
+    url.to_string()
+}
+
 /// Estimate URL column width using heuristics.
 ///
 /// When hyperlinks are supported, URLs display as `:PORT` (6 chars for 5-digit ports).
@@ -636,7 +666,7 @@ fn estimate_url_width(url_template: Option<&str>, hyperlinks_supported: bool) ->
 fn build_estimated_widths(
     max_branch: usize,
     tasks: &HashSet<TaskKind>,
-    has_branch_worktree_mismatch: bool,
+    path_is_informative: bool,
     url_width: usize,
     max_pr_number: Option<u64>,
     custom_widths: Vec<usize>,
@@ -667,7 +697,7 @@ fn build_estimated_widths(
     // before the data arrives, so empty penalties don't apply properly.
     //
     // Exceptions that we can compute instantly from items:
-    // - path: true only if any worktree has branch_worktree_mismatch
+    // - path: true only if a worktree is off-template or shares its branch
     // - branch_diff/ci_status: false if their task isn't in the run plan
     let data_flags = ColumnDataFlags {
         status: true,
@@ -677,7 +707,7 @@ fn build_estimated_widths(
         upstream: true,
         url: tasks.contains(&TaskKind::UrlStatus),
         ci_status: tasks.contains(&TaskKind::CiStatus),
-        path: has_branch_worktree_mismatch,
+        path: path_is_informative,
     };
 
     // URL width estimated from template + longest branch (or fallback)
@@ -1048,7 +1078,7 @@ fn allocate_columns_with_priority(
 /// - Age: 4 chars ("11mo" short format)
 /// - CI: sized from `max_pr_number` (the cached largest PR/MR number seen,
 ///   e.g. "#3035"); 5 chars ("#9999") before the first fetch populates it
-/// - Message: flexible (20-100 chars)
+/// - Message: flexible (10-100 chars)
 /// - URL: estimated from template + longest branch
 pub fn calculate_layout_with_width(
     items: &[super::model::ListItem],
@@ -1078,12 +1108,13 @@ pub fn calculate_layout_with_width(
         .unwrap_or(0);
     let max_path_width = fit_header(ColumnKind::Path.header(), path_data_width);
 
-    // Check if any worktree has a branch-worktree mismatch.
-    // Path column is only useful when there's a mismatch; otherwise it's redundant with branch.
-    let has_branch_worktree_mismatch = items
+    // The Path column is redundant with Branch unless a path says something the
+    // branch name doesn't: the worktree sits off-template, or two worktrees share
+    // the branch and the path is the only thing telling their rows apart.
+    let path_is_informative = items
         .iter()
         .filter_map(|item| item.worktree_data())
-        .any(|data| data.branch_worktree_mismatch);
+        .any(|data| data.branch_worktree_mismatch || data.duplicate_branch);
 
     // Estimate URL width from template (heuristic, no expansion needed)
     let url_width = estimate_url_width(url_template, supports_hyperlinks(Stream::Stdout));
@@ -1112,7 +1143,7 @@ pub fn calculate_layout_with_width(
     let metadata = build_estimated_widths(
         max_branch,
         tasks,
-        has_branch_worktree_mismatch,
+        path_is_informative,
         url_width,
         max_pr_number,
         custom_widths,
@@ -1386,7 +1417,7 @@ mod tests {
     fn test_pre_allocated_width_estimates() {
         // Test that build_estimated_widths() returns correct pre-allocated estimates
         // Full run plan means all tasks are computed (equivalent to --full)
-        // has_branch_worktree_mismatch=true to test the path flag is passed through
+        // path_is_informative=true to test the path flag is passed through
         // url_width=0 since we're not testing URL column here
         let metadata = build_estimated_widths(20, &full_run_tasks(), true, 0, None, Vec::new());
         let widths = metadata.widths;
@@ -1470,8 +1501,8 @@ mod tests {
     #[test]
     fn test_visible_columns_follow_gap_rule() {
         use crate::commands::list::model::{
-            ActiveGitOperation, AheadBehind, BranchDiffTotals, CommitDetails, ItemKind, ListItem,
-            StatusSymbols, UpstreamStatus, WorktreeData,
+            AheadBehind, BranchDiffTotals, CommitDetails, ItemKind, ListItem, StatusSymbols,
+            UpstreamStatus, WorktreeData,
         };
 
         // Create test data with specific widths to verify position calculation
@@ -1521,11 +1552,12 @@ mod tests {
                 working_tree_status: None,
                 has_conflicts: None,
                 has_working_tree_conflicts: None,
-                git_operation: Some(ActiveGitOperation::None),
+                git_operation: Some(None),
                 is_main: false,
                 is_current: false,
                 is_previous: false,
                 branch_worktree_mismatch: false,
+                duplicate_branch: false,
             })),
         };
 
@@ -1591,8 +1623,8 @@ mod tests {
     #[test]
     fn test_column_positions_with_empty_columns() {
         use crate::commands::list::model::{
-            ActiveGitOperation, AheadBehind, BranchDiffTotals, CommitDetails, ItemKind, ListItem,
-            StatusSymbols, UpstreamStatus, WorktreeData,
+            AheadBehind, BranchDiffTotals, CommitDetails, ItemKind, ListItem, StatusSymbols,
+            UpstreamStatus, WorktreeData,
         };
 
         // Create minimal data - most columns will be empty
@@ -1637,11 +1669,12 @@ mod tests {
                 working_tree_status: None,
                 has_conflicts: None,
                 has_working_tree_conflicts: None,
-                git_operation: Some(ActiveGitOperation::None),
+                git_operation: Some(None),
                 is_main: true, // Primary worktree: no ahead/behind shown
                 is_current: false,
                 is_previous: false,
                 branch_worktree_mismatch: false,
+                duplicate_branch: false,
             })),
         };
 
@@ -1731,9 +1764,7 @@ mod tests {
 
     /// Helper: create a minimal ListItem for layout tests.
     fn make_test_item(branch: &str) -> super::super::model::ListItem {
-        use crate::commands::list::model::{
-            ActiveGitOperation, ItemKind, StatusSymbols, WorktreeData,
-        };
+        use crate::commands::list::model::{ItemKind, StatusSymbols, WorktreeData};
         super::super::model::ListItem {
             head: "abc12345".to_string(),
             short_sha: "abc1234".to_string(),
@@ -1767,11 +1798,12 @@ mod tests {
                 working_tree_status: None,
                 has_conflicts: None,
                 has_working_tree_conflicts: None,
-                git_operation: Some(ActiveGitOperation::None),
+                git_operation: Some(None),
                 is_main: false,
                 is_current: false,
                 is_previous: false,
                 branch_worktree_mismatch: false,
+                duplicate_branch: false,
             })),
         }
     }
@@ -2199,9 +2231,7 @@ mod tests {
 
     /// Helper: create a test item with a specific worktree path and no mismatch.
     fn make_test_item_at(branch: &str, path: &str) -> super::super::model::ListItem {
-        use crate::commands::list::model::{
-            ActiveGitOperation, ItemKind, StatusSymbols, WorktreeData,
-        };
+        use crate::commands::list::model::{ItemKind, StatusSymbols, WorktreeData};
         super::super::model::ListItem {
             head: "abc12345".to_string(),
             short_sha: "abc1234".to_string(),
@@ -2235,11 +2265,12 @@ mod tests {
                 working_tree_status: None,
                 has_conflicts: None,
                 has_working_tree_conflicts: None,
-                git_operation: Some(ActiveGitOperation::None),
+                git_operation: Some(None),
                 is_main: false,
                 is_current: false,
                 is_previous: false,
                 branch_worktree_mismatch: false,
+                duplicate_branch: false,
             })),
         }
     }
@@ -2324,8 +2355,8 @@ mod tests {
     #[test]
     fn test_snapshot_path_yields_to_summary() {
         use crate::commands::list::model::{
-            ActiveGitOperation, AheadBehind, BranchDiffTotals, CommitDetails, ItemKind,
-            StatusSymbols, UpstreamStatus, WorktreeData,
+            AheadBehind, BranchDiffTotals, CommitDetails, ItemKind, StatusSymbols, UpstreamStatus,
+            WorktreeData,
         };
         use worktrunk::git::LineDiff;
 
@@ -2391,11 +2422,12 @@ mod tests {
                     working_tree_status: None,
                     has_conflicts: None,
                     has_working_tree_conflicts: None,
-                    git_operation: Some(ActiveGitOperation::None),
+                    git_operation: Some(None),
                     is_main,
                     is_current,
                     is_previous: false,
                     branch_worktree_mismatch: false,
+                    duplicate_branch: false,
                 })),
             }
         };

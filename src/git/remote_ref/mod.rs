@@ -22,6 +22,39 @@
 //! # }
 //! ```
 //!
+//! # Error Messages
+//!
+//! When a forge CLI reports a failure, the message the user sees is the CLI's
+//! own, in a gutter under one line of our context — see `cli_api_error` below.
+//! `gh` and `glab` both render an API failure as the API's own message plus the
+//! status (`gh: Not Found (HTTP 404)`, `glab: 401 Unauthorized (HTTP 401)`);
+//! `az` writes its own prose, which names the remedy where there is one. Either
+//! way that line stays accurate across locale, CLI version, and API rewording in
+//! a way our paraphrase of it would not.
+//!
+//! A provider writes a message of its own only where the CLI structurally cannot
+//! report the condition:
+//!
+//! - **GitHub's 404** answers about an owner/repo that is *our* choice — from
+//!   `gh repo set-default` or from a remote — so it often means the choice was
+//!   wrong rather than that the PR is missing. `gh` reports the miss; only we
+//!   know what we asked for and where the question came from.
+//! - **Azure DevOps' missing extension** is a precondition, not a guess: the
+//!   whole `az repos` command group ships in the `azure-devops` extension, and
+//!   `az extension list` answers for it. `az` itself never names it.
+//!
+//! Everything else forwards. Reading more nicely than the CLI does not qualify:
+//! "GitLab CLI not authenticated" restated `glab: 401 Unauthorized (HTTP 401)`
+//! with the status dropped, and cost a `starts_with("401")` test against prose
+//! to select it.
+//!
+//! Where a provider still classifies, it keys on structure and falls through to
+//! forwarding when the structure isn't there: `gh` puts a `status` field in its
+//! error body, while `glab` puts the status only inside the message text, so
+//! there is nothing there to key on. Gitea is the one provider whose response
+//! *shape* is the error channel at all, because `tea api` copies the body to
+//! stdout and exits 0 whatever the status — see [`gitea`].
+//!
 //! # Platform-Specific Notes
 //!
 //! ## GitHub
@@ -129,6 +162,11 @@ pub(super) fn run_cli_api(request: CliApiRequest<'_>) -> anyhow::Result<Output> 
     }
 }
 
+/// The CLI's own account of the failure: stderr when it wrote any, else stdout.
+///
+/// `gh` and `glab` write a formatted line to stderr (`gh: Not Found (HTTP 404)`)
+/// and the raw API body to stdout, so preferring stderr picks the human form
+/// over the JSON. The stdout fallback covers a CLI that writes only a body.
 pub(super) fn cli_api_error_details(output: &Output) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr);
     if stderr.trim().is_empty() {
@@ -138,6 +176,15 @@ pub(super) fn cli_api_error_details(output: &Output) -> String {
     }
 }
 
+/// Wrap a failed forge-CLI invocation, rendering `message` above the CLI's own
+/// output in a gutter.
+///
+/// Every provider's failure path ends here, and forwarding is the default:
+/// `message` names the request we made ("gh api failed for PR #123") and the
+/// gutter carries the CLI's verdict on it. A provider with something of its own
+/// to say — the cases in the module docs — passes it as `message` rather than
+/// bailing, so its words are added to the CLI's rather than substituted for
+/// them.
 pub(super) fn cli_api_error(ref_type: RefType, message: String, output: &Output) -> anyhow::Error {
     GitError::CliApiError {
         ref_type,
@@ -145,6 +192,28 @@ pub(super) fn cli_api_error(ref_type: RefType, message: String, output: &Output)
         stderr: cli_api_error_details(output),
     }
     .into()
+}
+
+/// Whether `host` is `domain` itself or a subdomain of it.
+///
+/// Compared label-wise, so `dev.azure.com` matches `dev.azure.com` and
+/// `x.dev.azure.com` but not `dev.azure.com.attacker.example` or
+/// `notdev.azure.com` — a plain substring test accepts an attacker-chosen host
+/// that merely contains the domain.
+fn host_is_within(host: &str, domain: &str) -> bool {
+    let host = host.to_ascii_lowercase();
+    host == domain || host.strip_suffix(domain).is_some_and(|p| p.ends_with('.'))
+}
+
+/// Whether any dot-separated label of `host` is exactly `label`.
+///
+/// Recognizes both `github.com` and the usual self-hosted naming
+/// (`github.corp.example`) without matching a host that merely spells the name
+/// inside a longer label, such as a `github-mirror.example` running something
+/// else. A deployment this misses names its provider explicitly — see
+/// `provider_override`.
+fn host_has_label(host: &str, label: &str) -> bool {
+    host.to_ascii_lowercase().split('.').any(|l| l == label)
 }
 
 /// Extract the host (e.g. `github.com`) from a PR/MR `html_url` returned by
@@ -405,8 +474,7 @@ pub fn repo_info_from_ref_url_with_provider(
 
     let provider = match marker {
         "pull" => {
-            if provider_override == Some(GitRepoProvider::GitHub)
-                || host.to_ascii_lowercase().contains("github")
+            if provider_override == Some(GitRepoProvider::GitHub) || host_has_label(&host, "github")
             {
                 GitRepoProvider::GitHub
             } else {
@@ -417,8 +485,8 @@ pub fn repo_info_from_ref_url_with_provider(
         "merge_requests" => GitRepoProvider::GitLab,
         "pullrequest" => {
             if provider_override == Some(GitRepoProvider::AzureDevOps)
-                || host.to_ascii_lowercase().contains("dev.azure.com")
-                || host.to_ascii_lowercase().contains("visualstudio.com")
+                || host_is_within(&host, "dev.azure.com")
+                || host_is_within(&host, "visualstudio.com")
             {
                 GitRepoProvider::AzureDevOps
             } else {
@@ -514,6 +582,31 @@ fn azure_repo_segments(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_host_matching_respects_label_boundaries() {
+        // The domain itself and subdomains of it.
+        assert!(host_is_within("dev.azure.com", "dev.azure.com"));
+        assert!(host_is_within("DEV.AZURE.COM", "dev.azure.com"));
+        assert!(host_is_within("myorg.visualstudio.com", "visualstudio.com"));
+        // A host that only spells the domain inside a longer name. A substring
+        // test takes each of these for Azure DevOps.
+        assert!(!host_is_within(
+            "dev.azure.com.attacker.example",
+            "dev.azure.com"
+        ));
+        assert!(!host_is_within("notdev.azure.com", "dev.azure.com"));
+        assert!(!host_is_within("evil-visualstudio.com", "visualstudio.com"));
+
+        // github.com and the usual self-hosted naming.
+        assert!(host_has_label("github.com", "github"));
+        assert!(host_has_label("github.corp.example", "github"));
+        assert!(host_has_label("git.github.corp.example", "github"));
+        // Spelled inside a longer label: not GitHub.
+        assert!(!host_has_label("github-mirror.example", "github"));
+        assert!(!host_has_label("mygithubmirror.com", "github"));
+        assert!(!host_has_label("notgithub.io", "github"));
+    }
 
     #[test]
     fn test_ref_paths() {

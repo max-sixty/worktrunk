@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use anyhow::Context;
+use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::{MergeConfig, UserConfig};
 use worktrunk::git::Repository;
@@ -166,6 +167,16 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let env = CommandEnv::for_action(config)?;
     let repo = &env.repo;
     let config = &env.config;
+    // Cache current worktree for multiple queries
+    let current_wt = repo.current_worktree();
+    // Ahead of the branch check: mid-rebase and mid-bisect both detach HEAD, so
+    // an unguarded merge blames the detached HEAD and points at `git switch`,
+    // which abandons the operation instead of finishing it.
+    repo.ensure_no_operation_in_progress("merge")?;
+    // Merge stages on the user's behalf through the commit and squash steps, so
+    // it takes their index gate here: in its own name, and ahead of the
+    // approval prompts rather than partway through the flow.
+    current_wt.ensure_no_unmerged_paths("merge")?;
     // Merge requires being on a branch (can't merge from detached HEAD)
     let current_branch = env.require_branch("merge")?.to_string();
 
@@ -181,9 +192,6 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         verify,
     } = flags.resolve(&resolved.merge);
     let stage_mode = stage.unwrap_or(resolved.commit.stage());
-
-    // Cache current worktree for multiple queries
-    let current_wt = repo.current_worktree();
 
     // Validate --no-commit: requires clean working tree
     if !commit {
@@ -204,6 +212,51 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
 
     // Get and validate target branch (must be a branch since we're updating it)
     let target_branch = repo.require_target_branch(target)?;
+
+    // #3519: when the branch is based past the local target into the target's
+    // upstream, the rewrite steps measure against the upstream (see
+    // `span_upstream`) and the final fast-forward carries the local target
+    // through the upstream commits by their real SHAs. That fast-forward exists
+    // only while the local target is strictly behind its upstream; a target
+    // that has *diverged* — its own commits AND behind — can never fast-forward
+    // to this branch, so refuse up front with the real reason rather than
+    // failing late in the push step. Local-only check — no fetch.
+    if let Some(upstream) = repo.span_upstream(&target_branch)? {
+        let target_sha = repo
+            .run_command(&[
+                "rev-parse",
+                "--verify",
+                "--end-of-options",
+                &format!("refs/heads/{target_branch}"),
+            ])?
+            .trim()
+            .to_string();
+        let upstream_sha = repo
+            .run_command(&["rev-parse", "--verify", "--end-of-options", &upstream])?
+            .trim()
+            .to_string();
+        if repo.is_ancestor_by_sha(&target_sha, &upstream_sha)? {
+            let carried = repo.count_commits(&target_branch, &upstream)?;
+            let (commit_text, pronoun) = if carried == 1 {
+                ("commit", "it")
+            } else {
+                ("commits", "them")
+            };
+            eprintln!(
+                "{}",
+                info_message(cformat!(
+                    "Local <bold>{target_branch}</> is {carried} {commit_text} behind <bold>{upstream}</>; the merge fast-forwards through {pronoun}"
+                ))
+            );
+        } else {
+            return Err(worktrunk::git::GitError::MergeTargetDivergedFromUpstream {
+                target_branch: target_branch.clone(),
+                upstream,
+            }
+            .into());
+        }
+    }
+
     // Worktree for target is optional: if present we use it for safety checks and as destination.
     let target_worktree_path = repo.worktree_for_branch(&target_branch)?;
     // Where `post-merge` / `post-remove` / `post-switch` run: the target
@@ -294,7 +347,6 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             options.target_branch = Some(&target_branch);
             options.hooks = commit_hooks;
             options.stage_mode = stage_mode;
-            options.warn_about_untracked = stage_mode == super::commit::StageMode::All;
             options.show_no_squash_note = true;
             options.guidance = guidance.clone();
 

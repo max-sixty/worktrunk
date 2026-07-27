@@ -24,6 +24,7 @@ use worktrunk::trace::Span;
 use super::super::hook_plan::{ApprovedHookPlan, HookPlan, HookPlanBuilder};
 use super::super::hooks::HookAnnouncer;
 use super::super::repository_ext::{RemoveTarget, RepositoryCliExt};
+use super::super::worktree::RemoveResult;
 use crate::output::{BackgroundFallbackMode, handle_remove_output};
 
 /// A candidate worktree or branch selected for removal.
@@ -42,23 +43,25 @@ struct Candidate {
 }
 
 impl Candidate {
+    /// The path wins whenever the scan found one, because the scan already
+    /// identified the exact worktree: naming it by branch instead re-resolves
+    /// to git's first-listed checkout, which for a branch checked out twice is
+    /// a different worktree — and for a stale entry is the live one. Only an
+    /// `Orphan` candidate (a branch with no worktree at all) has no path, and
+    /// `RemoveTarget::Path` degrades to branch-only deletion when the directory
+    /// is already gone, so a stale entry still prunes.
     fn remove_target(&self) -> anyhow::Result<RemoveTarget<'_>> {
         match self.kind {
             CandidateKind::Current => Ok(RemoveTarget::Current),
-            CandidateKind::BranchOnly => Ok(RemoveTarget::Branch(
-                self.branch
-                    .as_ref()
-                    .context("BranchOnly candidate missing branch")?,
-            )),
             CandidateKind::StaleDetached => Err(anyhow::anyhow!(
                 "stale detached candidate has no remove target"
             )),
-            CandidateKind::Other => match &self.branch {
-                Some(branch) => Ok(RemoveTarget::Branch(branch)),
-                None => Ok(RemoveTarget::Path(
-                    self.path
+            CandidateKind::BranchOnly | CandidateKind::Other => match &self.path {
+                Some(path) => Ok(RemoveTarget::Path(path)),
+                None => Ok(RemoveTarget::Branch(
+                    self.branch
                         .as_ref()
-                        .context("detached candidate missing path")?,
+                        .context("candidate has neither path nor branch")?,
                 )),
             },
         }
@@ -76,6 +79,10 @@ impl Candidate {
         }
     }
 }
+
+/// The current-worktree candidate held back until every other removal ran
+/// (its removal cd's the shell to the primary), with its scan-time plan.
+type DeferredCurrent = (Candidate, Option<RemoveResult>);
 
 #[derive(Clone, Copy)]
 enum CandidateKind {
@@ -188,7 +195,17 @@ struct RemovalContext<'a> {
 
 /// Try to remove a candidate immediately. Returns Ok(true) if removed,
 /// Ok(false) if skipped (preparation error), Err on execution error.
-fn try_remove(candidate: &Candidate, ctx: &RemovalContext<'_>) -> anyhow::Result<bool> {
+///
+/// `plan` is the scan-time `prepare_worktree_removal` result from
+/// [`check_one`]. `Prunable` candidates arrive plan-less and prepare here,
+/// under the write lock, because preparing them prunes stale worktree
+/// metadata. Scan-time plans may be stale by execution; the pre-rename
+/// `ensure_clean` and the branch-delete CAS re-validate what matters.
+fn try_remove(
+    candidate: &Candidate,
+    plan: Option<RemoveResult>,
+    ctx: &RemovalContext<'_>,
+) -> anyhow::Result<bool> {
     let _span = Span::new(format!("prune-remove:{}", candidate.label));
     // The guard protects `()` — there is no shared state to corrupt, so a
     // poisoned lock is meaningless here. Recover the guard rather than
@@ -201,21 +218,23 @@ fn try_remove(candidate: &Candidate, ctx: &RemovalContext<'_>) -> anyhow::Result
         return Ok(true);
     }
 
-    let target = candidate.remove_target()?;
-    let plan = match ctx.repo.prepare_worktree_removal(
-        target,
-        BranchDeletionMode::SafeDelete,
-        false,
-        None,
-        Some(ctx.worktrees),
-        Some(ctx.snapshot),
-    ) {
-        Ok(plan) => plan,
-        Err(_) => {
-            // prepare_worktree_removal is the gate: if the worktree can't
-            // be removed (dirty, locked, etc.), it's simply not selected.
-            return Ok(false);
-        }
+    let plan = match plan {
+        Some(plan) => plan,
+        None => match ctx.repo.prepare_worktree_removal(
+            candidate.remove_target()?,
+            BranchDeletionMode::SafeDelete,
+            false,
+            None,
+            Some(ctx.worktrees),
+            Some(ctx.snapshot),
+        ) {
+            Ok(plan) => plan,
+            Err(_) => {
+                // prepare_worktree_removal is the gate: if the worktree can't
+                // be removed (dirty, locked, etc.), it's simply not selected.
+                return Ok(false);
+            }
+        },
     };
     let mut announcer = HookAnnouncer::new(ctx.repo, true);
     // `SynchronousForNonCurrent`: prune keeps the rename-failure fallback's
@@ -255,9 +274,15 @@ struct SkippedApproval {
 struct CheckOutcome {
     effective_target: String,
     reason: Option<IntegrationReason>,
-    /// Result of `prepare_worktree_removal` — the same gate `wt remove` uses.
-    /// Dirty, locked, and primary worktrees end up `false` and are filtered
-    /// silently, never reported as "younger than" or processed downstream.
+    /// Removal plan from `prepare_worktree_removal` — the same gate `wt
+    /// remove` uses, computed here on the parallel scan so `try_remove`
+    /// doesn't re-derive it (a `git status` per worktree) under the write
+    /// lock. `None` means not removable (dirty, locked, primary — filtered
+    /// silently, never reported as "younger than") — except for `Prunable`
+    /// items, which are always removable but plan in `try_remove`: preparing
+    /// them calls `prune_worktrees()`, a mutation that must stay serialized.
+    plan: Option<RemoveResult>,
+    /// Whether the item passed the removability gate (see `plan`).
     removable: bool,
     /// `Some(_)` if `min_age` is set and the age could be resolved; the
     /// caller compares against `min_age_duration` to decide on the skip.
@@ -284,28 +309,42 @@ fn check_one(
         return Ok(CheckOutcome {
             effective_target,
             reason,
+            plan: None,
             removable: false,
             age: None,
         });
     }
-    let removable = match &item.source {
-        CheckSource::Prunable { .. } | CheckSource::Orphan => true,
-        CheckSource::Linked { wt_idx } => {
-            let wt = &worktrees[*wt_idx];
-            let target = match &wt.branch {
-                Some(b) if !wt.detached => RemoveTarget::Branch(b),
-                _ => RemoveTarget::Path(&wt.path),
-            };
-            repo.prepare_worktree_removal(
-                target,
+    let plan = match &item.source {
+        CheckSource::Prunable { .. } => None,
+        CheckSource::Orphan => repo
+            .prepare_worktree_removal(
+                RemoveTarget::Branch(&item.integration_ref),
                 BranchDeletionMode::SafeDelete,
                 false,
                 None,
                 Some(worktrees),
                 Some(snapshot),
             )
-            .is_ok()
+            .ok(),
+        CheckSource::Linked { wt_idx } => {
+            let wt = &worktrees[*wt_idx];
+            repo.prepare_worktree_removal(
+                // The scan already knows which worktree this is; naming it by
+                // branch would re-resolve to git's first-listed checkout, which
+                // for a duplicated branch is a different worktree.
+                RemoveTarget::Path(&wt.path),
+                BranchDeletionMode::SafeDelete,
+                false,
+                None,
+                Some(worktrees),
+                Some(snapshot),
+            )
+            .ok()
         }
+    };
+    let removable = match &item.source {
+        CheckSource::Prunable { .. } => true,
+        CheckSource::Orphan | CheckSource::Linked { .. } => plan.is_some(),
     };
     let age = if min_age_duration > Duration::ZERO {
         match &item.source {
@@ -319,6 +358,7 @@ fn check_one(
     Ok(CheckOutcome {
         effective_target,
         reason,
+        plan,
         removable,
         age,
     })
@@ -361,10 +401,14 @@ fn candidate_fields(
                 format!("(detached {short})")
             });
             match &wt.branch {
+                // The stale entry's own path, so the removal targets it rather
+                // than re-resolving the branch to whichever worktree git lists
+                // first — which, for a branch this one duplicates, is a live
+                // worktree the prune never selected.
                 Some(branch) => (
                     label,
                     Some(branch.clone()),
-                    None,
+                    Some(wt.path.clone()),
                     CandidateKind::BranchOnly,
                     " (stale)",
                 ),
@@ -401,6 +445,7 @@ fn gather_check_items(
     // Track branches seen via worktree entries so we don't double-count
     // in the orphan branch scan below.
     let mut seen_branches: HashSet<String> = HashSet::new();
+    let is_bare = repo.is_bare().context("checking whether repo is bare")?;
 
     for (idx, wt) in worktrees.iter().enumerate() {
         if let Some(branch) = &wt.branch {
@@ -435,13 +480,12 @@ fn gather_check_items(
             continue;
         }
 
-        // Skip main worktree (non-linked); in bare repos all are linked,
-        // so the default-branch check above is the primary guard.
-        let wt_tree = repo.worktree_at(&wt.path);
-        if !wt_tree
-            .is_linked()
-            .context("checking whether worktree is linked")?
-        {
+        // Skip the main worktree: `git worktree list` puts it first (a
+        // documented guarantee), so no per-worktree `git rev-parse` probe is
+        // needed. Bare repos have no main worktree — `list_worktrees()`
+        // filters the bare entry, leaving only linked worktrees — so the
+        // default-branch check above is their primary guard.
+        if idx == 0 && !is_bare {
             continue;
         }
 
@@ -881,8 +925,8 @@ pub fn step_prune(
     // `try_remove` immediately for positives. The current worktree is the one
     // exception: its removal cd's to the primary, so defer it until last.
     let scan_span = Span::new("prune-scan");
-    let (removed, deferred_current) =
-        std::thread::scope(|s| -> anyhow::Result<(Vec<Candidate>, Option<Candidate>)> {
+    let (removed, deferred_current) = std::thread::scope(
+        |s| -> anyhow::Result<(Vec<Candidate>, Option<DeferredCurrent>)> {
             let (tx, rx) = chan::unbounded::<(usize, anyhow::Result<CheckOutcome>)>();
             // Pre-shadow with references so `move` on s.spawn moves only `tx`
             // (so it's dropped when the spawn ends and `rx` can terminate),
@@ -915,7 +959,7 @@ pub fn step_prune(
             });
 
             let mut removed: Vec<Candidate> = Vec::new();
-            let mut deferred_current: Option<Candidate> = None;
+            let mut deferred_current: Option<DeferredCurrent> = None;
             for (idx, outcome) in &rx {
                 let outcome = outcome.context("checking branch integration")?;
                 let Some(_reason) = outcome.reason else {
@@ -972,21 +1016,22 @@ pub fn step_prune(
                     kind,
                 };
                 if matches!(candidate.kind, CandidateKind::Current) {
-                    deferred_current = Some(candidate);
-                } else if try_remove(&candidate, &removal_ctx)
+                    deferred_current = Some((candidate, outcome.plan));
+                } else if try_remove(&candidate, outcome.plan, &removal_ctx)
                     .with_context(|| candidate.removal_context())?
                 {
                     removed.push(candidate);
                 }
             }
             Ok((removed, deferred_current))
-        })?;
+        },
+    )?;
     drop(scan_span);
 
     let mut removed = removed;
     // Remove deferred current worktree last (cd-to-primary happens here)
-    if let Some(current) = deferred_current
-        && try_remove(&current, &removal_ctx).with_context(|| current.removal_context())?
+    if let Some((current, plan)) = deferred_current
+        && try_remove(&current, plan, &removal_ctx).with_context(|| current.removal_context())?
     {
         removed.push(current);
     }

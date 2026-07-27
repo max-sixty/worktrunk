@@ -277,7 +277,6 @@ fn test_list_config_serde() {
         remotes: None,
         summary: None,
         json_schema: None,
-        task_timeout_ms: Some(500),
         timeout_ms: None,
         columns: vec!["branch".into(), "ci".into(), "path".into()],
         custom_columns: Default::default(),
@@ -288,7 +287,6 @@ fn test_list_config_serde() {
     assert_eq!(parsed.branches, Some(false));
     assert_eq!(parsed.remotes, None);
     assert_eq!(parsed.summary, None);
-    assert_eq!(parsed.task_timeout_ms, Some(500));
     assert_eq!(parsed.timeout_ms, None);
     assert_eq!(parsed.columns, vec!["branch", "ci", "path"]);
 }
@@ -630,7 +628,6 @@ fn test_merge_list_config() {
         remotes: None,
         summary: Some(true),
         json_schema: None,
-        task_timeout_ms: Some(1000),
         timeout_ms: Some(2000),
         columns: vec!["branch".into(), "ci".into()],
         custom_columns: Default::default(),
@@ -641,9 +638,8 @@ fn test_merge_list_config() {
         remotes: Some(true),  // Should override (base was None)
         summary: None,        // Should fall back to base
         json_schema: None,
-        task_timeout_ms: None, // Should fall back to base
-        timeout_ms: None,      // Should fall back to base
-        columns: Vec::new(),   // Empty → fall back to base
+        timeout_ms: None,    // Should fall back to base
+        columns: Vec::new(), // Empty → fall back to base
         custom_columns: Default::default(),
     };
 
@@ -652,7 +648,6 @@ fn test_merge_list_config() {
     assert_eq!(merged.branches, Some(true)); // From override
     assert_eq!(merged.remotes, Some(true)); // From override
     assert_eq!(merged.summary, Some(true)); // From base
-    assert_eq!(merged.task_timeout_ms, Some(1000)); // From base
     assert_eq!(merged.timeout_ms, Some(2000)); // From base
     assert_eq!(merged.columns, vec!["branch", "ci"]); // From base (override empty)
 }
@@ -1092,7 +1087,6 @@ fn test_list_config_accessor_methods_defaults() {
     assert!(!config.full());
     assert!(!config.branches());
     assert!(!config.remotes());
-    assert!(config.task_timeout().is_none());
     assert!(config.timeout().is_none());
 }
 
@@ -1104,7 +1098,6 @@ fn test_list_config_accessor_methods_with_values() {
         remotes: Some(false),
         summary: Some(true),
         json_schema: None,
-        task_timeout_ms: Some(5000),
         timeout_ms: Some(3000),
         columns: Vec::new(),
         custom_columns: Default::default(),
@@ -1113,10 +1106,6 @@ fn test_list_config_accessor_methods_with_values() {
     assert!(config.branches());
     assert!(!config.remotes());
     assert!(config.summary());
-    assert_eq!(
-        config.task_timeout(),
-        Some(std::time::Duration::from_millis(5000))
-    );
     assert_eq!(
         config.timeout(),
         Some(std::time::Duration::from_millis(3000))

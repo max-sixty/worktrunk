@@ -2,11 +2,10 @@ use crate::display::{format_relative_time_short, shorten_path, truncate_to_width
 use anstyle::{Effects, Style};
 use std::path::Path;
 use unicode_width::UnicodeWidthStr;
-use worktrunk::styling::{Stream, StyledLine, hyperlink_stdout, supports_hyperlinks};
+use worktrunk::styling::{Stream, StyledLine, supports_hyperlinks};
 
-use super::collect::parse_port_from_url;
 use super::columns::{ColumnKind, DiffVariant};
-use super::layout::{ColumnFormat, ColumnLayout, DiffColumnConfig, LayoutConfig};
+use super::layout::{ColumnFormat, ColumnLayout, DiffColumnConfig, LayoutConfig, format_url_cell};
 use super::model::{ItemKind, ListItem, PositionMask};
 
 /// Placeholder glyph for unresolved Status positions — both "still loading" and
@@ -568,7 +567,7 @@ impl ColumnLayout {
                     return StyledLine::new();
                 };
                 let mut cell = StyledLine::new();
-                let formatted = format_url_cell(url);
+                let formatted = format_url_cell(url, supports_hyperlinks(Stream::Stdout));
                 if item.url_active == Some(true) {
                     cell.push_raw(formatted);
                 } else {
@@ -630,21 +629,6 @@ impl ColumnLayout {
             }
         }
     }
-}
-
-/// Format URL cell with optional hyperlink.
-///
-/// When the terminal supports OSC 8 hyperlinks, shows just the port (e.g., `:3000`)
-/// as a clickable link. Otherwise, shows the full URL.
-fn format_url_cell(url: &str) -> String {
-    if supports_hyperlinks(Stream::Stdout) {
-        // Extract port from URL for compact display
-        if let Some(port) = parse_port_from_url(url) {
-            return hyperlink_stdout(url, &format!(":{port}"));
-        }
-    }
-    // Fallback: show full URL
-    url.to_string()
 }
 
 #[cfg(test)]

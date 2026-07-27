@@ -170,7 +170,7 @@ Worktrunk can delete **worktrees** and **branches**. Both have safeguards.
 
 `wt remove` mirrors `git worktree remove`: it refuses to remove worktrees with uncommitted changes (staged, modified, or untracked files). The `--force` flag removes the worktree anyway, discarding all of those changes.
 
-For worktrees containing precious ignored data (databases, caches, large assets), use `git worktree lock`:
+To protect a worktree from removal entirely (say it holds a local database), lock it:
 
 ```bash
 git worktree lock ../myproject.feature --reason "Contains local database"
@@ -186,12 +186,14 @@ For the full algorithm, see [Branch cleanup](https://worktrunk.dev/remove/#branc
 
 Use `-D` to force-delete branches with unmerged changes. Use `--no-delete-branch` to keep the branch regardless of status.
 
+A branch checked out in a second worktree is retained regardless, `-D` included. Deleting it would leave that worktree unable to resolve `HEAD`; only `git worktree add --force` produces that state.
+
 ### Other cleanup
 
 - `wt remove` — besides the target worktree, two cleanup mechanisms run. The removed worktree's own `git fsmonitor--daemon` (git's per-worktree filesystem watcher under `core.fsmonitor=true`, which would leak once its worktree is gone) is sent `git fsmonitor--daemon stop`, then force-terminated (`SIGTERM`, then `SIGKILL`) via the PID resolved from its IPC socket if it didn't exit. A background sweep then deletes `.git/wt/trash/` entries older than 24 hours (directories orphaned when a previous background removal was interrupted) and terminates fsmonitor daemons whose worktree no longer exists (orphans from `git worktree remove`, `rm -rf`, or a crashed `wt`)
 - `wt config state clear` — removes all worktrunk data from `.git/` (config keys, caches, markers, hints, variables, logs, stale trash)
-- `wt config shell install` — when migrating an integration to a new location, removes the worktrunk-managed file left at the old one: fish `conf.d/wt.fish` (now `functions/wt.fish`) and nushell wrappers stranded under `<config-dir>/vendor/autoload` (now `<data-dir>/vendor/autoload`)
-- `wt config shell uninstall` — removes shell integration from rc files
+- `wt config shell install` — when migrating an integration to a new location, removes the file left at the old one: fish `conf.d/wt.fish` (now `functions/wt.fish`) and nushell wrappers stranded under `<config-dir>/vendor/autoload` (now `<data-dir>/vendor/autoload`). The old path is where worktrunk's own wrapper lived and is named after the command being installed, so it's taken back whole without reading it — a `conf.d/wt.fish` left in place would be sourced at startup and shadow the new wrapper anyway. Only that exact filename is touched, and each removal is printed
+- `wt config shell uninstall` — removes integration lines from bash/zsh/PowerShell rc files, and deletes worktrunk's wrapper and completion files (fish `functions/`, `conf.d/`, and `completions/`; nushell `vendor/autoload`). Uninstall takes no command name, so it lists those directories and recognizes files by worktrunk's own content markers, whatever binary name they were installed under; files without the markers are left alone. An rc file belongs to the user, so a line qualifies only where it runs the init command: one that merely mentions it, inside a comment, an `echo`, or an alias body, stays. Every line uninstall does take is printed, before removal and again after
 
 See [What files does Worktrunk create?](#what-files-does-worktrunk-create) for details.
 

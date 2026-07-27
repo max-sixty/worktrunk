@@ -342,7 +342,7 @@ impl HookFlags {
 
 #[derive(Args)]
 pub(crate) struct SwitchArgs {
-    /// Branch name, shortcut, or PR/MR URL
+    /// Branch, worktree path, shortcut, or PR/MR URL
     ///
     /// Opens interactive picker if omitted.
     /// Shortcuts: `^` (default branch), `-` (previous), `@` (current), `pr:{N}` (GitHub PR), `mr:{N}` (GitLab MR)
@@ -642,6 +642,10 @@ $ wt switch --create fix --base release    # New branch from release
 $ wt switch --create temp --no-hooks       # Skip hooks
 ```
 
+## Naming a worktree
+
+Worktrees are addressed by branch name, and every argument that takes one also accepts the path of the worktree itself — resolved after the branch, so a directory never shadows a branch sharing its name. A path names what a branch cannot: a detached worktree, or one of two checkouts of the same branch. Relative paths resolve against `-C` and a leading `~` against the home directory, so a path worktrunk printed can be pasted back.
+
 ## Shortcuts
 
 | Shortcut | Meaning |
@@ -905,15 +909,15 @@ Independent flags from `git status`; several can show at once (e.g. `+!?`). Each
 
 ### Worktree
 
-An in-progress git operation, a worktree-location attribute, or a branch with no worktree. One symbol shows, highest priority first (`✘ > ⤴ > ⤵ > ⊟ > ⊞ > ⚑ > /`):
+An in-progress git operation, a worktree-location attribute, or a branch with no worktree. One symbol shows, highest priority first (`✘ > ↻ > ⊟ > ⊞ > ⚑ > /`):
 
 | Symbol | JSON | Meaning |
 |--------|------|---------|
 | `✘` | `operation_state` `"conflicts"` | Merge conflicts |
-| `⤴` | `operation_state` `"rebase"` | Rebase in progress |
-| `⤵` | `operation_state` `"merge"` | Merge in progress |
+| `↻` | `operation_state` `"rebase"`, `"merge"`, `"cherry_pick"`, `"revert"`, `"bisect"` | A git operation is in progress; `git status` names it |
 | `⊟` | `worktree.state` `"prunable"` | Prunable (worktree directory missing) |
 | `⊞` | `worktree.state` `"locked"` | Locked worktree |
+| `⚑` | `worktree.state` `"duplicate_branch"` | Branch checked out in more than one worktree, so `wt` resolves it to whichever git lists first; every worktree on the branch is flagged |
 | `⚑` | `worktree.state` `"branch_worktree_mismatch"` | Branch name doesn't match the worktree path |
 | `/` | `kind` `"branch"` | Branch without a worktree (no `worktree` object) |
 
@@ -985,6 +989,7 @@ One envelope object. Items carry independent facts; rendered strings
                "committed_at": "2025-01-01T08:00:00Z"},
       "worktree": {"path": "/home/user/repo.feature", "main": false, "current": true,
                    "previous": false, "detached": false, "branch_mismatch": false,
+                   "duplicate_branch": false,
                    "changes": {"staged": false, "modified": true, "untracked": false,
                                "renamed": false, "deleted": false, "conflicted": false,
                                "diff": {"added": 10, "deleted": 2}}},
@@ -1016,7 +1021,7 @@ Item fields:
 | `branch` | Branch name; null for a detached-HEAD worktree. Remote rows carry the bare name with the remote in `remote` |
 | `remote` | Remote name, present only on remote-only branch rows |
 | `head` | `{sha, short_sha, subject, committed_at}`; null for unborn branches. `committed_at` is RFC 3339 UTC |
-| `worktree` | `{path, main, current, previous, detached, locked, prunable, branch_mismatch, operation, changes}`; absent on branch-only rows. `locked`/`prunable` are `{reason}` objects and can co-occur; `operation` is `"rebase"` or `"merge"`; `changes` holds the five working-tree flags plus `conflicted` and `diff {added, deleted}` |
+| `worktree` | `{path, main, current, previous, detached, locked, prunable, branch_mismatch, duplicate_branch, operation, changes}`; absent on branch-only rows. `locked`/`prunable` are `{reason}` objects and can co-occur; `operation` is `"rebase"` or `"merge"`; `changes` holds the five working-tree flags plus `conflicted` and `diff {added, deleted}` |
 | `default_branch` | Relation to the default branch: `{ahead, behind, diff, orphan, integration, merge_conflicts}`; absent on the default branch itself. `integration.reason` is one of `same_commit`, `ancestor`, `no_added_changes`, `trees_match`, `merge_adds_nothing`, `patch_id_match`; a dirty tree skips the checks, leaving `integration` null |
 | `upstream` | Tracking branch: `{remote, branch, ahead, behind}`; absent when none is configured |
 | `pr` | Open PR/MR: `{number, url, review, mergeable, repo}`; collected with `--full` or a listed `ci` column. `review` uses the schema 1 `ci.review_state` vocabulary; `mergeable` is false when the forge reports conflicts, null otherwise |
@@ -1024,7 +1029,7 @@ Item fields:
 | `dev_server` | `{url, listening}` from the project's `list.url` template |
 | `summary` | LLM branch summary (requires `[list] summary = true`) |
 | `vars` | Per-branch variables from [`wt config state vars`](@/config.md#wt-config-state-vars) |
-| `display` | Rendered strings: `state` (schema 1's `main_state` vocabulary), `symbols`, `statusline` (with ANSI colors), `columns` (custom-column cells keyed by header) |
+| `display` | Rendered strings: `state` (schema 1's `main_state` vocabulary), `symbols`, `statusline` (with ANSI colors and OSC 8 hyperlinks), `columns` (custom-column cells keyed by header) |
 
 Schema 1 names map directly: `commit` → `head`, `working_tree` →
 `worktree.changes`, `main` + `main_state` → `default_branch` +
@@ -1100,7 +1105,7 @@ $ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 | `url` | string | Dev server URL from project config; absent when not configured |
 | `url_active` | boolean | Whether the URL's port is listening; absent when not configured |
 | `summary` | string | LLM-generated branch summary; `--full` only, then absent when not configured or no summary |
-| `statusline` | string | Pre-formatted status with ANSI colors |
+| `statusline` | string | Pre-formatted status with colors and links |
 | `symbols` | string | Raw status symbols without colors (e.g., `"!?↓"`) |
 | `vars` | object | Per-branch variables from [`wt config state vars`](@/config.md#wt-config-state-vars) (absent when empty) |
 | `columns` | object | Rendered [custom column](#custom-columns) values keyed by header; empty cells omitted (absent when none configured) |
@@ -1152,7 +1157,7 @@ Present only for worktree-kind items. `state` is the worktree-location attribute
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `state` | string | `"branch_worktree_mismatch"`, `"prunable"`, or `"locked"` (absent when normal) |
+| `state` | string | `"branch_worktree_mismatch"`, `"duplicate_branch"`, `"prunable"`, or `"locked"` (absent when normal) |
 | `reason` | string | Reason for locked/prunable state |
 | `detached` | boolean | HEAD is detached |
 
@@ -1208,7 +1213,7 @@ Missing a field that would be generally useful? Open an issue at https://github.
 ## See also
 
 - [`wt switch`](@/switch.md) — Switch worktrees or open interactive picker
-"#
+<!-- subdoc: statusline -->"#
     )]
     // TODO: `args_conflicts_with_subcommands` causes confusing errors for unknown
     // subcommands ("cannot be used with --branches") instead of "unknown subcommand".
@@ -1271,6 +1276,8 @@ The default-branch walk is capped so a single check stays fast; a squash merge w
 The 'same commit' check uses the local default branch; for other checks, 'target' means the default branch, or its upstream (e.g., `origin/main`) when strictly ahead.
 
 Branches matching these conditions and with empty working trees are dimmed in `wt list` as safe to delete.
+
+Those six ask whether deleting loses work. A branch checked out in a second worktree (only reachable via `git worktree add --force`) fails a different test: deleting the ref would leave that worktree unable to resolve `HEAD`, which is why `git branch -d` refuses the same delete. Such a branch is retained whatever `-D` asks, and the surviving checkout is named.
 
 ## Force flags
 
@@ -1398,15 +1405,17 @@ $ wt merge --no-commit --no-rebase
 `wt merge` runs these steps:
 
 1. **Commit** — Pre-commit hooks run, then uncommitted changes are committed. Post-commit hooks run in background. Skipped when squashing (the default) — changes are staged during the squash step instead. With `--no-squash`, this is the only commit step.
-2. **Squash** — Combines all commits since target into one (like GitHub's "Squash and merge"). Use `--stage` to control what gets staged: `all` (default), `tracked`, or `none`. A backup ref is saved to `refs/wt-backup/<branch>`. With `--no-squash`, individual commits are preserved.
-3. **Rebase** — Rebases onto target if behind. Skipped if already up-to-date. Conflicts abort immediately. With `--no-rebase`, the graph produced by earlier commit/squash steps is preserved and the target must be able to fast-forward to its tip.
+2. **Squash** — Combines all commits since target into one (like GitHub's "Squash and merge"). Use `--stage` to control what gets staged: `all` (default), `tracked`, or `none`. Working-tree changes swept into the squash are backed up first to `refs/wt-backup/<branch>`. With `--no-squash`, individual commits are preserved.
+3. **Rebase** — Rebases onto target, skipping when nothing needs replaying ([`wt step rebase`](@/step.md#wt-step-rebase) gives the conditions). A conflict stops the merge with the rebase left open in the worktree, to resolve or abort. With `--no-rebase`, the graph produced by earlier commit/squash steps is preserved and the target must be able to fast-forward to its tip.
 4. **Pre-merge hooks** — Hooks run after rebase, before merge. Failures abort. See [`wt hook`](@/hook.md).
-5. **Merge** — Fast-forward merge to the target branch. With `--no-ff`, a merge commit is created instead — semi-linear history after the default rebase, while explicit `--no-rebase` preserves the graph produced by earlier steps before adding the merge commit. Non-fast-forward merges are rejected.
+5. **Merge** — Fast-forward merge to the target branch ([`wt step push`](@/step.md#wt-step-push)). With `--no-ff`, a merge commit is created instead — semi-linear history after the default rebase, while explicit `--no-rebase` preserves the graph produced by earlier steps before adding the merge commit. Non-fast-forward merges are rejected.
 6. **Pre-remove hooks** — Hooks run before removing worktree. Failures abort.
 7. **Cleanup** — Removes the worktree and branch. Use `--no-remove` to keep the worktree. When already on the target branch or in the primary worktree, the worktree is preserved.
 8. **Post-remove + post-merge hooks** — Run in background after cleanup.
 
 Use `--no-commit` to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless `--no-rebase` is passed. Combining both flags preserves the exact source graph and requires the target to be its ancestor. Useful after preparing commits manually with `wt step commit`. Requires a clean working tree.
+
+`wt merge` targets the *local* default-branch ref and never fetches. When that ref lags its upstream — e.g. a primary checkout's `main` left behind `origin/main` — a branch based on the newer upstream tip is measured, squashed, and rebased against the upstream (so already-upstream commits are never folded into the squash), and the final fast-forward carries the local ref through the already-fetched upstream commits by their real SHAs. `wt step squash` and `wt step rebase` measure the same way. A local target that has *diverged* from its upstream — its own commits and behind — cannot fast-forward, so the merge is refused until the target is reconciled.
 
 ## Local CI
 
@@ -1475,8 +1484,8 @@ $ wt step push
 
 - [`commit`](#wt-step-commit) — Stage and commit with [LLM-generated message](@/llm-commits.md)
 - [`squash`](#wt-step-squash) — Squash all branch commits into one with [LLM-generated message](@/llm-commits.md)
-- `rebase` — Rebase onto target branch
-- `push` — Fast-forward target to current branch
+- [`rebase`](#wt-step-rebase) — Rebase onto target branch
+- [`push`](#wt-step-push) — Fast-forward target to current branch
 - [`diff`](#wt-step-diff) — Show all changes since branching (committed, staged, unstaged, untracked)
 - [`copy-ignored`](#wt-step-copy-ignored) — Copy gitignored files between worktrees
 - [`eval`](#wt-step-eval) — [experimental] Evaluate a template expression
@@ -1494,6 +1503,8 @@ $ wt step push
 - [Aliases](@/extending.md#aliases) — Custom command templates run as `wt <name>`
 <!-- subdoc: commit -->
 <!-- subdoc: squash -->
+<!-- subdoc: rebase -->
+<!-- subdoc: push -->
 <!-- subdoc: diff -->
 <!-- subdoc: copy-ignored -->
 <!-- subdoc: eval -->
@@ -2046,8 +2057,7 @@ json-schema = 2    # JSON output schema: 2 (envelope) or 1 (bare array, the curr
 
 columns = ["branch", "status", "ci", "path"]   # Columns to show, in order — built-ins or custom headers (omit for the default set)
 
-task-timeout-ms = 0   # Kill individual git commands after N ms; 0 disables
-timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disables
+timeout-ms = 0     # Wall-clock budget for the entire collect phase; 0 disables
 ```
 
 `columns` selects and orders the columns to render; omit it for the default set.
