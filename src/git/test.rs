@@ -17,8 +17,8 @@ fn parse_single(input: &str) -> WorktreeInfo {
 #[test]
 fn test_parse_worktree_list_no_trailing_blank_line() {
     // Bug hypothesis: If output doesn't end with blank line,
-    // the last worktree might not be added
-    // Looking at the code (lines 1128-1130), this should be handled correctly
+    // the last worktree might not be added.
+    // The end-of-input handling in parse_porcelain_list should cover this.
     let output = "worktree /path/to/repo1\nHEAD abc123\nbranch refs/heads/main\n\nworktree /path/to/repo2\nHEAD def456\nbranch refs/heads/dev";
     let result = WorktreeInfo::parse_porcelain_list(output);
 
