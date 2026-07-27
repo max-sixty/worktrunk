@@ -12,4 +12,4 @@ For each `.rs` file in the survey, also check:
 
 ## Repo-Wide CI Breakage
 
-A failure that reproduces identically on `main` and every PR (a broken system-package install in `code-coverage`, say) belongs to `tend-ci-fix`, which fires on any `ci`-workflow `failure` on `main`; a non-required job failing is enough to trigger it. It does not fire on runs that end `cancelled`, so record the breakage in the summary rather than assuming the handoff lands.
+A failure that reproduces identically on `main` and every PR (a broken system-package install in `code-coverage`, say) belongs to `tend-ci-fix`, which fires on any watched-workflow `failure` on `main` — the list lives in `.config/tend.yaml` under `ci-fix.watched_workflows`; a non-required job failing is enough to trigger it. It does not fire on runs that end `cancelled`, so record the breakage in the summary rather than assuming the handoff lands.

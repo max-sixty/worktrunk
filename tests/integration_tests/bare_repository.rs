@@ -1,8 +1,8 @@
 use crate::common::{
     BareRepoTest, SLEEP_FOR_ABSENCE_CHECK, TestRepo, TestRepoBase, canonicalize,
     configure_directive_files, configure_git_cmd, configure_git_env, directive_files, repo,
-    setup_temp_snapshot_settings, wait_for_file, wait_for_file_content, wait_for_worktree_removed,
-    wt_command,
+    setup_temp_snapshot_settings, test_gitconfig_path, wait_for_file, wait_for_file_content,
+    wait_for_worktree_removed, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -401,21 +401,16 @@ fn test_repo_path_via_real_git_alias_bare_dot_git_layout() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let temp_path = canonicalize(temp_dir.path()).unwrap();
 
-    // Isolated gitconfig so we don't leak the user's real git settings.
-    let git_config_path = temp_path.join("test-gitconfig");
-    fs::write(
-        &git_config_path,
-        "[user]\n\tname = Test User\n\temail = test@example.com\n\
-         [init]\n\tdefaultBranch = main\n",
-    )
-    .unwrap();
+    // Isolated gitconfig (shared, read-only) so we don't leak the user's
+    // real git settings.
+    let git_config_path = test_gitconfig_path();
 
     // Layout: repo/.git (bare) + repo/main (linked worktree).
     let repo_dir = temp_path.join("repo");
     fs::create_dir(&repo_dir).unwrap();
     let bare_git = repo_dir.join(".git");
 
-    let git = |dir: &Path| configure_git_env(Cmd::new("git"), &git_config_path).current_dir(dir);
+    let git = |dir: &Path| configure_git_env(Cmd::new("git"), git_config_path).current_dir(dir);
 
     git(&temp_path)
         .args(["init", "--bare", "--initial-branch", "main"])
@@ -468,7 +463,7 @@ fn test_repo_path_via_real_git_alias_bare_dot_git_layout() {
 
     // Shared wt env applied to both the direct and aliased invocations.
     let apply_wt_env = |cmd: &mut Command| {
-        configure_git_cmd(cmd, &git_config_path);
+        configure_git_cmd(cmd, git_config_path);
         cmd.env("WORKTRUNK_CONFIG_PATH", &user_config)
             .env(
                 "WORKTRUNK_SYSTEM_CONFIG_PATH",
@@ -1404,82 +1399,48 @@ fn test_bare_repo_slashed_branch_with_sanitize() {
 ///
 /// This tests the pattern from GitHub issue #313 where users clone with:
 /// `git clone --bare <url> project/.git`
+///
+/// Composes over [`TestRepo::bare_at`], which owns the repo plumbing
+/// (canonicalized root, isolated config paths, `LOCAL_TEST_CONFIG`); this
+/// struct owns the project directory the bare repo nests in, plus the
+/// sibling-worktree template (`../{{ branch }}`).
 struct NestedBareRepoTest {
+    /// Owns project/; must outlive `repo`, whose path lives inside it.
     temp_dir: tempfile::TempDir,
     /// Path to the parent directory (project/)
     project_path: PathBuf,
-    /// Path to the bare repo (project/.git/)
-    bare_repo_path: PathBuf,
+    /// Config lives in `temp_dir`, not in `repo`'s internal config dir:
+    /// snapshots print this path, and their filters cover `temp_path()`.
     test_config_path: PathBuf,
-    git_config_path: PathBuf,
+    repo: TestRepo,
 }
 
 impl NestedBareRepoTest {
     fn new() -> Self {
         let temp_dir = tempfile::TempDir::new().unwrap();
-        // Create project directory
+        // Create project directory with the bare repo inside as .git
         let project_path = temp_dir.path().join("project");
-        fs::create_dir(&project_path).unwrap();
+        let repo = TestRepo::bare_at(&project_path.join(".git"));
+        let project_path = canonicalize(&project_path).unwrap();
 
-        // Bare repo inside project directory as .git
-        let bare_repo_path = project_path.join(".git");
+        // Worktrees as siblings to .git: project/main, project/feature
         let test_config_path = temp_dir.path().join("test-config.toml");
-        let git_config_path = temp_dir.path().join("test-gitconfig");
+        fs::write(&test_config_path, "worktree-path = \"../{{ branch }}\"\n").unwrap();
 
-        // Write git config with user settings (like TestRepo)
-        fs::write(
-            &git_config_path,
-            "[user]\n\tname = Test User\n\temail = test@example.com\n\
-             [advice]\n\tmergeConflict = false\n\tresolveConflict = false\n\
-             [init]\n\tdefaultBranch = main\n",
-        )
-        .unwrap();
-
-        let mut test = Self {
+        Self {
             temp_dir,
             project_path,
-            bare_repo_path,
             test_config_path,
-            git_config_path,
-        };
-
-        // Create bare repository at project/.git
-        let output = configure_git_env(Cmd::new("git"), &test.git_config_path)
-            .args(["init", "--bare", "--initial-branch", "main"])
-            .arg(test.bare_repo_path.to_str().unwrap())
-            .run()
-            .unwrap();
-
-        if !output.status.success() {
-            panic!(
-                "Failed to init nested bare repo:\nstdout: {}\nstderr: {}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
+            repo,
         }
-
-        // Canonicalize paths
-        test.project_path = canonicalize(&test.project_path).unwrap();
-        test.bare_repo_path = canonicalize(&test.bare_repo_path).unwrap();
-
-        // Write config with template for worktrees as siblings to .git
-        // For nested bare repos (project/.git), we use "../{{ branch }}" to create
-        // worktrees at project/main, project/feature (siblings to .git)
-        fs::write(
-            &test.test_config_path,
-            "worktree-path = \"../{{ branch }}\"\n",
-        )
-        .unwrap();
-
-        test
     }
 
-    fn project_path(&self) -> &PathBuf {
+    fn project_path(&self) -> &Path {
         &self.project_path
     }
 
-    fn bare_repo_path(&self) -> &PathBuf {
-        &self.bare_repo_path
+    fn bare_repo_path(&self) -> &Path {
+        self.repo.path()
     }
 
     fn config_path(&self) -> &Path {
@@ -1509,7 +1470,6 @@ impl NestedBareRepoTest {
         std::fs::create_dir_all(&home).ok();
 
         pty_env_vars(TestEnvPaths {
-            git_config: &self.git_config_path,
             home: &home,
             wt_config: &self.test_config_path,
             approvals: &self.temp_dir.path().join("test-approvals.toml"),
@@ -1519,7 +1479,7 @@ impl NestedBareRepoTest {
 
 impl TestRepoBase for NestedBareRepoTest {
     fn git_config_path(&self) -> &Path {
-        &self.git_config_path
+        test_gitconfig_path()
     }
 }
 
@@ -1719,18 +1679,12 @@ fn test_bare_repo_bootstrap_first_worktree() {
 #[test]
 fn test_clone_bare_repo_list_no_status_errors() {
     let temp_dir = tempfile::TempDir::new().unwrap();
-    let git_config_path = temp_dir.path().join("test-gitconfig");
+    let git_config_path = test_gitconfig_path();
     let test_config_path = temp_dir.path().join("test-config.toml");
-    fs::write(
-        &git_config_path,
-        "[user]\n\tname = Test User\n\temail = test@example.com\n\
-         [init]\n\tdefaultBranch = main\n",
-    )
-    .unwrap();
     fs::write(&test_config_path, "").unwrap();
 
     let run_git = |dir: &Path, args: &[&str]| {
-        let output = configure_git_env(Cmd::new("git"), &git_config_path)
+        let output = configure_git_env(Cmd::new("git"), git_config_path)
             .args(args.iter().copied())
             .current_dir(dir)
             .run()
@@ -1780,7 +1734,7 @@ fn test_clone_bare_repo_list_no_status_errors() {
 
     // Run wt list from the bare repo directory (the reported scenario)
     let mut cmd = wt_command();
-    configure_git_cmd(&mut cmd, &git_config_path);
+    configure_git_cmd(&mut cmd, git_config_path);
     cmd.env("WORKTRUNK_CONFIG_PATH", &test_config_path)
         .arg("list")
         .current_dir(&bare_path);

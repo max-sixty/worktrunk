@@ -47,26 +47,16 @@ source-compiling installs cascaded into bash-tool interrupts that blocked
 even `pwd` and `echo`. (Pre-built single-script installers like Determinate
 Nix's are fine — see **Weekly Maintenance: MSRV & Toolchain** for the one we
 use. The block is specifically about long-running cargo compiles.) Instead,
-query Codecov directly:
+query Codecov directly, following `tests/CLAUDE.md` → **Coverage
+Investigation** for the endpoints and their traps.
+
+If the Codecov API markers aren't enough, download the `code-coverage-report`
+artifact from the PR head's `coverage` workflow run — it contains a
+`cobertura.xml` with per-line hit counts:
 
 ```bash
 REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
-curl -sL "https://api.codecov.io/api/v2/gh/${REPO%/*}/repos/${REPO#*/}/compare/?pullid=<N>" > /tmp/codecov.json
-
-# Patch-level summary per file:
-jq '.files[] | {name: .name.head, patch: .totals.patch}' /tmp/codecov.json
-
-# Uncovered added lines in a specific changed file
-# (coverage.head is a LineType enum: 0=hit, 1=miss, 2=partial — filter on 1=miss):
-jq '.files[] | select(.name.head == "<path>") | .lines[] | select(.is_diff and .added and .coverage.head == 1) | {line: .number.head, code: .value}' /tmp/codecov.json
-```
-
-If the Codecov API markers aren't enough, download the `code-coverage-report`
-artifact from the PR head's `ci` workflow run — it contains a `cobertura.xml`
-with per-line hit counts:
-
-```bash
-# Find the ci run on the PR head SHA:
+# Find the coverage run on the PR head SHA:
 CI_RUN=$(gh api "repos/$REPO/commits/<sha>/check-runs" --jq '.check_runs[] | select(.name == "code-coverage") | .details_url | capture("runs/(?<id>[0-9]+)") | .id')
 # List artifacts, then download the coverage one:
 gh api "repos/$REPO/actions/runs/$CI_RUN/artifacts" --jq '.artifacts[] | {name, id}'
@@ -297,8 +287,8 @@ Pinned third-party versions in CI are invisible to Dependabot — it follows `Ca
 
 For each weekly run, check upstream and bump:
 
-- **`baptiste0928/cargo-install@v3` blocks** in `.github/workflows/ci.yaml`, `.github/workflows/nightly.yaml`, and `.github/actions/{test,claude}-setup/action.yaml` — every `version: "=X.Y.Z"` against `cargo info <crate>`. Today: `cargo-insta`, `cargo-nextest`, `cargo-llvm-cov`, `cargo-msrv`, `cargo-udeps`, `lychee`, `worktrunk`. The `cargo-affected` install has no version pin (follows default branch) — leave it alone. Verify each crate's `rust-version` against the pinned toolchain and note compatibility in the PR body (see PR #1657 for the format).
-- **`hustcer/setup-nu@v3`** `version:` input — latest from `gh api repos/nushell/nushell/releases/latest --jq '.tag_name'`. Four call sites: `ci.yaml` (`code-coverage`), `nightly.yaml` (`feature-powerset`), `benchmarks.yaml` (`benchmarks`), and `actions/test-setup/action.yaml`.
+- **`baptiste0928/cargo-install@v3` blocks** in `.github/workflows/{ci,coverage,nightly}.yaml` and `.github/actions/{test,claude}-setup/action.yaml` — every `version: "=X.Y.Z"` against `cargo info <crate>`. Today: `cargo-insta`, `cargo-nextest`, `cargo-llvm-cov`, `cargo-msrv`, `cargo-udeps`, `lychee`, `worktrunk`. The `cargo-affected` install has no version pin (follows default branch) — leave it alone. Verify each crate's `rust-version` against the pinned toolchain and note compatibility in the PR body (see PR #1657 for the format).
+- **`hustcer/setup-nu@v3`** `version:` input — latest from `gh api repos/nushell/nushell/releases/latest --jq '.tag_name'`. Four call sites: `coverage.yaml` (`code-coverage`), `nightly.yaml` (`feature-powerset`), `benchmarks.yaml` (`benchmarks`), and `actions/test-setup/action.yaml`.
 - **`taiki-e/install-action@v2.x`** `tool: zola@<ver>` in the `check-docs` job — latest from `gh api repos/getzola/zola/releases/latest --jq '.tag_name'`.
 - **Runner images** — `ubuntu-24.04`, `macos-15`, `windows-2022`. Keep `windows-2022` pinned (actions/runner-images#12677 — windows-2025 lacks the D: drive).
 

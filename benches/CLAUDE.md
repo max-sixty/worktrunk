@@ -227,17 +227,17 @@ groups** (a full-cold criterion iteration costs ~1 min in re-hashing statuses
 alone; a live one consumes the candidates). Expected one-shots on the
 `prune-real` fixture:
 
-- **full-cold dry-run ~5.5 s wall** (~46 s CPU over 472 subprocesses absorbed
-  by the rayon pool) — the fresh-fixture shape, dominated by stat-cold
-  `git status` at ~4.5 s per fresh worktree; the probes are `merge-base
-  --is-ancestor` ~40 ms and `merge-tree --write-tree` ~130 ms (vs 4–25 ms
-  synthetic, where shallow history walks bottom out at subprocess-spawn cost)
-- **live ~12 s wall** (measured before the removal chain was trimmed to one
-  clean check + daemon stop + rename + CAS delete; re-measure on the next
-  fixture rebuild) — all 24 removals serialize under the scan write lock
-  inside the `prune-scan` window: each of the 12 worktree candidates took
-  ~0.5–1.7 s, dominated by re-validation statuses running after the fsmonitor
-  daemon stop, branch-only candidates ~50 ms
+- **full-cold dry-run ~5.5–7 s wall** (46–92 s CPU over ~480 subprocesses
+  absorbed by the rayon pool) — the fresh-fixture shape, dominated by
+  stat-cold `git status` at ~4.5–6.5 s per fresh worktree; the probes are
+  `merge-base --is-ancestor` ~40 ms and `merge-tree --write-tree` ~130 ms (vs
+  4–25 ms synthetic, where shallow history walks bottom out at
+  subprocess-spawn cost)
+- **live ~2.9 s wall** — all 24 removals serialize under the scan write lock
+  inside the `prune-scan` window: each of the 12 worktree candidates
+  ~155–210 ms (fsmonitor-served status ~20 ms, daemon stop ~57 ms, metadata
+  prune ~11 ms, fresh ref snapshot ~40 ms, CAS delete ~7 ms), branch-only
+  candidates ~40–100 ms
 
 This is the "prune takes many seconds" experience users report: worktree
 count × stat-cold statuses bounds the scan, and removals extend it serially.
