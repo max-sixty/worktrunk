@@ -2153,7 +2153,7 @@ fn test_complete_custom_subcommand_listed(repo: TestRepo) {
     // Complete "wt " — should include "testext" from the `wt-testext` binary
     let mut cmd = repo.completion_cmd(&["wt", ""]);
     prepend_path(&mut cmd, ext_dir.path());
-    cmd.env("MOCK_CONFIG_DIR", ext_dir.path());
+    cmd.env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", ext_dir.path());
     let output = cmd.output().unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -2176,8 +2176,9 @@ fn test_complete_custom_subcommand_forwards(repo: TestRepo) {
     use std::os::unix::fs::PermissionsExt;
     repo.commit("initial");
 
-    // Create a real shell script that outputs completions (not mock-stub,
-    // which needs MOCK_CONFIG_DIR and doesn't know about COMPLETE env var).
+    // Create a real shell script that outputs completions (not mock-stub, which
+    // needs WORKTRUNK_TEST_MOCK_CONFIG_DIR and doesn't know about COMPLETE env
+    // var).
     let ext_dir = tempfile::tempdir().unwrap();
     let script = ext_dir.path().join("wt-testext");
     std::fs::write(

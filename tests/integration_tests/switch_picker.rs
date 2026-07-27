@@ -1519,10 +1519,11 @@ fn seed_ci_status(repo: &TestRepo, branch: &str, status_json: &str) {
 }
 
 /// Install a mock forge CLI (`gh`/`glab`) that answers the `--prs` list call
-/// from a canned JSON file with a caller-supplied response shape, and return env
-/// vars (mock on PATH + MOCK_CONFIG_DIR) for a `wt switch --prs` PTY run. No
-/// network is touched. The `list.json` file the response reads from is written
-/// here, so `list_response` should be built with `MockResponse::file("list.json")`.
+/// from a canned JSON file with a caller-supplied response shape, and return
+/// env vars (mock on PATH + WORKTRUNK_TEST_MOCK_CONFIG_DIR) for a
+/// `wt switch --prs` PTY run. No network is touched. The `list.json` file the
+/// response reads from is written here, so `list_response` should be built with
+/// `MockResponse::file("list.json")`.
 fn mock_forge_env_with(
     repo: &TestRepo,
     cli: &str,
@@ -1561,14 +1562,15 @@ fn mock_forge_env(
     )
 }
 
-/// Env vars (mock-bin on PATH + `MOCK_CONFIG_DIR`) for a PTY `wt` run that should
-/// resolve `gh`/`glab` to a mock written into `mock_bin`. Shared by
+/// Env vars (mock-bin on PATH + `WORKTRUNK_TEST_MOCK_CONFIG_DIR`) for a PTY
+/// `wt` run that should resolve `gh`/`glab` to a mock written into `mock_bin`.
+/// Shared by
 /// [`mock_forge_env`] and tests that build a richer mock (extra `pr view`
 /// responses) directly.
 fn forge_mock_env_vars(repo: &TestRepo, mock_bin: &Path) -> Vec<(String, String)> {
     let mut env_vars = repo.test_env_vars();
     env_vars.push((
-        "MOCK_CONFIG_DIR".to_string(),
+        "WORKTRUNK_TEST_MOCK_CONFIG_DIR".to_string(),
         mock_bin.display().to_string(),
     ));
     // Prepend mock-bin to PATH using the OS separator (`;` on Windows, `:` on
@@ -2020,7 +2022,7 @@ fn test_switch_picker_worktree_row_comments_tab_shows_thread(mut repo: TestRepo)
         .write(&mock_bin);
     let mut env_vars = repo.test_env_vars();
     env_vars.push((
-        "MOCK_CONFIG_DIR".to_string(),
+        "WORKTRUNK_TEST_MOCK_CONFIG_DIR".to_string(),
         mock_bin.display().to_string(),
     ));
     // Prepend mock-bin to PATH using the OS separator (`;` on Windows, `:` on

@@ -1210,7 +1210,7 @@ command = "{llm_path_str}"
         Some(&feature_wt),
         &[
             (&path_var, &path_with_bin),
-            ("MOCK_CONFIG_DIR", &bin_dir_str),
+            ("WORKTRUNK_TEST_MOCK_CONFIG_DIR", &bin_dir_str),
         ],
     );
 }
@@ -1317,7 +1317,7 @@ impl Registry {
         Some(&feature_wt),
         &[
             (&path_var, &path_with_bin),
-            ("MOCK_CONFIG_DIR", &bin_dir_str),
+            ("WORKTRUNK_TEST_MOCK_CONFIG_DIR", &bin_dir_str),
             ("WORKTRUNK_DIRECTIVE_CD_FILE", &directive_file_str),
         ],
     );

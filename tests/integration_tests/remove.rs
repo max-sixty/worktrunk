@@ -3250,8 +3250,8 @@ fn test_remove_resolves_all_fsmonitor_daemons_in_one_lsof(mut repo: TestRepo) {
         .wt_command()
         .args(["remove", "feature-fsmon", "-vv"])
         .env("PATH", &new_path)
-        .env("MOCK_CONFIG_DIR", &bin_dir)
-        .env("MOCK_CALL_LOG_DIR", call_log.path())
+        .env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", &bin_dir)
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
         .output()
         .unwrap();
     assert!(
@@ -3326,8 +3326,8 @@ fn test_remove_sweep_skips_lsof_when_no_daemon_pids(mut repo: TestRepo) {
         .wt_command()
         .args(["remove", "feature-fsmon", "-vv"])
         .env("PATH", &new_path)
-        .env("MOCK_CONFIG_DIR", &bin_dir)
-        .env("MOCK_CALL_LOG_DIR", call_log.path())
+        .env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", &bin_dir)
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
         .output()
         .unwrap();
     assert!(
@@ -3699,7 +3699,7 @@ cleanup = "flyctl scale count 0"
         assert_cmd_snapshot!("docs_remove_pre_remove_hook", {
             let mut cmd = make_snapshot_cmd(&repo, "remove", &["--yes"], Some(&api_wt));
             cmd.env("PATH", &new_path);
-            cmd.env("MOCK_CONFIG_DIR", &bin_dir_str);
+            cmd.env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", &bin_dir_str);
             cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", &directive_file_str);
             cmd
         });

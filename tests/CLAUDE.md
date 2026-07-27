@@ -112,6 +112,14 @@ right layer reaches every test that spawns `wt`. A per-builder copy reaches only
 the tests that happen to use that builder, and the ones it misses fail later,
 somewhere else.
 
+**Name it `WORKTRUNK_TEST_*`.** `isolate_subprocess_env` scrubs the parent
+environment by prefix — `GIT_*` and `WORKTRUNK_*` — so the prefix is what makes
+a variable hermetic; an unprefixed name inherits from whatever shell ran the
+suite. The rule covers the test-only protocol between the harness and its helper
+binaries, not just knobs `wt` itself reads: the harness sets
+`WORKTRUNK_TEST_MOCK_CONFIG_DIR` and only `mock-stub` reads it. A variable `wt`
+reads in production drops `TEST` and keeps `WORKTRUNK_`.
+
 ## Config Isolation for In-Process Unit Tests
 
 `repo.wt_command()` / `wt_command()` isolate *subprocess* tests (above). An

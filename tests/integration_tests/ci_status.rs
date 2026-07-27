@@ -88,7 +88,7 @@ fn setup_mock_gh_with_api_data(
 
 /// Configure command environment for local gh/glab mocks.
 fn configure_mock_ci_env(cmd: &mut Command, mock_bin: &Path) {
-    cmd.env("MOCK_CONFIG_DIR", mock_bin);
+    cmd.env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", mock_bin);
 
     let (path_var_name, current_path) = std::env::vars_os()
         .find(|(k, _)| k.eq_ignore_ascii_case("PATH"))

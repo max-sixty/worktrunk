@@ -3,7 +3,7 @@
 //! Reads a JSON config file to determine responses. When invoked as `gh`,
 //! looks for `gh.json` and responds based on config.
 //!
-//! Config location: `MOCK_CONFIG_DIR` env var (set by test harness)
+//! Config location: `WORKTRUNK_TEST_MOCK_CONFIG_DIR` env var (set by test harness)
 //!
 //! Config format:
 //! ```json
@@ -118,17 +118,21 @@ fn command_name() -> String {
 }
 
 fn config_dir() -> PathBuf {
-    PathBuf::from(env::var_os("MOCK_CONFIG_DIR").expect("mock: MOCK_CONFIG_DIR not set"))
+    PathBuf::from(
+        env::var_os("WORKTRUNK_TEST_MOCK_CONFIG_DIR")
+            .expect("mock: WORKTRUNK_TEST_MOCK_CONFIG_DIR not set"),
+    )
 }
 
-/// Append this invocation's argv to `<MOCK_CALL_LOG_DIR>/<command>.calls` so
-/// a test can assert *how many times* and *with what arguments* a command was
-/// spawned, not just what it returned. Needed wherever the spawn count is the
-/// behavior under test — e.g. the fsmonitor sweep resolving every daemon in
-/// one batched `lsof` rather than one call per PID.
+/// Append this invocation's argv to
+/// `<WORKTRUNK_TEST_MOCK_CALL_LOG_DIR>/<command>.calls` so a test can assert
+/// *how many times* and *with what arguments* a command was spawned, not just
+/// what it returned. Needed wherever the spawn count is the behavior under
+/// test — e.g. the fsmonitor sweep resolving every daemon in one batched
+/// `lsof` rather than one call per PID.
 ///
 /// Opt-in, and deliberately NOT written next to the JSON config. Tests
-/// routinely place `MOCK_CONFIG_DIR` inside the repo under test
+/// routinely place `WORKTRUNK_TEST_MOCK_CONFIG_DIR` inside the repo under test
 /// (`<repo>/.bin`), so logging there would create an untracked file mid-run
 /// and change what the command being tested observes — a hook-spawned mock
 /// dirties the working tree, and `wt merge` then stashes. Observability must
@@ -139,7 +143,7 @@ fn config_dir() -> PathBuf {
 /// failure must not change what the mock returns, or a test would fail on the
 /// logging rather than on its actual assertion.
 fn log_invocation(cmd_name: &str, args: &[String]) {
-    let Some(dir) = env::var_os("MOCK_CALL_LOG_DIR") else {
+    let Some(dir) = env::var_os("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR") else {
         return;
     };
     let path = PathBuf::from(dir).join(format!("{}.calls", cmd_name));

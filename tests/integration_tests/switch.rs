@@ -2869,10 +2869,11 @@ fn setup_mock_gh_for_pr(repo: &TestRepo, gh_response: Option<&str>) -> std::path
 
 /// Configure command environment for any mock CLI installed in `mock_bin`.
 ///
-/// Sets `MOCK_CONFIG_DIR` (so mock-stub finds its config) and prepends
-/// `mock_bin` to `PATH` (so the mock binary is found before any real CLI).
+/// Sets `WORKTRUNK_TEST_MOCK_CONFIG_DIR` (so mock-stub finds its config) and
+/// prepends `mock_bin` to `PATH` (so the mock binary is found before any real
+/// CLI).
 fn configure_mock_cli_env(cmd: &mut std::process::Command, mock_bin: &Path) {
-    cmd.env("MOCK_CONFIG_DIR", mock_bin);
+    cmd.env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", mock_bin);
 
     // Find the actual PATH var name (case-insensitive on Windows) to avoid
     // creating a duplicate entry with different case.
@@ -6169,7 +6170,7 @@ fn setup_mock_glab_for_mr(repo: &TestRepo, glab_response: Option<&str>) -> std::
 /// Configure command environment for mock glab.
 fn configure_mock_glab_env(cmd: &mut std::process::Command, mock_bin: &Path) {
     // Tell mock-stub where to find config files
-    cmd.env("MOCK_CONFIG_DIR", mock_bin);
+    cmd.env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", mock_bin);
 
     // Build PATH with mock binary first
     let (path_var_name, current_path) = std::env::vars_os()
