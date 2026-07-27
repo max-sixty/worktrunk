@@ -1338,24 +1338,26 @@ fn test_prune_runs_pre_remove_hook(mut repo: TestRepo) {
     assert!(!wt_path.exists(), "the merged worktree should be removed");
 }
 
-/// Regression test for serialized `wt step prune` fallback removals.
+/// Canary for `wt step prune` removals overlapping `.git/config` readers,
+/// and regression test for synchronous fallback completion.
 ///
-/// B-prime (the `check_lock` RwLock in `src/commands/step/prune.rs`)
-/// serializes the parallel `integration_reason` `.git/config` readers against
-/// the config-rewriting branch deletion writer. That includes the
-/// cross-filesystem / `.gitmodules` / Windows-file-lock fallback: prune runs
-/// the non-current fallback removal and branch deletion synchronously under
-/// the write guard instead of spawning a detached `git worktree remove && git
-/// branch -d`. A branch with a `[branch "<name>"]` section makes deletion
-/// rewrite `.git/config` via lockfile+rename.
+/// Prune's hook-free removals — the rename-failure fallback included — run
+/// concurrently with the parallel `integration_reason` readers on the read
+/// side of `check_lock` (`src/commands/step/prune.rs`). That is safe because
+/// the chain's branch deletion is a CAS `git update-ref -d`, which never
+/// rewrites `.git/config`; a deletion mechanism that rewrites config via
+/// lockfile+rename (as `git branch -D` does — the original Windows race,
+/// #2801) would collide with those readers again. Each branch here gets a
+/// `[branch "<name>"]` section so any such regression has a section to
+/// rewrite, and the assertion watches for the Windows
+/// `unable to access '.git/config'` failure.
 ///
-/// This forces that fallback for one non-current integrated worktree (by
-/// pre-blocking its staged path, like
+/// The fallback must also complete synchronously
+/// (`SynchronousForNonCurrent`): this forces it for one non-current
+/// integrated worktree (by pre-blocking its staged path, like
 /// `test_remove_background_fallback_on_rename_failure`) while several other
-/// integrated worktrees keep the parallel integration-check fan-out running,
-/// so the config-rewriting branch deletion overlaps live `.git/config`
-/// readers. After the fix, removal and deletion run synchronously inside
-/// `try_remove`, so `wt step prune` cannot exit before both finish — the
+/// integrated worktrees keep the parallel fan-out running. `wt step prune`
+/// cannot exit before the fallback removal and branch deletion finish — the
 /// regression assertion (`blocked` worktree and branch gone the instant prune
 /// returns) holds on every platform.
 ///
@@ -1374,11 +1376,11 @@ fn test_prune_fallback_config_race_canary(mut repo: TestRepo) {
     // Several integrated worktrees → a real parallel integration-check
     // fan-out. `add_worktree` puts each branch at `main` HEAD, so all are
     // same-commit integrated and will be pruned. Each branch gets a
-    // `[branch "<name>"]` section so its `git branch -d` rewrites
-    // `.git/config` — the racing write. (No remote needed: `git branch -d`
-    // removes the section regardless of whether `origin` resolves, and the
-    // same-commit local check yields "integrated" before upstream is
-    // consulted.)
+    // `[branch "<name>"]` section so a config-rewriting deletion (a
+    // regression from the CAS `update-ref -d` back toward `git branch -d`,
+    // which removes the section via lockfile+rename) has a racing write to
+    // make. (No remote needed: the same-commit local check yields
+    // "integrated" before upstream is consulted.)
     let names: Vec<String> = (0..6).map(|i| format!("merged-canary-{i}")).collect();
     for name in &names {
         repo.add_worktree(name);
@@ -1392,8 +1394,8 @@ fn test_prune_fallback_config_race_canary(mut repo: TestRepo) {
 
     // Force the fallback for one *non-current* worktree by pre-creating a
     // file at its computed staged path so `std::fs::rename(worktree → trash)`
-    // fails. Pick one in the middle so integration checks for later refs would
-    // still be in flight if fallback branch deletion escaped the write guard.
+    // fails. Pick one in the middle so integration checks for later refs are
+    // still in flight while the fallback runs.
     let blocked = names[3].clone();
     let blocked_wt_path = repo.worktree_path(&blocked).to_path_buf();
     let trash_dir = crate::common::resolve_git_common_dir(repo.root_path()).join("wt/trash");
@@ -1506,6 +1508,108 @@ fn test_prune_skips_prunable_candidate_whose_preparation_fails(mut repo: TestRep
         branches.lines().any(|branch| branch == "stale-merged"),
         "the skipped candidate's branch must survive; branches:\n{branches}"
     );
+}
+
+/// Hook-free removals execute concurrently (the read side of `check_lock`),
+/// not one at a time.
+///
+/// Two integrated orphan branches are removed through a `git` shim whose
+/// `update-ref -d` arms barrier on each other: each records that it started,
+/// then waits for the *other* branch's deletion to start before proceeding.
+/// The barrier only resolves if both removals are in flight at once — under
+/// serialized removals the first deletion would wait out the shim's 15 s
+/// timeout and drop a sentinel file, which the test asserts absent. Causally
+/// driven, so it runs at barrier speed when concurrency works; the timeout is
+/// only the safety net. Unix-only for the same `CreateProcess` shim reason as
+/// the canary above.
+#[cfg(unix)]
+#[rstest]
+fn test_prune_removals_run_concurrently(repo: TestRepo) {
+    repo.commit("initial");
+
+    // Orphan branches at main HEAD: same-commit integrated, no worktree, so
+    // each becomes a hook-free BranchOnly candidate on the parallel path.
+    repo.create_branch("para-a");
+    repo.create_branch("para-b");
+
+    let mut cmd = repo.wt_command();
+    // The removal pool is sized from the rayon thread count; pin it to two so
+    // the barrier can resolve even on a single-core runner (the workers block
+    // in subprocess waits, so two threads don't need two CPUs).
+    cmd.env("RAYON_NUM_THREADS", "2");
+    let git_wrapper_dir = repo.home_path().join("git-wrapper");
+    std::fs::create_dir_all(&git_wrapper_dir).unwrap();
+    write_barrier_git_wrapper(&git_wrapper_dir, &which::which("git").unwrap());
+    prepend_path(&mut cmd, &git_wrapper_dir);
+    let barrier_dir = repo.home_path().join("barrier");
+    std::fs::create_dir_all(&barrier_dir).unwrap();
+    cmd.env("WT_TEST_BARRIER_DIR", &barrier_dir);
+
+    let output = cmd
+        .args(["step", "prune", "--yes", "--min-age=0s"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "prune should succeed:\n{stderr}");
+    for name in ["para-a", "para-b"] {
+        assert!(
+            barrier_dir.join(format!("started-{name}")).exists(),
+            "the shim never fired for {name} — its CAS delete was not exercised"
+        );
+    }
+    let timeouts: Vec<String> = std::fs::read_dir(&barrier_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with("timeout-"))
+        .collect();
+    assert!(
+        timeouts.is_empty(),
+        "a deletion waited out the barrier — removals ran serially: {timeouts:?}"
+    );
+    let branches = repo.git_output(&["branch", "--format=%(refname:short)"]);
+    for name in ["para-a", "para-b"] {
+        assert!(
+            !branches.lines().any(|branch| branch == name),
+            "{name} should have been deleted; branches:\n{branches}"
+        );
+    }
+}
+
+/// A `git` shim whose `update-ref -d refs/heads/para-{a,b}` arms rendezvous
+/// with each other (see `test_prune_removals_run_concurrently`); everything
+/// else passes through to the real git.
+#[cfg(unix)]
+fn write_barrier_git_wrapper(dir: &std::path::Path, real_git: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
+    let script = format!(
+        r#"#!/bin/sh
+case "$1 $2 $3" in
+  "update-ref -d refs/heads/para-a") own=para-a; other=para-b ;;
+  "update-ref -d refs/heads/para-b") own=para-b; other=para-a ;;
+  *) exec {real_git} "$@" ;;
+esac
+: > "$WT_TEST_BARRIER_DIR/started-$own"
+i=0
+while [ ! -e "$WT_TEST_BARRIER_DIR/started-$other" ]; do
+  i=$((i+1))
+  if [ "$i" -gt 300 ]; then
+    : > "$WT_TEST_BARRIER_DIR/timeout-$own"
+    break
+  fi
+  sleep 0.05
+done
+exec {real_git} "$@"
+"#
+    );
+    let path = dir.join("git");
+    std::fs::write(&path, script).unwrap();
+    let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&path, permissions).unwrap();
 }
 
 /// A `git` shim that fails every `git worktree prune` and passes everything

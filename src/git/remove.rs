@@ -483,6 +483,13 @@ pub fn delete_branch_if_safe(
 /// failed → propagate the original error) by re-checking with `rev-parse
 /// --verify --quiet`, which has a structured exit code (0 = present, 1 =
 /// absent) rather than relying on locale-sensitive error-message text.
+///
+/// A `packed-refs.lock` that stays contended past git's ~1 s retry budget
+/// (concurrent deletes of packed branches — `wt step prune`'s parallel
+/// removals — on slow ref-store I/O) also fails the CAS with the ref
+/// present, and reads as `RetainedRaced` even though the tip never moved.
+/// Accepted: it is fail-closed, empirically unobserved at 24-way concurrency
+/// on local disks, and the next prune collects the branch.
 fn cas_delete_branch_outcome(
     repo: &Repository,
     branch_name: &str,

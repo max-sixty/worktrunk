@@ -316,6 +316,17 @@ impl ApprovedHookPlan {
         self.entries.is_empty()
     }
 
+    /// True when the frozen selection carries any commands for `anchor` under
+    /// one of `hook_types`. `wt step prune` routes such candidates onto its
+    /// serialized removal path — a foreground hook body is an arbitrary
+    /// command with streamed output, so it doesn't join the parallel removal
+    /// fan-out.
+    pub fn has_hooks_for(&self, anchor: &Path, hook_types: &[HookType]) -> bool {
+        hook_types
+            .iter()
+            .any(|ht| !self.lookup(*ht, anchor).is_empty())
+    }
+
     /// The frozen selection for `(hook_type, anchor)`, by exact match.
     ///
     /// Every covered gate anchors at the identical path its executor passes:
