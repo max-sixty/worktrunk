@@ -4,7 +4,6 @@
 //! full switch sequence (bare-repo fix-up, hooks, approval, execution, output)
 //! shared by the `wt switch` argument path and the interactive picker.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::display::format_relative_time_short;
@@ -14,8 +13,8 @@ use dunce::canonicalize;
 use serde::Serialize;
 use worktrunk::HookType;
 use worktrunk::config::{
-    UserConfig, ValidationScope, expand_template, referenced_vars_for_templates,
-    template_references_var, validate_template,
+    UserConfig, ValidationScope, VarScope, referenced_vars_for_templates, template_references_var,
+    validate_template,
 };
 use worktrunk::git::remote_ref::{
     self, AzureDevOpsProvider, GitHubProvider, GitLabProvider, GiteaProvider, RemoteRefInfo,
@@ -1769,11 +1768,8 @@ impl SwitchPipeline<'_> {
             let referenced = referenced_vars_for_templates(
                 std::iter::once(cmd).chain(execute_args.iter().map(String::as_str)),
             );
-            let template_vars = build_hook_context(&ctx, &extra_vars, Some(&referenced))?;
-            let vars: HashMap<&str, &str> = template_vars
-                .iter()
-                .map(|(k, v)| (k.as_str(), v.as_str()))
-                .collect();
+            let template_vars =
+                build_hook_context(&ctx, &extra_vars, VarScope::Referenced(&referenced))?;
 
             // The `--execute` payload is parsed by the active directive shell:
             // the PowerShell wrapper `Invoke-Expression`s the EXEC directive
@@ -1784,7 +1780,7 @@ impl SwitchPipeline<'_> {
             let escape_mode = directive_shell_escape_mode();
 
             // Expand template variables in command, escaped for the directive shell.
-            let expanded_cmd = expand_template(cmd, &vars, escape_mode, repo, "--execute command")?;
+            let expanded_cmd = template_vars.expand(cmd, escape_mode, repo, "--execute command")?;
 
             // Append any trailing args (after --) to the execute command.
             // Each arg is template-expanded literally, then escaped for the
@@ -1795,9 +1791,8 @@ impl SwitchPipeline<'_> {
                 let expanded_args: Result<Vec<_>, _> = execute_args
                     .iter()
                     .map(|arg| {
-                        expand_template(
+                        template_vars.expand(
                             arg,
-                            &vars,
                             ShellEscapeMode::Literal,
                             repo,
                             "--execute argument",

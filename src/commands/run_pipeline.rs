@@ -55,7 +55,6 @@
 //! since the expanded string is passed to a shell for interpretation.
 
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::fs;
 use std::io::Read as _;
 use std::path::Path;
@@ -63,6 +62,7 @@ use std::process::{Child, ExitStatus, Stdio};
 
 use anyhow::Context;
 
+use worktrunk::config::TemplateContext;
 use worktrunk::git::{Repository, WorktrunkError};
 use worktrunk::shell_exec::{ShellConfig, scrub_git_discovery_env_vars};
 use worktrunk::trace::CommandTrace;
@@ -108,8 +108,7 @@ pub fn run_pipeline() -> anyhow::Result<()> {
                 let log_file = create_command_log(&spec, &log_name)?;
                 let step_ctx = step_context(&spec.context, name.as_deref());
                 let expanded = expand_shell_template(template, &step_ctx, &repo, template_name)?;
-                let step_json = serde_json::to_string(&*step_ctx)
-                    .context("failed to serialize step context")?;
+                let step_json = step_ctx.to_json();
                 let (mut child, mut trace) =
                     spawn_shell_command(&expanded, &spec.worktree_path, &step_json, log_file)?;
                 let status = wait_resolving(&mut child, &mut trace, &expanded)?;
@@ -131,14 +130,11 @@ pub fn run_pipeline() -> anyhow::Result<()> {
 ///
 /// The shared pipeline context has `hook_name` stripped (it varies per step).
 /// Returns a `Cow` so unnamed steps borrow the base context without cloning.
-fn step_context<'a>(
-    base: &'a HashMap<String, String>,
-    name: Option<&str>,
-) -> Cow<'a, HashMap<String, String>> {
+fn step_context<'a>(base: &'a TemplateContext, name: Option<&str>) -> Cow<'a, TemplateContext> {
     match name {
         Some(n) => {
             let mut ctx = base.clone();
-            ctx.insert("hook_name".into(), n.into());
+            ctx.insert("hook_name", n);
             Cow::Owned(ctx)
         }
         None => Cow::Borrowed(base),
@@ -246,8 +242,7 @@ fn run_concurrent_group(
             let cmd_ctx = step_context(&spec.context, cmd.name.as_deref());
             let expanded =
                 expand_shell_template(&cmd.template, &cmd_ctx, repo, &cmd.template_name)?;
-            let cmd_json =
-                serde_json::to_string(&*cmd_ctx).context("failed to serialize step context")?;
+            let cmd_json = cmd_ctx.to_json();
             let (mut child, mut trace) =
                 spawn_shell_command(&expanded, &spec.worktree_path, &cmd_json, log_file)?;
             *cmd_index += 1;

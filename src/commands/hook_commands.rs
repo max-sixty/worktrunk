@@ -4,7 +4,6 @@
 //! - `run_hook` - Execute a specific hook type
 //! - `handle_hook_show` - Display configured hooks
 
-use std::collections::HashMap;
 use std::fmt::Write as _;
 
 use anyhow::Context;
@@ -12,7 +11,8 @@ use color_print::cformat;
 use strum::IntoEnumIterator;
 use worktrunk::HookType;
 use worktrunk::config::{
-    ALIAS_ARGS_KEY, Approvals, CommandConfig, ProjectConfig, UserConfig, referenced_vars_for_config,
+    ALIAS_ARGS_KEY, Approvals, CommandConfig, ProjectConfig, UserConfig, VarScope,
+    referenced_vars_for_config,
 };
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
@@ -657,29 +657,24 @@ fn expand_command_template(
     let default_branch = ctx.repo.default_branch();
     let template_vars = build_manual_hook_template_vars(ctx, hook_type, default_branch.as_deref());
     let extra_vars = template_vars.as_extra_vars();
-    let mut template_ctx = build_hook_context(ctx, &extra_vars, None)?;
-    template_ctx.insert("hook_type".into(), hook_type.to_string());
+    let mut template_ctx = build_hook_context(ctx, &extra_vars, VarScope::All)?;
+    template_ctx.insert("hook_type", hook_type.to_string());
     if let Some(name) = hook_name {
-        template_ctx.insert("hook_name".into(), name.into());
+        template_ctx.insert("hook_name", name);
     }
     // Preview has no CLI args to forward. Inject an empty JSON sequence
     // so templates that reference `{{ args }}` render cleanly rather than
     // erroring with "undefined value" at the preview site.
-    template_ctx.insert(ALIAS_ARGS_KEY.into(), "[]".into());
-    let vars: HashMap<&str, &str> = template_ctx
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
+    template_ctx.insert(ALIAS_ARGS_KEY, "[]");
 
-    // Standard template expansion. Hooks always run through `Cmd::shell`
-    // (POSIX), so the preview is POSIX-escaped.
-    // On any error, show both the template and error message
-    Ok(worktrunk::config::expand_template(
-        template,
-        &vars,
-        worktrunk::shell_exec::ShellEscapeMode::Posix,
-        ctx.repo,
-        "hook preview",
-    )
-    .unwrap_or_else(|err| format!("# {}\n{}", err.message, template)))
+    // Hooks always run through `Cmd::shell` (POSIX), so the preview is
+    // POSIX-escaped. On any error, show both the template and error message.
+    Ok(template_ctx
+        .expand(
+            template,
+            worktrunk::shell_exec::ShellEscapeMode::Posix,
+            ctx.repo,
+            "hook preview",
+        )
+        .unwrap_or_else(|err| format!("# {}\n{}", err.message, template)))
 }
