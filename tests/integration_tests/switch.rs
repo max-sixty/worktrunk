@@ -638,6 +638,62 @@ fn test_switch_execute_fallback_does_not_inherit_git_discovery_vars(mut repo: Te
     );
 }
 
+/// `--execute` computes only the template variables its command names.
+///
+/// The context map built at that call site feeds `expand_template` and nothing
+/// else — the payload reaches the child as a shell string, never as JSON on
+/// stdin, and `--execute` renders no `-v` variables table — so a var the
+/// templates don't reference is a git subprocess whose result is discarded.
+/// `var_default_branch` is the one with teeth: on a clone with no
+/// `refs/remotes/origin/HEAD` and no cached `worktrunk.default-branch` it falls
+/// through to `git ls-remote`, so an unfiltered context puts a variable-free
+/// `wt switch -x` on the network.
+///
+/// The `var_*` spans in the `-vv` trace are that work made observable. The
+/// second case is the control: it proves the trace captures spans from this
+/// call site, so the first case's empty set is the filter working rather than
+/// the trace missing them.
+#[rstest]
+fn test_switch_execute_computes_only_referenced_vars(mut repo: TestRepo) {
+    repo.add_worktree("exec-vars");
+    let trace = repo.root_path().join(".git/wt/logs/trace.jsonl");
+
+    // Each `-vv` run replaces trace.jsonl, so the two cases don't accumulate.
+    let var_spans = |execute: &str| -> Vec<String> {
+        let output = repo
+            .wt_command()
+            .args(["-vv", "switch", "exec-vars", "--execute", execute])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "switch --execute '{execute}' failed:\nstderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let raw = fs::read_to_string(&trace).expect("-vv should write trace.jsonl");
+        let mut spans: Vec<String> = raw
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter(|record| record["kind"] == "span")
+            .filter_map(|record| record["span"].as_str().map(str::to_owned))
+            .filter(|span| span.starts_with("var_"))
+            .collect();
+        spans.sort();
+        spans
+    };
+
+    let none_referenced = var_spans("echo hi");
+    assert!(
+        none_referenced.is_empty(),
+        "a --execute command naming no variables should compute none, got {none_referenced:?}"
+    );
+    assert_eq!(
+        var_spans("echo {{ commit }}"),
+        ["var_commit"],
+        "a --execute command naming commit should compute exactly that"
+    );
+}
+
 /// `--execute` with trailing `-- args` containing shell metacharacters: the
 /// constructed command appended to the exec directive file must POSIX-escape
 /// each trailing arg so the user's shell wrapper (`sh -c`, `bash -c`, …)

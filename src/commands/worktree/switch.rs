@@ -14,7 +14,8 @@ use dunce::canonicalize;
 use serde::Serialize;
 use worktrunk::HookType;
 use worktrunk::config::{
-    UserConfig, ValidationScope, expand_template, template_references_var, validate_template,
+    UserConfig, ValidationScope, expand_template, referenced_vars_for_templates,
+    template_references_var, validate_template,
 };
 use worktrunk::git::remote_ref::{
     self, AzureDevOpsProvider, GitHubProvider, GitLabProvider, GiteaProvider, RemoteRefInfo,
@@ -1752,7 +1753,23 @@ impl SwitchPipeline<'_> {
                 result.path(),
                 yes,
             );
-            let template_vars = build_hook_context(&ctx, &extra_vars, None)?;
+            // Compute only the vars the command actually names. The map is
+            // consumed by `expand_template` and nothing else — the child
+            // receives a shell string through the EXEC directive file (or
+            // `sh -c`), never the context as JSON on stdin, and `--execute`
+            // renders no `-v` variables table. So a var the templates don't
+            // reference is a git subprocess whose result is thrown away.
+            //
+            // The union is complete: `validate_switch_templates` already
+            // parsed both positions against `ValidationScope::SwitchExecute`
+            // before the switch ran, so nothing reaching here is unparsable.
+            // No `alias_context_filter` — `args` is alias scope only, and
+            // `branch` (the implicit read behind `{{ vars.X }}`) is in
+            // `build_hook_context`'s unconditional cheap block.
+            let referenced = referenced_vars_for_templates(
+                std::iter::once(cmd).chain(execute_args.iter().map(String::as_str)),
+            );
+            let template_vars = build_hook_context(&ctx, &extra_vars, Some(&referenced))?;
             let vars: HashMap<&str, &str> = template_vars
                 .iter()
                 .map(|(k, v)| (k.as_str(), v.as_str()))

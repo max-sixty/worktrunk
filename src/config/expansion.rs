@@ -789,16 +789,35 @@ pub fn template_environment(repo: &Repository) -> Environment<'static> {
 /// positives from literal text like `template_vars.txt`. Templates that fail
 /// to parse contribute nothing — a syntax error surfaces later at expansion
 /// time with a richer message.
-fn referenced_vars(template: &str) -> std::collections::HashSet<String> {
+fn referenced_vars(template: &str) -> BTreeSet<String> {
     minijinja::Environment::new()
         .template_from_str(template)
-        .map(|tmpl| tmpl.undeclared_variables(false))
+        .map(|tmpl| tmpl.undeclared_variables(false).into_iter().collect())
         .unwrap_or_default()
 }
 
 /// Check if a template references a specific top-level variable.
 pub fn template_references_var(template: &str, var: &str) -> bool {
     referenced_vars(template).contains(var)
+}
+
+/// Union of top-level variables referenced across `templates`.
+///
+/// Builds the `referenced` filter for `build_hook_context` at sites that expand
+/// bare template strings rather than a
+/// [`CommandConfig`](super::CommandConfig) — currently `wt switch --execute`,
+/// whose command and trailing args are two separate expansion positions over
+/// one shared context map.
+///
+/// Non-erroring, unlike `referenced_vars_for_config`: an unparsable template
+/// contributes nothing, and its syntax error surfaces from the caller's own
+/// validation, which names the position at fault. Under-collecting is
+/// therefore harmless — the vars a broken template named are ones it never
+/// gets to read.
+pub fn referenced_vars_for_templates<'a>(
+    templates: impl IntoIterator<Item = &'a str>,
+) -> BTreeSet<String> {
+    templates.into_iter().flat_map(referenced_vars).collect()
 }
 
 /// Union of top-level variables referenced across every command in `cfg`.
@@ -2879,6 +2898,30 @@ mod tests {
         let err = validate_template("{{ unclosed", ValidationScope::Alias, &test.repo, "test")
             .unwrap_err();
         assert!(err.message.contains("syntax error"), "got: {}", err.message);
+    }
+
+    /// The `--execute` filter unions across the command and its trailing args,
+    /// which are separate expansion positions over one context map — a var
+    /// named only in an arg still has to be computed.
+    #[test]
+    fn test_referenced_vars_for_templates_unions_positions() {
+        let refs = referenced_vars_for_templates(["echo {{ commit }}", "--onto={{ branch }}"]);
+        assert_eq!(
+            refs.iter().map(String::as_str).collect::<Vec<_>>(),
+            ["branch", "commit"]
+        );
+    }
+
+    /// Unparsable templates contribute nothing rather than erroring — the
+    /// caller's own validation reports the syntax error, naming which position
+    /// was at fault.
+    #[test]
+    fn test_referenced_vars_for_templates_skips_unparsable() {
+        let refs = referenced_vars_for_templates(["{{ unclosed", "echo {{ commit }}"]);
+        assert_eq!(
+            refs.iter().map(String::as_str).collect::<Vec<_>>(),
+            ["commit"]
+        );
     }
 
     #[test]

@@ -224,14 +224,29 @@ impl<'a> CommandContext<'a> {
 /// and used directly for template variable expansion.
 ///
 /// `referenced`, when `Some`, restricts the map to keys named in the set —
-/// vars the body doesn't reference are not computed. Aliases pass their
-/// `referenced_vars_for_config` set (extended via `alias_context_filter`)
-/// so unused git lookups (`var_commit` rev-parse, `var_default_branch` cold
-/// detection, `branch().upstream()`) are skipped, and the verbose
-/// `template variables:` table only lists vars the body actually references.
-/// Hooks pass `None` so every standard var stays available — the child
-/// receives the full context as JSON on stdin and may consume keys that
-/// don't appear in the inline `{{ }}` template (e.g. via `jq`).
+/// vars the body doesn't reference are not computed, skipping the git lookups
+/// behind them (`var_commit` rev-parse, `var_default_branch` cold detection,
+/// `branch().upstream()`).
+///
+/// Which to pass follows from who reads the map, not from what kind of command
+/// is running:
+///
+/// - **`Some`** when the map only feeds `expand_template`. A var the templates
+///   don't name is computed and discarded. Aliases pass
+///   `referenced_vars_for_config` (extended via `alias_context_filter`);
+///   `wt switch --execute` passes `referenced_vars_for_templates` over its
+///   command and trailing args.
+/// - **`None`** when something reads keys the `{{ }}` templates never mention.
+///   Either the child receives the whole map as JSON on stdin and may pull
+///   keys out of it (e.g. via `jq`) — hook pipelines, `wt step for-each` — or
+///   the command's output *is* the variable listing, which filtering would
+///   narrow to what the body happens to reference: `wt step eval -v`, and the
+///   hook pipeline's own `format_hook_variables` table.
+///
+/// The template-preview paths (`render_hook_commands`, `wt config alias`) fit
+/// neither case and still pass `None`: they expand and print one line per
+/// configured command, so filtering would be correct but saves nothing an
+/// interactive display would notice.
 pub fn build_hook_context(
     ctx: &CommandContext<'_>,
     extra_vars: &[(&str, &str)],
