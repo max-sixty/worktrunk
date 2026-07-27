@@ -43,27 +43,27 @@ struct Candidate {
 }
 
 impl Candidate {
-    /// The path wins whenever the scan found one, because the scan already
-    /// identified the exact worktree: naming it by branch instead re-resolves
-    /// to git's first-listed checkout, which for a branch checked out twice is
-    /// a different worktree — and for a stale entry is the live one. Only an
-    /// `Orphan` candidate (a branch with no worktree at all) has no path, and
-    /// `RemoveTarget::Path` degrades to branch-only deletion when the directory
-    /// is already gone, so a stale entry still prunes.
+    /// Always the path, because the scan already identified the exact worktree:
+    /// naming it by branch instead re-resolves to git's first-listed checkout,
+    /// which for a branch checked out twice is a different worktree — and for a
+    /// stale entry is the live one. `RemoveTarget::Path` degrades to branch-only
+    /// deletion when the directory is already gone, so a stale entry still
+    /// prunes.
+    ///
+    /// Only a candidate that arrives without a scan-time plan reaches this, and
+    /// `check_one` plans everything except `Prunable`, which always carries the
+    /// stale worktree's path.
     fn remove_target(&self) -> anyhow::Result<RemoveTarget<'_>> {
         match self.kind {
             CandidateKind::Current => Ok(RemoveTarget::Current),
             CandidateKind::StaleDetached => Err(anyhow::anyhow!(
                 "stale detached candidate has no remove target"
             )),
-            CandidateKind::BranchOnly | CandidateKind::Other => match &self.path {
-                Some(path) => Ok(RemoveTarget::Path(path)),
-                None => Ok(RemoveTarget::Branch(
-                    self.branch
-                        .as_ref()
-                        .context("candidate has neither path nor branch")?,
-                )),
-            },
+            CandidateKind::BranchOnly | CandidateKind::Other => Ok(RemoveTarget::Path(
+                self.path
+                    .as_ref()
+                    .context("candidate has no worktree path")?,
+            )),
         }
     }
 

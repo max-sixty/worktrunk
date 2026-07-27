@@ -4061,16 +4061,20 @@ fn test_remove_duplicate_checkout_by_name_retains_branch(mut repo: TestRepo) {
 /// `-D` overrides every other retention wt has, but it can't override this one:
 /// the ref is live in another worktree, so honoring it would corrupt that
 /// worktree. The refusal warns rather than passing silently.
+///
+/// `--foreground` so the retention is also exercised on the synchronous
+/// removal path; the other tests here take the background one.
 #[rstest]
 fn test_remove_force_delete_refused_while_branch_is_shared(mut repo: TestRepo) {
-    use crate::common::wait_for_worktree_removed;
-
     let survivor = repo.add_worktree("feature");
     let dup = add_force_duplicate(&repo, "feature", "feature-dup");
 
-    let stderr = run_remove(&repo, &[dup.to_str().unwrap(), "-D"]);
+    let stderr = run_remove(&repo, &[dup.to_str().unwrap(), "-D", "--foreground"]);
 
-    wait_for_worktree_removed(&dup);
+    assert!(
+        !dup.exists(),
+        "foreground removal should finish before returning\nstderr:\n{stderr}",
+    );
     assert_branch_exists(&repo, "feature", true, &stderr);
     assert_not_orphaned(&repo, &survivor, &stderr);
     assert!(
