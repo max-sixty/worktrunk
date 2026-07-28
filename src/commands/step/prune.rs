@@ -154,8 +154,9 @@ fn prune_summary(candidates: &[Candidate]) -> String {
         match &c.kind {
             CandidateKind::BranchOnly if c.deletes_branch => branch_only += 1,
             // Nothing but the stale worktree entry went. An orphan branch
-            // never reaches here — it has no worktree entry, so no sibling
-            // checkout exists to retain it.
+            // that kept its branch never reaches here — with no worktree
+            // entry it removed nothing, and `try_remove` excludes the no-op
+            // from the removed list entirely.
             CandidateKind::BranchOnly => worktree_only += 1,
             // A stale detached worktree never has a branch.
             CandidateKind::StaleDetached => worktree_only += 1,
@@ -271,7 +272,18 @@ fn try_remove(
     };
     let fate = handle_remove_output(&plan, execution, ctx.hook_plan, true, &mut announcer)?;
     announcer.flush()?;
-    Ok(Some(fate.deleted(&plan)))
+    let branch_deleted = fate.deleted(&plan);
+    // A branch-only candidate that kept its branch removed nothing at all —
+    // unless planning pruned a stale worktree entry, a removal worth counting.
+    // Excluding the no-op keeps the summary and JSON honest when a concurrent
+    // writer advanced an orphan branch between scan and delete (the per-item
+    // retention warning has already told the user).
+    if !branch_deleted
+        && let RemovalPlan::BranchOnly { pruned: false, .. } = plan
+    {
+        return Ok(None);
+    }
+    Ok(Some(branch_deleted))
 }
 
 /// One candidate skipped because its project hooks aren't yet approved.
