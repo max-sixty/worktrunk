@@ -44,12 +44,11 @@ design choices behind this — read it before re-adding guards or routes. -->
    consistent with existing worktree names, or, mid-session, from the work
    being moved; with nothing to derive from, ask.
 
-2. **Create and enter it in one call**, when no repo argument was given:
-   `EnterWorktree({name: "<branch>"})`. Worktrunk's `WorktreeCreate` hook
-   routes that through `wt switch --create`, so the worktree lands in the usual
-   sibling layout and in `wt list`, and the user is asked to confirm nothing.
-   On success, do the task (or, with no task text, confirm it's ready and
-   wait).
+2. **With no repo argument, create and enter in one call:**
+   `EnterWorktree({name: "<branch>"})`. Worktrunk's `WorktreeCreate` hook runs
+   `wt switch --create`, so the result is an ordinary `wt` worktree in the
+   usual sibling layout, and the user sees no confirmation prompt. On success,
+   do the task (or, with no task text, confirm it's ready and wait).
 
    Mid-session, carry uncommitted work across: `git stash push -u` before
    creating the worktree, then `git -C <path> stash pop` after (the stash is
@@ -74,26 +73,16 @@ design choices behind this — read it before re-adding guards or routes. -->
 
    - **Accepted** → the session is re-rooted in the worktree. Do the task (or,
      with no task text, confirm it's ready and wait).
-   - **Declined** → the denial reports a decision: the user answered no to the
-     confirmation Claude Code shows for entering a worktree outside
-     `.claude/worktrees/`. The worktree `wt` just created still exists; only
-     the entry didn't happen. Report its path and ask how to proceed, since
-     reaching it through `cd` would override that answer.
-   - **Rejected** → every other failure, a denial that only reports the session
-     couldn't ask included. Nothing moved, and one recovery covers them all.
-     `EnterWorktree` re-roots only into a worktree the session is permitted to
-     enter, and that permitted set is fixed by two factors: the repo your cwd
-     resolves to, and the session's state. Common rejections are that set
-     coming up empty or without the target: no repo resolves (cwd is outside
-     any git repo, e.g. a non-git parent such as `~/workspace` that only holds
-     repos, as in a background job), which fails with `the current directory is
-     not in a git repository`; the target belongs to a different repo than the
-     one resolved; or the session is already rooted in a worktree (or is a
-     pinned agent), a state that narrows the set to the resolved repo's
-     `.claude/worktrees/` and so excludes even a same-repo `wt` sibling. The
-     recovery test is whether you can `cd` into the worktree, which works when
-     it's inside an allowed directory (a `permissions.additionalDirectories`
-     entry such as `~/workspace`). So `cd <path>` and read the result:
+   - **Tool error** — the tool ran and returned an error (`Cannot enter
+     worktree: …`) → graceful; nothing moved, and one recovery covers them
+     all. Common causes: the cwd resolves to no git repo (e.g. a non-git
+     parent like `~/workspace` that only holds repos, as in a background job)
+     or to a different repo than the target; or the session is already rooted
+     in a worktree (or is a pinned agent), which limits entry to the current
+     repo's `.claude/worktrees/` and excludes even a same-repo `wt` sibling.
+     The recovery test is whether you can `cd` into the worktree, which works
+     when it's inside an allowed directory. So `cd <path>` and read the
+     result:
      - no `Shell cwd was reset` notice → it stuck; the worktree is reachable.
        Work there, but a bare `cd` is not a tracked re-root, so the cwd can
        revert to the session's launch worktree across turns (and in spawned
@@ -104,6 +93,14 @@ design choices behind this — read it before re-adding guards or routes. -->
        `permissions.additionalDirectories` (durable, every session), or run
        `/add-dir <path>` (this session). Then continue. Don't grind through
        absolute paths with `cd` resetting on every command.
+   - **Denied** — the call itself was refused, with no tool error → however
+     the denial is worded, it is the user's answer to the confirmation Claude
+     Code shows for entering a worktree outside `.claude/worktrees/`, unless
+     there was no user to ask (the denial says the session couldn't prompt),
+     which decides nothing — take the recovery above. On the user's answer:
+     the worktree `wt` just created still exists; only the entry didn't
+     happen. Report its path and ask how to proceed, since reaching it
+     through `cd` would override that answer.
 
 ## Cleanup
 
@@ -113,9 +110,9 @@ remove it unprompted.
 
 A worktree from step 2 that the session never touched — no changed files, no
 commits — is cleaned up when the session ends, branch included; anything
-written into it keeps it. A worktree from step 3 always stays. If the user
-asks to leave mid-session,
-`ExitWorktree({action: "keep"})` returns the session to its original directory;
+written into it keeps it. A worktree from step 3 always stays. If the user asks
+to leave mid-session, `ExitWorktree({action: "keep"})` returns the session to
+its original directory;
 `ExitWorktree` cannot remove a worktree entered by `path`, so removing one of
 those is always `wt remove <branch>`.
 

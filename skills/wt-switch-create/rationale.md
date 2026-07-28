@@ -1,14 +1,8 @@
 # wt-switch-create design rationale
 
-Why the skill creates by name and falls back to a path: `EnterWorktree({name})`
-creates and enters in one call, through worktrunk's own hook and with no
-confirmation, and it covers the common invocation. What it can't do — another
-repo, an existing branch, a session that already entered a worktree — falls
-back to `wt` plus `EnterWorktree({path})`, driven by the error rather than by a
-guard that predicts it. When a path entry fails for any reason but a decision
-against it, work in the worktree if it's reachable or escalate to the user to
-make it reachable. Not the guard-heavy multi-route flow this replaced, and not
-the silent absolute-paths fallback that read as a failure.
+The design of the skill's create-and-enter flow, and the verified harness
+behavior behind it. The flow is error-driven; predictive guards and extra
+routes were tried and cut.
 
 Every claim here was verified against primary sources (2026-06-11 to
 2026-06-17): Claude Code 2.1.173, with the path-entry and working-directory
@@ -33,7 +27,8 @@ Binary symbol names are deliberately omitted — they re-minify every build.
    machine-readable output (`.path` on stdout, status on stderr). Creating in
    another repo is fine; only *entering* the result is constrained. Entry that
    someone declined ends there, with the worktree left unentered (M2).
-3. On any other refusal, the session can still work there iff the path sits
+3. On a tool error (or a denial with no user behind it), the session can still
+   work there iff the path sits
    inside a directory it's allowed in (an `additionalDirectories` entry). A
    single `cd <path>` discovers which: it sticks when reachable, resets when
    not. Reachable → work in place. Unreachable → escalate, because the agent
@@ -121,16 +116,23 @@ cwd.
   (`default`, `acceptEdits`, `auto`); `bypassPermissions` allows without
   asking, and a session that can't prompt denies without asking.
   `EnterWorktree({name})` passes no `path`, so it never asks.
-- **Reading the failure:** step 3 routes on whether the denial reports a
-  decision or an inability to ask. A decision stops the flow; an inability
-  decides nothing, so it takes the recovery, which is what an unattended
-  session wants. The distinction has to come from the result text, because a
-  typed "no" arrives as a bare denial naming neither the tool nor a reason:
-  given branches labeled by who refused, a blind agent reasons its way into the
-  recovery and works in the worktree the user just declined. The only decision
-  that reaches step 3 is that answer — a `permissions.deny` entry for
-  `EnterWorktree`, with or without an argument pattern, drops the tool from the
-  session instead, so there is no call to deny.
+- **Reading the failure:** step 3 splits tool errors from denials
+  structurally rather than by parsing the denial's wording. The tool's own
+  rejections are verbatim and graceful (`Cannot enter …`), so they key the
+  recovery; a denial of the call defaults to being the user's answer, the
+  no-user case an exception keyed on the denial saying the session couldn't
+  prompt. The default falls on the safe side because denial texts don't
+  classify reliably: a typed "no" arrives as the generic `The user doesn't
+  want to proceed with this tool use`, naming neither the tool nor the
+  confirmation, and in blind tests every wording that asked the agent to
+  recognize it — branches labeled by who refused, "the denial reports a
+  decision", even that string quoted as an example — sent the agent into the
+  recovery, into the worktree the user had just declined. A recovery that
+  follows a denial invites that routing, so the denial branch leads with
+  stopping. The only decision that reaches step 3 is that answer — a
+  `permissions.deny` entry for `EnterWorktree`, with or without an argument
+  pattern, drops the tool from the session instead, so there is no call to
+  deny.
 - Rejections are graceful and side-effect-free (nothing is created). The three
   the skill's own flow produces, verbatim (others exist — a worktree locked by
   another running session, the main working tree, a prunable registration):
@@ -247,14 +249,9 @@ exits 1 with empty stdout.
 
 ## Known limits (deliberate)
 
-- `EnterWorktree` re-roots only within the repo the cwd is in, and the cwd can't
-  `cd` outside the session's `additionalDirectories` (Claude Code restrictions,
-  not skill gaps). So another repo is reachable only when it, or a parent like
-  `~/workspace`, is in `additionalDirectories` — then the session `cd`s in and
-  works there (and, from a plain session, can re-root within it). Otherwise the
-  skill escalates for a one-line config add rather than degrading to
-  absolute-paths mode. The agent can't enlarge the set itself (`/add-dir` is
-  user-typed), so this handback is irreducible — but set once, it is permanent.
+- Another repo is reachable only through `additionalDirectories` ("How they
+  compose", above); outside it the skill escalates for the one-line config add
+  rather than degrading to absolute-paths mode.
 - A pinned or already-in-worktree session can't even re-enter a *same-repo*
   sibling worktree (the stricter `.claude/worktrees/` check); it lands in the
   same reachability test and the same escalation.
