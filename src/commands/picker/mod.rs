@@ -135,8 +135,8 @@ use super::list::render::PLACEHOLDER;
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::worktree::{RemovalPlan, SwitchPipeline};
 use crate::cli::SwitchFormat;
-use crate::output::{BackgroundFallbackMode, handle_remove_output};
-use worktrunk::git::{BranchDeletionMode, delete_branch_if_safe};
+use crate::output::{RemovalExecution, handle_remove_output};
+use worktrunk::git::{BranchDeletionMode, execute_branch_deletion};
 
 use items::{LocalContent, LocalContentSlot, PreviewCache, ShortcutTable, WORKTREE_OUTPUT_PREFIX};
 use preview::{PreviewLayout, PreviewMode, PreviewState, PreviewStateData};
@@ -403,14 +403,15 @@ impl AltXRemover {
                 let main_repo = Repository::at(main_path)?;
                 let plan = approved_removal_plan(repo, main_path, worktree_path, approvals)?;
                 let mut announcer = HookAnnouncer::new(&main_repo, false);
+                // The fate is dropped: the picker infers success by observing
+                // whether the target survived (`removal_target_still_present`),
+                // never from what the executor reports.
                 handle_remove_output(
                     result,
-                    /* foreground */ true,
+                    RemovalExecution::Silent,
                     &plan,
                     /* quiet */ true,
-                    /* silent */ true,
                     &mut announcer,
-                    BackgroundFallbackMode::Detached,
                 )?;
                 announcer.flush()?;
             }
@@ -422,15 +423,12 @@ impl AltXRemover {
                 if !deletion_mode.should_keep() {
                     let default_branch = repo.default_branch();
                     let target = default_branch.as_deref().unwrap_or("HEAD");
-                    if let Ok(snapshot) = repo.capture_refs()
-                        && let Err(e) = delete_branch_if_safe(
-                            repo,
-                            &snapshot,
-                            branch_name,
-                            target,
-                            deletion_mode.is_force(),
-                        )
-                    {
+                    if let Err(e) = execute_branch_deletion(
+                        repo,
+                        branch_name,
+                        target,
+                        deletion_mode.is_force(),
+                    ) {
                         // A safe-delete refusal is `Ok(NotDeleted)`, not an error;
                         // this is a genuine `git branch -D` failure. The row is
                         // restored anyway because the branch still exists (see

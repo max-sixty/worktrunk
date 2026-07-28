@@ -4,7 +4,9 @@
 
 use std::path::{Path, PathBuf};
 
-use worktrunk::git::{BranchDeletionMode, IntegrationReason, RefType};
+use worktrunk::git::{
+    BranchDeletionMode, BranchDeletionOutcome, BranchDeletionResult, IntegrationReason, RefType,
+};
 
 /// Flags indicating which merge operations occurred
 #[derive(Debug, Clone, Copy)]
@@ -169,6 +171,61 @@ impl SharedBranchCheckout {
     }
 }
 
+/// What actually happened to a [`RemovalPlan`]'s branch by the time the
+/// executor returned — the observed counterpart of the intent the plan
+/// carries.
+///
+/// Consumers that report deletions (the prune summary, `--format=json`) read
+/// this rather than the plan, so a deletion the CAS refused or an unmerged
+/// branch SafeDelete declined is never reported as deleted. `Deferred` is the
+/// one case with nothing to observe; [`deleted`](Self::deleted) falls back to
+/// the plan's intent there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BranchFate {
+    /// No deletion was attempted: the plan had no branch (detached worktree)
+    /// or retained it (`deletion_mode` Keep — shared checkout, or
+    /// `--no-delete-branch`).
+    NotAttempted,
+    /// The deletion ran and the branch is gone.
+    Deleted,
+    /// The deletion ran and the branch survives: SafeDelete declined an
+    /// unmerged branch, the CAS refused a moved ref, or the delete command
+    /// itself failed (already narrated at the site that observed it).
+    Retained,
+    /// The deletion was handed to a detached background process (the legacy
+    /// `git worktree remove` fallback) whose outcome this process never sees.
+    Deferred,
+}
+
+impl BranchFate {
+    /// Map a synchronous deletion attempt's result. `None` means no attempt
+    /// was made.
+    pub fn from_result(result: Option<&anyhow::Result<BranchDeletionResult>>) -> Self {
+        match result {
+            None => Self::NotAttempted,
+            Some(Ok(r)) => match r.outcome {
+                BranchDeletionOutcome::Integrated(_) | BranchDeletionOutcome::ForceDeleted => {
+                    Self::Deleted
+                }
+                BranchDeletionOutcome::NotDeleted | BranchDeletionOutcome::RetainedRaced => {
+                    Self::Retained
+                }
+            },
+            Some(Err(_)) => Self::Retained,
+        }
+    }
+
+    /// Whether the branch was deleted, best knowledge: the observed outcome
+    /// where one exists, the plan's intent for `Deferred`.
+    pub fn deleted(&self, plan: &RemovalPlan) -> bool {
+        match self {
+            Self::Deleted => true,
+            Self::Deferred => plan.deletes_branch(),
+            Self::NotAttempted | Self::Retained => false,
+        }
+    }
+}
+
 /// A validated, planned removal — what `prepare_worktree_removal` decided to
 /// remove and how, before anything runs.
 ///
@@ -268,15 +325,16 @@ impl RemovalPlan {
         }
     }
 
-    /// Whether this removal deletes a branch.
+    /// Whether this plan intends to delete a branch.
     ///
     /// False for a detached worktree, which has none, and false whenever a
     /// sibling checkout forced `deletion_mode` to [`BranchDeletionMode::Keep`]
-    /// (see [`SharedBranchCheckout`]). What the plan intends, not what the
-    /// delete returned: a `SafeDelete` still re-decides against fresh refs, and
-    /// a background removal hasn't run yet — so this answers the same question
-    /// the removal message answers when it says "worktree" rather than
-    /// "worktree & branch".
+    /// (see [`SharedBranchCheckout`]). Intent only: a `SafeDelete` still
+    /// re-decides against fresh refs at execution, so anything reporting what
+    /// happened reads [`BranchFate`] and falls back here only for
+    /// [`BranchFate::Deferred`]. This answers the same question the progress
+    /// message answers when it says "worktree" rather than "worktree &
+    /// branch".
     pub fn deletes_branch(&self) -> bool {
         match self {
             RemovalPlan::Worktree {
@@ -289,7 +347,12 @@ impl RemovalPlan {
     }
 
     /// Convert to a JSON value for structured output.
-    pub fn to_json(&self) -> serde_json::Value {
+    ///
+    /// `fate` is what execution reported back; `branch_deleted` is derived
+    /// from it (via [`BranchFate::deleted`]) so the payload states what
+    /// happened, not what the plan hoped.
+    pub fn to_json(&self, fate: BranchFate) -> serde_json::Value {
+        let branch_deleted = fate.deleted(self);
         match self {
             RemovalPlan::Worktree {
                 worktree_path,
@@ -300,7 +363,7 @@ impl RemovalPlan {
                 "kind": "worktree",
                 "branch": branch_name,
                 "path": worktree_path,
-                "branch_deleted": self.deletes_branch(),
+                "branch_deleted": branch_deleted,
                 "branch_checked_out_at": branch_checked_out_at.as_ref().map(|c| &c.path),
             }),
             RemovalPlan::BranchOnly {
@@ -312,7 +375,7 @@ impl RemovalPlan {
                 "kind": "branch_only",
                 "branch": branch_name,
                 "pruned": pruned,
-                "branch_deleted": self.deletes_branch(),
+                "branch_deleted": branch_deleted,
                 "branch_checked_out_at": branch_checked_out_at.as_ref().map(|c| &c.path),
             }),
         }
@@ -356,6 +419,78 @@ mod tests {
             branch_checked_out_at: None,
         };
         assert_eq!(branch_only.branch_name(), Some("solo"));
+    }
+
+    /// The fate→deleted mapping: only an observed deletion counts, and only
+    /// `Deferred` consults the plan's intent. A raced or declined deletion
+    /// (`Retained`) reports false even when the plan meant to delete —
+    /// that divergence is the whole point of tracking fate separately.
+    #[test]
+    fn branch_fate_deleted_consults_plan_only_when_deferred() {
+        let deleting_plan = RemovalPlan::BranchOnly {
+            branch_name: "feature".to_string(),
+            deletion_mode: BranchDeletionMode::SafeDelete,
+            pruned: false,
+            target_branch: None,
+            integration_reason: None,
+            branch_checked_out_at: None,
+        };
+        let keeping_plan = RemovalPlan::BranchOnly {
+            branch_name: "feature".to_string(),
+            deletion_mode: BranchDeletionMode::Keep,
+            pruned: false,
+            target_branch: None,
+            integration_reason: None,
+            branch_checked_out_at: None,
+        };
+        let cases = [
+            (BranchFate::Deleted, true, true),
+            (BranchFate::Retained, false, false),
+            (BranchFate::NotAttempted, false, false),
+            // Deferred is the only intent-dependent row.
+            (BranchFate::Deferred, true, false),
+        ];
+        for (fate, with_delete_intent, with_keep_intent) in cases {
+            assert_eq!(fate.deleted(&deleting_plan), with_delete_intent, "{fate:?}");
+            assert_eq!(fate.deleted(&keeping_plan), with_keep_intent, "{fate:?}");
+        }
+    }
+
+    /// Synchronous deletion results map onto fates: deletions count, refusals
+    /// and errors read as the branch surviving, absence as never attempted.
+    #[test]
+    fn branch_fate_from_result_mapping() {
+        use worktrunk::git::IntegrationReason;
+
+        let fate = |outcome| {
+            BranchFate::from_result(Some(&Ok(BranchDeletionResult {
+                outcome,
+                integration_target: "main".to_string(),
+            })))
+        };
+        assert_eq!(
+            fate(BranchDeletionOutcome::Integrated(
+                IntegrationReason::SameCommit
+            )),
+            BranchFate::Deleted
+        );
+        assert_eq!(
+            fate(BranchDeletionOutcome::ForceDeleted),
+            BranchFate::Deleted
+        );
+        assert_eq!(
+            fate(BranchDeletionOutcome::NotDeleted),
+            BranchFate::Retained
+        );
+        assert_eq!(
+            fate(BranchDeletionOutcome::RetainedRaced),
+            BranchFate::Retained
+        );
+        assert_eq!(
+            BranchFate::from_result(Some(&Err(anyhow::anyhow!("boom")))),
+            BranchFate::Retained
+        );
+        assert_eq!(BranchFate::from_result(None), BranchFate::NotAttempted);
     }
 
     #[test]

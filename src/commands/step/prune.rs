@@ -25,7 +25,7 @@ use super::super::hook_plan::{ApprovedHookPlan, HookPlan, HookPlanBuilder};
 use super::super::hooks::HookAnnouncer;
 use super::super::repository_ext::{RemoveTarget, RepositoryCliExt, live_sibling_checkout};
 use super::super::worktree::RemovalPlan;
-use crate::output::{BackgroundFallbackMode, handle_remove_output};
+use crate::output::{BackgroundFallbackMode, RemovalExecution, handle_remove_output};
 
 /// A candidate worktree or branch selected for removal.
 #[derive(Clone)]
@@ -40,12 +40,16 @@ struct Candidate {
     path: Option<PathBuf>,
     /// Current worktree, other worktree, branch-only, or stale detached metadata
     kind: CandidateKind,
-    /// Whether the removal deletes `branch`, from
-    /// [`RemovalPlan::deletes_branch`]. The kind is a plan, not an outcome: a
-    /// branch a sibling worktree still has checked out is retained, so a
-    /// worktree candidate can take the worktree and leave the branch standing.
-    /// The summary counts this rather than the kind, so it never reports a
-    /// branch the run deliberately kept.
+    /// Whether the removal deletes `branch`. The kind is a plan, not an
+    /// outcome: a branch a sibling worktree still has checked out is retained,
+    /// so a worktree candidate can take the worktree and leave the branch
+    /// standing. The summary counts this rather than the kind, so it never
+    /// reports a branch the run deliberately kept.
+    ///
+    /// Starts as the scan's prediction (what the dry run prints); on the live
+    /// path [`try_remove`] overwrites it with the executed
+    /// [`BranchFate`](crate::commands::worktree::BranchFate), so a deletion
+    /// the CAS refused mid-run is counted as retained, not as the plan hoped.
     deletes_branch: bool,
 }
 
@@ -210,19 +214,22 @@ struct RemovalContext<'a> {
     check_lock: &'a RwLock<()>,
 }
 
-/// Try to remove a candidate immediately. Returns Ok(true) if removed,
-/// Ok(false) if skipped (preparation error), Err on execution error.
+/// Try to remove a candidate immediately. Returns `Ok(Some(branch_deleted))`
+/// if removed — the executed outcome the summary counts — `Ok(None)` if
+/// skipped (preparation error), `Err` on execution error.
 ///
 /// `plan` is the scan-time `prepare_worktree_removal` result from
 /// [`check_one`]. `Prunable` candidates arrive plan-less and prepare here,
 /// under the write lock, because preparing them prunes stale worktree
 /// metadata. Scan-time plans may be stale by execution; the pre-rename
-/// `ensure_clean` and the branch-delete CAS re-validate what matters.
+/// `ensure_clean` and the branch-delete CAS re-validate what matters — and the
+/// returned [`BranchFate`](crate::commands::worktree::BranchFate) is how a CAS
+/// refusal reaches the summary.
 fn try_remove(
     candidate: &Candidate,
     plan: Option<RemovalPlan>,
     ctx: &RemovalContext<'_>,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<Option<bool>> {
     let _span = Span::new(format!("prune-remove:{}", candidate.label));
     // The guard protects `()` — there is no shared state to corrupt, so a
     // poisoned lock is meaningless here. Recover the guard rather than
@@ -232,7 +239,8 @@ fn try_remove(
 
     if matches!(candidate.kind, CandidateKind::StaleDetached) {
         ctx.repo.prune_worktrees()?;
-        return Ok(true);
+        // A stale detached entry has no branch to delete.
+        return Ok(Some(false));
     }
 
     let plan = match plan {
@@ -249,24 +257,21 @@ fn try_remove(
             Err(_) => {
                 // prepare_worktree_removal is the gate: if the worktree can't
                 // be removed (dirty, locked, etc.), it's simply not selected.
-                return Ok(false);
+                return Ok(None);
             }
         },
     };
     let mut announcer = HookAnnouncer::new(ctx.repo, true);
     // `SynchronousForNonCurrent`: prune keeps the rename-failure fallback's
     // `.git/config` rewrite serialized with its integration-check readers.
-    handle_remove_output(
-        &plan,
-        ctx.foreground,
-        ctx.hook_plan,
-        true,
-        false,
-        &mut announcer,
-        BackgroundFallbackMode::SynchronousForNonCurrent,
-    )?;
+    let execution = if ctx.foreground {
+        RemovalExecution::Foreground
+    } else {
+        RemovalExecution::Background(BackgroundFallbackMode::SynchronousForNonCurrent)
+    };
+    let fate = handle_remove_output(&plan, execution, ctx.hook_plan, true, &mut announcer)?;
     announcer.flush()?;
-    Ok(true)
+    Ok(Some(fate.deleted(&plan)))
 }
 
 /// One candidate skipped because its project hooks aren't yet approved.
@@ -1047,7 +1052,7 @@ pub fn step_prune(
                     skipped_approval.push(SkippedApproval { path, differs });
                     continue;
                 }
-                let candidate = Candidate {
+                let mut candidate = Candidate {
                     check_idx: idx,
                     label,
                     branch,
@@ -1057,9 +1062,14 @@ pub fn step_prune(
                 };
                 if matches!(candidate.kind, CandidateKind::Current) {
                     deferred_current = Some((candidate, outcome.plan));
-                } else if try_remove(&candidate, outcome.plan, &removal_ctx)
-                    .with_context(|| candidate.removal_context())?
+                } else if let Some(branch_deleted) = try_remove(
+                    &candidate,
+                    outcome.plan,
+                    &removal_ctx,
+                )
+                .with_context(|| candidate.removal_context())?
                 {
+                    candidate.deletes_branch = branch_deleted;
                     removed.push(candidate);
                 }
             }
@@ -1070,9 +1080,11 @@ pub fn step_prune(
 
     let mut removed = removed;
     // Remove deferred current worktree last (cd-to-primary happens here)
-    if let Some((current, plan)) = deferred_current
-        && try_remove(&current, plan, &removal_ctx).with_context(|| current.removal_context())?
+    if let Some((mut current, plan)) = deferred_current
+        && let Some(branch_deleted) =
+            try_remove(&current, plan, &removal_ctx).with_context(|| current.removal_context())?
     {
+        current.deletes_branch = branch_deleted;
         removed.push(current);
     }
 

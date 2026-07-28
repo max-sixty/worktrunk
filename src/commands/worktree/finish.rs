@@ -38,7 +38,8 @@ use crate::commands::repository_ext::{
 };
 use crate::commands::template_vars::TemplateVars;
 use crate::output::{
-    BackgroundFallbackMode, handle_remove_output, post_hook_display_path, pre_hook_display_path,
+    BackgroundFallbackMode, RemovalExecution, handle_remove_output, post_hook_display_path,
+    pre_hook_display_path,
 };
 
 /// Inputs to [`finish_after_merge`]. Owned by the caller; this struct just
@@ -178,14 +179,15 @@ pub fn finish_after_merge(
             removed_commit: feature_commit.clone(),
             branch_checked_out_at,
         };
+        // The fate is dropped: merge's own reporting (`removed` in the JSON
+        // blob, the removal messages) doesn't itemize the branch, and the
+        // handler has already narrated any retention.
         handle_remove_output(
             &remove_result,
-            false,
+            RemovalExecution::Background(BackgroundFallbackMode::Detached),
             plan,
             false,
-            false,
             announcer,
-            BackgroundFallbackMode::Detached,
         )?;
         true
     };

@@ -75,8 +75,8 @@ pub use parse::{parse_porcelain_z, parse_untracked_files};
 pub use recover::{current_or_recover, cwd_removed_hint};
 pub use remove::{
     BranchDeletionMode, BranchDeletionOutcome, BranchDeletionResult, RemovalOutput, RemoveOptions,
-    delete_branch_if_safe, remove_worktree_with_cleanup, stage_worktree_removal,
-    stop_fsmonitor_daemon,
+    delete_branch_if_safe, execute_branch_deletion, remove_worktree_with_cleanup,
+    stage_worktree_removal, stop_fsmonitor_daemon,
 };
 pub use repository::sha_cache;
 pub use repository::{

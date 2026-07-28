@@ -406,6 +406,26 @@ pub fn stage_worktree_removal(repo: &Repository, worktree_path: &Path) -> Option
     }
 }
 
+/// Capture fresh refs and run a planned branch deletion.
+///
+/// The one spelling of "the plan said delete; do it now": every synchronous
+/// site that decided on a deletion earlier (a removal plan, a prune scan, a
+/// picker row) executes it through this recapture — never against the
+/// planning-time snapshot — so the CAS in [`delete_branch_if_safe`] always
+/// re-decides against the live ref. A hook or concurrent process that advanced
+/// the branch since planning surfaces as `RetainedRaced`, not a lost commit.
+/// (The detached-fallback path can't call Rust and gets the same guarantee
+/// from an `update-ref -d <ref> <sha>` shell tail instead.)
+pub fn execute_branch_deletion(
+    repo: &Repository,
+    branch_name: &str,
+    target: &str,
+    force_delete: bool,
+) -> anyhow::Result<BranchDeletionResult> {
+    let snapshot = repo.capture_refs()?;
+    delete_branch_if_safe(repo, &snapshot, branch_name, target, force_delete)
+}
+
 /// Delete a branch if its content is integrated into the target, or if
 /// `force_delete` is set.
 ///
