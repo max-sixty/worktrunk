@@ -33,9 +33,9 @@ branch-shaped lead — all task).
 
 ## What to do
 
-Steps 1–3 run on every invocation, before any other work. The invocation is
-itself the explicit request to create the worktree; a research or read-only
-task gets one all the same.
+Creating the worktree comes first on every invocation, before any other work.
+The invocation is itself the explicit request to create it; a research or
+read-only task gets one all the same.
 
 <!-- Maintainers: rationale.md (same directory) covers the harness rules and
 design choices behind this — read it before re-adding guards or routes. -->
@@ -44,7 +44,21 @@ design choices behind this — read it before re-adding guards or routes. -->
    consistent with existing worktree names, or, mid-session, from the work
    being moved; with nothing to derive from, ask.
 
-2. **Create the worktree** with a `Bash` call (omit `-C <repo>` for this repo):
+2. **Create and enter it in one call**, when no repo argument was given:
+   `EnterWorktree({name: "<branch>"})`. Worktrunk's `WorktreeCreate` hook
+   routes that through `wt switch --create`, so the worktree lands in the usual
+   sibling layout and in `wt list`, and the user is asked to confirm nothing.
+   On success, do the task (or, with no task text, confirm it's ready and
+   wait).
+
+   Mid-session, carry uncommitted work across: `git stash push -u` before
+   creating the worktree, then `git -C <path> stash pop` after (the stash is
+   shared across worktrees).
+
+3. **Otherwise create it with `wt` and enter by path.** Two cases reach here: a
+   repo argument, which step 2 can't target, and a failed step 2, whose error
+   says which — `✗ Branch <branch> already exists`, or `Already in a worktree
+   session`. Create with a `Bash` call (omit `-C <repo>` for this repo):
 
    ```
    wt -C <repo> switch --create <branch> --no-cd --format=json
@@ -56,19 +70,14 @@ design choices behind this — read it before re-adding guards or routes. -->
    worktree if missing); if step 1 picked the name, pick another and rerun. Any
    other failure (not a git repo, invalid name): report it and stop.
 
-   Mid-session, carry uncommitted work across: `git stash push -u` before
-   creating the worktree, then `git -C <path> stash pop` after (the stash is
-   shared across worktrees).
-
-3. **Enter the worktree, then do the task.** Call
-   `EnterWorktree({path: "<path from the JSON>"})`.
+   Then call `EnterWorktree({path: "<path from the JSON>"})`.
 
    - **Accepted** → the session is re-rooted in the worktree. Do the task (or,
      with no task text, confirm it's ready and wait).
    - **Declined** → the denial reports a decision: the user answered no to the
      confirmation Claude Code shows for entering a worktree outside
-     `.claude/worktrees/`. The worktree from step 2 still exists; only the
-     entry didn't happen. Report its path and ask how to proceed, since
+     `.claude/worktrees/`. The worktree `wt` just created still exists; only
+     the entry didn't happen. Report its path and ask how to proceed, since
      reaching it through `cd` would override that answer.
    - **Rejected** → every other failure, a denial that only reports the session
      couldn't ask included. Nothing moved, and one recovery covers them all.
@@ -98,12 +107,17 @@ design choices behind this — read it before re-adding guards or routes. -->
 
 ## Cleanup
 
-The worktree is a normal worktrunk worktree: it persists after the session
-ends, shows up in `wt list`, and is merged or removed with `wt merge` /
-`wt remove <branch>` like any other. Don't remove it unprompted. If the user
-asks to leave mid-session, `ExitWorktree({action: "keep"})` returns the
-session to its original directory; `ExitWorktree` cannot remove a worktree
-entered by `path`, so removal is always `wt remove <branch>`.
+The worktree is a normal worktrunk worktree: it shows up in `wt list` and is
+merged or removed with `wt merge` / `wt remove <branch>` like any other. Don't
+remove it unprompted.
+
+A worktree from step 2 that the session never touched — no changed files, no
+commits — is cleaned up when the session ends, branch included; anything
+written into it keeps it. A worktree from step 3 always stays. If the user
+asks to leave mid-session,
+`ExitWorktree({action: "keep"})` returns the session to its original directory;
+`ExitWorktree` cannot remove a worktree entered by `path`, so removing one of
+those is always `wt remove <branch>`.
 
 ## Scope
 
