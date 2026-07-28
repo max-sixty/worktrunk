@@ -16,7 +16,7 @@ use crate::output::{BackgroundFallbackMode, handle_remove_output};
 use super::hook_plan::{ApprovedHookPlan, HookPlanBuilder};
 use super::hooks::HookAnnouncer;
 use super::repository_ext::RepositoryCliExt;
-use super::worktree::RemoveResult;
+use super::worktree::RemovalPlan;
 use super::{RemoveTarget, flag_pair};
 
 /// Validated removal plans, categorized for ordered execution.
@@ -24,9 +24,9 @@ use super::{RemoveTarget, flag_pair};
 /// Multi-worktree removal validates all targets upfront, then executes in order:
 /// other worktrees first, branch-only cases next, current worktree last.
 struct RemovePlans {
-    others: Vec<RemoveResult>,
-    branch_only: Vec<RemoveResult>,
-    current: Option<RemoveResult>,
+    others: Vec<RemovalPlan>,
+    branch_only: Vec<RemovalPlan>,
+    current: Option<RemovalPlan>,
     errors: Vec<anyhow::Error>,
 }
 
@@ -214,7 +214,7 @@ fn reap_worktree_processes(worktree_path: &Path, label: &str) {
 /// removed a worktree (branch-only deletions have no directory to scope by).
 /// The display label prefers the branch name, falling back to the worktree
 /// directory name. No-op on non-Unix, where `--reap` is rejected up front.
-fn maybe_reap_result(result: &RemoveResult, reap_enabled: bool) {
+fn maybe_reap_result(result: &RemovalPlan, reap_enabled: bool) {
     #[cfg(unix)]
     if reap_enabled && let Some(path) = result.removed_worktree_path() {
         let label = result
@@ -416,7 +416,7 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                 // Execute all validated plans: others first, branch-only next, current last
                 let show_branch =
                     plans.others.len() + plans.branch_only.len() + plans.current.iter().len() > 1;
-                let run = |result: &RemoveResult| -> anyhow::Result<()> {
+                let run = |result: &RemovalPlan| -> anyhow::Result<()> {
                     maybe_reap_result(result, args.reap);
                     let mut announcer = HookAnnouncer::new(&repo, show_branch);
                     handle_remove_output(
@@ -446,7 +446,7 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                         .iter()
                         .chain(&plans.branch_only)
                         .chain(plans.current.as_ref())
-                        .map(RemoveResult::to_json)
+                        .map(RemovalPlan::to_json)
                         .collect();
                     println!("{}", serde_json::to_string_pretty(&json_items)?);
                 }

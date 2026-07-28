@@ -27,7 +27,7 @@ use worktrunk::config::UserConfig;
 use worktrunk::git::{BranchDeletionMode, Repository};
 use worktrunk::styling::{eprintln, info_message};
 
-use super::types::{RemoveResult, SharedBranchCheckout};
+use super::types::{RemovalPlan, SharedBranchCheckout};
 use crate::commands::command_executor::CommandContext;
 use crate::commands::context::CommandEnv;
 use crate::commands::hook_plan::{ApprovedHookPlan, register_planned};
@@ -166,7 +166,7 @@ pub fn finish_after_merge(
         // No config snapshot: `pre-remove` / `post-remove` were selected and
         // frozen into `plan` at the gate (anchored at `feature_path`), so the
         // executor needs no config — it runs only the frozen `plan`.
-        let remove_result = RemoveResult::RemovedWorktree {
+        let remove_result = RemovalPlan::Worktree {
             main_path: destination_path.clone(),
             worktree_path: worktree_root,
             changed_directory: true,

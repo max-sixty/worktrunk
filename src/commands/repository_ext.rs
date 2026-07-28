@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::worktree::{RemoveResult, SharedBranchCheckout};
+use super::worktree::{RemovalPlan, SharedBranchCheckout};
 use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::git::{
@@ -41,7 +41,7 @@ pub trait RepositoryCliExt {
     /// Prepare the removal of whichever worktree or branch [`RemoveTarget`]
     /// names.
     ///
-    /// Returns a `RemoveResult` describing what will be removed. The actual
+    /// Returns a `RemovalPlan` describing what will be removed. The actual
     /// removal is performed by the output handler.
     ///
     /// `current_path` overrides process-CWD discovery for determining which
@@ -65,7 +65,7 @@ pub trait RepositoryCliExt {
         current_path: Option<PathBuf>,
         worktrees: Option<&[WorktreeInfo]>,
         snapshot: Option<&RefSnapshot>,
-    ) -> anyhow::Result<RemoveResult>;
+    ) -> anyhow::Result<RemovalPlan>;
 
     /// Prepare the target worktree for push by auto-stashing non-overlapping changes when safe.
     ///
@@ -112,7 +112,7 @@ impl RepositoryCliExt for Repository {
         current_path: Option<PathBuf>,
         worktrees: Option<&[WorktreeInfo]>,
         snapshot: Option<&RefSnapshot>,
-    ) -> anyhow::Result<RemoveResult> {
+    ) -> anyhow::Result<RemovalPlan> {
         let current_path = current_path.map_or_else(|| self.current_worktree().root(), Ok)?;
         let worktrees = match worktrees {
             Some(wts) => wts,
@@ -274,7 +274,7 @@ impl RepositoryCliExt for Repository {
                         .map(|sibling| SharedBranchCheckout::new(&sibling.path, &deletion_mode))
                 });
                 if let Some(shared) = shared {
-                    return Ok(RemoveResult::BranchOnly {
+                    return Ok(RemovalPlan::BranchOnly {
                         branch_name: branch,
                         deletion_mode: BranchDeletionMode::Keep,
                         pruned: true,
@@ -292,7 +292,7 @@ impl RepositoryCliExt for Repository {
                     target,
                     deletion_mode,
                 );
-                return Ok(RemoveResult::BranchOnly {
+                return Ok(RemovalPlan::BranchOnly {
                     branch_name: branch,
                     deletion_mode,
                     pruned: pruned_from.is_some(),
@@ -375,7 +375,7 @@ impl RepositoryCliExt for Repository {
         // selected and frozen into the `ApprovedHookPlan` at the gate
         // (`remove.rs`'s `approve_remove`), anchored at this worktree's path,
         // so the executor needs no config — it runs only the frozen plan.
-        Ok(RemoveResult::RemovedWorktree {
+        Ok(RemovalPlan::Worktree {
             main_path,
             worktree_path,
             changed_directory,

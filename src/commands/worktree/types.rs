@@ -169,10 +169,16 @@ impl SharedBranchCheckout {
     }
 }
 
-/// Result of a worktree remove operation
-pub enum RemoveResult {
-    /// Removed worktree and changed directory (if needed)
-    RemovedWorktree {
+/// A validated, planned removal — what `prepare_worktree_removal` decided to
+/// remove and how, before anything runs.
+///
+/// Produced by the planner, executed by `output::handle_remove_output`. The
+/// deletion-relevant fields are intent, not fact: `deletion_mode` says what the
+/// executor should attempt, and the actual deletion re-decides against fresh
+/// refs (`delete_branch_if_safe`'s CAS).
+pub enum RemovalPlan {
+    /// Remove a worktree, changing directory away from it first if it's current.
+    Worktree {
         /// Stable working directory for post-removal execution: hooks run here,
         /// background removal spawns from here, and `cd` directs the shell here.
         /// Usually the primary worktree; falls back to cwd when removing the
@@ -207,7 +213,7 @@ pub enum RemoveResult {
     BranchOnly {
         branch_name: String,
         deletion_mode: BranchDeletionMode,
-        /// True if the worktree was pruned before returning this result.
+        /// True if a stale worktree entry was pruned during planning.
         pruned: bool,
         /// Integration target for display. May be the effective target (e.g.,
         /// `origin/main` when upstream is ahead) or the local default branch.
@@ -225,16 +231,16 @@ pub enum RemoveResult {
     },
 }
 
-impl RemoveResult {
-    /// Path of the removed worktree, if this result removed one.
+impl RemovalPlan {
+    /// Path of the worktree this plan removes, if it removes one.
     ///
     /// `None` for branch-only deletions — they have no worktree, so no
     /// `pre-remove` hook runs and there's no worktree-local `.config/wt.toml`
     /// to consult.
     pub fn removed_worktree_path(&self) -> Option<&Path> {
         match self {
-            RemoveResult::RemovedWorktree { worktree_path, .. } => Some(worktree_path),
-            RemoveResult::BranchOnly { .. } => None,
+            RemovalPlan::Worktree { worktree_path, .. } => Some(worktree_path),
+            RemovalPlan::BranchOnly { .. } => None,
         }
     }
 
@@ -246,19 +252,19 @@ impl RemoveResult {
     #[cfg(unix)]
     pub fn branch_name(&self) -> Option<&str> {
         match self {
-            RemoveResult::RemovedWorktree { branch_name, .. } => branch_name.as_deref(),
-            RemoveResult::BranchOnly { branch_name, .. } => Some(branch_name),
+            RemovalPlan::Worktree { branch_name, .. } => branch_name.as_deref(),
+            RemovalPlan::BranchOnly { branch_name, .. } => Some(branch_name),
         }
     }
 
     /// Post-removal working directory — where the user lands, and the worktree
     /// whose `.config/wt.toml` `post-switch` reads. `None` for branch-only
     /// deletions (no worktree was removed, so nothing was switched away from).
-    /// See the `main_path` field docs on [`RemoveResult::RemovedWorktree`].
+    /// See the `main_path` field docs on [`RemovalPlan::Worktree`].
     pub fn destination_path(&self) -> Option<&Path> {
         match self {
-            RemoveResult::RemovedWorktree { main_path, .. } => Some(main_path),
-            RemoveResult::BranchOnly { .. } => None,
+            RemovalPlan::Worktree { main_path, .. } => Some(main_path),
+            RemovalPlan::BranchOnly { .. } => None,
         }
     }
 
@@ -273,19 +279,19 @@ impl RemoveResult {
     /// "worktree & branch".
     pub fn deletes_branch(&self) -> bool {
         match self {
-            RemoveResult::RemovedWorktree {
+            RemovalPlan::Worktree {
                 branch_name,
                 deletion_mode,
                 ..
             } => branch_name.is_some() && !deletion_mode.should_keep(),
-            RemoveResult::BranchOnly { deletion_mode, .. } => !deletion_mode.should_keep(),
+            RemovalPlan::BranchOnly { deletion_mode, .. } => !deletion_mode.should_keep(),
         }
     }
 
     /// Convert to a JSON value for structured output.
     pub fn to_json(&self) -> serde_json::Value {
         match self {
-            RemoveResult::RemovedWorktree {
+            RemovalPlan::Worktree {
                 worktree_path,
                 branch_name,
                 branch_checked_out_at,
@@ -297,7 +303,7 @@ impl RemoveResult {
                 "branch_deleted": self.deletes_branch(),
                 "branch_checked_out_at": branch_checked_out_at.as_ref().map(|c| &c.path),
             }),
-            RemoveResult::BranchOnly {
+            RemovalPlan::BranchOnly {
                 branch_name,
                 pruned,
                 branch_checked_out_at,
@@ -327,7 +333,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn remove_result_branch_name_reads_both_variants() {
-        let removed = RemoveResult::RemovedWorktree {
+        let removed = RemovalPlan::Worktree {
             main_path: PathBuf::from("/main"),
             worktree_path: PathBuf::from("/wt"),
             changed_directory: false,
@@ -341,7 +347,7 @@ mod tests {
         };
         assert_eq!(removed.branch_name(), Some("feature"));
 
-        let branch_only = RemoveResult::BranchOnly {
+        let branch_only = RemovalPlan::BranchOnly {
             branch_name: "solo".to_string(),
             deletion_mode: BranchDeletionMode::default(),
             pruned: false,
@@ -391,7 +397,7 @@ mod tests {
 
     #[test]
     fn test_remove_result_removed_worktree() {
-        let result = RemoveResult::RemovedWorktree {
+        let result = RemovalPlan::Worktree {
             main_path: PathBuf::from("/main"),
             worktree_path: PathBuf::from("/worktree"),
             changed_directory: true,
@@ -404,7 +410,7 @@ mod tests {
             branch_checked_out_at: None,
         };
         match result {
-            RemoveResult::RemovedWorktree {
+            RemovalPlan::Worktree {
                 main_path,
                 worktree_path,
                 changed_directory,
@@ -427,13 +433,13 @@ mod tests {
                 assert_eq!(removed_commit.as_deref(), Some("abc1234567890"));
                 assert!(branch_checked_out_at.is_none());
             }
-            _ => panic!("Expected RemovedWorktree variant"),
+            _ => panic!("Expected Worktree variant"),
         }
     }
 
     #[test]
     fn test_remove_result_branch_only() {
-        let result = RemoveResult::BranchOnly {
+        let result = RemovalPlan::BranchOnly {
             branch_name: "stale-branch".to_string(),
             deletion_mode: BranchDeletionMode::Keep,
             pruned: false,
@@ -442,7 +448,7 @@ mod tests {
             branch_checked_out_at: None,
         };
         match result {
-            RemoveResult::BranchOnly {
+            RemovalPlan::BranchOnly {
                 branch_name,
                 deletion_mode,
                 pruned,
@@ -464,7 +470,7 @@ mod tests {
 
     #[test]
     fn test_remove_result_branch_only_pruned() {
-        let result = RemoveResult::BranchOnly {
+        let result = RemovalPlan::BranchOnly {
             branch_name: "pruned-branch".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
             pruned: true,
@@ -473,7 +479,7 @@ mod tests {
             branch_checked_out_at: None,
         };
         match result {
-            RemoveResult::BranchOnly {
+            RemovalPlan::BranchOnly {
                 branch_name,
                 deletion_mode,
                 pruned,
@@ -494,7 +500,7 @@ mod tests {
 
     #[test]
     fn test_remove_result_with_force_delete() {
-        let result = RemoveResult::RemovedWorktree {
+        let result = RemovalPlan::Worktree {
             main_path: PathBuf::from("/main"),
             worktree_path: PathBuf::from("/worktree"),
             changed_directory: false,
@@ -507,7 +513,7 @@ mod tests {
             branch_checked_out_at: None,
         };
         match result {
-            RemoveResult::RemovedWorktree {
+            RemovalPlan::Worktree {
                 branch_name,
                 deletion_mode,
                 force_worktree,
@@ -517,7 +523,7 @@ mod tests {
                 assert!(deletion_mode.is_force());
                 assert!(force_worktree);
             }
-            _ => panic!("Expected RemovedWorktree variant"),
+            _ => panic!("Expected Worktree variant"),
         }
     }
 }

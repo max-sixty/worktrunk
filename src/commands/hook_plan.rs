@@ -319,7 +319,7 @@ impl ApprovedHookPlan {
     /// The frozen selection for `(hook_type, anchor)`, by exact match.
     ///
     /// Every covered gate anchors at the identical path its executor passes:
-    /// the `RemoveResult` worktree/destination path threaded unchanged, the
+    /// the `RemovalPlan` worktree/destination path threaded unchanged, the
     /// `SwitchPlan`/`SwitchResult` destination, or the merge feature root
     /// (`current_worktree().root()` on the same `Repository`, cached, so the
     /// gate and `finish_after_merge` produce the same `PathBuf`). The invariant

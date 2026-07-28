@@ -24,7 +24,7 @@ use worktrunk::trace::Span;
 use super::super::hook_plan::{ApprovedHookPlan, HookPlan, HookPlanBuilder};
 use super::super::hooks::HookAnnouncer;
 use super::super::repository_ext::{RemoveTarget, RepositoryCliExt, live_sibling_checkout};
-use super::super::worktree::RemoveResult;
+use super::super::worktree::RemovalPlan;
 use crate::output::{BackgroundFallbackMode, handle_remove_output};
 
 /// A candidate worktree or branch selected for removal.
@@ -41,7 +41,7 @@ struct Candidate {
     /// Current worktree, other worktree, branch-only, or stale detached metadata
     kind: CandidateKind,
     /// Whether the removal deletes `branch`, from
-    /// [`RemoveResult::deletes_branch`]. The kind is a plan, not an outcome: a
+    /// [`RemovalPlan::deletes_branch`]. The kind is a plan, not an outcome: a
     /// branch a sibling worktree still has checked out is retained, so a
     /// worktree candidate can take the worktree and leave the branch standing.
     /// The summary counts this rather than the kind, so it never reports a
@@ -89,7 +89,7 @@ impl Candidate {
 
 /// The current-worktree candidate held back until every other removal ran
 /// (its removal cd's the shell to the primary), with its scan-time plan.
-type DeferredCurrent = (Candidate, Option<RemoveResult>);
+type DeferredCurrent = (Candidate, Option<RemovalPlan>);
 
 #[derive(Clone, Copy)]
 enum CandidateKind {
@@ -220,7 +220,7 @@ struct RemovalContext<'a> {
 /// `ensure_clean` and the branch-delete CAS re-validate what matters.
 fn try_remove(
     candidate: &Candidate,
-    plan: Option<RemoveResult>,
+    plan: Option<RemovalPlan>,
     ctx: &RemovalContext<'_>,
 ) -> anyhow::Result<bool> {
     let _span = Span::new(format!("prune-remove:{}", candidate.label));
@@ -298,7 +298,7 @@ struct CheckOutcome {
     /// silently, never reported as "younger than") — except for `Prunable`
     /// items, which are always removable but plan in `try_remove`: preparing
     /// them calls `prune_worktrees()`, a mutation that must stay serialized.
-    plan: Option<RemoveResult>,
+    plan: Option<RemovalPlan>,
     /// Whether the item passed the removability gate (see `plan`).
     removable: bool,
     /// What the removal takes, carried onto [`Candidate::deletes_branch`].

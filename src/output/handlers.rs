@@ -18,7 +18,7 @@ use crate::commands::process::{
 };
 use crate::commands::worktree::hooks::PostRemoveContext;
 use crate::commands::worktree::{
-    RemoveResult, SharedBranchCheckout, SwitchBranchInfo, SwitchResult,
+    RemovalPlan, SharedBranchCheckout, SwitchBranchInfo, SwitchResult,
 };
 use worktrunk::config::UserConfig;
 use worktrunk::git::ErrorExt;
@@ -1011,7 +1011,7 @@ pub fn execute_user_command(command: &str, display_path: Option<&Path>) -> anyho
 /// frozen at the gate, never re-read.
 ///
 /// When `silent` is true (the TUI picker — this runs while skim owns the
-/// terminal), a `RemovedWorktree` result is removed with no progress/success
+/// terminal), a `Worktree` result is removed with no progress/success
 /// messages, no trash-cleanup spinner, and no `cd` directive: just the git
 /// removal plus the planned `pre-remove` / `post-remove` / `post-switch`
 /// hooks. (The picker can't prompt mid-render, so its `plan` comes from a
@@ -1027,7 +1027,7 @@ pub fn execute_user_command(command: &str, display_path: Option<&Path>) -> anyho
 /// to keep the fallback's `.git/config` rewrite serialized with its parallel
 /// integration-check readers.
 pub fn handle_remove_output(
-    result: &RemoveResult,
+    result: &RemovalPlan,
     foreground: bool,
     plan: &ApprovedHookPlan,
     quiet: bool,
@@ -1036,7 +1036,7 @@ pub fn handle_remove_output(
     background_fallback_mode: BackgroundFallbackMode,
 ) -> anyhow::Result<()> {
     match result {
-        RemoveResult::RemovedWorktree {
+        RemovalPlan::Worktree {
             main_path,
             worktree_path,
             changed_directory,
@@ -1048,7 +1048,7 @@ pub fn handle_remove_output(
             removed_commit,
             branch_checked_out_at,
         } => handle_removed_worktree_output(
-            RemovedWorktreeOutputContext {
+            WorktreeRemovalContext {
                 main_path,
                 worktree_path,
                 changed_directory: *changed_directory,
@@ -1066,7 +1066,7 @@ pub fn handle_remove_output(
             },
             announcer,
         ),
-        RemoveResult::BranchOnly {
+        RemovalPlan::BranchOnly {
             branch_name,
             deletion_mode,
             pruned,
@@ -1223,7 +1223,7 @@ fn handle_branch_only_output(
 /// Only runs if `ctx.verify` is true (hooks approved).
 fn spawn_hooks_after_remove(
     repo: &Repository,
-    ctx: &RemovedWorktreeOutputContext<'_>,
+    ctx: &WorktreeRemovalContext<'_>,
     removed_branch: &str,
     announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
@@ -1504,7 +1504,7 @@ impl RemovalDisplayInfo {
 
 // ============================================================================
 
-struct RemovedWorktreeOutputContext<'a> {
+struct WorktreeRemovalContext<'a> {
     main_path: &'a Path,
     worktree_path: &'a Path,
     changed_directory: bool,
@@ -1533,7 +1533,7 @@ struct RemovedWorktreeOutputContext<'a> {
 
 fn execute_pre_remove_hooks_if_needed(
     repo: &Repository,
-    ctx: &RemovedWorktreeOutputContext<'_>,
+    ctx: &WorktreeRemovalContext<'_>,
 ) -> anyhow::Result<()> {
     let Ok(config) = UserConfig::load() else {
         return Ok(());
@@ -1606,7 +1606,7 @@ fn prepare_remove_directory_change(
 
 fn handle_detached_removed_worktree_output(
     repo: &Repository,
-    ctx: &RemovedWorktreeOutputContext<'_>,
+    ctx: &WorktreeRemovalContext<'_>,
     announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
     if ctx.foreground {
@@ -1685,7 +1685,7 @@ fn handle_detached_removed_worktree_output(
 
 fn handle_named_removed_worktree_foreground(
     repo: &Repository,
-    ctx: &RemovedWorktreeOutputContext<'_>,
+    ctx: &WorktreeRemovalContext<'_>,
     branch_name: &str,
     announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
@@ -1740,7 +1740,7 @@ fn handle_named_removed_worktree_foreground(
 
 fn handle_named_removed_worktree_background(
     repo: &Repository,
-    ctx: &RemovedWorktreeOutputContext<'_>,
+    ctx: &WorktreeRemovalContext<'_>,
     branch_name: &str,
     announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
@@ -1786,9 +1786,9 @@ fn handle_named_removed_worktree_background(
     Ok(())
 }
 
-/// Handle output for RemovedWorktree removal
+/// Handle output for Worktree removal
 fn handle_removed_worktree_output(
-    ctx: RemovedWorktreeOutputContext<'_>,
+    ctx: WorktreeRemovalContext<'_>,
     announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
     // Use main_path for discovery - the worktree being removed might be cwd,
@@ -1825,7 +1825,7 @@ fn handle_removed_worktree_output(
     }
 }
 
-/// Remove a `RemovedWorktree` worktree with no terminal output — the TUI
+/// Remove a `Worktree` worktree with no terminal output — the TUI
 /// (`wt switch` picker) path of [`handle_remove_output`].
 ///
 /// `pre-remove` has already run (when it was approved — `verify`), and the
@@ -1838,7 +1838,7 @@ fn handle_removed_worktree_output(
 /// entries" error against.
 fn remove_removed_worktree_silently(
     repo: &Repository,
-    ctx: &RemovedWorktreeOutputContext<'_>,
+    ctx: &WorktreeRemovalContext<'_>,
     announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
     let snapshot = repo.capture_refs()?;
