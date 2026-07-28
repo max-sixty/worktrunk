@@ -63,6 +63,14 @@ impl PreparedStep {
             Self::Concurrent(cmds) => cmds,
         }
     }
+
+    /// Borrow the step's commands (Single becomes a one-element slice).
+    pub fn commands(&self) -> &[PreparedCommand] {
+        match self {
+            Self::Single(cmd) => std::slice::from_ref(cmd),
+            Self::Concurrent(cmds) => cmds,
+        }
+    }
 }
 
 /// Wraps a command failure (FailFast path) into the final error.
@@ -727,14 +735,33 @@ pub fn map_config_steps(
         .collect()
 }
 
-/// Prepare hook pipeline steps for execution, preserving serial/concurrent
-/// structure. All hook preparation goes through this function (both
-/// foreground and background paths).
+/// Reject a prepared pipeline whose templates cannot parse, before its first
+/// command runs.
+///
+/// Separate from [`prepare_steps`] because it is an execution policy rather
+/// than part of building a command: every path that runs hooks calls it, while
+/// `wt hook show --expanded` prepares the same commands only to display them
+/// and annotates a broken template in place instead of blanking the listing.
+/// Semantic errors (undefined variable, filter failure) are not checked here —
+/// rendering is deferred, so they surface at the failing step.
+pub fn validate_pipeline_syntax(steps: &[PreparedStep]) -> Result<()> {
+    for cmd in steps.iter().flat_map(PreparedStep::commands) {
+        validate_template_syntax(&cmd.template, &cmd.template_name)?;
+    }
+    Ok(())
+}
+
+/// Prepare hook pipeline steps, preserving serial/concurrent structure. Sole
+/// producer of hook command contexts: every path that runs hooks (foreground
+/// and background) and `wt hook show --expanded`, which prepares the same
+/// commands to display them, go through this function — so a context key added
+/// here reaches both without a second edit.
 ///
 /// Each command freezes its context as JSON and keeps its raw template;
-/// rendering happens when the command runs. Syntax errors abort here — before
-/// the first step runs — while semantic errors (undefined variable, filter
-/// failure) surface at the failing step.
+/// rendering happens when the command runs, so semantic errors (undefined
+/// variable, filter failure) surface at the failing step. Execution paths
+/// follow up with [`validate_pipeline_syntax`], which aborts an unparsable
+/// pipeline before its first step runs.
 pub fn prepare_steps(
     command_config: &CommandConfig,
     ctx: &CommandContext<'_>,
@@ -770,7 +797,6 @@ pub fn prepare_steps(
             Some(name) => format!("{source}:{name}"),
             None => format!("{source} {hook_type} hook"),
         };
-        validate_template_syntax(&cmd.template, &template_name)?;
 
         Ok(PreparedCommand {
             name: cmd.name.clone(),

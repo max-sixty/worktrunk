@@ -564,6 +564,69 @@ project-deps = "echo deps"
     }
 }
 
+/// The `--expanded` listing and the pipeline agree on the template context.
+///
+/// `wt hook show --expanded` prepares its commands through the same function
+/// the execution path uses, so the pipeline-infrastructure keys — `hook_type`,
+/// the per-command `hook_name`, and the `args` sequence a listing leaves empty
+/// — render in the listing exactly as they do in `wt hook <type> --dry-run`,
+/// which previews what would actually run.
+#[rstest]
+fn test_hook_show_expanded_matches_dry_run(repo: TestRepo, temp_home: TempDir) {
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    let config_path = global_config_dir.join("config.toml");
+    fs::write(
+        &config_path,
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[pre-commit]
+context = "echo type={{ hook_type }} name={{ hook_name }} args=[{{ args }}]"
+"#,
+    )
+    .unwrap();
+
+    let expected = "echo type=pre-commit name=context args=[]";
+
+    let mut show = wt_command();
+    repo.configure_wt_cmd(&mut show);
+    show.env("WORKTRUNK_CONFIG_PATH", &config_path);
+    show.args(["hook", "show", "pre-commit", "--expanded", "--format=json"])
+        .current_dir(repo.root_path());
+    set_temp_home_env(&mut show, temp_home.path());
+    let output = show.output().unwrap();
+    assert!(
+        output.status.success(),
+        "hook show failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).expect("valid JSON");
+    assert_eq!(parsed[0]["expanded"], expected);
+
+    let mut dry_run = wt_command();
+    repo.configure_wt_cmd(&mut dry_run);
+    dry_run.env("WORKTRUNK_CONFIG_PATH", &config_path);
+    // Plain output so the rendered command is one contiguous substring rather
+    // than a run of syntax-highlighting spans.
+    dry_run.env_remove("CLICOLOR_FORCE").env("NO_COLOR", "1");
+    dry_run
+        .args(["hook", "pre-commit", "--dry-run"])
+        .current_dir(repo.root_path());
+    set_temp_home_env(&mut dry_run, temp_home.path());
+    let output = dry_run.output().unwrap();
+    assert!(
+        output.status.success(),
+        "hook --dry-run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(expected),
+        "dry-run should render the listing's command: {stdout}"
+    );
+}
+
 /// Test that valid templates expand correctly with --expanded.
 #[rstest]
 fn test_hook_show_expanded_valid_template(repo: TestRepo, temp_home: TempDir) {

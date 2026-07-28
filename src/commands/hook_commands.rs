@@ -11,8 +11,7 @@ use color_print::cformat;
 use strum::IntoEnumIterator;
 use worktrunk::HookType;
 use worktrunk::config::{
-    ALIAS_ARGS_KEY, Approvals, CommandConfig, ProjectConfig, UserConfig, VarScope,
-    referenced_vars_for_config,
+    ALIAS_ARGS_KEY, Approvals, CommandConfig, ProjectConfig, UserConfig, referenced_vars_for_config,
 };
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
@@ -23,9 +22,10 @@ use worktrunk::styling::{
 
 use super::command_approval::approve_hooks_filtered;
 use super::command_executor::{
-    CommandContext, FailureStrategy, build_hook_context, render_template_preview,
+    CommandContext, FailureStrategy, PreparedStep, prepare_steps, render_template_preview,
 };
 use super::context::CommandEnv;
+use super::hook_filter::HookSource;
 use super::hooks::{HookAnnouncer, prepare_and_check, run_hooks_foreground};
 use super::project_config::command_label;
 use super::template_vars::TemplateVars;
@@ -381,7 +381,6 @@ pub fn handle_hook_show(
             project_id.as_deref(),
             filter,
             ctx.as_ref(),
-            expanded,
         );
     }
 
@@ -417,8 +416,8 @@ pub fn handle_hook_show(
 ///
 /// Each record carries the hook type, source (user or project), optional name,
 /// raw template, project approval status, and — when `--expanded` was passed —
-/// the rendered command preview.
-#[allow(clippy::too_many_arguments)]
+/// the rendered command preview. `handle_hook_show` builds `ctx` only under
+/// `--expanded`, so its presence is that flag.
 fn emit_hook_show_json(
     user_config: &UserConfig,
     project_config: Option<&ProjectConfig>,
@@ -426,38 +425,31 @@ fn emit_hook_show_json(
     project_id: Option<&str>,
     filter: Option<HookType>,
     ctx: Option<&CommandContext>,
-    expanded: bool,
 ) -> anyhow::Result<()> {
     let mut entries: Vec<serde_json::Value> = Vec::new();
 
     let mut emit = |hook_type: HookType,
-                    source: &'static str,
+                    source: HookSource,
                     cfg: &CommandConfig,
                     needs_approval_for: Option<(&Approvals, Option<&str>)>|
      -> anyhow::Result<()> {
-        for cmd in cfg.commands() {
+        for row in hook_command_rows(cfg, ctx, hook_type, source)? {
             let needs_approval = needs_approval_for
                 .map(|(approvals, project_id)| {
-                    project_id.is_some_and(|pid| !approvals.is_command_approved(pid, &cmd.template))
+                    project_id.is_some_and(|pid| !approvals.is_command_approved(pid, &row.template))
                 })
                 .unwrap_or(false);
 
             let mut obj = serde_json::json!({
                 "type": hook_type.to_string(),
-                "source": source,
-                "name": cmd.name,
-                "template": cmd.template,
+                "source": source.to_string(),
+                "name": row.name,
+                "template": row.template,
                 "needs_approval": needs_approval,
             });
 
-            if expanded && let Some(command_ctx) = ctx {
-                let rendered = expand_command_template(
-                    &cmd.template,
-                    command_ctx,
-                    hook_type,
-                    cmd.name.as_deref(),
-                )?;
-                obj["expanded"] = serde_json::Value::String(rendered);
+            if ctx.is_some() {
+                obj["expanded"] = serde_json::Value::String(row.display);
             }
 
             entries.push(obj);
@@ -474,7 +466,7 @@ fn emit_hook_show_json(
             continue;
         }
         if let Some(cfg) = user_hooks.get(hook_type) {
-            emit(hook_type, "user", cfg, None)?;
+            emit(hook_type, HookSource::User, cfg, None)?;
         }
     }
 
@@ -487,7 +479,12 @@ fn emit_hook_show_json(
                 continue;
             }
             if let Some(cfg) = project.hooks.get(hook_type) {
-                emit(hook_type, "project", cfg, Some((approvals, project_id)))?;
+                emit(
+                    hook_type,
+                    HookSource::Project,
+                    cfg,
+                    Some((approvals, project_id)),
+                )?;
             }
         }
     }
@@ -537,7 +534,7 @@ fn render_user_hooks(
         }
 
         has_any = true;
-        render_hook_commands(out, *hook_type, cfg, None, ctx)?;
+        render_hook_commands(out, *hook_type, cfg, HookSource::User, None, ctx)?;
     }
 
     if !has_any {
@@ -590,7 +587,14 @@ fn render_project_hooks(
         }
 
         has_any = true;
-        render_hook_commands(out, *hook_type, cfg, Some((approvals, project_id)), ctx)?;
+        render_hook_commands(
+            out,
+            *hook_type,
+            cfg,
+            HookSource::Project,
+            Some((approvals, project_id)),
+            ctx,
+        )?;
     }
 
     if !has_any {
@@ -605,21 +609,17 @@ fn render_hook_commands(
     out: &mut String,
     hook_type: HookType,
     config: &CommandConfig,
+    source: HookSource,
     // For project hooks: (approvals, project_id) to check approval status
     approval_context: Option<(&Approvals, Option<&str>)>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<()> {
-    let commands: Vec<_> = config.commands().collect();
-    if commands.is_empty() {
-        return Ok(());
-    }
-
-    for cmd in commands {
-        let label = command_label(hook_type, cmd.name.as_deref());
+    for row in hook_command_rows(config, ctx, hook_type, source)? {
+        let label = command_label(hook_type, row.name.as_deref());
 
         // Check approval status for project hooks
         let needs_approval = if let Some((approvals, Some(project_id))) = approval_context {
-            !approvals.is_command_approved(project_id, &cmd.template)
+            !approvals.is_command_approved(project_id, &row.template)
         } else {
             false
         };
@@ -632,49 +632,79 @@ fn render_hook_commands(
         };
 
         writeln!(out, "{emoji} {label}{suffix}")?;
-
-        // Show template or expanded command
-        let command_text = if let Some(command_ctx) = ctx {
-            // Expand template with current context
-            expand_command_template(&cmd.template, command_ctx, hook_type, cmd.name.as_deref())?
-        } else {
-            cmd.template.clone()
-        };
-
-        writeln!(out, "{}", format_bash_with_gutter(&command_text))?;
+        writeln!(out, "{}", format_bash_with_gutter(&row.display))?;
     }
 
     Ok(())
 }
 
-/// Expand a command template with context variables
-fn expand_command_template(
-    template: &str,
-    ctx: &CommandContext,
-    hook_type: HookType,
-    hook_name: Option<&str>,
-) -> anyhow::Result<String> {
-    let default_branch = ctx.repo.default_branch();
-    let template_vars = build_manual_hook_template_vars(ctx, hook_type, default_branch.as_deref());
-    let extra_vars = template_vars.as_extra_vars();
-    let mut template_ctx = build_hook_context(ctx, &extra_vars, VarScope::All)?;
-    template_ctx.insert("hook_type", hook_type.to_string());
-    if let Some(name) = hook_name {
-        template_ctx.insert("hook_name", name);
-    }
-    // Preview has no CLI args to forward. Inject an empty JSON sequence
-    // so templates that reference `{{ args }}` render cleanly rather than
-    // erroring with "undefined value" at the preview site.
-    template_ctx.insert(ALIAS_ARGS_KEY, "[]");
+/// One command in a `wt hook show` listing.
+struct HookCommandRow {
+    name: Option<String>,
+    template: String,
+    /// What to print: the command as it would run under `--expanded`,
+    /// otherwise the raw template.
+    display: String,
+}
 
-    // Hooks always run through `Cmd::shell` (POSIX), so the preview is
-    // POSIX-escaped. On any error, show both the template and error message.
-    Ok(template_ctx
-        .expand(
-            template,
-            worktrunk::shell_exec::ShellEscapeMode::Posix,
-            ctx.repo,
-            "hook preview",
-        )
-        .unwrap_or_else(|err| format!("# {}\n{}", err.message, template)))
+/// The rows for one hook config, expanded when `ctx` is present (that is,
+/// under `--expanded` — `handle_hook_show` builds a context only then).
+///
+/// Expansion runs the config through [`prepare_steps`], the same function that
+/// builds what actually executes, so every context key the execution path
+/// gains reaches this preview with no second edit here. Rendering then goes
+/// through [`render_template_preview`], shared with `wt hook <type>
+/// --dry-run`, which shows a `vars.*` template raw — its values resolve from
+/// git config when the step runs, possibly written by an earlier step.
+///
+/// A manual invocation has no source or destination worktree, so the
+/// directional vars come from [`build_manual_hook_template_vars`], exactly as
+/// `run_hook` builds them. `args` is left unset and `prepare_steps` defaults it
+/// to the empty sequence: a listing has no CLI args to forward, which is what
+/// that default means.
+///
+/// A template that cannot expand renders as `# <error>` above its raw text
+/// rather than propagating — `wt hook show` lists configuration, so one broken
+/// template must not blank the rest of the listing.
+fn hook_command_rows(
+    config: &CommandConfig,
+    ctx: Option<&CommandContext>,
+    hook_type: HookType,
+    source: HookSource,
+) -> anyhow::Result<Vec<HookCommandRow>> {
+    // The emptiness check spares a config with no commands the git
+    // subprocesses `prepare_steps` spawns to build a context nothing reads.
+    if let Some(ctx) = ctx
+        && config.commands().next().is_some()
+    {
+        let default_branch = ctx.repo.default_branch();
+        let template_vars =
+            build_manual_hook_template_vars(ctx, hook_type, default_branch.as_deref());
+        let extra_vars = template_vars.as_extra_vars();
+
+        return Ok(prepare_steps(config, ctx, &extra_vars, hook_type, source)?
+            .into_iter()
+            .flat_map(PreparedStep::into_commands)
+            .map(|cmd| {
+                let template = cmd.template;
+                let display =
+                    render_template_preview(&template, &cmd.context, ctx.repo, &cmd.template_name)
+                        .unwrap_or_else(|err| format!("# {err}\n{template}"));
+                HookCommandRow {
+                    name: cmd.name,
+                    template,
+                    display,
+                }
+            })
+            .collect());
+    }
+
+    Ok(config
+        .commands()
+        .map(|cmd| HookCommandRow {
+            name: cmd.name.clone(),
+            template: cmd.template.clone(),
+            display: cmd.template.clone(),
+        })
+        .collect())
 }
