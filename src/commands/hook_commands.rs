@@ -82,8 +82,8 @@ fn run_post_hook(
 /// the current worktree path for directional path vars.
 ///
 /// This is the single source of truth for manual hook context — both `run_hook`
-/// (execution + dry-run) and `expand_command_template` (hook show --expanded)
-/// use this function. Returns a `TemplateVars` so callers can extend with
+/// (execution + dry-run) and [`hook_command_rows`] (`hook show --expanded`) use
+/// this function. Returns a `TemplateVars` so callers can extend with
 /// additional bindings (e.g. CLI shorthand) before materializing.
 fn build_manual_hook_template_vars(
     ctx: &CommandContext,
@@ -390,6 +390,7 @@ pub fn handle_hook_show(
     render_user_hooks(
         &mut output,
         config,
+        &approvals,
         project_id.as_deref(),
         filter,
         ctx.as_ref(),
@@ -428,34 +429,25 @@ fn emit_hook_show_json(
 ) -> anyhow::Result<()> {
     let mut entries: Vec<serde_json::Value> = Vec::new();
 
-    let mut emit = |hook_type: HookType,
-                    source: HookSource,
-                    cfg: &CommandConfig,
-                    needs_approval_for: Option<(&Approvals, Option<&str>)>|
-     -> anyhow::Result<()> {
-        for row in hook_command_rows(cfg, ctx, hook_type, source)? {
-            let needs_approval = needs_approval_for
-                .map(|(approvals, project_id)| {
-                    project_id.is_some_and(|pid| !approvals.is_command_approved(pid, &row.template))
-                })
-                .unwrap_or(false);
+    let mut emit =
+        |hook_type: HookType, source: HookSource, cfg: &CommandConfig| -> anyhow::Result<()> {
+            for row in hook_command_rows(cfg, ctx, hook_type, source)? {
+                let mut obj = serde_json::json!({
+                    "type": hook_type.to_string(),
+                    "source": source.to_string(),
+                    "name": row.name,
+                    "template": row.template,
+                    "needs_approval": needs_approval(source, approvals, project_id, &row.template),
+                });
 
-            let mut obj = serde_json::json!({
-                "type": hook_type.to_string(),
-                "source": source.to_string(),
-                "name": row.name,
-                "template": row.template,
-                "needs_approval": needs_approval,
-            });
+                if ctx.is_some() {
+                    obj["expanded"] = serde_json::Value::String(row.display);
+                }
 
-            if ctx.is_some() {
-                obj["expanded"] = serde_json::Value::String(row.display);
+                entries.push(obj);
             }
-
-            entries.push(obj);
-        }
-        Ok(())
-    };
+            Ok(())
+        };
 
     // User hooks (merge global + per-project so the listing matches what runs)
     let user_hooks = user_config.hooks(project_id);
@@ -466,7 +458,7 @@ fn emit_hook_show_json(
             continue;
         }
         if let Some(cfg) = user_hooks.get(hook_type) {
-            emit(hook_type, HookSource::User, cfg, None)?;
+            emit(hook_type, HookSource::User, cfg)?;
         }
     }
 
@@ -479,12 +471,7 @@ fn emit_hook_show_json(
                 continue;
             }
             if let Some(cfg) = project.hooks.get(hook_type) {
-                emit(
-                    hook_type,
-                    HookSource::Project,
-                    cfg,
-                    Some((approvals, project_id)),
-                )?;
+                emit(hook_type, HookSource::Project, cfg)?;
             }
         }
     }
@@ -497,6 +484,7 @@ fn emit_hook_show_json(
 fn render_user_hooks(
     out: &mut String,
     config: &UserConfig,
+    approvals: &Approvals,
     project_id: Option<&str>,
     filter: Option<HookType>,
     ctx: Option<&CommandContext>,
@@ -534,7 +522,15 @@ fn render_user_hooks(
         }
 
         has_any = true;
-        render_hook_commands(out, *hook_type, cfg, HookSource::User, None, ctx)?;
+        render_hook_commands(
+            out,
+            *hook_type,
+            cfg,
+            HookSource::User,
+            approvals,
+            project_id,
+            ctx,
+        )?;
     }
 
     if !has_any {
@@ -592,7 +588,8 @@ fn render_project_hooks(
             *hook_type,
             cfg,
             HookSource::Project,
-            Some((approvals, project_id)),
+            approvals,
+            project_id,
             ctx,
         )?;
     }
@@ -610,19 +607,14 @@ fn render_hook_commands(
     hook_type: HookType,
     config: &CommandConfig,
     source: HookSource,
-    // For project hooks: (approvals, project_id) to check approval status
-    approval_context: Option<(&Approvals, Option<&str>)>,
+    approvals: &Approvals,
+    project_id: Option<&str>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<()> {
     for row in hook_command_rows(config, ctx, hook_type, source)? {
         let label = command_label(hook_type, row.name.as_deref());
 
-        // Check approval status for project hooks
-        let needs_approval = if let Some((approvals, Some(project_id))) = approval_context {
-            !approvals.is_command_approved(project_id, &row.template)
-        } else {
-            false
-        };
+        let needs_approval = needs_approval(source, approvals, project_id, &row.template);
 
         // Use ❯ for needs approval, ○ for approved/user hooks
         let (emoji, suffix) = if needs_approval {
@@ -638,6 +630,25 @@ fn render_hook_commands(
     Ok(())
 }
 
+/// Whether a listed command still needs the user's approval to run.
+///
+/// Only project commands do — user config is the user's own. A repo with no
+/// project identifier has nothing to key approvals by, so nothing is approved
+/// and nothing is flagged.
+fn needs_approval(
+    source: HookSource,
+    approvals: &Approvals,
+    project_id: Option<&str>,
+    template: &str,
+) -> bool {
+    match source {
+        HookSource::User => false,
+        HookSource::Project => {
+            project_id.is_some_and(|id| !approvals.is_command_approved(id, template))
+        }
+    }
+}
+
 /// One command in a `wt hook show` listing.
 struct HookCommandRow {
     name: Option<String>,
@@ -647,8 +658,8 @@ struct HookCommandRow {
     display: String,
 }
 
-/// The rows for one hook config, expanded when `ctx` is present (that is,
-/// under `--expanded` — `handle_hook_show` builds a context only then).
+/// The rows for one hook config, expanded when `ctx` is present —
+/// `handle_hook_show` builds one only under `--expanded`.
 ///
 /// Expansion runs the config through [`prepare_steps`], the same function that
 /// builds what actually executes, so every context key the execution path
@@ -659,9 +670,9 @@ struct HookCommandRow {
 ///
 /// A manual invocation has no source or destination worktree, so the
 /// directional vars come from [`build_manual_hook_template_vars`], exactly as
-/// `run_hook` builds them. `args` is left unset and `prepare_steps` defaults it
-/// to the empty sequence: a listing has no CLI args to forward, which is what
-/// that default means.
+/// `run_hook` builds them. `args` is left unset, and `prepare_steps` defaults it
+/// to the empty sequence — a listing has no CLI args to forward, which is what
+/// that default encodes.
 ///
 /// A template that cannot expand renders as `# <error>` above its raw text
 /// rather than propagating — `wt hook show` lists configuration, so one broken

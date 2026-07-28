@@ -752,10 +752,9 @@ pub fn validate_pipeline_syntax(steps: &[PreparedStep]) -> Result<()> {
 }
 
 /// Prepare hook pipeline steps, preserving serial/concurrent structure. Sole
-/// producer of hook command contexts: every path that runs hooks (foreground
-/// and background) and `wt hook show --expanded`, which prepares the same
-/// commands to display them, go through this function — so a context key added
-/// here reaches both without a second edit.
+/// producer of hook command contexts: both the paths that run hooks (foreground
+/// and background) and the `wt hook show --expanded` listing come through here,
+/// so a context key added here reaches both with no second edit.
 ///
 /// Each command freezes its context as JSON and keeps its raw template;
 /// rendering happens when the command runs, so semantic errors (undefined
