@@ -1206,7 +1206,7 @@ fn test_foreground_pipeline_undefined_var_runs_earlier_steps(repo: TestRepo) {
 
 /// The other half of that contract: a *syntax* error anywhere in the pipeline
 /// aborts before step 1. Preparation parses every template
-/// (`validate_pipeline_syntax`), so a pipeline that can't render in full never
+/// (`PreparedPipeline::validated`), so a pipeline that can't render in full never
 /// starts — where a semantic error, rendered per step, lets earlier steps run.
 ///
 /// Driven through `wt merge`'s pre-commit hooks rather than `wt hook

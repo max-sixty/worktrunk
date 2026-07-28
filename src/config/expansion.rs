@@ -977,7 +977,7 @@ pub fn referenced_vars_for_config(
 /// Parse-only syntax check for a template.
 ///
 /// Every path that runs hooks calls this on each template, via
-/// `validate_pipeline_syntax`, so syntax errors (e.g. `{{ vars..foo }}`) abort
+/// `PreparedPipeline::validated`, so syntax errors (e.g. `{{ vars..foo }}`) abort
 /// before the first pipeline step runs; rendering — and with it semantic errors
 /// like undefined variables — is deferred to execution time. Alias dispatch has
 /// already parsed each template for argument routing by then, so it skips the
