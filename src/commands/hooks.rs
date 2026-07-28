@@ -77,7 +77,6 @@ use worktrunk::styling::{
 use super::command_executor::{
     CommandContext, FailureStrategy, ForegroundStep, PipelineKind, PreparedCommand, PreparedStep,
     alias_error_wrapper, execute_pipeline_foreground, hook_error_wrapper, prepare_steps,
-    validate_pipeline_syntax,
 };
 use super::hook_announcement::{SourcedStep, format_pipeline_summary};
 use crate::commands::process::{HookLog, spawn_detached_exec};
@@ -127,8 +126,7 @@ pub(crate) fn prepare_and_check(
             continue;
         }
 
-        let steps = prepare_steps(config, ctx, extra_vars, hook_type, source)?;
-        validate_pipeline_syntax(&steps)?;
+        let steps = prepare_steps(config, ctx, extra_vars, hook_type, source)?.validated()?;
         for step in steps {
             if let Some(filtered) = filter_step_by_name(step, source, &parsed_filters) {
                 result.push(SourcedStep {

@@ -52,7 +52,6 @@ use worktrunk::git::add_hook_skip_hint;
 use super::command_approval::approve_command_batch;
 use super::command_executor::{
     CommandContext, FailureStrategy, PipelineKind, execute_pipeline_foreground, prepare_steps,
-    validate_pipeline_syntax,
 };
 use super::hook_announcement::SourcedStep;
 use super::hook_filter::HookSource;
@@ -359,8 +358,7 @@ fn render_planned(
 ) -> anyhow::Result<Vec<SourcedStep>> {
     let mut out = Vec::new();
     for (source, cfg) in entries {
-        let steps = prepare_steps(cfg, ctx, extra_vars, hook_type, *source)?;
-        validate_pipeline_syntax(&steps)?;
+        let steps = prepare_steps(cfg, ctx, extra_vars, hook_type, *source)?.validated()?;
         for step in steps {
             out.push(SourcedStep {
                 step,

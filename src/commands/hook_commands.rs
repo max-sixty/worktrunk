@@ -85,18 +85,18 @@ fn run_post_hook(
 /// (execution + dry-run) and [`hook_command_rows`] (`hook show --expanded`) use
 /// this function. Returns a `TemplateVars` so callers can extend with
 /// additional bindings (e.g. CLI shorthand) before materializing.
-fn build_manual_hook_template_vars(
-    ctx: &CommandContext,
-    hook_type: HookType,
-    default_branch: Option<&str>,
-) -> TemplateVars {
+fn build_manual_hook_template_vars(ctx: &CommandContext, hook_type: HookType) -> TemplateVars {
     let branch = ctx.branch_or_head();
     let worktree_path = ctx.worktree_path;
     match hook_type {
-        // Merge/commit hooks: target = merge target (default branch for commit, current for merge)
-        HookType::PreCommit | HookType::PostCommit => {
-            default_branch.map_or_else(TemplateVars::new, |t| TemplateVars::new().with_target(t))
-        }
+        // Merge/commit hooks: target = merge target (default branch for commit,
+        // current for merge). Only this arm needs the default branch, and
+        // resolving it can cost a `git ls-remote` on a fresh clone — so it is
+        // fetched here rather than up front.
+        HookType::PreCommit | HookType::PostCommit => ctx
+            .repo
+            .default_branch()
+            .map_or_else(TemplateVars::new, |t| TemplateVars::new().with_target(&t)),
         HookType::PreMerge | HookType::PostMerge => TemplateVars::new()
             .with_target(branch)
             .with_target_worktree_path(worktree_path),
@@ -271,14 +271,13 @@ pub fn run_hook(
         .collect();
 
     // Build extra vars per hook type (shared by dry-run and execution paths)
-    let default_branch = repo.default_branch();
     // Splice `args` into the template context as a JSON-encoded sequence.
     // `expand_template` rehydrates it as `ShellArgs` so bare `{{ args }}`
     // renders space-joined with per-element shell escaping. Mirrors
     // `run_alias` at `src/commands/alias.rs`.
     let args_json =
         serde_json::to_string(&args).expect("Vec<String> serialization should never fail");
-    let template_vars = build_manual_hook_template_vars(&ctx, hook_type, default_branch.as_deref());
+    let template_vars = build_manual_hook_template_vars(&ctx, hook_type);
     let mut extra_vars = template_vars.as_extra_vars();
     extra_vars.extend(custom_vars_refs.iter().copied());
     // Forward positional CLI args as `{{ args }}` (empty sequence when
@@ -418,7 +417,7 @@ pub fn handle_hook_show(
 /// Each record carries the hook type, source (user or project), optional name,
 /// raw template, project approval status, and — when `--expanded` was passed —
 /// the rendered command preview. `handle_hook_show` builds `ctx` only under
-/// `--expanded`, so its presence is that flag.
+/// `--expanded`, and each row carries whether it was expanded.
 fn emit_hook_show_json(
     user_config: &UserConfig,
     project_config: Option<&ProjectConfig>,
@@ -440,8 +439,8 @@ fn emit_hook_show_json(
                     "needs_approval": needs_approval(source, approvals, project_id, &row.template),
                 });
 
-                if ctx.is_some() {
-                    obj["expanded"] = serde_json::Value::String(row.display);
+                if let Some(expanded) = row.expanded {
+                    obj["expanded"] = serde_json::Value::String(expanded);
                 }
 
                 entries.push(obj);
@@ -624,7 +623,8 @@ fn render_hook_commands(
         };
 
         writeln!(out, "{emoji} {label}{suffix}")?;
-        writeln!(out, "{}", format_bash_with_gutter(&row.display))?;
+        let shown = row.expanded.as_deref().unwrap_or(&row.template);
+        writeln!(out, "{}", format_bash_with_gutter(shown))?;
     }
 
     Ok(())
@@ -653,9 +653,10 @@ fn needs_approval(
 struct HookCommandRow {
     name: Option<String>,
     template: String,
-    /// What to print: the command as it would run under `--expanded`,
-    /// otherwise the raw template.
-    display: String,
+    /// The command as it would run, under `--expanded`. `None` without it, so
+    /// the listing prints the raw template and the JSON omits the field —
+    /// neither has to re-derive which mode it is in.
+    expanded: Option<String>,
 }
 
 /// The rows for one hook config, expanded when `ctx` is present —
@@ -688,12 +689,11 @@ fn hook_command_rows(
     if let Some(ctx) = ctx
         && config.commands().next().is_some()
     {
-        let default_branch = ctx.repo.default_branch();
-        let template_vars =
-            build_manual_hook_template_vars(ctx, hook_type, default_branch.as_deref());
+        let template_vars = build_manual_hook_template_vars(ctx, hook_type);
         let extra_vars = template_vars.as_extra_vars();
 
         return Ok(prepare_steps(config, ctx, &extra_vars, hook_type, source)?
+            .into_unvalidated()
             .into_iter()
             .flat_map(PreparedStep::into_commands)
             .map(|cmd| {
@@ -704,7 +704,7 @@ fn hook_command_rows(
                 HookCommandRow {
                     name: cmd.name,
                     template,
-                    display,
+                    expanded: Some(display),
                 }
             })
             .collect());
@@ -715,7 +715,7 @@ fn hook_command_rows(
         .map(|cmd| HookCommandRow {
             name: cmd.name.clone(),
             template: cmd.template.clone(),
-            display: cmd.template.clone(),
+            expanded: None,
         })
         .collect())
 }
