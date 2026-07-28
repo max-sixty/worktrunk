@@ -47,7 +47,7 @@ design choices behind this — read it before re-adding guards or routes. -->
 2. **With no repo argument, create and enter in one call:**
    `EnterWorktree({name: "<branch>"})`. Worktrunk's `WorktreeCreate` hook runs
    `wt switch --create`, so the result is an ordinary `wt` worktree in the
-   usual sibling layout, and the user sees no confirmation prompt. On success,
+   default layout, and the user sees no confirmation prompt. On success,
    do the task (or, with no task text, confirm it's ready and wait).
 
    Mid-session, carry uncommitted work across: `git stash push -u` before
