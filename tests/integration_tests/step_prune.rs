@@ -1577,6 +1577,173 @@ fn test_prune_removals_run_concurrently(repo: TestRepo) {
     }
 }
 
+/// The first failing removal aborts the rest of the queue.
+///
+/// Three integrated orphan branches scan in sorted order (`abort-a` first)
+/// with a single worker (`RAYON_NUM_THREADS=1`), so the jobs run FIFO. A
+/// `git` shim makes `abort-a`'s CAS delete fail *after* deleting the ref
+/// (so `cas_delete_branch_outcome`'s re-check finds it gone and propagates
+/// the error rather than reporting `RetainedRaced`). The failure must flip
+/// the abort flag: the queued `abort-b`/`abort-c` removals never execute,
+/// their branches survive, no summary prints, and prune exits non-zero —
+/// the serial loop's abort-on-first-error, preserved across the fan-out.
+/// Unix-only for the same `CreateProcess` shim reason as the canary above.
+#[cfg(unix)]
+#[rstest]
+fn test_prune_removal_failure_aborts_remaining_queue(repo: TestRepo) {
+    repo.commit("initial");
+
+    repo.create_branch("abort-a");
+    repo.create_branch("abort-b");
+    repo.create_branch("abort-c");
+
+    let mut cmd = repo.wt_command();
+    cmd.env("RAYON_NUM_THREADS", "1"); // FIFO: abort-a dispatches first
+    let git_wrapper_dir = repo.home_path().join("git-wrapper");
+    std::fs::create_dir_all(&git_wrapper_dir).unwrap();
+    write_failing_branch_delete_wrapper(&git_wrapper_dir, &which::which("git").unwrap());
+    prepend_path(&mut cmd, &git_wrapper_dir);
+    cmd.env("WT_TEST_FAIL_DELETE_BRANCH", "abort-a");
+
+    let output = cmd
+        .args(["step", "prune", "--yes", "--min-age=0s"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !output.status.success(),
+        "a failed removal must fail the run:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("removing branch abort-a"),
+        "the error should carry the failing candidate's context:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("Pruned "),
+        "no summary after an aborted run:\n{stderr}"
+    );
+    let branches = repo.git_output(&["branch", "--format=%(refname:short)"]);
+    assert!(
+        !branches.lines().any(|b| b == "abort-a"),
+        "the shim deleted abort-a's ref; branches:\n{branches}"
+    );
+    for name in ["abort-b", "abort-c"] {
+        assert!(
+            branches.lines().any(|b| b == name),
+            "{name} was queued behind the failure and must survive; branches:\n{branches}"
+        );
+    }
+}
+
+/// Concurrent failures: the first error is reported, the rest stay quiet.
+///
+/// Two failing removals rendezvous inside the shim (the barrier from
+/// `test_prune_removals_run_concurrently`) so both are in flight before
+/// either error lands — exercising the drain's duplicate-failure arm, which
+/// logs at debug rather than printing a second error.
+#[cfg(unix)]
+#[rstest]
+fn test_prune_concurrent_removal_failures_report_first(repo: TestRepo) {
+    repo.commit("initial");
+
+    repo.create_branch("dupe-a");
+    repo.create_branch("dupe-b");
+
+    let mut cmd = repo.wt_command();
+    cmd.env("RAYON_NUM_THREADS", "2"); // both jobs in flight at once
+    let git_wrapper_dir = repo.home_path().join("git-wrapper");
+    std::fs::create_dir_all(&git_wrapper_dir).unwrap();
+    write_barrier_failing_delete_wrapper(&git_wrapper_dir, &which::which("git").unwrap());
+    prepend_path(&mut cmd, &git_wrapper_dir);
+    let barrier_dir = repo.home_path().join("barrier");
+    std::fs::create_dir_all(&barrier_dir).unwrap();
+    cmd.env("WT_TEST_BARRIER_DIR", &barrier_dir);
+
+    let output = cmd
+        .args(["step", "prune", "--yes", "--min-age=0s"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !output.status.success(),
+        "failed removals must fail the run:\n{stderr}"
+    );
+    for name in ["dupe-a", "dupe-b"] {
+        assert!(
+            barrier_dir.join(format!("started-{name}")).exists(),
+            "the shim never fired for {name}"
+        );
+    }
+    // Exactly one candidate's failure reaches the terminal.
+    assert_eq!(
+        stderr.matches("removing branch dupe-").count(),
+        1,
+        "exactly one of the concurrent failures should be reported:\n{stderr}"
+    );
+}
+
+/// A `git` shim that deletes `refs/heads/$WT_TEST_FAIL_DELETE_BRANCH` for
+/// real and then reports failure when prune's CAS delete targets it —
+/// making `cas_delete_branch_outcome` propagate an error (ref gone on
+/// re-check) instead of `RetainedRaced` (ref still present).
+#[cfg(unix)]
+fn write_failing_branch_delete_wrapper(dir: &std::path::Path, real_git: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
+    let script = format!(
+        r#"#!/bin/sh
+if [ "$1" = "update-ref" ] && [ "$2" = "-d" ] && [ "$3" = "refs/heads/$WT_TEST_FAIL_DELETE_BRANCH" ]; then
+  {real_git} update-ref -d "$3" || true
+  exit 1
+fi
+exec {real_git} "$@"
+"#
+    );
+    let path = dir.join("git");
+    std::fs::write(&path, script).unwrap();
+    let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&path, permissions).unwrap();
+}
+
+/// The barrier shim (see `write_barrier_git_wrapper`) with a failing tail:
+/// both `dupe-{a,b}` deletions rendezvous, delete their ref for real, then
+/// report failure — two concurrent removal errors.
+#[cfg(unix)]
+fn write_barrier_failing_delete_wrapper(dir: &std::path::Path, real_git: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
+    let script = format!(
+        r#"#!/bin/sh
+case "$1 $2 $3" in
+  "update-ref -d refs/heads/dupe-a") own=dupe-a; other=dupe-b ;;
+  "update-ref -d refs/heads/dupe-b") own=dupe-b; other=dupe-a ;;
+  *) exec {real_git} "$@" ;;
+esac
+: > "$WT_TEST_BARRIER_DIR/started-$own"
+i=0
+while [ ! -e "$WT_TEST_BARRIER_DIR/started-$other" ]; do
+  i=$((i+1))
+  if [ "$i" -gt 300 ]; then
+    break
+  fi
+  sleep 0.05
+done
+{real_git} update-ref -d "$3" || true
+exit 1
+"#
+    );
+    let path = dir.join("git");
+    std::fs::write(&path, script).unwrap();
+    let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&path, permissions).unwrap();
+}
+
 /// A `git` shim whose `update-ref -d refs/heads/para-{a,b}` arms rendezvous
 /// with each other (see `test_prune_removals_run_concurrently`); everything
 /// else passes through to the real git.
