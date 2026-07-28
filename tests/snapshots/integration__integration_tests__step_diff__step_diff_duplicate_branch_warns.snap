@@ -11,6 +11,7 @@ info:
     CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_ALLOW_PROTOCOL: file
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
@@ -20,7 +21,6 @@ info:
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
-    MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     TERM: alacritty
@@ -35,6 +35,7 @@ info:
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_FISH_INSTALLED: "0"
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
+    WORKTRUNK_TEST_MOCK_CONFIG_DIR: "[TEST_MOCK_CONFIG]"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_PARENT_SHELL: ""
@@ -52,4 +53,4 @@ exit_code: 0
 [33m▲[39m [33mBranch [1mfeature[22m is checked out in 2 worktrees; wt uses the first:[39m
 [107m [0m _REPO_.feature
 [107m [0m _REPO_.feature-dup
-[2m↳[22m [2mTo drop a duplicate, run [4mgit worktree remove _REPO_.feature-dup[24m[22m
+[2m↳[22m [2mTo drop a duplicate, run [4mwt remove _REPO_.feature-dup[24m[22m

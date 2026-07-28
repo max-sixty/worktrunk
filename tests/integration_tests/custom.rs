@@ -42,7 +42,7 @@ fn custom_subcommand_runs_wt_prefixed_binary_on_path() {
 
     let mut cmd = wt_command();
     prepend_path(&mut cmd, dir.path());
-    cmd.env("MOCK_CONFIG_DIR", dir.path());
+    cmd.env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", dir.path());
     cmd.args(["wt-test-extcmd-ok", "arg1", "arg2"]);
 
     let output = cmd.output().expect("failed to run wt");
@@ -161,7 +161,7 @@ fn custom_subcommand_propagates_exit_code() {
 
     let mut cmd = wt_command();
     prepend_path(&mut cmd, dir.path());
-    cmd.env("MOCK_CONFIG_DIR", dir.path());
+    cmd.env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", dir.path());
     cmd.arg("wt-test-extcmd-fail");
 
     let output = cmd.output().expect("failed to run wt");
@@ -198,7 +198,7 @@ fn custom_subcommand_respects_global_dash_c_flag() {
 
     let mut cmd = wt_command();
     prepend_path(&mut cmd, dir.path());
-    cmd.env("MOCK_CONFIG_DIR", dir.path());
+    cmd.env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", dir.path());
     cmd.current_dir(std::env::temp_dir());
     cmd.args([
         "-C",
@@ -226,7 +226,7 @@ fn custom_subcommand_passes_help_flag_through() {
 
     let mut cmd = wt_command();
     prepend_path(&mut cmd, dir.path());
-    cmd.env("MOCK_CONFIG_DIR", dir.path());
+    cmd.env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", dir.path());
     cmd.args(["wt-test-extcmd-help", "--help"]);
 
     let output = cmd.output().expect("failed to run wt");

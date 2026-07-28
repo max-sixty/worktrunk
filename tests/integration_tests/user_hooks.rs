@@ -3921,7 +3921,7 @@ lint = "cargo clippy"
         assert_cmd_snapshot!("docs_hook_pre_merge", {
             let mut cmd = make_snapshot_cmd(&repo, "hook", &["pre-merge", "--yes"], None);
             cmd.env("PATH", &new_path);
-            cmd.env("MOCK_CONFIG_DIR", &bin_dir_str);
+            cmd.env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", &bin_dir_str);
             cmd
         });
     });

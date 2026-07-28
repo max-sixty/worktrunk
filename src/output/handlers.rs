@@ -17,7 +17,9 @@ use crate::commands::process::{
     HookLog, InternalOp, build_remove_command, build_remove_command_staged, spawn_detached,
 };
 use crate::commands::worktree::hooks::PostRemoveContext;
-use crate::commands::worktree::{RemoveResult, SwitchBranchInfo, SwitchResult};
+use crate::commands::worktree::{
+    RemoveResult, SharedBranchCheckout, SwitchBranchInfo, SwitchResult,
+};
 use worktrunk::config::UserConfig;
 use worktrunk::git::ErrorExt;
 use worktrunk::git::GitError;
@@ -638,6 +640,32 @@ fn print_retained_unmerged_branch(branch_name: &str) {
     eprintln!("{hint}");
 }
 
+/// Explain that the branch was kept because another worktree still has it
+/// checked out. Removing this worktree can't free a ref that's live elsewhere,
+/// so the branch is retained and the surviving checkout is named — the state is
+/// only reachable through `git worktree add --force`, so the user may not
+/// remember creating it.
+///
+/// Info by default: nothing went wrong, and this reads as a sibling of
+/// [`retained_unmerged_branch_messages`], the other "kept the branch, here's
+/// why" line. A refused `-D` is different — `-D` overrides every other
+/// retention wt has, so one that doesn't delete is unexpected and warns.
+fn print_branch_checked_out_elsewhere(branch_name: &str, shared: &SharedBranchCheckout) {
+    let path = format_path_for_display(&shared.path);
+    let message = if shared.refused_force_delete {
+        warning_message(cformat!(
+            "Branch <bold>{branch_name}</> retained despite <bold>-D</>; still checked out @ <bold>{path}</>"
+        ))
+        .to_string()
+    } else {
+        info_message(cformat!(
+            "Branch <bold>{branch_name}</> retained; still checked out @ <bold>{path}</>"
+        ))
+        .to_string()
+    };
+    eprintln!("{message}");
+}
+
 /// The canonical "branch retained because the atomic CAS delete was refused"
 /// warning. The ref moved between the integration check and the delete (a hook
 /// commit, a concurrent push), so the integrated branch is kept fail-closed
@@ -1017,6 +1045,7 @@ pub fn handle_remove_output(
             integration_reason,
             force_worktree,
             removed_commit,
+            branch_checked_out_at,
         } => handle_removed_worktree_output(
             RemovedWorktreeOutputContext {
                 main_path,
@@ -1028,6 +1057,7 @@ pub fn handle_remove_output(
                 integration_reason: *integration_reason,
                 force_worktree: *force_worktree,
                 removed_commit: removed_commit.as_deref(),
+                branch_checked_out_at: branch_checked_out_at.as_ref(),
                 plan,
                 foreground,
                 silent,
@@ -1041,12 +1071,14 @@ pub fn handle_remove_output(
             pruned,
             target_branch,
             integration_reason,
+            branch_checked_out_at,
         } => handle_branch_only_output(
             branch_name,
             *deletion_mode,
             *pruned,
             *integration_reason,
             target_branch.as_deref(),
+            branch_checked_out_at.as_ref(),
             quiet,
         ),
     }
@@ -1062,6 +1094,7 @@ fn handle_branch_only_output(
     pruned: bool,
     integration_reason: Option<IntegrationReason>,
     target_branch: Option<&str>,
+    branch_checked_out_at: Option<&SharedBranchCheckout>,
     quiet: bool,
 ) -> anyhow::Result<()> {
     let branch_info = if pruned {
@@ -1073,6 +1106,11 @@ fn handle_branch_only_output(
     // If we won't delete the branch, show info and return early
     if deletion_mode.should_keep() {
         eprintln!("{}", info_message(&branch_info));
+        // A sibling `--force` checkout kept the branch alive; name it so the
+        // user knows why the pruned branch survived rather than being deleted.
+        if let Some(shared) = branch_checked_out_at {
+            print_branch_checked_out_elsewhere(branch_name, shared);
+        }
         stderr().flush()?;
         return Ok(());
     }
@@ -1477,6 +1515,9 @@ struct RemovedWorktreeOutputContext<'a> {
     integration_reason: Option<IntegrationReason>,
     force_worktree: bool,
     removed_commit: Option<&'a str>,
+    /// A surviving checkout of this branch, when one exists. `Some` means the
+    /// branch was retained rather than deleted; see [`SharedBranchCheckout`].
+    branch_checked_out_at: Option<&'a SharedBranchCheckout>,
     /// The frozen, approved hook plan. `pre-remove` / `post-remove` /
     /// `post-switch` execute only from this — no `.config/wt.toml` re-read,
     /// no `ProjectConfig` snapshot to thread.
@@ -1686,6 +1727,9 @@ fn handle_named_removed_worktree_foreground(
 
     display_info.print_message(branch_name, true, Some(stats))?;
     display_info.print_hints(branch_name, ctx.deletion_mode, ctx.integration_reason)?;
+    if let Some(shared) = ctx.branch_checked_out_at {
+        print_branch_checked_out_elsewhere(branch_name, shared);
+    }
     print_switch_message_if_changed(ctx.changed_directory, ctx.main_path)?;
 
     spawn_hooks_after_remove(repo, ctx, branch_name, announcer)?;
@@ -1708,6 +1752,9 @@ fn handle_named_removed_worktree_background(
 
     display_info.print_message(branch_name, false, None)?;
     display_info.print_hints(branch_name, ctx.deletion_mode, ctx.integration_reason)?;
+    if let Some(shared) = ctx.branch_checked_out_at {
+        print_branch_checked_out_elsewhere(branch_name, shared);
+    }
     print_switch_message_if_changed(ctx.changed_directory, ctx.main_path)?;
 
     // Planner predicted retention when the user asked to keep, or when the

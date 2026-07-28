@@ -5,6 +5,7 @@ expression: "String::from_utf8_lossy(&output.stdout)"
 [
   {
     "branch": "orphan-branch",
+    "branch_checked_out_at": null,
     "branch_deleted": true,
     "kind": "branch_only",
     "pruned": false

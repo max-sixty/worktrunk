@@ -1850,3 +1850,63 @@ exec {real_git} "$@"
     permissions.set_mode(0o755);
     std::fs::set_permissions(&path, permissions).unwrap();
 }
+
+/// `wt step prune` sweeps stale worktrees unattended, so it's the worst place to
+/// delete a branch another worktree still has checked out — the user isn't
+/// watching, and the survivor is left at a null OID with an unresolvable `HEAD`.
+/// It shares `prepare_worktree_removal` with `wt remove`, and this pins that it
+/// keeps sharing the guard.
+#[rstest]
+fn test_prune_retains_branch_checked_out_in_another_worktree(mut repo: TestRepo) {
+    let survivor = repo.add_worktree("feature");
+
+    // A `--force` duplicate whose directory then disappears out-of-band: prune
+    // finds a stale entry whose branch is still live in `survivor`.
+    let dup = repo.root_path().parent().unwrap().join("repo.feature-dup");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "--force",
+        dup.to_str().unwrap(),
+        "feature",
+    ]);
+    std::fs::remove_dir_all(&dup).unwrap();
+
+    // Default `min-age`, deliberately: it holds `survivor` back as too young
+    // while the stale entry is pruned regardless of age. That asymmetry is what
+    // leaves a live checkout standing when the branch deletion runs — with
+    // `--min-age=0s` prune would remove both worktrees, and the branch would be
+    // free to delete by the time it did.
+    let output = repo
+        .wt_command()
+        .args(["step", "prune", "--yes"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(output.status.success(), "prune should succeed:\n{stderr}");
+
+    let branch_exists = repo
+        .git_command()
+        .args(["show-ref", "--verify", "--quiet", "refs/heads/feature"])
+        .run()
+        .unwrap()
+        .status
+        .success();
+    assert!(
+        branch_exists,
+        "prune must retain a branch another worktree still has checked out:\n{stderr}",
+    );
+
+    assert!(
+        repo.git_command()
+            .args(["rev-parse", "--verify", "HEAD"])
+            .current_dir(&survivor)
+            .run()
+            .unwrap()
+            .status
+            .success(),
+        "survivor must resolve HEAD to a commit, not a deleted branch:\n{stderr}",
+    );
+}

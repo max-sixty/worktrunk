@@ -1210,7 +1210,7 @@ command = "{llm_path_str}"
         Some(&feature_wt),
         &[
             (&path_var, &path_with_bin),
-            ("MOCK_CONFIG_DIR", &bin_dir_str),
+            ("WORKTRUNK_TEST_MOCK_CONFIG_DIR", &bin_dir_str),
         ],
     );
 }
@@ -1317,7 +1317,7 @@ impl Registry {
         Some(&feature_wt),
         &[
             (&path_var, &path_with_bin),
-            ("MOCK_CONFIG_DIR", &bin_dir_str),
+            ("WORKTRUNK_TEST_MOCK_CONFIG_DIR", &bin_dir_str),
             ("WORKTRUNK_DIRECTIVE_CD_FILE", &directive_file_str),
         ],
     );
@@ -5107,5 +5107,66 @@ fn test_post_merge_hook_from_rebased_in_config_does_not_run(merge_scenario: (Tes
         !injected.exists(),
         "a post-merge that entered the invoking worktree's config only via the \
          rebase must not run — it was never in the frozen plan"
+    );
+}
+
+/// `wt merge` reaches the same branch deletion `wt remove` does, so it needs the
+/// same shared-branch guard.
+///
+/// This is the likeliest way to meet a `--force` duplicate: the branch has just
+/// been merged, so it's integrated and nothing else would decline the delete —
+/// and deleting it strands the duplicate at a null OID with an unresolvable
+/// `HEAD`. A branch reaches two worktrees only through `git worktree add
+/// --force`, which worktrunk never runs itself.
+#[rstest]
+fn test_merge_retains_branch_checked_out_in_another_worktree(mut repo: TestRepo) {
+    let feature_wt = repo.add_feature();
+
+    let dup = repo.root_path().parent().unwrap().join("repo.feature-dup");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "--force",
+        dup.to_str().unwrap(),
+        "feature",
+    ]);
+
+    let output = repo
+        .wt_command()
+        .args(["merge", "main", "--yes", "--no-hooks"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "merge should succeed:\n{stderr}");
+
+    wait_for_worktree_removed(&feature_wt);
+
+    let branch_exists = repo
+        .git_command()
+        .args(["show-ref", "--verify", "--quiet", "refs/heads/feature"])
+        .run()
+        .unwrap()
+        .status
+        .success();
+    assert!(
+        branch_exists,
+        "branch must be retained while the duplicate still has it checked out:\n{stderr}",
+    );
+
+    assert!(
+        repo.git_command()
+            .args(["rev-parse", "--verify", "HEAD"])
+            .current_dir(&dup)
+            .run()
+            .unwrap()
+            .status
+            .success(),
+        "the duplicate must resolve HEAD to a commit, not a deleted branch:\n{stderr}",
+    );
+
+    assert!(
+        stderr.contains("retained") && stderr.contains("still checked out"),
+        "output should explain the branch was retained:\n{stderr}",
     );
 }

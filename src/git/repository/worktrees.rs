@@ -9,7 +9,9 @@ use dunce::canonicalize;
 
 use super::{GitError, Repository, ResolvedWorktree, WorktreeInfo, resolve_input_path};
 use crate::path::{format_path_for_display, paths_match};
-use crate::styling::{eprintln, format_with_gutter, hint_message, warning_message};
+use crate::styling::{
+    eprintln, format_with_gutter, hint_message, suggest_command, warning_message,
+};
 
 impl Repository {
     /// List all worktrees for this repository.
@@ -419,8 +421,8 @@ pub fn duplicated_branches(worktrees: &[WorktreeInfo]) -> HashSet<&str> {
 /// Warn once per process that `branch` resolves ambiguously across worktrees.
 ///
 /// Worktrunk addresses worktrees by branch name and resolves an ambiguous
-/// branch to the first worktree git lists, leaving the others unreachable by
-/// name. The warning surfaces that otherwise-silent choice — naming every
+/// branch to the first worktree git lists, leaving the others reachable only by
+/// path. The warning surfaces that otherwise-silent choice — naming every
 /// path — without changing which worktree is used. Deduplicated per branch so
 /// a command that resolves the same branch repeatedly (the picker, `wt list`)
 /// warns only once.
@@ -449,14 +451,14 @@ fn warn_duplicate_checkout(branch: &str, paths: &[PathBuf]) {
         );
         eprintln!("{}", format_with_gutter(&listing, None));
         // Name every shadowed worktree so removing them all is actionable; with a
-        // single extra (the common case) this is one hint.
+        // single extra (the common case) this is one hint. `wt remove <path>`
+        // removes exactly the worktree named and retains the branch the others
+        // still hold, so it's safe to suggest for a duplicate.
         for extra in &paths[1..] {
+            let cmd = suggest_command("remove", &[&format_path_for_display(extra)], &[]);
             eprintln!(
                 "{}",
-                hint_message(cformat!(
-                    "To drop a duplicate, run <underline>git worktree remove {}</>",
-                    format_path_for_display(extra)
-                ))
+                hint_message(cformat!("To drop a duplicate, run <underline>{cmd}</>"))
             );
         }
     }

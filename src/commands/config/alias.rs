@@ -26,7 +26,7 @@ use std::io::Write;
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::{
-    ALIAS_ARGS_KEY, CommandConfig, ProjectConfig, UserConfig, referenced_vars_for_config,
+    ALIAS_ARGS_KEY, CommandConfig, ProjectConfig, UserConfig, VarScope, referenced_vars_for_config,
 };
 use worktrunk::git::{Repository, WorktrunkError};
 use worktrunk::styling::{format_bash_with_gutter, info_message, println};
@@ -185,9 +185,9 @@ pub fn handle_alias_dry_run(name: String, args: Vec<String>) -> anyhow::Result<(
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    let mut context_map = build_hook_context(&ctx, &extra_refs, None)?;
+    let mut context_map = build_hook_context(&ctx, &extra_refs, VarScope::All)?;
     context_map.insert(
-        ALIAS_ARGS_KEY.to_string(),
+        ALIAS_ARGS_KEY,
         serde_json::to_string(&opts.positional_args)
             .expect("Vec<String> serialization should never fail"),
     );

@@ -3250,8 +3250,8 @@ fn test_remove_resolves_all_fsmonitor_daemons_in_one_lsof(mut repo: TestRepo) {
         .wt_command()
         .args(["remove", "feature-fsmon", "-vv"])
         .env("PATH", &new_path)
-        .env("MOCK_CONFIG_DIR", &bin_dir)
-        .env("MOCK_CALL_LOG_DIR", call_log.path())
+        .env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", &bin_dir)
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
         .output()
         .unwrap();
     assert!(
@@ -3326,8 +3326,8 @@ fn test_remove_sweep_skips_lsof_when_no_daemon_pids(mut repo: TestRepo) {
         .wt_command()
         .args(["remove", "feature-fsmon", "-vv"])
         .env("PATH", &new_path)
-        .env("MOCK_CONFIG_DIR", &bin_dir)
-        .env("MOCK_CALL_LOG_DIR", call_log.path())
+        .env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", &bin_dir)
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
         .output()
         .unwrap();
     assert!(
@@ -3699,7 +3699,7 @@ cleanup = "flyctl scale count 0"
         assert_cmd_snapshot!("docs_remove_pre_remove_hook", {
             let mut cmd = make_snapshot_cmd(&repo, "remove", &["--yes"], Some(&api_wt));
             cmd.env("PATH", &new_path);
-            cmd.env("MOCK_CONFIG_DIR", &bin_dir_str);
+            cmd.env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", &bin_dir_str);
             cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", &directive_file_str);
             cmd
         });
@@ -3944,5 +3944,186 @@ fn test_remove_merged_locally_when_upstream_diverged(#[from(repo_with_remote)] r
     assert!(
         !branch_still_exists.status.success(),
         "feature branch should be deleted after detection via local main"
+    );
+}
+
+// ============================================================================
+// Shared-branch retention
+//
+// A branch reaches two worktrees only through `git worktree add --force`, which
+// worktrunk never runs itself. Once it has, deleting the ref orphans whichever
+// checkout wt didn't remove: `git update-ref -d` is a compare-and-swap on the
+// ref alone and, unlike `git branch -d`, doesn't refuse a ref that's checked
+// out. The survivor is left at a null OID with an unresolvable `HEAD`, so every
+// test here asserts on the survivor's `HEAD`, not just on the branch.
+// ============================================================================
+
+/// Check out `branch` a second time at `<repo>.<suffix>`, the state only
+/// `--force` can produce.
+fn add_force_duplicate(repo: &TestRepo, branch: &str, suffix: &str) -> std::path::PathBuf {
+    let dup = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join(format!("repo.{suffix}"));
+    repo.run_git(&["worktree", "add", "--force", dup.to_str().unwrap(), branch]);
+    dup
+}
+
+/// Assert `worktree` still resolves `HEAD` to a commit — the corruption a
+/// deleted-but-checked-out branch leaves behind.
+#[track_caller]
+fn assert_not_orphaned(repo: &TestRepo, worktree: &std::path::Path, context: &str) {
+    let head = repo
+        .git_command()
+        .args(["rev-parse", "--verify", "HEAD"])
+        .current_dir(worktree)
+        .run()
+        .unwrap();
+    assert!(
+        head.status.success(),
+        "surviving worktree must resolve HEAD to a commit, not a deleted branch\n{context}",
+    );
+}
+
+#[track_caller]
+fn assert_branch_exists(repo: &TestRepo, branch: &str, expected: bool, context: &str) {
+    let found = repo
+        .git_command()
+        .args([
+            "show-ref",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{branch}"),
+        ])
+        .run()
+        .unwrap()
+        .status
+        .success();
+    assert_eq!(found, expected, "branch {branch} presence\n{context}");
+}
+
+/// Run `wt remove` with `args`, returning ANSI-stripped stderr.
+fn run_remove(repo: &TestRepo, args: &[&str]) -> String {
+    let output = repo.wt_command().arg("remove").args(args).output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(
+        output.status.success(),
+        "wt remove {args:?} should succeed\nstderr:\n{stderr}",
+    );
+    stderr
+}
+
+/// Naming a duplicate by its path removes exactly that worktree — resolving the
+/// path back to a branch would target git's first-listed checkout instead — and
+/// retains the branch the survivor still holds.
+#[rstest]
+fn test_remove_duplicate_checkout_by_path_retains_survivor(mut repo: TestRepo) {
+    use crate::common::wait_for_worktree_removed;
+
+    let survivor = repo.add_worktree("feature");
+    let dup = add_force_duplicate(&repo, "feature", "feature-dup");
+
+    let stderr = run_remove(&repo, &[dup.to_str().unwrap()]);
+
+    wait_for_worktree_removed(&dup);
+    assert!(
+        survivor.exists(),
+        "only the named worktree should be removed\nstderr:\n{stderr}",
+    );
+    assert_branch_exists(&repo, "feature", true, &stderr);
+    assert_not_orphaned(&repo, &survivor, &stderr);
+    assert!(
+        stderr.contains("retained") && stderr.contains("still checked out"),
+        "output should explain the branch was retained\nstderr:\n{stderr}",
+    );
+}
+
+/// Removing a duplicated branch *by name* resolves to git's first-listed
+/// worktree and removes that one, still retaining the shared branch rather than
+/// orphaning the other checkout.
+#[rstest]
+fn test_remove_duplicate_checkout_by_name_retains_branch(mut repo: TestRepo) {
+    use crate::common::wait_for_worktree_removed;
+
+    let first = repo.add_worktree("feature");
+    let dup = add_force_duplicate(&repo, "feature", "feature-dup");
+
+    let stderr = run_remove(&repo, &["feature"]);
+
+    wait_for_worktree_removed(&first);
+    assert_branch_exists(&repo, "feature", true, &stderr);
+    assert_not_orphaned(&repo, &dup, &stderr);
+}
+
+/// `-D` overrides every other retention wt has, but it can't override this one:
+/// the ref is live in another worktree, so honoring it would corrupt that
+/// worktree. The refusal warns rather than passing silently.
+///
+/// `--foreground` so the retention is also exercised on the synchronous
+/// removal path; the other tests here take the background one.
+#[rstest]
+fn test_remove_force_delete_refused_while_branch_is_shared(mut repo: TestRepo) {
+    let survivor = repo.add_worktree("feature");
+    let dup = add_force_duplicate(&repo, "feature", "feature-dup");
+
+    let stderr = run_remove(&repo, &[dup.to_str().unwrap(), "-D", "--foreground"]);
+
+    assert!(
+        !dup.exists(),
+        "foreground removal should finish before returning\nstderr:\n{stderr}",
+    );
+    assert_branch_exists(&repo, "feature", true, &stderr);
+    assert_not_orphaned(&repo, &survivor, &stderr);
+    assert!(
+        stderr.contains("retained despite -D"),
+        "a refused -D must say so, not retain silently\nstderr:\n{stderr}",
+    );
+}
+
+/// The missing-directory fallback reaches the same ref deletion, so it needs the
+/// same guard: the target's own entry is stale, but the sibling's checkout is
+/// live and would be orphaned.
+#[rstest]
+fn test_remove_pruned_dir_with_sibling_checkout_retains_branch(mut repo: TestRepo) {
+    // `feature` has no commits beyond main, so it's integrated and would be
+    // deleted by the branch-only fallback absent the sibling guard.
+    let survivor = repo.add_worktree("feature");
+    let dup = add_force_duplicate(&repo, "feature", "feature-dup");
+    std::fs::remove_dir_all(&dup).unwrap();
+
+    let stderr = run_remove(&repo, &[dup.to_str().unwrap()]);
+
+    assert_branch_exists(&repo, "feature", true, &stderr);
+    assert_not_orphaned(&repo, &survivor, &stderr);
+    assert!(
+        stderr.contains("pruned")
+            && stderr.contains("retained")
+            && stderr.contains("still checked out"),
+        "output should report the prune and explain the branch was retained\nstderr:\n{stderr}",
+    );
+}
+
+/// The mirror image: a *stale* duplicate entry alongside one live checkout. The
+/// live checkout is the one being removed, so nothing survives to be orphaned
+/// and the branch is deleted as usual. Retaining here would strand the branch
+/// and name a directory that no longer exists.
+#[rstest]
+fn test_remove_last_live_checkout_deletes_branch(mut repo: TestRepo) {
+    use crate::common::wait_for_worktree_removed;
+
+    let live = repo.add_worktree("feature");
+    let stale = add_force_duplicate(&repo, "feature", "feature-dup");
+    std::fs::remove_dir_all(&stale).unwrap();
+
+    let stderr = run_remove(&repo, &[live.to_str().unwrap()]);
+
+    wait_for_worktree_removed(&live);
+    assert_branch_exists(&repo, "feature", false, &stderr);
+    assert!(
+        !stderr.contains("still checked out"),
+        "a stale entry is not a checkout to retain the branch for\nstderr:\n{stderr}",
     );
 }

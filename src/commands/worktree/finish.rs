@@ -27,13 +27,14 @@ use worktrunk::config::UserConfig;
 use worktrunk::git::{BranchDeletionMode, Repository};
 use worktrunk::styling::{eprintln, info_message};
 
-use super::types::RemoveResult;
+use super::types::{RemoveResult, SharedBranchCheckout};
 use crate::commands::command_executor::CommandContext;
 use crate::commands::context::CommandEnv;
 use crate::commands::hook_plan::{ApprovedHookPlan, register_planned};
 use crate::commands::hooks::HookAnnouncer;
 use crate::commands::repository_ext::{
     check_not_default_branch, compute_integration_reason, is_primary_worktree,
+    live_sibling_checkout,
 };
 use crate::commands::template_vars::TemplateVars;
 use crate::output::{
@@ -131,26 +132,51 @@ pub fn finish_after_merge(
 
         let worktree_root = current_wt.root()?;
 
+        // Merge reaches the same ref deletion `wt remove` does, so it asks the
+        // same question: is this branch checked out anywhere else? Merging is
+        // the likeliest way to meet a `--force` duplicate — the branch is
+        // integrated, so nothing else would stop the delete, and deleting it
+        // strands the duplicate at a null OID.
+        let branch_checked_out_at =
+            live_sibling_checkout(repo.list_worktrees()?, current_branch, &worktree_root).map(
+                |sibling| SharedBranchCheckout::new(&sibling.path, &BranchDeletionMode::SafeDelete),
+            );
+
+        // A retained branch has no deletion to justify, so the integration
+        // check is skipped rather than computed and discarded — same shape as
+        // `prepare_worktree_removal`'s Phase 5.
+        let (deletion_mode, display_target, integration_reason) = if branch_checked_out_at.is_some()
+        {
+            (BranchDeletionMode::Keep, None, None)
+        } else {
+            let (integration_reason, effective_target) = compute_integration_reason(
+                repo,
+                &repo.capture_refs()?,
+                Some(current_branch),
+                Some(target_branch),
+                BranchDeletionMode::SafeDelete,
+            );
+            (
+                BranchDeletionMode::SafeDelete,
+                effective_target.or_else(|| Some(target_branch.to_string())),
+                integration_reason,
+            )
+        };
+
         // No config snapshot: `pre-remove` / `post-remove` were selected and
         // frozen into `plan` at the gate (anchored at `feature_path`), so the
         // executor needs no config — it runs only the frozen `plan`.
-        let (integration_reason, effective_target) = compute_integration_reason(
-            repo,
-            &repo.capture_refs()?,
-            Some(current_branch),
-            Some(target_branch),
-            BranchDeletionMode::SafeDelete,
-        );
         let remove_result = RemoveResult::RemovedWorktree {
             main_path: destination_path.clone(),
             worktree_path: worktree_root,
             changed_directory: true,
             branch_name: Some(current_branch.to_string()),
-            deletion_mode: BranchDeletionMode::SafeDelete,
-            target_branch: effective_target.or_else(|| Some(target_branch.to_string())),
+            deletion_mode,
+            target_branch: display_target,
             integration_reason,
             force_worktree: false,
             removed_commit: feature_commit.clone(),
+            branch_checked_out_at,
         };
         handle_remove_output(
             &remove_result,

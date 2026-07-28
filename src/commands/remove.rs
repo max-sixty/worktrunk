@@ -101,7 +101,7 @@ fn validate_remove_targets(
         };
 
         match resolved {
-            ResolvedWorktree::Worktree { path, branch } => {
+            ResolvedWorktree::Worktree { path, branch: _ } => {
                 // Use canonical paths to avoid symlink/normalization mismatches
                 let path_canonical = dunce::canonicalize(&path).unwrap_or(path);
                 let is_current = current_worktree.as_ref() == Some(&path_canonical);
@@ -121,13 +121,14 @@ fn validate_remove_targets(
                     continue;
                 }
 
-                // Non-current worktree: remove by branch name, or by path for
-                // detached worktrees (which have no branch).
-                let target = if let Some(ref branch_name) = branch {
-                    RemoveTarget::Branch(branch_name)
-                } else {
-                    RemoveTarget::Path(&path_canonical)
-                };
+                // Remove exactly the resolved worktree by its path. Targeting by
+                // branch name would resolve an ambiguous branch (one checked out
+                // in several worktrees via `git worktree add --force`) back to
+                // git's first-listed worktree — removing the wrong one — whereas
+                // the path is unambiguous. `prepare_worktree_removal` still
+                // deletes the branch when it's the sole checkout, and retains it
+                // otherwise (see its shared-branch handling).
+                let target = RemoveTarget::Path(&path_canonical);
                 match repo.prepare_worktree_removal(
                     target,
                     deletion_mode,

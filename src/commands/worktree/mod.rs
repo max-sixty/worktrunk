@@ -94,4 +94,6 @@ pub use push::{PushKind, PushOutcome, PushResult, handle_no_ff_merge, handle_pus
 pub use resolve::{compute_worktree_path, is_worktree_at_expected_path, worktree_display_name};
 pub(crate) use switch::SwitchPipeline;
 pub use switch::handle_switch_command;
-pub use types::{MergeOperations, RemoveResult, SwitchBranchInfo, SwitchResult};
+pub use types::{
+    MergeOperations, RemoveResult, SharedBranchCheckout, SwitchBranchInfo, SwitchResult,
+};

@@ -4813,7 +4813,7 @@ mod plugin_prompt_pty {
         // Add mock binary PATH if configured
         if let Some(mock_bin) = repo.mock_bin_path() {
             vars.push((
-                "MOCK_CONFIG_DIR".to_string(),
+                "WORKTRUNK_TEST_MOCK_CONFIG_DIR".to_string(),
                 mock_bin.display().to_string(),
             ));
 

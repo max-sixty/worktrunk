@@ -242,10 +242,10 @@ impl MockConfig {
 /// PIDs) rather than called in a loop. Returns empty when the command was
 /// never invoked, so a "was not called" assertion reads naturally.
 ///
-/// `log_dir` is the directory passed to the command as `MOCK_CALL_LOG_DIR`.
-/// It must be OUTSIDE the repo under test: mocks spawned by hooks would
-/// otherwise dirty the working tree mid-run and change the behavior being
-/// measured.
+/// `log_dir` is the directory passed to the command as
+/// `WORKTRUNK_TEST_MOCK_CALL_LOG_DIR`. It must be OUTSIDE the repo under test:
+/// mocks spawned by hooks would otherwise dirty the working tree mid-run and
+/// change the behavior being measured.
 pub fn mock_calls(log_dir: &Path, name: &str) -> Vec<String> {
     fs::read_to_string(log_dir.join(format!("{}.calls", name)))
         .map(|s| s.lines().map(str::to_string).collect())

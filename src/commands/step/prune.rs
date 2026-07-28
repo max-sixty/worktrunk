@@ -57,25 +57,27 @@ struct Candidate {
 }
 
 impl Candidate {
+    /// Always the path, because the scan already identified the exact worktree:
+    /// naming it by branch instead re-resolves to git's first-listed checkout,
+    /// which for a branch checked out twice is a different worktree — and for a
+    /// stale entry is the live one. `RemoveTarget::Path` degrades to branch-only
+    /// deletion when the directory is already gone, so a stale entry still
+    /// prunes.
+    ///
+    /// Only a candidate that arrives without a scan-time plan reaches this, and
+    /// `check_one` plans everything except `Prunable`, which always carries the
+    /// stale worktree's path.
     fn remove_target(&self) -> anyhow::Result<RemoveTarget<'_>> {
         match self.kind {
             CandidateKind::Current => Ok(RemoveTarget::Current),
-            CandidateKind::BranchOnly => Ok(RemoveTarget::Branch(
-                self.branch
-                    .as_ref()
-                    .context("BranchOnly candidate missing branch")?,
-            )),
             CandidateKind::StaleDetached => Err(anyhow::anyhow!(
                 "stale detached candidate has no remove target"
             )),
-            CandidateKind::Other => match &self.branch {
-                Some(branch) => Ok(RemoveTarget::Branch(branch)),
-                None => Ok(RemoveTarget::Path(
-                    self.path
-                        .as_ref()
-                        .context("detached candidate missing path")?,
-                )),
-            },
+            CandidateKind::BranchOnly | CandidateKind::Other => Ok(RemoveTarget::Path(
+                self.path
+                    .as_ref()
+                    .context("candidate has no worktree path")?,
+            )),
         }
     }
 
@@ -429,12 +431,11 @@ fn check_one(
             .ok(),
         CheckSource::Linked { wt_idx } => {
             let wt = &worktrees[*wt_idx];
-            let target = match &wt.branch {
-                Some(b) if !wt.detached => RemoveTarget::Branch(b),
-                _ => RemoveTarget::Path(&wt.path),
-            };
             repo.prepare_worktree_removal(
-                target,
+                // The scan already knows which worktree this is; naming it by
+                // branch would re-resolve to git's first-listed checkout, which
+                // for a duplicated branch is a different worktree.
+                RemoveTarget::Path(&wt.path),
                 BranchDeletionMode::SafeDelete,
                 false,
                 None,
@@ -503,10 +504,14 @@ fn candidate_fields(
                 format!("(detached {short})")
             });
             match &wt.branch {
+                // The stale entry's own path, so the removal targets it rather
+                // than re-resolving the branch to whichever worktree git lists
+                // first — which, for a branch this one duplicates, is a live
+                // worktree the prune never selected.
                 Some(branch) => (
                     label,
                     Some(branch.clone()),
-                    None,
+                    Some(wt.path.clone()),
                     CandidateKind::BranchOnly,
                     " (stale)",
                 ),

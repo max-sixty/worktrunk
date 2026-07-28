@@ -226,7 +226,7 @@ mod tests {
         PreparedCommand {
             name: name.map(String::from),
             template: template.to_string(),
-            context: std::collections::HashMap::new(),
+            context: worktrunk::config::TemplateContext::default(),
             template_name: label.clone(),
             label,
         }
