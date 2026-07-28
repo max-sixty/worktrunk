@@ -50,9 +50,9 @@ design choices behind this — read it before re-adding guards or routes. -->
    default layout, and the user sees no confirmation prompt. On success,
    do the task (or, with no task text, confirm it's ready and wait).
 
-   Mid-session, carry uncommitted work across: `git stash push -u` before
-   creating the worktree, then `git -C <path> stash pop` after (the stash is
-   shared across worktrees).
+   Mid-session, carry uncommitted work across: `git stash push -u` before the
+   `EnterWorktree` call, then `git stash pop` after — the call re-roots the
+   session into the new worktree, and the stash is shared across worktrees.
 
 3. **Otherwise create it with `wt` and enter by path.** Two cases reach here: a
    repo argument, which step 2 can't target, and a failed step 2, whose error
