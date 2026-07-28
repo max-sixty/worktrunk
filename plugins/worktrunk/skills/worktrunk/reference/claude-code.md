@@ -105,8 +105,6 @@ Claude Code agents can run in isolated worktrees (`isolation: "worktree"`). By d
 
 `/wt-switch-create [<branch>] [<repo>] [-- <task>]` starts a task in a fresh worktree without leaving the session: it creates the worktree, switches into it, and runs the task (all arguments optional). The worktree shows up in `wt list`; merge or remove it with `wt merge` / `wt remove`.
 
-A new branch in the current repo goes through the same `WorktreeCreate` hook as worktree isolation above, so the session enters it without asking. If nothing is ever written there, the worktree is removed at exit, branch included. Another repo or an existing branch goes through `wt` instead, and Claude Code asks you to confirm the switch, since the worktree sits outside its own `.claude/worktrees/` directory.
-
 ## Statusline (Claude Code only)
 
 `wt list statusline --format=claude-code` outputs a single-line status for the Claude Code statusline. Claude Code runs it in the background, which is what makes the occasional 1–2 second CI fetch invisible.
