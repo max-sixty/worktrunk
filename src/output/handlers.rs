@@ -103,9 +103,9 @@ pub enum BackgroundFallbackMode {
     /// `wt remove`, `wt merge`, and the picker.
     Detached,
     /// Run the fallback removal and branch deletion synchronously for a
-    /// non-current worktree. `wt step prune` uses this so each iteration's
-    /// removal completes before the next candidate is considered and before
-    /// the final summary is printed.
+    /// non-current worktree. `wt step prune` uses this so a candidate's
+    /// removal is complete by the time it is reported removed — before the
+    /// final summary prints, never outliving the prune process.
     SynchronousForNonCurrent,
 }
 
@@ -169,8 +169,8 @@ fn spawn_background_removal(
 /// is no longer checked out in any worktree), and the background command is just `rm -rf`.
 /// If rename fails (cross-filesystem, permissions, Windows file locking), either returns the
 /// legacy `git worktree remove` command with branch deletion deferred to the background, or
-/// runs that fallback synchronously for non-current worktrees when the caller needs to keep
-/// the fallback's `.git/config` rewrite serialized with other git readers.
+/// runs that fallback synchronously for non-current worktrees when the caller needs the
+/// removal complete before it reports success (`wt step prune`).
 ///
 /// The caller is responsible for spawning detached plans in the background.
 fn execute_instant_removal_or_fallback(
@@ -1087,8 +1087,7 @@ pub fn execute_user_command(command: &str, display_path: Option<&Path>) -> anyho
 /// every caller but `wt step prune` passes
 /// [`BackgroundFallbackMode::Detached`] (spawn the legacy `git worktree
 /// remove`); prune passes [`BackgroundFallbackMode::SynchronousForNonCurrent`]
-/// to keep the fallback's `.git/config` rewrite serialized with its parallel
-/// integration-check readers.
+/// so a candidate's removal is complete by the time prune reports it removed.
 pub fn handle_remove_output(
     plan: &RemovalPlan,
     execution: RemovalExecution,

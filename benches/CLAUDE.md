@@ -198,7 +198,7 @@ worth measuring at CI cadence.
 
 ## Recording `wt remove` / `wt step prune` staging
 
-The removal commands interleave serial per-target work with parallel scans and
+The removal commands interleave per-target work with parallel scans and
 detached background processes; a single e2e number hides which phase moved.
 Record them in two layers:
 
@@ -217,7 +217,7 @@ because its ~15 GiB fixture must never build on a hosted CI runner):
 |---------|----------|------------------|
 | `prune_e2e/dry_run_probe_cold` | ~150 ms | full parallel scan, probes re-run (`.git/wt/cache/` cleared; git's own caches stay warm — the "first prune after fetching main" shape) |
 | `prune_e2e/dry_run_warm` | ~60 ms | steady-state re-scan, probes hit sha_cache |
-| `prune_e2e/live` | ~600 ms | probe-cold scan + serial removal of the 8 candidates (worktree candidates ~100 ms each — mostly the fsmonitor-daemon stop — branch-only ~25 ms, under the scan write lock, reusing scan-time plans) |
+| `prune_e2e/live` | ~400 ms | probe-cold scan + parallel removal of the 8 candidates (worktree candidates ~145 ms each — mostly the fsmonitor-daemon stop — branch-only ~50 ms, concurrent on the removal worker pool under the scan lock's read side, reusing scan-time plans) |
 | `prune_real_repo/dry_run_warm` | ~0.25–0.8 s | steady-state scan of 72 items (36 worktrees + 36 branches) at 331k-commit scale |
 | `prune_real_repo/dry_run_probe_cold` | ~0.6–1 s | the same 72-item scan with probes re-running at real cost (statuses stay stat-warm) |
 | `first_output/remove` | ~86 ms | single-target validation up to first output (`benches/time_to_first_output.rs`) |
@@ -233,14 +233,19 @@ alone; a live one consumes the candidates). Expected one-shots on the
   `merge-base --is-ancestor` ~40 ms and `merge-tree --write-tree` ~130 ms (vs
   4–25 ms synthetic, where shallow history walks bottom out at
   subprocess-spawn cost)
-- **live ~2.9 s wall** — all 24 removals serialize under the scan write lock
-  inside the `prune-scan` window: each of the 12 worktree candidates
-  ~155–210 ms (fsmonitor-served status ~20 ms, daemon stop ~57 ms, metadata
-  prune ~11 ms, fresh ref snapshot ~40 ms, CAS delete ~7 ms), branch-only
-  candidates ~40–100 ms
+- **live ~0.6 s wall** — all 24 removals run concurrently on the removal
+  worker pool inside the `prune-scan` window (read side of the scan lock):
+  the 12 worktree candidates ~240–290 ms each, branch-only ~100–135 ms.
+  Contention inflates the per-span numbers — run serially, a worktree
+  candidate's chain is ~155–210 ms (fsmonitor-served status ~20 ms, daemon
+  stop ~57 ms, metadata prune ~11 ms, fresh ref snapshot ~40 ms, CAS delete
+  ~7 ms) — but the wall collapses to the scan plus the slowest straggler.
+  When candidate branches are packed (post-`gc`), the CAS deletes serialize
+  on `packed-refs.lock`, putting a floor under the branch-deletion tail
 
 This is the "prune takes many seconds" experience users report: worktree
-count × stat-cold statuses bounds the scan, and removals extend it serially.
+count × stat-cold statuses bounds the scan, and the removal tail extends it
+by roughly one candidate's chain.
 The synthetic fixture can't show it — its statuses are milliseconds — so
 scale-sensitive changes need a one-shot on `prune-real` (or
 `wt-perf timeline -- -C <repo> step prune --dry-run` on a real repo) alongside
@@ -262,10 +267,12 @@ silently timed.
 check region), one `prune-check:<ref>` per scanned item, and one
 `prune-remove:<label>` per removed candidate; `wt remove` emits
 `internal-sweep` around its end-of-command janitor. The `prune-remove` spans
-sit *inside* the `prune-scan` window on the live path — each removal takes the
-scan lock's write side, so a span covers the wait for in-flight checks to
-drain *plus* the removal itself: read it as "how long this removal stalled the
-run", not as pure removal work.
+sit *inside* the `prune-scan` window on the live path and overlap each other —
+removals execute concurrently on the worker pool, holding the scan lock's read
+side. A span covers any wait for the lock plus the removal itself; the
+exceptional candidates that take the write side (hook-bearing, `--foreground`,
+metadata-pruning — `removal_needs_write` in `src/commands/step/prune.rs`) also
+wait for every in-flight check and removal to drain first.
 
 ```bash
 cargo run -p wt-perf -- setup prune-4-8 --path /tmp/prune-repo
