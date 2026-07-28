@@ -571,6 +571,11 @@ project-deps = "echo deps"
 /// the per-command `hook_name`, and the `args` sequence a listing leaves empty
 /// — render in the listing exactly as they do in `wt hook <type> --dry-run`,
 /// which previews what would actually run.
+///
+/// The `varsy` command pins the one variable a preview deliberately leaves
+/// alone: `vars.*` is read from git config when the step runs, so it renders
+/// back as itself even though a value is set here, while `{{ branch }}` beside
+/// it still expands.
 #[rstest]
 fn test_hook_show_expanded_matches_dry_run(repo: TestRepo, temp_home: TempDir) {
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
@@ -582,11 +587,14 @@ fn test_hook_show_expanded_matches_dry_run(repo: TestRepo, temp_home: TempDir) {
 
 [pre-commit]
 context = "echo type={{ hook_type }} name={{ hook_name }} args=[{{ args }}]"
+varsy = "deploy --branch={{ branch }} --env={{ vars.env }}"
 "#,
     )
     .unwrap();
+    repo.run_git(&["config", "worktrunk.state.main.vars.env", "staging"]);
 
     let expected = "echo type=pre-commit name=context args=[]";
+    let expected_varsy = "deploy --branch=main --env={{ vars.env }}";
 
     let mut show = wt_command();
     repo.configure_wt_cmd(&mut show);
@@ -603,6 +611,7 @@ context = "echo type={{ hook_type }} name={{ hook_name }} args=[{{ args }}]"
     let parsed: serde_json::Value =
         serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).expect("valid JSON");
     assert_eq!(parsed[0]["expanded"], expected);
+    assert_eq!(parsed[1]["expanded"], expected_varsy);
 
     let mut dry_run = wt_command();
     repo.configure_wt_cmd(&mut dry_run);
@@ -621,10 +630,12 @@ context = "echo type={{ hook_type }} name={{ hook_name }} args=[{{ args }}]"
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains(expected),
-        "dry-run should render the listing's command: {stdout}"
-    );
+    for want in [expected, expected_varsy] {
+        assert!(
+            stdout.contains(want),
+            "dry-run should render the listing's command `{want}`: {stdout}"
+        );
+    }
 }
 
 /// Test that valid templates expand correctly with --expanded.

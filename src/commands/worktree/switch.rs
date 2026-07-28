@@ -2078,7 +2078,7 @@ fn validate_switch_templates(
                     // Skip full validation for templates referencing {{ vars.X }} —
                     // those values come from git config at execution time, after
                     // prior pipeline steps set them. Syntax is still checked by
-                    // prepare_steps.
+                    // validate_pipeline_syntax.
                     if template_references_var(&cmd.template, "vars") {
                         continue;
                     }

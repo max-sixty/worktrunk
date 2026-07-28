@@ -5,8 +5,8 @@ use anyhow::Result;
 use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::{
-    Command, CommandConfig, HookStep, TemplateContext, UserConfig, VarScope, format_hook_variables,
-    template_references_var, validate_template_syntax,
+    Command, CommandConfig, HookStep, TemplateContext, UserConfig, VarScope, VarsMode,
+    format_hook_variables, validate_template_syntax,
 };
 use worktrunk::git::{ErrorExt, Repository, WorktrunkError};
 use worktrunk::path::{format_path_for_display, to_posix_path};
@@ -26,8 +26,9 @@ use crate::output::{DirectivePassthrough, execute_shell_command};
 pub struct PreparedCommand {
     pub name: Option<String>,
     /// Raw template, rendered against `context` when the command runs.
-    /// Syntax is validated at preparation; rendering is deferred so `vars.*`
-    /// set by earlier pipeline steps are read fresh from git config.
+    /// Execution paths validate syntax via [`validate_pipeline_syntax`];
+    /// rendering is deferred so `vars.*` set by earlier pipeline steps are
+    /// read fresh from git config.
     pub template: String,
     /// Template variables, frozen at preparation. Serialized to JSON only at
     /// the process boundary (child stdin, background pipeline spec).
@@ -434,24 +435,26 @@ fn resolve_command_str(cmd: &PreparedCommand, repo: &Repository) -> Result<Strin
     expand_shell_template(&cmd.template, &cmd.context, repo, &cmd.template_name)
 }
 
-/// Render a template for dry-run / preview display. Mirrors execution-time
-/// semantics: a template referencing `vars.*` is shown raw after a syntax
-/// check — its values resolve from git config when the step runs, possibly
-/// written by earlier pipeline steps — while everything else renders against
-/// `context`. Expansion is side-effect-free, so previewing never perturbs the
-/// real run.
+/// Render a template for dry-run / preview display.
+///
+/// Everything renders against `context` as it would at execution time, except
+/// `{{ vars.<key> }}`, which renders back as itself: those values are read from
+/// git config when the step runs, possibly written by an earlier step, so a
+/// value resolved now could differ from the one the run uses. Expansion is
+/// side-effect-free, so previewing never perturbs the real run.
 pub fn render_template_preview(
     template: &str,
     context: &TemplateContext,
     repo: &Repository,
     name: &str,
 ) -> Result<String> {
-    if template_references_var(template, "vars") {
-        validate_template_syntax(template, name)?;
-        Ok(template.to_string())
-    } else {
-        expand_shell_template(template, context, repo, name)
-    }
+    Ok(context.expand_with(
+        template,
+        ShellEscapeMode::Posix,
+        repo,
+        name,
+        VarsMode::Literal,
+    )?)
 }
 
 /// Short summary name: "user:name" for named commands, "user" otherwise.
@@ -936,27 +939,5 @@ mod tests {
         let wrapper = hook_error_wrapper(HookType::PostCreate);
         let result = handle_command_error(err, &cmd, &wrapper, FailureStrategy::Warn);
         assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_template_references_var_for_vars() {
-        // Real vars references
-        assert!(template_references_var("{{ vars.container }}", "vars"));
-        assert!(template_references_var("{{vars.container}}", "vars"));
-        assert!(template_references_var(
-            "docker run --name {{ vars.name }}",
-            "vars"
-        ));
-        assert!(template_references_var(
-            "{% if vars.key %}yes{% endif %}",
-            "vars"
-        ));
-
-        // Literal text — not a template reference
-        assert!(!template_references_var(
-            "echo hello > template_vars.txt",
-            "vars"
-        ));
-        assert!(!template_references_var("no vars references here", "vars"));
     }
 }

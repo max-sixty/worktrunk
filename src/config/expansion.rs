@@ -153,12 +153,24 @@ impl TemplateContext {
         repo: &Repository,
         name: &str,
     ) -> Result<String, TemplateExpandError> {
+        self.expand_with(template, escape_mode, repo, name, VarsMode::Resolve)
+    }
+
+    /// [`Self::expand`], with control over how `{{ vars.<key> }}` resolves.
+    pub fn expand_with(
+        &self,
+        template: &str,
+        escape_mode: ShellEscapeMode,
+        repo: &Repository,
+        name: &str,
+        vars_mode: VarsMode,
+    ) -> Result<String, TemplateExpandError> {
         let vars: HashMap<&str, &str> = self
             .0
             .iter()
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect();
-        expand_template(template, &vars, escape_mode, repo, name)
+        expand_template_with(template, &vars, escape_mode, repo, name, vars_mode)
     }
 
     /// The JSON form piped to a child's stdin.
@@ -258,8 +270,8 @@ fn hook_extras(hook_type: HookType) -> &'static [&'static str] {
     }
 }
 
-/// Vars added by the hook execution infrastructure itself (`expand_commands`
-/// / `expand_command_template`), regardless of hook type.
+/// Vars added by the hook execution infrastructure itself (`prepare_steps`),
+/// regardless of hook type.
 const HOOK_INFRASTRUCTURE_VARS: &[&str] = &["hook_type", "hook_name"];
 
 /// All template variables available in a given scope.
@@ -443,6 +455,41 @@ impl Object for ShellArgs {
     fn render(self: &Arc<Self>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&shell_join(&self.0))
     }
+}
+
+/// Stands in for the `vars` map in a preview, rendering each reference back as
+/// the `{{ vars.<path> }}` that produced it.
+///
+/// A preview shows what a command *will* run, and `vars.*` values are read from
+/// git config when the step runs — after any earlier step in the pipeline has
+/// written them. Resolving one at preview time would show a value the run may
+/// not use, so the reference stands for itself while everything around it
+/// expands normally.
+///
+/// Each key access returns another `LiteralVars` carrying the path so far, so
+/// nested access (`{{ vars.config.port }}`) round-trips too. The formatter
+/// installed by `expand_template` writes it through unescaped, as it does
+/// `ShellArgs`.
+#[derive(Debug)]
+struct LiteralVars(String);
+
+impl Object for LiteralVars {
+    fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
+        Some(Value::from_object(LiteralVars(format!("{}.{key}", self.0))))
+    }
+
+    fn render(self: &Arc<Self>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{{{{ {} }}}}", self.0)
+    }
+}
+
+/// How template expansion resolves `{{ vars.<key> }}`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VarsMode {
+    /// Read values from git config — what a command runs with.
+    Resolve,
+    /// Render each reference back as `{{ vars.<key> }}`, for a preview.
+    Literal,
 }
 
 /// Space-join POSIX-shell-escaped args — the canonical rendering of
@@ -929,10 +976,12 @@ pub fn referenced_vars_for_config(
 
 /// Parse-only syntax check for a template.
 ///
-/// Hook and alias preparation runs this on every template so syntax errors
-/// (e.g. `{{ vars..foo }}`) abort before the first pipeline step runs;
-/// rendering — and with it semantic errors like undefined variables — is
-/// deferred to execution time. The error matches [`expand_template`]'s
+/// Every path that runs hooks calls this on each template, via
+/// `validate_pipeline_syntax`, so syntax errors (e.g. `{{ vars..foo }}`) abort
+/// before the first pipeline step runs; rendering — and with it semantic errors
+/// like undefined variables — is deferred to execution time. Alias dispatch has
+/// already parsed each template for argument routing by then, so it skips the
+/// check. The error matches [`expand_template`]'s
 /// parse-failure shape so syntax errors render identically wherever they
 /// surface.
 pub fn validate_template_syntax(template: &str, name: &str) -> Result<(), TemplateExpandError> {
@@ -1049,6 +1098,22 @@ pub fn expand_template(
     repo: &Repository,
     name: &str,
 ) -> Result<String, TemplateExpandError> {
+    expand_template_with(template, vars, escape_mode, repo, name, VarsMode::Resolve)
+}
+
+/// [`expand_template`], with control over how `{{ vars.<key> }}` resolves.
+///
+/// Previews pass [`VarsMode::Literal`] so a `vars.*` reference renders back as
+/// itself while every other variable expands; execution passes
+/// [`VarsMode::Resolve`].
+pub fn expand_template_with(
+    template: &str,
+    vars: &HashMap<&str, &str>,
+    escape_mode: ShellEscapeMode,
+    repo: &Repository,
+    name: &str,
+    vars_mode: VarsMode,
+) -> Result<String, TemplateExpandError> {
     // Build context map with raw values (shell escaping is applied at output time via formatter).
     // The `args` key is reserved: run_alias encodes positional CLI args as a JSON list string,
     // and we rehydrate it here as a `ShellArgs` object so `{{ args }}` behaves sequence-like.
@@ -1083,7 +1148,11 @@ pub fn expand_template(
             // output avoids re-escaping the whole joined string as one
             // opaque token. Iteration and indexing yield plain string
             // values that still flow through the generic escape branch.
-            if value.downcast_object_ref::<ShellArgs>().is_some() {
+            // `LiteralVars` renders the `{{ vars.<key> }}` reference itself,
+            // which must reach the preview unquoted.
+            if value.downcast_object_ref::<ShellArgs>().is_some()
+                || value.downcast_object_ref::<LiteralVars>().is_some()
+            {
                 write!(out, "{value}")?;
                 return Ok(());
             }
@@ -1125,13 +1194,25 @@ pub fn expand_template(
     // Only look up vars data if the parsed template references the top-level
     // `vars` object (avoids a git process spawn per expansion while supporting
     // every MiniJinja access form without false positives from literal text).
-    if tmpl.undeclared_variables(false).contains("vars")
-        && let Some(branch) = vars.get("branch")
-    {
-        context.insert(
-            "vars".to_string(),
-            vars_map_to_value(&repo.vars_entries(branch)),
-        );
+    // A preview injects `LiteralVars` instead, which needs no branch and no
+    // git config read.
+    if tmpl.undeclared_variables(false).contains("vars") {
+        match vars_mode {
+            VarsMode::Literal => {
+                context.insert(
+                    "vars".to_string(),
+                    Value::from_object(LiteralVars("vars".to_string())),
+                );
+            }
+            VarsMode::Resolve => {
+                if let Some(branch) = vars.get("branch") {
+                    context.insert(
+                        "vars".to_string(),
+                        vars_map_to_value(&repo.vars_entries(branch)),
+                    );
+                }
+            }
+        }
     }
 
     let result = tmpl
@@ -1271,6 +1352,28 @@ mod tests {
 
     fn test_repo() -> TestRepo {
         TestRepo::new()
+    }
+
+    #[test]
+    fn test_template_references_var_for_vars() {
+        // Real vars references
+        assert!(template_references_var("{{ vars.container }}", "vars"));
+        assert!(template_references_var("{{vars.container}}", "vars"));
+        assert!(template_references_var(
+            "docker run --name {{ vars.name }}",
+            "vars"
+        ));
+        assert!(template_references_var(
+            "{% if vars.key %}yes{% endif %}",
+            "vars"
+        ));
+
+        // Literal text — not a template reference
+        assert!(!template_references_var(
+            "echo hello > template_vars.txt",
+            "vars"
+        ));
+        assert!(!template_references_var("no vars references here", "vars"));
     }
 
     #[test]
