@@ -27,7 +27,7 @@ use worktrunk::config::UserConfig;
 use worktrunk::git::{BranchDeletionMode, Repository};
 use worktrunk::styling::{eprintln, info_message};
 
-use super::types::{RemoveResult, SharedBranchCheckout};
+use super::types::{RemovalPlan, SharedBranchCheckout};
 use crate::commands::command_executor::CommandContext;
 use crate::commands::context::CommandEnv;
 use crate::commands::hook_plan::{ApprovedHookPlan, register_planned};
@@ -38,7 +38,8 @@ use crate::commands::repository_ext::{
 };
 use crate::commands::template_vars::TemplateVars;
 use crate::output::{
-    BackgroundFallbackMode, handle_remove_output, post_hook_display_path, pre_hook_display_path,
+    BackgroundFallbackMode, RemovalExecution, handle_remove_output, post_hook_display_path,
+    pre_hook_display_path,
 };
 
 /// Inputs to [`finish_after_merge`]. Owned by the caller; this struct just
@@ -166,7 +167,7 @@ pub fn finish_after_merge(
         // No config snapshot: `pre-remove` / `post-remove` were selected and
         // frozen into `plan` at the gate (anchored at `feature_path`), so the
         // executor needs no config — it runs only the frozen `plan`.
-        let remove_result = RemoveResult::RemovedWorktree {
+        let remove_result = RemovalPlan::Worktree {
             main_path: destination_path.clone(),
             worktree_path: worktree_root,
             changed_directory: true,
@@ -178,14 +179,15 @@ pub fn finish_after_merge(
             removed_commit: feature_commit.clone(),
             branch_checked_out_at,
         };
+        // The fate is dropped: merge's own reporting (`removed` in the JSON
+        // blob, the removal messages) doesn't itemize the branch, and the
+        // handler has already narrated any retention.
         handle_remove_output(
             &remove_result,
-            false,
+            RemovalExecution::Background(BackgroundFallbackMode::Detached),
             plan,
             false,
-            false,
             announcer,
-            BackgroundFallbackMode::Detached,
         )?;
         true
     };

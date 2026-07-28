@@ -4,7 +4,9 @@
 
 use std::path::{Path, PathBuf};
 
-use worktrunk::git::{BranchDeletionMode, IntegrationReason, RefType};
+use worktrunk::git::{
+    BranchDeletionMode, BranchDeletionOutcome, BranchDeletionResult, IntegrationReason, RefType,
+};
 
 /// Flags indicating which merge operations occurred
 #[derive(Debug, Clone, Copy)]
@@ -169,10 +171,73 @@ impl SharedBranchCheckout {
     }
 }
 
-/// Result of a worktree remove operation
-pub enum RemoveResult {
-    /// Removed worktree and changed directory (if needed)
-    RemovedWorktree {
+/// What actually happened to a [`RemovalPlan`]'s branch by the time the
+/// executor returned — the observed counterpart of the intent the plan
+/// carries.
+///
+/// Consumers that report deletions (the prune summary, `--format=json`) read
+/// this rather than the plan, so a deletion the CAS refused or an unmerged
+/// branch SafeDelete declined is never reported as deleted. `Deferred` is the
+/// one case with nothing to observe; [`deleted`](Self::deleted) reports the
+/// plan's intent there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BranchFate {
+    /// No deletion was attempted: the plan had no branch (detached worktree)
+    /// or retained it (`deletion_mode` Keep — shared checkout, or
+    /// `--no-delete-branch`).
+    NotAttempted,
+    /// The deletion ran and the branch is gone.
+    Deleted,
+    /// The deletion ran and the branch survives: SafeDelete declined an
+    /// unmerged branch, the CAS refused a moved ref, or the delete command
+    /// itself failed (already narrated at the site that observed it).
+    Retained,
+    /// The deletion was handed to a detached background process (the legacy
+    /// `git worktree remove` fallback) whose outcome this process never sees.
+    ///
+    /// Only planned deletions defer — a `Keep` plan or a branchless worktree
+    /// has no deletion command to hand off, and every fallback arm maps those
+    /// to [`NotAttempted`](Self::NotAttempted) — so `Deferred` implies the
+    /// plan's intent was deletion.
+    Deferred,
+}
+
+impl BranchFate {
+    /// Map a synchronous deletion attempt's result. `None` means no attempt
+    /// was made.
+    pub fn from_result(result: Option<&anyhow::Result<BranchDeletionResult>>) -> Self {
+        match result {
+            None => Self::NotAttempted,
+            Some(Ok(r)) => match r.outcome {
+                BranchDeletionOutcome::Integrated(_) | BranchDeletionOutcome::ForceDeleted => {
+                    Self::Deleted
+                }
+                BranchDeletionOutcome::NotDeleted | BranchDeletionOutcome::RetainedRaced => {
+                    Self::Retained
+                }
+            },
+            Some(Err(_)) => Self::Retained,
+        }
+    }
+
+    /// Whether the branch was deleted, best knowledge: the observed outcome
+    /// where one exists, the plan's intent for `Deferred` (which is always
+    /// deletion — see the variant doc).
+    pub fn deleted(&self) -> bool {
+        matches!(self, Self::Deleted | Self::Deferred)
+    }
+}
+
+/// A validated, planned removal — what `prepare_worktree_removal` decided to
+/// remove and how, before anything runs.
+///
+/// Produced by the planner, executed by `output::handle_remove_output`. The
+/// deletion-relevant fields are intent, not fact: `deletion_mode` says what the
+/// executor should attempt, and the actual deletion re-decides against fresh
+/// refs (`delete_branch_if_safe`'s CAS).
+pub enum RemovalPlan {
+    /// Remove a worktree, changing directory away from it first if it's current.
+    Worktree {
         /// Stable working directory for post-removal execution: hooks run here,
         /// background removal spawns from here, and `cd` directs the shell here.
         /// Usually the primary worktree; falls back to cwd when removing the
@@ -207,7 +272,7 @@ pub enum RemoveResult {
     BranchOnly {
         branch_name: String,
         deletion_mode: BranchDeletionMode,
-        /// True if the worktree was pruned before returning this result.
+        /// True if a stale worktree entry was pruned during planning.
         pruned: bool,
         /// Integration target for display. May be the effective target (e.g.,
         /// `origin/main` when upstream is ahead) or the local default branch.
@@ -225,16 +290,16 @@ pub enum RemoveResult {
     },
 }
 
-impl RemoveResult {
-    /// Path of the removed worktree, if this result removed one.
+impl RemovalPlan {
+    /// Path of the worktree this plan removes, if it removes one.
     ///
     /// `None` for branch-only deletions — they have no worktree, so no
     /// `pre-remove` hook runs and there's no worktree-local `.config/wt.toml`
     /// to consult.
     pub fn removed_worktree_path(&self) -> Option<&Path> {
         match self {
-            RemoveResult::RemovedWorktree { worktree_path, .. } => Some(worktree_path),
-            RemoveResult::BranchOnly { .. } => None,
+            RemovalPlan::Worktree { worktree_path, .. } => Some(worktree_path),
+            RemovalPlan::BranchOnly { .. } => None,
         }
     }
 
@@ -246,46 +311,51 @@ impl RemoveResult {
     #[cfg(unix)]
     pub fn branch_name(&self) -> Option<&str> {
         match self {
-            RemoveResult::RemovedWorktree { branch_name, .. } => branch_name.as_deref(),
-            RemoveResult::BranchOnly { branch_name, .. } => Some(branch_name),
+            RemovalPlan::Worktree { branch_name, .. } => branch_name.as_deref(),
+            RemovalPlan::BranchOnly { branch_name, .. } => Some(branch_name),
         }
     }
 
     /// Post-removal working directory — where the user lands, and the worktree
     /// whose `.config/wt.toml` `post-switch` reads. `None` for branch-only
     /// deletions (no worktree was removed, so nothing was switched away from).
-    /// See the `main_path` field docs on [`RemoveResult::RemovedWorktree`].
+    /// See the `main_path` field docs on [`RemovalPlan::Worktree`].
     pub fn destination_path(&self) -> Option<&Path> {
         match self {
-            RemoveResult::RemovedWorktree { main_path, .. } => Some(main_path),
-            RemoveResult::BranchOnly { .. } => None,
+            RemovalPlan::Worktree { main_path, .. } => Some(main_path),
+            RemovalPlan::BranchOnly { .. } => None,
         }
     }
 
-    /// Whether this removal deletes a branch.
+    /// Whether this plan intends to delete a branch.
     ///
     /// False for a detached worktree, which has none, and false whenever a
     /// sibling checkout forced `deletion_mode` to [`BranchDeletionMode::Keep`]
-    /// (see [`SharedBranchCheckout`]). What the plan intends, not what the
-    /// delete returned: a `SafeDelete` still re-decides against fresh refs, and
-    /// a background removal hasn't run yet — so this answers the same question
-    /// the removal message answers when it says "worktree" rather than
-    /// "worktree & branch".
+    /// (see [`SharedBranchCheckout`]). Intent only: a `SafeDelete` still
+    /// re-decides against fresh refs at execution, so anything reporting what
+    /// happened reads [`BranchFate`]; this is what the scan-time predictions
+    /// (prune's dry run) print, and the question the progress message answers
+    /// when it says "worktree" rather than "worktree & branch".
     pub fn deletes_branch(&self) -> bool {
         match self {
-            RemoveResult::RemovedWorktree {
+            RemovalPlan::Worktree {
                 branch_name,
                 deletion_mode,
                 ..
             } => branch_name.is_some() && !deletion_mode.should_keep(),
-            RemoveResult::BranchOnly { deletion_mode, .. } => !deletion_mode.should_keep(),
+            RemovalPlan::BranchOnly { deletion_mode, .. } => !deletion_mode.should_keep(),
         }
     }
 
     /// Convert to a JSON value for structured output.
-    pub fn to_json(&self) -> serde_json::Value {
+    ///
+    /// `fate` is what execution reported back; `branch_deleted` is derived
+    /// from it (via [`BranchFate::deleted`]) so the payload states what
+    /// happened, not what the plan hoped.
+    pub fn to_json(&self, fate: BranchFate) -> serde_json::Value {
+        let branch_deleted = fate.deleted();
         match self {
-            RemoveResult::RemovedWorktree {
+            RemovalPlan::Worktree {
                 worktree_path,
                 branch_name,
                 branch_checked_out_at,
@@ -294,10 +364,10 @@ impl RemoveResult {
                 "kind": "worktree",
                 "branch": branch_name,
                 "path": worktree_path,
-                "branch_deleted": self.deletes_branch(),
+                "branch_deleted": branch_deleted,
                 "branch_checked_out_at": branch_checked_out_at.as_ref().map(|c| &c.path),
             }),
-            RemoveResult::BranchOnly {
+            RemovalPlan::BranchOnly {
                 branch_name,
                 pruned,
                 branch_checked_out_at,
@@ -306,7 +376,7 @@ impl RemoveResult {
                 "kind": "branch_only",
                 "branch": branch_name,
                 "pruned": pruned,
-                "branch_deleted": self.deletes_branch(),
+                "branch_deleted": branch_deleted,
                 "branch_checked_out_at": branch_checked_out_at.as_ref().map(|c| &c.path),
             }),
         }
@@ -327,7 +397,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn remove_result_branch_name_reads_both_variants() {
-        let removed = RemoveResult::RemovedWorktree {
+        let removed = RemovalPlan::Worktree {
             main_path: PathBuf::from("/main"),
             worktree_path: PathBuf::from("/wt"),
             changed_directory: false,
@@ -341,7 +411,7 @@ mod tests {
         };
         assert_eq!(removed.branch_name(), Some("feature"));
 
-        let branch_only = RemoveResult::BranchOnly {
+        let branch_only = RemovalPlan::BranchOnly {
             branch_name: "solo".to_string(),
             deletion_mode: BranchDeletionMode::default(),
             pruned: false,
@@ -350,6 +420,61 @@ mod tests {
             branch_checked_out_at: None,
         };
         assert_eq!(branch_only.branch_name(), Some("solo"));
+    }
+
+    /// The fate→deleted mapping: an observed deletion counts, a deferral
+    /// reports the intent it carried (always deletion), and a raced or
+    /// declined deletion (`Retained`) reports false even though the plan
+    /// meant to delete — that divergence is the whole point of tracking fate
+    /// separately.
+    #[test]
+    fn branch_fate_deleted_mapping() {
+        let cases = [
+            (BranchFate::Deleted, true),
+            (BranchFate::Deferred, true),
+            (BranchFate::Retained, false),
+            (BranchFate::NotAttempted, false),
+        ];
+        for (fate, deleted) in cases {
+            assert_eq!(fate.deleted(), deleted, "{fate:?}");
+        }
+    }
+
+    /// Synchronous deletion results map onto fates: deletions count, refusals
+    /// and errors read as the branch surviving, absence as never attempted.
+    #[test]
+    fn branch_fate_from_result_mapping() {
+        use worktrunk::git::IntegrationReason;
+
+        let fate = |outcome| {
+            BranchFate::from_result(Some(&Ok(BranchDeletionResult {
+                outcome,
+                integration_target: "main".to_string(),
+            })))
+        };
+        assert_eq!(
+            fate(BranchDeletionOutcome::Integrated(
+                IntegrationReason::SameCommit
+            )),
+            BranchFate::Deleted
+        );
+        assert_eq!(
+            fate(BranchDeletionOutcome::ForceDeleted),
+            BranchFate::Deleted
+        );
+        assert_eq!(
+            fate(BranchDeletionOutcome::NotDeleted),
+            BranchFate::Retained
+        );
+        assert_eq!(
+            fate(BranchDeletionOutcome::RetainedRaced),
+            BranchFate::Retained
+        );
+        assert_eq!(
+            BranchFate::from_result(Some(&Err(anyhow::anyhow!("boom")))),
+            BranchFate::Retained
+        );
+        assert_eq!(BranchFate::from_result(None), BranchFate::NotAttempted);
     }
 
     #[test]
@@ -391,7 +516,7 @@ mod tests {
 
     #[test]
     fn test_remove_result_removed_worktree() {
-        let result = RemoveResult::RemovedWorktree {
+        let result = RemovalPlan::Worktree {
             main_path: PathBuf::from("/main"),
             worktree_path: PathBuf::from("/worktree"),
             changed_directory: true,
@@ -404,7 +529,7 @@ mod tests {
             branch_checked_out_at: None,
         };
         match result {
-            RemoveResult::RemovedWorktree {
+            RemovalPlan::Worktree {
                 main_path,
                 worktree_path,
                 changed_directory,
@@ -427,13 +552,13 @@ mod tests {
                 assert_eq!(removed_commit.as_deref(), Some("abc1234567890"));
                 assert!(branch_checked_out_at.is_none());
             }
-            _ => panic!("Expected RemovedWorktree variant"),
+            _ => panic!("Expected Worktree variant"),
         }
     }
 
     #[test]
     fn test_remove_result_branch_only() {
-        let result = RemoveResult::BranchOnly {
+        let result = RemovalPlan::BranchOnly {
             branch_name: "stale-branch".to_string(),
             deletion_mode: BranchDeletionMode::Keep,
             pruned: false,
@@ -442,7 +567,7 @@ mod tests {
             branch_checked_out_at: None,
         };
         match result {
-            RemoveResult::BranchOnly {
+            RemovalPlan::BranchOnly {
                 branch_name,
                 deletion_mode,
                 pruned,
@@ -464,7 +589,7 @@ mod tests {
 
     #[test]
     fn test_remove_result_branch_only_pruned() {
-        let result = RemoveResult::BranchOnly {
+        let result = RemovalPlan::BranchOnly {
             branch_name: "pruned-branch".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
             pruned: true,
@@ -473,7 +598,7 @@ mod tests {
             branch_checked_out_at: None,
         };
         match result {
-            RemoveResult::BranchOnly {
+            RemovalPlan::BranchOnly {
                 branch_name,
                 deletion_mode,
                 pruned,
@@ -494,7 +619,7 @@ mod tests {
 
     #[test]
     fn test_remove_result_with_force_delete() {
-        let result = RemoveResult::RemovedWorktree {
+        let result = RemovalPlan::Worktree {
             main_path: PathBuf::from("/main"),
             worktree_path: PathBuf::from("/worktree"),
             changed_directory: false,
@@ -507,7 +632,7 @@ mod tests {
             branch_checked_out_at: None,
         };
         match result {
-            RemoveResult::RemovedWorktree {
+            RemovalPlan::Worktree {
                 branch_name,
                 deletion_mode,
                 force_worktree,
@@ -517,7 +642,7 @@ mod tests {
                 assert!(deletion_mode.is_force());
                 assert!(force_worktree);
             }
-            _ => panic!("Expected RemovedWorktree variant"),
+            _ => panic!("Expected Worktree variant"),
         }
     }
 }

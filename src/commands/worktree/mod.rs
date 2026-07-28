@@ -55,11 +55,12 @@
 //!
 //! # Implementation Details
 //!
-//! Result types (`SwitchResult`, `RemoveResult`) are pure data structures that only contain
-//! operation results. All presentation logic is handled by the `output` module:
+//! `SwitchResult` (an operation result) and `RemovalPlan` (a validated plan)
+//! are pure data structures. Execution and presentation live in the `output`
+//! module:
 //!
 //! - `output::handle_switch_output()`: Formats and outputs switch operation results
-//! - `output::handle_remove_output()`: Formats and outputs remove operation results
+//! - `output::handle_remove_output()`: Executes a `RemovalPlan` and narrates it
 //!
 //! The output handlers check `is_shell_integration_active()` to determine if hints should
 //! be suppressed (when shell integration is already configured).
@@ -95,5 +96,5 @@ pub use resolve::{compute_worktree_path, is_worktree_at_expected_path, worktree_
 pub(crate) use switch::SwitchPipeline;
 pub use switch::handle_switch_command;
 pub use types::{
-    MergeOperations, RemoveResult, SharedBranchCheckout, SwitchBranchInfo, SwitchResult,
+    BranchFate, MergeOperations, RemovalPlan, SharedBranchCheckout, SwitchBranchInfo, SwitchResult,
 };

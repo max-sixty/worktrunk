@@ -1663,7 +1663,7 @@ fn test_remove_squash_merged_on_remote_then_advanced(#[from(repo_with_remote)] r
 }
 
 /// Like `test_remove_squash_merged_on_remote`, but with a **worktree** (not just
-/// a branch). Tests that the `RemovedWorktree` path displays the effective target
+/// a branch). Tests that the worktree-removal path displays the effective target
 /// (`origin/main`) rather than the local default branch when upstream is ahead.
 #[rstest]
 fn test_remove_worktree_squash_merged_on_remote(#[from(repo_with_remote)] mut repo: TestRepo) {
@@ -3847,6 +3847,131 @@ fn test_remove_json_multi_with_current(mut repo: TestRepo) {
     assert_eq!(items[0]["kind"], "worktree");
     assert_eq!(items[1]["branch"], "current-feature");
     assert_eq!(items[1]["kind"], "worktree");
+}
+
+/// `branch_deleted` reports what execution did, not what the plan intended.
+///
+/// The planner sees `feature` at main's tip and intends to delete it. A
+/// `pre-remove` hook then commits on the branch, so the SafeDelete's re-check
+/// against fresh refs finds it unmerged and declines — the worktree goes, the
+/// branch stays. Reporting the plan here would tell a script the branch was
+/// deleted while it is still on disk.
+#[rstest]
+fn test_remove_json_branch_deleted_reflects_execution(mut repo: TestRepo) {
+    use crate::common::wait_for_worktree_removed;
+
+    repo.commit("initial");
+    // Same commit as main — integrated, so the plan intends to delete it.
+    let feature_wt = repo.add_worktree("feature");
+
+    // Runs in the worktree being removed, after planning, and leaves the
+    // worktree clean so the removal itself still succeeds. Resolved from the
+    // invoking worktree's config (the repo root), so it needn't be committed.
+    repo.write_project_config(
+        r#"pre-remove = "printf raced > raced.txt && git add raced.txt && git commit -m raced""#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature", "--format=json", "--yes"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(output.status.success(), "remove should succeed:\n{stderr}");
+
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    let items = json.as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["branch"], "feature");
+    assert_eq!(
+        items[0]["branch_deleted"], false,
+        "branch_deleted must report the declined deletion, not the plan's intent:\n{stderr}",
+    );
+
+    wait_for_worktree_removed(&feature_wt);
+    repo.run_git(&["rev-parse", "--verify", "refs/heads/feature"]);
+    let tip = repo.git_output(&["show", "--format=", "--name-only", "refs/heads/feature"]);
+    assert!(
+        tip.lines().any(|line| line == "raced.txt"),
+        "the hook's commit must be the branch tip, or the divergence never happened:\n{tip}",
+    );
+
+    assert!(
+        stderr.contains("Removed worktree but kept branch feature (not integrated)"),
+        "the surviving branch must be surfaced, not left silent:\n{stderr}",
+    );
+}
+
+/// The detached legacy fallback also corrects a broken deletion promise.
+///
+/// When the rename-into-trash fast path fails, the removal falls back to a
+/// detached `git worktree remove`, and the branch deletion becomes a CAS
+/// shell tail — built in the foreground. A `pre-remove` hook that advances
+/// the branch makes the integration re-check decline the tail, so the branch
+/// definitively survives while the progress message already promised
+/// "worktree & branch". That survival must be warned and reported, exactly as
+/// on the fast path.
+///
+/// The fast path is forced to fail portably by planting a *file* where the
+/// trash directory belongs: `stage_worktree_removal`'s `create_dir_all` fails
+/// (ignored) and the rename into a non-directory fails on every OS.
+#[rstest]
+fn test_remove_fallback_warns_when_no_cas_tail(mut repo: TestRepo) {
+    repo.commit("initial");
+    let feature_wt = repo.add_worktree("feature");
+
+    // Occupy the trash path with a file so the rename-into-trash fast path
+    // cannot stage, forcing the detached-fallback arm.
+    let wt_dir = repo.root_path().join(".git").join("wt");
+    std::fs::create_dir_all(&wt_dir).unwrap();
+    std::fs::write(wt_dir.join("trash"), b"not a directory").unwrap();
+
+    // Same divergence as the fast-path test above: planner sees `feature`
+    // integrated, the hook then commits on it, the re-check declines.
+    repo.write_project_config(
+        r#"pre-remove = "printf raced > raced.txt && git add raced.txt && git commit -m raced""#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature", "--format=json", "--yes"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(output.status.success(), "remove should succeed:\n{stderr}");
+
+    assert!(
+        stderr.contains("Removed worktree but kept branch feature (not integrated)"),
+        "the fallback must correct the deletion promise, not stay silent:\n{stderr}",
+    );
+    // Discriminates fallback from fast path (which prints the same warning):
+    // staging would have replaced the planted file with a real trash
+    // directory, so the file surviving proves the rename never staged.
+    assert!(
+        wt_dir.join("trash").is_file(),
+        "the planted trash file should have kept the fast path from staging",
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    assert_eq!(
+        json.as_array().unwrap()[0]["branch_deleted"],
+        false,
+        "a survival known in the foreground is not a deferral:\n{stderr}",
+    );
+    // The branch survives with the hook's commit as its tip; the worktree
+    // directory itself is the detached process's job, so it isn't asserted.
+    repo.run_git(&["rev-parse", "--verify", "refs/heads/feature"]);
+    let tip = repo.git_output(&["show", "--format=", "--name-only", "refs/heads/feature"]);
+    assert!(
+        tip.lines().any(|line| line == "raced.txt"),
+        "the hook's commit must be the branch tip, or the divergence never happened:\n{tip}",
+    );
+    let _ = feature_wt;
 }
 
 /// Regression: integration check ORs over local AND upstream. A branch merged

@@ -116,7 +116,7 @@ fn approve_merge_plan(
 
     // Every feature-worktree hook shares one anchor: the feature worktree's
     // canonical root, the exact path `finish_after_merge` records as
-    // `RemoveResult::worktree_path` and `handle_merge` passes as the
+    // `RemovalPlan::worktree_path` and `handle_merge` passes as the
     // `pre-merge` executor anchor, so every plan lookup is an exact match.
     // `pre-commit`/`post-commit` run via the unchanged `execute_hook` path and
     // are listed only so the single prompt is complete; their anchor is never
@@ -281,7 +281,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // (by-then-rebased / merged) on-disk config is structurally impossible.
     let project_id = repo.project_identifier()?;
     // One anchor for every feature-worktree hook: the canonical root, the same
-    // value `finish_after_merge` records as `RemoveResult::worktree_path`.
+    // value `finish_after_merge` records as `RemovalPlan::worktree_path`.
     let feature_root = current_wt.root()?;
     let plan = approve_merge_plan(
         repo,

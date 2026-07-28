@@ -11,22 +11,32 @@ use worktrunk::git::{BranchDeletionMode, ErrorExt, Repository, ResolvedWorktree}
 use worktrunk::styling::{eprintln, info_message};
 
 use crate::cli::{RemoveArgs, SwitchFormat};
-use crate::output::{BackgroundFallbackMode, handle_remove_output};
+use crate::output::{BackgroundFallbackMode, RemovalExecution, handle_remove_output};
 
 use super::hook_plan::{ApprovedHookPlan, HookPlanBuilder};
 use super::hooks::HookAnnouncer;
 use super::repository_ext::RepositoryCliExt;
-use super::worktree::RemoveResult;
+use super::worktree::{BranchFate, RemovalPlan};
 use super::{RemoveTarget, flag_pair};
+
+/// The execution mode `--foreground` selects; the background default falls
+/// back to the standard detached `git worktree remove`.
+fn removal_execution(foreground: bool) -> RemovalExecution {
+    if foreground {
+        RemovalExecution::Foreground
+    } else {
+        RemovalExecution::Background(BackgroundFallbackMode::Detached)
+    }
+}
 
 /// Validated removal plans, categorized for ordered execution.
 ///
 /// Multi-worktree removal validates all targets upfront, then executes in order:
 /// other worktrees first, branch-only cases next, current worktree last.
 struct RemovePlans {
-    others: Vec<RemoveResult>,
-    branch_only: Vec<RemoveResult>,
-    current: Option<RemoveResult>,
+    others: Vec<RemovalPlan>,
+    branch_only: Vec<RemovalPlan>,
+    current: Option<RemovalPlan>,
     errors: Vec<anyhow::Error>,
 }
 
@@ -214,7 +224,7 @@ fn reap_worktree_processes(worktree_path: &Path, label: &str) {
 /// removed a worktree (branch-only deletions have no directory to scope by).
 /// The display label prefers the branch name, falling back to the worktree
 /// directory name. No-op on non-Unix, where `--reap` is rejected up front.
-fn maybe_reap_result(result: &RemoveResult, reap_enabled: bool) {
+fn maybe_reap_result(result: &RemovalPlan, reap_enabled: bool) {
     #[cfg(unix)]
     if reap_enabled && let Some(path) = result.removed_worktree_path() {
         let label = result
@@ -356,18 +366,16 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                 maybe_reap_result(&result, args.reap);
 
                 let mut announcer = HookAnnouncer::new(&repo, false);
-                handle_remove_output(
+                let fate = handle_remove_output(
                     &result,
-                    args.foreground,
+                    removal_execution(args.foreground),
                     &plan,
                     false,
-                    false,
                     &mut announcer,
-                    BackgroundFallbackMode::Detached,
                 )?;
                 announcer.flush()?;
                 if json_mode {
-                    let json = serde_json::json!([result.to_json()]);
+                    let json = serde_json::json!([result.to_json(fate)]);
                     println!("{}", serde_json::to_string_pretty(&json)?);
                 }
                 // Fire-and-forget repo-wide internal cleanup (stale trash +
@@ -416,28 +424,29 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                 // Execute all validated plans: others first, branch-only next, current last
                 let show_branch =
                     plans.others.len() + plans.branch_only.len() + plans.current.iter().len() > 1;
-                let run = |result: &RemoveResult| -> anyhow::Result<()> {
+                let run = |result: &RemovalPlan| -> anyhow::Result<BranchFate> {
                     maybe_reap_result(result, args.reap);
                     let mut announcer = HookAnnouncer::new(&repo, show_branch);
-                    handle_remove_output(
+                    let fate = handle_remove_output(
                         result,
-                        args.foreground,
+                        removal_execution(args.foreground),
                         &plan,
                         false,
-                        false,
                         &mut announcer,
-                        BackgroundFallbackMode::Detached,
                     )?;
-                    announcer.flush()
+                    announcer.flush()?;
+                    Ok(fate)
                 };
+                // Fates in execution order, which is also the JSON order below.
+                let mut fates = Vec::new();
                 for result in &plans.others {
-                    run(result)?;
+                    fates.push(run(result)?);
                 }
                 for result in &plans.branch_only {
-                    run(result)?;
+                    fates.push(run(result)?);
                 }
                 if let Some(ref result) = plans.current {
-                    run(result)?;
+                    fates.push(run(result)?);
                 }
 
                 if json_mode {
@@ -446,7 +455,8 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                         .iter()
                         .chain(&plans.branch_only)
                         .chain(plans.current.as_ref())
-                        .map(RemoveResult::to_json)
+                        .zip(fates)
+                        .map(|(removal, fate)| removal.to_json(fate))
                         .collect();
                     println!("{}", serde_json::to_string_pretty(&json_items)?);
                 }
