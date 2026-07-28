@@ -3959,7 +3959,8 @@ fn test_remove_fallback_warns_when_no_cas_tail(mut repo: TestRepo) {
     let json: serde_json::Value =
         serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
     assert_eq!(
-        json.as_array().unwrap()[0]["branch_deleted"], false,
+        json.as_array().unwrap()[0]["branch_deleted"],
+        false,
         "a survival known in the foreground is not a deferral:\n{stderr}",
     );
     // The branch survives with the hook's commit as its tip; the worktree
