@@ -110,7 +110,9 @@ enum RemovalJob {
     /// Execute a removal via [`try_remove`] and report the outcome.
     Remove {
         candidate: Candidate,
-        plan: Option<RemoveResult>,
+        /// Boxed to keep the variants near parity
+        /// (`clippy::large_enum_variant` — `RemoveResult` is large).
+        plan: Box<Option<RemoveResult>>,
     },
     /// Print an already-formatted skip line.
     PrintSkip(String),
@@ -1090,7 +1092,7 @@ pub fn step_prune(
                                 if abort_ref.load(Ordering::Relaxed) {
                                     continue;
                                 }
-                                let result = try_remove(&candidate, plan, removal_ctx_ref)
+                                let result = try_remove(&candidate, *plan, removal_ctx_ref)
                                     .with_context(|| candidate.removal_context());
                                 if result.is_err() {
                                     abort_ref.store(true, Ordering::Relaxed);
@@ -1182,7 +1184,7 @@ pub fn step_prune(
                 } else {
                     let _ = job_tx.send(RemovalJob::Remove {
                         candidate,
-                        plan: outcome.plan,
+                        plan: Box::new(outcome.plan),
                     });
                 }
             }
