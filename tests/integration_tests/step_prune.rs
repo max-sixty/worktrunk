@@ -1338,6 +1338,47 @@ fn test_prune_runs_pre_remove_hook(mut repo: TestRepo) {
     assert!(!wt_path.exists(), "the merged worktree should be removed");
 }
 
+/// The summary counts the executed outcome, not the scan-time plan.
+///
+/// The scan selects `merged` as integrated and plans to take its branch with
+/// it. Its `pre-remove` hook then commits, so the SafeDelete re-check against
+/// fresh refs declines and only the worktree goes. Counting the plan would
+/// announce a branch the run left standing.
+#[rstest]
+fn test_prune_summary_counts_declined_deletion_as_worktree_only(mut repo: TestRepo) {
+    let wt_path = repo.add_worktree("merged");
+    // Advance the default branch so `merged` is an ancestor — prune's scan
+    // treats it as integrated and plans to delete the branch too.
+    repo.commit("Advance default branch");
+    // Runs in the worktree being removed and leaves it clean, so the removal
+    // still succeeds while the branch it was going to delete has moved on.
+    repo.write_project_config(
+        r#"pre-remove = "printf raced > raced.txt && git add raced.txt && git commit -m raced""#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["step", "prune", "--foreground", "--yes", "--min-age=0s"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(output.status.success(), "prune should succeed:\n{stderr}");
+
+    assert!(
+        stderr.contains("Pruned 1 worktree") && !stderr.contains("worktree & branch"),
+        "summary must count the worktree alone, not the branch prune kept:\n{stderr}",
+    );
+    assert!(!wt_path.exists(), "the merged worktree should be removed");
+    repo.run_git(&["rev-parse", "--verify", "refs/heads/merged"]);
+    let tip = repo.git_output(&["show", "--format=", "--name-only", "refs/heads/merged"]);
+    assert!(
+        tip.lines().any(|line| line == "raced.txt"),
+        "the hook's commit must be the branch tip, or the divergence never happened:\n{tip}",
+    );
+}
+
 /// Regression test for serialized `wt step prune` fallback removals.
 ///
 /// B-prime (the `check_lock` RwLock in `src/commands/step/prune.rs`)

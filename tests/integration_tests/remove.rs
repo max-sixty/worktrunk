@@ -3849,6 +3849,62 @@ fn test_remove_json_multi_with_current(mut repo: TestRepo) {
     assert_eq!(items[1]["kind"], "worktree");
 }
 
+/// `branch_deleted` reports what execution did, not what the plan intended.
+///
+/// The planner sees `feature` at main's tip and intends to delete it. A
+/// `pre-remove` hook then commits on the branch, so the SafeDelete's re-check
+/// against fresh refs finds it unmerged and declines — the worktree goes, the
+/// branch stays. Reporting the plan here would tell a script the branch was
+/// deleted while it is still on disk.
+#[rstest]
+fn test_remove_json_branch_deleted_reflects_execution(mut repo: TestRepo) {
+    use crate::common::wait_for_worktree_removed;
+
+    repo.commit("initial");
+    // Same commit as main — integrated, so the plan intends to delete it.
+    let feature_wt = repo.add_worktree("feature");
+
+    // Runs in the worktree being removed, after planning, and leaves the
+    // worktree clean so the removal itself still succeeds. Resolved from the
+    // invoking worktree's config (the repo root), so it needn't be committed.
+    repo.write_project_config(
+        r#"pre-remove = "printf raced > raced.txt && git add raced.txt && git commit -m raced""#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature", "--format=json", "--yes"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(output.status.success(), "remove should succeed:\n{stderr}");
+
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    let items = json.as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["branch"], "feature");
+    assert_eq!(
+        items[0]["branch_deleted"], false,
+        "branch_deleted must report the declined deletion, not the plan's intent:\n{stderr}",
+    );
+
+    wait_for_worktree_removed(&feature_wt);
+    repo.run_git(&["rev-parse", "--verify", "refs/heads/feature"]);
+    let tip = repo.git_output(&["show", "--format=", "--name-only", "refs/heads/feature"]);
+    assert!(
+        tip.lines().any(|line| line == "raced.txt"),
+        "the hook's commit must be the branch tip, or the divergence never happened:\n{tip}",
+    );
+
+    assert!(
+        stderr.contains("Removed worktree but kept branch feature (not integrated)"),
+        "the surviving branch must be surfaced, not left silent:\n{stderr}",
+    );
+}
+
 /// Regression: integration check ORs over local AND upstream. A branch merged
 /// into LOCAL `main` must still be detected as integrated when `main` and
 /// `origin/main` have diverged — symmetric to
