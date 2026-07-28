@@ -65,20 +65,26 @@ design choices behind this — read it before re-adding guards or routes. -->
 
    - **Accepted** → the session is re-rooted in the worktree. Do the task (or,
      with no task text, confirm it's ready and wait).
-   - **Rejected** → graceful, and nothing is created. `EnterWorktree`
-     re-roots only into a worktree the session is permitted to enter, and that
-     permitted set is fixed by two factors: the repo your cwd resolves to, and
-     the session's state. Each rejection is just that set coming up empty or
-     without the target: no repo resolves (cwd is outside any git repo, e.g. a
-     non-git parent such as `~/workspace` that only holds repos, as in a
-     background job), which fails with `the current directory is not in a git
-     repository`; the target belongs to a different repo than the one resolved;
-     or the session is already rooted in a worktree (or is a pinned agent), a
-     state that narrows the set to the resolved repo's `.claude/worktrees/` and
-     so excludes even a same-repo `wt` sibling. All reduce to the same recovery
-     test: whether you can `cd` into the worktree, which works when it's inside
-     an allowed directory (a `permissions.additionalDirectories` entry such as
-     `~/workspace`). So `cd <path>` and read the result:
+   - **Declined** → the denial reports a decision: the user answered no to the
+     confirmation Claude Code shows for entering a worktree outside
+     `.claude/worktrees/`. The worktree from step 2 still exists; only the
+     entry didn't happen. Report its path and ask how to proceed, since
+     reaching it through `cd` would override that answer.
+   - **Rejected** → every other failure, a denial that only reports the session
+     couldn't ask included. Nothing moved, and one recovery covers them all.
+     `EnterWorktree` re-roots only into a worktree the session is permitted to
+     enter, and that permitted set is fixed by two factors: the repo your cwd
+     resolves to, and the session's state. Common rejections are that set
+     coming up empty or without the target: no repo resolves (cwd is outside
+     any git repo, e.g. a non-git parent such as `~/workspace` that only holds
+     repos, as in a background job), which fails with `the current directory is
+     not in a git repository`; the target belongs to a different repo than the
+     one resolved; or the session is already rooted in a worktree (or is a
+     pinned agent), a state that narrows the set to the resolved repo's
+     `.claude/worktrees/` and so excludes even a same-repo `wt` sibling. The
+     recovery test is whether you can `cd` into the worktree, which works when
+     it's inside an allowed directory (a `permissions.additionalDirectories`
+     entry such as `~/workspace`). So `cd <path>` and read the result:
      - no `Shell cwd was reset` notice → it stuck; the worktree is reachable.
        Work there, but a bare `cd` is not a tracked re-root, so the cwd can
        revert to the session's launch worktree across turns (and in spawned

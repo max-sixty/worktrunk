@@ -103,6 +103,8 @@ Claude Code agents can run in isolated worktrees (`isolation: "worktree"`). By d
 
 `/wt-switch-create [<branch>] [<repo>] [-- <task>]` starts a task in a fresh worktree without leaving the session: it creates the worktree, switches into it, and runs the task (all arguments optional). The worktree persists like any other; merge or remove it with `wt merge` / `wt remove`.
 
+Claude Code confirms the switch first, because a worktrunk worktree sits outside the `.claude/worktrees/` directory it manages itself. A session running in `bypassPermissions` never sees the question, and neither does one whose worktrees already sit inside that directory. A `worktree-path` in the user config's [`[projects]` table](@/config.md#user-project-specific-settings) puts them there, at the price of worktrunk's default layout and with both tools managing one directory, which is untested.
+
 ## Statusline (Claude Code only)
 
 `wt list statusline --format=claude-code` outputs a single-line status for the Claude Code statusline. Claude Code runs it in the background, which is what makes the occasional 1–2 second CI fetch invisible.
