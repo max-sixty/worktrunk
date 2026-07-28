@@ -2930,6 +2930,34 @@ pub mod tests {
         );
     }
 
+    /// A branch-only row whose branch has since acquired a worktree — someone
+    /// ran `wt switch` elsewhere while the picker sat open. The row's signal
+    /// still decodes to `Branch`, and removing it would take out a worktree
+    /// nobody selected, so validation refuses.
+    #[test]
+    fn test_prepare_removal_refuses_branch_that_gained_a_worktree() {
+        let mut test = worktrunk::testing::TestRepo::with_initial_commit();
+        let worktree_path = test.add_worktree("feature");
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+
+        let remover = test_remover(Arc::new(Mutex::new(Vec::new())), repo);
+
+        let target = PickerRemovalTarget::from_signal("feature").unwrap();
+        let err = remover
+            .prepare_removal(&target)
+            .map(|_| ())
+            .expect_err("a branch with a worktree should not delete as branch-only");
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("feature") && rendered.contains("wt remove"),
+            "error should name the branch and the command that removes its worktree: {err:#}"
+        );
+        assert!(
+            worktree_path.exists(),
+            "the worktree nobody selected should survive"
+        );
+    }
+
     /// A selection that names neither a worktree nor a local branch fails the
     /// `prepare_worktree_removal` validation, so `prepare_removal` returns the
     /// error rather than touching the picker list.

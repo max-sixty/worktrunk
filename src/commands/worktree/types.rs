@@ -262,25 +262,43 @@ impl RemoveResult {
         }
     }
 
+    /// Whether this removal deletes a branch.
+    ///
+    /// False for a detached worktree, which has none, and false whenever a
+    /// sibling checkout forced `deletion_mode` to [`BranchDeletionMode::Keep`]
+    /// (see [`SharedBranchCheckout`]). What the plan intends, not what the
+    /// delete returned: a `SafeDelete` still re-decides against fresh refs, and
+    /// a background removal hasn't run yet — so this answers the same question
+    /// the removal message answers when it says "worktree" rather than
+    /// "worktree & branch".
+    pub fn deletes_branch(&self) -> bool {
+        match self {
+            RemoveResult::RemovedWorktree {
+                branch_name,
+                deletion_mode,
+                ..
+            } => branch_name.is_some() && !deletion_mode.should_keep(),
+            RemoveResult::BranchOnly { deletion_mode, .. } => !deletion_mode.should_keep(),
+        }
+    }
+
     /// Convert to a JSON value for structured output.
     pub fn to_json(&self) -> serde_json::Value {
         match self {
             RemoveResult::RemovedWorktree {
                 worktree_path,
                 branch_name,
-                deletion_mode,
                 branch_checked_out_at,
                 ..
             } => serde_json::json!({
                 "kind": "worktree",
                 "branch": branch_name,
                 "path": worktree_path,
-                "branch_deleted": !deletion_mode.should_keep(),
+                "branch_deleted": self.deletes_branch(),
                 "branch_checked_out_at": branch_checked_out_at.as_ref().map(|c| &c.path),
             }),
             RemoveResult::BranchOnly {
                 branch_name,
-                deletion_mode,
                 pruned,
                 branch_checked_out_at,
                 ..
@@ -288,7 +306,7 @@ impl RemoveResult {
                 "kind": "branch_only",
                 "branch": branch_name,
                 "pruned": pruned,
-                "branch_deleted": !deletion_mode.should_keep(),
+                "branch_deleted": self.deletes_branch(),
                 "branch_checked_out_at": branch_checked_out_at.as_ref().map(|c| &c.path),
             }),
         }

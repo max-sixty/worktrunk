@@ -23,7 +23,7 @@ use worktrunk::trace::Span;
 
 use super::super::hook_plan::{ApprovedHookPlan, HookPlan, HookPlanBuilder};
 use super::super::hooks::HookAnnouncer;
-use super::super::repository_ext::{RemoveTarget, RepositoryCliExt};
+use super::super::repository_ext::{RemoveTarget, RepositoryCliExt, live_sibling_checkout};
 use super::super::worktree::RemoveResult;
 use crate::output::{BackgroundFallbackMode, handle_remove_output};
 
@@ -40,6 +40,13 @@ struct Candidate {
     path: Option<PathBuf>,
     /// Current worktree, other worktree, branch-only, or stale detached metadata
     kind: CandidateKind,
+    /// Whether the removal deletes `branch`, from
+    /// [`RemoveResult::deletes_branch`]. The kind is a plan, not an outcome: a
+    /// branch a sibling worktree still has checked out is retained, so a
+    /// worktree candidate can take the worktree and leave the branch standing.
+    /// The summary counts this rather than the kind, so it never reports a
+    /// branch the run deliberately kept.
+    deletes_branch: bool,
 }
 
 impl Candidate {
@@ -129,20 +136,30 @@ struct DryRunInfo {
 ///
 /// Worktree + branch is the default pair (matching progress messages'
 /// "worktree & branch" pattern). Unpaired items listed separately.
+///
+/// Counts what each removal took, not what its kind selected — see
+/// [`Candidate::deletes_branch`]. A branch a sibling checkout retained leaves
+/// only its worktree, and a retained branch whose worktree was stale metadata
+/// leaves only the pruned entry, which reads the same as any other stale
+/// entry ("Pruned 1 worktree", matching the `pruned` line above it).
 fn prune_summary(candidates: &[Candidate]) -> String {
     let mut worktree_with_branch = 0usize;
-    let mut detached_worktree = 0usize;
+    let mut worktree_only = 0usize;
     let mut branch_only = 0usize;
     for c in candidates {
         match &c.kind {
-            CandidateKind::BranchOnly => branch_only += 1,
+            CandidateKind::BranchOnly if c.deletes_branch => branch_only += 1,
+            // Nothing but the stale worktree entry went. An orphan branch
+            // never reaches here — it has no worktree entry, so no sibling
+            // checkout exists to retain it.
+            CandidateKind::BranchOnly => worktree_only += 1,
             // A stale detached worktree never has a branch.
-            CandidateKind::StaleDetached => detached_worktree += 1,
+            CandidateKind::StaleDetached => worktree_only += 1,
             CandidateKind::Current | CandidateKind::Other => {
-                if c.branch.is_some() {
+                if c.deletes_branch {
                     worktree_with_branch += 1;
                 } else {
-                    detached_worktree += 1;
+                    worktree_only += 1;
                 }
             }
         }
@@ -156,13 +173,13 @@ fn prune_summary(candidates: &[Candidate]) -> String {
         };
         parts.push(format!("{worktree_with_branch} {noun}"));
     }
-    if detached_worktree > 0 {
-        let noun = if detached_worktree == 1 {
+    if worktree_only > 0 {
+        let noun = if worktree_only == 1 {
             "worktree"
         } else {
             "worktrees"
         };
-        parts.push(format!("{detached_worktree} {noun}"));
+        parts.push(format!("{worktree_only} {noun}"));
     }
     if branch_only > 0 {
         let noun = if branch_only == 1 {
@@ -284,6 +301,8 @@ struct CheckOutcome {
     plan: Option<RemoveResult>,
     /// Whether the item passed the removability gate (see `plan`).
     removable: bool,
+    /// What the removal takes, carried onto [`Candidate::deletes_branch`].
+    deletes_branch: bool,
     /// `Some(_)` if `min_age` is set and the age could be resolved; the
     /// caller compares against `min_age_duration` to decide on the skip.
     age: Option<Duration>,
@@ -311,6 +330,7 @@ fn check_one(
             reason,
             plan: None,
             removable: false,
+            deletes_branch: false,
             age: None,
         });
     }
@@ -346,6 +366,22 @@ fn check_one(
         CheckSource::Prunable { .. } => true,
         CheckSource::Orphan | CheckSource::Linked { .. } => plan.is_some(),
     };
+    let deletes_branch = match &plan {
+        Some(plan) => plan.deletes_branch(),
+        // A `Prunable` item has no plan until `try_remove` prunes its stale
+        // entry, so ask the predicate that plan would: a live sibling
+        // checkout of the same branch retains it. `Linked` and `Orphan`
+        // arrive here only when the gate refused them, and nothing is
+        // removed.
+        None => match &item.source {
+            CheckSource::Prunable { wt_idx } => {
+                let wt = &worktrees[*wt_idx];
+                wt.branch.is_some()
+                    && live_sibling_checkout(worktrees, &item.integration_ref, &wt.path).is_none()
+            }
+            CheckSource::Linked { .. } | CheckSource::Orphan => false,
+        },
+    };
     let age = if min_age_duration > Duration::ZERO {
         match &item.source {
             CheckSource::Linked { wt_idx } => worktree_age(repo, &worktrees[*wt_idx], now_secs)?,
@@ -360,6 +396,7 @@ fn check_one(
         reason,
         plan,
         removable,
+        deletes_branch,
         age,
     })
 }
@@ -581,6 +618,7 @@ fn render_dry_run(
                     "branch": c.branch,
                     "path": c.path,
                     "kind": c.kind.as_str(),
+                    "branch_deleted": c.deletes_branch,
                     "reason": info.reason_desc,
                     "target": info.effective_target,
                 })
@@ -814,6 +852,7 @@ pub fn step_prune(
                         label,
                         path,
                         kind,
+                        deletes_branch: outcome.deletes_branch,
                     },
                     DryRunInfo {
                         reason_desc: reason.description().to_string(),
@@ -1014,6 +1053,7 @@ pub fn step_prune(
                     branch,
                     path,
                     kind,
+                    deletes_branch: outcome.deletes_branch,
                 };
                 if matches!(candidate.kind, CandidateKind::Current) {
                     deferred_current = Some((candidate, outcome.plan));
@@ -1044,6 +1084,7 @@ pub fn step_prune(
                     "branch": c.branch,
                     "path": c.path,
                     "kind": c.kind.as_str(),
+                    "branch_deleted": c.deletes_branch,
                 })
             })
             .collect();
@@ -1148,6 +1189,7 @@ mod tests {
             label: label.to_string(),
             path: None,
             kind,
+            deletes_branch: !matches!(kind, CandidateKind::StaleDetached),
         }
     }
 
@@ -1261,6 +1303,7 @@ mod tests {
     fn prune_summary_counts_each_candidate_kind() {
         let mut detached = candidate(CandidateKind::Other, "det");
         detached.branch = None;
+        detached.deletes_branch = false;
         let candidates = [
             candidate(CandidateKind::Other, "feat-a"),
             candidate(CandidateKind::Other, "feat-b"),
@@ -1273,5 +1316,19 @@ mod tests {
             prune_summary(&candidates),
             "2 worktrees & branches, 2 worktrees, 1 branch"
         );
+    }
+
+    /// A branch a sibling worktree still has checked out is retained, so the
+    /// removal takes only the worktree — a live one for `Other`, a stale entry
+    /// for `BranchOnly`. Counting the kind instead would report branches that
+    /// are still there.
+    #[test]
+    fn prune_summary_counts_a_retained_branch_as_worktree_only() {
+        let mut shared_worktree = candidate(CandidateKind::Other, "shared");
+        shared_worktree.deletes_branch = false;
+        let mut shared_stale = candidate(CandidateKind::BranchOnly, "shared-stale");
+        shared_stale.deletes_branch = false;
+        assert_eq!(prune_summary(&[shared_worktree]), "1 worktree");
+        assert_eq!(prune_summary(&[shared_stale]), "1 worktree");
     }
 }

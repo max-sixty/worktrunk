@@ -1638,4 +1638,12 @@ fn test_prune_retains_branch_checked_out_in_another_worktree(mut repo: TestRepo)
             .success(),
         "survivor must resolve HEAD to a commit, not a deleted branch:\n{stderr}",
     );
+
+    // All the run took is the stale worktree entry, so that is what the summary
+    // counts. Counting the candidate's kind instead would announce a branch the
+    // run deliberately kept, contradicting the retention line above it.
+    assert!(
+        stderr.contains("Pruned 1 worktree") && !stderr.contains("Pruned 1 branch"),
+        "summary must count the pruned entry, not the retained branch:\n{stderr}",
+    );
 }
