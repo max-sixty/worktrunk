@@ -272,15 +272,13 @@ fn try_remove(
     };
     let fate = handle_remove_output(&plan, execution, ctx.hook_plan, true, &mut announcer)?;
     announcer.flush()?;
-    let branch_deleted = fate.deleted(&plan);
+    let branch_deleted = fate.deleted();
     // A branch-only candidate that kept its branch removed nothing at all —
     // unless planning pruned a stale worktree entry, a removal worth counting.
     // Excluding the no-op keeps the summary and JSON honest when a concurrent
     // writer advanced an orphan branch between scan and delete (the per-item
     // retention warning has already told the user).
-    if !branch_deleted
-        && let RemovalPlan::BranchOnly { pruned: false, .. } = plan
-    {
+    if !branch_deleted && let RemovalPlan::BranchOnly { pruned: false, .. } = plan {
         return Ok(None);
     }
     Ok(Some(branch_deleted))
@@ -1074,12 +1072,9 @@ pub fn step_prune(
                 };
                 if matches!(candidate.kind, CandidateKind::Current) {
                     deferred_current = Some((candidate, outcome.plan));
-                } else if let Some(branch_deleted) = try_remove(
-                    &candidate,
-                    outcome.plan,
-                    &removal_ctx,
-                )
-                .with_context(|| candidate.removal_context())?
+                } else if let Some(branch_deleted) =
+                    try_remove(&candidate, outcome.plan, &removal_ctx)
+                        .with_context(|| candidate.removal_context())?
                 {
                     candidate.deletes_branch = branch_deleted;
                     removed.push(candidate);

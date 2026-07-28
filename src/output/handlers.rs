@@ -109,10 +109,9 @@ pub enum BackgroundFallbackMode {
     SynchronousForNonCurrent,
 }
 
-/// How [`handle_remove_output`] executes a [`RemovalPlan`] — one axis, one
-/// value, where separate `foreground` / `silent` / fallback-mode parameters
-/// used to combine (`foreground: true, silent: true` was the picker's
-/// spelling of "inline, but quiet").
+/// How [`handle_remove_output`] executes a [`RemovalPlan`]: one axis, one
+/// value — inline with chrome, staged-and-detached with chrome, or inline
+/// with none.
 #[derive(Clone, Copy)]
 pub enum RemovalExecution {
     /// Remove inline and report actual outcomes: progress message, spinner
@@ -287,10 +286,25 @@ fn execute_instant_removal_or_fallback(
                 let cas_tail = build_cas_branch_delete_tail(repo, branch, target_branch);
                 // No tail means the foreground integration check declined (or
                 // couldn't run): the detached process won't touch the branch,
-                // so its survival is known here, not deferred.
+                // so its survival is known here, not deferred — and when the
+                // planner promised deletion, the progress message already said
+                // "worktree & branch", so the survival gets the same
+                // correction the fast path emits. (A check that errored
+                // collapses into this: it couldn't confirm integration, which
+                // is the message's effective claim.)
                 let fate = match cas_tail {
                     Some(_) => BranchFate::Deferred,
-                    None => BranchFate::Retained,
+                    None => {
+                        warn_if_branch_retained(
+                            branch,
+                            &Ok(BranchDeletionResult {
+                                outcome: BranchDeletionOutcome::NotDeleted,
+                                integration_target: target_branch.unwrap_or("HEAD").to_string(),
+                            }),
+                            planner_expected_retention,
+                        );
+                        BranchFate::Retained
+                    }
                 };
                 (
                     build_remove_command_with_tail(
@@ -341,8 +355,9 @@ fn delete_branch_in_synchronous_fallback(
 ///
 /// The worktree has already been removed by the time this runs, so silently
 /// dropping the branch-deletion outcome (the prior behavior) left the user
-/// with no signal that the branch survived. Both the fast path and the
-/// synchronous fallback route through here so the message is consistent.
+/// with no signal that the branch survived. The fast path, the synchronous
+/// fallback, and the detached fallback's known-retained arm (no CAS tail to
+/// append) all route through here so the message is consistent.
 ///
 /// - `Ok(RetainedRaced)`: atomic CAS rejected the delete because the ref
 ///   tip moved between integration check and delete (a hook, a concurrent
@@ -1044,8 +1059,11 @@ pub fn execute_user_command(command: &str, display_path: Option<&Path>) -> anyho
 ///
 /// Returns the branch's [`BranchFate`] so callers report what happened rather
 /// than what the plan intended — the prune summary and `--format=json` both
-/// read it. Worktree-removal failures propagate as `Err`; a surviving branch
-/// is a fate, not an error.
+/// read it. Worktree-removal failures propagate as `Err`, and for a
+/// `Worktree` plan a surviving branch is a fate, not an error — the removal
+/// was the primary operation. For a `BranchOnly` plan the deletion *is* the
+/// operation, so a hard command failure (not a declined or raced deletion)
+/// still propagates as `Err`.
 ///
 /// Approval is handled at the gate (command entry point), not here. The
 /// `announcer`'s `show_branch` setting (set by the caller) controls whether
@@ -1168,8 +1186,8 @@ fn handle_branch_only_output(
         && !deletion_mode.is_force()
     {
         let repo = worktrunk::git::Repository::current()?;
-        let result = execute_branch_deletion(&repo, branch_name, check_target, false)
-            .map(|mut r| {
+        let result =
+            execute_branch_deletion(&repo, branch_name, check_target, false).map(|mut r| {
                 // Preserve the planner's recorded reason so a CAS-accepted
                 // delete still reports the original "integrated because X"
                 // explanation. The fresh integration target stays as the
@@ -1295,7 +1313,7 @@ fn spawn_hooks_after_remove(
     let remove_ctx = CommandContext::new(repo, &config, Some(removed_branch), ctx.main_path, false);
 
     // `post-remove` is *about* the removed worktree (gone by now); it was
-    // selected and frozen into `plan` at the gate, anchored at the removed
+    // selected and frozen into `hook_plan` at the gate, anchored at the removed
     // worktree path. `remove_ctx` (rooted at `ctx.main_path`) only renders.
     register_planned(
         announcer,
@@ -1595,7 +1613,7 @@ fn execute_pre_remove_hooks_if_needed(
 
     // `pre-remove` runs in the worktree being removed (still on disk here).
     // `pre_remove_repo` roots the *render* context there for template vars;
-    // the command set is the frozen `plan` selected at the gate, so no
+    // the command set is the frozen `hook_plan` selected at the gate, so no
     // `.config/wt.toml` is re-read here.
     let pre_remove_repo = Repository::at(ctx.worktree_path)?;
     let command_ctx = CommandContext::new(
@@ -1883,8 +1901,8 @@ fn handle_removed_worktree_output(
     }
 }
 
-/// Remove a `Worktree` worktree with no terminal output — the TUI
-/// (`wt switch` picker) path of [`handle_remove_output`].
+/// Remove a [`RemovalPlan::Worktree`] target with no terminal output — the
+/// TUI (`wt switch` picker) path of [`handle_remove_output`].
 ///
 /// `pre-remove` has already run (when it was approved — `verify`), and the
 /// caller skipped the `cd` directive (the picker manages its own process cwd).

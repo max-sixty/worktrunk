@@ -1663,7 +1663,7 @@ fn test_remove_squash_merged_on_remote_then_advanced(#[from(repo_with_remote)] r
 }
 
 /// Like `test_remove_squash_merged_on_remote`, but with a **worktree** (not just
-/// a branch). Tests that the `RemovedWorktree` path displays the effective target
+/// a branch). Tests that the worktree-removal path displays the effective target
 /// (`origin/main`) rather than the local default branch when upstream is ahead.
 #[rstest]
 fn test_remove_worktree_squash_merged_on_remote(#[from(repo_with_remote)] mut repo: TestRepo) {

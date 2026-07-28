@@ -423,12 +423,9 @@ impl AltXRemover {
                 if !deletion_mode.should_keep() {
                     let default_branch = repo.default_branch();
                     let target = default_branch.as_deref().unwrap_or("HEAD");
-                    if let Err(e) = execute_branch_deletion(
-                        repo,
-                        branch_name,
-                        target,
-                        deletion_mode.is_force(),
-                    ) {
+                    if let Err(e) =
+                        execute_branch_deletion(repo, branch_name, target, deletion_mode.is_force())
+                    {
                         // A safe-delete refusal is `Ok(NotDeleted)`, not an error;
                         // this is a genuine `git branch -D` failure. The row is
                         // restored anyway because the branch still exists (see
@@ -1089,7 +1086,8 @@ fn removal_targets_current_worktree(result: &RemovalPlan) -> bool {
 /// branch). Drives the `alt-x` in-place morph: a kept branch turns the row into
 /// a `/ branch` row rather than dropping it.
 ///
-/// Mirrors [`delete_branch_if_safe`] exactly so the prediction can't drift from
+/// Mirrors [`delete_branch_if_safe`](worktrunk::git::delete_branch_if_safe)
+/// exactly so the prediction can't drift from
 /// the deletion the background `do_removal` performs: force always deletes; a
 /// `Keep` flag always retains; otherwise the branch is kept precisely when it is
 /// **not** integrated into the same `target_branch.unwrap_or("HEAD")` the actual

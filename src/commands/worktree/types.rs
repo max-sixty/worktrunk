@@ -178,8 +178,8 @@ impl SharedBranchCheckout {
 /// Consumers that report deletions (the prune summary, `--format=json`) read
 /// this rather than the plan, so a deletion the CAS refused or an unmerged
 /// branch SafeDelete declined is never reported as deleted. `Deferred` is the
-/// one case with nothing to observe; [`deleted`](Self::deleted) falls back to
-/// the plan's intent there.
+/// one case with nothing to observe; [`deleted`](Self::deleted) reports the
+/// plan's intent there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BranchFate {
     /// No deletion was attempted: the plan had no branch (detached worktree)
@@ -194,6 +194,11 @@ pub enum BranchFate {
     Retained,
     /// The deletion was handed to a detached background process (the legacy
     /// `git worktree remove` fallback) whose outcome this process never sees.
+    ///
+    /// Only planned deletions defer — a `Keep` plan or a branchless worktree
+    /// has no deletion command to hand off, and every fallback arm maps those
+    /// to [`NotAttempted`](Self::NotAttempted) — so `Deferred` implies the
+    /// plan's intent was deletion.
     Deferred,
 }
 
@@ -216,13 +221,10 @@ impl BranchFate {
     }
 
     /// Whether the branch was deleted, best knowledge: the observed outcome
-    /// where one exists, the plan's intent for `Deferred`.
-    pub fn deleted(&self, plan: &RemovalPlan) -> bool {
-        match self {
-            Self::Deleted => true,
-            Self::Deferred => plan.deletes_branch(),
-            Self::NotAttempted | Self::Retained => false,
-        }
+    /// where one exists, the plan's intent for `Deferred` (which is always
+    /// deletion — see the variant doc).
+    pub fn deleted(&self) -> bool {
+        matches!(self, Self::Deleted | Self::Deferred)
     }
 }
 
@@ -331,10 +333,9 @@ impl RemovalPlan {
     /// sibling checkout forced `deletion_mode` to [`BranchDeletionMode::Keep`]
     /// (see [`SharedBranchCheckout`]). Intent only: a `SafeDelete` still
     /// re-decides against fresh refs at execution, so anything reporting what
-    /// happened reads [`BranchFate`] and falls back here only for
-    /// [`BranchFate::Deferred`]. This answers the same question the progress
-    /// message answers when it says "worktree" rather than "worktree &
-    /// branch".
+    /// happened reads [`BranchFate`]; this is what the scan-time predictions
+    /// (prune's dry run) print, and the question the progress message answers
+    /// when it says "worktree" rather than "worktree & branch".
     pub fn deletes_branch(&self) -> bool {
         match self {
             RemovalPlan::Worktree {
@@ -352,7 +353,7 @@ impl RemovalPlan {
     /// from it (via [`BranchFate::deleted`]) so the payload states what
     /// happened, not what the plan hoped.
     pub fn to_json(&self, fate: BranchFate) -> serde_json::Value {
-        let branch_deleted = fate.deleted(self);
+        let branch_deleted = fate.deleted();
         match self {
             RemovalPlan::Worktree {
                 worktree_path,
@@ -421,38 +422,21 @@ mod tests {
         assert_eq!(branch_only.branch_name(), Some("solo"));
     }
 
-    /// The fate→deleted mapping: only an observed deletion counts, and only
-    /// `Deferred` consults the plan's intent. A raced or declined deletion
-    /// (`Retained`) reports false even when the plan meant to delete —
-    /// that divergence is the whole point of tracking fate separately.
+    /// The fate→deleted mapping: an observed deletion counts, a deferral
+    /// reports the intent it carried (always deletion), and a raced or
+    /// declined deletion (`Retained`) reports false even though the plan
+    /// meant to delete — that divergence is the whole point of tracking fate
+    /// separately.
     #[test]
-    fn branch_fate_deleted_consults_plan_only_when_deferred() {
-        let deleting_plan = RemovalPlan::BranchOnly {
-            branch_name: "feature".to_string(),
-            deletion_mode: BranchDeletionMode::SafeDelete,
-            pruned: false,
-            target_branch: None,
-            integration_reason: None,
-            branch_checked_out_at: None,
-        };
-        let keeping_plan = RemovalPlan::BranchOnly {
-            branch_name: "feature".to_string(),
-            deletion_mode: BranchDeletionMode::Keep,
-            pruned: false,
-            target_branch: None,
-            integration_reason: None,
-            branch_checked_out_at: None,
-        };
+    fn branch_fate_deleted_mapping() {
         let cases = [
-            (BranchFate::Deleted, true, true),
-            (BranchFate::Retained, false, false),
-            (BranchFate::NotAttempted, false, false),
-            // Deferred is the only intent-dependent row.
-            (BranchFate::Deferred, true, false),
+            (BranchFate::Deleted, true),
+            (BranchFate::Deferred, true),
+            (BranchFate::Retained, false),
+            (BranchFate::NotAttempted, false),
         ];
-        for (fate, with_delete_intent, with_keep_intent) in cases {
-            assert_eq!(fate.deleted(&deleting_plan), with_delete_intent, "{fate:?}");
-            assert_eq!(fate.deleted(&keeping_plan), with_keep_intent, "{fate:?}");
+        for (fate, deleted) in cases {
+            assert_eq!(fate.deleted(), deleted, "{fate:?}");
         }
     }
 
