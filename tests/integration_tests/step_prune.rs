@@ -1338,6 +1338,56 @@ fn test_prune_runs_pre_remove_hook(mut repo: TestRepo) {
     assert!(!wt_path.exists(), "the merged worktree should be removed");
 }
 
+/// A declined orphan deletion removed nothing, so nothing is counted.
+///
+/// The scan selects both `carrier` (worktree, integrated) and `orphan`
+/// (branch-only, integrated). `carrier`'s `pre-remove` hook then points
+/// `orphan` at a commit main doesn't contain, so when the worker reaches
+/// `orphan`, the SafeDelete re-check declines — and a candidate that removed
+/// nothing must not appear in the summary as either "1 branch" (the plan's
+/// intent) or "1 worktree" (the fate-counting of a stale entry it never had).
+///
+/// `RAYON_NUM_THREADS=1` makes the ordering causal, not raced: the serial
+/// scan queues `carrier` (worktree entries precede orphans in `check_items`)
+/// before `orphan`, and the single FIFO worker runs `carrier`'s removal — the
+/// hook — before `orphan`'s deletion.
+#[rstest]
+fn test_prune_excludes_declined_orphan_deletion_from_summary(mut repo: TestRepo) {
+    let carrier_wt = repo.add_worktree("carrier");
+    repo.run_git(&["branch", "orphan"]);
+    // Advance the default branch so both are ancestors — integrated at scan.
+    repo.commit("Advance default branch");
+    // Runs in `carrier`: commit a file, hand that commit to `orphan`, then
+    // step `carrier` back to its integrated tip with a clean tree.
+    repo.write_project_config(
+        r#"pre-remove = "printf raced > raced.txt && git add raced.txt && git commit -m raced && git update-ref refs/heads/orphan HEAD && git reset --hard HEAD~1""#,
+    );
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["step", "prune", "--foreground", "--yes", "--min-age=0s"])
+        .env("RAYON_NUM_THREADS", "1");
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(output.status.success(), "prune should succeed:\n{stderr}");
+
+    // The exact line, so a counted orphan fails whichever way it's counted:
+    // as its plan's intent ("…, 1 branch") or as a phantom worktree
+    // ("…, 1 worktree").
+    assert!(
+        stderr.contains("Pruned 1 worktree & branch\n"),
+        "the summary must count only carrier; the no-op orphan contributes nothing:\n{stderr}",
+    );
+    assert!(!carrier_wt.exists(), "carrier should be removed");
+    repo.run_git(&["rev-parse", "--verify", "refs/heads/orphan"]);
+    let tip = repo.git_output(&["show", "--format=", "--name-only", "refs/heads/orphan"]);
+    assert!(
+        tip.lines().any(|line| line == "raced.txt"),
+        "the hook's commit must be orphan's tip, or the divergence never happened:\n{tip}",
+    );
+}
+
 /// The summary counts the executed outcome, not the scan-time plan.
 ///
 /// The scan selects `merged` as integrated and plans to take its branch with

@@ -2926,6 +2926,29 @@ pub mod tests {
         );
     }
 
+    /// `do_removal` on a branch-only plan deletes the branch through
+    /// `execute_branch_deletion` — the same fresh-refs CAS path every planned
+    /// deletion takes — with no worktree involved.
+    #[test]
+    fn test_do_removal_deletes_branch_only_plan() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+
+        // Integrated (same commit as main), no worktree → safe to delete.
+        repo.run_command(&["branch", "row-branch"]).unwrap();
+
+        let remover = test_remover(Arc::new(Mutex::new(Vec::new())), repo.clone());
+        let target = PickerRemovalTarget::from_signal("row-branch").unwrap();
+        let (planning_repo, plan) = remover.prepare_removal(&target).unwrap();
+
+        AltXRemover::do_removal(&planning_repo, &plan, &Approvals::default()).unwrap();
+        assert!(
+            repo.run_command(&["rev-parse", "--verify", "refs/heads/row-branch"])
+                .is_err(),
+            "an integrated branch-only row should be deleted"
+        );
+    }
+
     /// A branch-only row whose branch has since acquired a worktree — someone
     /// ran `wt switch` elsewhere while the picker sat open. The row's signal
     /// still decodes to `Branch`, and removing it would take out a worktree
