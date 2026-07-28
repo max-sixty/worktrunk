@@ -12,11 +12,8 @@ docs = "wt step tether -C docs -- zola serve -p {{ branch | hash_port }}"
 clippy = "pre-commit run clippy --all-files || true"
 # Warms the cache the pre-merge `insta` gate reuses, so RUSTFLAGS and the
 # feature set must match that line: cargo fingerprints both, and a mismatch in
-# either leaves the gate rebuilding artifacts it can't reuse. Target selection
-# isn't a fingerprint input, so `--all-targets` rides along free and keeps the
-# benches compiling. `--all-features` doesn't: it adds the `git-wt` binary,
-# whose unit tests are a byte-identical duplicate of `wt`'s.
-build = "RUSTFLAGS='-D warnings' cargo test --no-run --locked --all-targets --features shell-integration-tests"
+# either leaves the gate rebuilding artifacts it can't reuse.
+build = "RUSTFLAGS='-D warnings' cargo test --no-run --locked --all-targets --all-features"
 install = "cargo install --path ."
 sync = 'if [ "{{ target }}" = "main" ]; then git pull && git push; fi'
 
@@ -28,7 +25,7 @@ sync = 'if [ "{{ target }}" = "main" ]; then git pull && git push; fi'
 # `cargo update --locked` would also fail on dependencies merely behind latest.
 lockfile = "cargo update --workspace --locked"
 pre-commit = "pre-commit run --all-files"
-insta = """RUSTFLAGS='-D warnings' cargo insta test --test-runner nextest --dnd --check $([ "$(uname)" = 'Linux' ] && echo '--unreferenced reject') --features shell-integration-tests"""
+insta = """RUSTFLAGS='-D warnings' cargo insta test --test-runner nextest --dnd --check $([ "$(uname)" = 'Linux' ] && echo '--unreferenced reject') --all-features"""
 doctest = "RUSTDOCFLAGS='-Dwarnings' cargo test --doc"
 doc = "RUSTDOCFLAGS='-Dwarnings' cargo doc --no-deps --document-private-items"
 
