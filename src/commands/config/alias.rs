@@ -139,10 +139,9 @@ fn warn_if_shadowed(name: &str) {
 /// and print the rendered command(s) without executing.
 ///
 /// Rendering goes through [`render_template_preview`], which mirrors
-/// execution-time semantics: templates referencing `vars.*` are shown raw
-/// (after syntax validation) because those values resolve from git config
-/// when the step runs, potentially written by earlier pipeline steps. Other
-/// templates expand against the current context.
+/// execution-time semantics for everything but `{{ vars.<key> }}`: each of
+/// those renders as itself, because the value resolves from git config when
+/// the step runs, potentially written by an earlier pipeline step.
 pub fn handle_alias_dry_run(name: String, args: Vec<String>) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let user_config = repo.user_config();
