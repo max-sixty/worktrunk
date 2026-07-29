@@ -711,6 +711,158 @@ fn test_configure_shell_fish_dry_run_does_not_delete_legacy(repo: TestRepo, temp
     );
 }
 
+/// `--dry-run` must *preview* the legacy files it would remove (issue #3644).
+///
+/// The cleanup takes back the legacy fish `conf.d/{cmd}.fish`; a preview run has
+/// to name that removal, not just the files it would add. Regression guard for
+/// the gap where `--dry-run` returned an empty `legacy_cleanups`, so the deletion
+/// never appeared before it happened.
+#[rstest]
+fn test_configure_shell_fish_dry_run_previews_legacy_removal(repo: TestRepo, temp_home: TempDir) {
+    // Bootstrap the canonical location with an actual install so functions/ and
+    // completions/ hold the exact content install writes (i.e. "already
+    // configured"), leaving only the legacy file as a pending change.
+    let mut bootstrap = wt_command();
+    repo.configure_wt_cmd(&mut bootstrap);
+    set_temp_home_env(&mut bootstrap, temp_home.path());
+    bootstrap.env("SHELL", "/bin/fish");
+    bootstrap
+        .args(["config", "shell", "install", "fish", "--yes"])
+        .current_dir(repo.root_path());
+    assert!(bootstrap.output().unwrap().status.success());
+
+    // A stale legacy conf.d file the cleanup would take back.
+    let conf_d = temp_home.path().join(".config/fish/conf.d");
+    fs::create_dir_all(&conf_d).unwrap();
+    let legacy_file = conf_d.join("wt.fish");
+    fs::write(&legacy_file, "wt config shell init fish | source").unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/fish");
+    cmd.args(["config", "shell", "install", "fish", "--dry-run"])
+        .current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+    assert!(output.status.success(), "dry-run failed: {output:?}");
+
+    // The preview (stdout) must name the legacy removal.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("deprecated") && stdout.contains("conf.d"),
+        "--dry-run should preview the legacy conf.d removal:\n{stdout}"
+    );
+
+    // ...and must not actually remove anything.
+    assert!(
+        legacy_file.exists(),
+        "--dry-run must not delete legacy conf.d/wt.fish: {legacy_file:?}"
+    );
+}
+
+/// When everything is already configured, removing the legacy file needs the
+/// user's consent — declining the prompt preserves it (issue #3644).
+///
+/// The already-configured branch used to run the cleanup and return without
+/// prompting at all, deleting a hand-written `conf.d/wt.fish` as a silent side
+/// effect. Now it prompts; declining must leave the file in place.
+#[rstest]
+fn test_configure_shell_fish_legacy_removal_declined_when_already_configured(
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
+    // Bootstrap the canonical location so a second install is a pure no-op except
+    // for the legacy cleanup.
+    let mut bootstrap = wt_command();
+    repo.configure_wt_cmd(&mut bootstrap);
+    set_temp_home_env(&mut bootstrap, temp_home.path());
+    bootstrap.env("SHELL", "/bin/fish");
+    bootstrap
+        .args(["config", "shell", "install", "fish", "--yes"])
+        .current_dir(repo.root_path());
+    assert!(bootstrap.output().unwrap().status.success());
+
+    let conf_d = temp_home.path().join(".config/fish/conf.d");
+    fs::create_dir_all(&conf_d).unwrap();
+    let legacy_file = conf_d.join("wt.fish");
+    fs::write(&legacy_file, "wt config shell init fish | source").unwrap();
+
+    // Run without --yes and decline the prompt.
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/fish");
+    cmd.args(["config", "shell", "install", "fish"])
+        .current_dir(repo.root_path())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = cmd.spawn().unwrap();
+    use std::io::Write as _;
+    child.stdin.take().unwrap().write_all(b"n\n").unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    // Declining is a non-zero exit ("Cancelled by user"), and the file survives.
+    assert!(
+        !output.status.success(),
+        "declining should exit non-zero: {output:?}"
+    );
+    assert!(
+        legacy_file.exists(),
+        "declining must preserve legacy conf.d/wt.fish: {legacy_file:?}"
+    );
+}
+
+/// Accepting the prompt in the already-configured branch removes the legacy file
+/// (issue #3644).
+///
+/// The complement of the decline test: confirming the `Remove deprecated shell
+/// integration files?` prompt proceeds with the cleanup that used to run
+/// unprompted.
+#[rstest]
+fn test_configure_shell_fish_legacy_removal_accepted_when_already_configured(
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
+    let mut bootstrap = wt_command();
+    repo.configure_wt_cmd(&mut bootstrap);
+    set_temp_home_env(&mut bootstrap, temp_home.path());
+    bootstrap.env("SHELL", "/bin/fish");
+    bootstrap
+        .args(["config", "shell", "install", "fish", "--yes"])
+        .current_dir(repo.root_path());
+    assert!(bootstrap.output().unwrap().status.success());
+
+    let conf_d = temp_home.path().join(".config/fish/conf.d");
+    fs::create_dir_all(&conf_d).unwrap();
+    let legacy_file = conf_d.join("wt.fish");
+    fs::write(&legacy_file, "wt config shell init fish | source").unwrap();
+
+    // Run without --yes and accept the prompt.
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/fish");
+    cmd.args(["config", "shell", "install", "fish"])
+        .current_dir(repo.root_path())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = cmd.spawn().unwrap();
+    use std::io::Write as _;
+    child.stdin.take().unwrap().write_all(b"y\n").unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "accepting should succeed: {output:?}"
+    );
+    assert!(
+        !legacy_file.exists(),
+        "accepting must remove legacy conf.d/wt.fish: {legacy_file:?}"
+    );
+}
+
 /// Test that detection finds fish integration in legacy conf.d location
 ///
 /// `wt config show` should detect shell integration whether it's in the

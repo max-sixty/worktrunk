@@ -1,12 +1,13 @@
 use crate::display::{format_relative_time_short, shorten_path, truncate_to_width};
 use anstyle::{Effects, Style};
-use std::path::Path;
 use unicode_width::UnicodeWidthStr;
-use worktrunk::styling::{Stream, StyledLine, supports_hyperlinks};
+use worktrunk::styling::StyledLine;
 
 use super::columns::{ColumnKind, DiffVariant};
-use super::layout::{ColumnFormat, ColumnLayout, DiffColumnConfig, LayoutConfig, format_url_cell};
-use super::model::{ItemKind, ListItem, PositionMask};
+use super::layout::{
+    ColumnFormat, ColumnLayout, DiffColumnConfig, LayoutConfig, LinkStyle, format_url_cell,
+};
+use super::model::{ItemKind, ListItem};
 
 /// Placeholder glyph for unresolved Status positions — both "still loading" and
 /// "drain deadline fired, won't arrive."
@@ -277,16 +278,7 @@ impl LayoutConfig {
     /// to [`PLACEHOLDER`] on the reveal tick. Non-progressive callers pass
     /// [`PLACEHOLDER`] directly.
     pub fn render_list_item_line(&self, item: &ListItem, placeholder: &str) -> StyledLine {
-        self.render_line(|column| {
-            column.render_cell(
-                item,
-                &self.status_position_mask,
-                &self.main_worktree_path,
-                self.max_message_len,
-                self.max_summary_len,
-                placeholder,
-            )
-        })
+        self.render_line(|column| column.render_cell(item, self, placeholder))
     }
 
     /// Render a skeleton row showing known data (branch, path) with placeholders for other columns.
@@ -358,10 +350,7 @@ impl LayoutConfig {
                     return match &item.pr_status {
                         Some(Some(pr_status)) => {
                             let mut ci = StyledLine::new();
-                            ci.push_raw(
-                                pr_status
-                                    .format_cell(col.width, supports_hyperlinks(Stream::Stdout)),
-                            );
+                            ci.push_raw(pr_status.format_cell(col.width, self.link_style));
                             ci
                         }
                         _ => StyledLine::new(),
@@ -377,14 +366,7 @@ impl LayoutConfig {
                 // skeleton paint) `item.commit` is `None`, and `render_cell`
                 // returns the same placeholder the `_` arm below would.
                 ColumnKind::Time | ColumnKind::Message => {
-                    return col.render_cell(
-                        item,
-                        &self.status_position_mask,
-                        &self.main_worktree_path,
-                        self.max_message_len,
-                        self.max_summary_len,
-                        spinner,
-                    );
+                    return col.render_cell(item, self, spinner);
                 }
                 _ => {
                     // Show spinner for data columns (placeholder_cell handles alignment)
@@ -431,15 +413,18 @@ impl ColumnLayout {
         config.render_segment(positive, negative)
     }
 
-    fn render_cell(
-        &self,
-        item: &ListItem,
-        status_mask: &PositionMask,
-        main_worktree_path: &Path,
-        max_message_len: usize,
-        max_summary_len: usize,
-        placeholder: &str,
-    ) -> StyledLine {
+    /// Render this column's cell for `item`.
+    ///
+    /// Reads the render-wide facts — the Status mask, the path rows shorten
+    /// against, the text budgets, the [`LinkStyle`] — off the `layout` this
+    /// column belongs to, so every cell in a row answers them the same way.
+    fn render_cell(&self, item: &ListItem, layout: &LayoutConfig, placeholder: &str) -> StyledLine {
+        let status_mask = &layout.status_position_mask;
+        let main_worktree_path = &layout.main_worktree_path;
+        let max_message_len = layout.max_message_len;
+        let max_summary_len = layout.max_summary_len;
+        let link: LinkStyle = layout.link_style;
+
         // Compute derived values inline (avoids separate context struct)
         let worktree_data = item.worktree_data();
         let text_style = item.should_dim().then(|| Style::new().dimmed());
@@ -560,14 +545,13 @@ impl ColumnLayout {
             }
             ColumnKind::Url => {
                 // URL column: shows dev server URL from project config template
-                // - When hyperlinks supported: show ":port" as clickable link
-                // - When hyperlinks not supported: show full URL
-                // - dim if not available/active, normal if active
+                // as ":port" or in full (see `format_url_cell`), dim if not
+                // available/active, normal if active
                 let Some(url) = &item.url else {
                     return StyledLine::new();
                 };
                 let mut cell = StyledLine::new();
-                let formatted = format_url_cell(url, supports_hyperlinks(Stream::Stdout));
+                let formatted = format_url_cell(url, link);
                 if item.url_active == Some(true) {
                     cell.push_raw(formatted);
                 } else {
@@ -582,9 +566,7 @@ impl ColumnLayout {
                     Some(None) => StyledLine::new(), // No CI for this branch
                     Some(Some(pr_status)) => {
                         let mut cell = StyledLine::new();
-                        cell.push_raw(
-                            pr_status.format_cell(self.width, supports_hyperlinks(Stream::Stdout)),
-                        );
+                        cell.push_raw(pr_status.format_cell(self.width, link));
                         cell
                     }
                 }
@@ -633,9 +615,11 @@ impl ColumnLayout {
 
 #[cfg(test)]
 mod tests {
+    use super::super::model::PositionMask;
     use super::*;
     use crate::commands::list::layout::DiffDisplayConfig;
     use ansi_str::AnsiStr;
+    use std::path::PathBuf;
     use worktrunk::styling::{ADDITION, DELETION};
 
     fn format_diff_like_column(
@@ -644,6 +628,19 @@ mod tests {
         config: DiffColumnConfig,
     ) -> StyledLine {
         config.render_segment(positive, negative)
+    }
+
+    /// A one-column layout carrying the render-wide facts `render_cell` reads.
+    fn cell_layout(column: ColumnLayout) -> LayoutConfig {
+        LayoutConfig {
+            columns: vec![column],
+            main_worktree_path: PathBuf::from("/tmp"),
+            max_message_len: 50,
+            max_summary_len: 40,
+            hidden_column_count: 0,
+            status_position_mask: PositionMask::FULL,
+            link_style: LinkStyle::Expanded,
+        }
     }
 
     #[test]
@@ -1316,11 +1313,92 @@ mod tests {
         insta::assert_snapshot!(arrow_behind_dim.render(), @"    [31m↓1C[0m");
     }
 
+    /// A row's link markup is a property of the render, not of the cell that
+    /// happens to emit it: the CI reference and the dev-server port either both
+    /// carry an underlined OSC 8 link or neither does. The picker renders
+    /// `Unlinked` because skim mangles the escape, and an underline there would
+    /// mark text with nothing behind it.
+    #[test]
+    fn test_link_markup_is_uniform_across_a_row() {
+        use super::super::ci_status::{CiSource, CiStatus, PrRef, PrStatus};
+        use super::super::layout::{ColumnLayout, LayoutConfig};
+        use super::super::model::ListItem;
+
+        let columns = || {
+            [(ColumnKind::CiStatus, "CI", 5), (ColumnKind::Url, "URL", 6)]
+                .into_iter()
+                .enumerate()
+                .map(|(i, (kind, header, width))| ColumnLayout {
+                    kind,
+                    header: std::borrow::Cow::Borrowed(header),
+                    start: i * 8,
+                    width,
+                    format: ColumnFormat::Text,
+                })
+                .collect()
+        };
+        let layout = |link_style| LayoutConfig {
+            columns: columns(),
+            main_worktree_path: PathBuf::from("/tmp"),
+            max_message_len: 0,
+            max_summary_len: 10,
+            hidden_column_count: 0,
+            status_position_mask: PositionMask::FULL,
+            link_style,
+        };
+
+        let mut item = ListItem::new_branch("abc123".into(), "feat".into());
+        item.url = Some("http://127.0.0.1:17913".into());
+        item.url_active = Some(true);
+        item.pr_status = Some(Some(PrStatus {
+            ci_status: CiStatus::Passed,
+            source: CiSource::PullRequest,
+            is_stale: false,
+            is_priming: false,
+            url: Some("https://github.com/owner/repo/pull/123".into()),
+            number: Some(PrRef::pr(123)),
+            review_state: None,
+            title: None,
+            body: None,
+            author: None,
+            comment_count: None,
+            updated_at: None,
+        }));
+
+        let linked = layout(LinkStyle::Linked)
+            .render_list_item_line(&item, PLACEHOLDER)
+            .render();
+        for (url, text) in [
+            ("https://github.com/owner/repo/pull/123", "#123"),
+            ("http://127.0.0.1:17913", ":17913"),
+        ] {
+            assert!(
+                linked.contains(&worktrunk::styling::hyperlink(url, text)),
+                "{text} should be an underlined link in {linked:?}"
+            );
+        }
+
+        let unlinked = layout(LinkStyle::Unlinked)
+            .render_list_item_line(&item, PLACEHOLDER)
+            .render();
+        assert!(
+            unlinked.contains("#123") && unlinked.contains(":17913"),
+            "both references keep their short text in {unlinked:?}"
+        );
+        assert!(
+            !unlinked.contains("\u{1b}]8;"),
+            "an unlinked row carries no OSC 8 escape: {unlinked:?}"
+        );
+        assert!(
+            !unlinked.contains("\u{1b}[4m"),
+            "and no underline, which would mark text with nothing behind it: {unlinked:?}"
+        );
+    }
+
     #[test]
     fn test_loading_uses_middle_dot() {
         use super::super::layout::{ColumnLayout, LayoutConfig};
-        use super::super::model::{ListItem, PositionMask};
-        use std::path::PathBuf;
+        use super::super::model::ListItem;
 
         let layout = LayoutConfig {
             columns: vec![ColumnLayout {
@@ -1335,6 +1413,7 @@ mod tests {
             max_summary_len: 10,
             hidden_column_count: 0,
             status_position_mask: PositionMask::FULL,
+            link_style: LinkStyle::Expanded,
         };
 
         let item = ListItem::new_branch("abc123".into(), "feat".into());
@@ -1347,8 +1426,7 @@ mod tests {
     #[test]
     fn test_summary_column_rendering() {
         use super::super::layout::ColumnLayout;
-        use super::super::model::{ListItem, PositionMask};
-        use std::path::PathBuf;
+        use super::super::model::ListItem;
 
         let summary_col = ColumnLayout {
             kind: ColumnKind::Summary,
@@ -1358,23 +1436,20 @@ mod tests {
             format: ColumnFormat::Text,
         };
 
-        let mask = PositionMask::FULL;
-        let main_path = PathBuf::from("/tmp");
-
         // Case 1: summary = None (not loaded yet → placeholder)
         let mut item = ListItem::new_branch("abc123".into(), "feat".into());
         item.summary = None;
-        let cell = summary_col.render_cell(&item, &mask, &main_path, 50, 40, PLACEHOLDER);
+        let cell = summary_col.render_cell(&item, &cell_layout(summary_col.clone()), PLACEHOLDER);
         insta::assert_snapshot!(cell.render(), @"[2m·[0m");
 
         // Case 2: summary = Some(None) (loaded, no summary → blank)
         item.summary = Some(None);
-        let cell = summary_col.render_cell(&item, &mask, &main_path, 50, 40, PLACEHOLDER);
+        let cell = summary_col.render_cell(&item, &cell_layout(summary_col.clone()), PLACEHOLDER);
         assert!(cell.render().is_empty());
 
         // Case 3: summary = Some(Some(text)) (has summary)
         item.summary = Some(Some("Add user authentication".into()));
-        let cell = summary_col.render_cell(&item, &mask, &main_path, 50, 40, PLACEHOLDER);
+        let cell = summary_col.render_cell(&item, &cell_layout(summary_col.clone()), PLACEHOLDER);
         insta::assert_snapshot!(cell.render(), @"Add user authentication");
     }
 
@@ -1412,6 +1487,7 @@ mod tests {
             max_summary_len: 10,
             hidden_column_count: 0,
             status_position_mask: PositionMask::FULL,
+            link_style: LinkStyle::Expanded,
         };
 
         // commit = None (first skeleton paint, before the batch) → placeholders.
@@ -1447,8 +1523,7 @@ mod tests {
     #[test]
     fn test_working_diff_placeholder_when_not_loaded() {
         use super::super::layout::ColumnLayout;
-        use super::super::model::{ItemKind, ListItem, PositionMask};
-        use std::path::PathBuf;
+        use super::super::model::{ItemKind, ListItem};
         use worktrunk::styling::{ADDITION, DELETION};
 
         let col = ColumnLayout {
@@ -1468,30 +1543,26 @@ mod tests {
             }),
         };
 
-        let mask = PositionMask::FULL;
-        let main_path = PathBuf::from("/tmp");
-
         // Branch item (no worktree data) → blank, not placeholder
         let branch_item = ListItem::new_branch("abc123".into(), "feat".into());
-        let cell = col.render_cell(&branch_item, &mask, &main_path, 50, 40, PLACEHOLDER);
+        let cell = col.render_cell(&branch_item, &cell_layout(col.clone()), PLACEHOLDER);
         assert!(cell.render().is_empty(), "branch item should be blank");
 
         // Worktree item with working_tree_diff: None → placeholder
         let mut wt_item = ListItem::new_branch("abc123".into(), "feat".into());
         wt_item.kind = ItemKind::Worktree(Box::default());
-        let cell = col.render_cell(&wt_item, &mask, &main_path, 50, 40, PLACEHOLDER);
+        let cell = col.render_cell(&wt_item, &cell_layout(col.clone()), PLACEHOLDER);
         insta::assert_snapshot!(cell.render(), @"        [2m·[0m");
 
         // Stale placeholder
-        let cell = col.render_cell(&wt_item, &mask, &main_path, 50, 40, "·");
+        let cell = col.render_cell(&wt_item, &cell_layout(col.clone()), "·");
         insta::assert_snapshot!(cell.render(), @"        [2m·[0m");
     }
 
     #[test]
     fn test_upstream_placeholder_when_not_loaded() {
         use super::super::layout::ColumnLayout;
-        use super::super::model::{ListItem, PositionMask, UpstreamStatus};
-        use std::path::PathBuf;
+        use super::super::model::{ListItem, UpstreamStatus};
         use worktrunk::styling::{ADDITION, DELETION};
 
         let col = ColumnLayout {
@@ -1511,19 +1582,16 @@ mod tests {
             }),
         };
 
-        let mask = PositionMask::FULL;
-        let main_path = PathBuf::from("/tmp");
-
         // upstream: None (not loaded) → placeholder
         let item = ListItem::new_branch("abc123".into(), "feat".into());
         assert!(item.upstream.is_none());
-        let cell = col.render_cell(&item, &mask, &main_path, 50, 40, PLACEHOLDER);
+        let cell = col.render_cell(&item, &cell_layout(col.clone()), PLACEHOLDER);
         insta::assert_snapshot!(cell.render(), @"      [2m·[0m");
 
         // upstream: Some(default) (loaded, no active upstream) → blank
         let mut item = ListItem::new_branch("abc123".into(), "feat".into());
         item.upstream = Some(UpstreamStatus::default());
-        let cell = col.render_cell(&item, &mask, &main_path, 50, 40, PLACEHOLDER);
+        let cell = col.render_cell(&item, &cell_layout(col.clone()), PLACEHOLDER);
         assert!(
             cell.render().is_empty(),
             "no active upstream should be blank"

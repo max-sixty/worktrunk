@@ -1275,7 +1275,7 @@ fn render_grid_row(entry: &PrEntry, grid: &ColumnGrid, list_width: usize) -> Str
     match grid.column(ColumnKind::CiStatus).zip(entry.status.as_ref()) {
         Some((col, status)) => {
             let mut cell = StyledLine::new();
-            cell.push_raw(status.format_cell(col.width, false));
+            cell.push_raw(status.format_cell(col.width, grid.link_style));
             segments.push((col.start, cell));
         }
         None => {
@@ -1327,6 +1327,7 @@ fn render_freeform_row(entry: &PrEntry, list_width: usize) -> String {
 // cached the same way via `spawn_pr_previews`.
 #[cfg(test)]
 mod tests {
+    use super::super::super::list::layout::LinkStyle;
     use super::super::items::PreviewCache;
     use super::super::preview_notify::PreviewNotifier;
     use super::*;
@@ -1418,6 +1419,7 @@ mod tests {
     /// longer skipped). Gutter 0–2, Branch 2–22, Status 24–32, CI 34–40.
     fn grid_with_ci() -> ColumnGrid {
         ColumnGrid {
+            link_style: LinkStyle::Unlinked,
             columns: vec![
                 grid_col(ColumnKind::Gutter, 0, 2),
                 grid_col(ColumnKind::Branch, 2, 20),
@@ -1557,6 +1559,7 @@ mod tests {
     /// the shape `calculate_layout_with_width` produces for the picker.
     fn grid() -> ColumnGrid {
         ColumnGrid {
+            link_style: LinkStyle::Unlinked,
             columns: vec![
                 grid_col(ColumnKind::Gutter, 0, 2),
                 grid_col(ColumnKind::Branch, 2, 20),
@@ -1662,6 +1665,7 @@ mod tests {
         // Even with a long branch the row stays inside the pane: the branch
         // truncates to its column and nothing flexible follows.
         let no_flexible = ColumnGrid {
+            link_style: LinkStyle::Unlinked,
             columns: vec![
                 grid_col(ColumnKind::Gutter, 0, 2),
                 grid_col(ColumnKind::Branch, 2, 20),
@@ -1698,6 +1702,7 @@ mod tests {
         // Message column (where worktree rows show their commit subject) is
         // present, only the gutter, branch, and CI number land.
         let grid = ColumnGrid {
+            link_style: LinkStyle::Unlinked,
             columns: vec![
                 grid_col(ColumnKind::Gutter, 0, 2),
                 grid_col(ColumnKind::Branch, 2, 20),

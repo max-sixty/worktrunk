@@ -522,7 +522,7 @@ The line carries the same cells as the worktree's row in `wt list`. A stale CI s
 
 A cell with nothing to show is left out rather than blanked, so most lines are shorter than that; `claude-code` also drops `branch` where `dir` already ends in `.<branch>`. A line that still overruns the terminal drops whole cells, least important first, starting with the dev server URL.
 
-The CI reference links to its PR/MR, and a dev server URL carrying a port shows as `:3000` linking to the URL in full, dim until something answers on that port. Both links are OSC 8, which a terminal that doesn't support them discards, leaving the same text unclickable.
+The CI reference links to its PR/MR, and a dev server URL carrying a port shows as `:3000` linking to the URL in full, dim until something answers on that port. Both are underlined, which is what marks them as clickable. They are OSC 8 links, and a terminal that doesn't support those discards the escape, leaving the underlined text unclickable.
 
 ### Claude Code mode
 

@@ -468,9 +468,13 @@ pub fn prompt_shell_integration(
 
     // TTY + first time: Show interactive prompt
     // Accepting installs for all shells with config files (same as `wt config shell install`)
+    // This first-run offer installs but resolves no legacy cleanups of its own;
+    // the subsequent handle_configure_shell reports any deprecated-file removal
+    // after the fact, as before.
     let confirmed = prompt_for_install(
         &scan.configured,
         &scan.completion_results,
+        &[],
         binary_name,
         "Install shell integration?",
     )

@@ -257,6 +257,59 @@ fn test_remove_locked_detached_multi(mut repo: TestRepo) {
     ));
 }
 
+/// Regression test for #3645: a locked worktree whose directory is currently
+/// absent must still honor the lock on removal. The missing-directory fallback
+/// used to run before the lock guard, so `wt remove` pruned the registration
+/// and fell through to branch deletion — bypassing the lock entirely. A lock
+/// says "don't remove this", and a temporarily-unreachable directory (removable
+/// media, a network mount, a dropped VPN) is exactly the case it exists for.
+#[rstest]
+fn test_remove_locked_worktree_directory_missing(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("locked-missing");
+    repo.lock_worktree("locked-missing", Some("Detachable media"));
+
+    // Simulate the directory becoming unreachable (unmounted media, etc.).
+    std::fs::remove_dir_all(&worktree_path).expect("Failed to remove worktree directory");
+
+    // `wt remove` must refuse: the lock guards the branch and registration even
+    // though the directory is currently absent.
+    let output = repo
+        .wt_command()
+        .args(["remove", "locked-missing"])
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "wt remove should fail on a locked worktree even when its directory is missing.\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    // The branch must survive.
+    let branch_exists = repo
+        .git_command()
+        .args(["branch", "--list", "locked-missing"])
+        .run()
+        .unwrap();
+    assert!(
+        !String::from_utf8_lossy(&branch_exists.stdout)
+            .trim()
+            .is_empty(),
+        "Branch should NOT be deleted for a locked worktree",
+    );
+
+    // The (stale) registration must NOT be pruned — the lock still guards it.
+    let list_after = repo
+        .git_command()
+        .args(["worktree", "list", "--porcelain"])
+        .run()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&list_after.stdout).contains("locked-missing"),
+        "Locked worktree registration should NOT be pruned",
+    );
+}
+
 #[rstest]
 fn test_remove_by_name_from_main(mut repo: TestRepo) {
     // Create a worktree
